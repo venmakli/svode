@@ -1,0 +1,18 @@
+{
+  "common_settings": "Настройки",
+  "common_about": "О программе",
+  "common_theme": "Тема",
+  "common_theme_light": "Светлая",
+  "common_theme_dark": "Тёмная",
+  "common_theme_system": "Системная",
+
+  "sidebar_workspaces": "ПРОСТРАНСТВА",
+  "sidebar_project_settings": "Настройки проекта",
+  "sidebar_all_projects": "Все проекты",
+
+  "chat_title": "AI Чат",
+  "chat_placeholder": "Чат будет реализован в Фазе 4",
+
+  "editor_title": "Редактор документов",
+  "editor_placeholder": "Редактор будет реализован в Фазе 3"
+}

@@ -1,0 +1,18 @@
+{
+  "common_settings": "Settings",
+  "common_about": "About",
+  "common_theme": "Theme",
+  "common_theme_light": "Light",
+  "common_theme_dark": "Dark",
+  "common_theme_system": "System",
+
+  "sidebar_workspaces": "WORKSPACES",
+  "sidebar_project_settings": "Project settings",
+  "sidebar_all_projects": "All projects",
+
+  "chat_title": "AI Chat",
+  "chat_placeholder": "Chat will be implemented in Phase 4",
+
+  "editor_title": "Document Editor",
+  "editor_placeholder": "Editor will be implemented in Phase 3"
+}

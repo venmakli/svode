@@ -8,6 +8,18 @@ pub enum AppError {
     #[error("Serialization error: {0}")]
     Serde(#[from] serde_json::Error),
 
+    #[error("File not found: {0}")]
+    FileNotFound(String),
+
+    #[error("File already exists: {0}")]
+    FileAlreadyExists(String),
+
+    #[error("Frontmatter parse error: {0}")]
+    FrontmatterParse(String),
+
+    #[error("File watcher error: {0}")]
+    Watcher(String),
+
     #[error("{0}")]
     General(String),
 }

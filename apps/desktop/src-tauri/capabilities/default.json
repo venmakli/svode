@@ -1,0 +1,15 @@
+{
+  "identifier": "default",
+  "description": "Default capability set for CombAI desktop",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-set-title",
+    "shell:allow-open"
+  ]
+}
