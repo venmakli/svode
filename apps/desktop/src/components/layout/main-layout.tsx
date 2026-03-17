@@ -10,6 +10,8 @@ import {
 import { AppSidebar } from "./app-sidebar";
 import { WindowHeader } from "./window-header";
 import { useLayoutStore } from "@/stores/layout";
+import { useWorkspaceStore } from "@/stores/workspace";
+import { EmptyProjectState } from "@/components/workspace/empty-project-state";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -39,14 +41,27 @@ function DocumentPlaceholder() {
 
 function MainBreadcrumbs() {
   const { activeDocument } = useLayoutStore();
+  const { workspaces, activeWorkspaceId } = useWorkspaceStore();
+
   if (!activeDocument) return null;
+
+  const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId);
+  const workspaceName = activeWorkspace
+    ? `${activeWorkspace.icon} ${activeWorkspace.name}`
+    : "";
 
   return (
     <div className="border-b px-4 py-1.5">
       <Breadcrumb>
         <BreadcrumbList>
-          <BreadcrumbItem className="text-sm">⚙️ Backend</BreadcrumbItem>
-          <BreadcrumbSeparator />
+          {workspaceName && (
+            <>
+              <BreadcrumbItem className="text-sm">
+                {workspaceName}
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+            </>
+          )}
           <BreadcrumbItem className="text-sm">{activeDocument}</BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>
@@ -57,7 +72,7 @@ function MainBreadcrumbs() {
 function MainContent() {
   const { activeDocument, chatPanelOpen } = useLayoutStore();
 
-  // Mode A: no document open → fullscreen chat
+  // Mode A: no document open -> fullscreen chat
   if (!activeDocument) {
     return (
       <div className="flex h-full flex-col">
@@ -100,6 +115,9 @@ function MainContent() {
 
 export function MainLayout() {
   useKeyboardShortcuts();
+  const { workspaces, activeProjectId } = useWorkspaceStore();
+
+  const hasWorkspaces = workspaces.length > 0;
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -107,7 +125,11 @@ export function MainLayout() {
         <WindowHeader />
         <AppSidebar />
         <SidebarInset className="pt-[44px]">
-          <MainContent />
+          {activeProjectId && !hasWorkspaces ? (
+            <EmptyProjectState />
+          ) : (
+            <MainContent />
+          )}
         </SidebarInset>
       </SidebarProvider>
     </TooltipProvider>

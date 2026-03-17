@@ -1,6 +1,7 @@
 mod commands;
 mod error;
 mod files;
+mod workspace;
 
 pub use error::AppError;
 
@@ -17,6 +18,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(files::FileWatcher::new())
         .invoke_handler(tauri::generate_handler![
             commands::greet::greet,
@@ -28,6 +30,17 @@ pub fn run() {
             commands::files::rename_entry,
             commands::files::watch_workspace,
             commands::files::unwatch_workspace,
+            commands::workspace::get_app_settings,
+            commands::workspace::save_app_settings,
+            commands::workspace::list_projects,
+            commands::workspace::create_project,
+            commands::workspace::delete_project,
+            commands::workspace::open_project,
+            commands::workspace::list_workspaces,
+            commands::workspace::create_workspace,
+            commands::workspace::open_folder_as_workspace,
+            commands::workspace::delete_workspace,
+            commands::workspace::get_last_active_project,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

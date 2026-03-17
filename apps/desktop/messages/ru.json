@@ -14,5 +14,37 @@
   "chat_placeholder": "Чат будет реализован в Фазе 4",
 
   "editor_title": "Редактор документов",
-  "editor_placeholder": "Редактор будет реализован в Фазе 3"
+  "editor_placeholder": "Редактор будет реализован в Фазе 3",
+
+  "home_title": "CombAI",
+  "home_empty_subtitle": "AI Workspace для ваших проектов",
+  "home_empty_description": "Project объединяет workspace'ы — пространства с документами и AI-агентом, который знает контекст и помогает работать. Данные хранятся локально.",
+  "home_create_project": "Создать project",
+
+  "project_new_title": "Новый project",
+  "project_name_label": "Название",
+  "project_name_placeholder": "Название project'а",
+  "project_icon_label": "Иконка",
+  "project_description_label": "Описание",
+  "project_description_placeholder": "Необязательное описание",
+  "project_create": "Создать",
+  "project_cancel": "Отмена",
+  "project_delete_title": "Удалить project?",
+  "project_delete_description": "Project будет удалён из списка. Workspace'ы останутся на диске.",
+  "project_delete_confirm": "Удалить",
+  "project_settings": "Настройки",
+  "project_remove": "Удалить из списка",
+
+  "workspace_add_first_title": "Добавьте первый workspace",
+  "workspace_add_first_description": "Workspace — пространство для документов с AI-агентом, который знает весь контекст и помогает на каждом этапе работы.",
+  "workspace_create": "Создать workspace",
+  "workspace_open_folder": "Открыть папку",
+  "workspace_new_title": "Новый workspace",
+  "workspace_name_label": "Название",
+  "workspace_name_placeholder": "Название workspace'а",
+  "workspace_path_label": "Расположение",
+  "workspace_path_placeholder": "Выберите папку",
+  "workspace_browse": "Обзор",
+
+  "nav_all_projects": "Все проекты"
 }

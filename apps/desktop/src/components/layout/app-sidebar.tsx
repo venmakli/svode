@@ -1,11 +1,8 @@
+import { useNavigate } from "@tanstack/react-router";
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
-  SidebarGroup,
-  SidebarGroupAction,
-  SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -23,14 +20,34 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ChevronDown, ChevronUp, Monitor, Moon, Plus, Settings, Sun } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Monitor, Moon, Settings, Sun } from "lucide-react";
 import { useTheme } from "@/components/theme-provider";
 import { useAppVersion } from "@/hooks/use-app-version";
+import { useWorkspaceStore } from "@/stores/workspace";
+import { NavWorkspaces } from "@/components/workspace/nav-workspaces";
 import * as m from "@/paraglide/messages.js";
 
 export function AppSidebar() {
   const { setTheme } = useTheme();
   const version = useAppVersion();
+  const navigate = useNavigate();
+  const {
+    projects,
+    activeProjectId,
+    activeProjectName,
+    activeProjectIcon,
+    openProject,
+    goHome,
+  } = useWorkspaceStore();
+
+  function handleGoHome() {
+    goHome();
+    navigate({ to: "/" });
+  }
+
+  function handleSwitchProject(id: string) {
+    openProject(id);
+  }
 
   return (
     <Sidebar variant="floating" collapsible="offcanvas" className="pt-[44px]">
@@ -41,18 +58,35 @@ export function AppSidebar() {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton size="lg" className="w-full">
-                  <span className="mr-2">📋</span>
-                  <span className="font-medium truncate">My Project</span>
+                  <span className="mr-2">{activeProjectIcon || "\u{1F4CB}"}</span>
+                  <span className="font-medium truncate">
+                    {activeProjectName || "Project"}
+                  </span>
                   <ChevronDown className="ml-auto h-4 w-4 opacity-50" />
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="min-w-[var(--radix-dropdown-menu-trigger-width)]">
-                <DropdownMenuItem>
+                <DropdownMenuItem disabled>
                   <Settings className="mr-2 h-4 w-4" />
                   {m.sidebar_project_settings()}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem>{m.sidebar_all_projects()}</DropdownMenuItem>
+                {projects.map((p) => (
+                  <DropdownMenuItem
+                    key={p.id}
+                    onClick={() => handleSwitchProject(p.id)}
+                  >
+                    <span className="mr-2">{p.icon}</span>
+                    <span className="flex-1 truncate">{p.name}</span>
+                    {p.id === activeProjectId && (
+                      <Check className="ml-2 h-4 w-4" />
+                    )}
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleGoHome}>
+                  {m.sidebar_all_projects()}
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </SidebarMenuItem>
@@ -60,29 +94,7 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>{m.sidebar_workspaces()}</SidebarGroupLabel>
-          <SidebarGroupAction title="Add workspace">
-            <Plus />
-            <span className="sr-only">Add workspace</span>
-          </SidebarGroupAction>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton isActive className="w-full font-medium">
-                  <span className="mr-2">⚙️</span>
-                  <span className="truncate">Backend</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton className="w-full">
-                  <span className="mr-2">🎨</span>
-                  <span className="truncate">Frontend</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        <NavWorkspaces />
       </SidebarContent>
 
       <SidebarFooter>
@@ -92,7 +104,7 @@ export function AppSidebar() {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton size="lg" className="w-full">
-                  <span className="mr-2">👤</span>
+                  <span className="mr-2">{"\u{1F464}"}</span>
                   <span className="truncate">User</span>
                   <ChevronUp className="ml-auto h-4 w-4 opacity-50" />
                 </SidebarMenuButton>

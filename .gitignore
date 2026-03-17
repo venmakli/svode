@@ -7,3 +7,5 @@ target/
 .env.*
 !.env.example
 bun.lock
+
+.claude/

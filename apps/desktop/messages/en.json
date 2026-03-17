@@ -14,5 +14,37 @@
   "chat_placeholder": "Chat will be implemented in Phase 4",
 
   "editor_title": "Document Editor",
-  "editor_placeholder": "Editor will be implemented in Phase 3"
+  "editor_placeholder": "Editor will be implemented in Phase 3",
+
+  "home_title": "CombAI",
+  "home_empty_subtitle": "AI Workspace for your projects",
+  "home_empty_description": "A Project groups workspaces — spaces with documents and an AI agent that knows the context and helps you work. Data is stored locally.",
+  "home_create_project": "Create project",
+
+  "project_new_title": "New project",
+  "project_name_label": "Name",
+  "project_name_placeholder": "Project name",
+  "project_icon_label": "Icon",
+  "project_description_label": "Description",
+  "project_description_placeholder": "Optional description",
+  "project_create": "Create",
+  "project_cancel": "Cancel",
+  "project_delete_title": "Remove project?",
+  "project_delete_description": "The project will be removed from the list. Workspaces will remain on disk.",
+  "project_delete_confirm": "Remove",
+  "project_settings": "Settings",
+  "project_remove": "Remove from list",
+
+  "workspace_add_first_title": "Add your first workspace",
+  "workspace_add_first_description": "A workspace is a space for documents with an AI agent that knows the entire context and helps at every stage.",
+  "workspace_create": "Create workspace",
+  "workspace_open_folder": "Open folder",
+  "workspace_new_title": "New workspace",
+  "workspace_name_label": "Name",
+  "workspace_name_placeholder": "Workspace name",
+  "workspace_path_label": "Location",
+  "workspace_path_placeholder": "Select a folder",
+  "workspace_browse": "Browse",
+
+  "nav_all_projects": "All projects"
 }

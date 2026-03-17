@@ -20,6 +20,15 @@ pub enum AppError {
     #[error("File watcher error: {0}")]
     Watcher(String),
 
+    #[error("Project not found: {0}")]
+    ProjectNotFound(String),
+
+    #[error("Workspace not found: {0}")]
+    WorkspaceNotFound(String),
+
+    #[error("Path not accessible: {0}")]
+    PathNotAccessible(String),
+
     #[error("{0}")]
     General(String),
 }

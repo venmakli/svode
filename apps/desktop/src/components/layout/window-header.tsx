@@ -1,4 +1,5 @@
-import { PanelLeft, PanelRight } from "lucide-react";
+import { useNavigate, useMatches } from "@tanstack/react-router";
+import { Home, PanelLeft, PanelRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -7,25 +8,40 @@ import {
 } from "@/components/ui/tooltip";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useLayoutStore } from "@/stores/layout";
+import { useWorkspaceStore } from "@/stores/workspace";
 import { useFullscreen } from "@/hooks/use-fullscreen";
 import { cn } from "@/lib/utils";
+import * as m from "@/paraglide/messages.js";
 
 export function WindowHeader() {
   const { activeDocument, toggleChatPanel } = useLayoutStore();
+  const { goHome } = useWorkspaceStore();
   const { toggleSidebar } = useSidebar();
   const isFullscreen = useFullscreen();
+  const navigate = useNavigate();
+  const matches = useMatches();
 
   const chatToggleDisabled = !activeDocument;
+
+  // Check if we're on the /workspace route
+  const isWorkspaceRoute = matches.some(
+    (match) => match.fullPath === "/workspace",
+  );
+
+  function handleGoHome() {
+    goHome();
+    navigate({ to: "/" });
+  }
 
   return (
     <header
       data-tauri-drag-region
       className={cn(
         "fixed top-0 left-0 right-0 z-20 flex h-[44px] items-center justify-between pr-2",
-        isFullscreen ? "pl-2" : "pl-[80px]"
+        isFullscreen ? "pl-2" : "pl-[80px]",
       )}
     >
-      {/* Left: sidebar toggle */}
+      {/* Left: sidebar toggle + home button */}
       <div className="flex items-center">
         <Tooltip>
           <TooltipTrigger asChild>
@@ -39,6 +55,23 @@ export function WindowHeader() {
           </TooltipTrigger>
           <TooltipContent side="bottom">Toggle sidebar (⌘\)</TooltipContent>
         </Tooltip>
+
+        {isWorkspaceRoute && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={handleGoHome}
+              >
+                <Home className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {m.nav_all_projects()} ({"\u2318\u21E7"}O)
+            </TooltipContent>
+          </Tooltip>
+        )}
       </div>
 
       {/* Right: chat panel toggle */}

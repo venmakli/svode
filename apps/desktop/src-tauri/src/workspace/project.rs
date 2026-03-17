@@ -1,0 +1,81 @@
+use std::path::Path;
+
+use crate::error::AppError;
+
+use super::registry;
+use super::types::{ProjectConfig, ProjectDefaults, WorkspaceRef};
+
+/// Read project config from config_dir/projects/{id}/config.json.
+pub fn read_project_config(config_dir: &Path, id: &str) -> Result<ProjectConfig, AppError> {
+    let path = config_dir.join("projects").join(id).join("config.json");
+    if !path.exists() {
+        return Err(AppError::ProjectNotFound(id.to_string()));
+    }
+    let data = std::fs::read_to_string(&path)?;
+    Ok(serde_json::from_str(&data)?)
+}
+
+/// Write project config to config_dir/projects/{id}/config.json.
+pub fn write_project_config(
+    config_dir: &Path,
+    id: &str,
+    config: &ProjectConfig,
+) -> Result<(), AppError> {
+    let dir = config_dir.join("projects").join(id);
+    std::fs::create_dir_all(&dir)?;
+    let data = serde_json::to_string_pretty(config)?;
+    std::fs::write(dir.join("config.json"), data)?;
+    Ok(())
+}
+
+/// Create a new project: generate ULID, write config, add to registry.
+/// Returns (id, ProjectConfig).
+pub fn create_project(
+    config_dir: &Path,
+    name: &str,
+    icon: &str,
+    description: &str,
+) -> Result<(String, ProjectConfig), AppError> {
+    let id = ulid::Ulid::new().to_string().to_lowercase();
+    let config = ProjectConfig {
+        name: name.to_string(),
+        description: description.to_string(),
+        icon: icon.to_string(),
+        workspaces: Vec::new(),
+        defaults: ProjectDefaults::default(),
+    };
+    write_project_config(config_dir, &id, &config)?;
+    registry::add_project(config_dir, &id)?;
+    Ok((id, config))
+}
+
+/// Delete a project: remove config directory and registry entry.
+pub fn delete_project(config_dir: &Path, id: &str) -> Result<(), AppError> {
+    let dir = config_dir.join("projects").join(id);
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir)?;
+    }
+    registry::remove_project(config_dir, id)
+}
+
+/// Add a workspace reference to the project config.
+pub fn add_workspace_to_project(
+    config_dir: &Path,
+    project_id: &str,
+    ws_ref: WorkspaceRef,
+) -> Result<(), AppError> {
+    let mut config = read_project_config(config_dir, project_id)?;
+    config.workspaces.push(ws_ref);
+    write_project_config(config_dir, project_id, &config)
+}
+
+/// Remove a workspace reference from the project config.
+pub fn remove_workspace_from_project(
+    config_dir: &Path,
+    project_id: &str,
+    ws_id: &str,
+) -> Result<(), AppError> {
+    let mut config = read_project_config(config_dir, project_id)?;
+    config.workspaces.retain(|w| w.id != ws_id);
+    write_project_config(config_dir, project_id, &config)
+}
