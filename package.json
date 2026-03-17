@@ -1,0 +1,22 @@
+{
+  "name": "combai",
+  "version": "0.0.1",
+  "private": true,
+  "author": "Kamnev Ilya",
+  "repository": "https://github.com/venmakli/combai",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "bun run --cwd apps/desktop dev",
+    "build": "bun run --cwd apps/desktop build",
+    "tauri": "bun run --cwd apps/desktop tauri",
+    "lint": "eslint .",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.0.3",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "prettier": "^3.8.1",
+    "typescript-eslint": "^8.57.1"
+  }
+}
