@@ -111,7 +111,7 @@ export function CreateWorkspaceDialog({
           <DialogFooter>
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
               onClick={() => handleOpenChange(false)}
             >
               {m.project_cancel()}

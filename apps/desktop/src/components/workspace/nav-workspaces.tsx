@@ -1,6 +1,7 @@
 import { useState } from "react";
 import * as m from "@/paraglide/messages.js";
 import { open } from "@tauri-apps/plugin-dialog";
+import { toast } from "sonner";
 import {
   SidebarGroup,
   SidebarGroupAction,
@@ -16,15 +17,36 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { ChevronRight, FolderOpen, Plus } from "lucide-react";
+import {
+  ChevronRight,
+  Ellipsis,
+  FilePlus,
+  FolderOpen,
+  Plus,
+  Settings,
+  Pencil,
+  Trash2,
+} from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { useLayoutStore } from "@/stores/layout";
 import { CreateWorkspaceDialog } from "./create-workspace-dialog";
 import { FileTreeItem } from "./file-tree-item";
 
@@ -36,8 +58,15 @@ export function NavWorkspaces() {
     fileTrees,
     openWorkspace,
     openFolderAsWorkspace,
+    deleteWorkspace,
+    createPage,
   } = useWorkspaceStore();
+  const { openDocument } = useLayoutStore();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
 
   async function handleOpenFolder() {
     if (!activeProjectId) return;
@@ -47,8 +76,50 @@ export function NavWorkspaces() {
         await openFolderAsWorkspace(activeProjectId, selected);
       } catch (err) {
         console.error("Failed to open folder as workspace:", err);
+        toast.error(m.toast_error());
       }
     }
+  }
+
+  async function handleNewPage(workspaceId: string) {
+    try {
+      const entry = await createPage(workspaceId, "Untitled");
+      if (entry) {
+        openDocument(entry.path);
+      }
+    } catch (err) {
+      console.error("Failed to create page:", err);
+      toast.error(m.toast_error());
+    }
+  }
+
+  async function handleDeleteWorkspace(workspaceId: string) {
+    if (!activeProjectId) return;
+    try {
+      await deleteWorkspace(activeProjectId, workspaceId);
+      toast.success(m.toast_workspace_deleted());
+    } catch (err) {
+      console.error("Failed to delete workspace:", err);
+      toast.error(m.toast_error());
+    }
+    setDeleteTarget(null);
+  }
+
+  function handleWorkspaceClick(ws: { id: string; exists: boolean; path: string }) {
+    if (!ws.exists) {
+      toast.error(m.workspace_not_found({ path: ws.path }), {
+        action: {
+          label: m.workspace_not_found_action_remove(),
+          onClick: () => {
+            if (activeProjectId) {
+              deleteWorkspace(activeProjectId, ws.id);
+            }
+          },
+        },
+      });
+      return;
+    }
+    openWorkspace(ws.id);
   }
 
   return (
@@ -87,7 +158,7 @@ export function NavWorkspaces() {
                   <SidebarMenuItem>
                     <SidebarMenuButton
                       isActive={isActive}
-                      onClick={() => openWorkspace(ws.id)}
+                      onClick={() => handleWorkspaceClick(ws)}
                     >
                       <span>{ws.icon}</span>
                       <span>{ws.name}</span>
@@ -100,9 +171,38 @@ export function NavWorkspaces() {
                         <ChevronRight />
                       </SidebarMenuAction>
                     </CollapsibleTrigger>
-                    <SidebarMenuAction showOnHover>
-                      <Plus />
-                    </SidebarMenuAction>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <SidebarMenuAction showOnHover>
+                          <Ellipsis />
+                        </SidebarMenuAction>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" side="bottom">
+                        <DropdownMenuItem onClick={() => handleNewPage(ws.id)}>
+                          <FilePlus className="mr-2 h-4 w-4" />
+                          {m.workspace_new_page()}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem disabled>
+                          <Settings className="mr-2 h-4 w-4" />
+                          {m.workspace_settings()}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem disabled>
+                          <Pencil className="mr-2 h-4 w-4" />
+                          {m.workspace_rename()}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
+                          onClick={() =>
+                            setDeleteTarget({ id: ws.id, name: ws.name })
+                          }
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          {m.workspace_delete()}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                     <CollapsibleContent>
                       <SidebarMenuSub>
                         {tree.map((node) => (
@@ -122,6 +222,31 @@ export function NavWorkspaces() {
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
       />
+
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{m.workspace_delete_title()}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {m.workspace_delete_description()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{m.project_cancel()}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() =>
+                deleteTarget && handleDeleteWorkspace(deleteTarget.id)
+              }
+            >
+              {m.workspace_delete()}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

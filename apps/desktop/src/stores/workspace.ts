@@ -1,11 +1,20 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
+import * as m from "@/paraglide/messages.js";
 import type {
   Project,
   ProjectConfig,
   Workspace,
   TreeNode,
 } from "@/types/workspace";
+
+interface Entry {
+  path: string;
+  title: string;
+  content: string;
+  frontmatter: Record<string, unknown>;
+}
 
 interface WorkspaceState {
   projects: Project[];
@@ -38,7 +47,9 @@ interface WorkspaceState {
     path: string,
   ) => Promise<Workspace>;
   deleteWorkspace: (projectId: string, workspaceId: string) => Promise<void>;
+  createPage: (workspaceId: string, title: string) => Promise<Entry | null>;
   refreshTree: (workspaceId?: string) => Promise<void>;
+  getLastActiveProjectId: () => Promise<string | null>;
   goHome: () => void;
 }
 
@@ -79,6 +90,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       await get().loadWorkspaces(id);
     } catch (err) {
       console.error("Failed to open project:", err);
+      toast.error(m.toast_error());
     }
   },
 
@@ -89,6 +101,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       description,
     });
     set((s) => ({ projects: [...s.projects, project] }));
+    toast.success(m.toast_project_created());
     return project;
   },
 
@@ -108,6 +121,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           }
         : {}),
     }));
+    toast.success(m.toast_project_deleted());
   },
 
   loadWorkspaces: async (projectId: string) => {
@@ -117,9 +131,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         projectId,
       });
       set({ workspaces });
+
+      // Check for missing workspaces and warn
+      for (const ws of workspaces) {
+        if (!ws.exists) {
+          toast.error(m.workspace_not_found({ path: ws.path }));
+        }
+      }
+
       // Auto-select first workspace if none active
       if (workspaces.length > 0 && !get().activeWorkspaceId) {
-        await get().openWorkspace(workspaces[0].id);
+        const firstExisting = workspaces.find((w) => w.exists);
+        if (firstExisting) {
+          await get().openWorkspace(firstExisting.id);
+        }
       }
     } catch (err) {
       console.error("Failed to load workspaces:", err);
@@ -149,6 +174,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     });
     set((s) => ({ workspaces: [...s.workspaces, workspace] }));
     await get().openWorkspace(workspace.id);
+    toast.success(m.toast_workspace_created());
     return workspace;
   },
 
@@ -159,6 +185,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     });
     set((s) => ({ workspaces: [...s.workspaces, workspace] }));
     await get().openWorkspace(workspace.id);
+    toast.success(m.toast_workspace_opened());
     return workspace;
   },
 
@@ -171,6 +198,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         ? { activeWorkspaceId: null }
         : {}),
     }));
+  },
+
+  createPage: async (workspaceId: string, title: string) => {
+    const workspace = get().workspaces.find((w) => w.id === workspaceId);
+    if (!workspace) return null;
+
+    try {
+      const entry = await invoke<Entry>("create_entry", {
+        workspace: workspace.path,
+        parentPath: null,
+        title,
+      });
+      await get().refreshTree(workspaceId);
+      toast.success(m.toast_page_created());
+      return entry;
+    } catch (err) {
+      console.error("Failed to create page:", err);
+      toast.error(m.toast_error());
+      return null;
+    }
   },
 
   refreshTree: async (workspaceId?: string) => {
@@ -192,6 +239,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set((s) => ({
         fileTrees: { ...s.fileTrees, [id]: [] },
       }));
+    }
+  },
+
+  getLastActiveProjectId: async () => {
+    try {
+      return await invoke<string | null>("get_last_active_project");
+    } catch {
+      return null;
     }
   },
 

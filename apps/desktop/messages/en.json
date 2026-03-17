@@ -45,6 +45,25 @@
   "workspace_path_label": "Location",
   "workspace_path_placeholder": "Select a folder",
   "workspace_browse": "Browse",
+  "workspace_description_label": "Description",
+  "workspace_description_placeholder": "Optional description",
+  "workspace_new_page": "New page",
+  "workspace_settings": "Settings",
+  "workspace_rename": "Rename",
+  "workspace_delete": "Remove",
+  "workspace_delete_title": "Remove workspace?",
+  "workspace_delete_description": "The workspace will be removed from the project. Files will remain on disk.",
+  "workspace_not_found": "Directory not found: {path}",
+  "workspace_not_found_action_update": "Update path",
+  "workspace_not_found_action_remove": "Remove from list",
+
+  "toast_project_created": "Project created",
+  "toast_workspace_created": "Workspace added",
+  "toast_workspace_opened": "Workspace added",
+  "toast_workspace_deleted": "Workspace removed",
+  "toast_project_deleted": "Project removed",
+  "toast_page_created": "Page created",
+  "toast_error": "Something went wrong",
 
   "nav_all_projects": "All projects"
 }

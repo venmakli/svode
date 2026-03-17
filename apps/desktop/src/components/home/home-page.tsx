@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import * as m from "@/paraglide/messages.js";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ export function HomePage() {
   const navigate = useNavigate();
   const version = useAppVersion();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const autoOpenAttempted = useRef(false);
 
   const {
     projects,
@@ -21,11 +22,28 @@ export function HomePage() {
     openProject,
     createProject,
     deleteProject,
+    getLastActiveProjectId,
   } = useWorkspaceStore();
 
   useEffect(() => {
     loadProjects();
   }, [loadProjects]);
+
+  // Auto-open last active project
+  useEffect(() => {
+    if (autoOpenAttempted.current) return;
+    if (isLoadingProjects) return;
+
+    autoOpenAttempted.current = true;
+
+    (async () => {
+      const lastActiveId = await getLastActiveProjectId();
+      if (lastActiveId && projects.some((p) => p.id === lastActiveId)) {
+        await openProject(lastActiveId);
+        navigate({ to: "/workspace" });
+      }
+    })();
+  }, [isLoadingProjects, projects, getLastActiveProjectId, openProject, navigate]);
 
   // Keyboard shortcut: Cmd+N to create project
   useEffect(() => {
