@@ -26,6 +26,8 @@ interface WorkspaceState {
   fileTrees: Record<string, TreeNode[]>;
   isLoadingProjects: boolean;
   isLoadingWorkspaces: boolean;
+  /** True when user explicitly navigated home — skip auto-open */
+  explicitHome: boolean;
 
   loadProjects: () => Promise<void>;
   openProject: (id: string) => Promise<void>;
@@ -63,6 +65,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   fileTrees: {},
   isLoadingProjects: false,
   isLoadingWorkspaces: false,
+  explicitHome: false,
 
   loadProjects: async () => {
     set({ isLoadingProjects: true });
@@ -86,6 +89,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeProjectIcon: config.icon,
         activeWorkspaceId: null,
         fileTrees: {},
+        explicitHome: false,
       });
       await get().loadWorkspaces(id);
     } catch (err) {
@@ -258,6 +262,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       workspaces: [],
       activeWorkspaceId: null,
       fileTrees: {},
+      explicitHome: true,
     });
   },
 }));

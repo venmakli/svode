@@ -12,6 +12,7 @@ import { WindowHeader } from "./window-header";
 import { useLayoutStore } from "@/stores/layout";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { EmptyProjectState } from "@/components/workspace/empty-project-state";
+import { DocumentEditor } from "@/features/editor/document-editor";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -28,16 +29,6 @@ function ChatPlaceholder() {
   );
 }
 
-function DocumentPlaceholder() {
-  const { activeDocument } = useLayoutStore();
-  return (
-    <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
-      <p className="text-lg font-medium">{m.editor_title()}</p>
-      <p className="text-sm">{activeDocument}</p>
-      <p className="text-xs mt-2">{m.editor_placeholder()}</p>
-    </div>
-  );
-}
 
 function MainBreadcrumbs() {
   const { activeDocument } = useLayoutStore();
@@ -49,6 +40,9 @@ function MainBreadcrumbs() {
   const workspaceName = activeWorkspace
     ? `${activeWorkspace.icon} ${activeWorkspace.name}`
     : "";
+
+  // Show just the filename without .md extension
+  const fileName = activeDocument.split("/").pop()?.replace(/\.md$/, "") ?? activeDocument;
 
   return (
     <div className="border-b px-4 py-1.5">
@@ -62,7 +56,7 @@ function MainBreadcrumbs() {
               <BreadcrumbSeparator />
             </>
           )}
-          <BreadcrumbItem className="text-sm">{activeDocument}</BreadcrumbItem>
+          <BreadcrumbItem className="text-sm">{fileName}</BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>
     </div>
@@ -90,7 +84,7 @@ function MainContent() {
       <div className="flex h-full flex-col">
         <MainBreadcrumbs />
         <div className="flex-1">
-          <DocumentPlaceholder />
+          <DocumentEditor />
         </div>
       </div>
     );
@@ -102,7 +96,7 @@ function MainContent() {
       <MainBreadcrumbs />
       <ResizablePanelGroup className="flex-1">
         <ResizablePanel defaultSize={65} minSize={30}>
-          <DocumentPlaceholder />
+          <DocumentEditor />
         </ResizablePanel>
         <ResizableHandle withHandle />
         <ResizablePanel defaultSize={35} minSize={20} maxSize={45}>

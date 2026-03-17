@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -13,6 +14,9 @@ pub struct EntryMeta {
     pub icon: Option<String>,
     pub created: String,
     pub updated: String,
+    /// User-defined custom fields from frontmatter YAML.
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_yml::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,6 +105,7 @@ pub fn create(
         icon: None,
         created: now.clone(),
         updated: now,
+        extra: HashMap::new(),
     };
 
     let body = "";
@@ -133,7 +138,15 @@ pub fn read(workspace: &str, path: &str) -> Result<Entry, AppError> {
 }
 
 /// Write content to an entry, updating the `updated` field in frontmatter.
-pub fn write(workspace: &str, path: &str, content: &str) -> Result<(), AppError> {
+/// Optionally update title, icon, and custom fields if provided.
+pub fn write(
+    workspace: &str,
+    path: &str,
+    content: &str,
+    title: Option<&str>,
+    icon: Option<&str>,
+    extra: Option<HashMap<String, serde_yml::Value>>,
+) -> Result<(), AppError> {
     let abs_path = resolve(workspace, path);
 
     if !abs_path.exists() {
@@ -146,6 +159,19 @@ pub fn write(workspace: &str, path: &str, content: &str) -> Result<(), AppError>
 
     // Update the timestamp
     meta.updated = now_rfc3339();
+
+    // Update title and icon if provided
+    if let Some(t) = title {
+        meta.title = t.to_string();
+    }
+    if let Some(i) = icon {
+        meta.icon = Some(i.to_string());
+    }
+
+    // Update custom fields if provided
+    if let Some(e) = extra {
+        meta.extra = e;
+    }
 
     let full_content = frontmatter::serialize(&meta, content);
     fs::write(&abs_path, full_content)?;

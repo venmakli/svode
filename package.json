@@ -12,6 +12,10 @@
     "lint": "eslint .",
     "format": "prettier --write ."
   },
+  "overrides": {
+    "@tiptap/core": "3.20.2",
+    "@tiptap/pm": "3.20.2"
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.0.3",

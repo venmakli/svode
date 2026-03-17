@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use tauri::{AppHandle, State};
 
 use crate::error::AppError;
@@ -23,8 +25,22 @@ pub fn read_entry(workspace: String, path: String) -> Result<Entry, AppError> {
 }
 
 #[tauri::command]
-pub fn write_entry(workspace: String, path: String, content: String) -> Result<(), AppError> {
-    entry::write(&workspace, &path, &content)
+pub fn write_entry(
+    workspace: String,
+    path: String,
+    content: String,
+    title: Option<String>,
+    icon: Option<String>,
+    extra: Option<HashMap<String, serde_yml::Value>>,
+) -> Result<(), AppError> {
+    entry::write(
+        &workspace,
+        &path,
+        &content,
+        title.as_deref(),
+        icon.as_deref(),
+        extra,
+    )
 }
 
 #[tauri::command]

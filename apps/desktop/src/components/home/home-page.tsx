@@ -23,16 +23,18 @@ export function HomePage() {
     createProject,
     deleteProject,
     getLastActiveProjectId,
+    explicitHome,
   } = useWorkspaceStore();
 
   useEffect(() => {
     loadProjects();
   }, [loadProjects]);
 
-  // Auto-open last active project
+  // Auto-open last active project (skip if user explicitly navigated home)
   useEffect(() => {
     if (autoOpenAttempted.current) return;
     if (isLoadingProjects) return;
+    if (explicitHome) return;
 
     autoOpenAttempted.current = true;
 
@@ -43,7 +45,7 @@ export function HomePage() {
         navigate({ to: "/workspace" });
       }
     })();
-  }, [isLoadingProjects, projects, getLastActiveProjectId, openProject, navigate]);
+  }, [isLoadingProjects, projects, getLastActiveProjectId, openProject, navigate, explicitHome]);
 
   // Keyboard shortcut: Cmd+N to create project
   useEffect(() => {

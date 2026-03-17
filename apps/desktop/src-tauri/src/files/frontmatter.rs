@@ -55,6 +55,7 @@ mod tests {
             icon: None,
             created: "2026-03-17T00:00:00Z".into(),
             updated: "2026-03-17T00:00:00Z".into(),
+            extra: std::collections::HashMap::new(),
         };
         let body = "Some content here.\n";
         let raw = serialize(&meta, body);
