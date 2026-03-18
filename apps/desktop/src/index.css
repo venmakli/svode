@@ -2,6 +2,8 @@
 
 @plugin "tailwind-scrollbar-hide";
 @import "tw-animate-css";
+@import "tw-shimmer";
+@import "streamdown/styles.css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/nunito-sans";
 

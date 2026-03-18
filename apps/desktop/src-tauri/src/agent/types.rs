@@ -31,6 +31,11 @@ pub enum AgentEvent {
         args: serde_json::Value,
         id: String,
     },
+    ToolInputDelta {
+        session_id: String,
+        id: String,
+        delta: String,
+    },
     ToolResult {
         session_id: String,
         id: String,
@@ -56,6 +61,7 @@ impl AgentEvent {
         match self {
             AgentEvent::TextDelta { .. } => "agent:text-delta",
             AgentEvent::ToolCall { .. } => "agent:tool-call",
+            AgentEvent::ToolInputDelta { .. } => "agent:tool-input-delta",
             AgentEvent::ToolResult { .. } => "agent:tool-result",
             AgentEvent::Reasoning { .. } => "agent:reasoning",
             AgentEvent::Error { .. } => "agent:error",

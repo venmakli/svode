@@ -188,6 +188,22 @@ fn parse_stream_event(parsed: &serde_json::Value, session_id: &str) -> Vec<Agent
                         delta: text.to_string(),
                     }]
                 }
+                "input_json_delta" => {
+                    let partial = delta
+                        .and_then(|d| d.get("partial_json"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("");
+                    if partial.is_empty() {
+                        return vec![];
+                    }
+                    // Get the current content block index to match with tool call
+                    let index = event.get("index").and_then(|i| i.as_u64()).unwrap_or(0);
+                    vec![AgentEvent::ToolInputDelta {
+                        session_id: session_id.to_string(),
+                        id: format!("block_{}", index),
+                        delta: partial.to_string(),
+                    }]
+                }
                 "thinking_delta" => {
                     let text = delta
                         .and_then(|d| d.get("thinking"))
