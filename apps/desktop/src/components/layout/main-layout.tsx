@@ -1,4 +1,3 @@
-import * as m from "@/paraglide/messages.js";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
@@ -13,21 +12,13 @@ import { useLayoutStore } from "@/stores/layout";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { EmptyProjectState } from "@/components/workspace/empty-project-state";
 import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";
+import { ChatPanel } from "@/features/chat/chat-panel";
 import {
   Breadcrumb,
   BreadcrumbItem,
   BreadcrumbList,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-
-function ChatPlaceholder() {
-  return (
-    <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
-      <p className="text-lg font-medium">{m.chat_title()}</p>
-      <p className="text-sm">{m.chat_placeholder()}</p>
-    </div>
-  );
-}
 
 
 function MainBreadcrumbs() {
@@ -69,10 +60,10 @@ function MainContent() {
   // Mode A: no document open -> fullscreen chat
   if (!activeDocument) {
     return (
-      <div className="flex h-full flex-col">
+      <div className="flex h-full flex-col overflow-hidden">
         <MainBreadcrumbs />
-        <div className="flex-1">
-          <ChatPlaceholder />
+        <div className="flex-1 min-h-0">
+          <ChatPanel />
         </div>
       </div>
     );
@@ -94,13 +85,13 @@ function MainContent() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <MainBreadcrumbs />
-      <ResizablePanelGroup className="flex-1 min-h-0">
-        <ResizablePanel defaultSize={65} minSize={30}>
+      <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0">
+        <ResizablePanel defaultSize="65%">
           <PlateDocumentEditor />
         </ResizablePanel>
         <ResizableHandle withHandle />
-        <ResizablePanel defaultSize={35} minSize={20} maxSize={45}>
-          <ChatPlaceholder />
+        <ResizablePanel defaultSize="35%">
+          <ChatPanel />
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>

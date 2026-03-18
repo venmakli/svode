@@ -29,6 +29,12 @@ pub enum AppError {
     #[error("Path not accessible: {0}")]
     PathNotAccessible(String),
 
+    #[error("Agent CLI not found: {0}")]
+    AgentCliNotFound(String),
+
+    #[error("Agent spawn failed: {0}")]
+    AgentSpawnFailed(String),
+
     #[error("{0}")]
     General(String),
 }

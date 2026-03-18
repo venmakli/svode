@@ -1,3 +1,4 @@
+mod agent;
 mod commands;
 mod error;
 mod files;
@@ -20,6 +21,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(files::FileWatcher::new())
+        .manage(agent::AgentSessions::new())
         .invoke_handler(tauri::generate_handler![
             commands::greet::greet,
             commands::files::list_entries,
@@ -41,6 +43,9 @@ pub fn run() {
             commands::workspace::open_folder_as_workspace,
             commands::workspace::delete_workspace,
             commands::workspace::get_last_active_project,
+            agent::commands::agent_send,
+            agent::commands::agent_stop,
+            agent::commands::agent_list_available,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

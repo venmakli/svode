@@ -11,7 +11,11 @@
   "sidebar_all_projects": "All projects",
 
   "chat_title": "AI Chat",
-  "chat_placeholder": "Chat will be implemented in Phase 4",
+  "chat_welcome_title": "Hello there!",
+  "chat_welcome_subtitle": "How can I help you today?",
+  "chat_composer_placeholder": "Send a message...",
+  "chat_error_cli_not_found": "Claude CLI not found. Install it with: npm install -g @anthropic-ai/claude-code",
+  "chat_error_agent": "Agent encountered an error",
 
   "editor_title": "Document Editor",
   "editor_placeholder": "Editor will be implemented in Phase 3",
