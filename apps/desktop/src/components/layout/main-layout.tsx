@@ -12,7 +12,7 @@ import { WindowHeader } from "./window-header";
 import { useLayoutStore } from "@/stores/layout";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { EmptyProjectState } from "@/components/workspace/empty-project-state";
-import { DocumentEditor } from "@/features/editor/document-editor";
+import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -81,10 +81,10 @@ function MainContent() {
   // Mode B: document only (chat hidden)
   if (!chatPanelOpen) {
     return (
-      <div className="flex h-full flex-col">
+      <div className="flex h-full flex-col overflow-hidden">
         <MainBreadcrumbs />
-        <div className="flex-1">
-          <DocumentEditor />
+        <div className="flex-1 min-w-0 min-h-0">
+          <PlateDocumentEditor />
         </div>
       </div>
     );
@@ -92,11 +92,11 @@ function MainContent() {
 
   // Mode B: document + chat panel
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col overflow-hidden">
       <MainBreadcrumbs />
-      <ResizablePanelGroup className="flex-1">
+      <ResizablePanelGroup className="flex-1 min-h-0">
         <ResizablePanel defaultSize={65} minSize={30}>
-          <DocumentEditor />
+          <PlateDocumentEditor />
         </ResizablePanel>
         <ResizableHandle withHandle />
         <ResizablePanel defaultSize={35} minSize={20} maxSize={45}>

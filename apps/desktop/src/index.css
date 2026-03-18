@@ -1,4 +1,6 @@
 @import "tailwindcss";
+
+@plugin "tailwind-scrollbar-hide";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/nunito-sans";
@@ -38,6 +40,8 @@
     --sidebar-accent-foreground: oklch(0.216 0.006 56.043);
     --sidebar-border: oklch(0.923 0.003 48.717);
     --sidebar-ring: oklch(0.709 0.01 56.259);
+    --highlight: oklch(0.852 0.199 91.936);
+    --brand: oklch(0.623 0.214 259.815);
 }
 
 .dark {
@@ -72,6 +76,8 @@
     --sidebar-accent-foreground: oklch(0.985 0.001 106.423);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.553 0.013 58.071);
+    --highlight: oklch(0.852 0.199 91.936);
+    --brand: oklch(0.707 0.165 254.624);
 }
 
 @theme inline {
@@ -114,6 +120,8 @@
     --radius-2xl: calc(var(--radius) * 1.8);
     --radius-3xl: calc(var(--radius) * 2.2);
     --radius-4xl: calc(var(--radius) * 2.6);
+    --color-brand: var(--brand);
+    --color-highlight: var(--highlight);
 }
 
 @layer base {

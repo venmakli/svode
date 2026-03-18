@@ -2,7 +2,8 @@ import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
-import type { Editor } from "@tiptap/core";
+import type { PlateEditor } from "platejs/react";
+import { MarkdownPlugin } from "@platejs/markdown";
 import { useLayoutStore } from "@/stores/layout";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useEditorStore } from "@/stores/editor";
@@ -14,7 +15,7 @@ interface FileEvent {
 }
 
 interface UseFileWatcherOptions {
-  editor: Editor | null;
+  editor: PlateEditor | null;
   workspacePath: string;
   activeDocument: string | null;
   onConflict: (path: string) => void;
@@ -94,7 +95,10 @@ export function useFileWatcher({
           })
             .then((entry) => {
               isLoadingRef.current = true;
-              editor.commands.setContent(entry.body);
+              const value = editor
+                .getApi(MarkdownPlugin)
+                .markdown.deserialize(entry.body);
+              editor.tf.setValue(value);
               isLoadingRef.current = false;
             })
             .catch((err) =>
