@@ -39,12 +39,11 @@ export interface WorkspaceConfig {
   agent?: unknown;
 }
 
-/**
- * Tree node from the Rust files engine.
- * Rust enum serialized with #[serde(tag = "type")]:
- * - { type: "Page", name, path, has_changes }
- * - { type: "Category", name, path, children }
- */
-export type TreeNode =
-  | { type: "Page"; name: string; path: string; has_changes: boolean }
-  | { type: "Category"; name: string; path: string; children: TreeNode[] };
+export interface TreeNode {
+  name: string;
+  path: string;
+  title: string;
+  icon: string | null;
+  has_changes: boolean;
+  children: TreeNode[];
+}

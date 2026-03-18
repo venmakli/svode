@@ -19,6 +19,7 @@ interface UseFileWatcherOptions {
   activeDocument: string | null;
   onConflict: (path: string) => void;
   justSavedRef: React.RefObject<boolean>;
+  isLoadingRef: React.RefObject<boolean>;
 }
 
 export function useFileWatcher({
@@ -27,6 +28,7 @@ export function useFileWatcher({
   activeDocument,
   onConflict,
   justSavedRef,
+  isLoadingRef,
 }: UseFileWatcherOptions) {
   const { closeDocument } = useLayoutStore();
   const { refreshTree } = useWorkspaceStore();
@@ -68,9 +70,10 @@ export function useFileWatcher({
     listen<FileEvent>("file:changed", (event) => {
       const changedPath = event.payload.path;
 
-      // Ignore file change events triggered by our own save
+      // Ignore file change events triggered by our own save.
+      // Don't reset here — multiple FS events can arrive from a single write.
+      // Cleared by onUpdate (next user edit) or document switch.
       if (changedPath === activeDocRef.current && justSavedRef.current) {
-        justSavedRef.current = false;
         return;
       }
 
@@ -90,7 +93,9 @@ export function useFileWatcher({
             path: changedPath,
           })
             .then((entry) => {
+              isLoadingRef.current = true;
               editor.commands.setContent(entry.body);
+              isLoadingRef.current = false;
             })
             .catch((err) =>
               console.error("Failed to reload document:", err),

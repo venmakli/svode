@@ -3,20 +3,16 @@ use std::fs;
 use std::path::Path;
 
 use crate::error::AppError;
+use crate::files::frontmatter;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum TreeNode {
-    Page {
-        name: String,
-        path: String,
-        has_changes: bool,
-    },
-    Category {
-        name: String,
-        path: String,
-        children: Vec<TreeNode>,
-    },
+pub struct TreeNode {
+    pub name: String,
+    pub path: String,
+    pub title: String,
+    pub icon: Option<String>,
+    pub has_changes: bool,
+    pub children: Vec<TreeNode>,
 }
 
 /// Check if a directory entry should be skipped.
@@ -24,8 +20,26 @@ fn is_hidden(name: &str) -> bool {
     name.starts_with('.')
 }
 
+/// Read title and icon from frontmatter. Falls back to filename without .md on error.
+fn read_frontmatter_meta(abs_path: &Path) -> (String, Option<String>) {
+    let fallback = abs_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    let content = match fs::read_to_string(abs_path) {
+        Ok(c) => c,
+        Err(_) => return (fallback, None),
+    };
+
+    match frontmatter::parse(&content) {
+        Ok((meta, _)) => (meta.title, meta.icon),
+        Err(_) => (fallback, None),
+    }
+}
+
 /// Build a file tree from a workspace directory.
-/// `base` is the workspace root (absolute), `rel` is the current relative path.
 pub fn build_tree(workspace: &str) -> Result<Vec<TreeNode>, AppError> {
     let root = Path::new(workspace);
     if !root.is_dir() {
@@ -44,7 +58,6 @@ fn read_dir_recursive(base: &Path, dir: &Path) -> Result<Vec<TreeNode>, AppError
     for entry in entries {
         let name = entry.file_name().to_string_lossy().to_string();
 
-        // Skip hidden directories/files (starting with '.')
         if is_hidden(&name) {
             continue;
         }
@@ -57,40 +70,38 @@ fn read_dir_recursive(base: &Path, dir: &Path) -> Result<Vec<TreeNode>, AppError
             .to_string();
 
         if abs_path.is_dir() {
-            // Check if this folder has a readme.md → category
-            let has_readme = abs_path.join("readme.md").is_file();
-
-            if has_readme {
-                let children = read_dir_recursive(base, &abs_path)?;
-                // Filter out readme.md from children (it's the category's own page)
-                let children: Vec<TreeNode> = children
-                    .into_iter()
-                    .filter(|node| {
-                        !matches!(node, TreeNode::Page { name, .. } if name.to_lowercase() == "readme.md")
-                    })
-                    .collect();
-
-                nodes.push(TreeNode::Category {
-                    name,
-                    path: rel_path,
-                    children,
-                });
-            } else {
-                // Regular directory — still recurse, treat as category without readme
-                let children = read_dir_recursive(base, &abs_path)?;
-                if !children.is_empty() {
-                    nodes.push(TreeNode::Category {
-                        name,
-                        path: rel_path,
-                        children,
-                    });
-                }
+            let readme_path = abs_path.join("readme.md");
+            if !readme_path.is_file() {
+                // Folder without readme.md → skip entirely
+                continue;
             }
+
+            let (title, icon) = read_frontmatter_meta(&readme_path);
+            let readme_rel = format!("{rel_path}/readme.md");
+
+            // Recurse and filter out readme.md from children
+            let children: Vec<TreeNode> = read_dir_recursive(base, &abs_path)?
+                .into_iter()
+                .filter(|node| node.name.to_lowercase() != "readme.md")
+                .collect();
+
+            nodes.push(TreeNode {
+                name,
+                path: readme_rel,
+                title,
+                icon,
+                has_changes: false,
+                children,
+            });
         } else if name.ends_with(".md") {
-            nodes.push(TreeNode::Page {
+            let (title, icon) = read_frontmatter_meta(&abs_path);
+            nodes.push(TreeNode {
                 name,
                 path: rel_path,
+                title,
+                icon,
                 has_changes: false,
+                children: vec![],
             });
         }
         // Non-.md files are ignored

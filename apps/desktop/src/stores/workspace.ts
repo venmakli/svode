@@ -51,6 +51,7 @@ interface WorkspaceState {
   deleteWorkspace: (projectId: string, workspaceId: string) => Promise<void>;
   createPage: (workspaceId: string, title: string) => Promise<Entry | null>;
   refreshTree: (workspaceId?: string) => Promise<void>;
+  updateNodeMeta: (path: string, title: string, icon: string | null) => void;
   getLastActiveProjectId: () => Promise<string | null>;
   goHome: () => void;
 }
@@ -244,6 +245,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         fileTrees: { ...s.fileTrees, [id]: [] },
       }));
     }
+  },
+
+  updateNodeMeta: (path: string, title: string, icon: string | null) => {
+    const id = get().activeWorkspaceId;
+    if (!id) return;
+    const trees = get().fileTrees;
+    const tree = trees[id];
+    if (!tree) return;
+
+    const update = (nodes: TreeNode[]): TreeNode[] =>
+      nodes.map((node) => {
+        if (node.path === path) {
+          return { ...node, title, icon };
+        }
+        if (node.children.length > 0) {
+          return { ...node, children: update(node.children) };
+        }
+        return node;
+      });
+
+    set({ fileTrees: { ...trees, [id]: update(tree) } });
   },
 
   getLastActiveProjectId: async () => {

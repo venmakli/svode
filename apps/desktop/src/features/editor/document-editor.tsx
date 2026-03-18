@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef, useState } from "react";
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, EditorContent, type JSONContent } from "@tiptap/react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { getExtensions } from "./extensions";
@@ -40,7 +40,7 @@ interface Entry {
 
 export function DocumentEditor() {
   const { activeDocument } = useLayoutStore();
-  const { workspaces, activeWorkspaceId } = useWorkspaceStore();
+  const { workspaces, activeWorkspaceId, updateNodeMeta } = useWorkspaceStore();
   const { markUnsaved, clearUnsaved } = useEditorStore();
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId);
@@ -49,12 +49,19 @@ export function DocumentEditor() {
   const isLoadingRef = useRef(false);
   const currentPathRef = useRef<string | null>(null);
   const justSavedRef = useRef(false);
+  const titleRef = useRef("");
+  const iconRef = useRef<string | null>(null);
+  const docCacheRef = useRef(new Map<string, JSONContent>());
 
   const [meta, setMeta] = useState<EntryMeta | null>(null);
   const [title, setTitle] = useState("");
   const [icon, setIcon] = useState<string | null>(null);
   const [frontmatterOpen, setFrontmatterOpen] = useState(false);
   const [conflictPath, setConflictPath] = useState<string | null>(null);
+
+  // Keep refs in sync with state for stable callback access
+  useEffect(() => { titleRef.current = title; }, [title]);
+  useEffect(() => { iconRef.current = icon; }, [icon]);
 
   const editor = useEditor({
     extensions: getExtensions(m.editor_placeholder_body()),
@@ -66,6 +73,7 @@ export function DocumentEditor() {
     },
     onUpdate: () => {
       if (!isLoadingRef.current && currentPathRef.current) {
+        justSavedRef.current = false;
         markUnsaved(currentPathRef.current);
       }
     },
@@ -75,38 +83,74 @@ export function DocumentEditor() {
   useEffect(() => {
     if (!editor || !activeDocument || !workspacePath) return;
 
+    // Cache current editor state before switching
+    const prevPath = currentPathRef.current;
+    if (prevPath && prevPath !== activeDocument) {
+      docCacheRef.current.set(prevPath, editor.getJSON());
+    }
+
     currentPathRef.current = activeDocument;
     isLoadingRef.current = true;
+    justSavedRef.current = false;
 
-    invoke<Entry>("read_entry", {
-      workspace: workspacePath,
-      path: activeDocument,
-    })
-      .then((entry) => {
-        setMeta(entry.meta);
-        setTitle(entry.meta.title);
-        setIcon(entry.meta.icon);
-        editor.commands.setContent(entry.body);
-        clearUnsaved(activeDocument);
+    // Use cached ProseMirror JSON if available and file wasn't modified externally
+    const cached = docCacheRef.current.get(activeDocument);
+    const wasExternallyModified = useEditorStore.getState().aiModified[activeDocument];
+
+    if (cached && !wasExternallyModified) {
+      // Restore from cache — preserves empty paragraphs and other editor state
+      invoke<Entry>("read_entry", {
+        workspace: workspacePath,
+        path: activeDocument,
       })
-      .catch((err) => {
-        console.error("Failed to load document:", err);
-        toast.error(m.editor_error_load());
+        .then((entry) => {
+          setMeta(entry.meta);
+          setTitle(entry.meta.title);
+          setIcon(entry.meta.icon);
+          editor.commands.setContent(cached);
+          clearUnsaved(activeDocument);
+        })
+        .catch((err) => {
+          console.error("Failed to load document meta:", err);
+          toast.error(m.editor_error_load());
+        })
+        .finally(() => {
+          isLoadingRef.current = false;
+        });
+    } else {
+      // No cache or externally modified — load from disk
+      docCacheRef.current.delete(activeDocument);
+      invoke<Entry>("read_entry", {
+        workspace: workspacePath,
+        path: activeDocument,
       })
-      .finally(() => {
-        isLoadingRef.current = false;
-      });
+        .then((entry) => {
+          setMeta(entry.meta);
+          setTitle(entry.meta.title);
+          setIcon(entry.meta.icon);
+          editor.commands.setContent(entry.body);
+          clearUnsaved(activeDocument);
+        })
+        .catch((err) => {
+          console.error("Failed to load document:", err);
+          toast.error(m.editor_error_load());
+        })
+        .finally(() => {
+          isLoadingRef.current = false;
+        });
+    }
   }, [editor, activeDocument, workspacePath]);
 
-  // Mark unsaved on title/icon change
+  // Mark unsaved on title/icon change + sync sidebar
   const handleTitleChange = useCallback(
     (newTitle: string) => {
       setTitle(newTitle);
       if (currentPathRef.current) {
         markUnsaved(currentPathRef.current);
+        updateNodeMeta(currentPathRef.current, newTitle, iconRef.current);
       }
     },
-    [markUnsaved],
+    [markUnsaved, updateNodeMeta],
   );
 
   const handleIconChange = useCallback(
@@ -114,9 +158,10 @@ export function DocumentEditor() {
       setIcon(newIcon);
       if (currentPathRef.current) {
         markUnsaved(currentPathRef.current);
+        updateNodeMeta(currentPathRef.current, titleRef.current, newIcon);
       }
     },
-    [markUnsaved],
+    [markUnsaved, updateNodeMeta],
   );
 
   const handleExtraChange = useCallback(
@@ -147,6 +192,10 @@ export function DocumentEditor() {
     })
       .then(() => {
         clearUnsaved(activeDocument);
+        // Update cache with current editor state so switching back preserves it
+        if (editor) {
+          docCacheRef.current.set(activeDocument, editor.getJSON());
+        }
         toast.success(m.editor_save_success());
       })
       .catch((err) => {
@@ -182,6 +231,7 @@ export function DocumentEditor() {
     activeDocument,
     onConflict: handleConflict,
     justSavedRef,
+    isLoadingRef,
   });
 
   // Conflict resolution: reload from disk

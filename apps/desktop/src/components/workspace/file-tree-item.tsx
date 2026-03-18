@@ -9,7 +9,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { ChevronRight, FileText, Folder } from "lucide-react";
+import { ChevronRight, FileText } from "lucide-react";
 import { useLayoutStore } from "@/stores/layout";
 import { useEditorStore } from "@/stores/editor";
 import type { TreeNode } from "@/types/workspace";
@@ -23,29 +23,36 @@ export function FileTreeItem({ node }: FileTreeItemProps) {
   const { unsavedChanges, aiModified } = useEditorStore();
   const [isOpen, setIsOpen] = useState(false);
 
-  if (node.type === "Page") {
-    const displayName = node.name.replace(/\.md$/, "");
-    const isActive = activeDocument === node.path;
-    const isUnsaved = !!unsavedChanges[node.path];
-    const isAiModified = !!aiModified[node.path];
-    const showDot = isUnsaved || isAiModified;
+  const isActive = activeDocument === node.path;
+  const isUnsaved = !!unsavedChanges[node.path];
+  const isAiModified = !!aiModified[node.path];
+  const showDot = isUnsaved || isAiModified;
 
+  const iconElement = node.icon ? (
+    <span className="h-4 w-4 shrink-0 text-center leading-4">{node.icon}</span>
+  ) : (
+    <FileText className="h-4 w-4 shrink-0" />
+  );
+
+  const dot = showDot ? (
+    <span
+      className={`ml-auto shrink-0 text-xs ${isUnsaved ? "text-red-500" : "text-blue-500"}`}
+      title={isUnsaved ? "Unsaved changes" : "Modified externally"}
+    >
+      ●
+    </span>
+  ) : null;
+
+  if (node.children.length === 0) {
     return (
       <SidebarMenuSubItem>
         <SidebarMenuSubButton
           isActive={isActive}
           onClick={() => openDocument(node.path)}
         >
-          <FileText className="h-4 w-4 shrink-0" />
-          <span className="truncate">{displayName}</span>
-          {showDot && (
-            <span
-              className={`ml-auto shrink-0 text-xs ${isUnsaved ? "text-red-500" : "text-blue-500"}`}
-              title={isUnsaved ? "Unsaved changes" : "Modified externally"}
-            >
-              ●
-            </span>
-          )}
+          {iconElement}
+          <span className="truncate">{node.title}</span>
+          {dot}
         </SidebarMenuSubButton>
       </SidebarMenuSubItem>
     );
@@ -54,13 +61,22 @@ export function FileTreeItem({ node }: FileTreeItemProps) {
   return (
     <SidebarMenuSubItem>
       <Collapsible open={isOpen} onOpenChange={setIsOpen} className="group/collapsible">
-        <CollapsibleTrigger asChild>
-          <SidebarMenuSubButton>
-            <ChevronRight className="h-3 w-3 shrink-0 transition-transform group-data-[state=open]/collapsible:rotate-90" />
-            <Folder className="h-4 w-4 shrink-0" />
-            <span className="truncate">{node.name}</span>
+        <div className="flex items-center">
+          <CollapsibleTrigger asChild>
+            <button className="flex h-7 w-5 shrink-0 items-center justify-center">
+              <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]/collapsible:rotate-90" />
+            </button>
+          </CollapsibleTrigger>
+          <SidebarMenuSubButton
+            isActive={isActive}
+            className="flex-1"
+            onClick={() => openDocument(node.path)}
+          >
+            {iconElement}
+            <span className="truncate">{node.title}</span>
+            {dot}
           </SidebarMenuSubButton>
-        </CollapsibleTrigger>
+        </div>
         <CollapsibleContent>
           <SidebarMenuSub>
             {node.children.map((child) => (
