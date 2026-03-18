@@ -8,7 +8,7 @@ function ChatContent() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0 overflow-hidden">
         <Thread />
       </div>
       <ThreadStatusBar isRunning={isRunning} />

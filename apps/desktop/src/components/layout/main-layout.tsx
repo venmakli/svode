@@ -62,7 +62,7 @@ function MainContent() {
     return (
       <div className="flex h-full flex-col overflow-hidden">
         <MainBreadcrumbs />
-        <div className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 overflow-hidden">
           <ChatPanel />
         </div>
       </div>
@@ -91,7 +91,9 @@ function MainContent() {
         </ResizablePanel>
         <ResizableHandle withHandle />
         <ResizablePanel defaultSize="35%">
-          <ChatPanel />
+          <div className="h-full overflow-hidden">
+            <ChatPanel />
+          </div>
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>
@@ -106,10 +108,10 @@ export function MainLayout() {
 
   return (
     <TooltipProvider delayDuration={300}>
-      <SidebarProvider>
+      <SidebarProvider className="min-h-0 h-dvh overflow-hidden">
         <WindowHeader />
         <AppSidebar />
-        <SidebarInset className="pt-[44px]">
+        <SidebarInset className="pt-[44px] min-h-0 overflow-hidden">
           {activeProjectId && !hasWorkspaces ? (
             <EmptyProjectState />
           ) : (

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   AssistantRuntimeProvider,
   useExternalStoreRuntime,
@@ -40,6 +40,11 @@ interface DonePayload {
   type: "done";
   session_id: string;
   message_id: string;
+}
+
+let msgCounter = 0;
+function generateId() {
+  return `msg-${Date.now()}-${++msgCounter}`;
 }
 
 /** Extract current text from ThreadMessageLike content */
@@ -88,13 +93,15 @@ export function ChatRuntimeProvider({
   }, [sessionId]);
 
   // Listen to Tauri agent events
+  // Use cancelled flag to handle async listener registration + React Strict Mode
   useEffect(() => {
+    let cancelled = false;
     const unlisteners: UnlistenFn[] = [];
 
     async function setup() {
-      // Text delta — accumulate inside state updater (atomic, no race conditions)
-      unlisteners.push(
-        await listen<TextDeltaPayload>("agent:text-delta", (e) => {
+      const listeners = await Promise.all([
+        listen<TextDeltaPayload>("agent:text-delta", (e) => {
+          if (cancelled) return;
           useChatStatusStore.getState().setAgentStatus("writing");
           setMessages((prev) =>
             updateLastAssistant(prev, (last) => {
@@ -103,33 +110,26 @@ export function ChatRuntimeProvider({
             }),
           );
         }),
-      );
 
-      // Tool call
-      unlisteners.push(
-        await listen<ToolCallPayload>("agent:tool-call", (e) => {
+        listen<ToolCallPayload>("agent:tool-call", (e) => {
+          if (cancelled) return;
           useChatStatusStore.getState().setAgentStatus("tool-calling");
           setMessages((prev) =>
             updateLastAssistant(prev, (last) => {
               const current = getTextFromContent(last.content);
-              // Append tool call info as text for now
               const toolInfo = `\n\n> **${e.payload.name}**`;
               return { ...last, content: current + toolInfo };
             }),
           );
         }),
-      );
 
-      // Reasoning
-      unlisteners.push(
-        await listen<ReasoningPayload>("agent:reasoning", () => {
+        listen<ReasoningPayload>("agent:reasoning", () => {
+          if (cancelled) return;
           useChatStatusStore.getState().setAgentStatus("thinking");
         }),
-      );
 
-      // Error
-      unlisteners.push(
-        await listen<ErrorPayload>("agent:error", (e) => {
+        listen<ErrorPayload>("agent:error", (e) => {
+          if (cancelled) return;
           setMessages((prev) =>
             updateLastAssistant(prev, (last) => ({
               ...last,
@@ -139,19 +139,26 @@ export function ChatRuntimeProvider({
           setIsRunning(false);
           useChatStatusStore.getState().setAgentStatus("idle");
         }),
-      );
 
-      // Done
-      unlisteners.push(
-        await listen<DonePayload>("agent:done", () => {
+        listen<DonePayload>("agent:done", () => {
+          if (cancelled) return;
           setIsRunning(false);
           useChatStatusStore.getState().setAgentStatus("idle");
         }),
-      );
+      ]);
+
+      if (cancelled) {
+        // Effect was cleaned up while we were awaiting — tear down immediately
+        for (const unlisten of listeners) unlisten();
+        return;
+      }
+
+      unlisteners.push(...listeners);
     }
 
     setup();
     return () => {
+      cancelled = true;
       for (const unlisten of unlisteners) unlisten();
     };
   }, [sessionId]);
@@ -167,10 +174,12 @@ export function ChatRuntimeProvider({
       const userMsg: ThreadMessageLike = {
         role: "user",
         content: text,
+        id: generateId(),
       };
       const assistantMsg: ThreadMessageLike = {
         role: "assistant",
         content: "",
+        id: generateId(),
       };
 
       setMessages((prev) => [...prev, userMsg, assistantMsg]);
