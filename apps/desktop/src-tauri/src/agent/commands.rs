@@ -31,20 +31,28 @@ pub async fn agent_send(
 
     let agent_config = config.unwrap_or_default();
 
-    // Spawn the CLI process
-    let mut child = claude::spawn_cli(workspace_dir, &message, &agent_config)?;
+    // Spawn the CLI process (no message arg — message sent via stdin)
+    let mut child = claude::spawn_cli(workspace_dir, &agent_config)?;
 
-    // Take stdout before storing child — streaming reads from stdout,
-    // while child handle stays in sessions for agent_stop to kill
+    // Take stdout for streaming
     let stdout = child.stdout.take().ok_or_else(|| {
         AppError::AgentSpawnFailed("Failed to capture CLI stdout".to_string())
     })?;
 
-    // Store the process so agent_stop can kill it
+    // Take stdin for sending messages and permission responses
+    let mut stdin = child.stdin.take().ok_or_else(|| {
+        AppError::AgentSpawnFailed("Failed to capture CLI stdin".to_string())
+    })?;
+
+    // Send the user message through stdin
+    claude::send_user_message(&mut stdin, &message).await?;
+
+    // Store the process with stdin handle
     let process = crate::agent::AgentProcess {
         child,
         session_id: session_id.clone(),
         workspace_dir: workspace_path.clone(),
+        stdin: Some(stdin),
     };
     sessions.insert(session_id.clone(), process).await;
 
@@ -118,6 +126,43 @@ pub async fn agent_stop(
         tracing::debug!("No active agent process for session {session_id}");
         Ok(())
     }
+}
+
+/// Respond to a permission request from the agent CLI.
+///
+/// When `behavior` is "allow", `updated_input` must be the original tool input
+/// from the control_request (passed through from frontend).
+#[tauri::command]
+pub async fn agent_respond_permission(
+    sessions: State<'_, AgentSessions>,
+    session_id: String,
+    request_id: String,
+    behavior: String,
+    updated_input: Option<serde_json::Value>,
+    message: Option<String>,
+) -> Result<(), AppError> {
+    tracing::info!(
+        "Responding to permission request: session={session_id} request={request_id} behavior={behavior}"
+    );
+    let result = sessions.with_stdin(&session_id, |stdin| {
+        let request_id = request_id.clone();
+        let behavior = behavior.clone();
+        let updated_input = updated_input.clone();
+        let message = message.clone();
+        Box::pin(async move {
+            claude::send_permission_response(
+                stdin,
+                &request_id,
+                &behavior,
+                updated_input.as_ref(),
+                message.as_deref(),
+            ).await
+        })
+    }).await;
+    if let Err(ref e) = result {
+        tracing::error!("Failed to respond to permission: {e}");
+    }
+    result
 }
 
 /// List available agent CLI tools detected on the system.

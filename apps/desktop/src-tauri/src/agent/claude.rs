@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::Stdio;
 
-use tokio::io::AsyncBufReadExt;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::io::BufReader;
 use tokio::process::{Child, Command};
 
@@ -34,7 +34,6 @@ pub fn detect_cli() -> Option<String> {
 /// Build the CLI command with appropriate flags.
 fn build_command(
     workspace_dir: &Path,
-    message: &str,
     config: &AgentConfig,
 ) -> Result<Command, AppError> {
     let cli_path = detect_cli().ok_or_else(|| {
@@ -45,10 +44,12 @@ fn build_command(
         .arg("--verbose")
         .arg("--output-format")
         .arg("stream-json")
+        .arg("--input-format")
+        .arg("stream-json")
         .arg("--include-partial-messages")
-        .arg(message)
+        .arg("--permission-prompt-tool=stdio")
         .current_dir(workspace_dir)
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -73,10 +74,9 @@ fn build_command(
 /// Spawn the Claude CLI process and return the child handle.
 pub fn spawn_cli(
     workspace_dir: &Path,
-    message: &str,
     config: &AgentConfig,
 ) -> Result<Child, AppError> {
-    let mut cmd = build_command(workspace_dir, message, config)?;
+    let mut cmd = build_command(workspace_dir, config)?;
     let child = cmd.spawn().map_err(|e| {
         AppError::AgentSpawnFailed(e.to_string())
     })?;
@@ -144,6 +144,36 @@ pub fn parse_jsonl_line(line: &str, session_id: &str) -> Vec<AgentEvent> {
                     }]
                 }
             }
+        }
+
+        // Permission request from --permission-prompt-tool=stdio
+        "control_request" => {
+            let request_id = parsed.get("request_id")
+                .and_then(|r| r.as_str())
+                .unwrap_or("")
+                .to_string();
+            let request = parsed.get("request");
+            let tool_name = request
+                .and_then(|r| r.get("tool_name"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string();
+            let input = request
+                .and_then(|r| r.get("input"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let tool_use_id = request
+                .and_then(|r| r.get("tool_use_id"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string();
+            vec![AgentEvent::PermissionRequest {
+                session_id: sid,
+                request_id,
+                tool_name,
+                input,
+                tool_use_id,
+            }]
         }
 
         // Ignore: system init, rate_limit, assistant (final snapshot — already streamed)
@@ -254,6 +284,80 @@ fn parse_stream_event(parsed: &serde_json::Value, session_id: &str) -> Vec<Agent
         // Ignore: message_start, message_delta, message_stop, content_block_stop
         _ => vec![],
     }
+}
+
+/// Send a user message through stdin as JSON (for --input-format stream-json).
+pub async fn send_user_message(
+    stdin: &mut tokio::process::ChildStdin,
+    message: &str,
+) -> Result<(), AppError> {
+    let msg = serde_json::json!({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": message
+        }
+    });
+    let mut line = serde_json::to_string(&msg)
+        .map_err(|e| AppError::General(e.to_string()))?;
+    line.push('\n');
+    tracing::debug!("Sending user message via stdin: {line}");
+    stdin.write_all(line.as_bytes()).await
+        .map_err(|e| AppError::General(format!("Failed to write to stdin: {e}")))?;
+    stdin.flush().await
+        .map_err(|e| AppError::General(format!("Failed to flush stdin: {e}")))?;
+    Ok(())
+}
+
+/// Send a permission response (control_response) through stdin.
+///
+/// When behavior is "allow", `updated_input` must contain the original tool input
+/// (passed back to CLI as `updatedInput`). Without it the CLI silently drops the allow.
+pub async fn send_permission_response(
+    stdin: &mut tokio::process::ChildStdin,
+    request_id: &str,
+    behavior: &str,
+    updated_input: Option<&serde_json::Value>,
+    message: Option<&str>,
+) -> Result<(), AppError> {
+    tracing::info!("Sending permission response: request_id={request_id} behavior={behavior}");
+    let response = if behavior == "allow" {
+        serde_json::json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": request_id,
+                "response": {
+                    "behavior": "allow",
+                    "updatedInput": updated_input,
+                    "updatedPermissions": null
+                }
+            }
+        })
+    } else {
+        serde_json::json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": request_id,
+                "response": {
+                    "behavior": "deny",
+                    "message": message.unwrap_or("User denied this action"),
+                    "interrupt": false
+                }
+            }
+        })
+    };
+    let mut line = serde_json::to_string(&response)
+        .map_err(|e| AppError::General(e.to_string()))?;
+    line.push('\n');
+    tracing::debug!("Sending control_response via stdin: {line}");
+    stdin.write_all(line.as_bytes()).await
+        .map_err(|e| AppError::General(format!("Failed to write permission response to stdin: {e}")))?;
+    stdin.flush().await
+        .map_err(|e| AppError::General(format!("Failed to flush permission response stdin: {e}")))?;
+    tracing::info!("Permission response sent successfully for request_id={request_id}");
+    Ok(())
 }
 
 /// Read stdout line by line, parse into AgentEvents, send through channel.

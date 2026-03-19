@@ -49,12 +49,34 @@ interface DonePayload {
   message_id: string;
 }
 
+interface PermissionRequestPayload {
+  type: "permissionRequest";
+  session_id: string;
+  request_id: string;
+  tool_name: string;
+  input: Record<string, unknown>;
+  tool_use_id: string;
+}
+
 // Content part types matching assistant-ui's ThreadMessageLike content
 type TextPart = { type: "text"; text: string };
 type ReasoningPart = { type: "reasoning"; text: string };
-type ToolCallPart = { type: "tool-call"; toolCallId: string; toolName: string; args: Record<string, JSONValue>; argsText?: string };
+type ToolCallPart = { type: "tool-call"; toolCallId: string; toolName: string; args: Record<string, JSONValue>; argsText?: string; result?: unknown };
 type JSONValue = string | number | boolean | null | JSONValue[] | { [key: string]: JSONValue };
 type ContentPart = TextPart | ReasoningPart | ToolCallPart;
+
+/** Mark all tool-call parts that have no result as complete */
+function markToolCallsDone(parts: ContentPart[]): ContentPart[] {
+  let changed = false;
+  const result = parts.map((p) => {
+    if (p.type === "tool-call" && (p as ToolCallPart).result === undefined) {
+      changed = true;
+      return { ...p, result: "Done" };
+    }
+    return p;
+  });
+  return changed ? result : parts;
+}
 
 let msgCounter = 0;
 function generateId() {
@@ -101,6 +123,7 @@ export function ChatRuntimeProvider({
   useEffect(() => {
     setMessages([]);
     setIsRunning(false);
+    useChatStatusStore.getState().setPendingPermission(null);
   }, [sessionId]);
 
   // Listen to Tauri agent events
@@ -110,36 +133,38 @@ export function ChatRuntimeProvider({
 
     async function setup() {
       const listeners = await Promise.all([
-        // Text delta — append to the last text part, or create one
+        // Text delta — append to the last text part, or create one.
+        // Also mark any preceding tool-call parts as complete.
         listen<TextDeltaPayload>("agent:text-delta", (e) => {
           if (cancelled) return;
           useChatStatusStore.getState().setAgentStatus("writing");
           setMessages((prev) =>
             updateLastAssistant(prev, (last) => {
-              const parts = getContentParts(last.content);
+              let parts = getContentParts(last.content);
+              // Mark preceding tool calls as done (they finished if we're getting text now)
+              parts = markToolCallsDone(parts);
               const lastText = parts.length > 0 && parts[parts.length - 1].type === "text"
                 ? parts[parts.length - 1] as { type: "text"; text: string }
                 : null;
 
               if (lastText) {
-                // Append delta to existing last text part
                 const updated = [...parts];
                 updated[updated.length - 1] = { type: "text", text: lastText.text + e.payload.delta };
                 return { ...last, content: updated };
               }
-              // Create new text part
               return { ...last, content: [...parts, { type: "text", text: e.payload.delta }] };
             }),
           );
         }),
 
-        // Tool call — add as proper tool-call content part
+        // Tool call — add as proper tool-call content part.
+        // Mark any preceding tool-calls as done first.
         listen<ToolCallPayload>("agent:tool-call", (e) => {
           if (cancelled) return;
           useChatStatusStore.getState().setAgentStatus("tool-calling");
           setMessages((prev) =>
             updateLastAssistant(prev, (last) => {
-              const parts = getContentParts(last.content);
+              const parts = markToolCallsDone(getContentParts(last.content));
               return {
                 ...last,
                 content: [
@@ -215,11 +240,32 @@ export function ChatRuntimeProvider({
           useChatStatusStore.getState().setAgentStatus("idle");
         }),
 
-        // Done
+        // Done — mark all tool-call parts as complete
         listen<DonePayload>("agent:done", () => {
           if (cancelled) return;
+          setMessages((prev) =>
+            prev.map((msg) => {
+              if (msg.role !== "assistant") return msg;
+              const parts = getContentParts(msg.content);
+              const updated = markToolCallsDone(parts);
+              return updated !== parts ? { ...msg, content: updated } : msg;
+            }),
+          );
           setIsRunning(false);
           useChatStatusStore.getState().setAgentStatus("idle");
+        }),
+
+        // Permission request — agent needs user approval
+        listen<PermissionRequestPayload>("agent:permission-request", (e) => {
+          if (cancelled) return;
+          useChatStatusStore.getState().setAgentStatus("awaiting-permission");
+          useChatStatusStore.getState().setPendingPermission({
+            requestId: e.payload.request_id,
+            toolName: e.payload.tool_name,
+            input: e.payload.input,
+            toolUseId: e.payload.tool_use_id,
+            sessionId: sessionId,
+          });
         }),
       ]);
 

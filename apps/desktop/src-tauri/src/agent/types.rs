@@ -45,6 +45,13 @@ pub enum AgentEvent {
         session_id: String,
         text: String,
     },
+    PermissionRequest {
+        session_id: String,
+        request_id: String,
+        tool_name: String,
+        input: serde_json::Value,
+        tool_use_id: String,
+    },
     Error {
         session_id: String,
         message: String,
@@ -63,6 +70,7 @@ impl AgentEvent {
             AgentEvent::ToolCall { .. } => "agent:tool-call",
             AgentEvent::ToolInputDelta { .. } => "agent:tool-input-delta",
             AgentEvent::ToolResult { .. } => "agent:tool-result",
+            AgentEvent::PermissionRequest { .. } => "agent:permission-request",
             AgentEvent::Reasoning { .. } => "agent:reasoning",
             AgentEvent::Error { .. } => "agent:error",
             AgentEvent::Done { .. } => "agent:done",

@@ -15,6 +15,7 @@ const statusLabels: Record<string, string> = {
   thinking: "thinking",
   writing: "writing",
   "tool-calling": "tool calling",
+  "awaiting-permission": "awaiting permission",
 };
 
 export function ThreadStatusBar({ isRunning }: { isRunning: boolean }) {
