@@ -21,10 +21,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Check, ChevronDown, ChevronUp, Monitor, Moon, Settings, Sun } from "lucide-react";
-import { useTheme } from "@/components/theme-provider";
+import { useTheme } from "@/components/ui/theme-provider";
 import { useAppVersion } from "@/hooks/use-app-version";
 import { useWorkspaceStore } from "@/stores/workspace";
-import { NavWorkspaces } from "@/components/workspace/nav-workspaces";
+import { NavWorkspaces } from "@/features/workspace/nav-workspaces";
 import * as m from "@/paraglide/messages.js";
 
 export function AppSidebar() {

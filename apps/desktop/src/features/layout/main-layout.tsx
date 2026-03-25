@@ -10,7 +10,7 @@ import { AppSidebar } from "./app-sidebar";
 import { WindowHeader } from "./window-header";
 import { useLayoutStore } from "@/stores/layout";
 import { useWorkspaceStore } from "@/stores/workspace";
-import { EmptyProjectState } from "@/components/workspace/empty-project-state";
+import { EmptyProjectState } from "@/features/workspace/empty-project-state";
 import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";
 import { ChatPanel } from "@/features/chat/chat-panel";
 import {
