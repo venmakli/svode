@@ -6,31 +6,13 @@ use tauri::{AppHandle, Emitter, State};
 use crate::agent::claude::{self, ClaudeCodeExecutor};
 use crate::agent::executor::AgentExecutor;
 use crate::agent::types::{
-    load_workspace_agent_config, AgentConfig, AgentEvent, AvailableAgent, FileContext,
+    load_workspace_agent_config, AgentConfig, AgentEvent, AvailableAgent,
 };
 use crate::agent::AgentSessions;
 use crate::error::AppError;
 
 /// Default timeout for agent execution: 10 minutes.
 const DEFAULT_TIMEOUT_SECS: u64 = 600;
-
-/// Build the final message string, prepending file context if provided.
-fn build_message_with_context(message: &str, context: Option<&[FileContext]>) -> String {
-    match context {
-        Some(files) if !files.is_empty() => {
-            let mut parts = Vec::with_capacity(files.len() + 1);
-            for file in files {
-                parts.push(format!(
-                    "[Context: {}]\n{}\n[End context]",
-                    file.path, file.content
-                ));
-            }
-            parts.push(message.to_string());
-            parts.join("\n\n")
-        }
-        _ => message.to_string(),
-    }
-}
 
 /// Send a message to the agent. Spawns a new CLI process for each message.
 /// The session_id groups messages logically but each call is a separate CLI invocation.
@@ -42,7 +24,6 @@ pub async fn agent_send(
     session_id: String,
     message: String,
     config: Option<AgentConfig>,
-    context: Option<Vec<FileContext>>,
 ) -> Result<(), AppError> {
     let workspace_dir = Path::new(&workspace_path);
     if !workspace_dir.exists() || !workspace_dir.is_dir() {
@@ -81,11 +62,8 @@ pub async fn agent_send(
         AppError::AgentSpawnFailed("Failed to capture CLI stdin".to_string())
     })?;
 
-    // Build message with context
-    let full_message = build_message_with_context(&message, context.as_deref());
-
     // Send the user message through stdin
-    executor.send_message(&mut stdin, &full_message).await?;
+    executor.send_message(&mut stdin, &message).await?;
 
     // Store the process with stdin handle
     process.session_id = session_id.clone();

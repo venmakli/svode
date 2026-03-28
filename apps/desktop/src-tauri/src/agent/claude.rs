@@ -133,6 +133,10 @@ fn build_command(workspace_dir: &Path, config: &AgentConfig, cli_path: &str) -> 
         }
     }
 
+    if let Some(ref model) = config.model {
+        cmd.arg("--model").arg(model);
+    }
+
     cmd
 }
 

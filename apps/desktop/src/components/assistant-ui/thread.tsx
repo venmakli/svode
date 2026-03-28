@@ -35,7 +35,13 @@ import {
   RefreshCwIcon,
   SquareIcon,
 } from "lucide-react";
-import type { FC } from "react";
+import { useRef, useState, useCallback, type FC } from "react";
+import { ModelSelector } from "@/components/assistant-ui/model-selector";
+import { useChatStatusStore, DEFAULT_MODEL } from "@/stores/chat";
+import {
+  useMentionDropdown,
+  MentionDropdown,
+} from "@/features/chat/composer-mentions";
 
 export const Thread: FC = () => {
   return (
@@ -136,6 +142,42 @@ const ThreadSuggestionItem: FC = () => {
 };
 
 const Composer: FC = () => {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [cursorPos, setCursorPos] = useState(0);
+  const [inputValue, setInputValue] = useState("");
+
+  const mention = useMentionDropdown(inputValue, cursorPos);
+
+  const handleInput = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    setInputValue(el.value);
+    setCursorPos(el.selectionStart);
+    mention.handleInputChange(el.value, el.selectionStart);
+  }, [mention.handleInputChange]);
+
+  const applyMention = useCallback(
+    (item: Parameters<typeof mention.handleSelect>[0]) => {
+      const el = textareaRef.current;
+      if (!el) return;
+      const newValue = mention.handleSelect(item);
+      const newCursor = newValue.indexOf("]]", newValue.lastIndexOf("[[")) + 2;
+      // Update textarea value via native setter, set cursor, then dispatch input
+      // to keep assistant-ui in sync with the correct cursor position
+      const nativeSetter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      nativeSetter?.call(el, newValue);
+      el.setSelectionRange(newCursor, newCursor);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.focus();
+      setInputValue(newValue);
+      setCursorPos(newCursor);
+    },
+    [mention.handleSelect],
+  );
+
   return (
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
       <ComposerPrimitive.AttachmentDropzone asChild>
@@ -144,13 +186,35 @@ const Composer: FC = () => {
           className="flex w-full flex-col gap-2 rounded-(--composer-radius) border bg-background p-(--composer-padding) transition-shadow focus-within:border-ring/75 focus-within:ring-2 focus-within:ring-ring/20 data-[dragging=true]:border-ring data-[dragging=true]:border-dashed data-[dragging=true]:bg-accent/50"
         >
           <ComposerAttachments />
-          <ComposerPrimitive.Input
-            placeholder="Send a message..."
-            className="aui-composer-input max-h-32 min-h-10 w-full resize-none bg-transparent px-1.75 py-1 text-sm outline-none placeholder:text-muted-foreground/80"
-            rows={1}
-            autoFocus
-            aria-label="Message input"
-          />
+          <div className="relative">
+            <ComposerPrimitive.Input
+              ref={textareaRef}
+              placeholder="Send a message..."
+              className="aui-composer-input max-h-32 min-h-10 w-full resize-none bg-transparent px-1.75 py-1 text-sm outline-none placeholder:text-muted-foreground/80"
+              rows={1}
+              autoFocus
+              aria-label="Message input"
+              onInput={handleInput}
+              onKeyUp={handleInput}
+              onKeyDown={(e) => {
+                if (mention.isOpen && mention.items.length > 0) {
+                  const handled = mention.handleKeyDown(e);
+                  if (handled && (e.key === "Enter" || e.key === "Tab")) {
+                    applyMention(mention.items[mention.selectedIndex]);
+                  }
+                }
+              }}
+            />
+            {mention.isOpen && (
+              <div className="absolute bottom-full left-0 z-50 mb-1 w-64">
+                <MentionDropdown
+                  items={mention.items}
+                  selectedIndex={mention.selectedIndex}
+                  onSelect={applyMention}
+                />
+              </div>
+            )}
+          </div>
           <ComposerAction />
         </div>
       </ComposerPrimitive.AttachmentDropzone>
@@ -158,10 +222,28 @@ const Composer: FC = () => {
   );
 };
 
+const MODELS = [
+  { id: "sonnet", name: "Sonnet", description: "Fast and capable" },
+  { id: "opus", name: "Opus", description: "Most capable" },
+  { id: "haiku", name: "Haiku", description: "Fastest" },
+];
+
 const ComposerAction: FC = () => {
+  const selectedModel = useChatStatusStore((s) => s.selectedModel);
+  const setSelectedModel = useChatStatusStore((s) => s.setSelectedModel);
+
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
-      <ComposerAddAttachment />
+      <div className="flex items-center gap-1">
+        <ComposerAddAttachment />
+        <ModelSelector
+          models={MODELS}
+          value={selectedModel}
+          onValueChange={setSelectedModel}
+          variant="ghost"
+          size="sm"
+        />
+      </div>
       <AuiIf condition={(s) => !s.thread.isRunning}>
         <ComposerPrimitive.Send asChild>
           <TooltipIconButton

@@ -148,15 +148,24 @@ export function SortableFileTree({
         toParent = getParentDir(overNode.path);
       }
 
-      // Don't move to same location
+      // Same parent — reorder within the same folder
       if (getParentDir(fromPath) === toParent) {
-        // Same parent — just reorder. Save order and refresh.
-        // Build new order from current tree with items swapped
-        await refreshTree(workspaceId);
-        const updatedTree = useWorkspaceStore.getState().fileTrees[workspaceId];
-        if (updatedTree) {
-          const order = buildOrderMap(updatedTree);
-          await saveOrder(workspaceId, order);
+        const fromNode = findNode(tree, fromPath);
+        if (!fromNode) return;
+
+        const order = buildOrderMap(tree);
+        const dirKey = toParent || ".";
+        const siblings = order[dirKey];
+        if (siblings) {
+          const fromIdx = siblings.indexOf(fromNode.name);
+          const overIdx = siblings.indexOf(overNode.name);
+          if (fromIdx !== -1 && overIdx !== -1 && fromIdx !== overIdx) {
+            // Move item from old position to new position
+            siblings.splice(fromIdx, 1);
+            siblings.splice(overIdx, 0, fromNode.name);
+            await saveOrder(workspaceId, order);
+            await refreshTree(workspaceId);
+          }
         }
         return;
       }

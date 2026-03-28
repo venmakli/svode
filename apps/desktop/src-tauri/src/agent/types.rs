@@ -22,6 +22,10 @@ pub struct AgentConfig {
     /// Maximum timeout in seconds for agent execution (default: 600 = 10 min)
     #[serde(default)]
     pub max_timeout: Option<u64>,
+
+    /// Model name override (passed as --model to CLI, e.g. "claude-sonnet-4-5")
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// A file context entry sent alongside the user message.

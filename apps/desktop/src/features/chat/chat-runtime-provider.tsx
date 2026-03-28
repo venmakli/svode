@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useChatStatusStore } from "@/stores/chat";
+import { extractMentions } from "./composer-mentions";
 
 interface TextDeltaPayload {
   type: "textDelta";
@@ -308,11 +309,47 @@ export function ChatRuntimeProvider({
       useChatStatusStore.getState().setAgentStatus("thinking");
 
       try {
+        const model = useChatStatusStore.getState().selectedModel;
+
+        // Resolve [[Title]] mentions to file context
+        const { fileTrees, activeWorkspaceId } = useWorkspaceStore.getState();
+        const tree = activeWorkspaceId ? fileTrees[activeWorkspaceId] ?? [] : [];
+        const mentions = extractMentions(text, tree);
+        let context: { path: string; content: string }[] | null = null;
+        if (mentions.length > 0) {
+          const entries = await Promise.all(
+            mentions.map(async (doc) => {
+              try {
+                const entry = await invoke<{ content: string }>("read_entry", {
+                  workspace: workspacePath,
+                  path: doc.path,
+                });
+                return { path: doc.path, content: entry.content };
+              } catch {
+                return null;
+              }
+            }),
+          );
+          const valid = entries.filter(
+            (e): e is { path: string; content: string } => e !== null,
+          );
+          if (valid.length > 0) context = valid;
+        }
+
+        // Build context into message text directly (CLI doesn't support structured context)
+        let messageWithContext = text;
+        if (context && context.length > 0) {
+          const contextBlocks = context.map(
+            (f) => `[Context: ${f.path}]\n${f.content}\n[End context]`,
+          );
+          messageWithContext = contextBlocks.join("\n\n") + "\n\n" + text;
+        }
+
         await invoke("agent_send", {
           workspacePath,
           sessionId,
-          message: text,
-          config: null,
+          message: messageWithContext,
+          config: { model },
         });
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
