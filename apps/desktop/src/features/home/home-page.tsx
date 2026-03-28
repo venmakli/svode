@@ -133,7 +133,18 @@ export function HomePage() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col items-center justify-center px-4">
-        <h1 className="text-2xl font-semibold mb-8">{m.home_title()}</h1>
+        <h1 className="text-2xl font-semibold mb-4">{m.home_title()}</h1>
+
+        <div className="flex gap-3 mb-8">
+          <Button onClick={() => setDialogOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            {m.home_create_project()}
+          </Button>
+          <Button variant="outline" onClick={handleOpenProjectFolder}>
+            <FolderOpen className="mr-2 h-4 w-4" />
+            {m.home_open_project()}
+          </Button>
+        </div>
 
         {hasProjects ? (
           <ProjectList
@@ -145,17 +156,6 @@ export function HomePage() {
         ) : (
           <EmptyState />
         )}
-
-        <div className="flex gap-3 mt-8">
-          <Button onClick={() => setDialogOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            {m.home_create_project()}
-          </Button>
-          <Button variant="outline" onClick={handleOpenProjectFolder}>
-            <FolderOpen className="mr-2 h-4 w-4" />
-            {m.home_open_project()}
-          </Button>
-        </div>
       </div>
 
       {/* Version at bottom-left */}

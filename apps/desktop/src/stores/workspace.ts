@@ -64,7 +64,7 @@ interface WorkspaceState {
     projectId: string,
     path: string,
   ) => Promise<Workspace>;
-  deleteWorkspace: (projectId: string, workspaceId: string) => Promise<void>;
+  deleteWorkspace: (projectId: string, workspaceId: string, deleteFiles?: boolean) => Promise<void>;
   createPage: (workspaceId: string, title: string) => Promise<Entry | null>;
   refreshTree: (workspaceId?: string) => Promise<void>;
   updateNodeMeta: (path: string, title: string, icon: string | null) => void;
@@ -275,8 +275,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     return workspace;
   },
 
-  deleteWorkspace: async (projectId: string, workspaceId: string) => {
-    await invoke("delete_workspace", { projectId, workspaceId });
+  deleteWorkspace: async (projectId: string, workspaceId: string, deleteFiles?: boolean) => {
+    await invoke("delete_workspace", { projectId, workspaceId, deleteFiles });
     const { activeWorkspaceId } = get();
     set((s) => ({
       workspaces: s.workspaces.filter((w) => w.id !== workspaceId),

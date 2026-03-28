@@ -319,6 +319,7 @@ pub fn delete_workspace(
     app: AppHandle,
     project_id: String,
     workspace_id: String,
+    delete_files: Option<bool>,
 ) -> Result<(), AppError> {
     let config_dir = app
         .path()
@@ -327,6 +328,32 @@ pub fn delete_workspace(
 
     let project_ref = registry::find_project(&config_dir, &project_id)?
         .ok_or_else(|| AppError::ProjectNotFound(project_id.clone()))?;
+
+    // Resolve workspace path before removing from config
+    if delete_files.unwrap_or(false) {
+        let cfg = if let Some(ref project_path) = project_ref.path {
+            project::read_directory_project_config(Path::new(project_path))?
+        } else {
+            project::read_project_config(&config_dir, &project_id)?
+        };
+
+        if let Some(ws_ref) = cfg.workspaces.iter().find(|w| w.id == workspace_id) {
+            let ws_path = if let Some(ref project_path) = project_ref.path {
+                let rel = Path::new(&ws_ref.path);
+                if rel.is_relative() {
+                    Path::new(project_path).join(rel)
+                } else {
+                    rel.to_path_buf()
+                }
+            } else {
+                Path::new(&ws_ref.path).to_path_buf()
+            };
+
+            if ws_path.exists() && ws_path.is_dir() {
+                std::fs::remove_dir_all(&ws_path)?;
+            }
+        }
+    }
 
     if let Some(ref path) = project_ref.path {
         project::remove_workspace_from_directory_project(Path::new(path), &workspace_id)

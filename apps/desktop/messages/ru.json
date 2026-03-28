@@ -96,6 +96,7 @@
   "workspace_delete": "Удалить",
   "workspace_delete_title": "Удалить пространство?",
   "workspace_delete_description": "Пространство будет удалено из проекта. Файлы останутся на диске.",
+  "workspace_delete_files": "Также удалить файлы с диска",
   "workspace_not_found": "Директория не найдена: {path}",
   "workspace_not_found_action_update": "Обновить путь",
   "workspace_not_found_action_remove": "Удалить из списка",

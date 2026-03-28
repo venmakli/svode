@@ -96,6 +96,7 @@
   "workspace_delete": "Remove",
   "workspace_delete_title": "Remove workspace?",
   "workspace_delete_description": "The workspace will be removed from the project. Files will remain on disk.",
+  "workspace_delete_files": "Also delete files from disk",
   "workspace_not_found": "Directory not found: {path}",
   "workspace_not_found_action_update": "Update path",
   "workspace_not_found_action_remove": "Remove from list",

@@ -35,6 +35,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   ChevronRight,
   Ellipsis,
@@ -68,6 +69,7 @@ export function NavWorkspaces() {
     id: string;
     name: string;
   } | null>(null);
+  const [deleteFiles, setDeleteFiles] = useState(false);
 
   async function handleOpenFolder() {
     if (!activeProjectId) return;
@@ -97,13 +99,14 @@ export function NavWorkspaces() {
   async function handleDeleteWorkspace(workspaceId: string) {
     if (!activeProjectId) return;
     try {
-      await deleteWorkspace(activeProjectId, workspaceId);
+      await deleteWorkspace(activeProjectId, workspaceId, deleteFiles);
       toast.success(m.toast_workspace_deleted());
     } catch (err) {
       console.error("Failed to delete workspace:", err);
       toast.error(m.toast_error());
     }
     setDeleteTarget(null);
+    setDeleteFiles(false);
   }
 
   function handleWorkspaceClick(ws: { id: string; exists: boolean; path: string }) {
@@ -235,7 +238,7 @@ export function NavWorkspaces() {
 
       <AlertDialog
         open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        onOpenChange={(open) => { if (!open) { setDeleteTarget(null); setDeleteFiles(false); } }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -244,6 +247,15 @@ export function NavWorkspaces() {
               {m.workspace_delete_description()}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <label className="flex items-center gap-2 py-2 cursor-pointer">
+            <Checkbox
+              checked={deleteFiles}
+              onCheckedChange={(checked) => setDeleteFiles(checked === true)}
+            />
+            <span className="text-sm text-destructive">
+              {m.workspace_delete_files()}
+            </span>
+          </label>
           <AlertDialogFooter>
             <AlertDialogCancel>{m.project_cancel()}</AlertDialogCancel>
             <AlertDialogAction
