@@ -26,6 +26,7 @@ serde_yml = "0.0.12"
 notify = "7"
 ulid = "1"
 chrono = { version = "0.4", features = ["serde"] }
+regex = "1"
 which = "7"
 
 [dev-dependencies]

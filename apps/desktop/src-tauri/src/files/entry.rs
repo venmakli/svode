@@ -4,7 +4,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
+use crate::files::backlinks::BacklinkIndex;
 use crate::files::frontmatter;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WriteResult {
+    /// New relative path if file was renamed, None if path unchanged.
+    pub new_path: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntryMeta {
@@ -223,6 +230,8 @@ pub fn read(workspace: &str, path: &str) -> Result<Entry, AppError> {
 
 /// Write content to an entry, updating the `updated` field in frontmatter.
 /// Optionally update title, icon, and custom fields if provided.
+/// If title changes, the file may be renamed based on the new slug.
+/// Returns WriteResult with new_path if a rename occurred.
 pub fn write(
     workspace: &str,
     path: &str,
@@ -230,7 +239,8 @@ pub fn write(
     title: Option<&str>,
     icon: Option<&str>,
     extra: Option<HashMap<String, serde_yml::Value>>,
-) -> Result<(), AppError> {
+    backlink_index: Option<&BacklinkIndex>,
+) -> Result<WriteResult, AppError> {
     let abs_path = resolve(workspace, path);
 
     if !abs_path.exists() {
@@ -240,6 +250,8 @@ pub fn write(
     // Read existing frontmatter to preserve metadata
     let existing = fs::read_to_string(&abs_path)?;
     let (mut meta, _old_body) = frontmatter::parse(&existing)?;
+
+    let old_title = meta.title.clone();
 
     // Update the timestamp
     meta.updated = now_rfc3339();
@@ -260,11 +272,144 @@ pub fn write(
     let full_content = frontmatter::serialize(&meta, content);
     fs::write(&abs_path, full_content)?;
 
-    Ok(())
+    // Check if title changed and we need to rename
+    let mut new_path: Option<String> = None;
+
+    if let Some(t) = title {
+        if t != old_title {
+            let new_slug = slugify(t);
+            let current_stem = Path::new(path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+
+            // Check if the file is a readme.md (category file)
+            let is_readme = Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.eq_ignore_ascii_case("readme.md"));
+
+            if new_slug != current_stem || is_readme {
+                if is_readme {
+                    // For readme.md, rename the parent folder
+                    if let Some(parent_rel) = Path::new(path).parent() {
+                        if parent_rel.as_os_str().is_empty() {
+                            // readme.md at root, no parent folder to rename
+                        } else {
+                            let grandparent = parent_rel
+                                .parent()
+                                .unwrap_or(Path::new(""));
+                            let new_dir_name = new_slug.clone();
+                            let new_dir_rel = if grandparent.as_os_str().is_empty() {
+                                new_dir_name.clone()
+                            } else {
+                                format!("{}/{}", grandparent.display(), new_dir_name)
+                            };
+                            let new_dir_abs = resolve(workspace, &new_dir_rel);
+
+                            if !new_dir_abs.exists() {
+                                let old_dir_abs = resolve(workspace, &parent_rel.to_string_lossy());
+                                fs::rename(&old_dir_abs, &new_dir_abs)?;
+                                let renamed_path = format!("{}/readme.md", new_dir_rel);
+                                new_path = Some(renamed_path);
+                            }
+                            // If collision, content is already saved, just skip rename
+                        }
+                    }
+                } else {
+                    // Regular file: rename slug.md
+                    let parent_dir = Path::new(path)
+                        .parent()
+                        .unwrap_or(Path::new(""));
+                    let new_filename = format!("{new_slug}.md");
+                    let new_rel = if parent_dir.as_os_str().is_empty() {
+                        new_filename
+                    } else {
+                        format!("{}/{}", parent_dir.display(), new_filename)
+                    };
+                    let new_abs = resolve(workspace, &new_rel);
+
+                    if !new_abs.exists() {
+                        fs::rename(&abs_path, &new_abs)?;
+                        new_path = Some(new_rel);
+                    }
+                    // If collision, content is already saved, just skip rename
+                }
+            }
+        }
+    }
+
+    // Update backlink index
+    let current_path = new_path.as_deref().unwrap_or(path);
+    if let Some(index) = backlink_index {
+        // If renamed, update links in other files
+        if let Some(ref np) = new_path {
+            let _ = index.update_links_on_rename(Path::new(workspace), path, np);
+        }
+        // Re-index the written file
+        let _ = index.update_file(Path::new(workspace), current_path);
+    }
+
+    Ok(WriteResult { new_path })
 }
 
-/// Delete an entry from disk.
-pub fn delete(workspace: &str, path: &str) -> Result<(), AppError> {
+/// Move a file or directory to a new parent directory.
+/// Updates backlinks. Returns the new relative path.
+pub fn move_entry(
+    workspace: &Path,
+    from: &str,
+    to_parent: &str,
+    backlink_index: Option<&BacklinkIndex>,
+) -> Result<String, AppError> {
+    let abs_from = workspace.join(from);
+
+    if !abs_from.exists() {
+        return Err(AppError::FileNotFound(from.to_string()));
+    }
+
+    let filename = Path::new(from)
+        .file_name()
+        .ok_or_else(|| AppError::General("invalid source path".to_string()))?;
+
+    let new_rel = if to_parent.is_empty() {
+        filename.to_string_lossy().to_string()
+    } else {
+        format!("{}/{}", to_parent, filename.to_string_lossy())
+    };
+
+    let abs_to = workspace.join(&new_rel);
+
+    if abs_to.exists() {
+        return Err(AppError::FileAlreadyExists(new_rel));
+    }
+
+    let is_md = abs_from.is_dir()
+        || Path::new(from).extension().and_then(|e| e.to_str()) == Some("md");
+
+    // Ensure target parent directory exists
+    if let Some(parent_dir) = abs_to.parent() {
+        fs::create_dir_all(parent_dir)?;
+    }
+
+    fs::rename(&abs_from, &abs_to)?;
+
+    // Update backlinks
+    if let Some(index) = backlink_index {
+        if is_md {
+            let _ = index.update_links_on_rename(workspace, from, &new_rel);
+            let _ = index.update_file(workspace, &new_rel);
+        }
+    }
+
+    Ok(new_rel)
+}
+
+/// Delete an entry from disk. Removes from backlink index if provided.
+pub fn delete(
+    workspace: &str,
+    path: &str,
+    backlink_index: Option<&BacklinkIndex>,
+) -> Result<(), AppError> {
     let abs_path = resolve(workspace, path);
 
     if !abs_path.exists() {
@@ -275,6 +420,10 @@ pub fn delete(workspace: &str, path: &str) -> Result<(), AppError> {
         fs::remove_dir_all(&abs_path)?;
     } else {
         fs::remove_file(&abs_path)?;
+    }
+
+    if let Some(index) = backlink_index {
+        index.remove_file(path);
     }
 
     Ok(())
@@ -387,5 +536,76 @@ mod tests {
 
         let e2 = create(ws, Some("docs"), "readme").unwrap();
         assert_eq!(e2.path, "docs/readme-1.md");
+    }
+
+    #[test]
+    fn test_write_title_change_renames_file() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().to_str().unwrap();
+
+        let entry = create(ws, None, "Original Title").unwrap();
+        assert_eq!(entry.path, "original-title.md");
+
+        let result = write(
+            ws,
+            &entry.path,
+            "body content",
+            Some("New Title"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result.new_path, Some("new-title.md".to_string()));
+        assert!(!resolve(ws, "original-title.md").exists());
+        assert!(resolve(ws, "new-title.md").exists());
+    }
+
+    #[test]
+    fn test_write_title_change_collision_no_rename() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().to_str().unwrap();
+
+        let e1 = create(ws, None, "Doc A").unwrap();
+        let _e2 = create(ws, None, "Doc B").unwrap();
+
+        // Try to rename Doc A to Doc B — collision, should save content but not rename
+        let result = write(
+            ws,
+            &e1.path,
+            "updated body",
+            Some("Doc B"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result.new_path, None);
+        // Original file still exists with updated content
+        assert!(resolve(ws, "doc-a.md").exists());
+    }
+
+    #[test]
+    fn test_write_same_title_no_rename() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().to_str().unwrap();
+
+        let entry = create(ws, None, "Keep Same").unwrap();
+
+        let result = write(
+            ws,
+            &entry.path,
+            "new body",
+            Some("Keep Same"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result.new_path, None);
+        assert!(resolve(ws, "keep-same.md").exists());
     }
 }

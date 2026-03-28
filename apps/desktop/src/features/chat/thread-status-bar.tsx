@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useChatStatusStore } from "@/stores/chat";
+import { useWorkspaceStore } from "@/stores/workspace";
 import { cn } from "@/lib/utils";
 
 function formatMs(ms: number): string {
@@ -20,6 +21,10 @@ const statusLabels: Record<string, string> = {
 
 export function ThreadStatusBar({ isRunning }: { isRunning: boolean }) {
   const agentStatus = useChatStatusStore((s) => s.agentStatus);
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const workspaceName = workspaces.find((w) => w.id === activeWorkspaceId)?.name;
+
   const [elapsed, setElapsed] = useState(0);
   const startRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -60,6 +65,14 @@ export function ThreadStatusBar({ isRunning }: { isRunning: boolean }) {
       </div>
       <span className="text-muted-foreground/50">&middot;</span>
       <span>claude</span>
+      {workspaceName && (
+        <>
+          <span className="text-muted-foreground/50">&middot;</span>
+          <span className="truncate max-w-40" title={workspaceName}>
+            📁 {workspaceName}
+          </span>
+        </>
+      )}
       {isRunning && elapsed > 0 && (
         <>
           <span className="text-muted-foreground/50">&middot;</span>

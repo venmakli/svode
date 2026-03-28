@@ -4,6 +4,8 @@ mod error;
 mod files;
 mod workspace;
 
+use std::sync::Arc;
+
 pub use error::AppError;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -22,6 +24,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(files::FileWatcher::new())
         .manage(agent::AgentSessions::new())
+        .manage(Arc::new(files::BacklinkIndex::new()))
         .invoke_handler(tauri::generate_handler![
             commands::greet::greet,
             commands::files::list_entries,
@@ -30,6 +33,9 @@ pub fn run() {
             commands::files::write_entry,
             commands::files::delete_entry,
             commands::files::rename_entry,
+            commands::files::move_entry,
+            commands::files::get_backlinks,
+            commands::files::rebuild_backlinks,
             commands::files::watch_workspace,
             commands::files::unwatch_workspace,
             commands::workspace::get_app_settings,

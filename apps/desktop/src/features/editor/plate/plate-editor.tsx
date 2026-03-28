@@ -179,7 +179,7 @@ export function PlateDocumentEditor() {
 
     justSavedRef.current = true;
 
-    invoke("write_entry", {
+    invoke<{ new_path: string | null }>("write_entry", {
       workspace: workspacePath,
       path: activeDocument,
       content: markdown,
@@ -187,11 +187,25 @@ export function PlateDocumentEditor() {
       icon: icon,
       extra: meta?.extra ?? null,
     })
-      .then(() => {
+      .then((result) => {
         clearUnsaved(activeDocument);
-        if (editor) {
-          docCacheRef.current.set(activeDocument, editor.children);
+
+        if (result.new_path) {
+          // File was renamed — update caches and stores
+          docCacheRef.current.delete(activeDocument);
+          if (editor) {
+            docCacheRef.current.set(result.new_path, editor.children);
+          }
+          useLayoutStore.getState().openDocument(result.new_path);
+          if (activeWorkspaceId) {
+            useWorkspaceStore.getState().refreshTree(activeWorkspaceId);
+          }
+        } else {
+          if (editor) {
+            docCacheRef.current.set(activeDocument, editor.children);
+          }
         }
+
         toast.success(m.editor_save_success());
       })
       .catch((err) => {

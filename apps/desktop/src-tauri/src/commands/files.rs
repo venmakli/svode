@@ -1,9 +1,11 @@
 use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Arc;
 
 use tauri::{AppHandle, State};
 
 use crate::error::AppError;
-use crate::files::{entry, tree, Entry, FileWatcher, TreeNode};
+use crate::files::{entry, tree, BacklinkIndex, BacklinkInfo, Entry, FileWatcher, TreeNode, WriteResult};
 
 #[tauri::command]
 pub fn list_entries(workspace: String) -> Result<Vec<TreeNode>, AppError> {
@@ -32,7 +34,8 @@ pub fn write_entry(
     title: Option<String>,
     icon: Option<String>,
     extra: Option<HashMap<String, serde_yml::Value>>,
-) -> Result<(), AppError> {
+    backlink_index: State<'_, Arc<BacklinkIndex>>,
+) -> Result<WriteResult, AppError> {
     entry::write(
         &workspace,
         &path,
@@ -40,17 +43,65 @@ pub fn write_entry(
         title.as_deref(),
         icon.as_deref(),
         extra,
+        Some(&backlink_index),
     )
 }
 
 #[tauri::command]
-pub fn delete_entry(workspace: String, path: String) -> Result<(), AppError> {
-    entry::delete(&workspace, &path)
+pub fn delete_entry(
+    workspace: String,
+    path: String,
+    backlink_index: State<'_, Arc<BacklinkIndex>>,
+) -> Result<(), AppError> {
+    entry::delete(&workspace, &path, Some(&backlink_index))
 }
 
 #[tauri::command]
-pub fn rename_entry(workspace: String, from: String, to: String) -> Result<(), AppError> {
-    entry::rename(&workspace, &from, &to)
+pub fn rename_entry(
+    workspace: String,
+    from: String,
+    to: String,
+    backlink_index: State<'_, Arc<BacklinkIndex>>,
+) -> Result<(), AppError> {
+    entry::rename(&workspace, &from, &to)?;
+    let _ = backlink_index.update_links_on_rename(Path::new(&workspace), &from, &to);
+    let _ = backlink_index.update_file(Path::new(&workspace), &to);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn move_entry(
+    workspace: String,
+    from: String,
+    to_parent: String,
+    backlink_index: State<'_, Arc<BacklinkIndex>>,
+) -> Result<String, AppError> {
+    entry::move_entry(
+        Path::new(&workspace),
+        &from,
+        &to_parent,
+        Some(&backlink_index),
+    )
+}
+
+#[tauri::command]
+pub fn get_backlinks(
+    workspace: String,
+    target_path: String,
+    backlink_index: State<'_, Arc<BacklinkIndex>>,
+) -> Result<Vec<BacklinkInfo>, AppError> {
+    if !backlink_index.is_built() {
+        backlink_index.build(Path::new(&workspace))?;
+    }
+    Ok(backlink_index.get_backlinks(&target_path))
+}
+
+#[tauri::command]
+pub fn rebuild_backlinks(
+    workspace: String,
+    backlink_index: State<'_, Arc<BacklinkIndex>>,
+) -> Result<(), AppError> {
+    backlink_index.build(Path::new(&workspace))
 }
 
 #[tauri::command]
