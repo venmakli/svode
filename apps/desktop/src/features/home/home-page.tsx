@@ -1,8 +1,10 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import * as m from "@/paraglide/messages.js";
+import { open } from "@tauri-apps/plugin-dialog";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-react";
+import { Plus, FolderOpen } from "lucide-react";
 import { useAppVersion } from "@/hooks/use-app-version";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { ProjectList } from "./project-list";
@@ -21,6 +23,8 @@ export function HomePage() {
     loadProjects,
     openProject,
     createProject,
+    createDirectoryProject,
+    openProjectFolder,
     deleteProject,
     getLastActiveProjectId,
     explicitHome,
@@ -68,18 +72,43 @@ export function HomePage() {
   );
 
   const handleCreateProject = useCallback(
-    async (name: string, icon: string, description?: string) => {
+    async (
+      name: string,
+      icon: string,
+      description?: string,
+      variant?: string,
+      path?: string,
+    ) => {
       try {
-        const project = await createProject(name, icon, description);
+        let project;
+        if (variant === "directory" && path) {
+          project = await createDirectoryProject(name, icon, description, path);
+        } else {
+          project = await createProject(name, icon, description);
+        }
         setDialogOpen(false);
         await openProject(project.id);
         navigate({ to: "/workspace" });
       } catch (err) {
         console.error("Failed to create project:", err);
+        toast.error(m.toast_error());
       }
     },
-    [createProject, openProject, navigate],
+    [createProject, createDirectoryProject, openProject, navigate],
   );
+
+  const handleOpenProjectFolder = useCallback(async () => {
+    const selected = await open({ directory: true });
+    if (!selected) return;
+    try {
+      const project = await openProjectFolder(selected);
+      await openProject(project.id);
+      navigate({ to: "/workspace" });
+    } catch (err) {
+      console.error("Failed to open project folder:", err);
+      toast.error(m.home_open_project_error());
+    }
+  }, [openProjectFolder, openProject, navigate]);
 
   const handleDeleteProject = useCallback(
     async (id: string) => {
@@ -117,13 +146,16 @@ export function HomePage() {
           <EmptyState />
         )}
 
-        <Button
-          className="mt-8"
-          onClick={() => setDialogOpen(true)}
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          {m.home_create_project()}
-        </Button>
+        <div className="flex gap-3 mt-8">
+          <Button onClick={() => setDialogOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            {m.home_create_project()}
+          </Button>
+          <Button variant="outline" onClick={handleOpenProjectFolder}>
+            <FolderOpen className="mr-2 h-4 w-4" />
+            {m.home_open_project()}
+          </Button>
+        </div>
       </div>
 
       {/* Version at bottom-left */}

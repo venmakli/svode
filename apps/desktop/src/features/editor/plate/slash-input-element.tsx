@@ -15,6 +15,7 @@ import {
   Code2,
   LightbulbIcon,
   Table,
+  ChevronRight,
 } from "lucide-react";
 import { type TComboboxInputElement, KEYS } from "platejs";
 import { PlateElement } from "platejs/react";
@@ -142,6 +143,18 @@ function getSlashItems(): SlashItem[] {
         editor
           .getTransforms(TablePlugin)
           .insert.table({}, { select: true });
+      },
+    },
+    {
+      icon: <ChevronRight />,
+      keywords: ["toggle", "спойлер", "details", "collapsible"],
+      label: m.editor_slash_toggle(),
+      value: KEYS.toggle,
+      onSelect: (editor) => {
+        editor.tf.insertNodes({
+          type: KEYS.toggle,
+          children: [{ type: KEYS.p, children: [{ text: "" }] }],
+        });
       },
     },
   ];

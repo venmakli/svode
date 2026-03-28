@@ -119,9 +119,12 @@ pub struct WorkspaceConfig {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LocalConfig {
     #[serde(default)]
     pub agent: Option<serde_json::Value>,
+    #[serde(default)]
+    pub expanded_paths: Vec<String>,
 }
 
 // Combined view types for frontend

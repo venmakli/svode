@@ -388,6 +388,45 @@ pub fn open_project_folder(app: AppHandle, path: String) -> Result<Project, AppE
 }
 
 #[tauri::command]
+pub fn create_directory_project(
+    app: AppHandle,
+    name: String,
+    icon: String,
+    description: Option<String>,
+    path: String,
+) -> Result<Project, AppError> {
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| AppError::General(e.to_string()))?;
+
+    let project_path = Path::new(&path);
+
+    // Scaffold directory project (creates .combai/config.json)
+    let cfg = scaffold::scaffold_directory_project(
+        project_path,
+        &name,
+        description.as_deref().unwrap_or(""),
+        &icon,
+    )?;
+
+    // Register in projects.json with path
+    let id = ulid::Ulid::new().to_string().to_lowercase();
+    registry::add_directory_project(&config_dir, &id, &path)?;
+
+    Ok(Project {
+        id,
+        name: cfg.name,
+        icon: cfg.icon,
+        description: cfg.description,
+        variant: cfg.variant,
+        path: Some(path),
+        workspace_count: 0,
+        last_opened: None,
+    })
+}
+
+#[tauri::command]
 pub fn create_workspace_in_directory(
     app: AppHandle,
     project_id: String,

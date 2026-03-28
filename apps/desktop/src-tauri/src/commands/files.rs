@@ -6,6 +6,7 @@ use tauri::{AppHandle, State};
 
 use crate::error::AppError;
 use crate::files::{entry, tree, BacklinkIndex, BacklinkInfo, Entry, FileWatcher, TreeNode, WriteResult};
+use crate::workspace::config;
 
 #[tauri::command]
 pub fn list_entries(workspace: String) -> Result<Vec<TreeNode>, AppError> {
@@ -119,4 +120,43 @@ pub fn unwatch_workspace(
     watcher: State<'_, FileWatcher>,
 ) -> Result<(), AppError> {
     watcher.unwatch(&workspace)
+}
+
+#[tauri::command]
+pub fn nest_entry(
+    workspace: String,
+    path: String,
+    backlink_index: State<'_, Arc<BacklinkIndex>>,
+) -> Result<String, AppError> {
+    entry::nest_entry(
+        Path::new(&workspace),
+        &path,
+        Some(&backlink_index),
+    )
+}
+
+#[tauri::command]
+pub fn read_tree_order(workspace: String) -> Result<HashMap<String, Vec<String>>, AppError> {
+    Ok(tree::read_order(Path::new(&workspace)))
+}
+
+#[tauri::command]
+pub fn save_tree_order(
+    workspace: String,
+    order: HashMap<String, Vec<String>>,
+) -> Result<(), AppError> {
+    tree::write_order(Path::new(&workspace), &order)
+}
+
+#[tauri::command]
+pub fn get_expanded_paths(workspace: String) -> Result<Vec<String>, AppError> {
+    let local = config::read_local_config(Path::new(&workspace))?;
+    Ok(local.expanded_paths)
+}
+
+#[tauri::command]
+pub fn save_expanded_paths(workspace: String, paths: Vec<String>) -> Result<(), AppError> {
+    let mut local = config::read_local_config(Path::new(&workspace))?;
+    local.expanded_paths = paths;
+    config::write_local_config(Path::new(&workspace), &local)
 }

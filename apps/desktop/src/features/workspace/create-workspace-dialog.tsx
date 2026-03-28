@@ -8,53 +8,106 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { FolderOpen } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace";
 
+const PRESET_ICONS = [
+  "\u{1F4C2}", // open folder
+  "\u{2699}\uFE0F", // gear
+  "\u{1F4BB}", // laptop
+  "\u{1F4DD}", // memo
+  "\u{1F3A8}", // palette
+  "\u{1F52C}", // microscope
+  "\u{1F680}", // rocket
+  "\u{1F4A1}", // lightbulb
+];
+
 interface CreateWorkspaceDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+}
+
+/** Simple slug preview (does not need to match Rust slugify exactly). */
+function slugPreview(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9а-яё-]/g, "")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 60) || "untitled";
 }
 
 export function CreateWorkspaceDialog({
   open: isOpen,
   onOpenChange,
 }: CreateWorkspaceDialogProps) {
-  const { activeProjectId, createWorkspace } = useWorkspaceStore();
+  const {
+    activeProjectId,
+    activeProjectVariant,
+    activeProjectPath,
+    createWorkspace,
+    createWorkspaceInDirectory,
+  } = useWorkspaceStore();
+
   const [name, setName] = useState("");
-  const [parentDir, setParentDir] = useState("");
+  const [icon, setIcon] = useState(PRESET_ICONS[0]);
+  const [folderPath, setFolderPath] = useState("");
+
+  const isDirectory = activeProjectVariant === "directory";
+
+  function resetForm() {
+    setName("");
+    setIcon(PRESET_ICONS[0]);
+    setFolderPath("");
+  }
 
   async function handleBrowse() {
     const selected = await open({ directory: true });
     if (selected) {
-      setParentDir(selected);
+      setFolderPath(selected);
     }
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim() || !parentDir.trim() || !activeProjectId) return;
-    const fullPath = `${parentDir.replace(/\/+$/, "")}/${name.trim()}`;
+    if (!name.trim() || !activeProjectId) return;
+
     try {
-      await createWorkspace(activeProjectId, name.trim(), fullPath);
+      if (isDirectory) {
+        await createWorkspaceInDirectory(activeProjectId, name.trim(), icon);
+      } else {
+        if (!folderPath.trim()) return;
+        await createWorkspace(activeProjectId, name.trim(), folderPath.trim());
+      }
       onOpenChange(false);
-      setName("");
-      setParentDir("");
+      resetForm();
     } catch (err) {
       console.error("Failed to create workspace:", err);
     }
   }
 
   function handleOpenChange(value: boolean) {
-    if (!value) {
-      setName("");
-      setParentDir("");
-    }
+    if (!value) resetForm();
     onOpenChange(value);
   }
+
+  const isValid = name.trim() !== "" && (isDirectory || folderPath.trim() !== "");
+
+  // Build slug preview path for directory mode
+  const slug = slugPreview(name);
+  const projectFolderName = activeProjectPath
+    ? activeProjectPath.split("/").pop() ?? ""
+    : "";
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
@@ -65,47 +118,82 @@ export function CreateWorkspaceDialog({
           </DialogHeader>
 
           <div className="grid gap-4 py-4">
+            {/* Name + icon */}
             <div className="grid gap-2">
               <Label htmlFor="workspace-name">
                 {m.workspace_name_label()}
               </Label>
-              <Input
-                id="workspace-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder={m.workspace_name_placeholder()}
-                autoFocus
-              />
+              <div className="flex gap-2">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="w-10 h-9 px-0 text-lg shrink-0"
+                      type="button"
+                    >
+                      {icon}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="start"
+                    className="grid grid-cols-4 gap-0.5 p-1.5 min-w-0 w-auto"
+                  >
+                    {PRESET_ICONS.map((emoji) => (
+                      <DropdownMenuItem
+                        key={emoji}
+                        className="text-lg p-1.5 justify-center cursor-pointer"
+                        onClick={() => setIcon(emoji)}
+                      >
+                        {emoji}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Input
+                  id="workspace-name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder={m.workspace_name_placeholder()}
+                  autoFocus
+                />
+              </div>
             </div>
 
-            <div className="grid gap-2">
-              <Label htmlFor="workspace-path">
-                {m.workspace_path_label()}
-              </Label>
-              <div className="flex gap-2">
-                <Input
-                  id="workspace-path"
-                  value={parentDir}
-                  onChange={(e) => setParentDir(e.target.value)}
-                  placeholder={m.workspace_path_placeholder()}
-                  className="flex-1"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  onClick={handleBrowse}
-                >
-                  <FolderOpen className="h-4 w-4" />
-                  <span className="sr-only">{m.workspace_browse()}</span>
-                </Button>
+            {/* Lightweight: folder picker for existing directory */}
+            {!isDirectory && (
+              <div className="grid gap-2">
+                <Label htmlFor="workspace-path">
+                  {m.workspace_path_label()}
+                </Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="workspace-path"
+                    value={folderPath}
+                    onChange={(e) => setFolderPath(e.target.value)}
+                    placeholder={m.workspace_path_placeholder()}
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={handleBrowse}
+                  >
+                    <FolderOpen className="h-4 w-4" />
+                    <span className="sr-only">{m.workspace_browse()}</span>
+                  </Button>
+                </div>
               </div>
-              {parentDir && name.trim() && (
-                <p className="text-xs text-muted-foreground truncate">
-                  {parentDir.replace(/\/+$/, "")}/{name.trim()}
-                </p>
-              )}
-            </div>
+            )}
+
+            {/* Directory: slug preview */}
+            {isDirectory && name.trim() && (
+              <p className="text-xs text-muted-foreground">
+                {m.workspace_slug_preview({
+                  path: `${projectFolderName}/${slug}/`,
+                })}
+              </p>
+            )}
           </div>
 
           <DialogFooter>
@@ -116,7 +204,7 @@ export function CreateWorkspaceDialog({
             >
               {m.project_cancel()}
             </Button>
-            <Button type="submit" disabled={!name.trim() || !parentDir.trim()}>
+            <Button type="submit" disabled={!isValid}>
               {m.project_create()}
             </Button>
           </DialogFooter>

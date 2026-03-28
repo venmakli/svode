@@ -3,6 +3,8 @@ export interface Project {
   name: string;
   icon: string;
   description: string;
+  variant?: string | null;
+  path?: string | null;
   workspaceCount: number;
   lastOpened: string | null;
 }
@@ -16,6 +18,8 @@ export interface Workspace {
 }
 
 export interface ProjectConfig {
+  type?: string;
+  variant?: string;
   name: string;
   description: string;
   icon: string;

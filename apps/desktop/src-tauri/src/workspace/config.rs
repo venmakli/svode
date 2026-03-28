@@ -34,3 +34,12 @@ pub fn read_local_config(path: &Path) -> Result<LocalConfig, AppError> {
     let data = std::fs::read_to_string(&config_path)?;
     Ok(serde_json::from_str(&data)?)
 }
+
+/// Write local config to {workspace_path}/.combai/local.json.
+pub fn write_local_config(path: &Path, local: &LocalConfig) -> Result<(), AppError> {
+    let dir = path.join(".combai");
+    std::fs::create_dir_all(&dir)?;
+    let data = serde_json::to_string_pretty(local)?;
+    std::fs::write(dir.join("local.json"), data)?;
+    Ok(())
+}

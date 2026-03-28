@@ -24,6 +24,7 @@ import {
 import { Editor, EditorContainer } from "@/components/ui/editor";
 import { FixedToolbar } from "@/components/ui/fixed-toolbar";
 import { FixedToolbarButtons } from "@/components/ui/fixed-toolbar-buttons";
+import { TocSidebar } from "../toc-sidebar";
 import * as m from "@/paraglide/messages.js";
 
 interface EntryMeta {
@@ -290,7 +291,7 @@ export function PlateDocumentEditor() {
             <FixedToolbarButtons />
           </FixedToolbar>
 
-          <EditorContainer className="flex-1">
+          <EditorContainer className="flex-1 relative">
             <div className="mx-auto px-16 pt-8 sm:px-[max(64px,calc(50%-350px))]">
               <TitleZone
                 title={title}
@@ -310,6 +311,7 @@ export function PlateDocumentEditor() {
               variant="default"
               placeholder={m.editor_placeholder_body()}
             />
+            <TocSidebar />
           </EditorContainer>
         </div>
       </Plate>

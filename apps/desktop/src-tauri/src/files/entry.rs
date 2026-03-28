@@ -404,6 +404,71 @@ pub fn move_entry(
     Ok(new_rel)
 }
 
+/// Nest an entry: convert `foo.md` → `foo/readme.md`, making it a category.
+/// Returns the new relative path (e.g. "foo/readme.md").
+pub fn nest_entry(
+    workspace: &Path,
+    path: &str,
+    backlink_index: Option<&BacklinkIndex>,
+) -> Result<String, AppError> {
+    let abs_path = workspace.join(path);
+
+    if !abs_path.exists() {
+        return Err(AppError::FileNotFound(path.to_string()));
+    }
+
+    // Only works on .md files, not directories
+    if abs_path.is_dir() {
+        return Err(AppError::General(
+            "Path is already a directory".to_string(),
+        ));
+    }
+
+    // Already a readme.md inside a folder — nothing to do
+    let filename = abs_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    if filename.eq_ignore_ascii_case("readme.md") {
+        return Ok(path.to_string());
+    }
+
+    // Determine the folder name: foo.md → foo/
+    let stem = abs_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| AppError::General("invalid filename".to_string()))?;
+
+    let parent = abs_path.parent().unwrap_or(workspace);
+    let folder = parent.join(stem);
+
+    if folder.exists() {
+        return Err(AppError::FileAlreadyExists(
+            folder.to_string_lossy().to_string(),
+        ));
+    }
+
+    // Create the folder and move the file into it as readme.md
+    fs::create_dir_all(&folder)?;
+    let new_abs = folder.join("readme.md");
+    fs::rename(&abs_path, &new_abs)?;
+
+    // Compute new relative path
+    let new_rel = new_abs
+        .strip_prefix(workspace)
+        .unwrap_or(&new_abs)
+        .to_string_lossy()
+        .to_string();
+
+    // Update backlinks
+    if let Some(index) = backlink_index {
+        let _ = index.update_links_on_rename(workspace, path, &new_rel);
+        let _ = index.update_file(workspace, &new_rel);
+    }
+
+    Ok(new_rel)
+}
+
 /// Delete an entry from disk. Removes from backlink index if provided.
 pub fn delete(
     workspace: &str,

@@ -20,8 +20,12 @@ import {
   NumberedListPlugin,
   TaskListPlugin,
 } from "@platejs/list-classic/react";
-import { MarkdownPlugin } from "@platejs/markdown";
+import { MarkdownPlugin, remarkMdx } from "@platejs/markdown";
 import { BlockMenuPlugin, BlockSelectionPlugin } from "@platejs/selection/react";
+import {
+  MentionPlugin,
+  MentionInputPlugin,
+} from "@platejs/mention/react";
 import { SlashInputPlugin, SlashPlugin } from "@platejs/slash-command/react";
 import {
   TablePlugin,
@@ -56,6 +60,7 @@ import { TocElement } from "@/components/ui/toc-node";
 import { ToggleElement } from "@/components/ui/toggle-node";
 import { BlockDraggable } from "@/components/ui/block-draggable";
 import { SlashInputElement } from "./slash-input-element";
+import { DocLinkInputElement } from "../doc-link-input-element";
 
 export function getPlugins() {
   return [
@@ -138,12 +143,47 @@ export function getPlugins() {
     // Markdown (serialize/deserialize)
     MarkdownPlugin.configure({
       options: {
-        remarkPlugins: [remarkGfm],
+        remarkPlugins: [remarkGfm, remarkMdx],
+        rules: {
+          // Toggle → <Toggle> MDX element
+          [KEYS.toggle]: {
+            serialize: (node: any) => ({
+              type: "mdxJsxFlowElement",
+              name: "Toggle",
+              attributes: [],
+              children: node.children?.map((child: any) => ({
+                type: "paragraph",
+                children: [{ type: "text", value: child.text ?? "" }],
+              })) ?? [],
+            }),
+            deserialize: (mdastNode: any) => ({
+              type: KEYS.toggle,
+              children: mdastNode.children?.map((child: any) => ({
+                type: "p",
+                children: [
+                  {
+                    text:
+                      child.children?.[0]?.value ?? child.value ?? "",
+                  },
+                ],
+              })) ?? [{ type: "p", children: [{ text: "" }] }],
+            }),
+          },
+        },
       },
     }),
 
     // Slash commands
     SlashPlugin,
     SlashInputPlugin.withComponent(SlashInputElement),
+
+    // Document links via [[ trigger
+    MentionPlugin.configure({
+      options: {
+        trigger: "[[",
+        triggerPreviousCharPattern: /^\s?$/,
+      },
+    }),
+    MentionInputPlugin.withComponent(DocLinkInputElement),
   ];
 }

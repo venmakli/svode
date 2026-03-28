@@ -49,6 +49,7 @@ import { useWorkspaceStore } from "@/stores/workspace";
 import { useLayoutStore } from "@/stores/layout";
 import { CreateWorkspaceDialog } from "./create-workspace-dialog";
 import { FileTreeItem } from "./file-tree-item";
+import { SortableFileTree } from "./sortable-file-tree";
 
 export function NavWorkspaces() {
   const {
@@ -204,11 +205,20 @@ export function NavWorkspaces() {
                       </DropdownMenuContent>
                     </DropdownMenu>
                     <CollapsibleContent>
-                      <SidebarMenuSub>
-                        {tree.map((node) => (
-                          <FileTreeItem key={node.path} node={node} />
-                        ))}
-                      </SidebarMenuSub>
+                      <SortableFileTree
+                        workspaceId={ws.id}
+                        tree={tree}
+                      >
+                        <SidebarMenuSub>
+                          {tree.map((node) => (
+                            <FileTreeItem
+                              key={node.path}
+                              node={node}
+                              workspaceId={ws.id}
+                            />
+                          ))}
+                        </SidebarMenuSub>
+                      </SortableFileTree>
                     </CollapsibleContent>
                   </SidebarMenuItem>
                 </Collapsible>
