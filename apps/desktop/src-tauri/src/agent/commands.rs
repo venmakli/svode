@@ -1,11 +1,36 @@
 use std::path::Path;
+use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, State};
 
-use crate::agent::claude;
-use crate::agent::types::{AgentConfig, AgentEvent, AvailableAgent};
+use crate::agent::claude::{self, ClaudeCodeExecutor};
+use crate::agent::executor::AgentExecutor;
+use crate::agent::types::{
+    load_workspace_agent_config, AgentConfig, AgentEvent, AvailableAgent, FileContext,
+};
 use crate::agent::AgentSessions;
 use crate::error::AppError;
+
+/// Default timeout for agent execution: 10 minutes.
+const DEFAULT_TIMEOUT_SECS: u64 = 600;
+
+/// Build the final message string, prepending file context if provided.
+fn build_message_with_context(message: &str, context: Option<&[FileContext]>) -> String {
+    match context {
+        Some(files) if !files.is_empty() => {
+            let mut parts = Vec::with_capacity(files.len() + 1);
+            for file in files {
+                parts.push(format!(
+                    "[Context: {}]\n{}\n[End context]",
+                    file.path, file.content
+                ));
+            }
+            parts.push(message.to_string());
+            parts.join("\n\n")
+        }
+        _ => message.to_string(),
+    }
+}
 
 /// Send a message to the agent. Spawns a new CLI process for each message.
 /// The session_id groups messages logically but each call is a separate CLI invocation.
@@ -17,6 +42,7 @@ pub async fn agent_send(
     session_id: String,
     message: String,
     config: Option<AgentConfig>,
+    context: Option<Vec<FileContext>>,
 ) -> Result<(), AppError> {
     let workspace_dir = Path::new(&workspace_path);
     if !workspace_dir.exists() || !workspace_dir.is_dir() {
@@ -31,39 +57,82 @@ pub async fn agent_send(
 
     let agent_config = config.unwrap_or_default();
 
-    // Spawn the CLI process (no message arg — message sent via stdin)
-    let mut child = claude::spawn_cli(workspace_dir, &agent_config)?;
+    // Load workspace-level agent config (best-effort)
+    let ws_config = load_workspace_agent_config(workspace_dir);
+
+    // Resolve CLI path: workspace local.json override → PATH detection
+    let executor = ClaudeCodeExecutor;
+    let cli_path_override = ws_config.cli_paths.get(executor.name()).cloned();
+
+    // Spawn the CLI process
+    let mut process = executor.spawn(
+        workspace_dir,
+        &agent_config,
+        cli_path_override.as_deref(),
+    )?;
 
     // Take stdout for streaming
-    let stdout = child.stdout.take().ok_or_else(|| {
+    let stdout = process.child.stdout.take().ok_or_else(|| {
         AppError::AgentSpawnFailed("Failed to capture CLI stdout".to_string())
     })?;
 
     // Take stdin for sending messages and permission responses
-    let mut stdin = child.stdin.take().ok_or_else(|| {
+    let mut stdin = process.stdin.take().ok_or_else(|| {
         AppError::AgentSpawnFailed("Failed to capture CLI stdin".to_string())
     })?;
 
+    // Build message with context
+    let full_message = build_message_with_context(&message, context.as_deref());
+
     // Send the user message through stdin
-    claude::send_user_message(&mut stdin, &message).await?;
+    executor.send_message(&mut stdin, &full_message).await?;
 
     // Store the process with stdin handle
-    let process = crate::agent::AgentProcess {
-        child,
-        session_id: session_id.clone(),
-        workspace_dir: workspace_path.clone(),
-        stdin: Some(stdin),
-    };
+    process.session_id = session_id.clone();
+    process.stdin = Some(stdin);
     sessions.insert(session_id.clone(), process).await;
 
     // Create a channel for streaming events
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
 
     let sid = session_id.clone();
+    let timeout_secs = agent_config.max_timeout.unwrap_or(DEFAULT_TIMEOUT_SECS);
 
-    // Spawn a task to read CLI output and send events through the channel
+    // Spawn a task to read CLI output and send events through the channel, with timeout
+    let sessions_for_timeout = sessions.inner().clone();
+    let sid_for_timeout = session_id.clone();
     tokio::spawn(async move {
-        claude::stream_stdout(stdout, &sid, tx).await;
+        let stream_future = claude::stream_stdout(stdout, &sid, tx.clone());
+        let result = tokio::time::timeout(
+            Duration::from_secs(timeout_secs),
+            stream_future,
+        )
+        .await;
+
+        if result.is_err() {
+            // Timeout — kill the process and emit error
+            tracing::error!(
+                "Agent timeout after {timeout_secs}s for session {sid_for_timeout}"
+            );
+            let error_event = AgentEvent::Error {
+                session_id: sid_for_timeout.clone(),
+                message: format!("Agent timeout after {} minutes", timeout_secs / 60),
+            };
+            let _ = tx.send(error_event);
+
+            // Kill the process
+            if let Some(mut process) = sessions_for_timeout.remove(&sid_for_timeout).await
+            {
+                let _ = process.child.kill().await;
+            }
+
+            // Emit done so frontend knows the stream ended
+            let done_event = AgentEvent::Done {
+                session_id: sid_for_timeout,
+                message_id: String::new(),
+            };
+            let _ = tx.send(done_event);
+        }
     });
 
     // Spawn a task to forward events from the channel to Tauri events
@@ -144,21 +213,26 @@ pub async fn agent_respond_permission(
     tracing::info!(
         "Responding to permission request: session={session_id} request={request_id} behavior={behavior}"
     );
-    let result = sessions.with_stdin(&session_id, |stdin| {
-        let request_id = request_id.clone();
-        let behavior = behavior.clone();
-        let updated_input = updated_input.clone();
-        let message = message.clone();
-        Box::pin(async move {
-            claude::send_permission_response(
-                stdin,
-                &request_id,
-                &behavior,
-                updated_input.as_ref(),
-                message.as_deref(),
-            ).await
+    let executor = ClaudeCodeExecutor;
+    let result = sessions
+        .with_stdin(&session_id, |stdin| {
+            let request_id = request_id.clone();
+            let behavior = behavior.clone();
+            let updated_input = updated_input.clone();
+            let message = message.clone();
+            Box::pin(async move {
+                executor
+                    .handle_permission(
+                        stdin,
+                        &request_id,
+                        &behavior,
+                        updated_input,
+                        message,
+                    )
+                    .await
+            })
         })
-    }).await;
+        .await;
     if let Err(ref e) = result {
         tracing::error!("Failed to respond to permission: {e}");
     }
@@ -170,9 +244,10 @@ pub async fn agent_respond_permission(
 pub fn agent_list_available() -> Result<Vec<AvailableAgent>, AppError> {
     let mut agents = Vec::new();
 
-    if let Some(path) = claude::detect_cli() {
+    let executor = ClaudeCodeExecutor;
+    if let Some(path) = executor.detect() {
         agents.push(AvailableAgent {
-            name: "claude".to_string(),
+            name: executor.name().to_string(),
             path,
         });
     }

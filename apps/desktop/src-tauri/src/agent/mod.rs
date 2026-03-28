@@ -1,5 +1,6 @@
 pub mod claude;
 pub mod commands;
+pub mod executor;
 pub mod types;
 
 use std::collections::HashMap;
@@ -9,6 +10,9 @@ use tokio::process::Child;
 use tokio::sync::Mutex;
 
 use crate::error::AppError;
+
+pub use claude::ClaudeCodeExecutor;
+pub use executor::AgentExecutor;
 
 /// Handle for a running agent CLI process.
 pub struct AgentProcess {

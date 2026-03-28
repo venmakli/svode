@@ -32,25 +32,76 @@ fn resolve(workspace: &str, rel: &str) -> PathBuf {
     Path::new(workspace).join(rel)
 }
 
+/// Transliterate Cyrillic characters to Latin equivalents.
+fn transliterate(input: &str) -> String {
+    let mut result = String::with_capacity(input.len() * 2);
+    for c in input.chars() {
+        let mapped = match c {
+            'а' | 'А' => "a",
+            'б' | 'Б' => "b",
+            'в' | 'В' => "v",
+            'г' | 'Г' => "g",
+            'д' | 'Д' => "d",
+            'е' | 'Е' => "e",
+            'ё' | 'Ё' => "yo",
+            'ж' | 'Ж' => "zh",
+            'з' | 'З' => "z",
+            'и' | 'И' => "i",
+            'й' | 'Й' => "j",
+            'к' | 'К' => "k",
+            'л' | 'Л' => "l",
+            'м' | 'М' => "m",
+            'н' | 'Н' => "n",
+            'о' | 'О' => "o",
+            'п' | 'П' => "p",
+            'р' | 'Р' => "r",
+            'с' | 'С' => "s",
+            'т' | 'Т' => "t",
+            'у' | 'У' => "u",
+            'ф' | 'Ф' => "f",
+            'х' | 'Х' => "h",
+            'ц' | 'Ц' => "ts",
+            'ч' | 'Ч' => "ch",
+            'ш' | 'Ш' => "sh",
+            'щ' | 'Щ' => "shch",
+            'ъ' | 'Ъ' => "",
+            'ы' | 'Ы' => "y",
+            'ь' | 'Ь' => "",
+            'э' | 'Э' => "e",
+            'ю' | 'Ю' => "yu",
+            'я' | 'Я' => "ya",
+            _ => {
+                result.push(c);
+                continue;
+            }
+        };
+        result.push_str(mapped);
+    }
+    result
+}
+
+const MAX_SLUG_LENGTH: usize = 60;
+
 /// Generate a URL-safe slug from a title.
-fn slugify(title: &str) -> String {
-    let slug: String = title
+pub(crate) fn slugify(title: &str) -> String {
+    // Transliterate Cyrillic → Latin, then lowercase
+    let transliterated = transliterate(title);
+    let slug: String = transliterated
         .to_lowercase()
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() {
                 c
-            } else if c == ' ' || c == '_' {
+            } else if c == ' ' || c == '_' || c == '-' {
                 '-'
             } else {
-                // skip non-ascii non-alphanumeric
                 '\0'
             }
         })
         .filter(|&c| c != '\0')
         .collect();
 
-    // collapse multiple hyphens
+    // Collapse multiple hyphens
     let mut result = String::with_capacity(slug.len());
     let mut prev_hyphen = false;
     for c in slug.chars() {
@@ -64,7 +115,23 @@ fn slugify(title: &str) -> String {
             prev_hyphen = false;
         }
     }
-    result.trim_matches('-').to_string()
+    let trimmed = result.trim_matches('-');
+
+    // Fallback for empty slugs (e.g. CJK-only input)
+    if trimmed.is_empty() {
+        return "untitled".to_string();
+    }
+
+    // Truncate to MAX_SLUG_LENGTH on word boundary
+    if trimmed.len() <= MAX_SLUG_LENGTH {
+        return trimmed.to_string();
+    }
+
+    let truncated = &trimmed[..MAX_SLUG_LENGTH];
+    match truncated.rfind('-') {
+        Some(pos) => truncated[..pos].to_string(),
+        None => truncated.to_string(),
+    }
 }
 
 /// Current UTC timestamp in RFC 3339 format.
@@ -80,22 +147,39 @@ pub fn create(
 ) -> Result<Entry, AppError> {
     let id = ulid::Ulid::new().to_string().to_lowercase();
     let slug = slugify(title);
-    let filename = format!("{slug}.md");
 
-    let rel_path = match parent_path {
-        Some(parent) => format!("{parent}/{filename}"),
-        None => filename,
+    // Find a non-colliding filename: slug.md, slug-1.md, slug-2.md, ...
+    let (rel_path, abs_path) = {
+        let make_rel = |name: &str| match parent_path {
+            Some(parent) => format!("{parent}/{name}.md"),
+            None => format!("{name}.md"),
+        };
+
+        let base_rel = make_rel(&slug);
+        let base_abs = resolve(workspace, &base_rel);
+
+        if !base_abs.exists() {
+            (base_rel, base_abs)
+        } else {
+            let mut found = None;
+            for i in 1..=100 {
+                let candidate = format!("{slug}-{i}");
+                let rel = make_rel(&candidate);
+                let abs = resolve(workspace, &rel);
+                if !abs.exists() {
+                    found = Some((rel, abs));
+                    break;
+                }
+            }
+            found.ok_or_else(|| {
+                AppError::FileAlreadyExists(make_rel(&slug))
+            })?
+        }
     };
-
-    let abs_path = resolve(workspace, &rel_path);
 
     // Ensure parent directory exists
     if let Some(parent_dir) = abs_path.parent() {
         fs::create_dir_all(parent_dir)?;
-    }
-
-    if abs_path.exists() {
-        return Err(AppError::FileAlreadyExists(rel_path));
     }
 
     let now = now_rfc3339();
@@ -222,12 +306,86 @@ pub fn rename(workspace: &str, from: &str, to: &str) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
-    fn test_slugify() {
+    fn test_slugify_basic() {
         assert_eq!(slugify("Hello World"), "hello-world");
         assert_eq!(slugify("My Cool Page!"), "my-cool-page");
         assert_eq!(slugify("  Spaced  Out  "), "spaced-out");
         assert_eq!(slugify("CamelCase"), "camelcase");
+    }
+
+    #[test]
+    fn test_slugify_cyrillic() {
+        assert_eq!(slugify("Архитектура"), "arhitektura");
+        assert_eq!(slugify("Привет мир"), "privet-mir");
+        assert_eq!(slugify("Ёжик в тумане"), "yozhik-v-tumane");
+        assert_eq!(slugify("Щука"), "shchuka");
+    }
+
+    #[test]
+    fn test_slugify_mixed() {
+        assert_eq!(slugify("My Документ"), "my-dokument");
+        assert_eq!(slugify("Stage 1 Обзор"), "stage-1-obzor");
+    }
+
+    #[test]
+    fn test_slugify_empty_and_fallback() {
+        assert_eq!(slugify(""), "untitled");
+        assert_eq!(slugify("!!!"), "untitled");
+        // CJK characters are not transliterated → fallback
+        assert_eq!(slugify("你好世界"), "untitled");
+    }
+
+    #[test]
+    fn test_slugify_max_length() {
+        // 70-char slug should be truncated at word boundary
+        let long_title = "this is a very long title that should be truncated at a word boundary somewhere";
+        let slug = slugify(long_title);
+        assert!(slug.len() <= 60);
+        assert!(!slug.ends_with('-'));
+        assert_eq!(
+            slug,
+            "this-is-a-very-long-title-that-should-be-truncated-at-a"
+        );
+    }
+
+    #[test]
+    fn test_slugify_max_length_no_hyphen() {
+        // A single very long word with no hyphens → hard truncate at 60
+        let long_word = "a".repeat(80);
+        let slug = slugify(&long_word);
+        assert_eq!(slug.len(), 60);
+    }
+
+    #[test]
+    fn test_create_collision_suffix() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().to_str().unwrap();
+
+        // Create first entry
+        let e1 = create(ws, None, "Test Doc").unwrap();
+        assert_eq!(e1.path, "test-doc.md");
+
+        // Create second with same title → should get -1
+        let e2 = create(ws, None, "Test Doc").unwrap();
+        assert_eq!(e2.path, "test-doc-1.md");
+
+        // Third → -2
+        let e3 = create(ws, None, "Test Doc").unwrap();
+        assert_eq!(e3.path, "test-doc-2.md");
+    }
+
+    #[test]
+    fn test_create_collision_with_parent() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().to_str().unwrap();
+
+        let e1 = create(ws, Some("docs"), "readme").unwrap();
+        assert_eq!(e1.path, "docs/readme.md");
+
+        let e2 = create(ws, Some("docs"), "readme").unwrap();
+        assert_eq!(e2.path, "docs/readme-1.md");
     }
 }

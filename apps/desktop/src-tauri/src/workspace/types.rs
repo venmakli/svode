@@ -66,11 +66,17 @@ impl Default for ProjectRegistry {
 pub struct ProjectRef {
     pub id: String,
     pub last_opened: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectConfig {
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub type_: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -101,6 +107,8 @@ pub struct ProjectDefaults {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceConfig {
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub type_: Option<String>,
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -125,6 +133,10 @@ pub struct Project {
     pub name: String,
     pub icon: String,
     pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     pub workspace_count: usize,
     pub last_opened: Option<String>,
 }

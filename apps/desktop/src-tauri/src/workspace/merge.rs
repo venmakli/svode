@@ -4,6 +4,7 @@ use super::types::{ProjectDefaults, WorkspaceConfig};
 /// Currently only merges the `agent` field.
 pub fn merge_config(defaults: &ProjectDefaults, ws_config: &WorkspaceConfig) -> WorkspaceConfig {
     WorkspaceConfig {
+        type_: ws_config.type_.clone(),
         name: ws_config.name.clone(),
         description: ws_config.description.clone(),
         icon: ws_config.icon.clone(),

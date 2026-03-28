@@ -1,15 +1,87 @@
 use std::path::Path;
 use std::process::Stdio;
 
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-use tokio::io::BufReader;
-use tokio::process::{Child, Command};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::Command;
 
+use crate::agent::executor::AgentExecutor;
 use crate::agent::types::{AgentConfig, AgentEvent};
+use crate::agent::AgentProcess;
 use crate::error::AppError;
 
+/// Claude Code CLI executor.
+pub struct ClaudeCodeExecutor;
+
+impl AgentExecutor for ClaudeCodeExecutor {
+    fn spawn(
+        &self,
+        workspace_dir: &Path,
+        config: &AgentConfig,
+        cli_path: Option<&Path>,
+    ) -> Result<AgentProcess, AppError> {
+        let resolved_path = match cli_path {
+            Some(p) => p.to_string_lossy().to_string(),
+            None => detect_cli().ok_or_else(|| {
+                AppError::AgentCliNotFound("claude".to_string())
+            })?,
+        };
+
+        let mut cmd = build_command(workspace_dir, config, &resolved_path);
+        let mut child = cmd.spawn().map_err(|e| {
+            AppError::AgentSpawnFailed(e.to_string())
+        })?;
+
+        let stdin = child.stdin.take();
+
+        Ok(AgentProcess {
+            child,
+            session_id: String::new(),
+            workspace_dir: workspace_dir.to_string_lossy().to_string(),
+            stdin,
+        })
+    }
+
+    fn parse_line(&self, raw: &str, session_id: &str) -> Vec<AgentEvent> {
+        parse_jsonl_line(raw, session_id)
+    }
+
+    async fn handle_permission(
+        &self,
+        stdin: &mut tokio::process::ChildStdin,
+        request_id: &str,
+        behavior: &str,
+        updated_input: Option<serde_json::Value>,
+        message: Option<String>,
+    ) -> Result<(), AppError> {
+        send_permission_response(
+            stdin,
+            request_id,
+            behavior,
+            updated_input.as_ref(),
+            message.as_deref(),
+        )
+        .await
+    }
+
+    async fn send_message(
+        &self,
+        stdin: &mut tokio::process::ChildStdin,
+        message: &str,
+    ) -> Result<(), AppError> {
+        send_user_message(stdin, message).await
+    }
+
+    fn name(&self) -> &str {
+        "claude"
+    }
+
+    fn detect(&self) -> Option<String> {
+        detect_cli()
+    }
+}
+
 /// Detect the `claude` CLI binary. Checks PATH first, then common install locations.
-pub fn detect_cli() -> Option<String> {
+fn detect_cli() -> Option<String> {
     if let Ok(p) = which::which("claude") {
         return Some(p.to_string_lossy().to_string());
     }
@@ -32,14 +104,8 @@ pub fn detect_cli() -> Option<String> {
 }
 
 /// Build the CLI command with appropriate flags.
-fn build_command(
-    workspace_dir: &Path,
-    config: &AgentConfig,
-) -> Result<Command, AppError> {
-    let cli_path = detect_cli().ok_or_else(|| {
-        AppError::AgentCliNotFound("claude".to_string())
-    })?;
-    let mut cmd = Command::new(&cli_path);
+fn build_command(workspace_dir: &Path, config: &AgentConfig, cli_path: &str) -> Command {
+    let mut cmd = Command::new(cli_path);
     cmd.arg("--print")
         .arg("--verbose")
         .arg("--output-format")
@@ -63,37 +129,15 @@ fn build_command(
 
     if let Some(ref allowed_tools) = config.allowed_tools {
         if !allowed_tools.is_empty() {
-            cmd.arg("--allowedTools")
-                .arg(allowed_tools.join(","));
+            cmd.arg("--allowedTools").arg(allowed_tools.join(","));
         }
     }
 
-    Ok(cmd)
-}
-
-/// Spawn the Claude CLI process and return the child handle.
-pub fn spawn_cli(
-    workspace_dir: &Path,
-    config: &AgentConfig,
-) -> Result<Child, AppError> {
-    let mut cmd = build_command(workspace_dir, config)?;
-    let child = cmd.spawn().map_err(|e| {
-        AppError::AgentSpawnFailed(e.to_string())
-    })?;
-    Ok(child)
+    cmd
 }
 
 /// Parse a single JSONL line from Claude Code `--include-partial-messages` output.
-///
-/// With `--include-partial-messages`, Claude Code emits real streaming events:
-/// - `stream_event` with `event.type`:
-///   - `content_block_delta` → `delta.type: "text_delta"` (real text deltas)
-///   - `content_block_start` → tool_use blocks
-///   - `message_start`, `message_delta`, `message_stop`, `content_block_stop`
-/// - `assistant` → final message snapshot (ignore — we already streamed deltas)
-/// - `result` → done/error
-/// - `system`, `rate_limit_event` → ignore
-pub fn parse_jsonl_line(line: &str, session_id: &str) -> Vec<AgentEvent> {
+fn parse_jsonl_line(line: &str, session_id: &str) -> Vec<AgentEvent> {
     let line = line.trim();
     if line.is_empty() {
         return vec![];
@@ -108,13 +152,14 @@ pub fn parse_jsonl_line(line: &str, session_id: &str) -> Vec<AgentEvent> {
     };
 
     let sid = session_id.to_string();
-    let top_type = parsed.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    let top_type = parsed
+        .get("type")
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
 
     match top_type {
-        // Real streaming events from --include-partial-messages
         "stream_event" => parse_stream_event(&parsed, &sid),
 
-        // Final result (done / error)
         "result" => {
             let subtype = parsed
                 .get("subtype")
@@ -146,9 +191,9 @@ pub fn parse_jsonl_line(line: &str, session_id: &str) -> Vec<AgentEvent> {
             }
         }
 
-        // Permission request from --permission-prompt-tool=stdio
         "control_request" => {
-            let request_id = parsed.get("request_id")
+            let request_id = parsed
+                .get("request_id")
                 .and_then(|r| r.as_str())
                 .unwrap_or("")
                 .to_string();
@@ -176,7 +221,6 @@ pub fn parse_jsonl_line(line: &str, session_id: &str) -> Vec<AgentEvent> {
             }]
         }
 
-        // Ignore: system init, rate_limit, assistant (final snapshot — already streamed)
         "system" | "rate_limit_event" | "assistant" => vec![],
 
         _ => {
@@ -193,10 +237,12 @@ fn parse_stream_event(parsed: &serde_json::Value, session_id: &str) -> Vec<Agent
         None => return vec![],
     };
 
-    let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    let event_type = event
+        .get("type")
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
 
     match event_type {
-        // Text delta — the real streaming content
         "content_block_delta" => {
             let delta = event.get("delta");
             let delta_type = delta
@@ -226,7 +272,6 @@ fn parse_stream_event(parsed: &serde_json::Value, session_id: &str) -> Vec<Agent
                     if partial.is_empty() {
                         return vec![];
                     }
-                    // Get the current content block index to match with tool call
                     let index = event.get("index").and_then(|i| i.as_u64()).unwrap_or(0);
                     vec![AgentEvent::ToolInputDelta {
                         session_id: session_id.to_string(),
@@ -251,7 +296,6 @@ fn parse_stream_event(parsed: &serde_json::Value, session_id: &str) -> Vec<Agent
             }
         }
 
-        // Content block start — detect tool_use blocks
         "content_block_start" => {
             let block = event.get("content_block");
             let block_type = block
@@ -281,13 +325,12 @@ fn parse_stream_event(parsed: &serde_json::Value, session_id: &str) -> Vec<Agent
             }
         }
 
-        // Ignore: message_start, message_delta, message_stop, content_block_stop
         _ => vec![],
     }
 }
 
 /// Send a user message through stdin as JSON (for --input-format stream-json).
-pub async fn send_user_message(
+async fn send_user_message(
     stdin: &mut tokio::process::ChildStdin,
     message: &str,
 ) -> Result<(), AppError> {
@@ -298,29 +341,32 @@ pub async fn send_user_message(
             "content": message
         }
     });
-    let mut line = serde_json::to_string(&msg)
-        .map_err(|e| AppError::General(e.to_string()))?;
+    let mut line =
+        serde_json::to_string(&msg).map_err(|e| AppError::General(e.to_string()))?;
     line.push('\n');
     tracing::debug!("Sending user message via stdin: {line}");
-    stdin.write_all(line.as_bytes()).await
+    stdin
+        .write_all(line.as_bytes())
+        .await
         .map_err(|e| AppError::General(format!("Failed to write to stdin: {e}")))?;
-    stdin.flush().await
+    stdin
+        .flush()
+        .await
         .map_err(|e| AppError::General(format!("Failed to flush stdin: {e}")))?;
     Ok(())
 }
 
 /// Send a permission response (control_response) through stdin.
-///
-/// When behavior is "allow", `updated_input` must contain the original tool input
-/// (passed back to CLI as `updatedInput`). Without it the CLI silently drops the allow.
-pub async fn send_permission_response(
+async fn send_permission_response(
     stdin: &mut tokio::process::ChildStdin,
     request_id: &str,
     behavior: &str,
     updated_input: Option<&serde_json::Value>,
     message: Option<&str>,
 ) -> Result<(), AppError> {
-    tracing::info!("Sending permission response: request_id={request_id} behavior={behavior}");
+    tracing::info!(
+        "Sending permission response: request_id={request_id} behavior={behavior}"
+    );
     let response = if behavior == "allow" {
         serde_json::json!({
             "type": "control_response",
@@ -348,14 +394,26 @@ pub async fn send_permission_response(
             }
         })
     };
-    let mut line = serde_json::to_string(&response)
-        .map_err(|e| AppError::General(e.to_string()))?;
+    let mut line =
+        serde_json::to_string(&response).map_err(|e| AppError::General(e.to_string()))?;
     line.push('\n');
     tracing::debug!("Sending control_response via stdin: {line}");
-    stdin.write_all(line.as_bytes()).await
-        .map_err(|e| AppError::General(format!("Failed to write permission response to stdin: {e}")))?;
-    stdin.flush().await
-        .map_err(|e| AppError::General(format!("Failed to flush permission response stdin: {e}")))?;
+    stdin
+        .write_all(line.as_bytes())
+        .await
+        .map_err(|e| {
+            AppError::General(format!(
+                "Failed to write permission response to stdin: {e}"
+            ))
+        })?;
+    stdin
+        .flush()
+        .await
+        .map_err(|e| {
+            AppError::General(format!(
+                "Failed to flush permission response stdin: {e}"
+            ))
+        })?;
     tracing::info!("Permission response sent successfully for request_id={request_id}");
     Ok(())
 }
@@ -366,11 +424,12 @@ pub async fn stream_stdout(
     session_id: &str,
     tx: tokio::sync::mpsc::UnboundedSender<AgentEvent>,
 ) {
+    let executor = ClaudeCodeExecutor;
     let reader = BufReader::new(stdout);
     let mut lines = reader.lines();
 
     while let Ok(Some(line)) = lines.next_line().await {
-        let events = parse_jsonl_line(&line, session_id);
+        let events = executor.parse_line(&line, session_id);
         for event in events {
             if tx.send(event).is_err() {
                 return;

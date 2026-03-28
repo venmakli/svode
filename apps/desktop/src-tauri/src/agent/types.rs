@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 /// Configuration for agent execution, extracted from workspace config.
@@ -15,6 +18,17 @@ pub struct AgentConfig {
     /// Allowed tools list
     #[serde(default)]
     pub allowed_tools: Option<Vec<String>>,
+
+    /// Maximum timeout in seconds for agent execution (default: 600 = 10 min)
+    #[serde(default)]
+    pub max_timeout: Option<u64>,
+}
+
+/// A file context entry sent alongside the user message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileContext {
+    pub path: String,
+    pub content: String,
 }
 
 /// Normalized agent event emitted to the frontend via Tauri events.
@@ -84,4 +98,57 @@ impl AgentEvent {
 pub struct AvailableAgent {
     pub name: String,
     pub path: String,
+}
+
+/// Agent-related settings loaded from workspace `.combai/` config files.
+#[derive(Debug, Clone, Default)]
+pub struct WorkspaceAgentConfig {
+    /// List of allowed CLI names (e.g. ["claude"])
+    pub clis: Vec<String>,
+    /// Map of CLI name -> custom binary path
+    pub cli_paths: HashMap<String, PathBuf>,
+}
+
+/// Load workspace agent config from `.combai/config.json` and `.combai/local.json`.
+///
+/// Best-effort: missing files or fields silently fall back to defaults.
+pub fn load_workspace_agent_config(workspace_dir: &std::path::Path) -> WorkspaceAgentConfig {
+    let mut result = WorkspaceAgentConfig::default();
+
+    // Read .combai/config.json → agent.clis
+    let config_path = workspace_dir.join(".combai/config.json");
+    if let Ok(data) = std::fs::read_to_string(&config_path) {
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
+            if let Some(clis) = parsed
+                .get("agent")
+                .and_then(|a| a.get("clis"))
+                .and_then(|c| c.as_array())
+            {
+                result.clis = clis
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect();
+            }
+        }
+    }
+
+    // Read .combai/local.json → agent.cliPaths
+    let local_path = workspace_dir.join(".combai/local.json");
+    if let Ok(data) = std::fs::read_to_string(&local_path) {
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
+            if let Some(paths) = parsed
+                .get("agent")
+                .and_then(|a| a.get("cliPaths"))
+                .and_then(|p| p.as_object())
+            {
+                for (key, val) in paths {
+                    if let Some(s) = val.as_str() {
+                        result.cli_paths.insert(key.clone(), PathBuf::from(s));
+                    }
+                }
+            }
+        }
+    }
+
+    result
 }

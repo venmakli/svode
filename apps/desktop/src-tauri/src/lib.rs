@@ -43,6 +43,8 @@ pub fn run() {
             commands::workspace::open_folder_as_workspace,
             commands::workspace::delete_workspace,
             commands::workspace::get_last_active_project,
+            commands::workspace::open_project_folder,
+            commands::workspace::create_workspace_in_directory,
             agent::commands::agent_send,
             agent::commands::agent_stop,
             agent::commands::agent_list_available,

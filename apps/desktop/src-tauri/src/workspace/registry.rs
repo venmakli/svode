@@ -32,9 +32,34 @@ pub fn add_project(config_dir: &Path, id: &str) -> Result<(), AppError> {
         registry.projects.push(ProjectRef {
             id: id.to_string(),
             last_opened: None,
+            path: None,
         });
     }
     write_registry(config_dir, &registry)
+}
+
+/// Add a directory project reference (with path) to the registry.
+pub fn add_directory_project(
+    config_dir: &Path,
+    id: &str,
+    path: &str,
+) -> Result<(), AppError> {
+    let mut registry = read_registry(config_dir)?;
+    // Avoid duplicates
+    if !registry.projects.iter().any(|p| p.id == id) {
+        registry.projects.push(ProjectRef {
+            id: id.to_string(),
+            last_opened: None,
+            path: Some(path.to_string()),
+        });
+    }
+    write_registry(config_dir, &registry)
+}
+
+/// Find a project ref by id.
+pub fn find_project(config_dir: &Path, id: &str) -> Result<Option<ProjectRef>, AppError> {
+    let registry = read_registry(config_dir)?;
+    Ok(registry.projects.iter().find(|p| p.id == id).cloned())
 }
 
 /// Remove a project reference from the registry.
