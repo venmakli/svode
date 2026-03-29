@@ -124,6 +124,26 @@ export function getProjection(
   // If no next item, min is 0 (root level)
   const minDepth = nextItem ? nextItem.depth : 0;
 
+  // Impossible position — no valid depth exists
+  if (minDepth > maxDepth) return null;
+
+  // Special case: user offsets right beyond maxDepth — try nesting into the next item
+  // This happens when dragging above the first child of a folder and offsetting right
+  if (projectedDepth > maxDepth && nextItem) {
+    const nestDepth = nextItem.depth + 1;
+    if (projectedDepth >= nestDepth) {
+      const overFolderPath = nextItem.hasChildren
+        ? nextItem.path.replace(/\/readme\.md$/i, "")
+        : nextItem.path.replace(/\.md$/i, "");
+      return {
+        depth: nestDepth,
+        parentPath: overFolderPath,
+        type: "child",
+        overPath: nextItem.path,
+      };
+    }
+  }
+
   // Clamp
   const depth = Math.max(minDepth, Math.min(maxDepth, projectedDepth));
 
@@ -131,20 +151,19 @@ export function getProjection(
   const parentPath = getParentPathForDepth(newItems, overIndex, depth);
 
   // Determine type:
-  // - If depth > previousItem.depth: nesting as child of previous item
+  // - If depth === previousItem.depth + 1: nesting as child of previous item
   // - Otherwise: sibling placement (before/after)
-  if (previousItem && depth > previousItem.depth) {
-    // This shouldn't normally happen since maxDepth = prevItem.depth + 1
-    // and we only go 1 deeper, but handle for safety
-    return { depth, parentPath, type: "child", overPath: overId };
-  }
-
   if (previousItem && depth === previousItem.depth + 1 && previousItem.hasChildren) {
+    // If the over item is already a child of this folder, it's a reorder ("before"), not nesting
+    const folderPath = previousItem.path.replace(/\/readme\.md$/i, "");
+    const originalOverItem = flatItems.find((i) => i.path === overId);
+    if (originalOverItem && originalOverItem.parentPath === folderPath) {
+      return { depth, parentPath, type: "before", overPath: overId };
+    }
     return { depth, parentPath, type: "child", overPath: previousItem.path };
   }
 
-  // For simple files (non-folders) at projected depth above them:
-  // nesting into them means we need to convert them to folders
+  // Nesting into a simple file — will need auto-nest (file → folder conversion)
   if (previousItem && depth === previousItem.depth + 1 && !previousItem.hasChildren) {
     const prevFolderPath = previousItem.path.replace(/\.md$/i, "");
     return { depth, parentPath: prevFolderPath, type: "child", overPath: previousItem.path };

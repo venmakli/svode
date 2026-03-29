@@ -33,16 +33,20 @@ import {
 
 interface TreeDndContextValue {
   activeId: string | null;
+  activeFolderPath: string | null; // folder path of active item (if it's a folder)
   overId: string | null;
   projection: Projection | null;
   flatItems: FlattenedItem[];
+  flatItemsMap: Map<string, FlattenedItem>;
 }
 
 export const TreeDndContext = createContext<TreeDndContextValue>({
   activeId: null,
+  activeFolderPath: null,
   overId: null,
   projection: null,
   flatItems: [],
+  flatItemsMap: new Map(),
 });
 
 // --- Props ---
@@ -111,6 +115,10 @@ export function SortableFileTree({
     scrollContainerRef.current = document.querySelector(
       '[data-slot="sidebar-content"]',
     );
+    return () => {
+      if (autoExpandTimer.current) clearTimeout(autoExpandTimer.current);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
   }, []);
 
   const sensors = useSensors(
@@ -131,6 +139,11 @@ export function SortableFileTree({
 
   const flatItemsRef = useRef(flatItems);
   flatItemsRef.current = flatItems;
+
+  const flatItemsMap = useMemo(
+    () => new Map(flatItems.map((i) => [i.path, i])),
+    [flatItems],
+  );
 
   const sortableIds = useMemo(() => flatItems.map((i) => i.path), [flatItems]);
 
@@ -272,7 +285,10 @@ export function SortableFileTree({
         return;
       }
 
-      const fromParent = getParentDir(fromPath);
+      // For folder documents (path = "folder/readme.md"), tree parent is parent of folder, not folder itself
+      const fromParent = fromNode.children.length > 0
+        ? getParentDir(fromPath.replace(/\/readme\.md$/i, ""))
+        : getParentDir(fromPath);
       const toParent = currentProjection.parentPath;
 
       try {
@@ -284,7 +300,6 @@ export function SortableFileTree({
           const targetNode = findNode(tree, currentProjection.overPath);
           if (targetNode && targetNode.children.length === 0) {
             const nestTarget = currentProjection.overPath;
-            // If the nest target is the open document, update its path
             const newNestPath = await invoke<string>("nest_entry", {
               workspace: workspace.path,
               path: nestTarget,
@@ -293,16 +308,21 @@ export function SortableFileTree({
               clearUnsaved(nestTarget);
               openDocument(newNestPath);
             }
+            // Refresh tree after nest — structure changed on disk
+            await refreshTree(workspaceId);
           }
         }
 
-        if (fromParent === toParent || (fromParent === "" && toParent === "")) {
+        // Use fresh tree from store (may have changed after nest_entry)
+        const currentTree = useWorkspaceStore.getState().fileTrees[workspaceId] ?? tree;
+
+        if (fromParent === toParent) {
           // Same parent — reorder
           const overPath = currentProjection.overPath;
-          const overNode = findNode(tree, overPath);
+          const overNode = findNode(currentTree, overPath);
           if (!overNode) return;
 
-          const order = buildOrderMap(tree);
+          const order = buildOrderMap(currentTree);
           const dirKey = toParent || ".";
           const siblings = order[dirKey];
           if (siblings) {
@@ -342,7 +362,8 @@ export function SortableFileTree({
 
         // Auto-unnest: if the old parent folder now has no children
         if (oldParentReadme) {
-          const oldParentNode = findNode(tree, oldParentReadme);
+          const freshTree = useWorkspaceStore.getState().fileTrees[workspaceId] ?? currentTree;
+          const oldParentNode = findNode(freshTree, oldParentReadme);
           if (oldParentNode && oldParentNode.children.length <= 1) {
             try {
               const currentActive = useLayoutStore.getState().activeDocument;
@@ -395,9 +416,15 @@ export function SortableFileTree({
 
   const activeNode = activeId ? findNode(tree, activeId) : null;
 
+  // If dragging a folder, compute its folder path for disabling children
+  const activeFolderPath = useMemo(() => {
+    if (!activeId || !activeNode || activeNode.children.length === 0) return null;
+    return activeId.replace(/\/readme\.md$/i, "");
+  }, [activeId, activeNode]);
+
   const contextValue = useMemo<TreeDndContextValue>(
-    () => ({ activeId, overId, projection, flatItems }),
-    [activeId, overId, projection, flatItems],
+    () => ({ activeId, activeFolderPath, overId, projection, flatItems, flatItemsMap }),
+    [activeId, activeFolderPath, overId, projection, flatItems, flatItemsMap],
   );
 
   return (

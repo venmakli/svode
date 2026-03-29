@@ -26,6 +26,7 @@ import { useWorkspaceStore } from "@/stores/workspace";
 import type { TreeNode } from "@/types/workspace";
 import { TreeDndContext } from "./sortable-file-tree";
 import { TreeDropIndicator } from "./tree-drop-indicator";
+import { isDescendantOf } from "./tree-dnd-utilities";
 
 interface FileTreeItemProps {
   node: TreeNode;
@@ -35,7 +36,7 @@ interface FileTreeItemProps {
 export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
   const { openDocument, activeDocument } = useLayoutStore();
   const { unsavedChanges, aiModified } = useEditorStore();
-  const { expandedPaths, toggleExpanded, refreshTree, workspaces } =
+  const { expandedPaths, toggleExpanded, refreshTree, workspaces, activeWorkspaceId } =
     useWorkspaceStore();
 
   const isActive = activeDocument === node.path;
@@ -45,22 +46,32 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
 
   const expanded = expandedPaths[workspaceId]?.includes(node.path) ?? false;
 
+  const { activeId, activeFolderPath, overId, projection, flatItemsMap } = useContext(TreeDndContext);
+
+  // Disable sortable for children of the currently dragged folder
+  const isChildOfDragged = !!activeFolderPath && isDescendantOf(node.path, activeFolderPath);
+
   const {
     attributes,
     listeners,
     setNodeRef,
     isDragging,
-  } = useSortable({ id: node.path });
-
-  const { activeId, overId, projection, flatItems } = useContext(TreeDndContext);
+  } = useSortable({ id: node.path, disabled: isChildOfDragged });
   const isOver = activeId !== null && overId === node.path;
-  const myDepth = flatItems.find((i) => i.path === node.path)?.depth ?? 0;
+  const myDepth = flatItemsMap.get(node.path)?.depth ?? 0;
 
   const style = {
     opacity: isDragging ? 0.4 : undefined,
   };
 
   const workspace = workspaces.find((w) => w.id === workspaceId);
+
+  function handleDocumentClick() {
+    if (activeWorkspaceId !== workspaceId) {
+      useWorkspaceStore.getState().openWorkspace(workspaceId);
+    }
+    openDocument(node.path);
+  }
 
   async function handleNewPage() {
     if (!workspace) return;
@@ -160,10 +171,13 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
   // Relative depth: how much deeper/shallower the projected position is
   // compared to this item's actual depth
   const relativeDepth = projection ? projection.depth - myDepth : 0;
+  const isNestTarget = isOver && projection?.type === "child";
   const dropIndicator =
-    isOver && projection ? (
-      <TreeDropIndicator type={projection.type === "before" ? "before" : "after"} relativeDepth={relativeDepth} />
+    isOver && projection && projection.type !== "child" ? (
+      <TreeDropIndicator type={projection.type} relativeDepth={relativeDepth} />
     ) : null;
+
+  const nestHighlight = isNestTarget ? "bg-sidebar-accent ring-1 ring-sidebar-primary/30 rounded-md" : "";
 
   if (node.children.length === 0) {
     return (
@@ -173,8 +187,8 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
           {dragHandle}
           <SidebarMenuSubButton
             isActive={isActive}
-            className="flex-1"
-            onClick={() => openDocument(node.path)}
+            className={`flex-1 ${nestHighlight}`}
+            onClick={handleDocumentClick}
           >
             {iconElement}
             <span className="truncate">{node.title}</span>
@@ -198,8 +212,8 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
           {dragHandle}
           <SidebarMenuSubButton
             isActive={isActive}
-            className="flex-1"
-            onClick={() => openDocument(node.path)}
+            className={`flex-1 ${nestHighlight}`}
+            onClick={handleDocumentClick}
           >
             <CollapsibleTrigger
               asChild
