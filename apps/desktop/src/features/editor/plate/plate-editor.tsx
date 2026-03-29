@@ -291,7 +291,8 @@ export function PlateDocumentEditor() {
             <FixedToolbarButtons />
           </FixedToolbar>
 
-          <EditorContainer className="flex-1 relative">
+          <div className="flex-1 relative overflow-hidden">
+            <EditorContainer className="h-full">
             <div className="mx-auto px-16 pt-8 sm:px-[max(64px,calc(50%-350px))]">
               <TitleZone
                 title={title}
@@ -311,8 +312,9 @@ export function PlateDocumentEditor() {
               variant="default"
               placeholder={m.editor_placeholder_body()}
             />
-            <TocSidebar />
           </EditorContainer>
+            <TocSidebar />
+          </div>
         </div>
       </Plate>
 

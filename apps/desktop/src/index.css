@@ -149,3 +149,19 @@
 [data-tauri-drag-region] [role="button"] {
   app-region: no-drag;
 }
+
+/* Thin scrollbar that matches the theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+}

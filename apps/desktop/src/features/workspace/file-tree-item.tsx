@@ -79,9 +79,11 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
     if (!workspace) return;
     try {
       let parentPath: string;
+      let parentNodePath: string;
       if (node.children.length > 0) {
         // Already a folder — parent is the folder path
         parentPath = node.path.replace(/\/readme\.md$/i, "");
+        parentNodePath = node.path;
       } else {
         // File — nest it first, then create child
         const newPath = await invoke<string>("nest_entry", {
@@ -89,18 +91,20 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
           path: node.path,
         });
         parentPath = newPath.replace(/\/readme\.md$/i, "");
+        parentNodePath = newPath; // path changed after nest
       }
       // Create the sub-page
-      await invoke("create_entry", {
+      const entry = await invoke<{ path: string }>("create_entry", {
         workspace: workspace.path,
         parentPath,
         title: "Untitled",
       });
       await refreshTree(workspaceId);
       // Expand the parent so the new child is visible
-      if (!expandedPaths[workspaceId]?.includes(node.path)) {
-        toggleExpanded(workspaceId, node.path);
+      if (!expandedPaths[workspaceId]?.includes(parentNodePath)) {
+        toggleExpanded(workspaceId, parentNodePath);
       }
+      openDocument(entry.path);
       toast.success(m.toast_page_created());
     } catch (err) {
       console.error("Failed to create page:", err);

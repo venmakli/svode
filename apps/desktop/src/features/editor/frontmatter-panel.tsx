@@ -93,7 +93,7 @@ export function FrontmatterPanel({
   );
 
   return (
-    <Collapsible open={isOpen} onOpenChange={onOpenChange} className="mb-4">
+    <Collapsible open={isOpen} onOpenChange={onOpenChange} className="mb-1">
       <CollapsibleTrigger asChild>
         <button type="button" className="w-full group">
           <Separator className="group-hover:bg-primary/30 transition-colors" />
