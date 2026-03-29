@@ -58,6 +58,8 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
     isDragging,
   } = useSortable({ id: node.path, disabled: isChildOfDragged });
   const isOver = activeId !== null && overId === node.path;
+  // Use projection.overPath as source of truth for nest highlight target
+  const isProjectionTarget = activeId !== null && projection?.overPath === node.path;
   const myDepth = flatItemsMap.get(node.path)?.depth ?? 0;
 
   const style = {
@@ -171,7 +173,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
   // Relative depth: how much deeper/shallower the projected position is
   // compared to this item's actual depth
   const relativeDepth = projection ? projection.depth - myDepth : 0;
-  const isNestTarget = isOver && projection?.type === "child";
+  const isNestTarget = isProjectionTarget && projection?.type === "child";
   const dropIndicator =
     isOver && projection && projection.type !== "child" ? (
       <TreeDropIndicator type={projection.type} relativeDepth={relativeDepth} />
