@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useMemo, createContext, useEffect } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -9,15 +9,43 @@ import {
   type DragStartEvent,
   type DragOverEvent,
   type DragEndEvent,
+  type DragMoveEvent,
 } from "@dnd-kit/core";
-import {
-  SortableContext,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
+import { SortableContext } from "@dnd-kit/sortable";
+import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { FileText } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { useLayoutStore } from "@/stores/layout";
+import { useEditorStore } from "@/stores/editor";
 import type { TreeNode } from "@/types/workspace";
+import {
+  flattenTree,
+  removeCollapsedChildren,
+  getProjection,
+  isDescendantOf,
+  getParentDir,
+  type FlattenedItem,
+  type Projection,
+} from "./tree-dnd-utilities";
+
+// --- Context for sharing DnD state with FileTreeItem ---
+
+interface TreeDndContextValue {
+  activeId: string | null;
+  overId: string | null;
+  projection: Projection | null;
+  flatItems: FlattenedItem[];
+}
+
+export const TreeDndContext = createContext<TreeDndContextValue>({
+  activeId: null,
+  overId: null,
+  projection: null,
+  flatItems: [],
+});
+
+// --- Props ---
 
 interface SortableFileTreeProps {
   workspaceId: string;
@@ -25,16 +53,21 @@ interface SortableFileTreeProps {
   children: React.ReactNode;
 }
 
-/** Flatten tree into array of sortable IDs (node paths). */
-function flattenIds(nodes: TreeNode[]): string[] {
-  const ids: string[] = [];
+/**
+ * Build order map from the current tree state.
+ * Each directory key maps to its children names in order.
+ */
+function buildOrderMap(nodes: TreeNode[], dirKey = "."): Record<string, string[]> {
+  const order: Record<string, string[]> = {};
+  order[dirKey] = nodes.map((n) => n.name);
   for (const node of nodes) {
-    ids.push(node.path);
     if (node.children.length > 0) {
-      ids.push(...flattenIds(node.children));
+      const nodeDir = node.path.replace(/\/readme\.md$/i, "");
+      const childOrder = buildOrderMap(node.children, nodeDir);
+      Object.assign(order, childOrder);
     }
   }
-  return ids;
+  return order;
 }
 
 /** Find a node in the tree by path. */
@@ -49,43 +82,36 @@ function findNode(nodes: TreeNode[], path: string): TreeNode | null {
   return null;
 }
 
-/** Get the parent directory of a relative path. Returns "" for root-level items. */
-function getParentDir(path: string): string {
-  const parts = path.split("/");
-  if (parts.length <= 1) return "";
-  // For paths like "folder/readme.md", the parent is "folder"
-  // For paths like "folder/sub/readme.md", the parent is "folder/sub"
-  parts.pop();
-  return parts.join("/");
-}
-
-/**
- * Build order map from the current tree state.
- * Each directory key maps to its children names in order.
- */
-function buildOrderMap(nodes: TreeNode[], dirKey = "."): Record<string, string[]> {
-  const order: Record<string, string[]> = {};
-  order[dirKey] = nodes.map((n) => n.name);
-  for (const node of nodes) {
-    if (node.children.length > 0) {
-      // Node's directory is the path without /readme.md
-      const nodeDir = node.path.replace(/\/readme\.md$/i, "");
-      const childOrder = buildOrderMap(node.children, nodeDir);
-      Object.assign(order, childOrder);
-    }
-  }
-  return order;
-}
-
 export function SortableFileTree({
   workspaceId,
   tree,
   children,
 }: SortableFileTreeProps) {
-  const { moveEntry, saveOrder, refreshTree, toggleExpanded } =
+  const { moveEntry, saveOrder, refreshTree, toggleExpanded, expandedPaths } =
     useWorkspaceStore();
+
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+  const [offsetLeft, setOffsetLeft] = useState(0);
+  const [projection, setProjection] = useState<Projection | null>(null);
   const autoExpandTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Use refs to avoid stale closures in drag handlers
+  const overIdRef = useRef<string | null>(null);
+  const offsetLeftRef = useRef(0);
+  const activeIdRef = useRef<string | null>(null);
+  const projectionRef = useRef<Projection | null>(null);
+
+  // Auto-scroll refs
+  const scrollContainerRef = useRef<HTMLElement | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const scrollSpeed = useRef(0);
+
+  useEffect(() => {
+    scrollContainerRef.current = document.querySelector(
+      '[data-slot="sidebar-content"]',
+    );
+  }, []);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -93,86 +119,247 @@ export function SortableFileTree({
     }),
   );
 
-  const ids = flattenIds(tree);
+  // Flatten tree and filter out collapsed children
+  const expandedSet = useMemo(() => {
+    return new Set(expandedPaths[workspaceId] ?? []);
+  }, [expandedPaths, workspaceId]);
+
+  const flatItems = useMemo(() => {
+    const all = flattenTree(tree);
+    return removeCollapsedChildren(all, expandedSet);
+  }, [tree, expandedSet]);
+
+  const flatItemsRef = useRef(flatItems);
+  flatItemsRef.current = flatItems;
+
+  const sortableIds = useMemo(() => flatItems.map((i) => i.path), [flatItems]);
+
+  // Compute projection using refs (always fresh values)
+  const computeProjection = useCallback(() => {
+    const aId = activeIdRef.current;
+    const oId = overIdRef.current;
+    const offset = offsetLeftRef.current;
+    if (aId && oId) {
+      const proj = getProjection(flatItemsRef.current, aId, oId, offset);
+      setProjection(proj);
+      projectionRef.current = proj;
+    } else {
+      setProjection(null);
+      projectionRef.current = null;
+    }
+  }, []);
+
+  // --- Auto-scroll ---
+
+  const startAutoScroll = useCallback((speed: number) => {
+    scrollSpeed.current = speed;
+    if (rafRef.current !== null) return;
+    const tick = () => {
+      scrollContainerRef.current?.scrollBy(0, scrollSpeed.current);
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  }, []);
+
+  const stopAutoScroll = useCallback(() => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    scrollSpeed.current = 0;
+  }, []);
+
+  // --- Drag handlers ---
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
-    setActiveId(event.active.id as string);
+    const id = event.active.id as string;
+    setActiveId(id);
+    setOverId(id);
+    setOffsetLeft(0);
+    setProjection(null);
+    activeIdRef.current = id;
+    overIdRef.current = id;
+    offsetLeftRef.current = 0;
+    projectionRef.current = null;
   }, []);
+
+  const handleDragMove = useCallback(
+    (event: DragMoveEvent) => {
+      // Update offset
+      offsetLeftRef.current = event.delta.x;
+      setOffsetLeft(event.delta.x);
+
+      // Update over if available from event
+      if (event.over) {
+        const newOver = event.over.id as string;
+        overIdRef.current = newOver;
+        setOverId(newOver);
+      }
+
+      // Recompute projection with fresh refs
+      computeProjection();
+
+      // Auto-scroll
+      const container = scrollContainerRef.current;
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        const mouseY =
+          event.activatorEvent instanceof MouseEvent
+            ? (event.activatorEvent as MouseEvent).clientY + event.delta.y
+            : 0;
+        const EDGE = 40;
+        const SPEED = 5;
+        if (mouseY > 0 && mouseY < rect.top + EDGE) {
+          startAutoScroll(-SPEED);
+        } else if (mouseY > 0 && mouseY > rect.bottom - EDGE) {
+          startAutoScroll(SPEED);
+        } else {
+          stopAutoScroll();
+        }
+      }
+    },
+    [computeProjection, startAutoScroll, stopAutoScroll],
+  );
 
   const handleDragOver = useCallback(
     (event: DragOverEvent) => {
-      const ovPath = event.over?.id as string | undefined;
+      const newOverId = (event.over?.id as string) ?? null;
+      overIdRef.current = newOverId;
+      setOverId(newOverId);
+
+      // Recompute with fresh refs
+      computeProjection();
 
       // Auto-expand collapsed folders after 500ms hover
       if (autoExpandTimer.current) {
         clearTimeout(autoExpandTimer.current);
         autoExpandTimer.current = null;
       }
-      if (ovPath) {
-        const overNode = findNode(tree, ovPath);
-        if (overNode && overNode.children.length > 0) {
+      if (newOverId) {
+        const overNode = findNode(tree, newOverId);
+        if (overNode && overNode.children.length > 0 && !expandedSet.has(newOverId)) {
           autoExpandTimer.current = setTimeout(() => {
-            toggleExpanded(workspaceId, ovPath);
+            toggleExpanded(workspaceId, newOverId);
           }, 500);
         }
       }
     },
-    [tree, workspaceId, toggleExpanded],
+    [tree, workspaceId, toggleExpanded, expandedSet, computeProjection],
   );
 
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
-      setActiveId(null);
-      if (autoExpandTimer.current) {
-        clearTimeout(autoExpandTimer.current);
-        autoExpandTimer.current = null;
-      }
+      const currentProjection = projectionRef.current;
+      resetState();
 
       const { active, over } = event;
-      if (!over || active.id === over.id) return;
+      if (!over || active.id === over.id || !currentProjection) return;
+
+      const workspace = useWorkspaceStore.getState().workspaces.find(
+        (w) => w.id === workspaceId,
+      );
+      if (!workspace) return;
 
       const fromPath = active.id as string;
-      const overPath = over.id as string;
-      const overNode = findNode(tree, overPath);
-      if (!overNode) return;
+      const fromNode = findNode(tree, fromPath);
+      if (!fromNode) return;
 
-      // Determine target parent:
-      // If dropping on a folder (has children), nest inside it
-      // If dropping on a file, place in the same parent directory
-      let toParent: string;
-      if (overNode.children.length > 0) {
-        // Dropping on a folder — nest inside
-        toParent = overNode.path.replace(/\/readme\.md$/i, "");
-      } else {
-        // Dropping on a file — same parent
-        toParent = getParentDir(overNode.path);
-      }
-
-      // Same parent — reorder within the same folder
-      if (getParentDir(fromPath) === toParent) {
-        const fromNode = findNode(tree, fromPath);
-        if (!fromNode) return;
-
-        const order = buildOrderMap(tree);
-        const dirKey = toParent || ".";
-        const siblings = order[dirKey];
-        if (siblings) {
-          const fromIdx = siblings.indexOf(fromNode.name);
-          const overIdx = siblings.indexOf(overNode.name);
-          if (fromIdx !== -1 && overIdx !== -1 && fromIdx !== overIdx) {
-            // Move item from old position to new position
-            siblings.splice(fromIdx, 1);
-            siblings.splice(overIdx, 0, fromNode.name);
-            await saveOrder(workspaceId, order);
-            await refreshTree(workspaceId);
-          }
-        }
+      // Guard: prevent dropping a folder into its own descendants
+      const fromFolderPath = fromNode.children.length > 0
+        ? fromPath.replace(/\/readme\.md$/i, "")
+        : fromPath;
+      if (isDescendantOf(currentProjection.parentPath, fromFolderPath)) {
         return;
       }
 
+      const fromParent = getParentDir(fromPath);
+      const toParent = currentProjection.parentPath;
+
       try {
-        await moveEntry(workspaceId, fromPath, toParent);
-        // Rebuild order from refreshed tree
+        const { activeDocument, openDocument, closeDocument } = useLayoutStore.getState();
+        const { clearUnsaved } = useEditorStore.getState();
+
+        // Auto-nest: if nesting into a non-folder file, convert it first
+        if (currentProjection.type === "child") {
+          const targetNode = findNode(tree, currentProjection.overPath);
+          if (targetNode && targetNode.children.length === 0) {
+            const nestTarget = currentProjection.overPath;
+            // If the nest target is the open document, update its path
+            const newNestPath = await invoke<string>("nest_entry", {
+              workspace: workspace.path,
+              path: nestTarget,
+            });
+            if (activeDocument === nestTarget) {
+              clearUnsaved(nestTarget);
+              openDocument(newNestPath);
+            }
+          }
+        }
+
+        if (fromParent === toParent || (fromParent === "" && toParent === "")) {
+          // Same parent — reorder
+          const overPath = currentProjection.overPath;
+          const overNode = findNode(tree, overPath);
+          if (!overNode) return;
+
+          const order = buildOrderMap(tree);
+          const dirKey = toParent || ".";
+          const siblings = order[dirKey];
+          if (siblings) {
+            const fromIdx = siblings.indexOf(fromNode.name);
+            const overIdx = siblings.indexOf(overNode.name);
+            if (fromIdx !== -1 && overIdx !== -1 && fromIdx !== overIdx) {
+              siblings.splice(fromIdx, 1);
+              const adjustedIdx =
+                fromIdx < overIdx ? overIdx - 1 : overIdx;
+              siblings.splice(
+                currentProjection.type === "after" ? adjustedIdx + 1 : adjustedIdx,
+                0,
+                fromNode.name,
+              );
+              await saveOrder(workspaceId, order);
+              await refreshTree(workspaceId);
+            }
+          }
+          return;
+        }
+
+        // Different parent — move entry
+        const oldParentReadme = fromParent
+          ? `${fromParent}/readme.md`
+          : null;
+
+        // If the moved file is the open document, update path
+        if (activeDocument === fromPath) {
+          clearUnsaved(fromPath);
+        }
+
+        const newPath = await moveEntry(workspaceId, fromPath, toParent);
+
+        if (activeDocument === fromPath && newPath) {
+          openDocument(newPath);
+        }
+
+        // Auto-unnest: if the old parent folder now has no children
+        if (oldParentReadme) {
+          const oldParentNode = findNode(tree, oldParentReadme);
+          if (oldParentNode && oldParentNode.children.length <= 1) {
+            try {
+              const currentActive = useLayoutStore.getState().activeDocument;
+              const unnestPath = await invoke<string>("unnest_entry", {
+                workspace: workspace.path,
+                path: oldParentReadme,
+              });
+              if (currentActive === oldParentReadme) {
+                useEditorStore.getState().clearUnsaved(oldParentReadme);
+                useLayoutStore.getState().openDocument(unnestPath);
+              }
+            } catch {
+              // Unnest may fail if folder still has children
+            }
+          }
+        }
+
         const updatedTree = useWorkspaceStore.getState().fileTrees[workspaceId];
         if (updatedTree) {
           const order = buildOrderMap(updatedTree);
@@ -187,42 +374,62 @@ export function SortableFileTree({
   );
 
   const handleDragCancel = useCallback(() => {
+    resetState();
+  }, []);
+
+  function resetState() {
     setActiveId(null);
+    setOverId(null);
+    setOffsetLeft(0);
+    setProjection(null);
+    activeIdRef.current = null;
+    overIdRef.current = null;
+    offsetLeftRef.current = 0;
+    projectionRef.current = null;
+    stopAutoScroll();
     if (autoExpandTimer.current) {
       clearTimeout(autoExpandTimer.current);
       autoExpandTimer.current = null;
     }
-  }, []);
+  }
 
   const activeNode = activeId ? findNode(tree, activeId) : null;
 
+  const contextValue = useMemo<TreeDndContextValue>(
+    () => ({ activeId, overId, projection, flatItems }),
+    [activeId, overId, projection, flatItems],
+  );
+
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      onDragStart={handleDragStart}
-      onDragOver={handleDragOver}
-      onDragEnd={handleDragEnd}
-      onDragCancel={handleDragCancel}
-    >
-      <SortableContext items={ids} strategy={verticalListSortingStrategy}>
-        {children}
-      </SortableContext>
-      <DragOverlay dropAnimation={null}>
-        {activeNode && (
-          <div className="flex items-center gap-2 rounded-md bg-sidebar-accent px-2 py-1.5 text-sm shadow-md opacity-80">
-            {activeNode.icon ? (
-              <span className="h-4 w-4 shrink-0 text-center leading-4">
-                {activeNode.icon}
-              </span>
-            ) : (
-              <FileText className="h-4 w-4 shrink-0" />
-            )}
-            <span className="truncate">{activeNode.title}</span>
-          </div>
-        )}
-      </DragOverlay>
-    </DndContext>
+    <TreeDndContext.Provider value={contextValue}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={handleDragStart}
+        onDragMove={handleDragMove}
+        onDragOver={handleDragOver}
+        onDragEnd={handleDragEnd}
+        onDragCancel={handleDragCancel}
+      >
+        <SortableContext items={sortableIds}>
+          {children}
+        </SortableContext>
+        <DragOverlay dropAnimation={null}>
+          {activeNode && (
+            <div className="flex items-center gap-2 rounded-md bg-sidebar-accent px-2 py-1.5 text-sm shadow-md opacity-80">
+              {activeNode.icon ? (
+                <span className="h-4 w-4 shrink-0 text-center leading-4">
+                  {activeNode.icon}
+                </span>
+              ) : (
+                <FileText className="h-4 w-4 shrink-0" />
+              )}
+              <span className="truncate">{activeNode.title}</span>
+            </div>
+          )}
+        </DragOverlay>
+      </DndContext>
+    </TreeDndContext.Provider>
   );
 }
 

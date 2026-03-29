@@ -1,5 +1,5 @@
+import { useContext } from "react";
 import { useSortable } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
@@ -19,11 +19,13 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { ChevronRight, Ellipsis, FileText, FilePlus, GripVertical } from "lucide-react";
+import { ChevronRight, Ellipsis, FileText, FilePlus, GripVertical, Trash2 } from "lucide-react";
 import { useLayoutStore } from "@/stores/layout";
 import { useEditorStore } from "@/stores/editor";
 import { useWorkspaceStore } from "@/stores/workspace";
 import type { TreeNode } from "@/types/workspace";
+import { TreeDndContext } from "./sortable-file-tree";
+import { TreeDropIndicator } from "./tree-drop-indicator";
 
 interface FileTreeItemProps {
   node: TreeNode;
@@ -47,20 +49,20 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
     attributes,
     listeners,
     setNodeRef,
-    transform,
-    transition,
     isDragging,
   } = useSortable({ id: node.path });
 
+  const { activeId, overId, projection, flatItems } = useContext(TreeDndContext);
+  const isOver = activeId !== null && overId === node.path;
+  const myDepth = flatItems.find((i) => i.path === node.path)?.depth ?? 0;
+
   const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
     opacity: isDragging ? 0.4 : undefined,
   };
 
   const workspace = workspaces.find((w) => w.id === workspaceId);
 
-  async function handleCreateSubpage() {
+  async function handleNewPage() {
     if (!workspace) return;
     try {
       let parentPath: string;
@@ -88,7 +90,21 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
       }
       toast.success(m.toast_page_created());
     } catch (err) {
-      console.error("Failed to create sub-page:", err);
+      console.error("Failed to create page:", err);
+      toast.error(m.toast_error());
+    }
+  }
+
+  async function handleDelete() {
+    if (!workspace) return;
+    try {
+      await invoke("delete_entry", {
+        workspace: workspace.path,
+        path: node.path,
+      });
+      await refreshTree(workspaceId);
+    } catch (err) {
+      console.error("Failed to delete entry:", err);
       toast.error(m.toast_error());
     }
   }
@@ -110,7 +126,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
 
   const dragHandle = (
     <button
-      className="flex h-7 w-4 shrink-0 items-center justify-center opacity-0 group-hover/tree-item:opacity-50 hover:!opacity-100 cursor-grab active:cursor-grabbing"
+      className="absolute -left-4 top-0 z-10 flex h-7 w-4 items-center justify-center opacity-0 group-hover/tree-item:opacity-50 hover:!opacity-100 cursor-grab active:cursor-grabbing"
       {...attributes}
       {...listeners}
     >
@@ -126,17 +142,33 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" side="bottom">
-        <DropdownMenuItem onClick={handleCreateSubpage}>
+        <DropdownMenuItem onClick={handleNewPage}>
           <FilePlus className="mr-2 h-4 w-4" />
-          {m.workspace_create_subpage()}
+          {m.workspace_new_page()}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className="text-destructive focus:text-destructive"
+          onClick={handleDelete}
+        >
+          <Trash2 className="mr-2 h-4 w-4" />
+          {m.workspace_delete()}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
 
+  // Relative depth: how much deeper/shallower the projected position is
+  // compared to this item's actual depth
+  const relativeDepth = projection ? projection.depth - myDepth : 0;
+  const dropIndicator =
+    isOver && projection ? (
+      <TreeDropIndicator type={projection.type === "before" ? "before" : "after"} relativeDepth={relativeDepth} />
+    ) : null;
+
   if (node.children.length === 0) {
     return (
-      <SidebarMenuSubItem ref={setNodeRef} style={style}>
+      <SidebarMenuSubItem ref={setNodeRef} style={style} className="relative">
+        {dropIndicator}
         <div className="flex items-center group/tree-item">
           {dragHandle}
           <SidebarMenuSubButton
@@ -155,7 +187,8 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
   }
 
   return (
-    <SidebarMenuSubItem ref={setNodeRef} style={style}>
+    <SidebarMenuSubItem ref={setNodeRef} style={style} className="relative">
+      {dropIndicator}
       <Collapsible
         open={expanded}
         onOpenChange={() => toggleExpanded(workspaceId, node.path)}
@@ -163,17 +196,22 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
       >
         <div className="flex items-center group/tree-item">
           {dragHandle}
-          <CollapsibleTrigger asChild>
-            <button className="flex h-7 w-5 shrink-0 items-center justify-center">
-              <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]/collapsible:rotate-90" />
-            </button>
-          </CollapsibleTrigger>
           <SidebarMenuSubButton
             isActive={isActive}
             className="flex-1"
             onClick={() => openDocument(node.path)}
           >
-            {iconElement}
+            <CollapsibleTrigger
+              asChild
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button className="relative h-4 w-4 shrink-0 flex items-center justify-center">
+                <span className="group-hover/tree-item:opacity-0 transition-opacity">
+                  {iconElement}
+                </span>
+                <ChevronRight className="absolute inset-0 m-auto h-3 w-3 opacity-0 group-hover/tree-item:opacity-100 transition-all group-data-[state=open]/collapsible:rotate-90" />
+              </button>
+            </CollapsibleTrigger>
             <span className="truncate">{node.title}</span>
             {dot}
           </SidebarMenuSubButton>

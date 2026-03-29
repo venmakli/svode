@@ -136,6 +136,19 @@ pub fn nest_entry(
 }
 
 #[tauri::command]
+pub fn unnest_entry(
+    workspace: String,
+    path: String,
+    backlink_index: State<'_, Arc<BacklinkIndex>>,
+) -> Result<String, AppError> {
+    entry::unnest_entry(
+        Path::new(&workspace),
+        &path,
+        Some(&backlink_index),
+    )
+}
+
+#[tauri::command]
 pub fn read_tree_order(workspace: String) -> Result<HashMap<String, Vec<String>>, AppError> {
     Ok(tree::read_order(Path::new(&workspace)))
 }

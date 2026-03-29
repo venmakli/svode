@@ -469,6 +469,86 @@ pub fn nest_entry(
     Ok(new_rel)
 }
 
+/// Unnest an entry: convert `foo/readme.md` → `foo.md` when the folder has no
+/// other children. Returns the new relative path (e.g. "foo.md").
+/// If the folder still has children, returns an error.
+pub fn unnest_entry(
+    workspace: &Path,
+    path: &str,
+    backlink_index: Option<&BacklinkIndex>,
+) -> Result<String, AppError> {
+    let abs_path = workspace.join(path);
+
+    if !abs_path.exists() {
+        return Err(AppError::FileNotFound(path.to_string()));
+    }
+
+    // Must be a readme.md inside a folder
+    let filename = abs_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    if !filename.eq_ignore_ascii_case("readme.md") {
+        return Err(AppError::General(
+            "Only readme.md inside a folder can be unnested".to_string(),
+        ));
+    }
+
+    let folder = abs_path
+        .parent()
+        .ok_or_else(|| AppError::General("no parent directory".to_string()))?;
+
+    // Check that the folder has no other children
+    let siblings: Vec<_> = fs::read_dir(folder)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name();
+            let s = name.to_string_lossy();
+            !s.eq_ignore_ascii_case("readme.md") && !s.starts_with('.')
+        })
+        .collect();
+
+    if !siblings.is_empty() {
+        return Err(AppError::General(
+            "Folder still has children, cannot unnest".to_string(),
+        ));
+    }
+
+    // Move readme.md → folder_name.md at the parent level
+    let folder_name = folder
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| AppError::General("invalid folder name".to_string()))?;
+    let parent_dir = folder
+        .parent()
+        .ok_or_else(|| AppError::General("no parent for folder".to_string()))?;
+    let new_abs = parent_dir.join(format!("{}.md", folder_name));
+
+    if new_abs.exists() {
+        return Err(AppError::FileAlreadyExists(
+            new_abs.to_string_lossy().to_string(),
+        ));
+    }
+
+    // Move the file out, then remove the empty folder
+    fs::rename(&abs_path, &new_abs)?;
+    let _ = fs::remove_dir(folder); // remove empty dir
+
+    let new_rel = new_abs
+        .strip_prefix(workspace)
+        .unwrap_or(&new_abs)
+        .to_string_lossy()
+        .to_string();
+
+    // Update backlinks
+    if let Some(index) = backlink_index {
+        let _ = index.update_links_on_rename(workspace, path, &new_rel);
+        let _ = index.update_file(workspace, &new_rel);
+    }
+
+    Ok(new_rel)
+}
+
 /// Delete an entry from disk. Removes from backlink index if provided.
 pub fn delete(
     workspace: &str,
