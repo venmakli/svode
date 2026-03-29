@@ -4,13 +4,19 @@ import { useLayoutStore } from "@/stores/layout";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 export function useKeyboardShortcuts() {
-  const { toggleChatPanel, closeDocument } = useLayoutStore();
+  const { toggleChatPanel, closeDocument, openAppSettings } = useLayoutStore();
   const goHome = useWorkspaceStore((s) => s.goHome);
   const navigate = useNavigate();
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       const isMeta = e.metaKey || e.ctrlKey;
+
+      // Cmd+, — open app settings
+      if (isMeta && e.key === ",") {
+        e.preventDefault();
+        openAppSettings();
+      }
 
       // Cmd+R — toggle chat panel
       if (isMeta && e.key === "r") {
@@ -34,5 +40,5 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [toggleChatPanel, closeDocument, goHome, navigate]);
+  }, [toggleChatPanel, closeDocument, openAppSettings, goHome, navigate]);
 }

@@ -109,5 +109,50 @@
   "toast_page_created": "Page created",
   "toast_error": "Something went wrong",
 
-  "nav_all_projects": "All projects"
+  "nav_all_projects": "All projects",
+
+  "settings_title": "Settings",
+  "settings_profile": "Profile",
+  "settings_appearance": "Appearance",
+  "settings_profile_name": "Name",
+  "settings_profile_name_placeholder": "Your name",
+  "settings_profile_avatar": "Avatar",
+  "settings_avatar_change": "Change",
+  "settings_theme_label": "Theme",
+  "settings_language_label": "Language",
+  "settings_language_en": "English",
+  "settings_language_ru": "Russian",
+  "settings_save": "Save",
+  "settings_cancel": "Cancel",
+  "settings_unsaved_title": "Unsaved changes",
+  "settings_unsaved_description": "You have unsaved changes. What would you like to do?",
+  "settings_unsaved_save": "Save",
+  "settings_unsaved_discard": "Discard",
+
+  "settings_project_title": "Project settings: {name}",
+  "settings_project_general": "General",
+  "settings_project_workspaces": "Workspaces",
+  "settings_project_add_workspace": "Add workspace",
+
+  "settings_workspace_title": "Settings: {name}",
+  "settings_workspace_space": "Space",
+  "settings_workspace_cli_agents": "CLI Agents",
+  "settings_workspace_instructions": "Instructions file",
+  "settings_workspace_cli_found_auth": "{version} \u00b7 authorized",
+  "settings_workspace_cli_found_noauth": "{version} \u00b7 not authorized",
+  "settings_workspace_cli_noauth_hint": "Run `{command}` in terminal",
+  "settings_workspace_cli_not_found": "not found",
+  "settings_workspace_cli_install": "How to install",
+  "settings_workspace_cli_refresh": "Refresh status",
+  "settings_workspace_agents_md_open": "Open",
+  "settings_workspace_agents_md_create": "Create AGENTS.md",
+  "settings_workspace_agents_md_symlink": "AGENTS.md \u2192 {target}",
+  "settings_workspace_agents_md_lines": "{count} lines",
+  "settings_workspace_symlinks_ok": "Symlinks OK",
+  "settings_workspace_symlinks_restored": "Restored {count} symlinks",
+
+  "settings_configure_agent": "Configure AI agent",
+  "settings_configure_agent_desc": "Select CLI and configure",
+
+  "toast_settings_saved": "Settings saved"
 }

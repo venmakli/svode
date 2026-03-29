@@ -1,18 +1,6 @@
-import { useState, useRef, useCallback, type KeyboardEvent } from "react";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { useRef, useCallback, type KeyboardEvent } from "react";
+import { EmojiPicker } from "@/components/ui/emoji-picker";
 import * as m from "@/paraglide/messages.js";
-
-const EMOJI_LIST = [
-  "📄", "📝", "📋", "📌", "📎", "📁", "📂", "📚",
-  "🏗️", "⚙️", "🔧", "🔨", "🚀", "💡", "🎯", "🎨",
-  "🔍", "📊", "📈", "💻", "🖥️", "🌐", "🔒", "🔑",
-  "⭐", "❤️", "🔥", "✅", "❌", "⚠️", "ℹ️", "💬",
-  "👤", "👥", "🏠", "📱", "🎵", "🎮", "📸", "🎬",
-];
 
 interface TitleZoneProps {
   title: string;
@@ -29,7 +17,6 @@ export function TitleZone({
   onIconChange,
   onEnter,
 }: TitleZoneProps) {
-  const [emojiOpen, setEmojiOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleKeyDown = useCallback(
@@ -44,33 +31,9 @@ export function TitleZone({
 
   return (
     <div className="flex items-start gap-3 mb-4">
-      <Popover open={emojiOpen} onOpenChange={setEmojiOpen}>
-        <PopoverTrigger asChild>
-          <button
-            className="text-3xl hover:bg-muted rounded-md p-1 transition-colors shrink-0 mt-0.5"
-            type="button"
-          >
-            {icon || "📄"}
-          </button>
-        </PopoverTrigger>
-        <PopoverContent className="w-64 p-2" align="start">
-          <div className="grid grid-cols-8 gap-1">
-            {EMOJI_LIST.map((emoji) => (
-              <button
-                key={emoji}
-                className="text-xl p-1 hover:bg-muted rounded transition-colors"
-                onClick={() => {
-                  onIconChange(emoji);
-                  setEmojiOpen(false);
-                }}
-                type="button"
-              >
-                {emoji}
-              </button>
-            ))}
-          </div>
-        </PopoverContent>
-      </Popover>
+      <div className="mt-0.5">
+        <EmojiPicker value={icon || "\u{1F4C4}"} onChange={onIconChange} size="lg" />
+      </div>
       <input
         ref={inputRef}
         type="text"

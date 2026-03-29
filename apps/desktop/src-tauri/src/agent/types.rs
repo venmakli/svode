@@ -102,6 +102,9 @@ impl AgentEvent {
 pub struct AvailableAgent {
     pub name: String,
     pub path: String,
+    pub version: Option<String>,
+    pub auth_status: String,
+    pub docs_url: String,
 }
 
 /// Agent-related settings loaded from workspace `.combai/` config files.

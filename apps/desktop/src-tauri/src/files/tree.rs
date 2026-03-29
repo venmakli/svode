@@ -125,6 +125,13 @@ fn read_dir_recursive(
         }
 
         let abs_path = entry.path();
+
+        // Skip symlinks (CLI-generated infrastructure files)
+        if let Ok(meta) = fs::symlink_metadata(&abs_path) {
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+        }
         let rel_path = abs_path
             .strip_prefix(base)
             .unwrap_or(&abs_path)

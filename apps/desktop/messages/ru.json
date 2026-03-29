@@ -109,5 +109,50 @@
   "toast_page_created": "Страница создана",
   "toast_error": "Что-то пошло не так",
 
-  "nav_all_projects": "Все проекты"
+  "nav_all_projects": "Все проекты",
+
+  "settings_title": "Настройки",
+  "settings_profile": "Профиль",
+  "settings_appearance": "Оформление",
+  "settings_profile_name": "Имя",
+  "settings_profile_name_placeholder": "Ваше имя",
+  "settings_profile_avatar": "Аватар",
+  "settings_avatar_change": "Изменить",
+  "settings_theme_label": "Тема",
+  "settings_language_label": "Язык",
+  "settings_language_en": "English",
+  "settings_language_ru": "Русский",
+  "settings_save": "Сохранить",
+  "settings_cancel": "Отмена",
+  "settings_unsaved_title": "Несохранённые изменения",
+  "settings_unsaved_description": "У вас есть несохранённые изменения. Что вы хотите сделать?",
+  "settings_unsaved_save": "Сохранить",
+  "settings_unsaved_discard": "Не сохранять",
+
+  "settings_project_title": "Настройки проекта: {name}",
+  "settings_project_general": "Общие",
+  "settings_project_workspaces": "Пространства",
+  "settings_project_add_workspace": "Добавить пространство",
+
+  "settings_workspace_title": "Настройки: {name}",
+  "settings_workspace_space": "Пространство",
+  "settings_workspace_cli_agents": "CLI-агенты",
+  "settings_workspace_instructions": "Файл инструкций",
+  "settings_workspace_cli_found_auth": "{version} \u00b7 авторизован",
+  "settings_workspace_cli_found_noauth": "{version} \u00b7 не авторизован",
+  "settings_workspace_cli_noauth_hint": "Выполните `{command}` в терминале",
+  "settings_workspace_cli_not_found": "не найден",
+  "settings_workspace_cli_install": "Как установить",
+  "settings_workspace_cli_refresh": "Обновить статус",
+  "settings_workspace_agents_md_open": "Открыть",
+  "settings_workspace_agents_md_create": "Создать AGENTS.md",
+  "settings_workspace_agents_md_symlink": "AGENTS.md \u2192 {target}",
+  "settings_workspace_agents_md_lines": "{count} строк",
+  "settings_workspace_symlinks_ok": "Симлинки в порядке",
+  "settings_workspace_symlinks_restored": "Восстановлено {count} симлинков",
+
+  "settings_configure_agent": "Настроить AI-агента",
+  "settings_configure_agent_desc": "Выбрать CLI и настроить",
+
+  "toast_settings_saved": "Настройки сохранены"
 }

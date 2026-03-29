@@ -4,7 +4,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::error::AppError;
 use crate::files::entry::slugify;
-use crate::workspace::{config, project, registry, scaffold, settings, types::*};
+use crate::workspace::{config, project, registry, scaffold, settings, symlinks, types::*};
 
 #[tauri::command]
 pub fn get_app_settings(app: AppHandle) -> Result<AppSettings, AppError> {
@@ -508,4 +508,106 @@ pub fn create_workspace_in_directory(
         path: ws_dir.to_string_lossy().to_string(),
         exists: true,
     })
+}
+
+#[tauri::command]
+pub fn get_workspace_config(workspace_path: String) -> Result<WorkspaceConfig, AppError> {
+    let path = Path::new(&workspace_path);
+    config::read_workspace_config(path)
+}
+
+#[tauri::command]
+pub fn save_workspace_config(
+    workspace_path: String,
+    config_data: WorkspaceConfig,
+) -> Result<(), AppError> {
+    let path = Path::new(&workspace_path);
+    config::write_workspace_config(path, &config_data)
+}
+
+#[tauri::command]
+pub fn get_project_config_cmd(
+    app: AppHandle,
+    project_id: String,
+) -> Result<ProjectConfig, AppError> {
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| AppError::General(e.to_string()))?;
+    let project_ref = registry::find_project(&config_dir, &project_id)?
+        .ok_or_else(|| AppError::ProjectNotFound(project_id.clone()))?;
+    if let Some(ref path) = project_ref.path {
+        project::read_directory_project_config(Path::new(path))
+    } else {
+        project::read_project_config(&config_dir, &project_id)
+    }
+}
+
+#[tauri::command]
+pub fn save_project_config(
+    app: AppHandle,
+    project_id: String,
+    name: String,
+    description: String,
+    icon: String,
+) -> Result<(), AppError> {
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| AppError::General(e.to_string()))?;
+    let project_ref = registry::find_project(&config_dir, &project_id)?
+        .ok_or_else(|| AppError::ProjectNotFound(project_id.clone()))?;
+
+    let mut cfg = if let Some(ref path) = project_ref.path {
+        project::read_directory_project_config(Path::new(path))?
+    } else {
+        project::read_project_config(&config_dir, &project_id)?
+    };
+
+    cfg.name = name;
+    cfg.description = description;
+    cfg.icon = icon;
+
+    if let Some(ref path) = project_ref.path {
+        project::write_directory_project_config(Path::new(path), &cfg)
+    } else {
+        project::write_project_config(&config_dir, &project_id, &cfg)
+    }
+}
+
+#[tauri::command]
+pub fn setup_cli_symlinks_cmd(
+    workspace_path: String,
+    cli_name: String,
+) -> Result<Vec<String>, AppError> {
+    let path = Path::new(&workspace_path);
+    symlinks::setup_cli_symlinks(path, &cli_name)
+}
+
+#[tauri::command]
+pub fn teardown_cli_symlinks_cmd(
+    workspace_path: String,
+    cli_name: String,
+) -> Result<(), AppError> {
+    let path = Path::new(&workspace_path);
+    symlinks::teardown_cli_symlinks(path, &cli_name)
+}
+
+#[tauri::command]
+pub fn check_symlink_health(
+    workspace_path: String,
+    cli_name: String,
+) -> Result<symlinks::SymlinkHealthReport, AppError> {
+    let path = Path::new(&workspace_path);
+    symlinks::health_check_symlinks(path, &cli_name)
+}
+
+#[tauri::command]
+pub fn read_agents_md(workspace_path: String) -> Result<Option<String>, AppError> {
+    let path = Path::new(&workspace_path).join(".combai").join("AGENTS.md");
+    if path.exists() {
+        Ok(Some(std::fs::read_to_string(&path)?))
+    } else {
+        Ok(None)
+    }
 }

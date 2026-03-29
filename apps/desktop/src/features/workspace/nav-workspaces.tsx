@@ -63,7 +63,7 @@ export function NavWorkspaces() {
     deleteWorkspace,
     createPage,
   } = useWorkspaceStore();
-  const { openDocument } = useLayoutStore();
+  const { openDocument, openWorkspaceSettings } = useLayoutStore();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{
     id: string;
@@ -187,7 +187,7 @@ export function NavWorkspaces() {
                           {m.workspace_new_page()}
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem disabled>
+                        <DropdownMenuItem onClick={() => openWorkspaceSettings(ws.id)}>
                           <Settings className="mr-2 h-4 w-4" />
                           {m.workspace_settings()}
                         </DropdownMenuItem>

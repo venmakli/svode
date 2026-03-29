@@ -51,3 +51,23 @@ export interface TreeNode {
   has_changes: boolean;
   children: TreeNode[];
 }
+
+export interface AvailableAgent {
+  name: string;
+  path: string;
+  version: string | null;
+  authStatus: string;
+  docsUrl: string;
+}
+
+export interface AppSettings {
+  user: { name: string; avatar: string };
+  appearance: { theme: string; language: string };
+  window: { width: number; height: number };
+}
+
+export interface SymlinkHealthReport {
+  ok: number;
+  restored: number;
+  errors: string[];
+}

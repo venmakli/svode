@@ -217,18 +217,73 @@ pub async fn agent_respond_permission(
     result
 }
 
+async fn get_cli_version(cli_path: &str) -> Option<String> {
+    let output = tokio::process::Command::new(cli_path)
+        .arg("--version")
+        .output()
+        .await
+        .ok()?;
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
+async fn get_cli_auth_status(cli_path: &str) -> String {
+    match tokio::process::Command::new(cli_path)
+        .args(["auth", "status"])
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => "authorized".to_string(),
+        Ok(_) => "unauthorized".to_string(),
+        Err(_) => "unknown".to_string(),
+    }
+}
+
 /// List available agent CLI tools detected on the system.
 #[tauri::command]
-pub fn agent_list_available() -> Result<Vec<AvailableAgent>, AppError> {
+pub async fn agent_list_available() -> Result<Vec<AvailableAgent>, AppError> {
     let mut agents = Vec::new();
 
     let executor = ClaudeCodeExecutor;
     if let Some(path) = executor.detect() {
+        let version = get_cli_version(&path).await;
+        let auth_status = get_cli_auth_status(&path).await;
         agents.push(AvailableAgent {
             name: executor.name().to_string(),
             path,
+            version,
+            auth_status,
+            docs_url: "https://docs.anthropic.com/claude-code".to_string(),
+        });
+    } else {
+        agents.push(AvailableAgent {
+            name: "claude".to_string(),
+            path: String::new(),
+            version: None,
+            auth_status: "not_found".to_string(),
+            docs_url: "https://docs.anthropic.com/claude-code".to_string(),
         });
     }
+
+    // Codex
+    let codex_path = which::which("codex")
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let codex_status = if codex_path.is_empty() {
+        "not_found"
+    } else {
+        "authorized"
+    };
+    agents.push(AvailableAgent {
+        name: "codex".to_string(),
+        path: codex_path,
+        version: None,
+        auth_status: codex_status.to_string(),
+        docs_url: "https://github.com/openai/codex".to_string(),
+    });
 
     Ok(agents)
 }

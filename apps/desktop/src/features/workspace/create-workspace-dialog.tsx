@@ -9,28 +9,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { EmojiPicker } from "@/components/ui/emoji-picker";
 import { FolderOpen } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace";
-
-const PRESET_ICONS = [
-  "\u{1F4C2}", // open folder
-  "\u{2699}\uFE0F", // gear
-  "\u{1F4BB}", // laptop
-  "\u{1F4DD}", // memo
-  "\u{1F3A8}", // palette
-  "\u{1F52C}", // microscope
-  "\u{1F680}", // rocket
-  "\u{1F4A1}", // lightbulb
-];
 
 interface CreateWorkspaceDialogProps {
   open: boolean;
@@ -73,14 +57,14 @@ export function CreateWorkspaceDialog({
   } = useWorkspaceStore();
 
   const [name, setName] = useState("");
-  const [icon, setIcon] = useState(PRESET_ICONS[0]);
+  const [icon, setIcon] = useState("\u{1F4C2}");
   const [folderPath, setFolderPath] = useState("");
 
   const isDirectory = activeProjectVariant === "directory";
 
   function resetForm() {
     setName("");
-    setIcon(PRESET_ICONS[0]);
+    setIcon("\u{1F4C2}");
     setFolderPath("");
   }
 
@@ -138,31 +122,7 @@ export function CreateWorkspaceDialog({
                 {m.workspace_name_label()}
               </Label>
               <div className="flex gap-2">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className="w-10 h-9 px-0 text-lg shrink-0"
-                      type="button"
-                    >
-                      {icon}
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="start"
-                    className="grid grid-cols-4 gap-0.5 p-1.5 min-w-0 w-auto"
-                  >
-                    {PRESET_ICONS.map((emoji) => (
-                      <DropdownMenuItem
-                        key={emoji}
-                        className="text-lg p-1.5 justify-center cursor-pointer"
-                        onClick={() => setIcon(emoji)}
-                      >
-                        {emoji}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <EmojiPicker value={icon} onChange={setIcon} size="sm" />
                 <Input
                   id="workspace-name"
                   value={name}

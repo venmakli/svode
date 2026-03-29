@@ -24,6 +24,7 @@ import { Check, ChevronDown, ChevronUp, Monitor, Moon, Settings, Sun } from "luc
 import { useTheme } from "@/components/ui/theme-provider";
 import { useAppVersion } from "@/hooks/use-app-version";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { useLayoutStore } from "@/stores/layout";
 import { NavWorkspaces } from "@/features/workspace/nav-workspaces";
 import * as m from "@/paraglide/messages.js";
 
@@ -39,6 +40,7 @@ export function AppSidebar() {
     openProject,
     goHome,
   } = useWorkspaceStore();
+  const { openAppSettings, openProjectSettings } = useLayoutStore();
 
   function handleGoHome() {
     goHome();
@@ -66,7 +68,7 @@ export function AppSidebar() {
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="min-w-[var(--radix-dropdown-menu-trigger-width)]">
-                <DropdownMenuItem disabled>
+                <DropdownMenuItem onClick={() => openProjectSettings()}>
                   <Settings className="mr-2 h-4 w-4" />
                   {m.sidebar_project_settings()}
                 </DropdownMenuItem>
@@ -110,7 +112,7 @@ export function AppSidebar() {
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="min-w-[var(--radix-dropdown-menu-trigger-width)]">
-                <DropdownMenuItem>
+                <DropdownMenuItem onClick={() => openAppSettings()}>
                   <Settings className="mr-2 h-4 w-4" />
                   {m.common_settings()}
                 </DropdownMenuItem>
