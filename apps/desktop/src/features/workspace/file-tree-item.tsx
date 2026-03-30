@@ -19,7 +19,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { ChevronRight, Ellipsis, FileText, FilePlus, GripVertical, Trash2 } from "lucide-react";
+import { ChevronRight, Ellipsis, FileText, FilePlus, FolderOpen, GripVertical, FileSymlink, Trash2 } from "lucide-react";
 import { useLayoutStore } from "@/stores/layout";
 import { useEditorStore } from "@/stores/editor";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -33,13 +33,19 @@ interface FileTreeItemProps {
   workspaceId: string;
 }
 
+/** Bare folder = directory without readme.md (path doesn't end with .md) */
+function isBareFolder(node: TreeNode): boolean {
+  return !node.path.endsWith(".md");
+}
+
 export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
   const { openDocument, activeDocument } = useLayoutStore();
   const { unsavedChanges, aiModified } = useEditorStore();
   const { expandedPaths, toggleExpanded, refreshTree, workspaces, activeWorkspaceId } =
     useWorkspaceStore();
 
-  const isActive = activeDocument === node.path;
+  const bareFolder = isBareFolder(node);
+  const isActive = !bareFolder && activeDocument === node.path;
   const isUnsaved = !!unsavedChanges[node.path];
   const isAiModified = !!aiModified[node.path];
   const showDot = isUnsaved || isAiModified;
@@ -69,6 +75,11 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
   const workspace = workspaces.find((w) => w.id === workspaceId);
 
   function handleDocumentClick() {
+    if (bareFolder) {
+      // Bare folder — toggle expand, don't open in editor
+      toggleExpanded(workspaceId, node.path);
+      return;
+    }
     if (activeWorkspaceId !== workspaceId) {
       useWorkspaceStore.getState().openWorkspace(workspaceId);
     }
@@ -80,12 +91,16 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
     try {
       let parentPath: string;
       let parentNodePath: string;
-      if (node.children.length > 0) {
-        // Already a folder — parent is the folder path
+      if (bareFolder) {
+        // Bare folder — already a directory, just use the path
+        parentPath = node.path;
+        parentNodePath = node.path;
+      } else if (node.children.length > 0) {
+        // Document folder — parent is the folder path
         parentPath = node.path.replace(/\/readme\.md$/i, "");
         parentNodePath = node.path;
       } else {
-        // File — nest it first, then create child
+        // Simple file — nest it first, then create child
         const newPath = await invoke<string>("nest_entry", {
           workspace: workspace.path,
           path: node.path,
@@ -112,6 +127,31 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
     }
   }
 
+  async function handleMakeDocument() {
+    if (!workspace || !bareFolder) return;
+    try {
+      // Create a document inside the bare folder, then rename to readme.md
+      const entry = await invoke<{ path: string }>("create_entry", {
+        workspace: workspace.path,
+        parentPath: node.path,
+        title: node.title,
+      });
+      const readmePath = `${node.path}/readme.md`;
+      if (entry.path !== readmePath) {
+        await invoke("rename_entry", {
+          workspace: workspace.path,
+          from: entry.path,
+          to: readmePath,
+        });
+      }
+      await refreshTree(workspaceId);
+      openDocument(readmePath);
+    } catch (err) {
+      console.error("Failed to make document:", err);
+      toast.error(m.toast_error());
+    }
+  }
+
   async function handleDelete() {
     if (!workspace) return;
     try {
@@ -126,7 +166,9 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
     }
   }
 
-  const iconElement = node.icon ? (
+  const iconElement = bareFolder ? (
+    <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+  ) : node.icon ? (
     <span className="h-4 w-4 shrink-0 text-center leading-4">{node.icon}</span>
   ) : (
     <FileText className="h-4 w-4 shrink-0" />
@@ -159,6 +201,12 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" side="bottom">
+        {bareFolder && (
+          <DropdownMenuItem onClick={handleMakeDocument}>
+            <FileSymlink className="mr-2 h-4 w-4" />
+            {m.workspace_make_document()}
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem onClick={handleNewPage}>
           <FilePlus className="mr-2 h-4 w-4" />
           {m.workspace_new_page()}
@@ -185,7 +233,8 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
 
   const nestHighlight = isNestTarget ? "bg-sidebar-accent ring-1 ring-sidebar-primary/30 rounded-md" : "";
 
-  if (node.children.length === 0) {
+  // Leaf node (simple file or empty bare folder with no children)
+  if (node.children.length === 0 && !bareFolder) {
     return (
       <SidebarMenuSubItem ref={setNodeRef} style={style} className="relative">
         {dropIndicator}
@@ -206,6 +255,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
     );
   }
 
+  // Folder node (document with children, or bare folder)
   return (
     <SidebarMenuSubItem ref={setNodeRef} style={style} className="relative">
       {dropIndicator}

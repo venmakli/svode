@@ -296,9 +296,11 @@ export function SortableFileTree({
         const { clearUnsaved } = useEditorStore.getState();
 
         // Auto-nest: if nesting into a non-folder file, convert it first
+        // Skip for bare folders (path doesn't end with .md) — they're already directories
         if (currentProjection.type === "child") {
           const targetNode = findNode(tree, currentProjection.overPath);
-          if (targetNode && targetNode.children.length === 0) {
+          const targetIsBareFolder = targetNode && !targetNode.path.endsWith(".md");
+          if (targetNode && targetNode.children.length === 0 && !targetIsBareFolder) {
             const nestTarget = currentProjection.overPath;
             const oldName = targetNode.name; // e.g. "doc2.md"
             const newNestPath = await invoke<string>("nest_entry", {
@@ -363,9 +365,11 @@ export function SortableFileTree({
           ? `${fromParent}/readme.md`
           : null;
 
-        // For folders, move the folder itself, not just readme.md
-        const isFolder = fromNode.children.length > 0;
-        const movePath = isFolder
+        // For document folders, move the folder itself, not just readme.md
+        // Bare folders (path without .md) are already folder paths
+        const isBareFolder = !fromPath.endsWith(".md");
+        const isDocFolder = !isBareFolder && fromNode.children.length > 0;
+        const movePath = isDocFolder
           ? fromPath.replace(/\/readme\.md$/i, "")
           : fromPath;
 
@@ -376,9 +380,9 @@ export function SortableFileTree({
 
         const newPath = await moveEntry(workspaceId, movePath, toParent);
 
-        if (activeDocument === fromPath && newPath) {
-          // moveEntry returns folder path for folders, append readme.md
-          const newDocPath = isFolder ? `${newPath}/readme.md` : newPath;
+        if (activeDocument === fromPath && newPath && !isBareFolder) {
+          // moveEntry returns folder path for doc folders, append readme.md
+          const newDocPath = isDocFolder ? `${newPath}/readme.md` : newPath;
           openDocument(newDocPath);
         }
 

@@ -140,13 +140,21 @@ fn read_dir_recursive(
 
         if abs_path.is_dir() {
             let readme_path = abs_path.join("readme.md");
-            if !readme_path.is_file() {
-                // Folder without readme.md → skip entirely
-                continue;
-            }
+            let has_readme = readme_path.is_file();
 
-            let (title, icon) = read_frontmatter_meta(&readme_path);
-            let readme_rel = format!("{rel_path}/readme.md");
+            let (title, icon) = if has_readme {
+                read_frontmatter_meta(&readme_path)
+            } else {
+                (name.clone(), None)
+            };
+
+            // For document folders: path = "dir/readme.md"
+            // For bare folders: path = "dir" (no .md extension)
+            let node_path = if has_readme {
+                format!("{rel_path}/readme.md")
+            } else {
+                rel_path.clone()
+            };
 
             // Recurse and filter out readme.md from children
             let children: Vec<TreeNode> = read_dir_recursive(base, &abs_path, order)?
@@ -156,7 +164,7 @@ fn read_dir_recursive(
 
             nodes.push(TreeNode {
                 name,
-                path: readme_rel,
+                path: node_path,
                 title,
                 icon,
                 has_changes: false,
