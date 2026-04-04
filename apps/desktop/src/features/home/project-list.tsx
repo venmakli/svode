@@ -7,7 +7,7 @@ interface ProjectListProps {
   projects: Project[];
   isLoading: boolean;
   onOpenProject: (id: string) => void;
-  onDeleteProject: (id: string) => void;
+  onDeleteProject: (id: string, deleteFiles: boolean) => void;
 }
 
 export function ProjectList({
@@ -48,7 +48,7 @@ export function ProjectList({
             key={project.id}
             project={project}
             onClick={() => onOpenProject(project.id)}
-            onDelete={() => onDeleteProject(project.id)}
+            onDelete={(deleteFiles) => onDeleteProject(project.id, deleteFiles)}
           />
         ))}
       </div>

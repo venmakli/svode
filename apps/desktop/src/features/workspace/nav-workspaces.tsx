@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import * as m from "@/paraglide/messages.js";
-import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import {
   SidebarGroup,
@@ -40,7 +40,7 @@ import {
   ChevronRight,
   Ellipsis,
   FilePlus,
-  FolderOpen,
+  FolderPlus,
   Plus,
   Settings,
   Pencil,
@@ -48,6 +48,7 @@ import {
 } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useLayoutStore } from "@/stores/layout";
+import type { WorkspaceConfig } from "@/types/workspace";
 import { CreateWorkspaceDialog } from "./create-workspace-dialog";
 import { FileTreeItem } from "./file-tree-item";
 import { SortableFileTree } from "./sortable-file-tree";
@@ -59,9 +60,9 @@ export function NavWorkspaces() {
     activeProjectId,
     fileTrees,
     openWorkspace,
-    openFolderAsWorkspace,
     deleteWorkspace,
     createPage,
+    refreshTree,
   } = useWorkspaceStore();
   const { openDocument, openWorkspaceSettings } = useLayoutStore();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -70,18 +71,41 @@ export function NavWorkspaces() {
     name: string;
   } | null>(null);
   const [deleteFiles, setDeleteFiles] = useState(false);
+  const [editingWorkspaceId, setEditingWorkspaceId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const editRef = useRef<HTMLInputElement>(null);
 
-  async function handleOpenFolder() {
-    if (!activeProjectId) return;
-    const selected = await open({ directory: true });
-    if (selected) {
-      try {
-        await openFolderAsWorkspace(activeProjectId, selected);
-      } catch (err) {
-        console.error("Failed to open folder as workspace:", err);
-        toast.error(m.toast_error());
-      }
+  useEffect(() => {
+    if (editingWorkspaceId && editRef.current) {
+      editRef.current.focus();
+      editRef.current.select();
     }
+  }, [editingWorkspaceId]);
+
+  async function handleRenameWorkspace() {
+    const ws = workspaces.find((w) => w.id === editingWorkspaceId);
+    if (!ws || !editValue.trim() || editValue.trim() === ws.name) {
+      setEditingWorkspaceId(null);
+      return;
+    }
+    try {
+      const cfg = await invoke<WorkspaceConfig>("get_workspace_config", {
+        workspacePath: ws.path,
+      });
+      await invoke("save_workspace_config", {
+        workspacePath: ws.path,
+        configData: { ...cfg, name: editValue.trim() },
+      });
+      useWorkspaceStore.setState({
+        workspaces: useWorkspaceStore.getState().workspaces.map((w) =>
+          w.id === editingWorkspaceId ? { ...w, name: editValue.trim() } : w
+        ),
+      });
+    } catch (err) {
+      console.error("Failed to rename workspace:", err);
+      toast.error(m.toast_error());
+    }
+    setEditingWorkspaceId(null);
   }
 
   async function handleNewPage(workspaceId: string) {
@@ -92,6 +116,22 @@ export function NavWorkspaces() {
       }
     } catch (err) {
       console.error("Failed to create page:", err);
+      toast.error(m.toast_error());
+    }
+  }
+
+  async function handleNewFolder(workspaceId: string) {
+    const workspace = workspaces.find((w) => w.id === workspaceId);
+    if (!workspace) return;
+    try {
+      await invoke<string>("create_folder", {
+        workspace: workspace.path,
+        parentPath: null,
+        name: m.workspace_new_folder(),
+      });
+      await refreshTree(workspaceId);
+    } catch (err) {
+      console.error("Failed to create folder:", err);
       toast.error(m.toast_error());
     }
   }
@@ -130,24 +170,13 @@ export function NavWorkspaces() {
     <>
       <SidebarGroup>
         <SidebarGroupLabel>{m.sidebar_workspaces()}</SidebarGroupLabel>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <SidebarGroupAction title={m.workspace_create()}>
-              <Plus />
-              <span className="sr-only">{m.workspace_create()}</span>
-            </SidebarGroupAction>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" side="bottom">
-            <DropdownMenuItem onClick={() => setCreateDialogOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              {m.workspace_create()}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={handleOpenFolder}>
-              <FolderOpen className="mr-2 h-4 w-4" />
-              {m.workspace_open_folder()}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <SidebarGroupAction
+          title={m.workspace_create()}
+          onClick={() => setCreateDialogOpen(true)}
+        >
+          <Plus />
+          <span className="sr-only">{m.workspace_create()}</span>
+        </SidebarGroupAction>
         <SidebarGroupContent>
           <SidebarMenu>
             {workspaces.map((ws) => {
@@ -162,10 +191,29 @@ export function NavWorkspaces() {
                   <SidebarMenuItem>
                     <SidebarMenuButton
                       isActive={isActive}
-                      onClick={() => handleWorkspaceClick(ws)}
+                      onClick={() => { if (editingWorkspaceId !== ws.id) handleWorkspaceClick(ws); }}
+                      onDoubleClick={() => {
+                        setEditingWorkspaceId(ws.id);
+                        setEditValue(ws.name);
+                      }}
                     >
                       <span>{ws.icon}</span>
-                      <span>{ws.name}</span>
+                      {editingWorkspaceId === ws.id ? (
+                        <input
+                          ref={editRef}
+                          className="truncate bg-transparent outline-none text-sm w-full border-b border-primary"
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onBlur={handleRenameWorkspace}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") { e.preventDefault(); handleRenameWorkspace(); }
+                            else if (e.key === "Escape") setEditingWorkspaceId(null);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      ) : (
+                        <span>{ws.name}</span>
+                      )}
                     </SidebarMenuButton>
                     <CollapsibleTrigger asChild>
                       <SidebarMenuAction
@@ -186,12 +234,19 @@ export function NavWorkspaces() {
                           <FilePlus className="mr-2 h-4 w-4" />
                           {m.workspace_new_page()}
                         </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleNewFolder(ws.id)}>
+                          <FolderPlus className="mr-2 h-4 w-4" />
+                          {m.workspace_new_folder()}
+                        </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onClick={() => openWorkspaceSettings(ws.id)}>
                           <Settings className="mr-2 h-4 w-4" />
                           {m.workspace_settings()}
                         </DropdownMenuItem>
-                        <DropdownMenuItem disabled>
+                        <DropdownMenuItem onClick={() => {
+                          setEditingWorkspaceId(ws.id);
+                          setEditValue(ws.name);
+                        }}>
                           <Pencil className="mr-2 h-4 w-4" />
                           {m.workspace_rename()}
                         </DropdownMenuItem>

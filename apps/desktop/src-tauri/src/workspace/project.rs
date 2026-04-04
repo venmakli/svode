@@ -52,7 +52,39 @@ pub fn create_project(
 }
 
 /// Delete a project: remove config directory and registry entry.
-pub fn delete_project(config_dir: &Path, id: &str) -> Result<(), AppError> {
+/// If `delete_files` is true, also delete project data from disk:
+/// - Directory project: remove the entire project folder
+/// - Lightweight project: remove each workspace folder
+pub fn delete_project(
+    config_dir: &Path,
+    id: &str,
+    delete_files: bool,
+) -> Result<(), AppError> {
+    let project_ref = registry::find_project(config_dir, id)?;
+
+    if delete_files {
+        if let Some(ref project_ref) = project_ref {
+            if let Some(ref project_path) = project_ref.path {
+                // Directory project: delete entire project folder
+                let path = Path::new(project_path);
+                if path.exists() {
+                    std::fs::remove_dir_all(path)?;
+                }
+            } else {
+                // Lightweight project: delete each workspace folder
+                if let Ok(cfg) = read_project_config(config_dir, id) {
+                    for ws in &cfg.workspaces {
+                        let ws_path = Path::new(&ws.path);
+                        if ws_path.exists() && ws_path.is_dir() {
+                            std::fs::remove_dir_all(ws_path)?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Always remove lightweight config dir
     let dir = config_dir.join("projects").join(id);
     if dir.exists() {
         std::fs::remove_dir_all(&dir)?;

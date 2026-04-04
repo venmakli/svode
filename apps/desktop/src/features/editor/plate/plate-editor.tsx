@@ -43,9 +43,9 @@ interface Entry {
 }
 
 export function PlateDocumentEditor() {
-  const { activeDocument } = useLayoutStore();
+  const { activeDocument, openDocument } = useLayoutStore();
   const { workspaces, activeWorkspaceId, updateNodeMeta } = useWorkspaceStore();
-  const { markUnsaved, clearUnsaved } = useEditorStore();
+  const { markUnsaved, clearUnsaved, pendingRename, clearPendingRename } = useEditorStore();
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId);
   const workspacePath = activeWorkspace?.path ?? "";
@@ -150,6 +150,29 @@ export function PlateDocumentEditor() {
     },
     [markUnsaved, updateNodeMeta],
   );
+
+  // Apply pending rename from sidebar (file already renamed on disk)
+  useEffect(() => {
+    if (!pendingRename || pendingRename.path !== activeDocument || !editor) return;
+    const { title: newTitle, newPath } = pendingRename;
+    clearPendingRename();
+
+    setTitle(newTitle);
+    titleRef.current = newTitle;
+
+    if (newPath) {
+      // File was renamed on disk — cache editor content for new path and switch
+      docCacheRef.current.set(newPath, editor.children);
+      docCacheRef.current.delete(pendingRename.path);
+      clearUnsaved(pendingRename.path);
+      openDocument(newPath);
+    } else {
+      // Slug unchanged, just update sidebar
+      if (currentPathRef.current) {
+        updateNodeMeta(currentPathRef.current, newTitle, iconRef.current);
+      }
+    }
+  }, [pendingRename, activeDocument, editor, clearPendingRename, clearUnsaved, openDocument, updateNodeMeta]);
 
   const handleIconChange = useCallback(
     (newIcon: string) => {

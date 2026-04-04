@@ -10,6 +10,7 @@ import {
   ChevronRightIcon,
   Code2,
   Columns3Icon,
+  FileTextIcon,
   Heading1Icon,
   Heading2Icon,
   Heading3Icon,
@@ -220,6 +221,25 @@ const groups: Group[] = [
         insertInlineElement(editor, value);
       },
     })),
+  },
+  {
+    group: 'Links',
+    items: [
+      {
+        focusEditor: false,
+        icon: <FileTextIcon />,
+        keywords: ['document', 'link', 'документ', 'ссылка', 'doc', '[['],
+        label: 'Document link',
+        value: 'doc-link',
+        onSelect: (editor) => {
+          editor.tf.insertNodes({
+            type: KEYS.mentionInput,
+            trigger: '[[',
+            children: [{ text: '' }],
+          });
+        },
+      },
+    ],
   },
 ];
 

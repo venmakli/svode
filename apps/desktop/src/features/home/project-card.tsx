@@ -17,6 +17,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { MoreHorizontal, Settings, Trash2 } from "lucide-react";
 import { relativeTime } from "@/lib/relative-time";
 import type { Project } from "@/types/workspace";
@@ -24,7 +25,7 @@ import type { Project } from "@/types/workspace";
 interface ProjectCardProps {
   project: Project;
   onClick: () => void;
-  onDelete: () => void;
+  onDelete: (deleteFiles: boolean) => void;
 }
 
 function workspaceCountText(count: number): string {
@@ -35,6 +36,7 @@ function workspaceCountText(count: number): string {
 
 export function ProjectCard({ project, onClick, onDelete }: ProjectCardProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteFiles, setDeleteFiles] = useState(false);
 
   return (
     <>
@@ -95,7 +97,13 @@ export function ProjectCard({ project, onClick, onDelete }: ProjectCardProps) {
         </DropdownMenu>
       </div>
 
-      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+      <AlertDialog
+        open={deleteOpen}
+        onOpenChange={(open) => {
+          if (!open) setDeleteFiles(false);
+          setDeleteOpen(open);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{m.project_delete_title()}</AlertDialogTitle>
@@ -103,11 +111,20 @@ export function ProjectCard({ project, onClick, onDelete }: ProjectCardProps) {
               {m.project_delete_description()}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <label className="flex items-center gap-2 py-2 cursor-pointer">
+            <Checkbox
+              checked={deleteFiles}
+              onCheckedChange={(checked) => setDeleteFiles(checked === true)}
+            />
+            <span className="text-sm text-destructive">
+              {m.project_delete_files()}
+            </span>
+          </label>
           <AlertDialogFooter>
             <AlertDialogCancel>{m.project_cancel()}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={onDelete}
+              onClick={() => onDelete(deleteFiles)}
             >
               {m.project_delete_confirm()}
             </AlertDialogAction>

@@ -7,7 +7,8 @@ import { useWorkspaceStore } from "@/stores/workspace";
 import { CreateWorkspaceDialog } from "./create-workspace-dialog";
 
 export function EmptyProjectState() {
-  const { activeProjectId, openFolderAsWorkspace } = useWorkspaceStore();
+  const { activeProjectId, activeProjectPath, openFolderAsWorkspace } =
+    useWorkspaceStore();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   async function handleOpenFolder() {
@@ -34,10 +35,12 @@ export function EmptyProjectState() {
             <Plus className="mr-2 h-4 w-4" />
             {m.workspace_create()}
           </Button>
-          <Button variant="outline" onClick={handleOpenFolder}>
-            <FolderOpen className="mr-2 h-4 w-4" />
-            {m.workspace_open_folder()}
-          </Button>
+          {!activeProjectPath && (
+            <Button variant="outline" onClick={handleOpenFolder}>
+              <FolderOpen className="mr-2 h-4 w-4" />
+              {m.workspace_open_folder()}
+            </Button>
+          )}
         </div>
       </div>
 

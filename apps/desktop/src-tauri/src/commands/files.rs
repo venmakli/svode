@@ -23,6 +23,15 @@ pub fn create_entry(
 }
 
 #[tauri::command]
+pub fn create_folder(
+    workspace: String,
+    parent_path: Option<String>,
+    name: String,
+) -> Result<String, AppError> {
+    entry::create_folder(&workspace, parent_path.as_deref(), &name)
+}
+
+#[tauri::command]
 pub fn read_entry(workspace: String, path: String) -> Result<Entry, AppError> {
     entry::read(&workspace, &path)
 }

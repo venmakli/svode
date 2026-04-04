@@ -39,8 +39,8 @@ import { useRef, useState, useCallback, type FC } from "react";
 import { ModelSelector } from "@/components/assistant-ui/model-selector";
 import { useChatStatusStore, DEFAULT_MODEL } from "@/stores/chat";
 import {
-  useMentionDropdown,
-  MentionDropdown,
+  useSlashMenu,
+  SlashMenuDropdown,
 } from "@/features/chat/composer-mentions";
 
 export const Thread: FC = () => {
@@ -146,24 +146,22 @@ const Composer: FC = () => {
   const [cursorPos, setCursorPos] = useState(0);
   const [inputValue, setInputValue] = useState("");
 
-  const mention = useMentionDropdown(inputValue, cursorPos);
+  const slashMenu = useSlashMenu(inputValue, cursorPos);
 
   const handleInput = useCallback(() => {
     const el = textareaRef.current;
     if (!el) return;
     setInputValue(el.value);
     setCursorPos(el.selectionStart);
-    mention.handleInputChange(el.value, el.selectionStart);
-  }, [mention.handleInputChange]);
+    slashMenu.handleInputChange(el.value, el.selectionStart);
+  }, [slashMenu.handleInputChange]);
 
-  const applyMention = useCallback(
-    (item: Parameters<typeof mention.handleSelect>[0]) => {
+  const applySlashSelection = useCallback(
+    (item: Parameters<typeof slashMenu.handleSelect>[0]) => {
       const el = textareaRef.current;
       if (!el) return;
-      const newValue = mention.handleSelect(item);
+      const newValue = slashMenu.handleSelect(item);
       const newCursor = newValue.indexOf("]]", newValue.lastIndexOf("[[")) + 2;
-      // Update textarea value via native setter, set cursor, then dispatch input
-      // to keep assistant-ui in sync with the correct cursor position
       const nativeSetter = Object.getOwnPropertyDescriptor(
         HTMLTextAreaElement.prototype,
         "value",
@@ -175,7 +173,7 @@ const Composer: FC = () => {
       setInputValue(newValue);
       setCursorPos(newCursor);
     },
-    [mention.handleSelect],
+    [slashMenu.handleSelect],
   );
 
   return (
@@ -197,20 +195,20 @@ const Composer: FC = () => {
               onInput={handleInput}
               onKeyUp={handleInput}
               onKeyDown={(e) => {
-                if (mention.isOpen && mention.items.length > 0) {
-                  const handled = mention.handleKeyDown(e);
+                if (slashMenu.isOpen && slashMenu.items.length > 0) {
+                  const handled = slashMenu.handleKeyDown(e);
                   if (handled && (e.key === "Enter" || e.key === "Tab")) {
-                    applyMention(mention.items[mention.selectedIndex]);
+                    applySlashSelection(slashMenu.items[slashMenu.selectedIndex]);
                   }
                 }
               }}
             />
-            {mention.isOpen && (
-              <div className="absolute bottom-full left-0 z-50 mb-1 w-64">
-                <MentionDropdown
-                  items={mention.items}
-                  selectedIndex={mention.selectedIndex}
-                  onSelect={applyMention}
+            {slashMenu.isOpen && (
+              <div className="absolute bottom-full left-0 z-50 mb-1">
+                <SlashMenuDropdown
+                  items={slashMenu.items}
+                  selectedIndex={slashMenu.selectedIndex}
+                  onSelect={applySlashSelection}
                 />
               </div>
             )}

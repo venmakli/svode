@@ -103,12 +103,16 @@ pub fn create_project(
 }
 
 #[tauri::command]
-pub fn delete_project(app: AppHandle, id: String) -> Result<(), AppError> {
+pub fn delete_project(
+    app: AppHandle,
+    id: String,
+    delete_files: Option<bool>,
+) -> Result<(), AppError> {
     let config_dir = app
         .path()
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
-    project::delete_project(&config_dir, &id)
+    project::delete_project(&config_dir, &id, delete_files.unwrap_or(false))
 }
 
 #[tauri::command]

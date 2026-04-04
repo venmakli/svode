@@ -7,6 +7,7 @@ import {
 } from "react";
 import { FileText } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { useLayoutStore } from "@/stores/layout";
 import * as m from "@/paraglide/messages.js";
 import type { TreeNode } from "@/types/workspace";
 
@@ -38,17 +39,16 @@ function fuzzyMatch(target: string, query: string): boolean {
     .every((word) => lower.includes(word));
 }
 
-/** Extract [[Title]] mentions from message text, return matched doc items.
- *  Accepts TreeNode[] (flattens internally) or flat DocItem[]. */
+/** Extract /Title mentions from message text, return matched doc items. */
 export function extractMentions(
   text: string,
   docItems: TreeNode[] | DocItem[],
 ): DocItem[] {
-  // Flatten if tree nodes (have children property)
   const flat: DocItem[] =
     docItems.length > 0 && "children" in docItems[0]
       ? flattenTree(docItems as TreeNode[])
       : (docItems as DocItem[]);
+  // Match badge format: data-mention-path attribute value or [[Title]] fallback
   const mentionPattern = /\[\[([^\]]+)\]\]/g;
   const mentions: DocItem[] = [];
   let match: RegExpExecArray | null;
@@ -65,7 +65,7 @@ export function extractMentions(
   return mentions;
 }
 
-interface UseMentionDropdownResult {
+interface UseSlashMenuResult {
   isOpen: boolean;
   query: string;
   items: DocItem[];
@@ -77,13 +77,13 @@ interface UseMentionDropdownResult {
 }
 
 /**
- * Hook to manage [[-mention dropdown state for a textarea.
- * Returns filtered items, selection state, and handlers.
+ * Hook to manage /-slash menu state for a textarea.
+ * Returns filtered document items, selection state, and handlers.
  */
-export function useMentionDropdown(
+export function useSlashMenu(
   currentValue: string,
   cursorPosition: number,
-): UseMentionDropdownResult {
+): UseSlashMenuResult {
   const { activeWorkspaceId, fileTrees } = useWorkspaceStore();
   const tree = activeWorkspaceId ? fileTrees[activeWorkspaceId] ?? [] : [];
   const allDocs = flattenTree(tree);
@@ -93,27 +93,29 @@ export function useMentionDropdown(
   const [triggerStart, setTriggerStart] = useState(-1);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  // Detect [[ trigger in text
+  // Detect / trigger in text
   const handleInputChange = useCallback(
     (value: string, cursorPos: number) => {
-      // Look backwards from cursor for [[
       const before = value.slice(0, cursorPos);
-      const triggerIdx = before.lastIndexOf("[[");
+
+      // Find the last / that could be a trigger
+      const triggerIdx = before.lastIndexOf("/");
 
       if (triggerIdx === -1) {
         setIsOpen(false);
         return;
       }
 
-      // Check there's no ]] between trigger and cursor (mention already completed)
-      const afterTrigger = before.slice(triggerIdx + 2);
-      if (afterTrigger.includes("]]")) {
+      // / must be at start or preceded by whitespace
+      if (triggerIdx > 0 && !/\s/.test(value[triggerIdx - 1])) {
         setIsOpen(false);
         return;
       }
 
-      // Check the trigger is not preceded by ] (which would be ]][ pattern)
-      if (triggerIdx > 0 && value[triggerIdx - 1] === "]") {
+      const afterTrigger = before.slice(triggerIdx + 1);
+
+      // Close if there's a space with no query content (user moved on)
+      if (afterTrigger.includes("\n")) {
         setIsOpen(false);
         return;
       }
@@ -133,7 +135,7 @@ export function useMentionDropdown(
       )
     : allDocs;
 
-  // Handle selection: replace [[query with [[Title]]
+  // Handle selection: replace /query with [[Title]]
   const handleSelect = useCallback(
     (item: DocItem): string => {
       const before = currentValue.slice(0, triggerStart);
@@ -162,7 +164,6 @@ export function useMentionDropdown(
         case "Enter":
         case "Tab":
           e.preventDefault();
-          // Selection will be handled by the component
           return true;
         case "Escape":
           e.preventDefault();
@@ -189,8 +190,8 @@ export function useMentionDropdown(
   };
 }
 
-/** Dropdown UI for document mentions. */
-export function MentionDropdown({
+/** Dropdown UI for slash menu — styled to match Plate InlineCombobox. */
+export function SlashMenuDropdown({
   items,
   selectedIndex,
   onSelect,
@@ -205,14 +206,16 @@ export function MentionDropdown({
   useEffect(() => {
     const list = listRef.current;
     if (!list) return;
-    const selected = list.children[selectedIndex] as HTMLElement | undefined;
+    const selected = list.querySelector("[data-active-item=true]") as HTMLElement | undefined;
     selected?.scrollIntoView({ block: "nearest" });
   }, [selectedIndex]);
 
   if (items.length === 0) {
     return (
-      <div className="rounded-lg border bg-popover p-2 text-sm text-muted-foreground shadow-md">
-        {m.editor_doc_link_no_results()}
+      <div className="max-h-[288px] w-[300px] rounded-md bg-popover shadow-md">
+        <div className="mx-1 flex h-[28px] select-none items-center rounded-sm px-2 text-muted-foreground text-sm">
+          {m.chat_slash_no_results()}
+        </div>
       </div>
     );
   }
@@ -220,32 +223,68 @@ export function MentionDropdown({
   return (
     <div
       ref={listRef}
-      className="max-h-48 overflow-y-auto rounded-lg border bg-popover p-1 shadow-md"
+      className="max-h-[288px] w-[300px] overflow-y-auto rounded-md bg-popover shadow-md"
     >
-      {items.map((item, index) => (
-        <button
-          key={item.path}
-          type="button"
-          className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
-            index === selectedIndex
-              ? "bg-accent text-accent-foreground"
-              : "text-popover-foreground hover:bg-accent/50"
-          }`}
-          onMouseDown={(e) => {
-            e.preventDefault(); // Don't steal focus from textarea
-            onSelect(item);
-          }}
-        >
-          <span className="flex-shrink-0 text-muted-foreground">
-            {item.icon ? (
-              <span className="text-sm">{item.icon}</span>
-            ) : (
-              <FileText className="h-4 w-4" />
-            )}
-          </span>
-          <span className="truncate">{item.title}</span>
-        </button>
-      ))}
+      <div className="py-1.5">
+        <div className="mt-1.5 mb-2 px-3 font-medium text-muted-foreground text-xs">
+          {m.chat_slash_group_documents()}
+        </div>
+        {items.map((item, index) => (
+          <button
+            key={item.path}
+            type="button"
+            data-active-item={index === selectedIndex}
+            className={
+              "mx-1 flex h-[28px] w-[calc(100%-8px)] cursor-pointer select-none items-center gap-2 rounded-sm px-2 text-left text-foreground text-sm outline-none transition-colors" +
+              (index === selectedIndex
+                ? " bg-accent text-accent-foreground"
+                : " hover:bg-accent hover:text-accent-foreground")
+            }
+            onMouseDown={(e) => {
+              e.preventDefault();
+              onSelect(item);
+            }}
+          >
+            <span className="flex-shrink-0 text-muted-foreground [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0">
+              {item.icon ? (
+                <span className="text-sm">{item.icon}</span>
+              ) : (
+                <FileText />
+              )}
+            </span>
+            <span className="truncate">{item.title}</span>
+          </button>
+        ))}
+      </div>
     </div>
+  );
+}
+
+/** Clickable badge for a mentioned document in the composer / messages. */
+export function MentionBadge({
+  title,
+  icon,
+  path,
+}: {
+  title: string;
+  icon: string | null;
+  path: string;
+}) {
+  const { openDocument } = useLayoutStore();
+
+  return (
+    <button
+      type="button"
+      className="inline-flex items-center gap-1 rounded-md bg-accent px-1.5 py-0.5 text-accent-foreground text-xs font-medium hover:bg-accent/80 transition-colors cursor-pointer"
+      onClick={() => openDocument(path)}
+      title={path}
+    >
+      {icon ? (
+        <span className="text-xs">{icon}</span>
+      ) : (
+        <FileText className="h-3 w-3" />
+      )}
+      {title}
+    </button>
   );
 }

@@ -111,9 +111,9 @@ export function HomePage() {
   }, [openProjectFolder, openProject, navigate]);
 
   const handleDeleteProject = useCallback(
-    async (id: string) => {
+    async (id: string, deleteFiles: boolean) => {
       try {
-        await deleteProject(id);
+        await deleteProject(id, deleteFiles);
       } catch (err) {
         console.error("Failed to delete project:", err);
       }

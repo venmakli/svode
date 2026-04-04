@@ -1,4 +1,4 @@
-import { useContext } from "react";
+import { useContext, useState, useRef, useEffect } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
@@ -19,7 +19,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { ChevronRight, Ellipsis, FileText, FilePlus, FolderOpen, GripVertical, FileSymlink, Trash2 } from "lucide-react";
+import { ChevronRight, Ellipsis, FileText, FilePlus, FolderOpen, FolderPlus, GripVertical, FileSymlink, Pencil, Trash2 } from "lucide-react";
 import { useLayoutStore } from "@/stores/layout";
 import { useEditorStore } from "@/stores/editor";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -73,6 +73,76 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
   };
 
   const workspace = workspaces.find((w) => w.id === workspaceId);
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState("");
+  const editRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isEditing && editRef.current) {
+      editRef.current.focus();
+      editRef.current.select();
+    }
+  }, [isEditing]);
+
+  function handleStartRename() {
+    setEditValue(node.title);
+    setIsEditing(true);
+  }
+
+  async function handleRenameSubmit() {
+    const newName = editValue.trim();
+    if (!workspace || !newName || newName === node.title) {
+      setIsEditing(false);
+      return;
+    }
+    try {
+      if (bareFolder) {
+        // Bare folder: rename directory on disk
+        const parent = node.path.includes("/")
+          ? node.path.substring(0, node.path.lastIndexOf("/"))
+          : "";
+        const newPath = parent ? `${parent}/${newName}` : newName;
+        await invoke("rename_entry", {
+          workspace: workspace.path,
+          from: node.path,
+          to: newPath,
+        });
+      } else {
+        // Document: always write to disk (updates title + renames file)
+        const entry = await invoke<{ meta: { icon: string | null; extra: Record<string, unknown> }; body: string }>(
+          "read_entry",
+          { workspace: workspace.path, path: node.path },
+        );
+        const result = await invoke<{ new_path: string | null }>("write_entry", {
+          workspace: workspace.path,
+          path: node.path,
+          content: entry.body,
+          title: newName,
+          icon: entry.meta.icon,
+          extra: entry.meta.extra && Object.keys(entry.meta.extra).length > 0 ? entry.meta.extra : null,
+        });
+        // If document is open in editor, sync its state
+        if (activeDocument === node.path) {
+          useEditorStore.getState().requestRename(node.path, newName, result.new_path);
+        }
+      }
+      await refreshTree(workspaceId);
+    } catch (err) {
+      console.error("Failed to rename:", err);
+      toast.error(m.toast_error());
+    }
+    setIsEditing(false);
+  }
+
+  function handleRenameKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleRenameSubmit();
+    } else if (e.key === "Escape") {
+      setIsEditing(false);
+    }
+  }
 
   function handleDocumentClick() {
     if (bareFolder) {
@@ -152,6 +222,41 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
     }
   }
 
+  async function handleNewFolder() {
+    if (!workspace) return;
+    try {
+      let parentPath: string;
+      let parentNodePath: string;
+      if (bareFolder) {
+        parentPath = node.path;
+        parentNodePath = node.path;
+      } else if (node.children.length > 0) {
+        parentPath = node.path.replace(/\/readme\.md$/i, "");
+        parentNodePath = node.path;
+      } else {
+        // Simple file — nest it first, then create folder inside
+        const newPath = await invoke<string>("nest_entry", {
+          workspace: workspace.path,
+          path: node.path,
+        });
+        parentPath = newPath.replace(/\/readme\.md$/i, "");
+        parentNodePath = newPath;
+      }
+      await invoke<string>("create_folder", {
+        workspace: workspace.path,
+        parentPath,
+        name: m.workspace_new_folder(),
+      });
+      await refreshTree(workspaceId);
+      if (!expandedPaths[workspaceId]?.includes(parentNodePath)) {
+        toggleExpanded(workspaceId, parentNodePath);
+      }
+    } catch (err) {
+      console.error("Failed to create folder:", err);
+      toast.error(m.toast_error());
+    }
+  }
+
   async function handleDelete() {
     if (!workspace) return;
     try {
@@ -183,6 +288,20 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
     </span>
   ) : null;
 
+  const titleElement = isEditing ? (
+    <input
+      ref={editRef}
+      className="truncate bg-transparent outline-none text-sm w-full border-b border-primary"
+      value={editValue}
+      onChange={(e) => setEditValue(e.target.value)}
+      onBlur={handleRenameSubmit}
+      onKeyDown={handleRenameKeyDown}
+      onClick={(e) => e.stopPropagation()}
+    />
+  ) : (
+    <span className="truncate">{node.title}</span>
+  );
+
   const dragHandle = (
     <button
       className="absolute -left-4 top-0 z-10 flex h-7 w-4 items-center justify-center opacity-0 group-hover/tree-item:opacity-50 hover:!opacity-100 cursor-grab active:cursor-grabbing"
@@ -210,6 +329,14 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
         <DropdownMenuItem onClick={handleNewPage}>
           <FilePlus className="mr-2 h-4 w-4" />
           {m.workspace_new_page()}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={handleNewFolder}>
+          <FolderPlus className="mr-2 h-4 w-4" />
+          {m.workspace_new_folder()}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={handleStartRename}>
+          <Pencil className="mr-2 h-4 w-4" />
+          {m.workspace_rename()}
         </DropdownMenuItem>
         <DropdownMenuItem
           className="text-destructive focus:text-destructive"
@@ -244,9 +371,10 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
             isActive={isActive}
             className={`flex-1 ${nestHighlight}`}
             onClick={handleDocumentClick}
+            onDoubleClick={handleStartRename}
           >
             {iconElement}
-            <span className="truncate">{node.title}</span>
+            {titleElement}
             {dot}
           </SidebarMenuSubButton>
           {contextMenu}
@@ -270,6 +398,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
             isActive={isActive}
             className={`flex-1 ${nestHighlight}`}
             onClick={handleDocumentClick}
+            onDoubleClick={handleStartRename}
           >
             <CollapsibleTrigger
               asChild
@@ -282,7 +411,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
                 <ChevronRight className="absolute inset-0 m-auto h-3 w-3 opacity-0 group-hover/tree-item:opacity-100 transition-all group-data-[state=open]/collapsible:rotate-90" />
               </button>
             </CollapsibleTrigger>
-            <span className="truncate">{node.title}</span>
+            {titleElement}
             {dot}
           </SidebarMenuSubButton>
           {contextMenu}

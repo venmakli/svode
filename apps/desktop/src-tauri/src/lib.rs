@@ -29,6 +29,7 @@ pub fn run() {
             commands::greet::greet,
             commands::files::list_entries,
             commands::files::create_entry,
+            commands::files::create_folder,
             commands::files::read_entry,
             commands::files::write_entry,
             commands::files::delete_entry,

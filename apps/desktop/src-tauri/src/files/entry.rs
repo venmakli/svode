@@ -210,6 +210,30 @@ pub fn create(
     })
 }
 
+/// Create a bare folder (directory without readme.md).
+/// The folder name is the title as-is (no slugify, no transliteration).
+/// Returns the relative path of the created folder.
+pub fn create_folder(
+    workspace: &str,
+    parent_path: Option<&str>,
+    name: &str,
+) -> Result<String, AppError> {
+    let rel_path = match parent_path {
+        Some(parent) => format!("{parent}/{name}"),
+        None => name.to_string(),
+    };
+
+    let abs_path = resolve(workspace, &rel_path);
+
+    if abs_path.exists() {
+        return Err(AppError::FileAlreadyExists(rel_path));
+    }
+
+    fs::create_dir_all(&abs_path)?;
+
+    Ok(rel_path)
+}
+
 /// Read an entry from disk.
 pub fn read(workspace: &str, path: &str) -> Result<Entry, AppError> {
     let abs_path = resolve(workspace, path);
