@@ -9,7 +9,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useChatStatusStore } from "@/stores/chat";
-import { extractMentions } from "./composer-mentions";
 
 interface TextDeltaPayload {
   type: "textDelta";
@@ -309,22 +308,20 @@ export function ChatRuntimeProvider({
       useChatStatusStore.getState().setAgentStatus("thinking");
 
       try {
-        const model = useChatStatusStore.getState().selectedModel;
+        const { selectedModel: model, docMentions, clearDocMentions } =
+          useChatStatusStore.getState();
 
-        // Resolve [[Title]] mentions to file context
-        const { fileTrees, activeWorkspaceId } = useWorkspaceStore.getState();
-        const tree = activeWorkspaceId ? fileTrees[activeWorkspaceId] ?? [] : [];
-        const mentions = extractMentions(text, tree);
-        let context: { path: string; content: string }[] | null = null;
-        if (mentions.length > 0) {
+        // Resolve doc-mention chips to file context
+        let messageWithContext = text;
+        if (docMentions.length > 0) {
           const entries = await Promise.all(
-            mentions.map(async (doc) => {
+            docMentions.map(async (doc) => {
               try {
-                const entry = await invoke<{ content: string }>("read_entry", {
+                const entry = await invoke<{ body: string }>("read_entry", {
                   workspace: workspacePath,
                   path: doc.path,
                 });
-                return { path: doc.path, content: entry.content };
+                return { path: doc.path, content: entry.body };
               } catch {
                 return null;
               }
@@ -333,16 +330,15 @@ export function ChatRuntimeProvider({
           const valid = entries.filter(
             (e): e is { path: string; content: string } => e !== null,
           );
-          if (valid.length > 0) context = valid;
-        }
-
-        // Build context into message text directly (CLI doesn't support structured context)
-        let messageWithContext = text;
-        if (context && context.length > 0) {
-          const contextBlocks = context.map(
-            (f) => `[Context: ${f.path}]\n${f.content}\n[End context]`,
-          );
-          messageWithContext = contextBlocks.join("\n\n") + "\n\n" + text;
+          if (valid.length > 0) {
+            const contextBlocks = valid.map((f) => {
+              const doc = docMentions.find((d) => d.path === f.path);
+              const title = doc?.title ?? "";
+              return `<document path="${f.path}" title="${title}">\n${f.content}\n</document>`;
+            });
+            messageWithContext = contextBlocks.join("\n\n") + "\n\n" + text;
+          }
+          clearDocMentions();
         }
 
         await invoke("agent_send", {

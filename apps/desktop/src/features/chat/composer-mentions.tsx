@@ -7,7 +7,6 @@ import {
 } from "react";
 import { FileText } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace";
-import { useLayoutStore } from "@/stores/layout";
 import * as m from "@/paraglide/messages.js";
 import type { TreeNode } from "@/types/workspace";
 
@@ -37,32 +36,6 @@ function fuzzyMatch(target: string, query: string): boolean {
     .split(/\s+/)
     .filter(Boolean)
     .every((word) => lower.includes(word));
-}
-
-/** Extract /Title mentions from message text, return matched doc items. */
-export function extractMentions(
-  text: string,
-  docItems: TreeNode[] | DocItem[],
-): DocItem[] {
-  const flat: DocItem[] =
-    docItems.length > 0 && "children" in docItems[0]
-      ? flattenTree(docItems as TreeNode[])
-      : (docItems as DocItem[]);
-  // Match badge format: data-mention-path attribute value or [[Title]] fallback
-  const mentionPattern = /\[\[([^\]]+)\]\]/g;
-  const mentions: DocItem[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = mentionPattern.exec(text)) !== null) {
-    const title = match[1].trim();
-    if (!title) continue;
-    const doc = flat.find(
-      (d) => d.title === title || d.path === title,
-    );
-    if (doc && !mentions.some((m) => m.path === doc.path)) {
-      mentions.push(doc);
-    }
-  }
-  return mentions;
 }
 
 interface UseSlashMenuResult {
@@ -135,12 +108,12 @@ export function useSlashMenu(
       )
     : allDocs;
 
-  // Handle selection: replace /query with [[Title]]
+  // Handle selection: remove /query from text (doc is added as chip separately)
   const handleSelect = useCallback(
     (item: DocItem): string => {
       const before = currentValue.slice(0, triggerStart);
       const after = currentValue.slice(cursorPosition);
-      const newValue = `${before}[[${item.title}]]${after}`;
+      const newValue = `${before}${after}`;
       setIsOpen(false);
       return newValue;
     },
@@ -260,31 +233,3 @@ export function SlashMenuDropdown({
   );
 }
 
-/** Clickable badge for a mentioned document in the composer / messages. */
-export function MentionBadge({
-  title,
-  icon,
-  path,
-}: {
-  title: string;
-  icon: string | null;
-  path: string;
-}) {
-  const { openDocument } = useLayoutStore();
-
-  return (
-    <button
-      type="button"
-      className="inline-flex items-center gap-1 rounded-md bg-accent px-1.5 py-0.5 text-accent-foreground text-xs font-medium hover:bg-accent/80 transition-colors cursor-pointer"
-      onClick={() => openDocument(path)}
-      title={path}
-    >
-      {icon ? (
-        <span className="text-xs">{icon}</span>
-      ) : (
-        <FileText className="h-3 w-3" />
-      )}
-      {title}
-    </button>
-  );
-}

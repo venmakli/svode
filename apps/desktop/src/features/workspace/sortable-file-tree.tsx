@@ -454,6 +454,18 @@ export function SortableFileTree({
     [activeId, activeFolderPath, overId, projection, flatItems, flatItemsMap],
   );
 
+  // Cross-workspace not-allowed cursor: when dragging starts, mark other workspace trees
+  useEffect(() => {
+    if (!activeId) return;
+    const others = document.querySelectorAll(
+      `[data-dnd-workspace]:not([data-dnd-workspace="${workspaceId}"])`,
+    );
+    others.forEach((el) => el.classList.add("dnd-not-allowed"));
+    return () => {
+      others.forEach((el) => el.classList.remove("dnd-not-allowed"));
+    };
+  }, [activeId, workspaceId]);
+
   return (
     <TreeDndContext.Provider value={contextValue}>
       <DndContext
@@ -466,7 +478,9 @@ export function SortableFileTree({
         onDragCancel={handleDragCancel}
       >
         <SortableContext items={sortableIds}>
-          {children}
+          <div data-dnd-workspace={workspaceId}>
+            {children}
+          </div>
         </SortableContext>
         <DragOverlay dropAnimation={null}>
           {activeNode && (

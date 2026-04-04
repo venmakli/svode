@@ -45,7 +45,7 @@ interface Entry {
 export function PlateDocumentEditor() {
   const { activeDocument, openDocument } = useLayoutStore();
   const { workspaces, activeWorkspaceId, updateNodeMeta } = useWorkspaceStore();
-  const { markUnsaved, clearUnsaved, pendingRename, clearPendingRename } = useEditorStore();
+  const { markUnsaved, clearUnsaved, pendingRename, clearPendingRename, setBrokenLinks } = useEditorStore();
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId);
   const workspacePath = activeWorkspace?.path ?? "";
@@ -88,6 +88,19 @@ export function PlateDocumentEditor() {
     currentPathRef.current = activeDocument;
     isLoadingRef.current = true;
     justSavedRef.current = false;
+
+    // Validate links in background
+    invoke<{ url: string; exists: boolean }[]>("validate_links", {
+      workspace: workspacePath,
+      path: activeDocument,
+    })
+      .then((results) => {
+        const broken = new Set(
+          results.filter((r) => !r.exists).map((r) => r.url),
+        );
+        setBrokenLinks(broken);
+      })
+      .catch(() => setBrokenLinks(new Set()));
 
     // Use cached Plate value if available and file wasn't modified externally
     const cached = docCacheRef.current.get(activeDocument);
@@ -203,7 +216,7 @@ export function PlateDocumentEditor() {
 
     justSavedRef.current = true;
 
-    invoke<{ new_path: string | null }>("write_entry", {
+    invoke<{ new_path: string | null; modified_files: string[] }>("write_entry", {
       workspace: workspacePath,
       path: activeDocument,
       content: markdown,
@@ -228,6 +241,12 @@ export function PlateDocumentEditor() {
           if (editor) {
             docCacheRef.current.set(activeDocument, editor.children);
           }
+        }
+
+        // Mark files with updated backlinks for reload
+        for (const f of result.modified_files) {
+          useEditorStore.getState().markAiModified(f);
+          docCacheRef.current.delete(f);
         }
 
         toast.success(m.editor_save_success());

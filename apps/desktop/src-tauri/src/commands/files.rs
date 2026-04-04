@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 use crate::error::AppError;
-use crate::files::{entry, tree, BacklinkIndex, BacklinkInfo, Entry, FileWatcher, TreeNode, WriteResult};
+use crate::files::{entry, tree, BacklinkIndex, BacklinkInfo, Entry, FileWatcher, LinkValidation, TreeNode, WriteResult};
 use crate::workspace::config;
 
 #[tauri::command]
@@ -72,11 +72,13 @@ pub fn rename_entry(
     from: String,
     to: String,
     backlink_index: State<'_, Arc<BacklinkIndex>>,
-) -> Result<(), AppError> {
+) -> Result<Vec<String>, AppError> {
     entry::rename(&workspace, &from, &to)?;
-    let _ = backlink_index.update_links_on_rename(Path::new(&workspace), &from, &to);
+    let modified = backlink_index
+        .update_links_on_rename(Path::new(&workspace), &from, &to)
+        .unwrap_or_default();
     let _ = backlink_index.update_file(Path::new(&workspace), &to);
-    Ok(())
+    Ok(modified)
 }
 
 #[tauri::command]
@@ -112,6 +114,14 @@ pub fn rebuild_backlinks(
     backlink_index: State<'_, Arc<BacklinkIndex>>,
 ) -> Result<(), AppError> {
     backlink_index.build(Path::new(&workspace))
+}
+
+#[tauri::command]
+pub fn validate_links(
+    workspace: String,
+    path: String,
+) -> Result<Vec<LinkValidation>, AppError> {
+    crate::files::backlinks::validate_links(Path::new(&workspace), &path)
 }
 
 #[tauri::command]

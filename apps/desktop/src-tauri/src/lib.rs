@@ -37,6 +37,7 @@ pub fn run() {
             commands::files::move_entry,
             commands::files::get_backlinks,
             commands::files::rebuild_backlinks,
+            commands::files::validate_links,
             commands::files::nest_entry,
             commands::files::unnest_entry,
             commands::files::watch_workspace,

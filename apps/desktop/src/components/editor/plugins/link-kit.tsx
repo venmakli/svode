@@ -2,13 +2,13 @@
 
 import { LinkPlugin } from '@platejs/link/react';
 
-import { LinkElement } from '@/components/ui/link-node';
+import { DocLinkElement } from '@/features/editor/doc-link-element';
 import { LinkFloatingToolbar } from '@/components/ui/link-toolbar';
 
 export const LinkKit = [
   LinkPlugin.configure({
     render: {
-      node: LinkElement,
+      node: DocLinkElement,
       afterEditable: () => <LinkFloatingToolbar />,
     },
   }),

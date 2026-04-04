@@ -15,6 +15,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
@@ -77,6 +87,10 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
   const editRef = useRef<HTMLInputElement>(null);
+  const [deleteDialog, setDeleteDialog] = useState<{
+    open: boolean;
+    backlinks: { source_path: string; link_count: number }[];
+  }>({ open: false, backlinks: [] });
 
   useEffect(() => {
     if (isEditing && editRef.current) {
@@ -103,18 +117,22 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
           ? node.path.substring(0, node.path.lastIndexOf("/"))
           : "";
         const newPath = parent ? `${parent}/${newName}` : newName;
-        await invoke("rename_entry", {
+        const modifiedFiles = await invoke<string[]>("rename_entry", {
           workspace: workspace.path,
           from: node.path,
           to: newPath,
         });
+        // Mark files with updated backlinks for reload
+        for (const f of modifiedFiles) {
+          useEditorStore.getState().markAiModified(f);
+        }
       } else {
         // Document: always write to disk (updates title + renames file)
         const entry = await invoke<{ meta: { icon: string | null; extra: Record<string, unknown> }; body: string }>(
           "read_entry",
           { workspace: workspace.path, path: node.path },
         );
-        const result = await invoke<{ new_path: string | null }>("write_entry", {
+        const result = await invoke<{ new_path: string | null; modified_files: string[] }>("write_entry", {
           workspace: workspace.path,
           path: node.path,
           content: entry.body,
@@ -125,6 +143,10 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
         // If document is open in editor, sync its state
         if (activeDocument === node.path) {
           useEditorStore.getState().requestRename(node.path, newName, result.new_path);
+        }
+        // Mark files with updated backlinks for reload
+        for (const f of result.modified_files) {
+          useEditorStore.getState().markAiModified(f);
         }
       }
       await refreshTree(workspaceId);
@@ -257,8 +279,23 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
     }
   }
 
-  async function handleDelete() {
+  async function handleDeleteRequest() {
     if (!workspace) return;
+    try {
+      const backlinks = await invoke<{ source_path: string; link_count: number }[]>(
+        "get_backlinks",
+        { workspace: workspace.path, targetPath: node.path },
+      );
+      setDeleteDialog({ open: true, backlinks });
+    } catch {
+      // If backlinks check fails, show dialog anyway without backlinks
+      setDeleteDialog({ open: true, backlinks: [] });
+    }
+  }
+
+  async function handleDeleteConfirm() {
+    if (!workspace) return;
+    setDeleteDialog({ open: false, backlinks: [] });
     try {
       await invoke("delete_entry", {
         workspace: workspace.path,
@@ -340,7 +377,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
         </DropdownMenuItem>
         <DropdownMenuItem
           className="text-destructive focus:text-destructive"
-          onClick={handleDelete}
+          onClick={handleDeleteRequest}
         >
           <Trash2 className="mr-2 h-4 w-4" />
           {m.workspace_delete()}
@@ -360,74 +397,120 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
 
   const nestHighlight = isNestTarget ? "bg-sidebar-accent ring-1 ring-sidebar-primary/30 rounded-md" : "";
 
+  const deleteConfirmDialog = (
+    <AlertDialog
+      open={deleteDialog.open}
+      onOpenChange={(open) => {
+        if (!open) setDeleteDialog({ open: false, backlinks: [] });
+      }}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{m.file_delete_title()}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {m.file_delete_description()}
+            {deleteDialog.backlinks.length > 0 && (
+              <>
+                <br /><br />
+                {m.file_delete_has_backlinks()}
+                <ul className="mt-2 list-disc pl-5">
+                  {deleteDialog.backlinks.map((bl) => (
+                    <li key={bl.source_path} className="text-foreground">
+                      {bl.source_path}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{m.file_delete_cancel()}</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={handleDeleteConfirm}
+          >
+            {m.file_delete_confirm()}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+
   // Leaf node (simple file or empty bare folder with no children)
   if (node.children.length === 0 && !bareFolder) {
     return (
-      <SidebarMenuSubItem ref={setNodeRef} style={style} className="relative">
-        {dropIndicator}
-        <div className="flex items-center group/tree-item">
-          {dragHandle}
-          <SidebarMenuSubButton
-            isActive={isActive}
-            className={`flex-1 ${nestHighlight}`}
-            onClick={handleDocumentClick}
-            onDoubleClick={handleStartRename}
-          >
-            {iconElement}
-            {titleElement}
-            {dot}
-          </SidebarMenuSubButton>
-          {contextMenu}
-        </div>
-      </SidebarMenuSubItem>
+      <>
+        <SidebarMenuSubItem ref={setNodeRef} style={style} className="relative">
+          {dropIndicator}
+          <div className="flex items-center group/tree-item">
+            {dragHandle}
+            <SidebarMenuSubButton
+              isActive={isActive}
+              className={`flex-1 ${nestHighlight}`}
+              onClick={handleDocumentClick}
+              onDoubleClick={handleStartRename}
+            >
+              {iconElement}
+              {titleElement}
+              {dot}
+            </SidebarMenuSubButton>
+            {contextMenu}
+          </div>
+        </SidebarMenuSubItem>
+        {deleteConfirmDialog}
+      </>
     );
   }
 
   // Folder node (document with children, or bare folder)
   return (
-    <SidebarMenuSubItem ref={setNodeRef} style={style} className="relative">
-      {dropIndicator}
-      <Collapsible
-        open={expanded}
-        onOpenChange={() => toggleExpanded(workspaceId, node.path)}
-        className="group/collapsible"
-      >
-        <div className="flex items-center group/tree-item">
-          {dragHandle}
-          <SidebarMenuSubButton
-            isActive={isActive}
-            className={`flex-1 ${nestHighlight}`}
-            onClick={handleDocumentClick}
-            onDoubleClick={handleStartRename}
-          >
-            <CollapsibleTrigger
-              asChild
-              onClick={(e) => e.stopPropagation()}
+    <>
+      <SidebarMenuSubItem ref={setNodeRef} style={style} className="relative">
+        {dropIndicator}
+        <Collapsible
+          open={expanded}
+          onOpenChange={() => toggleExpanded(workspaceId, node.path)}
+          className="group/collapsible"
+        >
+          <div className="flex items-center group/tree-item">
+            {dragHandle}
+            <SidebarMenuSubButton
+              isActive={isActive}
+              className={`flex-1 ${nestHighlight}`}
+              onClick={handleDocumentClick}
+              onDoubleClick={handleStartRename}
             >
-              <button className="relative h-4 w-4 shrink-0 flex items-center justify-center">
-                <span className="group-hover/tree-item:opacity-0 transition-opacity">
-                  {iconElement}
-                </span>
-                <ChevronRight className="absolute inset-0 m-auto h-3 w-3 opacity-0 group-hover/tree-item:opacity-100 transition-all group-data-[state=open]/collapsible:rotate-90" />
-              </button>
-            </CollapsibleTrigger>
-            {titleElement}
-            {dot}
-          </SidebarMenuSubButton>
-          {contextMenu}
-        </div>
-        <CollapsibleContent>
-          <SidebarMenuSub>
-            {node.children.map((child) => (
-              <FileTreeItem
-                key={child.path}
-                node={child}
-                workspaceId={workspaceId}
-              />
-            ))}
-          </SidebarMenuSub>
-        </CollapsibleContent>
-      </Collapsible>
-    </SidebarMenuSubItem>
+              <CollapsibleTrigger
+                asChild
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button className="relative h-4 w-4 shrink-0 flex items-center justify-center">
+                  <span className="group-hover/tree-item:opacity-0 transition-opacity">
+                    {iconElement}
+                  </span>
+                  <ChevronRight className="absolute inset-0 m-auto h-3 w-3 opacity-0 group-hover/tree-item:opacity-100 transition-all group-data-[state=open]/collapsible:rotate-90" />
+                </button>
+              </CollapsibleTrigger>
+              {titleElement}
+              {dot}
+            </SidebarMenuSubButton>
+            {contextMenu}
+          </div>
+          <CollapsibleContent>
+            <SidebarMenuSub>
+              {node.children.map((child) => (
+                <FileTreeItem
+                  key={child.path}
+                  node={child}
+                  workspaceId={workspaceId}
+                />
+              ))}
+            </SidebarMenuSub>
+          </CollapsibleContent>
+        </Collapsible>
+      </SidebarMenuSubItem>
+      {deleteConfirmDialog}
+    </>
   );
 }

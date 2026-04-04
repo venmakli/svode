@@ -7,6 +7,8 @@ interface EditorState {
   aiModified: Record<string, boolean>;
   /** Pending title rename from sidebar — editor picks it up and applies */
   pendingRename: { path: string; title: string; newPath: string | null } | null;
+  /** Set of broken link target paths for the currently open document */
+  brokenLinks: Set<string>;
 
   markUnsaved: (path: string) => void;
   clearUnsaved: (path: string) => void;
@@ -15,12 +17,14 @@ interface EditorState {
   hasIndicator: (path: string) => boolean;
   requestRename: (path: string, title: string, newPath: string | null) => void;
   clearPendingRename: () => void;
+  setBrokenLinks: (links: Set<string>) => void;
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
   unsavedChanges: {},
   aiModified: {},
   pendingRename: null,
+  brokenLinks: new Set<string>(),
 
   markUnsaved: (path) =>
     set((s) => ({
@@ -51,4 +55,5 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   requestRename: (path, title, newPath) => set({ pendingRename: { path, title, newPath } }),
   clearPendingRename: () => set({ pendingRename: null }),
+  setBrokenLinks: (links) => set({ brokenLinks: links }),
 }));

@@ -109,6 +109,12 @@
   "workspace_not_found_action_update": "Update path",
   "workspace_not_found_action_remove": "Remove from list",
 
+  "file_delete_title": "Delete document?",
+  "file_delete_description": "This document will be permanently deleted.",
+  "file_delete_has_backlinks": "The following documents link to this one:",
+  "file_delete_confirm": "Delete",
+  "file_delete_cancel": "Cancel",
+
   "toast_project_created": "Project created",
   "toast_workspace_created": "Workspace added",
   "toast_workspace_opened": "Workspace added",

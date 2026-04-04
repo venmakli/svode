@@ -386,6 +386,42 @@ fn resolve_relative_to(source_rel_path: &str, target_link: &str) -> String {
     parts.join("/")
 }
 
+/// Result of validating a single link in a document.
+#[derive(Debug, Clone, Serialize)]
+pub struct LinkValidation {
+    pub url: String,
+    pub exists: bool,
+}
+
+/// Validate all internal (.md) links in a document.
+/// Returns a list of {url, exists} for each link found.
+pub fn validate_links(workspace_path: &Path, doc_rel_path: &str) -> Result<Vec<LinkValidation>, AppError> {
+    let abs_path = workspace_path.join(doc_rel_path);
+    if !abs_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let content = fs::read_to_string(&abs_path)?;
+    let links = parse_markdown_links(&content);
+
+    let mut results = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for (target, _span) in links {
+        let resolved = resolve_relative_to(doc_rel_path, &target);
+        if !seen.insert(resolved.clone()) {
+            continue;
+        }
+        let target_abs = workspace_path.join(&resolved);
+        results.push(LinkValidation {
+            url: resolved,
+            exists: target_abs.exists(),
+        });
+    }
+
+    Ok(results)
+}
+
 /// Collect all .md files under a directory, recursively.
 fn collect_md_files(dir: &Path) -> Result<Vec<PathBuf>, AppError> {
     let mut files = Vec::new();

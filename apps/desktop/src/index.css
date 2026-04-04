@@ -150,6 +150,12 @@
   app-region: no-drag;
 }
 
+/* DnD: show not-allowed cursor on other workspaces during cross-workspace drag */
+.dnd-not-allowed,
+.dnd-not-allowed * {
+  cursor: not-allowed !important;
+}
+
 /* Thin scrollbar that matches the theme */
 ::-webkit-scrollbar {
   width: 8px;

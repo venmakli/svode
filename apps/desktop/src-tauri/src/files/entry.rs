@@ -6,11 +6,14 @@ use std::path::{Path, PathBuf};
 use crate::error::AppError;
 use crate::files::backlinks::BacklinkIndex;
 use crate::files::frontmatter;
+use crate::files::tree;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WriteResult {
     /// New relative path if file was renamed, None if path unchanged.
     pub new_path: Option<String>,
+    /// Files whose backlinks were updated due to rename.
+    pub modified_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,6 +149,27 @@ fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
+/// Append a filename to order.json for a given directory key.
+fn order_append(workspace: &Path, dir_key: &str, name: &str) {
+    let mut order = tree::read_order(workspace);
+    order
+        .entry(dir_key.to_string())
+        .or_default()
+        .push(name.to_string());
+    let _ = tree::write_order(workspace, &order);
+}
+
+/// Rename an entry in order.json (replace old_name with new_name in the given directory).
+fn order_rename(workspace: &Path, dir_key: &str, old_name: &str, new_name: &str) {
+    let mut order = tree::read_order(workspace);
+    if let Some(list) = order.get_mut(dir_key) {
+        if let Some(pos) = list.iter().position(|n| n == old_name) {
+            list[pos] = new_name.to_string();
+            let _ = tree::write_order(workspace, &order);
+        }
+    }
+}
+
 /// Create a new entry on disk. Returns the created Entry.
 pub fn create(
     workspace: &str,
@@ -203,6 +227,15 @@ pub fn create(
     let content = frontmatter::serialize(&meta, body);
     fs::write(&abs_path, &content)?;
 
+    // Append to order.json so the new file appears at the end
+    let filename = Path::new(&rel_path)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let dir_key = parent_path.unwrap_or(".");
+    order_append(Path::new(workspace), dir_key, &filename);
+
     Ok(Entry {
         meta,
         body: body.to_string(),
@@ -230,6 +263,10 @@ pub fn create_folder(
     }
 
     fs::create_dir_all(&abs_path)?;
+
+    // Append to order.json
+    let dir_key = parent_path.unwrap_or(".");
+    order_append(Path::new(workspace), dir_key, name);
 
     Ok(rel_path)
 }
@@ -363,18 +400,89 @@ pub fn write(
         }
     }
 
+    // Update order.json if file/folder was renamed
+    if let Some(ref np) = new_path {
+        let ws_path = Path::new(workspace);
+        let old_name = Path::new(path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let new_name = Path::new(np.as_str())
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        // For readme.md renames, the "name" in order is the folder name, not "readme.md"
+        let is_readme = old_name.eq_ignore_ascii_case("readme.md");
+        if is_readme {
+            let old_dir_name = Path::new(path)
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let new_dir_name = Path::new(np.as_str())
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let grandparent = Path::new(path)
+                .parent()
+                .and_then(|p| p.parent())
+                .unwrap_or(Path::new(""));
+            let dir_key = if grandparent.as_os_str().is_empty() {
+                ".".to_string()
+            } else {
+                grandparent.to_string_lossy().to_string()
+            };
+            // Rename folder entry in parent's order list
+            order_rename(ws_path, &dir_key, &old_dir_name, &new_dir_name);
+            // Rename the key itself (children order moves to new dir name)
+            let mut order = tree::read_order(ws_path);
+            let old_key = if dir_key == "." {
+                old_dir_name.clone()
+            } else {
+                format!("{}/{}", dir_key, old_dir_name)
+            };
+            if let Some(children) = order.remove(&old_key) {
+                let new_key = if dir_key == "." {
+                    new_dir_name
+                } else {
+                    format!("{}/{}", dir_key, new_dir_name)
+                };
+                order.insert(new_key, children);
+                let _ = tree::write_order(ws_path, &order);
+            }
+        } else {
+            // Regular file: dir_key is the parent directory
+            let parent_dir = Path::new(path)
+                .parent()
+                .unwrap_or(Path::new(""));
+            let dir_key = if parent_dir.as_os_str().is_empty() {
+                ".".to_string()
+            } else {
+                parent_dir.to_string_lossy().to_string()
+            };
+            order_rename(ws_path, &dir_key, &old_name, &new_name);
+        }
+    }
+
     // Update backlink index
     let current_path = new_path.as_deref().unwrap_or(path);
+    let mut modified_files = Vec::new();
     if let Some(index) = backlink_index {
         // If renamed, update links in other files
         if let Some(ref np) = new_path {
-            let _ = index.update_links_on_rename(Path::new(workspace), path, np);
+            modified_files = index
+                .update_links_on_rename(Path::new(workspace), path, np)
+                .unwrap_or_default();
         }
         // Re-index the written file
         let _ = index.update_file(Path::new(workspace), current_path);
     }
 
-    Ok(WriteResult { new_path })
+    Ok(WriteResult { new_path, modified_files })
 }
 
 /// Move a file or directory to a new parent directory.
@@ -617,6 +725,47 @@ pub fn rename(workspace: &str, from: &str, to: &str) -> Result<(), AppError> {
     }
 
     fs::rename(&abs_from, &abs_to)?;
+
+    // Update order.json: rename entry in parent's order list
+    let old_name = Path::new(from)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let new_name = Path::new(to)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let parent_dir = Path::new(from)
+        .parent()
+        .unwrap_or(Path::new(""));
+    let dir_key = if parent_dir.as_os_str().is_empty() {
+        ".".to_string()
+    } else {
+        parent_dir.to_string_lossy().to_string()
+    };
+    let ws_path = Path::new(workspace);
+    order_rename(ws_path, &dir_key, &old_name, &new_name);
+
+    // If it's a directory, also rename the key in order.json
+    if abs_to.is_dir() {
+        let mut order = tree::read_order(ws_path);
+        let old_key = if dir_key == "." {
+            old_name
+        } else {
+            format!("{}/{}", dir_key, old_name)
+        };
+        if let Some(children) = order.remove(&old_key) {
+            let new_key = if dir_key == "." {
+                new_name
+            } else {
+                format!("{}/{}", dir_key, new_name)
+            };
+            order.insert(new_key, children);
+            let _ = tree::write_order(ws_path, &order);
+        }
+    }
 
     Ok(())
 }

@@ -42,6 +42,7 @@ import {
   useSlashMenu,
   SlashMenuDropdown,
 } from "@/features/chat/composer-mentions";
+import { DocMentionChips } from "@/features/chat/doc-mention-chips";
 
 export const Thread: FC = () => {
   return (
@@ -146,6 +147,7 @@ const Composer: FC = () => {
   const [cursorPos, setCursorPos] = useState(0);
   const [inputValue, setInputValue] = useState("");
 
+  const addDocMention = useChatStatusStore((s) => s.addDocMention);
   const slashMenu = useSlashMenu(inputValue, cursorPos);
 
   const handleInput = useCallback(() => {
@@ -156,24 +158,53 @@ const Composer: FC = () => {
     slashMenu.handleInputChange(el.value, el.selectionStart);
   }, [slashMenu.handleInputChange]);
 
-  const applySlashSelection = useCallback(
-    (item: Parameters<typeof slashMenu.handleSelect>[0]) => {
+  const setTextareaValue = useCallback(
+    (value: string, focusEnd = true) => {
       const el = textareaRef.current;
       if (!el) return;
-      const newValue = slashMenu.handleSelect(item);
-      const newCursor = newValue.indexOf("]]", newValue.lastIndexOf("[[")) + 2;
       const nativeSetter = Object.getOwnPropertyDescriptor(
         HTMLTextAreaElement.prototype,
         "value",
       )?.set;
-      nativeSetter?.call(el, newValue);
-      el.setSelectionRange(newCursor, newCursor);
+      nativeSetter?.call(el, value);
+      if (focusEnd) {
+        el.setSelectionRange(value.length, value.length);
+      }
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.focus();
-      setInputValue(newValue);
-      setCursorPos(newCursor);
+      setInputValue(value);
+      setCursorPos(focusEnd ? value.length : el.selectionStart);
     },
-    [slashMenu.handleSelect],
+    [],
+  );
+
+  const applySlashSelection = useCallback(
+    (item: Parameters<typeof slashMenu.handleSelect>[0]) => {
+      // Remove /query, insert doc title at that position
+      const baseValue = slashMenu.handleSelect(item);
+      const insertPos = baseValue.length - (inputValue.length - cursorPos);
+      const newValue =
+        baseValue.slice(0, insertPos) +
+        item.title +
+        baseValue.slice(insertPos);
+
+      addDocMention({ title: item.title, path: item.path, icon: item.icon });
+      setTextareaValue(newValue);
+    },
+    [slashMenu.handleSelect, addDocMention, setTextareaValue, inputValue, cursorPos],
+  );
+
+  const handleChipRemove = useCallback(
+    (title: string) => {
+      // Remove first occurrence of title from textarea text
+      const idx = inputValue.indexOf(title);
+      if (idx !== -1) {
+        const newValue =
+          inputValue.slice(0, idx) + inputValue.slice(idx + title.length);
+        setTextareaValue(newValue, false);
+      }
+    },
+    [inputValue, setTextareaValue],
   );
 
   return (
@@ -184,6 +215,7 @@ const Composer: FC = () => {
           className="flex w-full flex-col gap-2 rounded-(--composer-radius) border bg-background p-(--composer-padding) transition-shadow focus-within:border-ring/75 focus-within:ring-2 focus-within:ring-ring/20 data-[dragging=true]:border-ring data-[dragging=true]:border-dashed data-[dragging=true]:bg-accent/50"
         >
           <ComposerAttachments />
+          <DocMentionChips onRemoveText={handleChipRemove} />
           <div className="relative">
             <ComposerPrimitive.Input
               ref={textareaRef}
