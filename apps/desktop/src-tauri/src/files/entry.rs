@@ -149,6 +149,28 @@ fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
+/// Convert filesystem timestamp to RFC 3339 string, falling back to now.
+fn system_time_to_rfc3339(st: std::io::Result<std::time::SystemTime>) -> String {
+    st.ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| {
+            chrono::DateTime::from_timestamp(d.as_secs() as i64, d.subsec_nanos())
+                .unwrap_or_else(chrono::Utc::now)
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        })
+        .unwrap_or_else(now_rfc3339)
+}
+
+/// Generate a title from a filename stem: "my-notes" → "My notes".
+fn title_from_stem(stem: &str) -> String {
+    let s = stem.replace('-', " ").replace('_', " ");
+    let mut chars = s.chars();
+    match chars.next() {
+        None => "Untitled".to_string(),
+        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+    }
+}
+
 /// Append a filename to order.json for a given directory key.
 fn order_append(workspace: &Path, dir_key: &str, name: &str) {
     let mut order = tree::read_order(workspace);
@@ -272,6 +294,8 @@ pub fn create_folder(
 }
 
 /// Read an entry from disk.
+/// If the file has no frontmatter, generates metadata in memory without modifying the file.
+/// Frontmatter will be written to disk only on the first explicit save (write).
 pub fn read(workspace: &str, path: &str) -> Result<Entry, AppError> {
     let abs_path = resolve(workspace, path);
 
@@ -280,18 +304,48 @@ pub fn read(workspace: &str, path: &str) -> Result<Entry, AppError> {
     }
 
     let content = fs::read_to_string(&abs_path)?;
-    let (meta, body) = frontmatter::parse(&content)?;
 
-    Ok(Entry {
-        meta,
-        body,
-        path: path.to_string(),
-    })
+    match frontmatter::try_parse(&content)? {
+        Some((meta, body)) => Ok(Entry {
+            meta,
+            body,
+            path: path.to_string(),
+        }),
+        None => {
+            // No frontmatter — generate meta in memory, don't touch the file
+            let fs_meta = fs::metadata(&abs_path)?;
+            let created = system_time_to_rfc3339(fs_meta.created());
+            let updated = system_time_to_rfc3339(fs_meta.modified());
+
+            let stem = Path::new(path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("untitled");
+            let title = title_from_stem(stem);
+
+            let meta = EntryMeta {
+                id: ulid::Ulid::new().to_string().to_lowercase(),
+                title,
+                icon: None,
+                created,
+                updated,
+                extra: HashMap::new(),
+            };
+
+            Ok(Entry {
+                meta,
+                body: content,
+                path: path.to_string(),
+            })
+        }
+    }
 }
 
 /// Write content to an entry, updating the `updated` field in frontmatter.
 /// Optionally update title, icon, and custom fields if provided.
 /// If title changes, the file may be renamed based on the new slug.
+/// `existing_id` is used when saving a file that had no frontmatter — preserves
+/// the id generated during `read()`.
 /// Returns WriteResult with new_path if a rename occurred.
 pub fn write(
     workspace: &str,
@@ -300,6 +354,7 @@ pub fn write(
     title: Option<&str>,
     icon: Option<&str>,
     extra: Option<HashMap<String, serde_yml::Value>>,
+    existing_id: Option<&str>,
     backlink_index: Option<&BacklinkIndex>,
 ) -> Result<WriteResult, AppError> {
     let abs_path = resolve(workspace, path);
@@ -310,9 +365,39 @@ pub fn write(
 
     // Read existing frontmatter to preserve metadata
     let existing = fs::read_to_string(&abs_path)?;
-    let (mut meta, _old_body) = frontmatter::parse(&existing)?;
+    let had_frontmatter = frontmatter::try_parse(&existing)?.is_some();
+    let meta_needs_write = had_frontmatter || title.is_some() || icon.is_some() || extra.is_some();
 
-    let old_title = meta.title.clone();
+    let (old_title, mut meta) = if meta_needs_write {
+        let meta = match frontmatter::try_parse(&existing)? {
+            Some((meta, _)) => meta,
+            None => {
+                // First metadata change on a file without frontmatter — generate meta
+                let fs_meta = fs::metadata(&abs_path)?;
+                let created = system_time_to_rfc3339(fs_meta.created());
+                let id = existing_id
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| ulid::Ulid::new().to_string().to_lowercase());
+                EntryMeta {
+                    id,
+                    title: title_from_stem(
+                        Path::new(path).file_stem().and_then(|s| s.to_str()).unwrap_or("untitled"),
+                    ),
+                    icon: None,
+                    created,
+                    updated: String::new(),
+                    extra: HashMap::new(),
+                }
+            }
+        };
+        let old_title = meta.title.clone();
+
+        (old_title, meta)
+    } else {
+        // Body-only save on a file without frontmatter — write content as-is
+        fs::write(&abs_path, content)?;
+        return Ok(WriteResult { new_path: None, modified_files: Vec::new() });
+    };
 
     // Update the timestamp
     meta.updated = now_rfc3339();
@@ -371,7 +456,11 @@ pub fn write(
                             if !new_dir_abs.exists() {
                                 let old_dir_abs = resolve(workspace, &parent_rel.to_string_lossy());
                                 fs::rename(&old_dir_abs, &new_dir_abs)?;
-                                let renamed_path = format!("{}/readme.md", new_dir_rel);
+                                let readme_filename = Path::new(path)
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy();
+                                let renamed_path = format!("{}/{}", new_dir_rel, readme_filename);
                                 new_path = Some(renamed_path);
                             }
                             // If collision, content is already saved, just skip rename
@@ -580,9 +669,9 @@ pub fn nest_entry(
         ));
     }
 
-    // Create the folder and move the file into it as readme.md
+    // Create the folder and move the file into it as README.md
     fs::create_dir_all(&folder)?;
-    let new_abs = folder.join("readme.md");
+    let new_abs = folder.join("README.md");
     fs::rename(&abs_path, &new_abs)?;
 
     // Compute new relative path
@@ -872,6 +961,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -897,6 +987,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -917,6 +1008,7 @@ mod tests {
             &entry.path,
             "new body",
             Some("Keep Same"),
+            None,
             None,
             None,
             None,

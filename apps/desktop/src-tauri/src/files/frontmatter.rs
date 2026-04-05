@@ -4,6 +4,20 @@ use crate::files::EntryMeta;
 const FRONTMATTER_DELIMITER: &str = "---";
 
 /// Parse a markdown file's content into (frontmatter, body).
+/// Returns `Ok(Some((meta, body)))` on success, `Ok(None)` if no frontmatter found,
+/// or `Err` if frontmatter is present but malformed.
+pub fn try_parse(content: &str) -> Result<Option<(EntryMeta, String)>, AppError> {
+    let trimmed = content.trim_start();
+
+    if !trimmed.starts_with(FRONTMATTER_DELIMITER) {
+        return Ok(None);
+    }
+
+    parse_inner(trimmed).map(Some)
+}
+
+/// Parse a markdown file's content into (frontmatter, body).
+/// Returns an error if frontmatter is missing or malformed.
 pub fn parse(content: &str) -> Result<(EntryMeta, String), AppError> {
     let trimmed = content.trim_start();
 
@@ -12,6 +26,11 @@ pub fn parse(content: &str) -> Result<(EntryMeta, String), AppError> {
             "file does not start with frontmatter delimiter '---'".into(),
         ));
     }
+
+    parse_inner(trimmed)
+}
+
+fn parse_inner(trimmed: &str) -> Result<(EntryMeta, String), AppError> {
 
     // Find the closing delimiter
     let after_first = &trimmed[FRONTMATTER_DELIMITER.len()..];

@@ -223,6 +223,7 @@ export function PlateDocumentEditor() {
       title: title || m.editor_untitled(),
       icon: icon,
       extra: meta?.extra ?? null,
+      existingId: meta?.id ?? null,
     })
       .then((result) => {
         clearUnsaved(activeDocument);

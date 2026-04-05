@@ -21,6 +21,19 @@ fn is_hidden(name: &str) -> bool {
     name.starts_with('.')
 }
 
+/// Find a readme.md file inside a directory (case-insensitive).
+/// Returns the absolute path if found.
+fn find_readme(dir: &Path) -> Option<std::path::PathBuf> {
+    fs::read_dir(dir).ok()?.filter_map(|e| e.ok()).find_map(|e| {
+        let name = e.file_name();
+        if name.to_string_lossy().eq_ignore_ascii_case("readme.md") && e.path().is_file() {
+            Some(e.path())
+        } else {
+            None
+        }
+    })
+}
+
 /// Read title and icon from frontmatter. Falls back to filename without .md on error.
 fn read_frontmatter_meta(abs_path: &Path) -> (String, Option<String>) {
     let fallback = abs_path
@@ -139,19 +152,25 @@ fn read_dir_recursive(
             .to_string();
 
         if abs_path.is_dir() {
-            let readme_path = abs_path.join("readme.md");
-            let has_readme = readme_path.is_file();
+            let readme = find_readme(&abs_path);
 
-            let (title, icon) = if has_readme {
-                read_frontmatter_meta(&readme_path)
+            let (title, icon) = if let Some(ref rp) = readme {
+                let (t, i) = read_frontmatter_meta(rp);
+                // If frontmatter missing, title falls back to "README" — use folder name instead
+                if i.is_none() && t.eq_ignore_ascii_case("readme") {
+                    (name.clone(), None)
+                } else {
+                    (t, i)
+                }
             } else {
                 (name.clone(), None)
             };
 
-            // For document folders: path = "dir/readme.md"
+            // For document folders: path = "dir/README.md" (actual filename)
             // For bare folders: path = "dir" (no .md extension)
-            let node_path = if has_readme {
-                format!("{rel_path}/readme.md")
+            let node_path = if let Some(ref rp) = readme {
+                let readme_name = rp.file_name().unwrap_or_default().to_string_lossy();
+                format!("{rel_path}/{readme_name}")
             } else {
                 rel_path.clone()
             };

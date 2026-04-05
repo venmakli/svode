@@ -44,6 +44,7 @@ pub fn write_entry(
     title: Option<String>,
     icon: Option<String>,
     extra: Option<HashMap<String, serde_yml::Value>>,
+    existing_id: Option<String>,
     backlink_index: State<'_, Arc<BacklinkIndex>>,
 ) -> Result<WriteResult, AppError> {
     entry::write(
@@ -53,6 +54,7 @@ pub fn write_entry(
         title.as_deref(),
         icon.as_deref(),
         extra,
+        existing_id.as_deref(),
         Some(&backlink_index),
     )
 }

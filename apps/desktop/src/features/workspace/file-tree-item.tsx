@@ -128,7 +128,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
         }
       } else {
         // Document: always write to disk (updates title + renames file)
-        const entry = await invoke<{ meta: { icon: string | null; extra: Record<string, unknown> }; body: string }>(
+        const entry = await invoke<{ meta: { id: string; icon: string | null; extra: Record<string, unknown> }; body: string }>(
           "read_entry",
           { workspace: workspace.path, path: node.path },
         );
@@ -139,6 +139,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
           title: newName,
           icon: entry.meta.icon,
           extra: entry.meta.extra && Object.keys(entry.meta.extra).length > 0 ? entry.meta.extra : null,
+          existingId: entry.meta.id ?? null,
         });
         // If document is open in editor, sync its state
         if (activeDocument === node.path) {
