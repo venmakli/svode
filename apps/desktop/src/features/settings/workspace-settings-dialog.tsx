@@ -28,9 +28,17 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmojiPicker } from "@/components/ui/emoji-picker";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ExternalLink, Pencil, RefreshCw } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useLayoutStore } from "@/stores/layout";
+import { useChatStatusStore, type ModelOption } from "@/stores/chat";
 import type {
   WorkspaceConfig,
   AvailableAgent,
@@ -71,6 +79,10 @@ export function WorkspaceSettingsDialog({
   const [healthReport, setHealthReport] = useState<SymlinkHealthReport | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Default model
+  const [defaultModel, setDefaultModel] = useState("sonnet");
+  const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
+
   // AGENTS.md
   const [agentsMdContent, setAgentsMdContent] = useState<string | null>(null);
 
@@ -88,11 +100,22 @@ export function WorkspaceSettingsDialog({
       setInitialName(cfg.name);
       setInitialDescription(cfg.description);
 
-      // Parse enabled CLIs from agent config
-      const agentValue = cfg.agent as { clis?: string[] } | null;
+      // Parse enabled CLIs and default model from agent config
+      const agentValue = cfg.agent as { clis?: string[]; defaultModel?: string } | null;
       setEnabledClis(agentValue?.clis ?? []);
+      setDefaultModel(agentValue?.defaultModel ?? "sonnet");
     } catch (err) {
       console.error("Failed to load workspace config:", err);
+    }
+  }, [workspacePath]);
+
+  const loadModels = useCallback(async () => {
+    if (!workspacePath) return;
+    try {
+      const models = await invoke<ModelOption[]>("agent_list_models", { workspacePath });
+      setAvailableModels(models);
+    } catch {
+      setAvailableModels([]);
     }
   }, [workspacePath]);
 
@@ -134,9 +157,10 @@ export function WorkspaceSettingsDialog({
     if (open && workspacePath) {
       loadConfig();
       loadAgents();
+      loadModels();
       loadAgentsMd();
     }
-  }, [open, workspacePath, loadConfig, loadAgents, loadAgentsMd]);
+  }, [open, workspacePath, loadConfig, loadAgents, loadModels, loadAgentsMd]);
 
   useEffect(() => {
     if (open && enabledClis.length > 0) {
@@ -193,6 +217,21 @@ export function WorkspaceSettingsDialog({
         w.id === workspaceId ? { ...w, icon: newIcon } : w
       ),
     });
+  }
+
+  async function handleDefaultModelChange(modelId: string) {
+    setDefaultModel(modelId);
+    try {
+      const cfg = await invoke<WorkspaceConfig>("get_workspace_config", { workspacePath });
+      const agentValue = (cfg.agent ?? {}) as Record<string, unknown>;
+      await saveConfig({ agent: { ...agentValue, defaultModel: modelId } });
+      // Apply to active chat immediately
+      useChatStatusStore.getState().applyDefaultModel(modelId);
+      toast.success(m.toast_settings_saved());
+    } catch (err) {
+      console.error("Failed to save default model:", err);
+      toast.error(m.toast_error());
+    }
   }
 
   async function handleCliToggle(cliName: string, enabled: boolean) {
@@ -377,6 +416,34 @@ export function WorkspaceSettingsDialog({
                       : m.settings_workspace_symlinks_ok()}
                   </span>
                 )}
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Section: Default Model */}
+            <div className="space-y-4">
+              <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+                {m.settings_workspace_model()}
+              </h3>
+              <div className="space-y-2">
+                <Label>{m.settings_workspace_default_model()}</Label>
+                <Select value={defaultModel} onValueChange={handleDefaultModelChange}>
+                  <SelectTrigger className="w-[200px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableModels.map((model) => (
+                      <SelectItem key={model.id} value={model.id}>
+                        <span>{model.name}</span>
+                        <span className="ml-2 text-muted-foreground">{model.description}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {m.settings_workspace_default_model_desc()}
+                </p>
               </div>
             </div>
 

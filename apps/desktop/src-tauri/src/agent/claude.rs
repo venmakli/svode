@@ -5,7 +5,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
 use crate::agent::executor::AgentExecutor;
-use crate::agent::types::{AgentConfig, AgentEvent};
+use crate::agent::types::{AgentConfig, AgentEvent, ModelOption};
 use crate::agent::AgentProcess;
 use crate::error::AppError;
 
@@ -77,6 +77,10 @@ impl AgentExecutor for ClaudeCodeExecutor {
 
     fn detect(&self) -> Option<String> {
         detect_cli()
+    }
+
+    fn available_models(&self) -> Vec<ModelOption> {
+        claude_models()
     }
 }
 
@@ -420,6 +424,28 @@ async fn send_permission_response(
         })?;
     tracing::info!("Permission response sent successfully for request_id={request_id}");
     Ok(())
+}
+
+/// Claude Code CLI model aliases. Updated manually with app releases.
+/// CLI resolves each alias to the latest version of that model family.
+fn claude_models() -> Vec<ModelOption> {
+    vec![
+        ModelOption {
+            id: "sonnet".to_string(),
+            name: "Claude Sonnet 4.6".to_string(),
+            description: "Balanced".to_string(),
+        },
+        ModelOption {
+            id: "opus".to_string(),
+            name: "Claude Opus 4.6".to_string(),
+            description: "Most powerful".to_string(),
+        },
+        ModelOption {
+            id: "haiku".to_string(),
+            name: "Claude Haiku 4.5".to_string(),
+            description: "Fast, cheap".to_string(),
+        },
+    ]
 }
 
 /// Read stdout line by line, parse into AgentEvents, send through channel.

@@ -71,6 +71,7 @@ pub fn run() {
             agent::commands::agent_send,
             agent::commands::agent_stop,
             agent::commands::agent_list_available,
+            agent::commands::agent_list_models,
             agent::commands::agent_respond_permission,
         ])
         .run(tauri::generate_context!())

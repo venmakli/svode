@@ -71,7 +71,7 @@ export function DocLinkInputElement(
 
   return (
     <PlateElement {...props} as="span">
-      <InlineCombobox element={element} trigger="[[" showTrigger={false}>
+      <InlineCombobox element={element} trigger="/doc" showTrigger={false}>
         <InlineComboboxInput />
         <InlineComboboxContent>
           <InlineComboboxEmpty>

@@ -168,5 +168,9 @@
   "settings_configure_agent": "Настроить AI-агента",
   "settings_configure_agent_desc": "Выбрать CLI и настроить",
 
+  "settings_workspace_model": "Модель",
+  "settings_workspace_default_model": "Модель по умолчанию",
+  "settings_workspace_default_model_desc": "Модель, используемая по умолчанию в чате",
+
   "toast_settings_saved": "Настройки сохранены"
 }

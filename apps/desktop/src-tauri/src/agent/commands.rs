@@ -6,7 +6,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::agent::claude::{self, ClaudeCodeExecutor};
 use crate::agent::executor::AgentExecutor;
 use crate::agent::types::{
-    load_workspace_agent_config, AgentConfig, AgentEvent, AvailableAgent,
+    load_workspace_agent_config, AgentConfig, AgentEvent, AvailableAgent, ModelOption,
 };
 use crate::agent::AgentSessions;
 use crate::error::AppError;
@@ -286,4 +286,21 @@ pub async fn agent_list_available() -> Result<Vec<AvailableAgent>, AppError> {
     });
 
     Ok(agents)
+}
+
+/// List available models for the active agent CLI in a workspace.
+#[tauri::command]
+pub async fn agent_list_models(
+    workspace_path: String,
+) -> Result<Vec<ModelOption>, AppError> {
+    let workspace_dir = Path::new(&workspace_path);
+    let ws_config = load_workspace_agent_config(workspace_dir);
+    let active_cli = ws_config.clis.first().map(|s| s.as_str()).unwrap_or("claude");
+
+    let models = match active_cli {
+        "claude" => ClaudeCodeExecutor.available_models(),
+        _ => ClaudeCodeExecutor.available_models(),
+    };
+
+    Ok(models)
 }

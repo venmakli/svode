@@ -28,13 +28,6 @@ pub struct AgentConfig {
     pub model: Option<String>,
 }
 
-/// A file context entry sent alongside the user message.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileContext {
-    pub path: String,
-    pub content: String,
-}
-
 /// Normalized agent event emitted to the frontend via Tauri events.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -105,6 +98,18 @@ pub struct AvailableAgent {
     pub version: Option<String>,
     pub auth_status: String,
     pub docs_url: String,
+}
+
+/// A model option available for an agent CLI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelOption {
+    /// Short alias used with --model flag (e.g. "sonnet", "opus")
+    pub id: String,
+    /// Display name (e.g. "Claude Sonnet 4")
+    pub name: String,
+    /// Brief description
+    pub description: String,
 }
 
 /// Agent-related settings loaded from workspace `.combai/` config files.

@@ -2,7 +2,7 @@ use std::path::Path;
 
 use tokio::process::ChildStdin;
 
-use super::types::{AgentConfig, AgentEvent};
+use super::types::{AgentConfig, AgentEvent, ModelOption};
 use super::AgentProcess;
 use crate::error::AppError;
 
@@ -41,4 +41,7 @@ pub trait AgentExecutor: Send + Sync {
 
     /// Detect if CLI is available on the system. Returns the path if found.
     fn detect(&self) -> Option<String>;
+
+    /// Return the list of models supported by this CLI.
+    fn available_models(&self) -> Vec<ModelOption>;
 }

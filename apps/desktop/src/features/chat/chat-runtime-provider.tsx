@@ -119,12 +119,35 @@ export function ChatRuntimeProvider({
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId);
   const workspacePath = activeWorkspace?.path ?? "";
 
-  // Reset when workspace changes
+  // Reset when workspace changes & load agent config
   useEffect(() => {
     setMessages([]);
     setIsRunning(false);
     useChatStatusStore.getState().setPendingPermission(null);
-  }, [sessionId]);
+
+    if (workspacePath) {
+      // Load available models from backend (per-executor)
+      invoke<Array<{ id: string; name: string; description: string }>>(
+        "agent_list_models",
+        { workspacePath },
+      ).then((models) => {
+        useChatStatusStore.getState().setAvailableModels(models);
+      }).catch(() => {
+        // fallback handled by store
+      });
+
+      // Load default model from workspace config
+      invoke<{ agent?: { defaultModel?: string } }>(
+        "get_workspace_config",
+        { workspacePath },
+      ).then((cfg) => {
+        const agent = cfg.agent as { defaultModel?: string } | null;
+        useChatStatusStore.getState().applyDefaultModel(agent?.defaultModel);
+      }).catch(() => {
+        useChatStatusStore.getState().applyDefaultModel(undefined);
+      });
+    }
+  }, [sessionId, workspacePath]);
 
   // Listen to Tauri agent events
   useEffect(() => {

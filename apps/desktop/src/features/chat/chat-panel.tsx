@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { Thread } from "@/components/assistant-ui/thread";
 import { ChatRuntimeProvider } from "./chat-runtime-provider";
 import { ThreadStatusBar } from "./thread-status-bar";
-import { BashToolUI, EditToolUI, WriteToolUI } from "./tool-uis";
+import { BashToolUI, EditToolUI, WriteToolUI, PlanToolUI } from "./tool-uis";
 import { useChatStatusStore } from "@/stores/chat";
 
 function useFocusComposerShortcut() {
@@ -30,6 +30,7 @@ function ChatContent() {
       <BashToolUI />
       <EditToolUI />
       <WriteToolUI />
+      <PlanToolUI />
       <div className="flex-1 min-h-0 overflow-hidden">
         <Thread />
       </div>

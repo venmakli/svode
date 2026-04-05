@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 import { useRef, useState, useCallback, type FC } from "react";
 import { ModelSelector } from "@/components/assistant-ui/model-selector";
-import { useChatStatusStore, DEFAULT_MODEL } from "@/stores/chat";
+import { useChatStatusStore } from "@/stores/chat";
 import {
   useSlashMenu,
   SlashMenuDropdown,
@@ -252,22 +252,17 @@ const Composer: FC = () => {
   );
 };
 
-const MODELS = [
-  { id: "sonnet", name: "Sonnet", description: "Fast and capable" },
-  { id: "opus", name: "Opus", description: "Most capable" },
-  { id: "haiku", name: "Haiku", description: "Fastest" },
-];
-
 const ComposerAction: FC = () => {
   const selectedModel = useChatStatusStore((s) => s.selectedModel);
   const setSelectedModel = useChatStatusStore((s) => s.setSelectedModel);
+  const availableModels = useChatStatusStore((s) => s.availableModels);
 
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
       <div className="flex items-center gap-1">
         <ComposerAddAttachment />
         <ModelSelector
-          models={MODELS}
+          models={availableModels}
           value={selectedModel}
           onValueChange={setSelectedModel}
           variant="ghost"

@@ -2,6 +2,7 @@ import { makeAssistantToolUI } from "@assistant-ui/react";
 import { Terminal } from "@/components/tool-ui/terminal";
 import { CodeDiff } from "@/components/tool-ui/code-diff";
 import { CodeBlock } from "@/components/tool-ui/code-block";
+import { Plan } from "@/components/tool-ui/plan";
 
 let toolUiCounter = 0;
 function uniqueId(prefix: string): string {
@@ -115,13 +116,41 @@ export const WriteToolUI = makeAssistantToolUI<
 
     const filename = filePath?.split("/").pop();
     return (
-      <CodeBlock
+      <CodeDiff
         id={uniqueId("write")}
-        code={content}
+        oldCode=""
+        newCode={content}
         language={langFromFilename(filename)}
         filename={filename}
         lineNumbers="visible"
+        diffStyle="unified"
         maxCollapsedLines={25}
+      />
+    );
+  },
+});
+
+export const PlanToolUI = makeAssistantToolUI<
+  { title?: string; description?: string; todos?: Array<{ id: string; label: string; status: string; description?: string }> },
+  unknown
+>({
+  toolName: "Plan",
+  render: ({ args, status }) => {
+    const title = args.title ?? "Plan";
+    const todos = args.todos ?? [];
+    if (todos.length === 0 && status.type === "running") return null;
+
+    return (
+      <Plan
+        id={uniqueId("plan")}
+        title={title}
+        description={args.description}
+        todos={todos.map((t) => ({
+          id: t.id,
+          label: t.label,
+          status: (t.status as "pending" | "in_progress" | "completed" | "cancelled") ?? "pending",
+          description: t.description,
+        }))}
       />
     );
   },

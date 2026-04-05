@@ -168,5 +168,9 @@
   "settings_configure_agent": "Configure AI agent",
   "settings_configure_agent_desc": "Select CLI and configure",
 
+  "settings_workspace_model": "Model",
+  "settings_workspace_default_model": "Default model",
+  "settings_workspace_default_model_desc": "Model used by default in the chat composer",
+
   "toast_settings_saved": "Settings saved"
 }
