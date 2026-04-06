@@ -21,9 +21,12 @@ const statusLabels: Record<string, string> = {
 
 export function ThreadStatusBar({ isRunning }: { isRunning: boolean }) {
   const agentStatus = useChatStatusStore((s) => s.agentStatus);
-  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
-  const workspaces = useWorkspaceStore((s) => s.workspaces);
-  const workspaceName = workspaces.find((w) => w.id === activeWorkspaceId)?.name;
+  const activeChildId = useWorkspaceStore((s) => s.activeChildId);
+  const activeRootName = useWorkspaceStore((s) => s.activeRootName);
+  const workspaces = useWorkspaceStore((s) => s.children);
+  const workspaceName = activeChildId
+    ? workspaces.find((w) => w.id === activeChildId)?.name
+    : activeRootName;
 
   const [elapsed, setElapsed] = useState(0);
   const startRef = useRef(0);

@@ -1,50 +1,54 @@
 import { create } from "zustand";
 
-type SettingsDialog = "app" | "project" | "workspace" | null;
+type SettingsDialog = "app" | "workspace" | null;
 
 interface LayoutState {
   activeDocument: string | null;
+  /** Workspace id that owns the active document */
+  activeDocumentWorkspaceId: string | null;
   chatPanelOpen: boolean;
   settingsDialog: SettingsDialog;
-  settingsWorkspaceId: string | null;
+  /** Path of workspace whose settings are open (root or child) */
+  settingsWorkspacePath: string | null;
 
   toggleChatPanel: () => void;
-  openDocument: (path: string) => void;
+  openDocument: (path: string, workspaceId?: string) => void;
   closeDocument: () => void;
   openAppSettings: () => void;
-  openProjectSettings: () => void;
-  openWorkspaceSettings: (workspaceId: string) => void;
+  openWorkspaceSettings: (workspacePath: string) => void;
   closeSettings: () => void;
 }
 
 export const useLayoutStore = create<LayoutState>((set, get) => ({
   activeDocument: null,
+  activeDocumentWorkspaceId: null,
   chatPanelOpen: true,
   settingsDialog: null,
-  settingsWorkspaceId: null,
+  settingsWorkspacePath: null,
 
   toggleChatPanel: () => {
     const { activeDocument } = get();
-    // Chat cannot be hidden when no document is open (Mode A)
     if (!activeDocument) return;
     set((s) => ({ chatPanelOpen: !s.chatPanelOpen }));
   },
 
-  openDocument: (path) =>
-    set({ activeDocument: path, chatPanelOpen: true }),
+  openDocument: (path, workspaceId?) =>
+    set((s) => ({
+      activeDocument: path,
+      chatPanelOpen: true,
+      // Preserve existing workspace id if not provided (e.g. rename within same workspace)
+      activeDocumentWorkspaceId: workspaceId ?? s.activeDocumentWorkspaceId,
+    })),
 
   closeDocument: () =>
-    set({ activeDocument: null, chatPanelOpen: true }),
+    set({ activeDocument: null, activeDocumentWorkspaceId: null, chatPanelOpen: true }),
 
   openAppSettings: () =>
-    set({ settingsDialog: "app", settingsWorkspaceId: null }),
+    set({ settingsDialog: "app", settingsWorkspacePath: null }),
 
-  openProjectSettings: () =>
-    set({ settingsDialog: "project", settingsWorkspaceId: null }),
-
-  openWorkspaceSettings: (workspaceId) =>
-    set({ settingsDialog: "workspace", settingsWorkspaceId: workspaceId }),
+  openWorkspaceSettings: (workspacePath) =>
+    set({ settingsDialog: "workspace", settingsWorkspacePath: workspacePath }),
 
   closeSettings: () =>
-    set({ settingsDialog: null, settingsWorkspaceId: null }),
+    set({ settingsDialog: null, settingsWorkspacePath: null }),
 }));

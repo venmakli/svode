@@ -18,38 +18,37 @@ export function HomePage() {
   const autoOpenAttempted = useRef(false);
 
   const {
-    projects,
-    isLoadingProjects,
-    loadProjects,
-    openProject,
-    createProject,
-    createDirectoryProject,
-    openProjectFolder,
-    deleteProject,
-    getLastActiveProjectId,
+    rootWorkspaces,
+    isLoadingRoots,
+    loadRootWorkspaces,
+    openRoot,
+    createRoot,
+    openRootFolder,
+    deleteRoot,
+    getLastActiveRootId,
     explicitHome,
   } = useWorkspaceStore();
 
   useEffect(() => {
-    loadProjects();
-  }, [loadProjects]);
+    loadRootWorkspaces();
+  }, [loadRootWorkspaces]);
 
   // Auto-open last active project (skip if user explicitly navigated home)
   useEffect(() => {
     if (autoOpenAttempted.current) return;
-    if (isLoadingProjects) return;
+    if (isLoadingRoots) return;
     if (explicitHome) return;
 
     autoOpenAttempted.current = true;
 
     (async () => {
-      const lastActiveId = await getLastActiveProjectId();
-      if (lastActiveId && projects.some((p) => p.id === lastActiveId)) {
-        await openProject(lastActiveId);
+      const lastActiveId = await getLastActiveRootId();
+      if (lastActiveId && rootWorkspaces.some((w) => w.id === lastActiveId)) {
+        await openRoot(lastActiveId);
         navigate({ to: "/workspace" });
       }
     })();
-  }, [isLoadingProjects, projects, getLastActiveProjectId, openProject, navigate, explicitHome]);
+  }, [isLoadingRoots, rootWorkspaces, getLastActiveRootId, openRoot, navigate, explicitHome]);
 
   // Keyboard shortcut: Cmd+N to create project
   useEffect(() => {
@@ -65,63 +64,52 @@ export function HomePage() {
 
   const handleOpenProject = useCallback(
     async (id: string) => {
-      await openProject(id);
+      await openRoot(id);
       navigate({ to: "/workspace" });
     },
-    [openProject, navigate],
+    [openRoot, navigate],
   );
 
   const handleCreateProject = useCallback(
-    async (
-      name: string,
-      icon: string,
-      description?: string,
-      variant?: string,
-      path?: string,
-    ) => {
+    async (name: string, icon: string, description: string | undefined, path: string) => {
       try {
-        let project;
-        if (variant === "directory" && path) {
-          project = await createDirectoryProject(name, icon, description, path);
-        } else {
-          project = await createProject(name, icon, description);
-        }
+        const ws = await createRoot(name, icon, description, path);
         setDialogOpen(false);
-        await openProject(project.id);
+        await openRoot(ws.id);
         navigate({ to: "/workspace" });
       } catch (err) {
         console.error("Failed to create project:", err);
         toast.error(m.toast_error());
       }
     },
-    [createProject, createDirectoryProject, openProject, navigate],
+    [createRoot, openRoot, navigate],
   );
 
   const handleOpenProjectFolder = useCallback(async () => {
     const selected = await open({ directory: true });
     if (!selected) return;
     try {
-      const project = await openProjectFolder(selected);
-      await openProject(project.id);
+      const ws = await openRootFolder(selected);
+      await openRoot(ws.id);
       navigate({ to: "/workspace" });
     } catch (err) {
       console.error("Failed to open project folder:", err);
       toast.error(m.home_open_project_error());
     }
-  }, [openProjectFolder, openProject, navigate]);
+  }, [openRootFolder, openRoot, navigate]);
 
   const handleDeleteProject = useCallback(
     async (id: string, deleteFiles: boolean) => {
       try {
-        await deleteProject(id, deleteFiles);
+        await deleteRoot(id, deleteFiles);
       } catch (err) {
         console.error("Failed to delete project:", err);
       }
     },
-    [deleteProject],
+    [deleteRoot],
   );
 
-  const hasProjects = projects.length > 0 || isLoadingProjects;
+  const hasProjects = rootWorkspaces.length > 0 || isLoadingRoots;
 
   return (
     <div className="flex flex-col h-screen">
@@ -148,8 +136,8 @@ export function HomePage() {
 
         {hasProjects ? (
           <ProjectList
-            projects={projects}
-            isLoading={isLoadingProjects}
+            projects={rootWorkspaces}
+            isLoading={isLoadingRoots}
             onOpenProject={handleOpenProject}
             onDeleteProject={handleDeleteProject}
           />

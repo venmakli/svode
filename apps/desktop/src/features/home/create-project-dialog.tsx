@@ -8,7 +8,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,9 +21,8 @@ interface CreateProjectDialogProps {
   onSubmit: (
     name: string,
     icon: string,
-    description?: string,
-    variant?: string,
-    path?: string,
+    description: string | undefined,
+    path: string,
   ) => void;
 }
 
@@ -36,29 +34,23 @@ export function CreateProjectDialog({
   const [name, setName] = useState("");
   const [icon, setIcon] = useState("\u{1F4C1}");
   const [description, setDescription] = useState("");
-  const [variant, setVariant] = useState<"lightweight" | "directory">(
-    "lightweight",
-  );
   const [folderPath, setFolderPath] = useState("");
 
   function resetForm() {
     setName("");
     setIcon("\u{1F4C1}");
     setDescription("");
-    setVariant("lightweight");
     setFolderPath("");
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim()) return;
-    if (variant === "directory" && !folderPath.trim()) return;
+    if (!name.trim() || !folderPath.trim()) return;
     onSubmit(
       name.trim(),
       icon,
       description.trim() || undefined,
-      variant,
-      variant === "directory" ? folderPath.trim() : undefined,
+      folderPath.trim(),
     );
     resetForm();
   }
@@ -75,9 +67,7 @@ export function CreateProjectDialog({
     }
   }
 
-  const isValid =
-    name.trim() !== "" &&
-    (variant === "lightweight" || folderPath.trim() !== "");
+  const isValid = name.trim() !== "" && folderPath.trim() !== "";
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -88,41 +78,6 @@ export function CreateProjectDialog({
           </DialogHeader>
 
           <div className="grid gap-4 py-4">
-            {/* Variant selector */}
-            <div className="grid gap-2">
-              <Label>{m.project_variant_label()}</Label>
-              <RadioGroup
-                value={variant}
-                onValueChange={(v) =>
-                  setVariant(v as "lightweight" | "directory")
-                }
-                className="gap-3"
-              >
-                <label className="flex items-start gap-3 cursor-pointer">
-                  <RadioGroupItem value="lightweight" className="mt-0.5" />
-                  <div className="grid gap-0.5">
-                    <span className="text-sm font-medium leading-none">
-                      {m.project_variant_lightweight()}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {m.project_variant_lightweight_desc()}
-                    </span>
-                  </div>
-                </label>
-                <label className="flex items-start gap-3 cursor-pointer">
-                  <RadioGroupItem value="directory" className="mt-0.5" />
-                  <div className="grid gap-0.5">
-                    <span className="text-sm font-medium leading-none">
-                      {m.project_variant_directory()}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {m.project_variant_directory_desc()}
-                    </span>
-                  </div>
-                </label>
-              </RadioGroup>
-            </div>
-
             {/* Name + icon */}
             <div className="grid gap-2">
               <Label htmlFor="project-name">{m.project_name_label()}</Label>
@@ -135,6 +90,30 @@ export function CreateProjectDialog({
                   placeholder={m.project_name_placeholder()}
                   autoFocus
                 />
+              </div>
+            </div>
+
+            {/* Folder picker */}
+            <div className="grid gap-2">
+              <Label htmlFor="project-folder">
+                {m.project_folder_label()}
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  id="project-folder"
+                  value={folderPath}
+                  onChange={(e) => setFolderPath(e.target.value)}
+                  placeholder={m.project_folder_placeholder()}
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={handleBrowseFolder}
+                >
+                  <FolderOpen className="h-4 w-4" />
+                </Button>
               </div>
             </div>
 
@@ -151,32 +130,6 @@ export function CreateProjectDialog({
                 rows={3}
               />
             </div>
-
-            {/* Folder picker (Directory variant only) */}
-            {variant === "directory" && (
-              <div className="grid gap-2">
-                <Label htmlFor="project-folder">
-                  {m.project_folder_label()}
-                </Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="project-folder"
-                    value={folderPath}
-                    onChange={(e) => setFolderPath(e.target.value)}
-                    placeholder={m.project_folder_placeholder()}
-                    className="flex-1"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={handleBrowseFolder}
-                  >
-                    <FolderOpen className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            )}
           </div>
 
           <DialogFooter>

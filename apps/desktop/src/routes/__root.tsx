@@ -3,24 +3,20 @@ import { ThemeProvider } from "@/components/ui/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { useLayoutStore } from "@/stores/layout";
 import { AppSettingsDialog } from "@/features/settings/app-settings-dialog";
-import { ProjectSettingsDialog } from "@/features/settings/project-settings-dialog";
 import { WorkspaceSettingsDialog } from "@/features/settings/workspace-settings-dialog";
 
 function SettingsDialogs() {
-  const { settingsDialog, settingsWorkspaceId, closeSettings } = useLayoutStore();
+  const { settingsDialog, settingsWorkspacePath, closeSettings } = useLayoutStore();
+
   return (
     <>
       <AppSettingsDialog
         open={settingsDialog === "app"}
         onOpenChange={(open) => { if (!open) closeSettings(); }}
       />
-      <ProjectSettingsDialog
-        open={settingsDialog === "project"}
-        onOpenChange={(open) => { if (!open) closeSettings(); }}
-      />
       <WorkspaceSettingsDialog
         open={settingsDialog === "workspace"}
-        workspaceId={settingsWorkspaceId}
+        workspacePath={settingsWorkspacePath}
         onOpenChange={(open) => { if (!open) closeSettings(); }}
       />
     </>

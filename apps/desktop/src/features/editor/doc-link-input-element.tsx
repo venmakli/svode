@@ -63,10 +63,10 @@ export function DocLinkInputElement(
   props: PlateElementProps<TComboboxInputElement>,
 ) {
   const { editor, element } = props;
-  const { activeWorkspaceId, fileTrees } = useWorkspaceStore();
+  const { activeChildId, fileTrees } = useWorkspaceStore();
   const { activeDocument } = useLayoutStore();
 
-  const tree = activeWorkspaceId ? fileTrees[activeWorkspaceId] ?? [] : [];
+  const tree = activeChildId ? fileTrees[activeChildId] ?? [] : [];
   const docItems = flattenTree(tree);
 
   return (

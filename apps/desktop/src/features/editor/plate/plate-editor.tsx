@@ -43,12 +43,16 @@ interface Entry {
 }
 
 export function PlateDocumentEditor() {
-  const { activeDocument, openDocument } = useLayoutStore();
-  const { workspaces, activeWorkspaceId, updateNodeMeta } = useWorkspaceStore();
+  const { activeDocument, activeDocumentWorkspaceId, openDocument } = useLayoutStore();
+  const { updateNodeMeta, rootWorkspaces, children: childWorkspaces } = useWorkspaceStore();
   const { markUnsaved, clearUnsaved, pendingRename, clearPendingRename, setBrokenLinks } = useEditorStore();
 
-  const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId);
-  const workspacePath = activeWorkspace?.path ?? "";
+  // Resolve workspace path from the document's workspace id
+  const docWs = activeDocumentWorkspaceId
+    ? [...rootWorkspaces, ...childWorkspaces].find((w) => w.id === activeDocumentWorkspaceId)
+    : null;
+  const workspacePath = docWs?.path ?? "";
+  const activeWsId = activeDocumentWorkspaceId;
 
   const isLoadingRef = useRef(false);
   const currentPathRef = useRef<string | null>(null);
@@ -156,12 +160,12 @@ export function PlateDocumentEditor() {
   const handleTitleChange = useCallback(
     (newTitle: string) => {
       setTitle(newTitle);
-      if (currentPathRef.current) {
+      if (currentPathRef.current && activeWsId) {
         markUnsaved(currentPathRef.current);
-        updateNodeMeta(currentPathRef.current, newTitle, iconRef.current);
+        updateNodeMeta(activeWsId, currentPathRef.current, newTitle, iconRef.current);
       }
     },
-    [markUnsaved, updateNodeMeta],
+    [markUnsaved, updateNodeMeta, activeWsId],
   );
 
   // Apply pending rename from sidebar (file already renamed on disk)
@@ -181,8 +185,8 @@ export function PlateDocumentEditor() {
       openDocument(newPath);
     } else {
       // Slug unchanged, just update sidebar
-      if (currentPathRef.current) {
-        updateNodeMeta(currentPathRef.current, newTitle, iconRef.current);
+      if (currentPathRef.current && activeWsId) {
+        updateNodeMeta(activeWsId, currentPathRef.current, newTitle, iconRef.current);
       }
     }
   }, [pendingRename, activeDocument, editor, clearPendingRename, clearUnsaved, openDocument, updateNodeMeta]);
@@ -190,12 +194,12 @@ export function PlateDocumentEditor() {
   const handleIconChange = useCallback(
     (newIcon: string) => {
       setIcon(newIcon);
-      if (currentPathRef.current) {
+      if (currentPathRef.current && activeWsId) {
         markUnsaved(currentPathRef.current);
-        updateNodeMeta(currentPathRef.current, titleRef.current, newIcon);
+        updateNodeMeta(activeWsId, currentPathRef.current, titleRef.current, newIcon);
       }
     },
-    [markUnsaved, updateNodeMeta],
+    [markUnsaved, updateNodeMeta, activeWsId],
   );
 
   const handleExtraChange = useCallback(
@@ -235,8 +239,8 @@ export function PlateDocumentEditor() {
             docCacheRef.current.set(result.new_path, editor.children);
           }
           useLayoutStore.getState().openDocument(result.new_path);
-          if (activeWorkspaceId) {
-            useWorkspaceStore.getState().refreshTree(activeWorkspaceId);
+          if (activeWsId) {
+            useWorkspaceStore.getState().refreshTree(activeWsId);
           }
         } else {
           if (editor) {

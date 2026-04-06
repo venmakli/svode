@@ -1,10 +1,10 @@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ProjectCard } from "./project-card";
-import type { Project } from "@/types/workspace";
+import type { Workspace } from "@/types/workspace";
 
 interface ProjectListProps {
-  projects: Project[];
+  projects: Workspace[];
   isLoading: boolean;
   onOpenProject: (id: string) => void;
   onDeleteProject: (id: string, deleteFiles: boolean) => void;

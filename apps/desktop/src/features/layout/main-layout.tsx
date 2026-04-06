@@ -36,7 +36,6 @@ function findTitleInTree(
 ): string | null {
   for (const node of nodes) {
     if (node.path === targetPath) return node.title;
-    // Check if this folder's path (without /readme.md) matches a segment
     const folderPath = node.path.replace(/\/readme\.md$/i, "");
     if (folderPath === targetPath) return node.title;
     if (node.children.length > 0) {
@@ -55,20 +54,16 @@ function buildSegments(
   const parts = docPath.split("/");
   const segments: { label: string; path: string }[] = [];
 
-  // Build cumulative paths for each directory segment
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
     const cumPath = parts.slice(0, i + 1).join("/");
 
-    // Skip readme.md as last segment — the folder title already represents it
     if (i === parts.length - 1 && part.toLowerCase() === "readme.md") continue;
 
-    // For directory segments, look up title
     if (i < parts.length - 1) {
       const title = findTitleInTree(tree, cumPath) ?? part;
       segments.push({ label: title, path: cumPath + "/readme.md" });
     } else {
-      // File segment
       const title =
         findTitleInTree(tree, cumPath) ?? part.replace(/\.md$/, "");
       segments.push({ label: title, path: cumPath });
@@ -79,22 +74,24 @@ function buildSegments(
 }
 
 function MainBreadcrumbs() {
-  const { activeDocument } = useLayoutStore();
-  const { workspaces, activeWorkspaceId, fileTrees, openWorkspace } =
+  const { activeDocument, activeDocumentWorkspaceId } = useLayoutStore();
+  const { children, activeChildId, fileTrees, openChild } =
     useWorkspaceStore();
   const { openDocument } = useLayoutStore();
 
   if (!activeDocument) return null;
 
-  const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId);
+  const activeWorkspace = activeChildId
+    ? children.find((w) => w.id === activeChildId)
+    : null;
   const workspaceName = activeWorkspace
     ? `${activeWorkspace.icon} ${activeWorkspace.name}`
     : "";
 
-  const tree = activeWorkspaceId ? fileTrees[activeWorkspaceId] ?? [] : [];
+  const treeId = activeDocumentWorkspaceId;
+  const tree = treeId ? fileTrees[treeId] ?? [] : [];
   const segments = buildSegments(activeDocument, tree);
 
-  // For deep paths, show first + last 2, with ellipsis in between
   const MAX_VISIBLE = 3;
   const needsEllipsis = segments.length > MAX_VISIBLE;
   const visibleSegments = needsEllipsis
@@ -110,8 +107,8 @@ function MainBreadcrumbs() {
               <BreadcrumbItem className="text-sm">
                 <WorkspaceBreadcrumb
                   label={workspaceName}
-                  workspaces={workspaces}
-                  onSwitch={openWorkspace}
+                  workspaces={children}
+                  onSwitch={openChild}
                 />
               </BreadcrumbItem>
               {segments.length > 0 && <BreadcrumbSeparator />}
@@ -144,7 +141,6 @@ function MainBreadcrumbs() {
   );
 }
 
-/** Workspace breadcrumb item — shows dropdown when sidebar is collapsed. */
 function WorkspaceBreadcrumb({
   label,
   workspaces,
@@ -154,7 +150,6 @@ function WorkspaceBreadcrumb({
   workspaces: { id: string; name: string; icon: string }[];
   onSwitch: (id: string) => void;
 }) {
-  // Try to use sidebar context — if not available, just render label
   try {
     return <WorkspaceBreadcrumbInner label={label} workspaces={workspaces} onSwitch={onSwitch} />;
   } catch {
@@ -198,7 +193,6 @@ function WorkspaceBreadcrumbInner({
 function MainContent() {
   const { activeDocument, chatPanelOpen } = useLayoutStore();
 
-  // Mode A: no document open -> fullscreen chat
   if (!activeDocument) {
     return (
       <div className="flex h-full flex-col overflow-hidden">
@@ -210,7 +204,6 @@ function MainContent() {
     );
   }
 
-  // Mode B: document only (chat hidden)
   if (!chatPanelOpen) {
     return (
       <div className="flex h-full flex-col overflow-hidden">
@@ -222,7 +215,6 @@ function MainContent() {
     );
   }
 
-  // Mode B: document + chat panel
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <MainBreadcrumbs />
@@ -243,9 +235,12 @@ function MainContent() {
 
 export function MainLayout() {
   useKeyboardShortcuts();
-  const { workspaces, activeProjectId } = useWorkspaceStore();
+  const { children, activeRootId, fileTrees } = useWorkspaceStore();
 
-  const hasWorkspaces = workspaces.length > 0;
+  const hasChildren = children.length > 0;
+  const rootTree = activeRootId ? fileTrees[activeRootId] ?? [] : [];
+  const hasDocuments = rootTree.length > 0;
+  const isEmpty = !hasChildren && !hasDocuments;
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -253,7 +248,7 @@ export function MainLayout() {
         <WindowHeader />
         <AppSidebar />
         <SidebarInset className="pt-[44px] min-h-0 overflow-hidden">
-          {activeProjectId && !hasWorkspaces ? (
+          {activeRootId && isEmpty ? (
             <EmptyProjectState />
           ) : (
             <MainContent />

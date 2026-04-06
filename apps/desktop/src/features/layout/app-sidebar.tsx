@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import {
   Sidebar,
@@ -13,34 +14,58 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuPortal,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Check, ChevronDown, ChevronUp, Monitor, Moon, Settings, Sun } from "lucide-react";
-import { useTheme } from "@/components/ui/theme-provider";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Check, ChevronDown, ChevronUp, Plus, Settings, Trash2 } from "lucide-react";
 import { useAppVersion } from "@/hooks/use-app-version";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useLayoutStore } from "@/stores/layout";
+import { NavDocuments } from "@/features/workspace/nav-documents";
 import { NavWorkspaces } from "@/features/workspace/nav-workspaces";
+import { CreateWorkspaceDialog } from "@/features/workspace/create-workspace-dialog";
+import { useAppSettings } from "@/hooks/use-app-settings";
 import * as m from "@/paraglide/messages.js";
 
 export function AppSidebar() {
-  const { setTheme } = useTheme();
   const version = useAppVersion();
   const navigate = useNavigate();
   const {
-    projects,
-    activeProjectId,
-    activeProjectName,
-    activeProjectIcon,
-    openProject,
+    rootWorkspaces,
+    activeRootId,
+    activeRootName,
+    activeRootIcon,
+    activeRootPath,
+    openRoot,
+    deleteRoot,
     goHome,
   } = useWorkspaceStore();
-  const { openAppSettings, openProjectSettings } = useLayoutStore();
+  const { openAppSettings, openWorkspaceSettings } = useLayoutStore();
+  const appSettings = useAppSettings();
+
+  const [createWsOpen, setCreateWsOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteFiles, setDeleteFiles] = useState(false);
+
+  const userName = appSettings?.user.name || "User";
+  const userAvatar = appSettings?.user.avatar || "#3B82F6";
+  const initials = userName
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
 
   function handleGoHome() {
     goHome();
@@ -48,39 +73,54 @@ export function AppSidebar() {
   }
 
   function handleSwitchProject(id: string) {
-    openProject(id);
+    openRoot(id);
+  }
+
+  async function handleDeleteProject() {
+    if (!activeRootId) return;
+    await deleteRoot(activeRootId, deleteFiles);
+    setDeleteOpen(false);
+    setDeleteFiles(false);
+    navigate({ to: "/" });
   }
 
   return (
     <Sidebar variant="floating" collapsible="offcanvas" className="pt-[44px]">
       <SidebarHeader>
-        {/* Project selector */}
         <SidebarMenu>
           <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton size="lg" className="w-full">
-                  <span className="mr-2">{activeProjectIcon || "\u{1F4CB}"}</span>
+                  <span className="mr-2">{activeRootIcon || "\u{1F4CB}"}</span>
                   <span className="font-medium truncate">
-                    {activeProjectName || "Project"}
+                    {activeRootName || "Project"}
                   </span>
                   <ChevronDown className="ml-auto h-4 w-4 opacity-50" />
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="min-w-[var(--radix-dropdown-menu-trigger-width)]">
-                <DropdownMenuItem onClick={() => openProjectSettings()}>
-                  <Settings className="mr-2 h-4 w-4" />
-                  {m.sidebar_project_settings()}
-                </DropdownMenuItem>
+                {activeRootPath && (
+                  <DropdownMenuItem onClick={() => openWorkspaceSettings(activeRootPath)}>
+                    <Settings className="mr-2 h-4 w-4" />
+                    {m.sidebar_project_settings()}
+                  </DropdownMenuItem>
+                )}
+                {activeRootPath && (
+                  <DropdownMenuItem onClick={() => setCreateWsOpen(true)}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    {m.sidebar_add_workspace()}
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
-                {projects.map((p) => (
+                {rootWorkspaces.map((w) => (
                   <DropdownMenuItem
-                    key={p.id}
-                    onClick={() => handleSwitchProject(p.id)}
+                    key={w.id}
+                    onClick={() => handleSwitchProject(w.id)}
                   >
-                    <span className="mr-2">{p.icon}</span>
-                    <span className="flex-1 truncate">{p.name}</span>
-                    {p.id === activeProjectId && (
+                    <span className="mr-2">{w.icon}</span>
+                    <span className="flex-1 truncate">{w.name}</span>
+                    {w.id === activeRootId && (
                       <Check className="ml-2 h-4 w-4" />
                     )}
                   </DropdownMenuItem>
@@ -89,6 +129,18 @@ export function AppSidebar() {
                 <DropdownMenuItem onClick={handleGoHome}>
                   {m.sidebar_all_projects()}
                 </DropdownMenuItem>
+                {activeRootId && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onClick={() => setDeleteOpen(true)}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      {m.sidebar_delete_project()}
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </SidebarMenuItem>
@@ -96,6 +148,7 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
+        <NavDocuments />
         <NavWorkspaces />
       </SidebarContent>
 
@@ -103,49 +156,61 @@ export function AppSidebar() {
         <SidebarSeparator />
         <SidebarMenu>
           <SidebarMenuItem>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <SidebarMenuButton size="lg" className="w-full">
-                  <span className="mr-2">{"\u{1F464}"}</span>
-                  <span className="truncate">User</span>
-                  <ChevronUp className="ml-auto h-4 w-4 opacity-50" />
-                </SidebarMenuButton>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="min-w-[var(--radix-dropdown-menu-trigger-width)]">
-                <DropdownMenuItem onClick={() => openAppSettings()}>
-                  <Settings className="mr-2 h-4 w-4" />
-                  {m.common_settings()}
-                </DropdownMenuItem>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>
-                    <Sun className="mr-2 h-4 w-4" />
-                    {m.common_theme()}
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuPortal>
-                    <DropdownMenuSubContent>
-                      <DropdownMenuItem onClick={() => setTheme("light")}>
-                        <Sun className="mr-2 h-4 w-4" />
-                        {m.common_theme_light()}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => setTheme("dark")}>
-                        <Moon className="mr-2 h-4 w-4" />
-                        {m.common_theme_dark()}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => setTheme("system")}>
-                        <Monitor className="mr-2 h-4 w-4" />
-                        {m.common_theme_system()}
-                      </DropdownMenuItem>
-                    </DropdownMenuSubContent>
-                  </DropdownMenuPortal>
-                </DropdownMenuSub>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem>{m.common_about()}</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <SidebarMenuButton
+              size="lg"
+              className="w-full"
+              onClick={() => openAppSettings()}
+            >
+              <span
+                className="flex h-6 w-6 items-center justify-center rounded-md text-xs font-medium text-white shrink-0"
+                style={{ backgroundColor: userAvatar }}
+              >
+                {initials}
+              </span>
+              <span className="truncate">{userName}</span>
+              <ChevronUp className="ml-auto h-4 w-4 opacity-50" />
+            </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
         <p className="pb-2 text-center text-xs text-muted-foreground">Version {version}</p>
       </SidebarFooter>
+
+      <CreateWorkspaceDialog
+        open={createWsOpen}
+        onOpenChange={setCreateWsOpen}
+      />
+
+      <AlertDialog
+        open={deleteOpen}
+        onOpenChange={(open) => { if (!open) { setDeleteOpen(false); setDeleteFiles(false); } }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{m.project_delete_title()}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {m.project_delete_description()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <label className="flex items-center gap-2 py-2 cursor-pointer">
+            <Checkbox
+              checked={deleteFiles}
+              onCheckedChange={(checked) => setDeleteFiles(checked === true)}
+            />
+            <span className="text-sm text-destructive">
+              {m.project_delete_files()}
+            </span>
+          </label>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{m.project_cancel()}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleDeleteProject}
+            >
+              {m.project_delete_confirm()}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Sidebar>
   );
 }

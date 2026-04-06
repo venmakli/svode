@@ -20,18 +20,12 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MoreHorizontal, Settings, Trash2 } from "lucide-react";
 import { relativeTime } from "@/lib/relative-time";
-import type { Project } from "@/types/workspace";
+import type { Workspace } from "@/types/workspace";
 
 interface ProjectCardProps {
-  project: Project;
+  project: Workspace;
   onClick: () => void;
   onDelete: (deleteFiles: boolean) => void;
-}
-
-function workspaceCountText(count: number): string {
-  if (count === 0) return "no workspaces";
-  if (count === 1) return "1 workspace";
-  return `${count} workspaces`;
 }
 
 export function ProjectCard({ project, onClick, onDelete }: ProjectCardProps) {
@@ -56,8 +50,8 @@ export function ProjectCard({ project, onClick, onDelete }: ProjectCardProps) {
 
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium truncate">{project.name}</p>
-          <p className="text-xs text-muted-foreground">
-            {workspaceCountText(project.workspaceCount)}
+          <p className="text-xs text-muted-foreground truncate">
+            {project.description || project.path}
           </p>
         </div>
 

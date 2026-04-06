@@ -6,6 +6,27 @@ pub struct AppSettings {
     pub user: UserSettings,
     pub appearance: AppearanceSettings,
     pub window: WindowSettings,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agents: Option<AppAgentSettings>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppAgentSettings {
+    #[serde(default)]
+    pub detected: Vec<DetectedCli>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_scan: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectedCli {
+    pub name: String,
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    pub auth_status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,21 +62,24 @@ impl Default for AppSettings {
                 width: 1200,
                 height: 800,
             },
+            agents: None,
         }
     }
 }
 
+// --- Workspace Registry (workspaces.json) ---
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ProjectRegistry {
-    pub projects: Vec<ProjectRef>,
+pub struct WorkspaceRegistry {
+    pub workspaces: Vec<WorkspaceRef>,
     pub last_active: Option<String>,
 }
 
-impl Default for ProjectRegistry {
+impl Default for WorkspaceRegistry {
     fn default() -> Self {
         Self {
-            projects: Vec::new(),
+            workspaces: Vec::new(),
             last_active: None,
         }
     }
@@ -63,29 +87,28 @@ impl Default for ProjectRegistry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ProjectRef {
+pub struct WorkspaceRef {
     pub id: String,
     pub last_opened: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
+    pub path: String,
 }
+
+// --- Workspace Config (.combai/config.json) ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ProjectConfig {
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    pub type_: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub variant: Option<String>,
+pub struct WorkspaceConfig {
     pub name: String,
     #[serde(default)]
     pub description: String,
     #[serde(default = "default_icon")]
     pub icon: String,
-    #[serde(default)]
-    pub workspaces: Vec<WorkspaceRef>,
-    #[serde(default)]
-    pub defaults: ProjectDefaults,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub children: Option<Vec<ChildRef>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defaults: Option<WorkspaceDefaults>,
 }
 
 fn default_icon() -> String {
@@ -93,30 +116,35 @@ fn default_icon() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkspaceRef {
+pub struct ChildRef {
     pub id: String,
     pub path: String,
+    pub repo: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ProjectDefaults {
-    #[serde(default)]
-    pub agent: Option<serde_json::Value>,
+#[serde(rename_all = "camelCase")]
+pub struct AgentConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clis: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_timeout: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WorkspaceConfig {
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    pub type_: Option<String>,
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default)]
-    pub icon: String,
-    #[serde(default)]
-    pub agent: Option<serde_json::Value>,
+pub struct WorkspaceDefaults {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentConfig>,
 }
+
+// --- Local Config (.combai/local.json) ---
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -127,29 +155,16 @@ pub struct LocalConfig {
     pub expanded_paths: Vec<String>,
 }
 
-// Combined view types for frontend
+// --- Frontend view type ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Project {
+pub struct WorkspaceInfo {
     pub id: String,
     pub name: String,
     pub icon: String,
     pub description: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub variant: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-    pub workspace_count: usize,
-    pub last_opened: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Workspace {
-    pub id: String,
-    pub name: String,
-    pub icon: String,
     pub path: String,
-    pub exists: bool,
+    pub has_children: bool,
+    pub last_opened: Option<String>,
 }

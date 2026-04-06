@@ -51,7 +51,7 @@ function isBareFolder(node: TreeNode): boolean {
 export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
   const { openDocument, activeDocument } = useLayoutStore();
   const { unsavedChanges, aiModified } = useEditorStore();
-  const { expandedPaths, toggleExpanded, refreshTree, workspaces, activeWorkspaceId } =
+  const { expandedPaths, toggleExpanded, refreshTree, children: workspaces, rootWorkspaces, activeChildId, activeRootId } =
     useWorkspaceStore();
 
   const bareFolder = isBareFolder(node);
@@ -82,7 +82,8 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
     opacity: isDragging ? 0.4 : undefined,
   };
 
-  const workspace = workspaces.find((w) => w.id === workspaceId);
+  const workspace = workspaces.find((w) => w.id === workspaceId)
+    ?? rootWorkspaces.find((w) => w.id === workspaceId);
 
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
@@ -169,14 +170,16 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
 
   function handleDocumentClick() {
     if (bareFolder) {
-      // Bare folder — toggle expand, don't open in editor
       toggleExpanded(workspaceId, node.path);
       return;
     }
-    if (activeWorkspaceId !== workspaceId) {
-      useWorkspaceStore.getState().openWorkspace(workspaceId);
+    const isRootWorkspace = workspaceId === activeRootId;
+    if (isRootWorkspace && activeChildId) {
+      useWorkspaceStore.getState().clearActiveChild();
+    } else if (!isRootWorkspace && activeChildId !== workspaceId) {
+      useWorkspaceStore.getState().openChild(workspaceId);
     }
-    openDocument(node.path);
+    openDocument(node.path, workspaceId);
   }
 
   async function handleNewPage() {
@@ -212,7 +215,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
       if (!expandedPaths[workspaceId]?.includes(parentNodePath)) {
         toggleExpanded(workspaceId, parentNodePath);
       }
-      openDocument(entry.path);
+      openDocument(entry.path, workspaceId);
       toast.success(m.toast_page_created());
     } catch (err) {
       console.error("Failed to create page:", err);
@@ -229,7 +232,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
         parentPath: node.path,
         title: node.title,
       });
-      const readmePath = `${node.path}/readme.md`;
+      const readmePath = `${node.path}/README.md`;
       if (entry.path !== readmePath) {
         await invoke("rename_entry", {
           workspace: workspace.path,
@@ -238,7 +241,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
         });
       }
       await refreshTree(workspaceId);
-      openDocument(readmePath);
+      openDocument(readmePath, workspaceId);
     } catch (err) {
       console.error("Failed to make document:", err);
       toast.error(m.toast_error());

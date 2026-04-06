@@ -1,10 +1,11 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
 use crate::error::AppError;
 use crate::files::frontmatter;
+use crate::workspace::config::read_workspace_config;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TreeNode {
@@ -102,6 +103,19 @@ fn apply_order(nodes: &mut Vec<TreeNode>, order_list: Option<&Vec<String>>) {
     });
 }
 
+/// Collect relative folder names of child workspaces from config.
+fn child_folder_names(workspace: &Path) -> HashSet<String> {
+    let mut names = HashSet::new();
+    if let Ok(cfg) = read_workspace_config(workspace) {
+        if let Some(children) = cfg.children {
+            for child in children {
+                names.insert(child.path);
+            }
+        }
+    }
+    names
+}
+
 /// Build a file tree from a workspace directory.
 pub fn build_tree(workspace: &str) -> Result<Vec<TreeNode>, AppError> {
     let root = Path::new(workspace);
@@ -109,13 +123,15 @@ pub fn build_tree(workspace: &str) -> Result<Vec<TreeNode>, AppError> {
         return Err(AppError::FileNotFound(workspace.to_string()));
     }
     let order = read_order(root);
-    read_dir_recursive(root, root, &order)
+    let skip_dirs = child_folder_names(root);
+    read_dir_recursive(root, root, &order, &skip_dirs)
 }
 
 fn read_dir_recursive(
     base: &Path,
     dir: &Path,
     order: &HashMap<String, Vec<String>>,
+    skip_dirs: &HashSet<String>,
 ) -> Result<Vec<TreeNode>, AppError> {
     let mut nodes: Vec<TreeNode> = Vec::new();
     let entries: Vec<fs::DirEntry> = fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
@@ -145,6 +161,7 @@ fn read_dir_recursive(
                 continue;
             }
         }
+
         let rel_path = abs_path
             .strip_prefix(base)
             .unwrap_or(&abs_path)
@@ -152,6 +169,11 @@ fn read_dir_recursive(
             .to_string();
 
         if abs_path.is_dir() {
+            // Skip child workspace folders (registered in parent config)
+            if skip_dirs.contains(&rel_path) {
+                continue;
+            }
+
             let readme = find_readme(&abs_path);
 
             let (title, icon) = if let Some(ref rp) = readme {
@@ -176,7 +198,7 @@ fn read_dir_recursive(
             };
 
             // Recurse and filter out readme.md from children
-            let children: Vec<TreeNode> = read_dir_recursive(base, &abs_path, order)?
+            let children: Vec<TreeNode> = read_dir_recursive(base, &abs_path, order, skip_dirs)?
                 .into_iter()
                 .filter(|node| node.name.to_lowercase() != "readme.md")
                 .collect();

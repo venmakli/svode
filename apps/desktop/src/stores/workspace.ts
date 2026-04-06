@@ -3,9 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import type {
-  Project,
-  ProjectConfig,
   Workspace,
+  WorkspaceConfig,
   TreeNode,
 } from "@/types/workspace";
 
@@ -17,58 +16,52 @@ interface Entry {
 }
 
 interface WorkspaceState {
-  projects: Project[];
-  activeProjectId: string | null;
-  activeProjectName: string | null;
-  activeProjectIcon: string | null;
-  activeProjectVariant: string | null;
-  activeProjectPath: string | null;
-  workspaces: Workspace[];
-  activeWorkspaceId: string | null;
+  // Root workspaces (formerly "projects")
+  rootWorkspaces: Workspace[];
+  activeRootId: string | null;
+  activeRootName: string | null;
+  activeRootIcon: string | null;
+  activeRootPath: string | null;
+
+  // Children (formerly "workspaces")
+  children: Workspace[];
+  activeChildId: string | null;
+
+  // File trees & UI state
   fileTrees: Record<string, TreeNode[]>;
-  isLoadingProjects: boolean;
-  isLoadingWorkspaces: boolean;
-  /** True when user explicitly navigated home — skip auto-open */
+  isLoadingRoots: boolean;
+  isLoadingChildren: boolean;
   explicitHome: boolean;
-  /** Expanded folder paths per workspace */
   expandedPaths: Record<string, string[]>;
 
-  loadProjects: () => Promise<void>;
-  openProject: (id: string) => Promise<void>;
-  createProject: (
-    name: string,
-    icon: string,
-    description?: string,
-  ) => Promise<Project>;
-  createDirectoryProject: (
+  // Root workspace methods
+  loadRootWorkspaces: () => Promise<void>;
+  openRoot: (id: string) => Promise<void>;
+  createRoot: (
     name: string,
     icon: string,
     description: string | undefined,
     path: string,
-  ) => Promise<Project>;
-  openProjectFolder: (path: string) => Promise<Project>;
-  deleteProject: (id: string, deleteFiles?: boolean) => Promise<void>;
-  loadWorkspaces: (projectId: string) => Promise<void>;
-  openWorkspace: (id: string) => Promise<void>;
-  createWorkspace: (
-    projectId: string,
-    name: string,
-    path: string,
   ) => Promise<Workspace>;
-  createWorkspaceInDirectory: (
-    projectId: string,
+  openRootFolder: (path: string) => Promise<Workspace>;
+  deleteRoot: (id: string, deleteFiles?: boolean) => Promise<void>;
+  getLastActiveRootId: () => Promise<string | null>;
+
+  // Children methods
+  loadChildren: (rootPath: string) => Promise<void>;
+  openChild: (id: string) => Promise<void>;
+  createChild: (
+    parentPath: string,
     name: string,
     icon: string,
   ) => Promise<Workspace>;
-  openFolderAsWorkspace: (
-    projectId: string,
-    path: string,
-  ) => Promise<Workspace>;
-  deleteWorkspace: (projectId: string, workspaceId: string, deleteFiles?: boolean) => Promise<void>;
-  createPage: (workspaceId: string, title: string) => Promise<Entry | null>;
+  deleteChild: (parentPath: string, childId: string, deleteFiles?: boolean) => Promise<void>;
+  clearActiveChild: () => void;
+
+  // Document/tree methods
+  createPage: (workspacePath: string, title: string) => Promise<Entry | null>;
   refreshTree: (workspaceId?: string) => Promise<void>;
-  updateNodeMeta: (path: string, title: string, icon: string | null) => void;
-  getLastActiveProjectId: () => Promise<string | null>;
+  updateNodeMeta: (workspaceId: string, path: string, title: string, icon: string | null) => void;
   goHome: () => void;
   loadExpandedPaths: (workspaceId: string) => Promise<void>;
   toggleExpanded: (workspaceId: string, path: string) => void;
@@ -83,106 +76,116 @@ interface WorkspaceState {
   ) => Promise<void>;
 }
 
+/** Find workspace path by id from either rootWorkspaces or children */
+function findWorkspacePath(state: WorkspaceState, id: string): string | null {
+  const root = state.rootWorkspaces.find((w) => w.id === id);
+  if (root) return root.path;
+  const child = state.children.find((w) => w.id === id);
+  if (child) return child.path;
+  return null;
+}
+
+/** Active workspace id: child if selected, otherwise root */
+export function selectActiveWorkspaceId(state: WorkspaceState): string | null {
+  return state.activeChildId ?? state.activeRootId;
+}
+
+/** Active workspace path: child if selected, otherwise root */
+export function selectActiveWorkspacePath(state: WorkspaceState): string {
+  if (state.activeChildId) {
+    const child = state.children.find((w) => w.id === state.activeChildId);
+    if (child) return child.path;
+  }
+  return state.activeRootPath ?? "";
+}
+
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
-  projects: [],
-  activeProjectId: null,
-  activeProjectName: null,
-  activeProjectIcon: null,
-  activeProjectVariant: null,
-  activeProjectPath: null,
-  workspaces: [],
-  activeWorkspaceId: null,
+  rootWorkspaces: [],
+  activeRootId: null,
+  activeRootName: null,
+  activeRootIcon: null,
+  activeRootPath: null,
+  children: [],
+  activeChildId: null,
   fileTrees: {},
-  isLoadingProjects: false,
-  isLoadingWorkspaces: false,
+  isLoadingRoots: false,
+  isLoadingChildren: false,
   explicitHome: false,
   expandedPaths: {},
 
-  loadProjects: async () => {
-    set({ isLoadingProjects: true });
+  loadRootWorkspaces: async () => {
+    set({ isLoadingRoots: true });
     try {
-      const projects = await invoke<Project[]>("list_projects");
-      set({ projects });
+      const workspaces = await invoke<Workspace[]>("list_workspaces");
+      set({ rootWorkspaces: workspaces });
     } catch (err) {
-      console.error("Failed to load projects:", err);
-      set({ projects: [] });
+      console.error("Failed to load workspaces:", err);
+      set({ rootWorkspaces: [] });
     } finally {
-      set({ isLoadingProjects: false });
+      set({ isLoadingRoots: false });
     }
   },
 
-  openProject: async (id: string) => {
+  openRoot: async (id: string) => {
     try {
-      const config = await invoke<ProjectConfig>("open_project", { id });
-      // Look up variant/path from the projects list
-      const project = get().projects.find((p) => p.id === id);
+      const config = await invoke<WorkspaceConfig>("open_workspace", { id });
+      const ws = get().rootWorkspaces.find((w) => w.id === id);
       set({
-        activeProjectId: id,
-        activeProjectName: config.name,
-        activeProjectIcon: config.icon,
-        activeProjectVariant: project?.variant ?? config.variant ?? null,
-        activeProjectPath: project?.path ?? null,
-        activeWorkspaceId: null,
+        activeRootId: id,
+        activeRootName: config.name,
+        activeRootIcon: config.icon,
+        activeRootPath: ws?.path ?? null,
+        activeChildId: null,
+        children: [],
         fileTrees: {},
         explicitHome: false,
       });
-      await get().loadWorkspaces(id);
+      // Load root file tree (project documents) and children
+      if (ws?.path) {
+        await get().refreshTree(id);
+        await get().loadExpandedPaths(id);
+        await get().loadChildren(ws.path);
+      }
     } catch (err) {
-      console.error("Failed to open project:", err);
+      console.error("Failed to open workspace:", err);
       toast.error(m.toast_error());
     }
   },
 
-  createProject: async (name: string, icon: string, description?: string) => {
-    const project = await invoke<Project>("create_project", {
-      name,
-      icon,
-      description,
-    });
-    set((s) => ({ projects: [...s.projects, project] }));
-    toast.success(m.toast_project_created());
-    return project;
-  },
-
-  createDirectoryProject: async (
-    name: string,
-    icon: string,
-    description: string | undefined,
-    path: string,
-  ) => {
-    const project = await invoke<Project>("create_directory_project", {
+  createRoot: async (name, icon, description, path) => {
+    const ws = await invoke<Workspace>("create_workspace", {
       name,
       icon,
       description,
       path,
     });
-    set((s) => ({ projects: [...s.projects, project] }));
+    set((s) => ({ rootWorkspaces: [...s.rootWorkspaces, ws] }));
     toast.success(m.toast_project_created());
-    return project;
+    return ws;
   },
 
-  openProjectFolder: async (path: string) => {
-    const project = await invoke<Project>("open_project_folder", { path });
-    // Add to list if not already present
+  openRootFolder: async (path: string) => {
+    const ws = await invoke<Workspace>("open_workspace_folder", { path });
     set((s) => {
-      const exists = s.projects.some((p) => p.id === project.id);
-      return exists ? {} : { projects: [...s.projects, project] };
+      const exists = s.rootWorkspaces.some((w) => w.id === ws.id);
+      return exists ? {} : { rootWorkspaces: [...s.rootWorkspaces, ws] };
     });
-    return project;
+    return ws;
   },
 
-  deleteProject: async (id: string, deleteFiles?: boolean) => {
-    await invoke("delete_project", { id, deleteFiles });
-    const { activeProjectId } = get();
+  deleteRoot: async (id, deleteFiles) => {
+    await invoke("delete_workspace", { id, deleteFiles });
+    const { activeRootId } = get();
     set((s) => ({
-      projects: s.projects.filter((p) => p.id !== id),
-      ...(activeProjectId === id
+      rootWorkspaces: s.rootWorkspaces.filter((w) => w.id !== id),
+      ...(activeRootId === id
         ? {
-            activeProjectId: null,
-            activeProjectName: null,
-            activeProjectIcon: null,
-            workspaces: [],
-            activeWorkspaceId: null,
+            activeRootId: null,
+            activeRootName: null,
+            activeRootIcon: null,
+            activeRootPath: null,
+            children: [],
+            activeChildId: null,
             fileTrees: {},
           }
         : {}),
@@ -190,113 +193,85 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     toast.success(m.toast_project_deleted());
   },
 
-  loadWorkspaces: async (projectId: string) => {
-    set({ isLoadingWorkspaces: true });
+  getLastActiveRootId: async () => {
     try {
-      const workspaces = await invoke<Workspace[]>("list_workspaces", {
-        projectId,
-      });
-      set({ workspaces });
-
-      // Check for missing workspaces and warn
-      for (const ws of workspaces) {
-        if (!ws.exists) {
-          toast.error(m.workspace_not_found({ path: ws.path }));
-        }
-      }
-
-      // Auto-select first workspace if none active
-      if (workspaces.length > 0 && !get().activeWorkspaceId) {
-        const firstExisting = workspaces.find((w) => w.exists);
-        if (firstExisting) {
-          await get().openWorkspace(firstExisting.id);
-        }
-      }
-    } catch (err) {
-      console.error("Failed to load workspaces:", err);
-      set({ workspaces: [] });
-    } finally {
-      set({ isLoadingWorkspaces: false });
+      return await invoke<string | null>("get_last_active_workspace");
+    } catch {
+      return null;
     }
   },
 
-  openWorkspace: async (id: string) => {
-    set({ activeWorkspaceId: id });
-    // Load tree if not cached
+  loadChildren: async (rootPath: string) => {
+    set({ isLoadingChildren: true });
+    try {
+      const children = await invoke<Workspace[]>("list_children", {
+        workspacePath: rootPath,
+      });
+      set({ children });
+
+      // Auto-select first child if none active
+      if (children.length > 0 && !get().activeChildId) {
+        await get().openChild(children[0].id);
+      }
+    } catch (err) {
+      console.error("Failed to load children:", err);
+      set({ children: [] });
+    } finally {
+      set({ isLoadingChildren: false });
+    }
+  },
+
+  openChild: async (id: string) => {
+    set({ activeChildId: id });
     if (!get().fileTrees[id]) {
       await get().refreshTree(id);
     }
-    // Load expanded paths if not cached
     if (!get().expandedPaths[id]) {
       await get().loadExpandedPaths(id);
     }
   },
 
-  createWorkspace: async (
-    projectId: string,
-    name: string,
-    path: string,
-  ) => {
-    const workspace = await invoke<Workspace>("create_workspace", {
-      projectId,
-      name,
-      path,
-    });
-    set((s) => ({ workspaces: [...s.workspaces, workspace] }));
-    await get().openWorkspace(workspace.id);
-    toast.success(m.toast_workspace_created());
-    return workspace;
+  clearActiveChild: () => {
+    set({ activeChildId: null });
   },
 
-  createWorkspaceInDirectory: async (
-    projectId: string,
-    name: string,
-    icon: string,
-  ) => {
-    const workspace = await invoke<Workspace>("create_workspace_in_directory", {
-      projectId,
+  createChild: async (parentPath, name, icon) => {
+    const ws = await invoke<Workspace>("create_child", {
+      parentPath,
       name,
       icon,
     });
-    set((s) => ({ workspaces: [...s.workspaces, workspace] }));
-    await get().openWorkspace(workspace.id);
+    set((s) => ({ children: [...s.children, ws] }));
+    await get().openChild(ws.id);
     toast.success(m.toast_workspace_created());
-    return workspace;
+    return ws;
   },
 
-  openFolderAsWorkspace: async (projectId: string, path: string) => {
-    const workspace = await invoke<Workspace>("open_folder_as_workspace", {
-      projectId,
-      path,
-    });
-    set((s) => ({ workspaces: [...s.workspaces, workspace] }));
-    await get().openWorkspace(workspace.id);
-    toast.success(m.toast_workspace_opened());
-    return workspace;
-  },
-
-  deleteWorkspace: async (projectId: string, workspaceId: string, deleteFiles?: boolean) => {
-    await invoke("delete_workspace", { projectId, workspaceId, deleteFiles });
-    const { activeWorkspaceId } = get();
+  deleteChild: async (parentPath, childId, deleteFiles) => {
+    await invoke("delete_child", { parentPath, childId, deleteFiles });
+    const { activeChildId } = get();
     set((s) => ({
-      workspaces: s.workspaces.filter((w) => w.id !== workspaceId),
-      ...(activeWorkspaceId === workspaceId
-        ? { activeWorkspaceId: null }
-        : {}),
+      children: s.children.filter((w) => w.id !== childId),
+      ...(activeChildId === childId ? { activeChildId: null } : {}),
     }));
+    toast.success(m.toast_workspace_deleted());
   },
 
-  createPage: async (workspaceId: string, title: string) => {
-    const workspace = get().workspaces.find((w) => w.id === workspaceId);
-    if (!workspace) return null;
-
+  createPage: async (workspacePath: string, title: string) => {
     try {
       const entry = await invoke<Entry>("create_entry", {
-        workspace: workspace.path,
+        workspace: workspacePath,
         parentPath: null,
         title,
       });
-      await get().refreshTree(workspaceId);
+      // Find workspace id by path and refresh its tree
+      const state = get();
+      const ws = [...state.rootWorkspaces, ...state.children].find(
+        (w) => w.path === workspacePath,
+      );
+      if (ws) {
+        await get().refreshTree(ws.id);
+      }
       toast.success(m.toast_page_created());
       return entry;
     } catch (err) {
@@ -307,15 +282,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   refreshTree: async (workspaceId?: string) => {
-    const id = workspaceId ?? get().activeWorkspaceId;
+    const id = workspaceId ?? get().activeChildId ?? get().activeRootId;
     if (!id) return;
 
-    const workspace = get().workspaces.find((w) => w.id === id);
-    if (!workspace) return;
+    const workspacePath = findWorkspacePath(get(), id);
+    if (!workspacePath) return;
 
     try {
       const tree = await invoke<TreeNode[]>("list_entries", {
-        workspace: workspace.path,
+        workspace: workspacePath,
       });
       set((s) => ({
         fileTrees: { ...s.fileTrees, [id]: tree },
@@ -328,11 +303,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  updateNodeMeta: (path: string, title: string, icon: string | null) => {
-    const id = get().activeWorkspaceId;
-    if (!id) return;
+  updateNodeMeta: (workspaceId: string, path: string, title: string, icon: string | null) => {
     const trees = get().fileTrees;
-    const tree = trees[id];
+    const tree = trees[workspaceId];
     if (!tree) return;
 
     const update = (nodes: TreeNode[]): TreeNode[] =>
@@ -346,26 +319,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         return node;
       });
 
-    set({ fileTrees: { ...trees, [id]: update(tree) } });
-  },
-
-  getLastActiveProjectId: async () => {
-    try {
-      return await invoke<string | null>("get_last_active_project");
-    } catch {
-      return null;
-    }
+    set({ fileTrees: { ...trees, [workspaceId]: update(tree) } });
   },
 
   goHome: () => {
     set({
-      activeProjectId: null,
-      activeProjectName: null,
-      activeProjectIcon: null,
-      activeProjectVariant: null,
-      activeProjectPath: null,
-      workspaces: [],
-      activeWorkspaceId: null,
+      activeRootId: null,
+      activeRootName: null,
+      activeRootIcon: null,
+      activeRootPath: null,
+      children: [],
+      activeChildId: null,
       fileTrees: {},
       expandedPaths: {},
       explicitHome: true,
@@ -373,11 +337,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   loadExpandedPaths: async (workspaceId: string) => {
-    const workspace = get().workspaces.find((w) => w.id === workspaceId);
-    if (!workspace) return;
+    const workspacePath = findWorkspacePath(get(), workspaceId);
+    if (!workspacePath) return;
     try {
       const paths = await invoke<string[]>("get_expanded_paths", {
-        workspace: workspace.path,
+        workspace: workspacePath,
       });
       set((s) => ({
         expandedPaths: { ...s.expandedPaths, [workspaceId]: paths },
@@ -395,21 +359,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set((s) => ({
       expandedPaths: { ...s.expandedPaths, [workspaceId]: next },
     }));
-    // Persist in background
-    const workspace = get().workspaces.find((w) => w.id === workspaceId);
-    if (workspace) {
+    const workspacePath = findWorkspacePath(get(), workspaceId);
+    if (workspacePath) {
       invoke("save_expanded_paths", {
-        workspace: workspace.path,
+        workspace: workspacePath,
         paths: next,
       }).catch(() => {});
     }
   },
 
   moveEntry: async (workspaceId: string, from: string, toParent: string) => {
-    const workspace = get().workspaces.find((w) => w.id === workspaceId);
-    if (!workspace) throw new Error("Workspace not found");
+    const workspacePath = findWorkspacePath(get(), workspaceId);
+    if (!workspacePath) throw new Error("Workspace not found");
     const newPath = await invoke<string>("move_entry", {
-      workspace: workspace.path,
+      workspace: workspacePath,
       from,
       toParent,
     });
@@ -421,10 +384,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     workspaceId: string,
     order: Record<string, string[]>,
   ) => {
-    const workspace = get().workspaces.find((w) => w.id === workspaceId);
-    if (!workspace) return;
+    const workspacePath = findWorkspacePath(get(), workspaceId);
+    if (!workspacePath) return;
     await invoke("save_tree_order", {
-      workspace: workspace.path,
+      workspace: workspacePath,
       order,
     });
   },

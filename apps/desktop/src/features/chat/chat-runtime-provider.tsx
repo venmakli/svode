@@ -7,7 +7,7 @@ import {
 } from "@assistant-ui/react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { useWorkspaceStore } from "@/stores/workspace";
+import { useWorkspaceStore, selectActiveWorkspacePath, selectActiveWorkspaceId } from "@/stores/workspace";
 import { useChatStatusStore } from "@/stores/chat";
 
 interface TextDeltaPayload {
@@ -109,15 +109,13 @@ export function ChatRuntimeProvider({
 }: {
   children: React.ReactNode;
 }) {
-  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
-  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const activeWsId = useWorkspaceStore(selectActiveWorkspaceId);
+  const workspacePath = useWorkspaceStore(selectActiveWorkspacePath);
 
   const [messages, setMessages] = useState<readonly ThreadMessageLike[]>([]);
   const [isRunning, setIsRunning] = useState(false);
 
-  const sessionId = activeWorkspaceId ?? "default";
-  const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId);
-  const workspacePath = activeWorkspace?.path ?? "";
+  const sessionId = activeWsId ?? "default";
 
   // Reset when workspace changes & load agent config
   useEffect(() => {

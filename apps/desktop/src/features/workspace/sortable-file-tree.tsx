@@ -86,6 +86,16 @@ function findNode(nodes: TreeNode[], path: string): TreeNode | null {
   return null;
 }
 
+/** Find the parent tree node that directly contains a child with the given path. */
+function findParentOf(nodes: TreeNode[], childPath: string): TreeNode | null {
+  for (const node of nodes) {
+    if (node.children.some((c) => c.path === childPath)) return node;
+    const found = findParentOf(node.children, childPath);
+    if (found) return found;
+  }
+  return null;
+}
+
 export function SortableFileTree({
   workspaceId,
   tree,
@@ -268,9 +278,9 @@ export function SortableFileTree({
       const { active, over } = event;
       if (!over || active.id === over.id || !currentProjection) return;
 
-      const workspace = useWorkspaceStore.getState().workspaces.find(
-        (w) => w.id === workspaceId,
-      );
+      const state = useWorkspaceStore.getState();
+      const workspace = state.children.find((w) => w.id === workspaceId)
+        ?? state.rootWorkspaces.find((w) => w.id === workspaceId);
       if (!workspace) return;
 
       const fromPath = active.id as string;
@@ -309,7 +319,7 @@ export function SortableFileTree({
             });
             if (activeDocument === nestTarget) {
               clearUnsaved(nestTarget);
-              openDocument(newNestPath);
+              openDocument(newNestPath, workspaceId);
             }
             // Update order.json: rename "doc2.md" → "doc2" (file → folder)
             const newName = oldName.replace(/\.md$/i, "");
@@ -361,8 +371,10 @@ export function SortableFileTree({
         }
 
         // Different parent — move entry
-        const oldParentReadme = fromParent
-          ? `${fromParent}/readme.md`
+        // Use actual tree node path (preserves readme.md case from filesystem)
+        const oldParentTreeNode = fromParent ? findParentOf(tree, fromPath) : null;
+        const oldParentReadme = oldParentTreeNode?.path.toLowerCase().endsWith("/readme.md")
+          ? oldParentTreeNode.path
           : null;
 
         // For document folders, move the folder itself, not just readme.md
@@ -381,9 +393,10 @@ export function SortableFileTree({
         const newPath = await moveEntry(workspaceId, movePath, toParent);
 
         if (activeDocument === fromPath && newPath && !isBareFolder) {
-          // moveEntry returns folder path for doc folders, append readme.md
-          const newDocPath = isDocFolder ? `${newPath}/readme.md` : newPath;
-          openDocument(newDocPath);
+          // moveEntry returns folder path for doc folders, append readme filename (preserve case)
+          const readmeFilename = fromPath.split("/").pop() ?? "README.md";
+          const newDocPath = isDocFolder ? `${newPath}/${readmeFilename}` : newPath;
+          openDocument(newDocPath, workspaceId);
         }
 
         // Auto-unnest: if the old parent folder now has no children
@@ -399,7 +412,7 @@ export function SortableFileTree({
               });
               if (currentActive === oldParentReadme) {
                 useEditorStore.getState().clearUnsaved(oldParentReadme);
-                useLayoutStore.getState().openDocument(unnestPath);
+                useLayoutStore.getState().openDocument(unnestPath, workspaceId);
               }
               await refreshTree(workspaceId);
             } catch {
