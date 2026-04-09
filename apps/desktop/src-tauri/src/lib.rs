@@ -2,6 +2,7 @@ mod agent;
 mod commands;
 mod error;
 mod files;
+mod git;
 mod workspace;
 
 use std::sync::Arc;
@@ -25,6 +26,7 @@ pub fn run() {
         .manage(files::FileWatcher::new())
         .manage(agent::AgentSessions::new())
         .manage(Arc::new(files::BacklinkIndex::new()))
+        .manage(git::GitState::new())
         .invoke_handler(tauri::generate_handler![
             commands::greet::greet,
             commands::files::list_entries,
@@ -68,6 +70,16 @@ pub fn run() {
             agent::commands::agent_list_available,
             agent::commands::agent_list_models,
             agent::commands::agent_respond_permission,
+            git::commands::git_check_availability,
+            git::commands::git_init_workspace,
+            git::commands::git_clone_workspace,
+            git::commands::git_status,
+            git::commands::git_commit_file,
+            git::commands::git_commit_all,
+            git::commands::git_sync,
+            git::commands::git_conflict_files,
+            git::commands::git_resolve_continue,
+            git::commands::git_merge_abort,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -32,6 +32,21 @@ pub enum AppError {
     #[error("Agent spawn failed: {0}")]
     AgentSpawnFailed(String),
 
+    #[error("Git not found")]
+    GitNotFound,
+
+    #[error("Git command failed: {0}")]
+    GitCommandFailed(String),
+
+    #[error("Git conflict: {0}")]
+    GitConflict(String),
+
+    #[error("Git auth required: {0}")]
+    GitAuthRequired(String),
+
+    #[error("Git no remote configured")]
+    GitNoRemote,
+
     #[error("{0}")]
     General(String),
 }
