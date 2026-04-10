@@ -42,16 +42,22 @@ import {
   FilePlus,
   FolderPlus,
   Plus,
+  Save,
   Settings,
   Pencil,
   Trash2,
 } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useLayoutStore } from "@/stores/layout";
-import type { WorkspaceConfig } from "@/types/workspace";
+import type { TreeNode, WorkspaceConfig } from "@/types/workspace";
 import { CreateWorkspaceDialog } from "./create-workspace-dialog";
 import { SortableFileTree } from "./sortable-file-tree";
 import { FileTreeItem } from "./file-tree-item";
+import { WorkspaceGitIndicatorIcon } from "./git-status-indicator";
+import { WorkspaceGitWatcher } from "./workspace-git-watcher";
+import { useGitStore } from "@/stores/git";
+import { Progress } from "@/components/ui/progress";
+import { commitAllWorkspace } from "./git-actions";
 
 export function NavWorkspaces() {
   const {
@@ -166,104 +172,24 @@ export function NavWorkspaces() {
               {children.map((ws) => {
                 const tree = fileTrees[ws.id] ?? [];
                 const isActive = ws.id === activeChildId;
-
                 return (
-                  <Collapsible
+                  <WorkspaceRow
                     key={ws.id}
-                    defaultOpen={isActive}
-                  >
-                    <SidebarMenuItem>
-                      <SidebarMenuButton
-                        isActive={isActive}
-                        onClick={() => { if (editingWorkspaceId !== ws.id) openChild(ws.id); }}
-                        onDoubleClick={() => {
-                          setEditingWorkspaceId(ws.id);
-                          setEditValue(ws.name);
-                        }}
-                      >
-                        <span>{ws.icon}</span>
-                        {editingWorkspaceId === ws.id ? (
-                          <input
-                            ref={editRef}
-                            className="truncate bg-transparent outline-none text-sm w-full border-b border-primary"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            onBlur={handleRenameWorkspace}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") { e.preventDefault(); handleRenameWorkspace(); }
-                              else if (e.key === "Escape") setEditingWorkspaceId(null);
-                            }}
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        ) : (
-                          <span>{ws.name}</span>
-                        )}
-                      </SidebarMenuButton>
-                      <CollapsibleTrigger asChild>
-                        <SidebarMenuAction
-                          className="left-2 bg-sidebar-accent text-sidebar-accent-foreground data-[state=open]:rotate-90"
-                          showOnHover
-                        >
-                          <ChevronRight />
-                        </SidebarMenuAction>
-                      </CollapsibleTrigger>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <SidebarMenuAction showOnHover>
-                            <Ellipsis />
-                          </SidebarMenuAction>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" side="bottom">
-                          <DropdownMenuItem onClick={() => handleNewPage(ws)}>
-                            <FilePlus className="mr-2 h-4 w-4" />
-                            {m.workspace_new_page()}
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleNewFolder(ws)}>
-                            <FolderPlus className="mr-2 h-4 w-4" />
-                            {m.workspace_new_folder()}
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => openWorkspaceSettings(ws.path)}>
-                            <Settings className="mr-2 h-4 w-4" />
-                            {m.workspace_settings()}
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => {
-                            setEditingWorkspaceId(ws.id);
-                            setEditValue(ws.name);
-                          }}>
-                            <Pencil className="mr-2 h-4 w-4" />
-                            {m.workspace_rename()}
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            className="text-destructive focus:text-destructive"
-                            onClick={() =>
-                              setDeleteTarget({ id: ws.id, name: ws.name })
-                            }
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            {m.workspace_delete()}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                      <CollapsibleContent>
-                        <SortableFileTree
-                          workspaceId={ws.id}
-                          tree={tree}
-                        >
-                          <SidebarMenuSub>
-                            {tree.map((node) => (
-                              <FileTreeItem
-                                key={node.path}
-                                node={node}
-                                workspaceId={ws.id}
-                              />
-                            ))}
-                          </SidebarMenuSub>
-                        </SortableFileTree>
-                      </CollapsibleContent>
-                    </SidebarMenuItem>
-                  </Collapsible>
+                    ws={ws}
+                    isActive={isActive}
+                    tree={tree}
+                    editingWorkspaceId={editingWorkspaceId}
+                    editValue={editValue}
+                    setEditValue={setEditValue}
+                    setEditingWorkspaceId={setEditingWorkspaceId}
+                    handleRenameWorkspace={handleRenameWorkspace}
+                    handleNewPage={handleNewPage}
+                    handleNewFolder={handleNewFolder}
+                    openWorkspaceSettings={openWorkspaceSettings}
+                    openChild={openChild}
+                    setDeleteTarget={setDeleteTarget}
+                    editRef={editRef}
+                  />
                 );
               })}
             </SidebarMenu>
@@ -310,5 +236,160 @@ export function NavWorkspaces() {
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+interface WorkspaceRowProps {
+  ws: { id: string; name: string; icon: string; path: string };
+  isActive: boolean;
+  tree: TreeNode[];
+  editingWorkspaceId: string | null;
+  editValue: string;
+  setEditValue: (v: string) => void;
+  setEditingWorkspaceId: (id: string | null) => void;
+  handleRenameWorkspace: () => void;
+  handleNewPage: (ws: { id: string; path: string }) => void;
+  handleNewFolder: (ws: { id: string; path: string }) => void;
+  openWorkspaceSettings: (path: string) => void;
+  openChild: (id: string) => void;
+  setDeleteTarget: (t: { id: string; name: string }) => void;
+  editRef: React.RefObject<HTMLInputElement | null>;
+}
+
+function WorkspaceRow({
+  ws,
+  isActive,
+  tree,
+  editingWorkspaceId,
+  editValue,
+  setEditValue,
+  setEditingWorkspaceId,
+  handleRenameWorkspace,
+  handleNewPage,
+  handleNewFolder,
+  openWorkspaceSettings,
+  openChild,
+  setDeleteTarget,
+  editRef,
+}: WorkspaceRowProps) {
+  const cloning = useGitStore((s) => s.cloning[ws.path]);
+  const dirty = useGitStore(
+    (s) =>
+      !!(s.statuses[ws.path]?.hasStaged || s.statuses[ws.path]?.hasUnstaged),
+  );
+
+  return (
+    <Collapsible defaultOpen={isActive}>
+      <WorkspaceGitWatcher workspacePath={ws.path} />
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          isActive={isActive}
+          disabled={!!cloning}
+          onClick={() => {
+            if (editingWorkspaceId !== ws.id) openChild(ws.id);
+          }}
+          onDoubleClick={() => {
+            setEditingWorkspaceId(ws.id);
+            setEditValue(ws.name);
+          }}
+        >
+          <span>{ws.icon}</span>
+          {editingWorkspaceId === ws.id ? (
+            <input
+              ref={editRef}
+              className="truncate bg-transparent outline-none text-sm w-full border-b border-primary"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onBlur={handleRenameWorkspace}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleRenameWorkspace();
+                } else if (e.key === "Escape") setEditingWorkspaceId(null);
+              }}
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <span className="flex-1 truncate">{ws.name}</span>
+          )}
+          <span className="ml-auto flex items-center pr-1">
+            <WorkspaceGitIndicatorIcon workspacePath={ws.path} />
+          </span>
+        </SidebarMenuButton>
+        {cloning && (
+          <div className="px-2 pb-1">
+            <Progress value={cloning.percent} className="h-1" />
+            <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
+              {cloning.error ? cloning.error : `${cloning.phase} ${cloning.percent}%`}
+            </p>
+          </div>
+        )}
+        <CollapsibleTrigger asChild>
+          <SidebarMenuAction
+            className="left-2 bg-sidebar-accent text-sidebar-accent-foreground data-[state=open]:rotate-90"
+            showOnHover
+          >
+            <ChevronRight />
+          </SidebarMenuAction>
+        </CollapsibleTrigger>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <SidebarMenuAction showOnHover>
+              <Ellipsis />
+            </SidebarMenuAction>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" side="bottom">
+            <DropdownMenuItem onClick={() => handleNewPage(ws)}>
+              <FilePlus className="mr-2 h-4 w-4" />
+              {m.workspace_new_page()}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleNewFolder(ws)}>
+              <FolderPlus className="mr-2 h-4 w-4" />
+              {m.workspace_new_folder()}
+            </DropdownMenuItem>
+            {dirty && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => commitAllWorkspace(ws.path)}>
+                  <Save className="mr-2 h-4 w-4" />
+                  {m.git_save_all()}
+                </DropdownMenuItem>
+              </>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => openWorkspaceSettings(ws.path)}>
+              <Settings className="mr-2 h-4 w-4" />
+              {m.workspace_settings()}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => {
+                setEditingWorkspaceId(ws.id);
+                setEditValue(ws.name);
+              }}
+            >
+              <Pencil className="mr-2 h-4 w-4" />
+              {m.workspace_rename()}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onClick={() => setDeleteTarget({ id: ws.id, name: ws.name })}
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              {m.workspace_delete()}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <CollapsibleContent>
+          <SortableFileTree workspaceId={ws.id} tree={tree}>
+            <SidebarMenuSub>
+              {tree.map((node) => (
+                <FileTreeItem key={node.path} node={node} workspaceId={ws.id} />
+              ))}
+            </SidebarMenuSub>
+          </SortableFileTree>
+        </CollapsibleContent>
+      </SidebarMenuItem>
+    </Collapsible>
   );
 }

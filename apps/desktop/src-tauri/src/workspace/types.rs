@@ -109,6 +109,16 @@ pub struct WorkspaceConfig {
     pub agent: Option<AgentConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub defaults: Option<WorkspaceDefaults>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git: Option<GitWorkspaceConfig>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitWorkspaceConfig {
+    /// Whether ⌘S/⌘⇧S should auto-sync after committing. Default: true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_sync: Option<bool>,
 }
 
 fn default_icon() -> String {

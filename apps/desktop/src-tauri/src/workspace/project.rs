@@ -133,6 +133,67 @@ pub fn create_child(
     })
 }
 
+/// Register a freshly-cloned directory as a child workspace.
+///
+/// Called by the Stage-3 clone flow after `git clone` completes. Reads or
+/// scaffolds `.combai/config.json` inside the cloned folder, then adds a
+/// `ChildRef` entry to the parent's `children` list.
+pub fn register_cloned_child(
+    parent_path: &Path,
+    folder_name: &str,
+    fallback_name: &str,
+    icon: &str,
+) -> Result<WorkspaceInfo, AppError> {
+    let child_dir = parent_path.join(folder_name);
+    if !child_dir.is_dir() {
+        return Err(AppError::PathNotAccessible(
+            child_dir.to_string_lossy().to_string(),
+        ));
+    }
+
+    // Read the cloned repo's config if it already has one, otherwise scaffold
+    // a fresh `.combai/` on top of the cloned content (preserving files).
+    let ws_config = match config::read_workspace_config(&child_dir) {
+        Ok(cfg) => cfg,
+        Err(_) => scaffold::scaffold_workspace(&child_dir, fallback_name, icon, "")?,
+    };
+
+    // Add to parent config (avoid duplicate if re-registered)
+    let mut parent_config = config::read_workspace_config(parent_path)?;
+    let children = parent_config.children.get_or_insert_with(Vec::new);
+    let already_registered = children.iter().any(|c| c.path == folder_name);
+    let child_id = if already_registered {
+        children
+            .iter()
+            .find(|c| c.path == folder_name)
+            .map(|c| c.id.clone())
+            .unwrap()
+    } else {
+        let id = ulid::Ulid::new().to_string().to_lowercase();
+        children.push(ChildRef {
+            id: id.clone(),
+            path: folder_name.to_string(),
+            repo: None,
+        });
+        config::write_workspace_config(parent_path, &parent_config)?;
+        id
+    };
+
+    Ok(WorkspaceInfo {
+        id: child_id,
+        name: ws_config.name,
+        icon: ws_config.icon,
+        description: ws_config.description,
+        path: child_dir.to_string_lossy().to_string(),
+        has_children: ws_config
+            .children
+            .as_ref()
+            .map(|ch| !ch.is_empty())
+            .unwrap_or(false),
+        last_opened: None,
+    })
+}
+
 /// Delete a child workspace: remove from parent config, optionally delete files.
 pub fn delete_child(
     parent_path: &Path,

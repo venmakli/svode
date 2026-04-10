@@ -37,6 +37,7 @@ import { SuggestionKit } from '@/components/editor/plugins/suggestion-kit';
 import { TableKit } from '@/components/editor/plugins/table-kit';
 import { TocKit } from '@/components/editor/plugins/toc-kit';
 import { ToggleKit } from '@/components/editor/plugins/toggle-kit';
+import { ConflictPlugin } from '@/features/editor/conflict/conflict-plugin';
 
 export const EditorKit = [
   ...CopilotKit,
@@ -79,6 +80,9 @@ export const EditorKit = [
   ...EmojiKit,
   ...ExitBreakKit,
   TrailingBlockPlugin,
+
+  // Git conflict rendering
+  ConflictPlugin,
 
   // Parsers
   ...DocxKit,

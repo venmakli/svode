@@ -12,6 +12,13 @@ import { useLayoutStore } from "@/stores/layout";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useEditorStore } from "@/stores/editor";
 import {
+  commitAllWorkspace,
+  commitFileAndMaybeSync,
+  syncWorkspace,
+} from "@/features/workspace/git-actions";
+import { useGitStore } from "@/stores/git";
+import { deserializeWithConflicts, hasUnresolvedConflicts } from "../conflict/parse-conflicts";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -140,9 +147,7 @@ export function PlateDocumentEditor() {
           setMeta(entry.meta);
           setTitle(entry.meta.title);
           setIcon(entry.meta.icon);
-          const value = editor
-            .getApi(MarkdownPlugin)
-            .markdown.deserialize(entry.body);
+          const value = deserializeWithConflicts(editor, entry.body);
           editor.tf.setValue(value);
           clearUnsaved(activeDocument);
         })
@@ -216,6 +221,13 @@ export function PlateDocumentEditor() {
   const handleSave = useCallback(() => {
     if (!editor || !activeDocument || !workspacePath) return;
 
+    // Prevent saving while unresolved conflict blocks remain — otherwise the
+    // markdown serializer would silently drop them.
+    if (hasUnresolvedConflicts(editor.children)) {
+      toast.error(m.git_sync_conflict({ count: "1" }));
+      return;
+    }
+
     const markdown = editor.getApi(MarkdownPlugin).markdown.serialize();
 
     justSavedRef.current = true;
@@ -254,7 +266,28 @@ export function PlateDocumentEditor() {
           docCacheRef.current.delete(f);
         }
 
-        toast.success(m.editor_save_success());
+        // Stage 3 — auto-commit the saved file (and auto-sync if enabled).
+        // No success toast — the sidebar git indicator is the visible feedback.
+        const committedPath = result.new_path ?? activeDocument;
+        if (workspacePath) {
+          // If the workspace is mid-merge (conflicts present), the file save
+          // is actually a conflict-resolution save. Call git_resolve_continue
+          // which runs add+commit+push against the pending merge.
+          const status = useGitStore.getState().statuses[workspacePath];
+          if (status?.hasConflicts) {
+            invoke("git_resolve_continue", { workspacePath })
+              .then(() => {
+                void useGitStore.getState().refreshStatus(workspacePath);
+                void syncWorkspace(workspacePath);
+              })
+              .catch((err) => {
+                console.error("git_resolve_continue failed:", err);
+                toast.error(m.git_sync_failed());
+              });
+          } else {
+            void commitFileAndMaybeSync(workspacePath, committedPath);
+          }
+        }
       })
       .catch((err) => {
         console.error("Failed to save document:", err);
@@ -262,9 +295,60 @@ export function PlateDocumentEditor() {
       });
   }, [editor, activeDocument, workspacePath, title, icon, clearUnsaved]);
 
+  // Save-all (⌘⇧S): flush the currently-open document's in-memory edits to
+  // disk (if dirty), then `git add . && git commit` through commitAllWorkspace
+  // — which catches every other on-disk change too (externally-modified files,
+  // AI writes, backlink updates).
+  //
+  // Note: multi-document editors aren't wired yet. When they are, this hook
+  // should iterate unsavedChanges and flush each editor instance before
+  // calling commitAllWorkspace.
+  const handleSaveAll = useCallback(async () => {
+    if (!workspacePath) return;
+    if (!editor || !activeDocument) {
+      void commitAllWorkspace(workspacePath);
+      return;
+    }
+    const isDirty = useEditorStore.getState().unsavedChanges[activeDocument];
+    if (!isDirty) {
+      void commitAllWorkspace(workspacePath);
+      return;
+    }
+    // Prevent double-commit: handleSave would otherwise call
+    // commitFileAndMaybeSync on its own. Write the file directly and let
+    // commitAllWorkspace own the single commit.
+    if (hasUnresolvedConflicts(editor.children)) {
+      toast.error(m.git_sync_conflict({ count: "1" }));
+      return;
+    }
+    const markdown = editor.getApi(MarkdownPlugin).markdown.serialize();
+    justSavedRef.current = true;
+    try {
+      await invoke("write_entry", {
+        workspace: workspacePath,
+        path: activeDocument,
+        content: markdown,
+        title: title || m.editor_untitled(),
+        icon: icon,
+        extra: meta?.extra ?? null,
+        existingId: meta?.id ?? null,
+      });
+      clearUnsaved(activeDocument);
+      await commitAllWorkspace(workspacePath);
+    } catch (err) {
+      console.error("Save-all failed:", err);
+      toast.error(m.editor_error_save());
+    }
+  }, [editor, activeDocument, workspacePath, title, icon, meta, clearUnsaved]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        void handleSaveAll();
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
         e.preventDefault();
         handleSave();
@@ -276,7 +360,7 @@ export function PlateDocumentEditor() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [handleSave]);
+  }, [handleSave, handleSaveAll]);
 
   // File watcher
   const handleConflict = useCallback((path: string) => {
@@ -304,9 +388,7 @@ export function PlateDocumentEditor() {
         setMeta(entry.meta);
         setTitle(entry.meta.title);
         setIcon(entry.meta.icon);
-        const value = editor
-          .getApi(MarkdownPlugin)
-          .markdown.deserialize(entry.body);
+        const value = deserializeWithConflicts(editor, entry.body);
         editor.tf.setValue(value);
         clearUnsaved(conflictPath);
       })

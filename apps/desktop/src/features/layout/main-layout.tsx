@@ -8,6 +8,10 @@ import {
 } from "@/components/ui/resizable";
 import { AppSidebar } from "./app-sidebar";
 import { WindowHeader } from "./window-header";
+import { GitMissingDialog } from "./git-missing-dialog";
+import { useGitAvailability } from "@/hooks/use-git-availability";
+import { useAppGitFocus } from "@/features/workspace/use-app-git-focus";
+import { WorkspaceGitWatcher } from "@/features/workspace/workspace-git-watcher";
 import { useLayoutStore } from "@/stores/layout";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { EmptyProjectState } from "@/features/workspace/empty-project-state";
@@ -235,7 +239,9 @@ function MainContent() {
 
 export function MainLayout() {
   useKeyboardShortcuts();
-  const { children, activeRootId, fileTrees } = useWorkspaceStore();
+  useAppGitFocus();
+  const { children, activeRootId, activeRootPath, fileTrees } = useWorkspaceStore();
+  const { available, recheck } = useGitAvailability();
 
   const hasChildren = children.length > 0;
   const rootTree = activeRootId ? fileTrees[activeRootId] ?? [] : [];
@@ -254,6 +260,8 @@ export function MainLayout() {
             <MainContent />
           )}
         </SidebarInset>
+        {activeRootPath && <WorkspaceGitWatcher workspacePath={activeRootPath} />}
+        <GitMissingDialog open={available === false} onRecheck={recheck} />
       </SidebarProvider>
     </TooltipProvider>
   );

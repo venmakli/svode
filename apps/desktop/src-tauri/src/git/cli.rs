@@ -47,6 +47,11 @@ impl GitCli {
         })
     }
 
+    /// Path to the git binary.
+    pub fn git_path(&self) -> &Path {
+        &self.git_path
+    }
+
     /// Execute a git command in the given workspace directory.
     pub async fn exec(
         &self,

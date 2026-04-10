@@ -213,6 +213,22 @@ pub fn delete_child(
     project::delete_child(path, &child_id, delete_files.unwrap_or(false))
 }
 
+#[tauri::command]
+pub fn register_cloned_child(
+    parent_path: String,
+    folder_name: String,
+    fallback_name: String,
+    icon: String,
+) -> Result<WorkspaceInfo, AppError> {
+    let path = Path::new(&parent_path);
+    project::register_cloned_child(path, &folder_name, &fallback_name, &icon)
+}
+
+#[tauri::command]
+pub fn path_exists(path: String) -> Result<bool, AppError> {
+    Ok(Path::new(&path).exists())
+}
+
 // --- Config ---
 
 #[tauri::command]

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use super::cli::{GitAvailability, GitCli};
 use super::ops::WorkspaceGitStatus;
@@ -10,8 +10,15 @@ use super::sync::SyncResult;
 use crate::index::IndexState;
 use crate::AppError;
 
+/// Helper: read the GitCli reference (clone is cheap — PathBuf only) outside the
+/// per-workspace lock, so async work that needs `&AppHandle` doesn't borrow
+/// `state`.
+pub(crate) fn require_cli(state: &GitState) -> Result<GitCli, AppError> {
+    state.cli.clone().ok_or(AppError::GitNotFound)
+}
+
 pub struct GitState {
-    cli: Option<GitCli>,
+    pub(crate) cli: Option<GitCli>,
     locks: tokio::sync::Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
 }
 
@@ -35,8 +42,9 @@ impl GitState {
         self.cli.as_ref().ok_or(AppError::GitNotFound)
     }
 
-    /// Get or create a per-workspace lock.
-    async fn get_lock(&self, path: &Path) -> Arc<tokio::sync::Mutex<()>> {
+    /// Get or create a per-workspace lock. Public so other modules
+    /// (like the workspace creation flow) can serialize git work too.
+    pub(crate) async fn get_lock(&self, path: &Path) -> Arc<tokio::sync::Mutex<()>> {
         let mut locks = self.locks.lock().await;
         locks
             .entry(path.to_path_buf())
@@ -73,13 +81,51 @@ pub async fn git_init_workspace(
 #[tauri::command]
 pub async fn git_clone_workspace(
     state: State<'_, GitState>,
+    app: AppHandle,
     url: String,
     target_path: String,
 ) -> Result<(), AppError> {
     let path = PathBuf::from(&target_path);
+    let cli = require_cli(&state)?;
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
-    super::ops::clone(state.cli()?, &url, &path).await
+    super::clone::clone_with_progress(&cli, &app, &url, &path).await
+}
+
+#[tauri::command]
+pub async fn git_get_remote(
+    state: State<'_, GitState>,
+    workspace_path: String,
+) -> Result<Option<String>, AppError> {
+    let path = PathBuf::from(&workspace_path);
+    let lock = state.get_lock(&path).await;
+    let _guard = lock.lock().await;
+    super::ops::get_remote(state.cli()?, &path).await
+}
+
+#[tauri::command]
+pub async fn git_set_remote(
+    state: State<'_, GitState>,
+    workspace_path: String,
+    url: String,
+) -> Result<(), AppError> {
+    let path = PathBuf::from(&workspace_path);
+    let lock = state.get_lock(&path).await;
+    let _guard = lock.lock().await;
+    super::ops::set_remote(state.cli()?, &path, &url).await
+}
+
+#[tauri::command]
+pub async fn git_push(
+    state: State<'_, GitState>,
+    workspace_path: String,
+) -> Result<WorkspaceGitStatus, AppError> {
+    let path = PathBuf::from(&workspace_path);
+    let lock = state.get_lock(&path).await;
+    let _guard = lock.lock().await;
+    let cli = state.cli()?;
+    super::ops::push(cli, &path).await?;
+    super::ops::status(cli, &path).await
 }
 
 #[tauri::command]
@@ -98,22 +144,26 @@ pub async fn git_commit_file(
     state: State<'_, GitState>,
     workspace_path: String,
     file_path: String,
-) -> Result<(), AppError> {
+) -> Result<WorkspaceGitStatus, AppError> {
     let path = PathBuf::from(&workspace_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
-    super::ops::commit_file(state.cli()?, &path, &file_path).await
+    let cli = state.cli()?;
+    super::ops::commit_file(cli, &path, &file_path).await?;
+    super::ops::status(cli, &path).await
 }
 
 #[tauri::command]
 pub async fn git_commit_all(
     state: State<'_, GitState>,
     workspace_path: String,
-) -> Result<(), AppError> {
+) -> Result<WorkspaceGitStatus, AppError> {
     let path = PathBuf::from(&workspace_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
-    super::ops::commit_all(state.cli()?, &path).await
+    let cli = state.cli()?;
+    super::ops::commit_all(cli, &path).await?;
+    super::ops::status(cli, &path).await
 }
 
 #[tauri::command]

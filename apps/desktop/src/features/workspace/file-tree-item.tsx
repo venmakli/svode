@@ -37,6 +37,8 @@ import type { TreeNode } from "@/types/workspace";
 import { TreeDndContext } from "./sortable-file-tree";
 import { TreeDropIndicator } from "./tree-drop-indicator";
 import { isDescendantOf } from "./tree-dnd-utilities";
+import { FileGitIndicatorIcon } from "./git-status-indicator";
+import { selectFileIndicator, useGitStore } from "@/stores/git";
 
 interface FileTreeItemProps {
   node: TreeNode;
@@ -58,7 +60,15 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
   const isActive = !bareFolder && activeDocument === node.path;
   const isUnsaved = !!unsavedChanges[node.path];
   const isAiModified = !!aiModified[node.path];
-  const showDot = isUnsaved || isAiModified;
+  // Conflict always wins — if the file has merge markers, we must show ⚠
+  // even if the user is mid-edit locally.
+  const workspaceForGit = workspaces.find((w) => w.id === workspaceId)
+    ?? rootWorkspaces.find((w) => w.id === workspaceId);
+  const fileGitState = useGitStore((s) =>
+    workspaceForGit ? selectFileIndicator(s, workspaceForGit.path, node.path) : "clean",
+  );
+  const inConflict = fileGitState === "conflict";
+  const showDot = !inConflict && (isUnsaved || isAiModified);
 
   const expanded = expandedPaths[workspaceId]?.includes(node.path) ?? false;
 
@@ -82,8 +92,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
     opacity: isDragging ? 0.4 : undefined,
   };
 
-  const workspace = workspaces.find((w) => w.id === workspaceId)
-    ?? rootWorkspaces.find((w) => w.id === workspaceId);
+  const workspace = workspaceForGit;
 
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
@@ -326,6 +335,13 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
       title={isUnsaved ? "Unsaved changes" : "Modified externally"}
     >
       ●
+    </span>
+  ) : workspace ? (
+    <span className="ml-auto shrink-0 flex items-center">
+      <FileGitIndicatorIcon
+        workspacePath={workspace.path}
+        filePath={node.path}
+      />
     </span>
   ) : null;
 

@@ -17,6 +17,12 @@ export interface WorkspaceConfig {
   children?: ChildRef[];
   agent?: AgentConfig;
   defaults?: WorkspaceDefaults;
+  git?: GitWorkspaceConfig;
+}
+
+export interface GitWorkspaceConfig {
+  /** Auto pull+push after each commit. Default: true. */
+  autoSync?: boolean;
 }
 
 export interface ChildRef {

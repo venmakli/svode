@@ -135,17 +135,28 @@ fn debounce_loop(
 fn process_events(events: &[Event], workspace: &str, app: &AppHandle) {
     // Deduplicate by path — keep the last event kind per path
     let mut seen: HashMap<PathBuf, &EventKind> = HashMap::new();
+    let mut any_dirty = false;
     for event in events {
         for path in &event.paths {
             if should_ignore(path) {
                 continue;
             }
-            // Only care about .md files
+            // Any non-ignored file change → workspace is dirty.
+            // Includes non-.md assets (frontend uses this to refresh git status).
+            any_dirty = true;
+            // Per-file file:* events are emitted only for .md files.
             if path.extension().and_then(|e| e.to_str()) != Some("md") {
                 continue;
             }
             seen.insert(path.clone(), &event.kind);
         }
+    }
+
+    if any_dirty {
+        let _ = app.emit(
+            "workspace:dirty",
+            serde_json::json!({ "workspace": workspace }),
+        );
     }
 
     for (path, kind) in seen {

@@ -43,7 +43,17 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmojiPicker } from "@/components/ui/emoji-picker";
-import { Bot, ExternalLink, FileText, Pencil, RefreshCw, Settings } from "lucide-react";
+import { Bot, ExternalLink, FileText, GitBranch, Pencil, RefreshCw, Settings } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useLayoutStore } from "@/stores/layout";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useChatStatusStore, type ModelOption } from "@/stores/chat";
@@ -64,7 +74,7 @@ const CLI_AUTH_COMMANDS: Record<string, string> = {
   claude: "claude login",
 };
 
-type Section = "general" | "ai-agent" | "defaults" | "instructions";
+type Section = "general" | "ai-agent" | "git" | "defaults" | "instructions";
 
 export function WorkspaceSettingsDialog({
   open,
@@ -107,6 +117,13 @@ export function WorkspaceSettingsDialog({
 
   const [savedSystemPrompt, setSavedSystemPrompt] = useState("");
 
+  // Git section
+  const [remoteUrl, setRemoteUrl] = useState("");
+  const [savedRemoteUrl, setSavedRemoteUrl] = useState("");
+  const [branch, setBranch] = useState<string | null>(null);
+  const [autoSync, setAutoSync] = useState(true);
+  const [pendingRemote, setPendingRemote] = useState<string | null>(null);
+
   const loadConfig = useCallback(async () => {
     if (!workspacePath) return;
     try {
@@ -126,8 +143,31 @@ export function WorkspaceSettingsDialog({
         setSavedDefaultsModel(cfg.defaults.agent.defaultModel ?? "");
         setSavedDefaultsPrompt(cfg.defaults.agent.systemPrompt ?? "");
       }
+      setAutoSync(cfg.git?.autoSync !== false);
     } catch (err) {
       console.error("Failed to load workspace config:", err);
+    }
+  }, [workspacePath]);
+
+  const loadGitInfo = useCallback(async () => {
+    if (!workspacePath) return;
+    try {
+      const remote = await invoke<string | null>("git_get_remote", {
+        workspacePath,
+      });
+      setRemoteUrl(remote ?? "");
+      setSavedRemoteUrl(remote ?? "");
+    } catch {
+      setRemoteUrl("");
+      setSavedRemoteUrl("");
+    }
+    try {
+      const status = await invoke<{ branch: string }>("git_status", {
+        workspacePath,
+      });
+      setBranch(status.branch);
+    } catch {
+      setBranch(null);
     }
   }, [workspacePath]);
 
@@ -176,9 +216,10 @@ export function WorkspaceSettingsDialog({
       loadAgents();
       loadModels();
       loadAgentsMd();
+      loadGitInfo();
       setSection("general");
     }
-  }, [open, workspacePath, loadConfig, loadAgents, loadModels, loadAgentsMd]);
+  }, [open, workspacePath, loadConfig, loadAgents, loadModels, loadAgentsMd, loadGitInfo]);
 
   useEffect(() => {
     if (open && enabledClis.length > 0) checkHealth();
@@ -323,6 +364,37 @@ export function WorkspaceSettingsDialog({
     setRefreshing(false);
   }
 
+  async function applyRemote(newUrl: string) {
+    try {
+      await invoke("git_set_remote", { workspacePath, url: newUrl });
+      setSavedRemoteUrl(newUrl);
+      setRemoteUrl(newUrl);
+      toast.success(m.toast_settings_saved());
+    } catch (err) {
+      console.error("Failed to set remote:", err);
+      toast.error(m.toast_error());
+      // Roll back UI to previously-saved value
+      setRemoteUrl(savedRemoteUrl);
+    }
+  }
+
+  function handleRemoteBlur() {
+    const next = remoteUrl.trim();
+    if (next === savedRemoteUrl) return;
+    if (next === "") {
+      // Empty value — apply silently (clear remote intentionally requires
+      // a separate UI; we just no-op for now).
+      setRemoteUrl(savedRemoteUrl);
+      return;
+    }
+    setPendingRemote(next);
+  }
+
+  async function handleAutoSyncChange(value: boolean) {
+    setAutoSync(value);
+    await saveConfig({ git: { autoSync: value } });
+  }
+
 
   function handleOpenAgentsMd() {
     closeSettings();
@@ -340,6 +412,7 @@ export function WorkspaceSettingsDialog({
   const navItems: { key: Section; label: string; icon: React.FC<{ className?: string }>; show: boolean }[] = [
     { key: "general", label: m.settings_general(), icon: Settings, show: true },
     { key: "ai-agent", label: m.settings_ai_agent(), icon: Bot, show: true },
+    { key: "git", label: m.git_section(), icon: GitBranch, show: true },
     { key: "defaults", label: m.settings_defaults(), icon: Settings, show: hasChildren },
     { key: "instructions", label: m.settings_instructions(), icon: FileText, show: true },
   ];
@@ -537,6 +610,52 @@ export function WorkspaceSettingsDialog({
                   </div>
                 )}
 
+                {section === "git" && (
+                  <div className="space-y-6 max-w-sm">
+                    <div className="space-y-2">
+                      <Label htmlFor="ws-git-remote">{m.git_remote_label()}</Label>
+                      <Input
+                        id="ws-git-remote"
+                        value={remoteUrl}
+                        onChange={(e) => setRemoteUrl(e.target.value)}
+                        onBlur={handleRemoteBlur}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            (e.target as HTMLInputElement).blur();
+                          }
+                        }}
+                        placeholder={m.git_remote_placeholder()}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{m.git_branch_label()}</Label>
+                      <p className="text-sm text-muted-foreground">
+                        {branch ?? "—"}
+                      </p>
+                    </div>
+                    <Separator />
+                    <div className="space-y-2">
+                      <Label>{m.git_auto_sync_label()}</Label>
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <Checkbox
+                          checked={autoSync}
+                          onCheckedChange={(checked) =>
+                            handleAutoSyncChange(checked === true)
+                          }
+                          className="mt-0.5"
+                        />
+                        <span className="text-sm">
+                          {m.git_auto_sync_checkbox()}
+                          <span className="block text-xs text-muted-foreground">
+                            {m.git_auto_sync_hint()}
+                          </span>
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+                )}
+
                 {section === "defaults" && hasChildren && (
                   <div className="space-y-6 max-w-sm">
                     <p className="text-sm text-muted-foreground">
@@ -605,6 +724,43 @@ export function WorkspaceSettingsDialog({
             </main>
           </SidebarProvider>
         </DialogContent>
+        <AlertDialog
+          open={pendingRemote !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setPendingRemote(null);
+              setRemoteUrl(savedRemoteUrl);
+            }
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{m.git_remote_confirm_title()}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {m.git_remote_confirm_description({ url: pendingRemote ?? "" })}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel
+                onClick={() => {
+                  setPendingRemote(null);
+                  setRemoteUrl(savedRemoteUrl);
+                }}
+              >
+                {m.project_cancel()}
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={async () => {
+                  const target = pendingRemote;
+                  setPendingRemote(null);
+                  if (target) await applyRemote(target);
+                }}
+              >
+                {m.git_remote_confirm_action()}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </Dialog>
   );
 }

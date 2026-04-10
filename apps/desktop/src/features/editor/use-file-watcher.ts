@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import type { PlateEditor } from "platejs/react";
-import { MarkdownPlugin } from "@platejs/markdown";
+import { deserializeWithConflicts } from "./conflict/parse-conflicts";
 import { useLayoutStore } from "@/stores/layout";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useEditorStore } from "@/stores/editor";
@@ -95,10 +95,8 @@ export function useFileWatcher({
           })
             .then((entry) => {
               isLoadingRef.current = true;
-              const value = editor
-                .getApi(MarkdownPlugin)
-                .markdown.deserialize(entry.body);
-              editor.tf.setValue(value);
+              const value = deserializeWithConflicts(editor, entry.body);
+              editor.tf.setValue(value as never);
               isLoadingRef.current = false;
             })
             .catch((err) =>
