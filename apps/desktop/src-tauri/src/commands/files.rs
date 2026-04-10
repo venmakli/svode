@@ -6,6 +6,7 @@ use tauri::{AppHandle, State};
 
 use crate::error::AppError;
 use crate::files::{entry, tree, BacklinkIndex, BacklinkInfo, Entry, FileWatcher, LinkValidation, TreeNode, WriteResult};
+use crate::index::{self, IndexState};
 use crate::workspace::config;
 
 #[tauri::command]
@@ -37,7 +38,7 @@ pub fn read_entry(workspace: String, path: String) -> Result<Entry, AppError> {
 }
 
 #[tauri::command]
-pub fn write_entry(
+pub async fn write_entry(
     workspace: String,
     path: String,
     content: String,
@@ -46,8 +47,9 @@ pub fn write_entry(
     extra: Option<HashMap<String, serde_yml::Value>>,
     existing_id: Option<String>,
     backlink_index: State<'_, Arc<BacklinkIndex>>,
+    index_state: State<'_, IndexState>,
 ) -> Result<WriteResult, AppError> {
-    entry::write(
+    let result = entry::write(
         &workspace,
         &path,
         &content,
@@ -56,16 +58,44 @@ pub fn write_entry(
         extra,
         existing_id.as_deref(),
         Some(&backlink_index),
-    )
+    )?;
+
+    // Update SQLite index for the (possibly renamed) target path.
+    // On rename: delete the stale row first, then upsert the new path. The
+    // reverse order would let a concurrent write to the new path get clobbered
+    // by the stale-row delete.
+    if let Ok(pool) = index_state.get_or_create(&workspace).await {
+        if result.new_path.is_some() {
+            if let Err(e) = index::update::delete_entry_path(&pool, &path).await {
+                tracing::warn!("index delete stale path failed for {path}: {e}");
+            }
+        }
+        let target = result.new_path.clone().unwrap_or_else(|| path.clone());
+        if let Err(e) =
+            index::update::update_entry(&pool, Path::new(&workspace), &target).await
+        {
+            tracing::warn!("index update_entry failed for {target}: {e}");
+        }
+    }
+
+    Ok(result)
 }
 
 #[tauri::command]
-pub fn delete_entry(
+pub async fn delete_entry(
     workspace: String,
     path: String,
     backlink_index: State<'_, Arc<BacklinkIndex>>,
+    index_state: State<'_, IndexState>,
 ) -> Result<(), AppError> {
-    entry::delete(&workspace, &path, Some(&backlink_index))
+    entry::delete(&workspace, &path, Some(&backlink_index))?;
+
+    if let Ok(pool) = index_state.get_or_create(&workspace).await {
+        if let Err(e) = index::update::delete_entry_path(&pool, &path).await {
+            tracing::warn!("index delete_entry_path failed for {path}: {e}");
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]

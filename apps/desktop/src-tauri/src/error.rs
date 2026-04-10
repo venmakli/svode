@@ -47,6 +47,12 @@ pub enum AppError {
     #[error("Git no remote configured")]
     GitNoRemote,
 
+    #[error("Index error: {0}")]
+    Index(String),
+
+    #[error("Database error: {0}")]
+    Db(#[from] sqlx::Error),
+
     #[error("{0}")]
     General(String),
 }

@@ -1,8 +1,10 @@
 use std::path::Path;
+use std::path::PathBuf;
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, State};
 
 use crate::error::AppError;
+use crate::index::IndexState;
 use crate::workspace::{config, project, registry, settings, symlinks, types::*};
 
 // --- App Settings ---
@@ -114,8 +116,9 @@ pub fn open_workspace_folder(app: AppHandle, path: String) -> Result<WorkspaceIn
 }
 
 #[tauri::command]
-pub fn delete_workspace(
+pub async fn delete_workspace(
     app: AppHandle,
+    index_state: State<'_, IndexState>,
     id: String,
     delete_files: Option<bool>,
 ) -> Result<(), AppError> {
@@ -123,6 +126,13 @@ pub fn delete_workspace(
         .path()
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
+
+    // Close the index pool before any filesystem operations so SQLite releases
+    // file handles (Windows would otherwise refuse to remove the directory).
+    if let Some(ws_ref) = registry::find_workspace(&config_dir, &id)? {
+        index_state.close(&ws_ref.path).await;
+    }
+
     project::delete_workspace(&config_dir, &id, delete_files.unwrap_or(false))
 }
 
@@ -137,7 +147,11 @@ pub fn get_last_active_workspace(app: AppHandle) -> Result<Option<String>, AppEr
 }
 
 #[tauri::command]
-pub fn open_workspace(app: AppHandle, id: String) -> Result<WorkspaceConfig, AppError> {
+pub async fn open_workspace(
+    app: AppHandle,
+    index_state: State<'_, IndexState>,
+    id: String,
+) -> Result<WorkspaceConfig, AppError> {
     let config_dir = app
         .path()
         .app_config_dir()
@@ -148,7 +162,27 @@ pub fn open_workspace(app: AppHandle, id: String) -> Result<WorkspaceConfig, App
     let ws_ref = registry::find_workspace(&config_dir, &id)?
         .ok_or_else(|| AppError::WorkspaceNotFound(id.clone()))?;
 
-    config::read_workspace_config(Path::new(&ws_ref.path))
+    let cfg = config::read_workspace_config(Path::new(&ws_ref.path))?;
+
+    // Build/refresh the SQLite index in the background so the UI doesn't wait
+    // on filesystem walk + N upserts. Failure is logged but does not block
+    // workspace open — the user can always trigger a manual reindex later.
+    // The per-workspace reindex lock prevents two rapid opens from running
+    // concurrent full reindexes against the same DB.
+    let pool = index_state.get_or_create(&ws_ref.path).await?;
+    let reindex_lock = index_state.reindex_lock(&ws_ref.path).await;
+    let workspace_dir: PathBuf = PathBuf::from(&ws_ref.path);
+    tokio::spawn(async move {
+        let _guard = reindex_lock.lock().await;
+        if let Err(e) = crate::index::reindex::full_reindex(&pool, &workspace_dir).await {
+            tracing::warn!(
+                "background reindex failed for {}: {e}",
+                workspace_dir.display()
+            );
+        }
+    });
+
+    Ok(cfg)
 }
 
 // --- Children ---

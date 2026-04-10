@@ -7,6 +7,7 @@ use tauri::State;
 use super::cli::{GitAvailability, GitCli};
 use super::ops::WorkspaceGitStatus;
 use super::sync::SyncResult;
+use crate::index::IndexState;
 use crate::AppError;
 
 pub struct GitState {
@@ -118,12 +119,32 @@ pub async fn git_commit_all(
 #[tauri::command]
 pub async fn git_sync(
     state: State<'_, GitState>,
+    index_state: State<'_, IndexState>,
     workspace_path: String,
 ) -> Result<SyncResult, AppError> {
     let path = PathBuf::from(&workspace_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
-    super::sync::sync(state.cli()?, &path).await
+    let cli = state.cli()?;
+    let result = super::sync::sync(cli, &path).await?;
+
+    // On a successful pull (Success means pull+push completed), refresh the
+    // SQLite index for any files that the merge brought in or modified.
+    if matches!(result, SyncResult::Success) {
+        if let Ok(changed) = super::ops::diff_after_pull(cli, &path).await {
+            if !changed.is_empty() {
+                if let Ok(pool) = index_state.get_or_create(&workspace_path).await {
+                    if let Err(e) =
+                        crate::index::update::reindex_after_pull(&pool, &path, changed).await
+                    {
+                        tracing::warn!("reindex_after_pull failed: {e}");
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 #[tauri::command]
@@ -140,12 +161,32 @@ pub async fn git_conflict_files(
 #[tauri::command]
 pub async fn git_resolve_continue(
     state: State<'_, GitState>,
+    index_state: State<'_, IndexState>,
     workspace_path: String,
 ) -> Result<SyncResult, AppError> {
     let path = PathBuf::from(&workspace_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
-    super::sync::resolve_and_continue(state.cli()?, &path).await
+    let cli = state.cli()?;
+    let result = super::sync::resolve_and_continue(cli, &path).await?;
+
+    // After conflict resolution + merge commit + push, the workspace tree
+    // has changed; refresh the index for the diff against the previous HEAD.
+    if matches!(result, SyncResult::Success) {
+        if let Ok(changed) = super::ops::diff_after_pull(cli, &path).await {
+            if !changed.is_empty() {
+                if let Ok(pool) = index_state.get_or_create(&workspace_path).await {
+                    if let Err(e) =
+                        crate::index::update::reindex_after_pull(&pool, &path, changed).await
+                    {
+                        tracing::warn!("reindex_after_pull failed: {e}");
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 #[tauri::command]
