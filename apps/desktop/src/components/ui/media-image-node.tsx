@@ -1,5 +1,3 @@
-'use client';
-
 import * as React from 'react';
 
 import type { TImageElement } from 'platejs';
@@ -11,6 +9,11 @@ import { ResizableProvider, useResizableValue } from '@platejs/resizable';
 import { PlateElement, withHOC } from 'platejs/react';
 
 import { cn } from '@/lib/utils';
+import { resolveAssetUrl } from '@/hooks/use-resolved-asset-url';
+import {
+  selectActiveWorkspacePath,
+  useWorkspaceStore,
+} from '@/stores/workspace';
 
 import { Caption, CaptionTextarea } from './caption';
 import { MediaToolbar } from './media-toolbar';
@@ -25,6 +28,7 @@ export const ImageElement = withHOC(
   function ImageElement(props: PlateElementProps<TImageElement>) {
     const { align = 'center', focused, readOnly, selected } = useMediaState();
     const width = useResizableValue('width');
+    const workspacePath = useWorkspaceStore(selectActiveWorkspacePath);
 
     const { isDragging, handleRef } = useDraggable({
       element: props.element,
@@ -54,6 +58,10 @@ export const ImageElement = withHOC(
                   isDragging && 'opacity-50'
                 )}
                 alt={props.attributes.alt as string | undefined}
+                setProps={({ src, ...rest }) => ({
+                  ...rest,
+                  src: resolveAssetUrl(src, workspacePath) ?? src,
+                })}
               />
               <ResizeHandle
                 className={mediaResizeHandleVariants({

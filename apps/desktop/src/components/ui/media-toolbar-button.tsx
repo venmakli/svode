@@ -1,5 +1,3 @@
-'use client';
-
 import * as React from 'react';
 
 import type { DropdownMenuProps } from '@radix-ui/react-dropdown-menu';
@@ -15,7 +13,6 @@ import {
 import { isUrl, KEYS } from 'platejs';
 import { useEditorRef } from 'platejs/react';
 import { toast } from 'sonner';
-import { useFilePicker } from 'use-file-picker';
 
 import {
   AlertDialog,
@@ -35,6 +32,11 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { type MediaKind } from '@/lib/media-types';
+import {
+  filesToFileList,
+  pickMediaFiles,
+} from '@/lib/native-file-picker';
 
 import {
   ToolbarSplitButton,
@@ -45,33 +47,33 @@ import {
 const MEDIA_CONFIG: Record<
   string,
   {
-    accept: string[];
     icon: React.ReactNode;
+    kind: MediaKind;
     title: string;
     tooltip: string;
   }
 > = {
   [KEYS.audio]: {
-    accept: ['audio/*'],
     icon: <AudioLinesIcon className="size-4" />,
+    kind: 'audio',
     title: 'Insert Audio',
     tooltip: 'Audio',
   },
   [KEYS.file]: {
-    accept: ['*'],
     icon: <FileUpIcon className="size-4" />,
+    kind: 'file',
     title: 'Insert File',
     tooltip: 'File',
   },
   [KEYS.img]: {
-    accept: ['image/*'],
     icon: <ImageIcon className="size-4" />,
+    kind: 'image',
     title: 'Insert Image',
     tooltip: 'Image',
   },
   [KEYS.video]: {
-    accept: ['video/*'],
     icon: <FilmIcon className="size-4" />,
+    kind: 'video',
     title: 'Insert Video',
     tooltip: 'Video',
   },
@@ -87,13 +89,19 @@ export function MediaToolbarButton({
   const [open, setOpen] = React.useState(false);
   const [dialogOpen, setDialogOpen] = React.useState(false);
 
-  const { openFilePicker } = useFilePicker({
-    accept: currentConfig.accept,
-    multiple: true,
-    onFilesSelected: ({ plainFiles: updatedFiles }) => {
-      editor.getTransforms(PlaceholderPlugin).insert.media(updatedFiles);
-    },
-  });
+  const openFilePicker = React.useCallback(async () => {
+    try {
+      const files = await pickMediaFiles(currentConfig.kind);
+      if (files.length === 0) return;
+      editor
+        .getTransforms(PlaceholderPlugin)
+        .insert.media(filesToFileList(files));
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : 'Failed to open file dialog'
+      );
+    }
+  }, [currentConfig.kind, editor]);
 
   return (
     <>

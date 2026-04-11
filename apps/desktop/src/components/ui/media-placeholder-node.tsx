@@ -1,5 +1,3 @@
-'use client';
-
 import * as React from 'react';
 
 import type { TPlaceholderElement } from 'platejs';
@@ -13,38 +11,40 @@ import {
 import { AudioLines, FileUp, Film, ImageIcon, Loader2Icon } from 'lucide-react';
 import { KEYS } from 'platejs';
 import { PlateElement, useEditorPlugin, withHOC } from 'platejs/react';
-import { useFilePicker } from 'use-file-picker';
+import { toast } from 'sonner';
 
 import { cn } from '@/lib/utils';
+import { type MediaKind } from '@/lib/media-types';
+import { filesToFileList, pickMediaFiles } from '@/lib/native-file-picker';
 import { useUploadFile } from '@/hooks/use-upload-file';
 
 const CONTENT: Record<
   string,
   {
-    accept: string[];
     content: React.ReactNode;
     icon: React.ReactNode;
+    kind: MediaKind;
   }
 > = {
   [KEYS.audio]: {
-    accept: ['audio/*'],
     content: 'Add an audio file',
     icon: <AudioLines />,
+    kind: 'audio',
   },
   [KEYS.file]: {
-    accept: ['*'],
     content: 'Add a file',
     icon: <FileUp />,
+    kind: 'file',
   },
   [KEYS.img]: {
-    accept: ['image/*'],
     content: 'Add an image',
     icon: <ImageIcon />,
+    kind: 'image',
   },
   [KEYS.video]: {
-    accept: ['video/*'],
     content: 'Add a video',
     icon: <Film />,
+    kind: 'video',
   },
 };
 
@@ -66,20 +66,27 @@ export const PlaceholderElement = withHOC(
 
     const imageRef = React.useRef<HTMLImageElement>(null);
 
-    const { openFilePicker } = useFilePicker({
-      accept: currentContent.accept,
-      multiple: true,
-      onFilesSelected: ({ plainFiles: updatedFiles }) => {
-        const firstFile = updatedFiles[0];
-        const restFiles = updatedFiles.slice(1);
+    const openFilePicker = React.useCallback(async () => {
+      try {
+        const files = await pickMediaFiles(currentContent.kind);
+        if (files.length === 0) return;
+
+        const [firstFile, ...restFiles] = files;
 
         replaceCurrentPlaceholder(firstFile);
 
         if (restFiles.length > 0) {
-          editor.getTransforms(PlaceholderPlugin).insert.media(restFiles);
+          editor
+            .getTransforms(PlaceholderPlugin)
+            .insert.media(filesToFileList(restFiles));
         }
-      },
-    });
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : 'Failed to open file dialog'
+        );
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [currentContent.kind, editor]);
 
     const replaceCurrentPlaceholder = React.useCallback(
       (file: File) => {

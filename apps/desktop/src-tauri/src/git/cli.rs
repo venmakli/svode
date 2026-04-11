@@ -52,6 +52,11 @@ impl GitCli {
         &self.git_path
     }
 
+    /// Whether git-lfs is installed and available on PATH.
+    pub fn lfs_available(&self) -> bool {
+        self.lfs_available
+    }
+
     /// Execute a git command in the given workspace directory.
     pub async fn exec(
         &self,

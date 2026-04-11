@@ -29,6 +29,7 @@ pub fn scaffold_workspace(
         agent: None,
         defaults: None,
         git: None,
+        assets: None,
     };
     write_workspace_config(path, &ws_config)?;
 

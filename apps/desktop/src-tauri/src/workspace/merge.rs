@@ -30,5 +30,6 @@ pub fn merge_with_defaults(child: &WorkspaceConfig, defaults: &WorkspaceDefaults
         agent: merged_agent,
         defaults: child.defaults.clone(),
         git: child.git.clone(),
+        assets: child.assets.clone(),
     }
 }

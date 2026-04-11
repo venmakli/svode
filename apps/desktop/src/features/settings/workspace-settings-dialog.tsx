@@ -43,7 +43,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmojiPicker } from "@/components/ui/emoji-picker";
-import { Bot, ExternalLink, FileText, GitBranch, Pencil, RefreshCw, Settings } from "lucide-react";
+import { Bot, ExternalLink, FileText, GitBranch, HardDrive, Loader2, Pencil, RefreshCw, Settings } from "lucide-react";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -62,7 +63,10 @@ import type {
   AgentConfig,
   AvailableAgent,
   SymlinkHealthReport,
+  AssetsStrategy,
+  AssetsWorkspaceConfig,
 } from "@/types/workspace";
+import type { GitAvailability } from "@/types/git";
 
 interface WorkspaceSettingsDialogProps {
   open: boolean;
@@ -74,7 +78,7 @@ const CLI_AUTH_COMMANDS: Record<string, string> = {
   claude: "claude login",
 };
 
-type Section = "general" | "ai-agent" | "git" | "defaults" | "instructions";
+type Section = "general" | "ai-agent" | "git" | "storage" | "defaults" | "instructions";
 
 export function WorkspaceSettingsDialog({
   open,
@@ -124,6 +128,16 @@ export function WorkspaceSettingsDialog({
   const [autoSync, setAutoSync] = useState(true);
   const [pendingRemote, setPendingRemote] = useState<string | null>(null);
 
+  // Storage section
+  const [assetsStrategy, setAssetsStrategy] = useState<AssetsStrategy>("local");
+  const [savedAssetsStrategy, setSavedAssetsStrategy] = useState<AssetsStrategy>("local");
+  const [pendingStrategy, setPendingStrategy] = useState<AssetsStrategy | null>(null);
+  const [pendingAssetCount, setPendingAssetCount] = useState<number>(0);
+  const [lfsAvailable, setLfsAvailable] = useState<boolean>(false);
+  const [lfsVersion, setLfsVersion] = useState<string | null>(null);
+  const [applyingStrategy, setApplyingStrategy] = useState(false);
+  const [strategyInFlight, setStrategyInFlight] = useState<AssetsStrategy | null>(null);
+
   const loadConfig = useCallback(async () => {
     if (!workspacePath) return;
     try {
@@ -144,10 +158,24 @@ export function WorkspaceSettingsDialog({
         setSavedDefaultsPrompt(cfg.defaults.agent.systemPrompt ?? "");
       }
       setAutoSync(cfg.git?.autoSync !== false);
+      const strategy: AssetsStrategy = cfg.assets?.strategy ?? "local";
+      setAssetsStrategy(strategy);
+      setSavedAssetsStrategy(strategy);
     } catch (err) {
       console.error("Failed to load workspace config:", err);
     }
   }, [workspacePath]);
+
+  const loadLfsAvailability = useCallback(async () => {
+    try {
+      const avail = await invoke<GitAvailability>("git_check_availability");
+      setLfsAvailable(avail.gitLfs);
+      setLfsVersion(avail.gitVersion);
+    } catch {
+      setLfsAvailable(false);
+      setLfsVersion(null);
+    }
+  }, []);
 
   const loadGitInfo = useCallback(async () => {
     if (!workspacePath) return;
@@ -217,9 +245,10 @@ export function WorkspaceSettingsDialog({
       loadModels();
       loadAgentsMd();
       loadGitInfo();
+      loadLfsAvailability();
       setSection("general");
     }
-  }, [open, workspacePath, loadConfig, loadAgents, loadModels, loadAgentsMd, loadGitInfo]);
+  }, [open, workspacePath, loadConfig, loadAgents, loadModels, loadAgentsMd, loadGitInfo, loadLfsAvailability]);
 
   useEffect(() => {
     if (open && enabledClis.length > 0) checkHealth();
@@ -395,6 +424,60 @@ export function WorkspaceSettingsDialog({
     await saveConfig({ git: { autoSync: value } });
   }
 
+  async function handleStrategySelect(next: AssetsStrategy) {
+    if (next === savedAssetsStrategy) return;
+    // LFS strategies require git-lfs
+    if ((next === "lfs-remote" || next === "lfs-s3") && !lfsAvailable) return;
+    // Fetch the count of existing assets so the confirmation dialog can warn
+    // that they will NOT be migrated automatically (see strategy.rs — partial
+    // migration is documented in stage-3/PLAN.md).
+    let count = 0;
+    if (workspacePath) {
+      try {
+        count = await invoke<number>("count_assets", { workspacePath });
+      } catch (err) {
+        console.warn("count_assets failed, continuing without warning:", err);
+      }
+    }
+    setPendingAssetCount(count);
+    // lfs-s3 defers to Phase 4.3 — show confirmation but allow config save for future.
+    setPendingStrategy(next);
+  }
+
+  async function applyStrategy(next: AssetsStrategy) {
+    if (!workspacePath) return;
+    setApplyingStrategy(true);
+    setStrategyInFlight(next);
+    try {
+      const result = await invoke<{ warnings: string[] }>("set_assets_strategy", {
+        workspacePath,
+        strategy: next,
+        // s3Config: will be populated in Phase 4.3 once S3 UI lands.
+        s3Config: null,
+      });
+      setAssetsStrategy(next);
+      setSavedAssetsStrategy(next);
+      if (result.warnings && result.warnings.length > 0) {
+        // Strategy applied, but LFS install/track/migrate produced errors —
+        // surface them instead of a misleading success toast.
+        toast.warning(m.storage_apply_warnings({ count: String(result.warnings.length) }), {
+          description: result.warnings.join("\n"),
+        });
+      } else {
+        toast.success(m.toast_settings_saved());
+      }
+    } catch (err) {
+      console.error("Failed to apply assets strategy:", err);
+      const detail = typeof err === "string" ? err : ((err as { message?: string })?.message ?? "");
+      toast.error(detail || m.storage_apply_failed());
+      // Roll back to last known good.
+      setAssetsStrategy(savedAssetsStrategy);
+    } finally {
+      setApplyingStrategy(false);
+      setStrategyInFlight(null);
+    }
+  }
+
 
   function handleOpenAgentsMd() {
     closeSettings();
@@ -413,6 +496,7 @@ export function WorkspaceSettingsDialog({
     { key: "general", label: m.settings_general(), icon: Settings, show: true },
     { key: "ai-agent", label: m.settings_ai_agent(), icon: Bot, show: true },
     { key: "git", label: m.git_section(), icon: GitBranch, show: true },
+    { key: "storage", label: m.storage_section(), icon: HardDrive, show: true },
     { key: "defaults", label: m.settings_defaults(), icon: Settings, show: hasChildren },
     { key: "instructions", label: m.settings_instructions(), icon: FileText, show: true },
   ];
@@ -656,6 +740,99 @@ export function WorkspaceSettingsDialog({
                   </div>
                 )}
 
+                {section === "storage" && (
+                  <div className="space-y-4 max-w-md">
+                    <div>
+                      <Label className="text-sm font-medium">{m.storage_title()}</Label>
+                    </div>
+                    <RadioGroup
+                      value={assetsStrategy}
+                      onValueChange={(v) => handleStrategySelect(v as AssetsStrategy)}
+                      className="gap-3"
+                    >
+                      {(
+                        [
+                          {
+                            value: "local" as const,
+                            title: m.storage_strategy_local_title(),
+                            desc: m.storage_strategy_local_desc(),
+                            needsLfs: false,
+                          },
+                          {
+                            value: "in-git" as const,
+                            title: m.storage_strategy_in_git_title(),
+                            desc: m.storage_strategy_in_git_desc(),
+                            needsLfs: false,
+                          },
+                          {
+                            value: "lfs-remote" as const,
+                            title: m.storage_strategy_lfs_remote_title(),
+                            desc: m.storage_strategy_lfs_remote_desc(),
+                            needsLfs: true,
+                          },
+                          {
+                            value: "lfs-s3" as const,
+                            title: m.storage_strategy_lfs_s3_title(),
+                            desc: m.storage_strategy_lfs_s3_desc(),
+                            needsLfs: true,
+                          },
+                        ]
+                      ).map((opt) => {
+                        const disabled =
+                          applyingStrategy || (opt.needsLfs && !lfsAvailable) || opt.value === "lfs-s3";
+                        return (
+                          <label
+                            key={opt.value}
+                            className={`flex items-start gap-3 rounded-md border p-3 ${
+                              disabled ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-accent/50"
+                            } ${assetsStrategy === opt.value ? "border-primary" : ""}`}
+                          >
+                            {strategyInFlight === opt.value ? (
+                              <Loader2 className="mt-0.5 size-4 animate-spin text-muted-foreground" />
+                            ) : (
+                              <RadioGroupItem
+                                value={opt.value}
+                                id={`storage-${opt.value}`}
+                                disabled={disabled}
+                                className="mt-0.5"
+                              />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium">{opt.title}</span>
+                                {opt.needsLfs && (
+                                  lfsAvailable ? (
+                                    <Badge variant="secondary" className="text-xs font-normal">
+                                      <span className="text-green-600 mr-1">&#10003;</span>
+                                      {lfsVersion
+                                        ? `${m.storage_lfs_available()} (${lfsVersion})`
+                                        : m.storage_lfs_available()}
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="destructive" className="text-xs font-normal">
+                                      <span className="mr-1">&#10005;</span>
+                                      {m.storage_lfs_missing()}
+                                    </Badge>
+                                  )
+                                )}
+                              </div>
+                              <p className="mt-0.5 text-xs text-muted-foreground">{opt.desc}</p>
+                              {opt.value === "lfs-s3" && (
+                                <p className="mt-1 text-xs text-muted-foreground italic">
+                                  {m.storage_s3_deferred()}
+                                </p>
+                              )}
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </RadioGroup>
+                    {!lfsAvailable && (
+                      <p className="text-xs text-muted-foreground">{m.storage_lfs_install_hint()}</p>
+                    )}
+                  </div>
+                )}
+
                 {section === "defaults" && hasChildren && (
                   <div className="space-y-6 max-w-sm">
                     <p className="text-sm text-muted-foreground">
@@ -757,6 +934,49 @@ export function WorkspaceSettingsDialog({
                 }}
               >
                 {m.git_remote_confirm_action()}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+        <AlertDialog
+          open={pendingStrategy !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setPendingStrategy(null);
+              setPendingAssetCount(0);
+            }
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{m.storage_confirm_title()}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {m.storage_confirm_description({ strategy: pendingStrategy ?? "" })}
+                {pendingAssetCount > 0 && (
+                  <span className="mt-2 block text-destructive">
+                    {m.storage_confirm_existing_assets({ count: String(pendingAssetCount) })}
+                  </span>
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel
+                onClick={() => {
+                  setPendingStrategy(null);
+                  setPendingAssetCount(0);
+                }}
+              >
+                {m.project_cancel()}
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={async () => {
+                  const target = pendingStrategy;
+                  setPendingStrategy(null);
+                  setPendingAssetCount(0);
+                  if (target) await applyStrategy(target);
+                }}
+              >
+                {m.storage_confirm_action()}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

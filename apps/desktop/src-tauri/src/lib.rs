@@ -4,6 +4,7 @@ mod error;
 mod files;
 mod git;
 mod index;
+mod storage;
 mod workspace;
 
 use std::sync::Arc;
@@ -63,6 +64,7 @@ pub fn run() {
             commands::workspace::delete_child,
             commands::workspace::register_cloned_child,
             commands::workspace::path_exists,
+            commands::workspace::ensure_assets_scope,
             commands::workspace::get_workspace_config,
             commands::workspace::save_workspace_config,
             commands::workspace::setup_cli_symlinks_cmd,
@@ -91,6 +93,13 @@ pub fn run() {
             index::commands::search_entries_by_title,
             index::commands::search_entries,
             index::commands::recent_entries,
+            storage::commands::upload_asset,
+            storage::commands::read_file_for_upload,
+            storage::commands::list_assets,
+            storage::commands::count_assets,
+            storage::commands::get_assets_config,
+            storage::commands::set_assets_strategy,
+            storage::commands::check_s3_connection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

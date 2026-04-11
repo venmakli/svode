@@ -6,14 +6,18 @@ import type { PlateEditor, PlateElementProps } from 'platejs/react';
 
 import { AIChatPlugin } from '@platejs/ai/react';
 import {
+  AudioLines,
   CalendarIcon,
   ChevronRightIcon,
   Code2,
   Columns3Icon,
   FileTextIcon,
+  FileUp,
+  Film,
   Heading1Icon,
   Heading2Icon,
   Heading3Icon,
+  ImageIcon,
   LightbulbIcon,
   ListIcon,
   ListOrdered,
@@ -219,6 +223,41 @@ const groups: Group[] = [
       ...item,
       onSelect: (editor, value) => {
         insertInlineElement(editor, value);
+      },
+    })),
+  },
+  {
+    group: 'Media',
+    items: [
+      {
+        icon: <ImageIcon />,
+        keywords: ['image', 'picture', 'photo', 'img'],
+        label: 'Image',
+        value: KEYS.img,
+      },
+      {
+        icon: <FileUp />,
+        keywords: ['file', 'attachment'],
+        label: 'File',
+        value: KEYS.file,
+      },
+      {
+        icon: <Film />,
+        keywords: ['video', 'movie'],
+        label: 'Video',
+        value: KEYS.video,
+      },
+      {
+        icon: <AudioLines />,
+        keywords: ['audio', 'sound', 'music'],
+        label: 'Audio',
+        value: KEYS.audio,
+      },
+    ].map((item) => ({
+      ...item,
+      focusEditor: false,
+      onSelect: (editor, value) => {
+        insertBlock(editor, value, { upsert: true });
       },
     })),
   },

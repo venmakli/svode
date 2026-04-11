@@ -142,6 +142,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       });
       // Load root file tree (project documents) and children
       if (ws?.path) {
+        // Grant the webview access to this workspace's `.assets/` via the
+        // Tauri asset protocol. Scope is per-app-session and the call is
+        // idempotent — safe to repeat on every root open.
+        invoke("ensure_assets_scope", { workspacePath: ws.path }).catch(
+          (err) => console.warn("ensure_assets_scope failed:", err),
+        );
         await get().refreshTree(id);
         await get().loadExpandedPaths(id);
         await get().loadChildren(ws.path);
@@ -223,6 +229,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   openChild: async (id: string) => {
     set({ activeChildId: id });
+    // Grant the webview access to this child workspace's `.assets/` via
+    // the Tauri asset protocol. Scope is per-app-session and idempotent
+    // — safe to call every time the user activates a child.
+    const child = get().children.find((w) => w.id === id);
+    if (child?.path) {
+      invoke("ensure_assets_scope", { workspacePath: child.path }).catch(
+        (err) => console.warn("ensure_assets_scope failed:", err),
+      );
+    }
     if (!get().fileTrees[id]) {
       await get().refreshTree(id);
     }

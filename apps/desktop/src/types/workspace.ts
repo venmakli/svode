@@ -18,11 +18,25 @@ export interface WorkspaceConfig {
   agent?: AgentConfig;
   defaults?: WorkspaceDefaults;
   git?: GitWorkspaceConfig;
+  assets?: AssetsWorkspaceConfig;
 }
 
 export interface GitWorkspaceConfig {
   /** Auto pull+push after each commit. Default: true. */
   autoSync?: boolean;
+}
+
+export type AssetsStrategy = "local" | "in-git" | "lfs-remote" | "lfs-s3";
+
+export interface AssetsS3Config {
+  endpoint: string;
+  bucket: string;
+  region: string;
+}
+
+export interface AssetsWorkspaceConfig {
+  strategy: AssetsStrategy;
+  s3?: AssetsS3Config;
 }
 
 export interface ChildRef {

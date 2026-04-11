@@ -1,5 +1,3 @@
-'use client';
-
 import * as React from 'react';
 import LiteYouTubeEmbed from 'react-lite-youtube-embed';
 import ReactPlayer from 'react-player';
@@ -21,6 +19,7 @@ import {
   Resizable,
   ResizeHandle,
 } from './resize-handle';
+import { useResolvedAssetUrl } from '@/hooks/use-resolved-asset-url';
 
 export const VideoElement = withHOC(
   ResizableProvider,
@@ -37,6 +36,7 @@ export const VideoElement = withHOC(
     } = useMediaState({
       urlParsers: [parseTwitterUrl, parseVideoUrl],
     });
+    const resolvedUrl = useResolvedAssetUrl(unsafeUrl);
     const width = useResizableValue('width');
 
     const isEditorMounted = useEditorMounted();
@@ -100,7 +100,7 @@ export const VideoElement = withHOC(
                 <div ref={handleRef}>
                   <ReactPlayer
                     height="100%"
-                    src={unsafeUrl}
+                    src={resolvedUrl}
                     width="100%"
                     controls
                   />

@@ -1,5 +1,3 @@
-'use client';
-
 import * as React from 'react';
 
 import type { TAudioElement } from 'platejs';
@@ -10,11 +8,13 @@ import { ResizableProvider } from '@platejs/resizable';
 import { PlateElement, withHOC } from 'platejs/react';
 
 import { Caption, CaptionTextarea } from './caption';
+import { useResolvedAssetUrl } from '@/hooks/use-resolved-asset-url';
 
 export const AudioElement = withHOC(
   ResizableProvider,
   function AudioElement(props: PlateElementProps<TAudioElement>) {
     const { align = 'center', readOnly, unsafeUrl } = useMediaState();
+    const resolvedUrl = useResolvedAssetUrl(unsafeUrl);
 
     return (
       <PlateElement {...props} className="mb-1">
@@ -23,7 +23,7 @@ export const AudioElement = withHOC(
           contentEditable={false}
         >
           <div className="h-16">
-            <audio className="size-full" src={unsafeUrl} controls />
+            <audio className="size-full" src={resolvedUrl} controls />
           </div>
 
           <Caption style={{ width: '100%' }} align={align}>

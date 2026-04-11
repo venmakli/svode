@@ -10,12 +10,8 @@ import { insertExcalidraw } from '@platejs/excalidraw';
 import { insertColumnGroup, toggleColumnGroup } from '@platejs/layout';
 import { triggerFloatingLink } from '@platejs/link/react';
 import { insertEquation, insertInlineEquation } from '@platejs/math';
-import {
-  insertAudioPlaceholder,
-  insertFilePlaceholder,
-  insertMedia,
-  insertVideoPlaceholder,
-} from '@platejs/media';
+import { insertMediaEmbed } from '@platejs/media';
+import { PlaceholderPlugin } from '@platejs/media/react';
 import { SuggestionPlugin } from '@platejs/suggestion/react';
 import { TablePlugin } from '@platejs/table/react';
 import { insertToc } from '@platejs/toc';
@@ -26,6 +22,8 @@ import {
   KEYS,
   PathApi,
 } from 'platejs';
+import { type MediaKind } from '@/lib/media-types';
+import { filesToFileList, pickMediaFiles } from '@/lib/native-file-picker';
 
 const ACTION_THREE_COLUMNS = 'action_three_columns';
 
@@ -48,29 +46,47 @@ const insertBlockMap: Record<
   [KEYS.ul]: insertList,
   [ACTION_THREE_COLUMNS]: (editor) =>
     insertColumnGroup(editor, { columns: 3, select: true }),
-  [KEYS.audio]: (editor) => insertAudioPlaceholder(editor, { select: true }),
+  [KEYS.audio]: (editor) => pickAndInsertMedia(editor, 'audio'),
   [KEYS.callout]: (editor) => insertCallout(editor, { select: true }),
   [KEYS.codeBlock]: (editor) => insertCodeBlock(editor, { select: true }),
   [KEYS.codeDrawing]: (editor) =>
     insertCodeDrawing(editor, {}, { select: true }),
   [KEYS.equation]: (editor) => insertEquation(editor, { select: true }),
   [KEYS.excalidraw]: (editor) => insertExcalidraw(editor, {}, { select: true }),
-  [KEYS.file]: (editor) => insertFilePlaceholder(editor, { select: true }),
-  [KEYS.img]: (editor) =>
-    insertMedia(editor, {
-      select: true,
-      type: KEYS.img,
-    }),
-  [KEYS.mediaEmbed]: (editor) =>
-    insertMedia(editor, {
-      select: true,
-      type: KEYS.mediaEmbed,
-    }),
+  [KEYS.file]: (editor) => pickAndInsertMedia(editor, 'file'),
+  [KEYS.img]: (editor) => pickAndInsertMedia(editor, 'image'),
+  [KEYS.mediaEmbed]: (editor) => insertMediaEmbed(editor, { select: true }),
   [KEYS.table]: (editor) =>
     editor.getTransforms(TablePlugin).insert.table({}, { select: true }),
   [KEYS.toc]: (editor) => insertToc(editor, { select: true }),
-  [KEYS.video]: (editor) => insertVideoPlaceholder(editor, { select: true }),
+  [KEYS.video]: (editor) => pickAndInsertMedia(editor, 'video'),
 };
+
+/**
+ * Open the native Tauri file dialog for the given media kind and hand the
+ * chosen files to the react-side `PlaceholderPlugin.insert.media` transform.
+ * This is the only correct path for programmatic media insertion from slash
+ * commands and the block-insert menu: it sets the placeholder node `id`,
+ * registers the file via `addUploadingFile`, AND tags the history batch so
+ * `updateUploadHistory` can patch it when the upload completes. Using the
+ * base `insert{Image,File,Video,Audio}Placeholder` helpers skips the history
+ * tagging and crashes later with `batch.operations` undefined.
+ *
+ * Uses `@tauri-apps/plugin-dialog` instead of a raw `<input type="file">`
+ * because WKWebView on macOS silently ignores the `accept` attribute — see
+ * `src/lib/native-file-picker.ts` for the full story.
+ */
+export async function pickAndInsertMedia(
+  editor: PlateEditor,
+  kind: MediaKind
+) {
+  const files = await pickMediaFiles(kind);
+  if (files.length === 0) return;
+
+  editor.getTransforms(PlaceholderPlugin).insert.media(filesToFileList(files), {
+    nextBlock: false,
+  });
+}
 
 const insertInlineMap: Record<
   string,

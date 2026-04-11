@@ -111,6 +111,37 @@ pub struct WorkspaceConfig {
     pub defaults: Option<WorkspaceDefaults>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git: Option<GitWorkspaceConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assets: Option<AssetsWorkspaceConfig>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AssetsStrategy {
+    #[default]
+    Local,
+    InGit,
+    LfsRemote,
+    LfsS3,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetsWorkspaceConfig {
+    #[serde(default)]
+    pub strategy: AssetsStrategy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub s3: Option<AssetsS3Config>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetsS3Config {
+    pub endpoint: String,
+    pub bucket: String,
+    pub region: String,
+    // NOTE: access/secret keys intentionally NOT stored here — they belong in
+    // OS keychain (deferred to Phase 4.3).
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

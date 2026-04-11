@@ -229,6 +229,28 @@ pub fn path_exists(path: String) -> Result<bool, AppError> {
     Ok(Path::new(&path).exists())
 }
 
+/// Register the `<workspace_path>/.assets` directory with the Tauri asset
+/// protocol scope so the webview can render images/videos/audio uploaded
+/// to that workspace. Idempotent — the frontend calls this every time a
+/// workspace (root or child) becomes active, and `Scope::allow_directory`
+/// is a set insert under the hood.
+///
+/// Scoping the `.assets` subdirectory explicitly (rather than the whole
+/// workspace) gives us a tight blast radius: the asset protocol can only
+/// serve files that were actually uploaded through our pipeline, not
+/// arbitrary files in the workspace tree. The default Unix
+/// `require_literal_leading_dot: true` is fine here because `.assets` is
+/// a literal path component in the pattern — the wildcard `**` only
+/// applies to the filename, which our `assets::sanitize_filename` ensures
+/// never starts with a dot.
+#[tauri::command]
+pub fn ensure_assets_scope(app: AppHandle, workspace_path: String) -> Result<(), AppError> {
+    let assets_dir = Path::new(&workspace_path).join(".assets");
+    app.asset_protocol_scope()
+        .allow_directory(&assets_dir, true)
+        .map_err(|e| AppError::General(e.to_string()))
+}
+
 // --- Config ---
 
 #[tauri::command]
