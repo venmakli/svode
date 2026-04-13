@@ -106,7 +106,6 @@ export function SortableFileTree({
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
-  const [offsetLeft, setOffsetLeft] = useState(0);
   const [projection, setProjection] = useState<Projection | null>(null);
   const autoExpandTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -198,7 +197,6 @@ export function SortableFileTree({
     const id = event.active.id as string;
     setActiveId(id);
     setOverId(id);
-    setOffsetLeft(0);
     setProjection(null);
     activeIdRef.current = id;
     overIdRef.current = id;
@@ -210,7 +208,6 @@ export function SortableFileTree({
     (event: DragMoveEvent) => {
       // Update offset
       offsetLeftRef.current = event.delta.x;
-      setOffsetLeft(event.delta.x);
 
       // Update over if available from event
       if (event.over) {
@@ -270,6 +267,21 @@ export function SortableFileTree({
     [tree, workspaceId, toggleExpanded, expandedSet, computeProjection],
   );
 
+  const resetState = useCallback(() => {
+    setActiveId(null);
+    setOverId(null);
+    setProjection(null);
+    activeIdRef.current = null;
+    overIdRef.current = null;
+    offsetLeftRef.current = 0;
+    projectionRef.current = null;
+    stopAutoScroll();
+    if (autoExpandTimer.current) {
+      clearTimeout(autoExpandTimer.current);
+      autoExpandTimer.current = null;
+    }
+  }, [stopAutoScroll]);
+
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
       const currentProjection = projectionRef.current;
@@ -302,8 +314,8 @@ export function SortableFileTree({
       const toParent = currentProjection.parentPath;
 
       try {
-        const { activeDocument, openDocument, closeDocument } = useLayoutStore.getState();
-        const { clearUnsaved } = useEditorStore.getState();
+        const { activeDocument, openDocument } = useLayoutStore.getState();
+        const { clearUnsaved, suppressPaths } = useEditorStore.getState();
 
         // Auto-nest: if nesting into a non-folder file, convert it first
         // Skip for bare folders (path doesn't end with .md) — they're already directories
@@ -313,10 +325,13 @@ export function SortableFileTree({
           if (targetNode && targetNode.children.length === 0 && !targetIsBareFolder) {
             const nestTarget = currentProjection.overPath;
             const oldName = targetNode.name; // e.g. "doc2.md"
+            // Suppress file watcher for structural change
+            suppressPaths([nestTarget, fromPath]);
             const newNestPath = await invoke<string>("nest_entry", {
               workspace: workspace.path,
               path: nestTarget,
             });
+            suppressPaths([newNestPath]);
             if (activeDocument === nestTarget) {
               clearUnsaved(nestTarget);
               openDocument(newNestPath, workspaceId);
@@ -390,7 +405,10 @@ export function SortableFileTree({
           clearUnsaved(fromPath);
         }
 
+        // Suppress file watcher for structural move
+        suppressPaths([fromPath, movePath]);
         const newPath = await moveEntry(workspaceId, movePath, toParent);
+        if (newPath) suppressPaths([newPath]);
 
         if (activeDocument === fromPath && newPath && !isBareFolder) {
           // moveEntry returns folder path for doc folders, append readme filename (preserve case)
@@ -406,10 +424,12 @@ export function SortableFileTree({
           if (oldParentNode && oldParentNode.children.length <= 1) {
             try {
               const currentActive = useLayoutStore.getState().activeDocument;
+              useEditorStore.getState().suppressPaths([oldParentReadme]);
               const unnestPath = await invoke<string>("unnest_entry", {
                 workspace: workspace.path,
                 path: oldParentReadme,
               });
+              useEditorStore.getState().suppressPaths([unnestPath]);
               if (currentActive === oldParentReadme) {
                 useEditorStore.getState().clearUnsaved(oldParentReadme);
                 useLayoutStore.getState().openDocument(unnestPath, workspaceId);
@@ -431,28 +451,13 @@ export function SortableFileTree({
         toast.error("Failed to move file");
       }
     },
-    [tree, workspaceId, moveEntry, saveOrder, refreshTree],
+    [tree, workspaceId, moveEntry, saveOrder, refreshTree, resetState],
   );
 
   const handleDragCancel = useCallback(() => {
     resetState();
-  }, []);
+  }, [resetState]);
 
-  function resetState() {
-    setActiveId(null);
-    setOverId(null);
-    setOffsetLeft(0);
-    setProjection(null);
-    activeIdRef.current = null;
-    overIdRef.current = null;
-    offsetLeftRef.current = 0;
-    projectionRef.current = null;
-    stopAutoScroll();
-    if (autoExpandTimer.current) {
-      clearTimeout(autoExpandTimer.current);
-      autoExpandTimer.current = null;
-    }
-  }
 
   const activeNode = activeId ? findNode(tree, activeId) : null;
 

@@ -312,7 +312,7 @@ function WorkspaceRow({
           ) : (
             <span className="flex-1 truncate">{ws.name}</span>
           )}
-          <span className="ml-auto flex items-center pr-1">
+          <span className="ml-auto flex items-center">
             <WorkspaceGitIndicatorIcon workspacePath={ws.path} />
           </span>
         </SidebarMenuButton>

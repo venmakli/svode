@@ -1,0 +1,25 @@
+[package]
+name = "lfs-dal"
+version = "0.0.1"
+edition = "2024"
+authors = ["Kamnev Ilya"]
+repository = "https://github.com/venmakli/combai"
+description = "Git LFS Custom Transfer Agent for CombAI — uploads/downloads asset blobs to S3-compatible storage via OpenDAL."
+
+[[bin]]
+name = "lfs-dal"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "fs"] }
+opendal = { version = "0.55", features = ["services-s3"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+anyhow = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

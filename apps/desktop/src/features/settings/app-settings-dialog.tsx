@@ -102,6 +102,7 @@ export function AppSettingsDialog({ open, onOpenChange }: AppSettingsDialogProps
 
   useEffect(() => {
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- async setState after await
       loadSettings();
       loadAgents();
       setSection("profile");

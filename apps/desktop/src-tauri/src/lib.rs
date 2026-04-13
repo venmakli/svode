@@ -100,6 +100,7 @@ pub fn run() {
             storage::commands::get_assets_config,
             storage::commands::set_assets_strategy,
             storage::commands::check_s3_connection,
+            storage::commands::has_s3_credentials,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

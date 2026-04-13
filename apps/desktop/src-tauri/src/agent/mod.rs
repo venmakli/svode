@@ -11,13 +11,12 @@ use tokio::sync::Mutex;
 
 use crate::error::AppError;
 
-pub use claude::ClaudeCodeExecutor;
-pub use executor::AgentExecutor;
 
 /// Handle for a running agent CLI process.
 pub struct AgentProcess {
     pub child: Child,
     pub session_id: String,
+    #[allow(dead_code)]
     pub workspace_dir: String,
     pub stdin: Option<tokio::process::ChildStdin>,
 }
@@ -44,6 +43,7 @@ impl AgentSessions {
         self.sessions.lock().await.remove(session_id)
     }
 
+    #[allow(dead_code)]
     pub async fn contains(&self, session_id: &str) -> bool {
         self.sessions.lock().await.contains_key(session_id)
     }

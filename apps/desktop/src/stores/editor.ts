@@ -9,12 +9,18 @@ interface EditorState {
   pendingRename: { path: string; title: string; newPath: string | null } | null;
   /** Set of broken link target paths for the currently open document */
   brokenLinks: Set<string>;
+  /** Paths to ignore in file watcher events (structural operations, auto-cleared after timeout) */
+  suppressedPaths: Set<string>;
 
   markUnsaved: (path: string) => void;
   clearUnsaved: (path: string) => void;
   markAiModified: (path: string) => void;
   clearAiModified: (path: string) => void;
   hasIndicator: (path: string) => boolean;
+  /** Suppress file watcher indicators for these paths (auto-cleared after 2s) */
+  suppressPaths: (paths: string[]) => void;
+  /** Returns true if the path is currently suppressed */
+  isSuppressed: (path: string) => boolean;
   requestRename: (path: string, title: string, newPath: string | null) => void;
   clearPendingRename: () => void;
   setBrokenLinks: (links: Set<string>) => void;
@@ -25,6 +31,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   aiModified: {},
   pendingRename: null,
   brokenLinks: new Set<string>(),
+  suppressedPaths: new Set<string>(),
 
   markUnsaved: (path) =>
     set((s) => ({
@@ -33,7 +40,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   clearUnsaved: (path) =>
     set((s) => {
-      const { [path]: _, ...rest } = s.unsavedChanges;
+      const { [path]: _removed, ...rest } = s.unsavedChanges;
       return { unsavedChanges: rest };
     }),
 
@@ -44,7 +51,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   clearAiModified: (path) =>
     set((s) => {
-      const { [path]: _, ...rest } = s.aiModified;
+      const { [path]: _removed, ...rest } = s.aiModified;
       return { aiModified: rest };
     }),
 
@@ -52,6 +59,24 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const { unsavedChanges, aiModified } = get();
     return !!unsavedChanges[path] || !!aiModified[path];
   },
+
+  suppressPaths: (paths) => {
+    set((s) => {
+      const next = new Set(s.suppressedPaths);
+      for (const p of paths) next.add(p);
+      return { suppressedPaths: next };
+    });
+    // Auto-clear after 2s to catch all FS events from the operation
+    setTimeout(() => {
+      set((s) => {
+        const next = new Set(s.suppressedPaths);
+        for (const p of paths) next.delete(p);
+        return { suppressedPaths: next };
+      });
+    }, 2000);
+  },
+
+  isSuppressed: (path) => get().suppressedPaths.has(path),
 
   requestRename: (path, title, newPath) => set({ pendingRename: { path, title, newPath } }),
   clearPendingRename: () => set({ pendingRename: null }),

@@ -34,10 +34,7 @@ function IndicatorIcon({ state }: { state: WorkspaceGitIndicator | "dirty" | "sy
   switch (state) {
     case "dirty":
       return (
-        <Circle
-          aria-label="uncommitted changes"
-          className="h-2 w-2 fill-muted-foreground text-muted-foreground"
-        />
+        <span aria-label="uncommitted changes" className="text-xs text-muted-foreground">●</span>
       );
     case "syncing":
       return (

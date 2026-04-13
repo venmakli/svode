@@ -2,10 +2,11 @@ use std::path::Path;
 
 use serde::Serialize;
 
+use super::s3;
 use crate::error::AppError;
 use crate::git::GitState;
 use crate::git::commands::require_cli;
-use crate::workspace::types::{AssetsStrategy, AssetsWorkspaceConfig};
+use crate::workspace::types::{AssetsS3Config, AssetsStrategy, AssetsWorkspaceConfig};
 
 /// Non-fatal diagnostics produced by `apply_strategy` — surfaced to the UI so
 /// the user sees e.g. a silent `git lfs migrate import` failure instead of a
@@ -161,6 +162,8 @@ pub async fn apply_strategy(
     git_state: &GitState,
     workspace_dir: &Path,
     new: AssetsStrategy,
+    s3_config: Option<&AssetsS3Config>,
+    lfs_dal_path: Option<&Path>,
 ) -> Result<ApplyStrategyResult, AppError> {
     let cli = require_cli(git_state)?;
     let mut result = ApplyStrategyResult::default();
@@ -168,6 +171,22 @@ pub async fn apply_strategy(
     // Pre-flight: LFS strategies require git-lfs to be installed.
     if matches!(new, AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3) && !cli.lfs_available() {
         return Err(AppError::Storage("git-lfs not installed".into()));
+    }
+    // LfsS3 also needs an S3 config and a resolved sidecar binary path —
+    // commands::set_assets_strategy is responsible for stashing credentials
+    // in the keychain *before* invoking apply_strategy and for resolving the
+    // binary via the Tauri AppHandle.
+    if matches!(new, AssetsStrategy::LfsS3) {
+        if s3_config.is_none() {
+            return Err(AppError::Storage(
+                "lfs-s3 strategy requires an S3 configuration".into(),
+            ));
+        }
+        if lfs_dal_path.is_none() {
+            return Err(AppError::Storage(
+                "lfs-dal sidecar binary not available".into(),
+            ));
+        }
     }
 
     let lock = git_state.get_lock(workspace_dir).await;
@@ -290,6 +309,83 @@ pub async fn apply_strategy(
         // into the tree. Not attempted in this phase.
     }
 
+    // --- LFS S3 custom transfer agent (lfs-dal) wiring/teardown. ---
+    // For LfsS3 we (a) write `.combai/lfs-s3-agent.json`, (b) ensure the
+    // agent config file is gitignored, and (c) configure git to use lfs-dal
+    // as the standalone transfer agent. For any other strategy we tear the
+    // git config back down so a stale agent doesn't fire on push.
+    if matches!(new, AssetsStrategy::LfsS3) {
+        let cfg = s3_config.expect("checked above");
+        let bin = lfs_dal_path.expect("checked above");
+
+        s3::ensure_agent_gitignore(workspace_dir)?;
+        let agent_cfg = s3::AgentConfigFile {
+            endpoint: cfg.endpoint.clone(),
+            bucket: cfg.bucket.clone(),
+            region: cfg.region.clone(),
+            keychain_account: s3::keychain_account(cfg),
+            prefix: None,
+        };
+        s3::write_agent_config(workspace_dir, &agent_cfg)?;
+
+        let bin_str = bin.to_string_lossy().to_string();
+        let pairs: [(&str, &str); 3] = [
+            ("lfs.customtransfer.lfs-dal.path", bin_str.as_str()),
+            ("lfs.customtransfer.lfs-dal.concurrent", "true"),
+            ("lfs.standalonetransferagent", "lfs-dal"),
+        ];
+        for (key, value) in pairs {
+            match cli
+                .exec(workspace_dir, &["config", "--local", key, value])
+                .await
+            {
+                Ok(o) if o.exit_code != 0 => {
+                    let msg = format!("git config {key} failed: {}", o.stderr.trim());
+                    tracing::warn!("{msg}");
+                    result.warnings.push(msg);
+                }
+                Err(e) => {
+                    let msg = format!("git config {key} errored: {e}");
+                    tracing::warn!("{msg}");
+                    result.warnings.push(msg);
+                }
+                _ => {}
+            }
+        }
+    } else {
+        // Tear down lfs-dal git config and the agent config file. Missing
+        // values are fine — `git config --unset` returns 5, which we treat
+        // as no-op rather than warning.
+        let unset_keys = [
+            "lfs.standalonetransferagent",
+            "lfs.customtransfer.lfs-dal.path",
+            "lfs.customtransfer.lfs-dal.concurrent",
+        ];
+        for key in unset_keys {
+            match cli
+                .exec(workspace_dir, &["config", "--local", "--unset", key])
+                .await
+            {
+                Ok(o) if o.exit_code != 0 && o.exit_code != 5 => {
+                    let msg = format!("git config --unset {key} failed: {}", o.stderr.trim());
+                    tracing::warn!("{msg}");
+                    result.warnings.push(msg);
+                }
+                Err(e) => {
+                    let msg = format!("git config --unset {key} errored: {e}");
+                    tracing::warn!("{msg}");
+                    result.warnings.push(msg);
+                }
+                _ => {}
+            }
+        }
+        if let Err(e) = s3::delete_agent_config(workspace_dir) {
+            let msg = format!("delete lfs-s3-agent.json failed: {e}");
+            tracing::warn!("{msg}");
+            result.warnings.push(msg);
+        }
+    }
+
     // Stage the updated meta files so the user sees them in "Changes".
     // Only add files that actually exist on disk now.
     let mut to_add: Vec<&str> = Vec::new();
@@ -318,17 +414,4 @@ pub async fn apply_strategy(
     }
 
     Ok(result)
-}
-
-/// Stub — real S3 connection check lives in Phase 4.3 (lfs-dal crate).
-pub async fn check_s3_connection(
-    _endpoint: String,
-    _bucket: String,
-    _region: String,
-    _access_key: String,
-    _secret_key: String,
-) -> Result<bool, AppError> {
-    Err(AppError::Storage(
-        "S3 support will be added in Phase 4.3".into(),
-    ))
 }

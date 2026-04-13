@@ -365,11 +365,12 @@ pub fn write(
 
     // Read existing frontmatter to preserve metadata
     let existing = fs::read_to_string(&abs_path)?;
-    let had_frontmatter = frontmatter::try_parse(&existing)?.is_some();
+    let parsed_existing = frontmatter::try_parse(&existing)?;
+    let had_frontmatter = parsed_existing.is_some();
     let meta_needs_write = had_frontmatter || title.is_some() || icon.is_some() || extra.is_some();
 
     let (old_title, mut meta) = if meta_needs_write {
-        let meta = match frontmatter::try_parse(&existing)? {
+        let meta = match parsed_existing.clone() {
             Some((meta, _)) => meta,
             None => {
                 // First metadata change on a file without frontmatter — generate meta
@@ -394,13 +395,14 @@ pub fn write(
 
         (old_title, meta)
     } else {
-        // Body-only save on a file without frontmatter — write content as-is
+        // Body-only save on a file without frontmatter — write content as-is,
+        // skipping the write entirely if nothing changed (avoids spurious commits).
+        if existing == content {
+            return Ok(WriteResult { new_path: None, modified_files: Vec::new() });
+        }
         fs::write(&abs_path, content)?;
         return Ok(WriteResult { new_path: None, modified_files: Vec::new() });
     };
-
-    // Update the timestamp
-    meta.updated = now_rfc3339();
 
     // Update title and icon if provided
     if let Some(t) = title {
@@ -414,6 +416,24 @@ pub fn write(
     if let Some(e) = extra {
         meta.extra = e;
     }
+
+    // Skip the write entirely if neither body nor meta (ignoring `updated`)
+    // changed. Otherwise every Cmd+S would bump `updated` and create an empty
+    // commit even though the user typed nothing.
+    if let Some((ref old_meta, ref old_body)) = parsed_existing {
+        if old_body == content
+            && old_meta.id == meta.id
+            && old_meta.title == meta.title
+            && old_meta.icon == meta.icon
+            && old_meta.created == meta.created
+            && old_meta.extra == meta.extra
+        {
+            return Ok(WriteResult { new_path: None, modified_files: Vec::new() });
+        }
+    }
+
+    // Update the timestamp only once we know something actually changed.
+    meta.updated = now_rfc3339();
 
     let full_content = frontmatter::serialize(&meta, content);
     fs::write(&abs_path, full_content)?;

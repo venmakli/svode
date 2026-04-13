@@ -20,11 +20,11 @@ export default tseslint.config(
       ...reactHooks.configs.recommended.rules,
       "@typescript-eslint/no-unused-vars": [
         "warn",
-        { argsIgnorePattern: "^_" },
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", destructuredArrayIgnorePattern: "^_" },
       ],
     },
   },
   {
-    ignores: ["**/dist/**", "**/target/**", "**/node_modules/**", "**/*.gen.*"],
+    ignores: ["**/dist/**", "**/target/**", "**/node_modules/**", "**/*.gen.*", "**/paraglide/**"],
   },
 );

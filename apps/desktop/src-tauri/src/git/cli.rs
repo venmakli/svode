@@ -99,6 +99,7 @@ impl GitCli {
     }
 
     /// Execute a git command without a working directory (e.g. clone).
+    #[allow(dead_code)]
     pub async fn exec_no_dir(
         &self,
         args: &[&str],

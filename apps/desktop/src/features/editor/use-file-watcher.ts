@@ -71,6 +71,11 @@ export function useFileWatcher({
     listen<FileEvent>("file:changed", (event) => {
       const changedPath = event.payload.path;
 
+      // Ignore events from structural operations (nest/move/unnest)
+      if (useEditorStore.getState().isSuppressed(changedPath)) {
+        return;
+      }
+
       // Ignore file change events triggered by our own save.
       // Don't reset here — multiple FS events can arrive from a single write.
       // Cleared by onUpdate (next user edit) or document switch.

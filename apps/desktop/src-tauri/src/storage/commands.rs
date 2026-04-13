@@ -1,10 +1,11 @@
 use std::path::Path;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use super::assets::{self, Asset, UploadResult};
+use super::s3::{self, AgentSecrets};
 use super::strategy::{self, ApplyStrategyResult};
 use crate::error::AppError;
 use crate::git::GitState;
@@ -109,18 +110,73 @@ pub async fn get_assets_config(
     Ok(config.assets.unwrap_or_default())
 }
 
+/// Optional S3 credentials supplied alongside `set_assets_strategy` when the
+/// user picks LfsS3 for the first time. We persist these to the OS keychain
+/// (never to disk) and only when both keys are present — passing `None` lets
+/// the existing keychain entry stand untouched.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct S3CredentialInput {
+    pub access_key: String,
+    pub secret_key: String,
+}
+
 #[tauri::command]
 pub async fn set_assets_strategy(
+    app: AppHandle,
     workspace_path: String,
     strategy: AssetsStrategy,
     s3_config: Option<AssetsS3Config>,
+    s3_credentials: Option<S3CredentialInput>,
     git_state: State<'_, GitState>,
 ) -> Result<ApplyStrategyResult, AppError> {
     let workspace_dir = Path::new(&workspace_path);
 
     let mut config = read_workspace_config(workspace_dir)?;
 
-    let result = super::strategy::apply_strategy(&git_state, workspace_dir, strategy).await?;
+    // For LfsS3 we need to (1) stash credentials in keychain and (2) resolve
+    // the bundled lfs-dal binary. Both happen *before* apply_strategy so any
+    // failure rolls back cleanly without leaving half-written git config.
+    let lfs_dal_path = if matches!(strategy, AssetsStrategy::LfsS3) {
+        let cfg = s3_config
+            .as_ref()
+            .ok_or_else(|| AppError::Storage("lfs-s3 requires endpoint/bucket/region".into()))?;
+        if let Some(creds) = s3_credentials {
+            let account = s3::keychain_account(cfg);
+            s3::save_credentials(
+                account,
+                AgentSecrets {
+                    access_key: creds.access_key,
+                    secret_key: creds.secret_key,
+                },
+            )
+            .await?;
+        }
+        Some(s3::resolve_agent_binary(&app)?)
+    } else {
+        None
+    };
+
+    let result = super::strategy::apply_strategy(
+        &git_state,
+        workspace_dir,
+        strategy,
+        s3_config.as_ref(),
+        lfs_dal_path.as_deref(),
+    )
+    .await?;
+
+    // Tearing down LfsS3 — drop the keychain entry that the previous config
+    // referenced, if any. We read the previous config (not the new one) to
+    // know which account to delete.
+    if !matches!(strategy, AssetsStrategy::LfsS3) {
+        if let Some(prev) = config.assets.as_ref().and_then(|a| a.s3.as_ref()) {
+            let account = s3::keychain_account(prev);
+            if let Err(e) = s3::clear_credentials(account).await {
+                tracing::warn!("clear_credentials failed: {e}");
+            }
+        }
+    }
 
     config.assets = Some(AssetsWorkspaceConfig {
         strategy,
@@ -153,5 +209,27 @@ pub async fn check_s3_connection(
     access_key: String,
     secret_key: String,
 ) -> Result<bool, AppError> {
-    strategy::check_s3_connection(endpoint, bucket, region, access_key, secret_key).await
+    s3::check_connection(endpoint, bucket, region, access_key, secret_key).await
+}
+
+/// Tell the frontend whether the keychain currently holds credentials for
+/// the workspace's saved S3 config — used to render a "credentials saved"
+/// badge instead of leaving the secret fields looking blank.
+#[tauri::command]
+pub async fn has_s3_credentials(workspace_path: String) -> Result<bool, AppError> {
+    let workspace_dir = Path::new(&workspace_path);
+    let cfg = read_workspace_config(workspace_dir)?;
+    let Some(s3_cfg) = cfg.assets.and_then(|a| a.s3) else {
+        return Ok(false);
+    };
+    let account = s3::keychain_account(&s3_cfg);
+    let present = tokio::task::spawn_blocking(move || {
+        let Ok(entry) = keyring::Entry::new(s3::KEYCHAIN_SERVICE, &account) else {
+            return false;
+        };
+        entry.get_password().is_ok()
+    })
+    .await
+    .unwrap_or(false);
+    Ok(present)
 }

@@ -401,15 +401,21 @@ export function PlateDocumentEditor() {
       });
   }, [editor, conflictPath, workspacePath, clearUnsaved]);
 
-  // onChange — mark unsaved when editor content changes
+  // onChange — mark unsaved only when editor content actually changes
+  // (skip selection-only changes like clicking or focusing)
   const handleChange = useCallback(
     ({ value }: { value: Descendant[] }) => {
       if (!isLoadingRef.current && currentPathRef.current) {
-        justSavedRef.current = false;
-        markUnsaved(currentPathRef.current);
+        const hasContentChange = editor.operations.some(
+          (op) => op.type !== "set_selection",
+        );
+        if (hasContentChange) {
+          justSavedRef.current = false;
+          markUnsaved(currentPathRef.current);
+        }
       }
     },
-    [markUnsaved],
+    [editor, markUnsaved],
   );
 
   return (

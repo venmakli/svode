@@ -2,6 +2,7 @@ use super::types::{AgentConfig, WorkspaceConfig, WorkspaceDefaults};
 
 /// Merge parent defaults into child workspace config.
 /// Child values take priority; falls back to parent defaults.
+#[allow(dead_code)]
 pub fn merge_with_defaults(child: &WorkspaceConfig, defaults: &WorkspaceDefaults) -> WorkspaceConfig {
     let merged_agent = match (&child.agent, &defaults.agent) {
         (Some(child_agent), Some(default_agent)) => Some(AgentConfig {

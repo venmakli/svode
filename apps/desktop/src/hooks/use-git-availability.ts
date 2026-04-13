@@ -30,6 +30,7 @@ export function useGitAvailability(): {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async setState after await
     void recheck();
   }, []);
 

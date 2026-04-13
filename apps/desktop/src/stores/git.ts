@@ -60,10 +60,10 @@ export const useGitStore = create<GitState>((set) => ({
 
   clear: (workspacePath) =>
     set((s) => {
-      const { [workspacePath]: _s, ...statuses } = s.statuses;
-      const { [workspacePath]: _sy, ...syncing } = s.syncing;
-      const { [workspacePath]: _e, ...syncError } = s.syncError;
-      const { [workspacePath]: _c, ...cloning } = s.cloning;
+      const { [workspacePath]: _rmStatus, ...statuses } = s.statuses;
+      const { [workspacePath]: _rmSync, ...syncing } = s.syncing;
+      const { [workspacePath]: _rmError, ...syncError } = s.syncError;
+      const { [workspacePath]: _rmClone, ...cloning } = s.cloning;
       return { statuses, syncing, syncError, cloning };
     }),
 

@@ -64,7 +64,6 @@ import type {
   AvailableAgent,
   SymlinkHealthReport,
   AssetsStrategy,
-  AssetsWorkspaceConfig,
 } from "@/types/workspace";
 import type { GitAvailability } from "@/types/git";
 
@@ -113,7 +112,7 @@ export function WorkspaceSettingsDialog({
   // Defaults
   const [defaultsModel, setDefaultsModel] = useState("");
   const [defaultsPrompt, setDefaultsPrompt] = useState("");
-  const [savedDefaultsModel, setSavedDefaultsModel] = useState("");
+  const [_savedDefaultsModel, setSavedDefaultsModel] = useState("");
   const [savedDefaultsPrompt, setSavedDefaultsPrompt] = useState("");
 
   // AGENTS.md
@@ -137,6 +136,18 @@ export function WorkspaceSettingsDialog({
   const [lfsVersion, setLfsVersion] = useState<string | null>(null);
   const [applyingStrategy, setApplyingStrategy] = useState(false);
   const [strategyInFlight, setStrategyInFlight] = useState<AssetsStrategy | null>(null);
+  // S3 form (only shown when the selected radio is lfs-s3). Credentials are
+  // never round-tripped from disk — once saved they live in the OS keychain
+  // and `hasSavedS3Credentials` just tells us whether to draw the "saved"
+  // hint vs. an empty input.
+  const [s3Endpoint, setS3Endpoint] = useState("");
+  const [s3Bucket, setS3Bucket] = useState("");
+  const [s3Region, setS3Region] = useState("");
+  const [s3AccessKey, setS3AccessKey] = useState("");
+  const [s3SecretKey, setS3SecretKey] = useState("");
+  const [hasSavedS3Credentials, setHasSavedS3Credentials] = useState(false);
+  const [s3TestState, setS3TestState] = useState<"idle" | "testing" | "ok" | "fail">("idle");
+  const [s3TestError, setS3TestError] = useState<string | null>(null);
 
   const loadConfig = useCallback(async () => {
     if (!workspacePath) return;
@@ -161,6 +172,20 @@ export function WorkspaceSettingsDialog({
       const strategy: AssetsStrategy = cfg.assets?.strategy ?? "local";
       setAssetsStrategy(strategy);
       setSavedAssetsStrategy(strategy);
+      const s3 = cfg.assets?.s3;
+      setS3Endpoint(s3?.endpoint ?? "");
+      setS3Bucket(s3?.bucket ?? "");
+      setS3Region(s3?.region ?? "");
+      setS3AccessKey("");
+      setS3SecretKey("");
+      setS3TestState("idle");
+      setS3TestError(null);
+      try {
+        const present = await invoke<boolean>("has_s3_credentials", { workspacePath });
+        setHasSavedS3Credentials(present);
+      } catch {
+        setHasSavedS3Credentials(false);
+      }
     } catch (err) {
       console.error("Failed to load workspace config:", err);
     }
@@ -428,6 +453,13 @@ export function WorkspaceSettingsDialog({
     if (next === savedAssetsStrategy) return;
     // LFS strategies require git-lfs
     if ((next === "lfs-remote" || next === "lfs-s3") && !lfsAvailable) return;
+    // For lfs-s3 we don't apply on radio click — the user fills credentials
+    // first and the form's "Save" button drives the confirmation dialog. We
+    // still update the local radio so the form panel shows up.
+    if (next === "lfs-s3") {
+      setAssetsStrategy("lfs-s3");
+      return;
+    }
     // Fetch the count of existing assets so the confirmation dialog can warn
     // that they will NOT be migrated automatically (see strategy.rs — partial
     // migration is documented in stage-3/PLAN.md).
@@ -440,8 +472,55 @@ export function WorkspaceSettingsDialog({
       }
     }
     setPendingAssetCount(count);
-    // lfs-s3 defers to Phase 4.3 — show confirmation but allow config save for future.
     setPendingStrategy(next);
+  }
+
+  function s3FormValid(): boolean {
+    if (!s3Endpoint.trim() || !s3Bucket.trim() || !s3Region.trim()) return false;
+    // Credentials are required either fresh-typed or already in the keychain.
+    if (!hasSavedS3Credentials && (!s3AccessKey.trim() || !s3SecretKey.trim())) return false;
+    return true;
+  }
+
+  async function handleTestS3() {
+    if (!s3Endpoint.trim() || !s3Bucket.trim() || !s3Region.trim()) return;
+    if (!s3AccessKey.trim() || !s3SecretKey.trim()) {
+      // Connection test always uses fresh creds — we can't read them back
+      // from the keychain.
+      setS3TestState("fail");
+      setS3TestError(m.storage_s3_test_needs_keys());
+      return;
+    }
+    setS3TestState("testing");
+    setS3TestError(null);
+    try {
+      await invoke<boolean>("check_s3_connection", {
+        endpoint: s3Endpoint.trim(),
+        bucket: s3Bucket.trim(),
+        region: s3Region.trim(),
+        accessKey: s3AccessKey,
+        secretKey: s3SecretKey,
+      });
+      setS3TestState("ok");
+    } catch (err) {
+      const detail = typeof err === "string" ? err : ((err as { message?: string })?.message ?? "");
+      setS3TestState("fail");
+      setS3TestError(detail || m.storage_s3_test_failed());
+    }
+  }
+
+  async function handleSaveS3() {
+    if (!s3FormValid()) return;
+    let count = 0;
+    if (workspacePath) {
+      try {
+        count = await invoke<number>("count_assets", { workspacePath });
+      } catch (err) {
+        console.warn("count_assets failed, continuing without warning:", err);
+      }
+    }
+    setPendingAssetCount(count);
+    setPendingStrategy("lfs-s3");
   }
 
   async function applyStrategy(next: AssetsStrategy) {
@@ -449,14 +528,41 @@ export function WorkspaceSettingsDialog({
     setApplyingStrategy(true);
     setStrategyInFlight(next);
     try {
-      const result = await invoke<{ warnings: string[] }>("set_assets_strategy", {
+      const args: Record<string, unknown> = {
         workspacePath,
         strategy: next,
-        // s3Config: will be populated in Phase 4.3 once S3 UI lands.
         s3Config: null,
-      });
+        s3Credentials: null,
+      };
+      if (next === "lfs-s3") {
+        args.s3Config = {
+          endpoint: s3Endpoint.trim(),
+          bucket: s3Bucket.trim(),
+          region: s3Region.trim(),
+        };
+        if (s3AccessKey.trim() && s3SecretKey.trim()) {
+          args.s3Credentials = {
+            accessKey: s3AccessKey,
+            secretKey: s3SecretKey,
+          };
+        }
+      }
+      const result = await invoke<{ warnings: string[] }>("set_assets_strategy", args);
       setAssetsStrategy(next);
       setSavedAssetsStrategy(next);
+      if (next === "lfs-s3") {
+        // After save, secrets live in keychain — clear the form fields and
+        // flip the "credentials saved" hint.
+        if (s3AccessKey.trim() && s3SecretKey.trim()) {
+          setHasSavedS3Credentials(true);
+          setS3AccessKey("");
+          setS3SecretKey("");
+        }
+      } else {
+        // Leaving lfs-s3 — drop the local "saved" hint, the keychain entry
+        // gets cleared backend-side.
+        setHasSavedS3Credentials(false);
+      }
       if (result.warnings && result.warnings.length > 0) {
         // Strategy applied, but LFS install/track/migrate produced errors —
         // surface them instead of a misleading success toast.
@@ -779,7 +885,7 @@ export function WorkspaceSettingsDialog({
                         ]
                       ).map((opt) => {
                         const disabled =
-                          applyingStrategy || (opt.needsLfs && !lfsAvailable) || opt.value === "lfs-s3";
+                          applyingStrategy || (opt.needsLfs && !lfsAvailable);
                         return (
                           <label
                             key={opt.value}
@@ -817,11 +923,6 @@ export function WorkspaceSettingsDialog({
                                 )}
                               </div>
                               <p className="mt-0.5 text-xs text-muted-foreground">{opt.desc}</p>
-                              {opt.value === "lfs-s3" && (
-                                <p className="mt-1 text-xs text-muted-foreground italic">
-                                  {m.storage_s3_deferred()}
-                                </p>
-                              )}
                             </div>
                           </label>
                         );
@@ -829,6 +930,108 @@ export function WorkspaceSettingsDialog({
                     </RadioGroup>
                     {!lfsAvailable && (
                       <p className="text-xs text-muted-foreground">{m.storage_lfs_install_hint()}</p>
+                    )}
+                    {assetsStrategy === "lfs-s3" && (
+                      <div className="space-y-3 rounded-md border p-3">
+                        <div className="space-y-1">
+                          <Label htmlFor="s3-endpoint" className="text-xs">{m.storage_s3_endpoint()}</Label>
+                          <Input
+                            id="s3-endpoint"
+                            value={s3Endpoint}
+                            onChange={(e) => setS3Endpoint(e.target.value)}
+                            placeholder="https://s3.amazonaws.com"
+                            className="h-8 text-sm"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <Label htmlFor="s3-bucket" className="text-xs">{m.storage_s3_bucket()}</Label>
+                            <Input
+                              id="s3-bucket"
+                              value={s3Bucket}
+                              onChange={(e) => setS3Bucket(e.target.value)}
+                              placeholder="my-assets"
+                              className="h-8 text-sm"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label htmlFor="s3-region" className="text-xs">{m.storage_s3_region()}</Label>
+                            <Input
+                              id="s3-region"
+                              value={s3Region}
+                              onChange={(e) => setS3Region(e.target.value)}
+                              placeholder="us-east-1"
+                              className="h-8 text-sm"
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <Label htmlFor="s3-access" className="text-xs">{m.storage_s3_access_key()}</Label>
+                          <Input
+                            id="s3-access"
+                            value={s3AccessKey}
+                            onChange={(e) => setS3AccessKey(e.target.value)}
+                            placeholder={hasSavedS3Credentials ? m.storage_s3_creds_saved() : ""}
+                            className="h-8 text-sm font-mono"
+                            autoComplete="off"
+                            spellCheck={false}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label htmlFor="s3-secret" className="text-xs">{m.storage_s3_secret_key()}</Label>
+                          <Input
+                            id="s3-secret"
+                            type="password"
+                            value={s3SecretKey}
+                            onChange={(e) => setS3SecretKey(e.target.value)}
+                            placeholder={hasSavedS3Credentials ? m.storage_s3_creds_saved() : ""}
+                            className="h-8 text-sm font-mono"
+                            autoComplete="off"
+                            spellCheck={false}
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={handleTestS3}
+                            disabled={
+                              s3TestState === "testing" ||
+                              !s3Endpoint.trim() ||
+                              !s3Bucket.trim() ||
+                              !s3Region.trim()
+                            }
+                          >
+                            {s3TestState === "testing" && (
+                              <Loader2 className="mr-1 size-3 animate-spin" />
+                            )}
+                            {m.storage_s3_check()}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={handleSaveS3}
+                            disabled={applyingStrategy || !s3FormValid()}
+                          >
+                            {applyingStrategy && strategyInFlight === "lfs-s3" && (
+                              <Loader2 className="mr-1 size-3 animate-spin" />
+                            )}
+                            {m.storage_s3_save()}
+                          </Button>
+                          {s3TestState === "ok" && (
+                            <span className="text-xs text-green-600">{m.storage_s3_test_ok()}</span>
+                          )}
+                          {s3TestState === "fail" && (
+                            <span className="text-xs text-destructive">
+                              {s3TestError ?? m.storage_s3_test_failed()}
+                            </span>
+                          )}
+                        </div>
+                        {hasSavedS3Credentials && (
+                          <p className="text-xs text-muted-foreground">{m.storage_s3_creds_hint()}</p>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}
