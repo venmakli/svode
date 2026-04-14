@@ -26,6 +26,9 @@ pub enum AppError {
     #[error("Path not accessible: {0}")]
     PathNotAccessible(String),
 
+    #[error("Project already exists at: {0}")]
+    ProjectAlreadyExists(String),
+
     #[error("Agent CLI not found: {0}")]
     AgentCliNotFound(String),
 

@@ -19,7 +19,7 @@ import { useWorkspaceStore } from "@/stores/workspace";
 import { useGitStore } from "@/stores/git";
 import type { CloneProgress } from "@/types/git";
 
-interface CreateWorkspaceDialogProps {
+interface CreateSpaceDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -51,11 +51,11 @@ function slugPreview(name: string): string {
 const URL_REGEX =
   /^(https?:\/\/|ssh:\/\/|git:\/\/|file:\/\/)\S+|^[\w.-]+@[\w.-]+:\S+$/;
 
-export function CreateWorkspaceDialog({
+export function CreateSpaceDialog({
   open: isOpen,
   onOpenChange,
-}: CreateWorkspaceDialogProps) {
-  const { activeRootPath, createChild, loadChildren } = useWorkspaceStore();
+}: CreateSpaceDialogProps) {
+  const { activeRootPath, createSpace, loadSpaces } = useWorkspaceStore();
 
   const [name, setName] = useState("");
   const [icon, setIcon] = useState("\u{1F4C2}");
@@ -103,9 +103,9 @@ export function CreateWorkspaceDialog({
     if (!name.trim() || !activeRootPath || !urlValid) return;
 
     if (trimmedUrl === "") {
-      // No URL → create a new workspace + git init
+      // No URL → create a new space + git init
       try {
-        const ws = await createChild(activeRootPath, name.trim(), icon);
+        const ws = await createSpace(activeRootPath, name.trim(), icon);
         try {
           await invoke("git_init_workspace", { workspacePath: ws.path });
         } catch (err) {
@@ -114,7 +114,7 @@ export function CreateWorkspaceDialog({
         onOpenChange(false);
         resetForm();
       } catch (err) {
-        console.error("Failed to create workspace:", err);
+        console.error("Failed to create space:", err);
         toast.error(m.toast_error());
       }
       return;
@@ -163,16 +163,16 @@ export function CreateWorkspaceDialog({
         url: opts.url,
         targetPath: opts.targetPath,
       });
-      // Register the cloned folder as a child workspace. Backend scaffolds
-      // `.combai/` if the repo didn't ship one, then adds a ChildRef entry
+      // Register the cloned folder as a space. Backend scaffolds
+      // `.combai/` if the repo didn't ship one, then adds a SpaceRef entry
       // to the parent's config.json.
-      await invoke("register_cloned_child", {
+      await invoke("register_cloned_space", {
         parentPath: opts.parentPath,
         folderName: opts.folderName,
         fallbackName: opts.fallbackName,
         icon: opts.icon,
       });
-      await loadChildren(opts.parentPath);
+      await loadSpaces(opts.parentPath);
       git.setCloning(opts.targetPath, null);
     } catch (err) {
       console.error("git_clone_workspace failed:", err);
@@ -184,8 +184,7 @@ export function CreateWorkspaceDialog({
         error: message,
       });
       toast.error(m.git_clone_failed());
-      // Auto-clear the ✕ state after a few seconds so the sidebar row
-      // isn't stuck forever. User already saw the toast + indicator.
+      // Auto-clear the error state after a few seconds
       window.setTimeout(() => {
         useGitStore.getState().setCloning(opts.targetPath, null);
       }, 6000);
@@ -210,25 +209,25 @@ export function CreateWorkspaceDialog({
       <DialogContent className="sm:max-w-[400px]">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>{m.workspace_new_title()}</DialogTitle>
+            <DialogTitle>{m.space_new_title()}</DialogTitle>
             <DialogDescription className="text-sm text-muted-foreground">
-              {m.workspace_add_first_description()}
+              {m.space_add_first_description()}
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-4 py-4">
             {/* Name + icon */}
             <div className="grid gap-2">
-              <Label htmlFor="workspace-name">
-                {m.workspace_name_label()}
+              <Label htmlFor="space-name">
+                {m.space_name_label()}
               </Label>
               <div className="flex gap-2">
                 <EmojiPicker value={icon} onChange={setIcon} size="sm" />
                 <Input
-                  id="workspace-name"
+                  id="space-name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder={m.workspace_name_placeholder()}
+                  placeholder={m.space_name_placeholder()}
                   autoFocus
                 />
               </div>
@@ -237,7 +236,7 @@ export function CreateWorkspaceDialog({
             {/* Slug preview */}
             {name.trim() && (
               <p className="text-xs text-muted-foreground">
-                {m.workspace_slug_preview({
+                {m.space_slug_preview({
                   path: `${projectFolderName}/${slug}/`,
                 })}
               </p>
@@ -250,9 +249,9 @@ export function CreateWorkspaceDialog({
 
             {/* Optional clone URL */}
             <div className="grid gap-2">
-              <Label htmlFor="workspace-url">{m.git_clone_url_label()}</Label>
+              <Label htmlFor="space-url">{m.git_clone_url_label()}</Label>
               <Input
-                id="workspace-url"
+                id="space-url"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 placeholder="https://github.com/org/repo"

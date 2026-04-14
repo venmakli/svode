@@ -29,17 +29,16 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Check, ChevronDown, ChevronUp, Plus, Settings, Trash2 } from "lucide-react";
-import { useAppVersion } from "@/hooks/use-app-version";
+
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useLayoutStore } from "@/stores/layout";
 import { NavDocuments } from "@/features/workspace/nav-documents";
-import { NavWorkspaces } from "@/features/workspace/nav-workspaces";
-import { CreateWorkspaceDialog } from "@/features/workspace/create-workspace-dialog";
+import { NavSpaces } from "@/features/workspace/nav-spaces";
+import { CreateSpaceDialog } from "@/features/workspace/create-space-dialog";
 import { useAppSettings } from "@/hooks/use-app-settings";
 import * as m from "@/paraglide/messages.js";
 
 export function AppSidebar() {
-  const version = useAppVersion();
   const navigate = useNavigate();
   const {
     rootWorkspaces,
@@ -109,7 +108,7 @@ export function AppSidebar() {
                 {activeRootPath && (
                   <DropdownMenuItem onClick={() => setCreateWsOpen(true)}>
                     <Plus className="mr-2 h-4 w-4" />
-                    {m.sidebar_add_workspace()}
+                    {m.sidebar_add_space()}
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuSeparator />
@@ -149,7 +148,7 @@ export function AppSidebar() {
 
       <SidebarContent>
         <NavDocuments />
-        <NavWorkspaces />
+        <NavSpaces />
       </SidebarContent>
 
       <SidebarFooter>
@@ -172,10 +171,9 @@ export function AppSidebar() {
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
-        <p className="pb-2 text-center text-xs text-muted-foreground">Version {version}</p>
       </SidebarFooter>
 
-      <CreateWorkspaceDialog
+      <CreateSpaceDialog
         open={createWsOpen}
         onOpenChange={setCreateWsOpen}
       />

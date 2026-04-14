@@ -107,9 +107,9 @@ fn apply_order(nodes: &mut Vec<TreeNode>, order_list: Option<&Vec<String>>) {
 fn child_folder_names(workspace: &Path) -> HashSet<String> {
     let mut names = HashSet::new();
     if let Ok(cfg) = read_workspace_config(workspace) {
-        if let Some(children) = cfg.children {
-            for child in children {
-                names.insert(child.path);
+        if let Some(spaces) = cfg.spaces {
+            for space in spaces {
+                names.insert(space.path);
             }
         }
     }

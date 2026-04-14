@@ -54,7 +54,7 @@ export function NavDocuments() {
       await invoke<string>("create_folder", {
         workspace: activeRootPath,
         parentPath: null,
-        name: m.workspace_new_folder(),
+        name: m.space_new_folder(),
       });
       await refreshTree(activeRootId);
     } catch (err) {
@@ -75,11 +75,11 @@ export function NavDocuments() {
         <DropdownMenuContent align="end" side="bottom">
           <DropdownMenuItem onClick={handleNewPage}>
             <FilePlus className="mr-2 h-4 w-4" />
-            {m.workspace_new_page()}
+            {m.space_new_page()}
           </DropdownMenuItem>
           <DropdownMenuItem onClick={handleNewFolder}>
             <FolderPlus className="mr-2 h-4 w-4" />
-            {m.workspace_new_folder()}
+            {m.space_new_folder()}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

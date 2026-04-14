@@ -291,7 +291,7 @@ export function SortableFileTree({
       if (!over || active.id === over.id || !currentProjection) return;
 
       const state = useWorkspaceStore.getState();
-      const workspace = state.children.find((w) => w.id === workspaceId)
+      const workspace = state.spaces.find((w) => w.id === workspaceId)
         ?? state.rootWorkspaces.find((w) => w.id === workspaceId);
       if (!workspace) return;
 

@@ -104,7 +104,7 @@ pub struct WorkspaceConfig {
     #[serde(default = "default_icon")]
     pub icon: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub children: Option<Vec<ChildRef>>,
+    pub spaces: Option<Vec<SpaceRef>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -157,7 +157,7 @@ fn default_icon() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChildRef {
+pub struct SpaceRef {
     pub id: String,
     pub path: String,
     pub repo: Option<String>,
@@ -206,6 +206,6 @@ pub struct WorkspaceInfo {
     pub icon: String,
     pub description: String,
     pub path: String,
-    pub has_children: bool,
+    pub has_spaces: bool,
     pub last_opened: Option<String>,
 }

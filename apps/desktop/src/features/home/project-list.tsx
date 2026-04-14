@@ -1,13 +1,24 @@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Progress } from "@/components/ui/progress";
+import * as m from "@/paraglide/messages.js";
 import { ProjectCard } from "./project-card";
 import type { Workspace } from "@/types/workspace";
+
+interface CloningProject {
+  name: string;
+  path: string;
+  phase: string;
+  percent: number;
+  error?: string;
+}
 
 interface ProjectListProps {
   projects: Workspace[];
   isLoading: boolean;
   onOpenProject: (id: string) => void;
   onDeleteProject: (id: string, deleteFiles: boolean) => void;
+  cloningProject?: CloningProject | null;
 }
 
 export function ProjectList({
@@ -15,6 +26,7 @@ export function ProjectList({
   isLoading,
   onOpenProject,
   onDeleteProject,
+  cloningProject,
 }: ProjectListProps) {
   if (isLoading) {
     return (
@@ -43,6 +55,24 @@ export function ProjectList({
   return (
     <ScrollArea className="w-full max-w-md mx-auto max-h-[400px]">
       <div className="space-y-0.5">
+        {cloningProject && (
+          <div className="flex items-center gap-3 rounded-md px-3 py-2.5 opacity-70">
+            <span className="text-xl shrink-0">{"\u{1F4E6}"}</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">{cloningProject.name}</p>
+              {cloningProject.error ? (
+                <p className="text-xs text-destructive truncate">{cloningProject.error}</p>
+              ) : (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    {m.home_cloning()} {cloningProject.percent}%
+                  </p>
+                  <Progress value={cloningProject.percent} className="h-1 mt-1" />
+                </>
+              )}
+            </div>
+          </div>
+        )}
         {sorted.map((project) => (
           <ProjectCard
             key={project.id}

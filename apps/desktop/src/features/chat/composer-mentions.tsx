@@ -57,8 +57,8 @@ export function useSlashMenu(
   currentValue: string,
   cursorPosition: number,
 ): UseSlashMenuResult {
-  const { activeChildId, fileTrees } = useWorkspaceStore();
-  const tree = activeChildId ? fileTrees[activeChildId] ?? [] : [];
+  const { activeSpaceId, fileTrees } = useWorkspaceStore();
+  const tree = activeSpaceId ? fileTrees[activeSpaceId] ?? [] : [];
   const allDocs = flattenTree(tree);
 
   const [isOpen, setIsOpen] = useState(false);

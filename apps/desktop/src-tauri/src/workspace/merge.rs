@@ -27,7 +27,7 @@ pub fn merge_with_defaults(child: &WorkspaceConfig, defaults: &WorkspaceDefaults
         name: child.name.clone(),
         description: child.description.clone(),
         icon: child.icon.clone(),
-        children: child.children.clone(),
+        spaces: child.spaces.clone(),
         agent: merged_agent,
         defaults: child.defaults.clone(),
         git: child.git.clone(),

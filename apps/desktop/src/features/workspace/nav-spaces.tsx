@@ -50,7 +50,7 @@ import {
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useLayoutStore } from "@/stores/layout";
 import type { TreeNode, WorkspaceConfig } from "@/types/workspace";
-import { CreateWorkspaceDialog } from "./create-workspace-dialog";
+import { CreateSpaceDialog } from "./create-space-dialog";
 import { SortableFileTree } from "./sortable-file-tree";
 import { FileTreeItem } from "./file-tree-item";
 import { WorkspaceGitIndicatorIcon } from "./git-status-indicator";
@@ -59,14 +59,14 @@ import { useGitStore } from "@/stores/git";
 import { Progress } from "@/components/ui/progress";
 import { commitAllWorkspace } from "./git-actions";
 
-export function NavWorkspaces() {
+export function NavSpaces() {
   const {
-    children,
-    activeChildId,
+    spaces,
+    activeSpaceId,
     activeRootPath,
     fileTrees,
-    openChild,
-    deleteChild,
+    openSpace,
+    deleteSpace,
     createPage,
     refreshTree,
   } = useWorkspaceStore();
@@ -77,21 +77,21 @@ export function NavWorkspaces() {
     name: string;
   } | null>(null);
   const [deleteFiles, setDeleteFiles] = useState(false);
-  const [editingWorkspaceId, setEditingWorkspaceId] = useState<string | null>(null);
+  const [editingSpaceId, setEditingSpaceId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const editRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (editingWorkspaceId && editRef.current) {
+    if (editingSpaceId && editRef.current) {
       editRef.current.focus();
       editRef.current.select();
     }
-  }, [editingWorkspaceId]);
+  }, [editingSpaceId]);
 
-  async function handleRenameWorkspace() {
-    const ws = children.find((w) => w.id === editingWorkspaceId);
+  async function handleRenameSpace() {
+    const ws = spaces.find((w) => w.id === editingSpaceId);
     if (!ws || !editValue.trim() || editValue.trim() === ws.name) {
-      setEditingWorkspaceId(null);
+      setEditingSpaceId(null);
       return;
     }
     try {
@@ -103,15 +103,15 @@ export function NavWorkspaces() {
         configData: { ...cfg, name: editValue.trim() },
       });
       useWorkspaceStore.setState({
-        children: useWorkspaceStore.getState().children.map((w) =>
-          w.id === editingWorkspaceId ? { ...w, name: editValue.trim() } : w
+        spaces: useWorkspaceStore.getState().spaces.map((w) =>
+          w.id === editingSpaceId ? { ...w, name: editValue.trim() } : w
         ),
       });
     } catch (err) {
-      console.error("Failed to rename workspace:", err);
+      console.error("Failed to rename space:", err);
       toast.error(m.toast_error());
     }
-    setEditingWorkspaceId(null);
+    setEditingSpaceId(null);
   }
 
   async function handleNewPage(ws: { id: string; path: string }) {
@@ -131,7 +131,7 @@ export function NavWorkspaces() {
       await invoke<string>("create_folder", {
         workspace: ws.path,
         parentPath: null,
-        name: m.workspace_new_folder(),
+        name: m.space_new_folder(),
       });
       await refreshTree(ws.id);
     } catch (err) {
@@ -140,53 +140,53 @@ export function NavWorkspaces() {
     }
   }
 
-  async function handleDeleteWorkspace(childId: string) {
+  async function handleDeleteSpace(spaceId: string) {
     if (!activeRootPath) return;
     try {
-      await deleteChild(activeRootPath, childId, deleteFiles);
+      await deleteSpace(activeRootPath, spaceId, deleteFiles);
     } catch (err) {
-      console.error("Failed to delete workspace:", err);
+      console.error("Failed to delete space:", err);
       toast.error(m.toast_error());
     }
     setDeleteTarget(null);
     setDeleteFiles(false);
   }
 
-  // Only show children section if there are children
-  if (children.length === 0 && !activeRootPath) return null;
+  // Only show spaces section if there are spaces
+  if (spaces.length === 0 && !activeRootPath) return null;
 
   return (
     <>
-      {children.length > 0 && (
+      {spaces.length > 0 && (
         <SidebarGroup>
-          <SidebarGroupLabel>{m.sidebar_workspaces()}</SidebarGroupLabel>
+          <SidebarGroupLabel>{m.sidebar_spaces()}</SidebarGroupLabel>
           <SidebarGroupAction
-            title={m.workspace_create()}
+            title={m.space_create()}
             onClick={() => setCreateDialogOpen(true)}
           >
             <Plus />
-            <span className="sr-only">{m.workspace_create()}</span>
+            <span className="sr-only">{m.space_create()}</span>
           </SidebarGroupAction>
           <SidebarGroupContent>
             <SidebarMenu>
-              {children.map((ws) => {
+              {spaces.map((ws) => {
                 const tree = fileTrees[ws.id] ?? [];
-                const isActive = ws.id === activeChildId;
+                const isActive = ws.id === activeSpaceId;
                 return (
-                  <WorkspaceRow
+                  <SpaceRow
                     key={ws.id}
                     ws={ws}
                     isActive={isActive}
                     tree={tree}
-                    editingWorkspaceId={editingWorkspaceId}
+                    editingSpaceId={editingSpaceId}
                     editValue={editValue}
                     setEditValue={setEditValue}
-                    setEditingWorkspaceId={setEditingWorkspaceId}
-                    handleRenameWorkspace={handleRenameWorkspace}
+                    setEditingSpaceId={setEditingSpaceId}
+                    handleRenameSpace={handleRenameSpace}
                     handleNewPage={handleNewPage}
                     handleNewFolder={handleNewFolder}
                     openWorkspaceSettings={openWorkspaceSettings}
-                    openChild={openChild}
+                    openSpace={openSpace}
                     setDeleteTarget={setDeleteTarget}
                     editRef={editRef}
                   />
@@ -197,7 +197,7 @@ export function NavWorkspaces() {
         </SidebarGroup>
       )}
 
-      <CreateWorkspaceDialog
+      <CreateSpaceDialog
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
       />
@@ -208,9 +208,9 @@ export function NavWorkspaces() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{m.workspace_delete_title()}</AlertDialogTitle>
+            <AlertDialogTitle>{m.space_delete_title()}</AlertDialogTitle>
             <AlertDialogDescription>
-              {m.workspace_delete_description()}
+              {m.space_delete_description()}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <label className="flex items-center gap-2 py-2 cursor-pointer">
@@ -219,7 +219,7 @@ export function NavWorkspaces() {
               onCheckedChange={(checked) => setDeleteFiles(checked === true)}
             />
             <span className="text-sm text-destructive">
-              {m.workspace_delete_files()}
+              {m.space_delete_files()}
             </span>
           </label>
           <AlertDialogFooter>
@@ -227,10 +227,10 @@ export function NavWorkspaces() {
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() =>
-                deleteTarget && handleDeleteWorkspace(deleteTarget.id)
+                deleteTarget && handleDeleteSpace(deleteTarget.id)
               }
             >
-              {m.workspace_delete()}
+              {m.space_delete()}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -239,39 +239,39 @@ export function NavWorkspaces() {
   );
 }
 
-interface WorkspaceRowProps {
+interface SpaceRowProps {
   ws: { id: string; name: string; icon: string; path: string };
   isActive: boolean;
   tree: TreeNode[];
-  editingWorkspaceId: string | null;
+  editingSpaceId: string | null;
   editValue: string;
   setEditValue: (v: string) => void;
-  setEditingWorkspaceId: (id: string | null) => void;
-  handleRenameWorkspace: () => void;
+  setEditingSpaceId: (id: string | null) => void;
+  handleRenameSpace: () => void;
   handleNewPage: (ws: { id: string; path: string }) => void;
   handleNewFolder: (ws: { id: string; path: string }) => void;
   openWorkspaceSettings: (path: string) => void;
-  openChild: (id: string) => void;
+  openSpace: (id: string) => void;
   setDeleteTarget: (t: { id: string; name: string }) => void;
   editRef: React.RefObject<HTMLInputElement | null>;
 }
 
-function WorkspaceRow({
+function SpaceRow({
   ws,
   isActive,
   tree,
-  editingWorkspaceId,
+  editingSpaceId,
   editValue,
   setEditValue,
-  setEditingWorkspaceId,
-  handleRenameWorkspace,
+  setEditingSpaceId,
+  handleRenameSpace,
   handleNewPage,
   handleNewFolder,
   openWorkspaceSettings,
-  openChild,
+  openSpace,
   setDeleteTarget,
   editRef,
-}: WorkspaceRowProps) {
+}: SpaceRowProps) {
   const cloning = useGitStore((s) => s.cloning[ws.path]);
   const dirty = useGitStore(
     (s) =>
@@ -286,26 +286,26 @@ function WorkspaceRow({
           isActive={isActive}
           disabled={!!cloning}
           onClick={() => {
-            if (editingWorkspaceId !== ws.id) openChild(ws.id);
+            if (editingSpaceId !== ws.id) openSpace(ws.id);
           }}
           onDoubleClick={() => {
-            setEditingWorkspaceId(ws.id);
+            setEditingSpaceId(ws.id);
             setEditValue(ws.name);
           }}
         >
           <span>{ws.icon}</span>
-          {editingWorkspaceId === ws.id ? (
+          {editingSpaceId === ws.id ? (
             <input
               ref={editRef}
               className="truncate bg-transparent outline-none text-sm w-full border-b border-primary"
               value={editValue}
               onChange={(e) => setEditValue(e.target.value)}
-              onBlur={handleRenameWorkspace}
+              onBlur={handleRenameSpace}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
-                  handleRenameWorkspace();
-                } else if (e.key === "Escape") setEditingWorkspaceId(null);
+                  handleRenameSpace();
+                } else if (e.key === "Escape") setEditingSpaceId(null);
               }}
               onClick={(e) => e.stopPropagation()}
             />
@@ -341,11 +341,11 @@ function WorkspaceRow({
           <DropdownMenuContent align="end" side="bottom">
             <DropdownMenuItem onClick={() => handleNewPage(ws)}>
               <FilePlus className="mr-2 h-4 w-4" />
-              {m.workspace_new_page()}
+              {m.space_new_page()}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => handleNewFolder(ws)}>
               <FolderPlus className="mr-2 h-4 w-4" />
-              {m.workspace_new_folder()}
+              {m.space_new_folder()}
             </DropdownMenuItem>
             {dirty && (
               <>
@@ -359,16 +359,16 @@ function WorkspaceRow({
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => openWorkspaceSettings(ws.path)}>
               <Settings className="mr-2 h-4 w-4" />
-              {m.workspace_settings()}
+              {m.space_settings()}
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => {
-                setEditingWorkspaceId(ws.id);
+                setEditingSpaceId(ws.id);
                 setEditValue(ws.name);
               }}
             >
               <Pencil className="mr-2 h-4 w-4" />
-              {m.workspace_rename()}
+              {m.space_rename()}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
@@ -376,7 +376,7 @@ function WorkspaceRow({
               onClick={() => setDeleteTarget({ id: ws.id, name: ws.name })}
             >
               <Trash2 className="mr-2 h-4 w-4" />
-              {m.workspace_delete()}
+              {m.space_delete()}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

@@ -51,7 +51,7 @@ interface Entry {
 
 export function PlateDocumentEditor() {
   const { activeDocument, activeDocumentWorkspaceId, openDocument } = useLayoutStore();
-  const { updateNodeMeta, rootWorkspaces, children: childWorkspaces } = useWorkspaceStore();
+  const { updateNodeMeta, rootWorkspaces, spaces: childWorkspaces } = useWorkspaceStore();
   const { markUnsaved, clearUnsaved, pendingRename, clearPendingRename, setBrokenLinks } = useEditorStore();
 
   // Resolve workspace path from the document's workspace id

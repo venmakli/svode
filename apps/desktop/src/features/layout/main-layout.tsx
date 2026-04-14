@@ -79,14 +79,14 @@ function buildSegments(
 
 function MainBreadcrumbs() {
   const { activeDocument, activeDocumentWorkspaceId } = useLayoutStore();
-  const { children, activeChildId, fileTrees, openChild } =
+  const { spaces, activeSpaceId, fileTrees, openSpace } =
     useWorkspaceStore();
   const { openDocument } = useLayoutStore();
 
   if (!activeDocument) return null;
 
-  const activeWorkspace = activeChildId
-    ? children.find((w) => w.id === activeChildId)
+  const activeWorkspace = activeSpaceId
+    ? spaces.find((w) => w.id === activeSpaceId)
     : null;
   const workspaceName = activeWorkspace
     ? `${activeWorkspace.icon} ${activeWorkspace.name}`
@@ -111,8 +111,8 @@ function MainBreadcrumbs() {
               <BreadcrumbItem className="text-sm">
                 <WorkspaceBreadcrumb
                   label={workspaceName}
-                  workspaces={children}
-                  onSwitch={openChild}
+                  workspaces={spaces}
+                  onSwitch={openSpace}
                 />
               </BreadcrumbItem>
               {segments.length > 0 && <BreadcrumbSeparator />}
@@ -240,10 +240,10 @@ function MainContent() {
 export function MainLayout() {
   useKeyboardShortcuts();
   useAppGitFocus();
-  const { children, activeRootId, activeRootPath, fileTrees } = useWorkspaceStore();
+  const { spaces, activeRootId, activeRootPath, fileTrees } = useWorkspaceStore();
   const { available, recheck } = useGitAvailability();
 
-  const hasChildren = children.length > 0;
+  const hasChildren = spaces.length > 0;
   const rootTree = activeRootId ? fileTrees[activeRootId] ?? [] : [];
   const hasDocuments = rootTree.length > 0;
   const isEmpty = !hasChildren && !hasDocuments;

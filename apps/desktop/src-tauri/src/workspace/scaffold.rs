@@ -25,7 +25,7 @@ pub fn scaffold_workspace(
         } else {
             icon.to_string()
         },
-        children: None,
+        spaces: None,
         agent: None,
         defaults: None,
         git: None,

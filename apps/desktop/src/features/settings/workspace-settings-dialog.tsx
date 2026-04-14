@@ -85,11 +85,11 @@ export function WorkspaceSettingsDialog({
   onOpenChange,
 }: WorkspaceSettingsDialogProps) {
   const { openDocument, closeSettings } = useLayoutStore();
-  const { activeRootPath, children } = useWorkspaceStore();
+  const { activeRootPath, spaces } = useWorkspaceStore();
 
   const workspacePath = inputPath ?? "";
   const isRoot = workspacePath === activeRootPath;
-  const hasChildren = isRoot && children.length > 0;
+  const hasSpaces = isRoot && spaces.length > 0;
 
   const [section, setSection] = useState<Section>("general");
 
@@ -303,7 +303,7 @@ export function WorkspaceSettingsDialog({
       });
     } else {
       useWorkspaceStore.setState({
-        children: useWorkspaceStore.getState().children.map((w) =>
+        spaces: useWorkspaceStore.getState().spaces.map((w) =>
           w.path === workspacePath ? { ...w, ...updates } : w
         ),
       });
@@ -603,7 +603,7 @@ export function WorkspaceSettingsDialog({
     { key: "ai-agent", label: m.settings_ai_agent(), icon: Bot, show: true },
     { key: "git", label: m.git_section(), icon: GitBranch, show: true },
     { key: "storage", label: m.storage_section(), icon: HardDrive, show: true },
-    { key: "defaults", label: m.settings_defaults(), icon: Settings, show: hasChildren },
+    { key: "defaults", label: m.settings_defaults(), icon: Settings, show: hasSpaces },
     { key: "instructions", label: m.settings_instructions(), icon: FileText, show: true },
   ];
 
@@ -663,7 +663,7 @@ export function WorkspaceSettingsDialog({
                 {section === "general" && (
                   <div className="space-y-4 max-w-sm">
                     <div className="space-y-2">
-                      <Label htmlFor="ws-settings-name">{m.workspace_name_label()}</Label>
+                      <Label htmlFor="ws-settings-name">{m.space_name_label()}</Label>
                       <div className="flex gap-2">
                         <EmojiPicker value={icon} onChange={handleIconChange} size="sm" />
                         <Input
@@ -671,19 +671,19 @@ export function WorkspaceSettingsDialog({
                           value={name}
                           onChange={(e) => setName(e.target.value)}
                           onBlur={handleNameBlur}
-                          placeholder={m.workspace_name_placeholder()}
+                          placeholder={m.space_name_placeholder()}
                           className="flex-1"
                         />
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="ws-settings-desc">{m.workspace_description_label()}</Label>
+                      <Label htmlFor="ws-settings-desc">{m.space_description_label()}</Label>
                       <Textarea
                         id="ws-settings-desc"
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}
                         onBlur={handleDescriptionBlur}
-                        placeholder={m.workspace_description_placeholder()}
+                        placeholder={m.space_description_placeholder()}
                         rows={3}
                       />
                     </div>
@@ -1036,7 +1036,7 @@ export function WorkspaceSettingsDialog({
                   </div>
                 )}
 
-                {section === "defaults" && hasChildren && (
+                {section === "defaults" && hasSpaces && (
                   <div className="space-y-6 max-w-sm">
                     <p className="text-sm text-muted-foreground">
                       {m.settings_defaults_description()}

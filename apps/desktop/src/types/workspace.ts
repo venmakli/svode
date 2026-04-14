@@ -6,7 +6,7 @@ export interface Workspace {
   icon: string;
   description: string;
   path: string;
-  hasChildren: boolean;
+  hasSpaces: boolean;
   lastOpened: string | null;
 }
 
@@ -14,7 +14,7 @@ export interface WorkspaceConfig {
   name: string;
   description: string;
   icon: string;
-  children?: ChildRef[];
+  spaces?: SpaceRef[];
   agent?: AgentConfig;
   defaults?: WorkspaceDefaults;
   git?: GitWorkspaceConfig;
@@ -39,7 +39,7 @@ export interface AssetsWorkspaceConfig {
   s3?: AssetsS3Config;
 }
 
-export interface ChildRef {
+export interface SpaceRef {
   id: string;
   path: string;
   repo?: string;

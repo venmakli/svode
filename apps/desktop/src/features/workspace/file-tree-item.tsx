@@ -53,7 +53,7 @@ function isBareFolder(node: TreeNode): boolean {
 export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
   const { openDocument, activeDocument } = useLayoutStore();
   const { unsavedChanges, aiModified } = useEditorStore();
-  const { expandedPaths, toggleExpanded, refreshTree, children: workspaces, rootWorkspaces, activeChildId, activeRootId } =
+  const { expandedPaths, toggleExpanded, refreshTree, spaces: workspaces, rootWorkspaces, activeSpaceId, activeRootId } =
     useWorkspaceStore();
 
   const bareFolder = isBareFolder(node);
@@ -183,10 +183,10 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
       return;
     }
     const isRootWorkspace = workspaceId === activeRootId;
-    if (isRootWorkspace && activeChildId) {
-      useWorkspaceStore.getState().clearActiveChild();
-    } else if (!isRootWorkspace && activeChildId !== workspaceId) {
-      useWorkspaceStore.getState().openChild(workspaceId);
+    if (isRootWorkspace && activeSpaceId) {
+      useWorkspaceStore.getState().clearActiveSpace();
+    } else if (!isRootWorkspace && activeSpaceId !== workspaceId) {
+      useWorkspaceStore.getState().openSpace(workspaceId);
     }
     openDocument(node.path, workspaceId);
   }
@@ -280,7 +280,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
       await invoke<string>("create_folder", {
         workspace: workspace.path,
         parentPath,
-        name: m.workspace_new_folder(),
+        name: m.space_new_folder(),
       });
       await refreshTree(workspaceId);
       if (!expandedPaths[workspaceId]?.includes(parentNodePath)) {
@@ -380,27 +380,27 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
         {bareFolder && (
           <DropdownMenuItem onClick={handleMakeDocument}>
             <FileSymlink className="mr-2 h-4 w-4" />
-            {m.workspace_make_document()}
+            {m.space_make_document()}
           </DropdownMenuItem>
         )}
         <DropdownMenuItem onClick={handleNewPage}>
           <FilePlus className="mr-2 h-4 w-4" />
-          {m.workspace_new_page()}
+          {m.space_new_page()}
         </DropdownMenuItem>
         <DropdownMenuItem onClick={handleNewFolder}>
           <FolderPlus className="mr-2 h-4 w-4" />
-          {m.workspace_new_folder()}
+          {m.space_new_folder()}
         </DropdownMenuItem>
         <DropdownMenuItem onClick={handleStartRename}>
           <Pencil className="mr-2 h-4 w-4" />
-          {m.workspace_rename()}
+          {m.space_rename()}
         </DropdownMenuItem>
         <DropdownMenuItem
           className="text-destructive focus:text-destructive"
           onClick={handleDeleteRequest}
         >
           <Trash2 className="mr-2 h-4 w-4" />
-          {m.workspace_delete()}
+          {m.space_delete()}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
