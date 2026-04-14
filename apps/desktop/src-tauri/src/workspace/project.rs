@@ -8,6 +8,51 @@ use super::registry;
 use super::scaffold;
 use super::types::{SpaceRef, WorkspaceConfig, WorkspaceInfo};
 
+/// Where to register a newly created/opened workspace.
+enum RegistrationTarget<'a> {
+    /// Global registry (workspaces.json) — for root projects.
+    Registry(&'a Path),
+    /// Parent workspace config.json — for child spaces.
+    ParentSpace(&'a Path, String),
+}
+
+/// Scaffold (if needed) + generate id + register.
+///
+/// Returns `(id, config)`. The caller is responsible for pre-checks
+/// (path existence, slug collision, duplicate detection) before calling this.
+fn create_and_register(
+    path: &Path,
+    name: &str,
+    icon: &str,
+    description: &str,
+    target: RegistrationTarget,
+) -> Result<(String, WorkspaceConfig), AppError> {
+    let cfg = match config::read_workspace_config(path) {
+        Ok(cfg) => cfg,
+        Err(_) => scaffold::scaffold_workspace(path, name, icon, description)?,
+    };
+
+    let id = ulid::Ulid::new().to_string().to_lowercase();
+
+    match target {
+        RegistrationTarget::Registry(config_dir) => {
+            registry::add_workspace(config_dir, &id, &path.to_string_lossy())?;
+        }
+        RegistrationTarget::ParentSpace(parent_path, folder_name) => {
+            let mut parent_config = config::read_workspace_config(parent_path)?;
+            let spaces = parent_config.spaces.get_or_insert_with(Vec::new);
+            spaces.push(SpaceRef {
+                id: id.clone(),
+                path: folder_name,
+                repo: None,
+            });
+            config::write_workspace_config(parent_path, &parent_config)?;
+        }
+    }
+
+    Ok((id, cfg))
+}
+
 /// Create a new root workspace: scaffold folder, register in workspaces.json.
 pub fn create_workspace(
     config_dir: &Path,
@@ -16,7 +61,6 @@ pub fn create_workspace(
     description: &str,
     path: &Path,
 ) -> Result<(String, WorkspaceConfig), AppError> {
-    // Ensure path exists
     if !path.exists() {
         std::fs::create_dir_all(path)?;
     }
@@ -26,12 +70,7 @@ pub fn create_workspace(
         ));
     }
 
-    let ws_config = scaffold::scaffold_workspace(path, name, icon, description)?;
-
-    let id = ulid::Ulid::new().to_string().to_lowercase();
-    registry::add_workspace(config_dir, &id, &path.to_string_lossy())?;
-
-    Ok((id, ws_config))
+    create_and_register(path, name, icon, description, RegistrationTarget::Registry(config_dir))
 }
 
 /// Register an existing folder as a root workspace (open folder).
@@ -53,22 +92,12 @@ pub fn open_workspace_folder(
         return Ok((existing.id.clone(), cfg));
     }
 
-    // Read existing config or scaffold
-    let cfg = match config::read_workspace_config(path) {
-        Ok(cfg) => cfg,
-        Err(_) => {
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "Workspace".to_string());
-            scaffold::scaffold_workspace(path, &name, "", "")?
-        }
-    };
+    let fallback_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "Workspace".to_string());
 
-    let id = ulid::Ulid::new().to_string().to_lowercase();
-    registry::add_workspace(config_dir, &id, &path_str)?;
-
-    Ok((id, cfg))
+    create_and_register(path, &fallback_name, "", "", RegistrationTarget::Registry(config_dir))
 }
 
 /// Delete a root workspace: remove from registry, optionally delete files.
@@ -107,26 +136,19 @@ pub fn create_space(
     let space_dir = parent_path.join(&folder_name);
     std::fs::create_dir_all(&space_dir)?;
 
-    let ws_config = scaffold::scaffold_workspace(&space_dir, name, icon, "")?;
-
-    let space_id = ulid::Ulid::new().to_string().to_lowercase();
-    let space_ref = SpaceRef {
-        id: space_id.clone(),
-        path: folder_name,
-        repo: None,
-    };
-
-    // Add to parent config
-    let mut parent_config = config::read_workspace_config(parent_path)?;
-    let spaces = parent_config.spaces.get_or_insert_with(Vec::new);
-    spaces.push(space_ref.clone());
-    config::write_workspace_config(parent_path, &parent_config)?;
+    let (id, cfg) = create_and_register(
+        &space_dir,
+        name,
+        icon,
+        "",
+        RegistrationTarget::ParentSpace(parent_path, folder_name),
+    )?;
 
     Ok(WorkspaceInfo {
-        id: space_id,
-        name: ws_config.name,
-        icon: ws_config.icon,
-        description: ws_config.description,
+        id,
+        name: cfg.name,
+        icon: cfg.icon,
+        description: cfg.description,
         path: space_dir.to_string_lossy().to_string(),
         has_spaces: false,
         last_opened: None,
@@ -151,45 +173,41 @@ pub fn register_cloned_space(
         ));
     }
 
-    // Read the cloned repo's config if it already has one, otherwise scaffold
-    // a fresh `.combai/` on top of the cloned content (preserving files).
-    let ws_config = match config::read_workspace_config(&space_dir) {
-        Ok(cfg) => cfg,
-        Err(_) => scaffold::scaffold_workspace(&space_dir, fallback_name, icon, "")?,
-    };
+    // Check if already registered in parent
+    let parent_config = config::read_workspace_config(parent_path)?;
+    if let Some(spaces) = &parent_config.spaces {
+        if let Some(existing) = spaces.iter().find(|s| s.path == folder_name) {
+            let cfg = match config::read_workspace_config(&space_dir) {
+                Ok(cfg) => cfg,
+                Err(_) => scaffold::scaffold_workspace(&space_dir, fallback_name, icon, "")?,
+            };
+            return Ok(WorkspaceInfo {
+                id: existing.id.clone(),
+                name: cfg.name,
+                icon: cfg.icon,
+                description: cfg.description,
+                path: space_dir.to_string_lossy().to_string(),
+                has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
+                last_opened: None,
+            });
+        }
+    }
 
-    // Add to parent config (avoid duplicate if re-registered)
-    let mut parent_config = config::read_workspace_config(parent_path)?;
-    let spaces = parent_config.spaces.get_or_insert_with(Vec::new);
-    let already_registered = spaces.iter().any(|s| s.path == folder_name);
-    let space_id = if already_registered {
-        spaces
-            .iter()
-            .find(|s| s.path == folder_name)
-            .map(|s| s.id.clone())
-            .unwrap()
-    } else {
-        let id = ulid::Ulid::new().to_string().to_lowercase();
-        spaces.push(SpaceRef {
-            id: id.clone(),
-            path: folder_name.to_string(),
-            repo: None,
-        });
-        config::write_workspace_config(parent_path, &parent_config)?;
-        id
-    };
+    let (id, cfg) = create_and_register(
+        &space_dir,
+        fallback_name,
+        icon,
+        "",
+        RegistrationTarget::ParentSpace(parent_path, folder_name.to_string()),
+    )?;
 
     Ok(WorkspaceInfo {
-        id: space_id,
-        name: ws_config.name,
-        icon: ws_config.icon,
-        description: ws_config.description,
+        id,
+        name: cfg.name,
+        icon: cfg.icon,
+        description: cfg.description,
         path: space_dir.to_string_lossy().to_string(),
-        has_spaces: ws_config
-            .spaces
-            .as_ref()
-            .map(|s| !s.is_empty())
-            .unwrap_or(false),
+        has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
         last_opened: None,
     })
 }
