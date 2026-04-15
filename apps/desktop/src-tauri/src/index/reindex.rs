@@ -95,11 +95,11 @@ pub(crate) struct IndexedEntry {
 /// Build an `IndexedEntry` from an absolute file path. Parses frontmatter,
 /// falling back to synthesized values if absent or invalid.
 pub(crate) fn build_entry(
-    workspace_dir: &Path,
+    space_dir: &Path,
     abs_path: &Path,
 ) -> Result<IndexedEntry, AppError> {
     let rel_path = abs_path
-        .strip_prefix(workspace_dir)
+        .strip_prefix(space_dir)
         .unwrap_or(abs_path)
         .to_string_lossy()
         .to_string();
@@ -287,9 +287,9 @@ struct IndexedAsset {
 /// Build an `IndexedAsset` from an absolute file path. Synchronous; called
 /// outside the transaction so blocking metadata reads don't hold the SQLite
 /// write lock.
-fn build_asset(workspace_dir: &Path, abs_path: &Path) -> Result<IndexedAsset, AppError> {
+fn build_asset(space_dir: &Path, abs_path: &Path) -> Result<IndexedAsset, AppError> {
     let rel_path = abs_path
-        .strip_prefix(workspace_dir)
+        .strip_prefix(space_dir)
         .unwrap_or(abs_path)
         .to_string_lossy()
         .to_string();
@@ -328,7 +328,7 @@ fn build_asset(workspace_dir: &Path, abs_path: &Path) -> Result<IndexedAsset, Ap
     })
 }
 
-/// Full reindex of a workspace: wipes `entries` and `assets`, then rescans.
+/// Full reindex of a space: wipes `entries` and `assets`, then rescans.
 ///
 /// Atomicity model:
 /// - All filesystem I/O (walks, frontmatter parses) runs BEFORE the transaction
@@ -338,14 +338,14 @@ fn build_asset(workspace_dir: &Path, abs_path: &Path) -> Result<IndexedAsset, Ap
 /// - Per-file build failures (bad frontmatter, unreadable file) are logged and
 ///   skipped *without* aborting the tx — those entries are absent from the
 ///   resulting index. Skipped count is reported in the final log line.
-pub async fn full_reindex(pool: &SqlitePool, workspace_dir: &Path) -> Result<(), AppError> {
-    tracing::debug!("full reindex of workspace: {}", workspace_dir.display());
+pub async fn full_reindex(pool: &SqlitePool, space_dir: &Path) -> Result<(), AppError> {
+    tracing::debug!("full reindex of space: {}", space_dir.display());
 
     // ── Phase 1: filesystem walk + parse, no locks held ──────────────────
     let mut md_files: Vec<PathBuf> = Vec::new();
-    collect_md_files(workspace_dir, workspace_dir, &mut md_files)?;
+    collect_md_files(space_dir, space_dir, &mut md_files)?;
 
-    let assets_dir = workspace_dir.join(".assets");
+    let assets_dir = space_dir.join(".assets");
     let mut asset_files: Vec<PathBuf> = Vec::new();
     if assets_dir.is_dir() {
         collect_asset_files(&assets_dir, &mut asset_files)?;
@@ -354,7 +354,7 @@ pub async fn full_reindex(pool: &SqlitePool, workspace_dir: &Path) -> Result<(),
     let mut entries: Vec<IndexedEntry> = Vec::with_capacity(md_files.len());
     let mut entries_skipped = 0usize;
     for path in &md_files {
-        match build_entry(workspace_dir, path) {
+        match build_entry(space_dir, path) {
             Ok(entry) => entries.push(entry),
             Err(e) => {
                 entries_skipped += 1;
@@ -366,7 +366,7 @@ pub async fn full_reindex(pool: &SqlitePool, workspace_dir: &Path) -> Result<(),
     let mut assets: Vec<IndexedAsset> = Vec::with_capacity(asset_files.len());
     let mut assets_skipped = 0usize;
     for path in &asset_files {
-        match build_asset(workspace_dir, path) {
+        match build_asset(space_dir, path) {
             Ok(a) => assets.push(a),
             Err(e) => {
                 assets_skipped += 1;

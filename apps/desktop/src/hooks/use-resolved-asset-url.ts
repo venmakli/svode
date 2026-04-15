@@ -1,5 +1,5 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { useWorkspaceStore, selectActiveWorkspacePath } from "@/stores/workspace";
+import { useWorkspaceStore, selectActiveSpacePath } from "@/stores/workspace";
 
 /**
  * Resolve a URL stored in a Plate media node to something the webview can
@@ -12,19 +12,19 @@ import { useWorkspaceStore, selectActiveWorkspacePath } from "@/stores/workspace
  * so existing Plate features like URL embeds or ephemeral blob previews
  * keep working.
  */
-export function resolveAssetUrl(url: string | undefined, workspacePath: string): string | undefined {
+export function resolveAssetUrl(url: string | undefined, spacePath: string): string | undefined {
   if (!url) return url;
   if (/^(https?:|data:|blob:|asset:|file:)/i.test(url)) return url;
-  if (!workspacePath) return url;
+  if (!spacePath) return url;
   // Normalize: strip any leading "./"
   const rel = url.replace(/^\.\//, "");
   // Join workspace dir + relative path. Use forward slashes — convertFileSrc
   // handles platform-specific normalization.
-  const absolute = `${workspacePath.replace(/\\/g, "/").replace(/\/$/, "")}/${rel}`;
+  const absolute = `${spacePath.replace(/\\/g, "/").replace(/\/$/, "")}/${rel}`;
   return convertFileSrc(absolute);
 }
 
 export function useResolvedAssetUrl(url: string | undefined): string | undefined {
-  const workspacePath = useWorkspaceStore(selectActiveWorkspacePath);
-  return resolveAssetUrl(url, workspacePath);
+  const spacePath = useWorkspaceStore(selectActiveSpacePath);
+  return resolveAssetUrl(url, spacePath);
 }

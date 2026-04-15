@@ -6,7 +6,7 @@ use super::s3;
 use crate::error::AppError;
 use crate::git::GitState;
 use crate::git::commands::require_cli;
-use crate::workspace::types::{AssetsS3Config, AssetsStrategy, AssetsWorkspaceConfig};
+use crate::space::types::{AssetsS3Config, AssetsSpaceConfig, AssetsStrategy};
 
 /// Non-fatal diagnostics produced by `apply_strategy` — surfaced to the UI so
 /// the user sees e.g. a silent `git lfs migrate import` failure instead of a
@@ -32,8 +32,8 @@ const LFS_BODY: &str = ".assets/** filter=lfs diff=lfs merge=lfs -text";
 /// the user (strategy promises tracking, the upload broke that promise).
 pub async fn stage_new_asset(
     git_state: &GitState,
-    workspace_dir: &Path,
-    cfg: Option<&AssetsWorkspaceConfig>,
+    space_dir: &Path,
+    cfg: Option<&AssetsSpaceConfig>,
     asset_rel_path: &str,
 ) -> Result<(), AppError> {
     let strategy = cfg.map(|c| c.strategy).unwrap_or_default();
@@ -47,11 +47,11 @@ pub async fn stage_new_asset(
         ))
     })?;
 
-    let lock = git_state.get_lock(workspace_dir).await;
+    let lock = git_state.get_lock(space_dir).await;
     let _guard = lock.lock().await;
 
     let output = cli
-        .exec(workspace_dir, &["add", asset_rel_path])
+        .exec(space_dir, &["add", asset_rel_path])
         .await
         .map_err(|e| AppError::Storage(format!("git add {asset_rel_path} errored: {e}")))?;
     if output.exit_code != 0 {
@@ -153,14 +153,14 @@ fn write_or_remove(path: &Path, contents: &str) -> Result<(), AppError> {
 
 /// Apply a new assets strategy: update `.gitignore` / `.gitattributes`,
 /// install/track LFS if needed, and best-effort migrate existing history.
-/// Does NOT mutate `WorkspaceConfig` — the caller owns that.
+/// Does NOT mutate `SpaceConfig` — the caller owns that.
 ///
 /// LFS setup and history migration are best-effort: failures are collected
 /// into `ApplyStrategyResult.warnings` so the UI can surface them, rather
 /// than swallowed into `tracing::warn!` while the user sees a success toast.
 pub async fn apply_strategy(
     git_state: &GitState,
-    workspace_dir: &Path,
+    space_dir: &Path,
     new: AssetsStrategy,
     s3_config: Option<&AssetsS3Config>,
     lfs_dal_path: Option<&Path>,
@@ -189,11 +189,11 @@ pub async fn apply_strategy(
         }
     }
 
-    let lock = git_state.get_lock(workspace_dir).await;
+    let lock = git_state.get_lock(space_dir).await;
     let _guard = lock.lock().await;
 
-    let gitignore_path = workspace_dir.join(".gitignore");
-    let gitattributes_path = workspace_dir.join(".gitattributes");
+    let gitignore_path = space_dir.join(".gitignore");
+    let gitattributes_path = space_dir.join(".gitattributes");
 
     // --- .gitignore: managed `.assets/` block only when Local. ---
     {
@@ -224,7 +224,7 @@ pub async fn apply_strategy(
     // --- LFS setup + history migration (best-effort). ---
     if matches!(new, AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3) {
         // Install LFS hooks in this repo.
-        match cli.exec(workspace_dir, &["lfs", "install", "--local"]).await {
+        match cli.exec(space_dir, &["lfs", "install", "--local"]).await {
             Ok(o) if o.exit_code != 0 => {
                 let msg = format!("git lfs install --local failed: {}", o.stderr.trim());
                 tracing::warn!("{msg}");
@@ -241,7 +241,7 @@ pub async fn apply_strategy(
         // `git lfs track` will rewrite .gitattributes itself — after it runs,
         // dedupe and re-apply our managed block as the canonical form.
         match cli
-            .exec(workspace_dir, &["lfs", "track", ".assets/**"])
+            .exec(space_dir, &["lfs", "track", ".assets/**"])
             .await
         {
             Ok(o) if o.exit_code != 0 => {
@@ -276,7 +276,7 @@ pub async fn apply_strategy(
         // migration fails for any reason (dirty tree, etc.), log and continue.
         match cli
             .exec(
-                workspace_dir,
+                space_dir,
                 &[
                     "lfs",
                     "migrate",
@@ -318,7 +318,7 @@ pub async fn apply_strategy(
         let cfg = s3_config.expect("checked above");
         let bin = lfs_dal_path.expect("checked above");
 
-        s3::ensure_agent_gitignore(workspace_dir)?;
+        s3::ensure_agent_gitignore(space_dir)?;
         let agent_cfg = s3::AgentConfigFile {
             endpoint: cfg.endpoint.clone(),
             bucket: cfg.bucket.clone(),
@@ -326,7 +326,7 @@ pub async fn apply_strategy(
             keychain_account: s3::keychain_account(cfg),
             prefix: None,
         };
-        s3::write_agent_config(workspace_dir, &agent_cfg)?;
+        s3::write_agent_config(space_dir, &agent_cfg)?;
 
         let bin_str = bin.to_string_lossy().to_string();
         let pairs: [(&str, &str); 3] = [
@@ -336,7 +336,7 @@ pub async fn apply_strategy(
         ];
         for (key, value) in pairs {
             match cli
-                .exec(workspace_dir, &["config", "--local", key, value])
+                .exec(space_dir, &["config", "--local", key, value])
                 .await
             {
                 Ok(o) if o.exit_code != 0 => {
@@ -363,7 +363,7 @@ pub async fn apply_strategy(
         ];
         for key in unset_keys {
             match cli
-                .exec(workspace_dir, &["config", "--local", "--unset", key])
+                .exec(space_dir, &["config", "--local", "--unset", key])
                 .await
             {
                 Ok(o) if o.exit_code != 0 && o.exit_code != 5 => {
@@ -379,7 +379,7 @@ pub async fn apply_strategy(
                 _ => {}
             }
         }
-        if let Err(e) = s3::delete_agent_config(workspace_dir) {
+        if let Err(e) = s3::delete_agent_config(space_dir) {
             let msg = format!("delete lfs-s3-agent.json failed: {e}");
             tracing::warn!("{msg}");
             result.warnings.push(msg);
@@ -398,7 +398,7 @@ pub async fn apply_strategy(
     if !to_add.is_empty() {
         let mut args: Vec<&str> = vec!["add"];
         args.extend(to_add);
-        match cli.exec(workspace_dir, &args).await {
+        match cli.exec(space_dir, &args).await {
             Ok(o) if o.exit_code != 0 => {
                 let msg = format!("git add meta files failed: {}", o.stderr.trim());
                 tracing::warn!("{msg}");

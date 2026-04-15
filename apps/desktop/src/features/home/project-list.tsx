@@ -3,7 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import * as m from "@/paraglide/messages.js";
 import { ProjectCard } from "./project-card";
-import type { Workspace } from "@/types/workspace";
+import type { SpaceInfo } from "@/types/space";
 
 interface CloningProject {
   name: string;
@@ -14,7 +14,7 @@ interface CloningProject {
 }
 
 interface ProjectListProps {
-  projects: Workspace[];
+  projects: SpaceInfo[];
   isLoading: boolean;
   onOpenProject: (id: string) => void;
   onDeleteProject: (id: string, deleteFiles: boolean) => void;

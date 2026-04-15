@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-/// Configuration for agent execution, extracted from workspace config.
+/// Configuration for agent execution, extracted from space config.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentConfig {
@@ -112,23 +112,23 @@ pub struct ModelOption {
     pub description: String,
 }
 
-/// Agent-related settings loaded from workspace `.combai/` config files.
+/// Agent-related settings loaded from space `.combai/` config files.
 #[derive(Debug, Clone, Default)]
-pub struct WorkspaceAgentConfig {
+pub struct SpaceAgentConfig {
     /// List of allowed CLI names (e.g. ["claude"])
     pub clis: Vec<String>,
     /// Map of CLI name -> custom binary path
     pub cli_paths: HashMap<String, PathBuf>,
 }
 
-/// Load workspace agent config from `.combai/config.json` and `.combai/local.json`.
+/// Load space agent config from `.combai/config.json` and `.combai/local.json`.
 ///
 /// Best-effort: missing files or fields silently fall back to defaults.
-pub fn load_workspace_agent_config(workspace_dir: &std::path::Path) -> WorkspaceAgentConfig {
-    let mut result = WorkspaceAgentConfig::default();
+pub fn load_space_agent_config(space_dir: &std::path::Path) -> SpaceAgentConfig {
+    let mut result = SpaceAgentConfig::default();
 
     // Read .combai/config.json → agent.clis
-    let config_path = workspace_dir.join(".combai/config.json");
+    let config_path = space_dir.join(".combai/config.json");
     if let Ok(data) = std::fs::read_to_string(&config_path) {
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
             if let Some(clis) = parsed
@@ -145,7 +145,7 @@ pub fn load_workspace_agent_config(workspace_dir: &std::path::Path) -> Workspace
     }
 
     // Read .combai/local.json → agent.cliPaths
-    let local_path = workspace_dir.join(".combai/local.json");
+    let local_path = space_dir.join(".combai/local.json");
     if let Ok(data) = std::fs::read_to_string(&local_path) {
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
             if let Some(paths) = parsed

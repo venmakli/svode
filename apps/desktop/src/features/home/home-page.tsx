@@ -13,7 +13,7 @@ import { ProjectList } from "./project-list";
 import { EmptyState } from "./empty-state";
 import { CreateProjectDialog } from "./create-project-dialog";
 import { CloneProjectDialog } from "./clone-project-dialog";
-import type { Workspace } from "@/types/workspace";
+import type { SpaceInfo } from "@/types/space";
 import type { CloneProgress } from "@/types/git";
 
 export function HomePage() {
@@ -24,9 +24,9 @@ export function HomePage() {
   const autoOpenAttempted = useRef(false);
 
   const {
-    rootWorkspaces,
+    rootSpaces,
     isLoadingRoots,
-    loadRootWorkspaces,
+    loadRootSpaces,
     openRoot,
     createRoot,
     openRootFolder,
@@ -36,8 +36,8 @@ export function HomePage() {
   } = useWorkspaceStore();
 
   useEffect(() => {
-    loadRootWorkspaces();
-  }, [loadRootWorkspaces]);
+    loadRootSpaces();
+  }, [loadRootSpaces]);
 
   // Auto-open last active project (skip if user explicitly navigated home)
   useEffect(() => {
@@ -49,12 +49,12 @@ export function HomePage() {
 
     (async () => {
       const lastActiveId = await getLastActiveRootId();
-      if (lastActiveId && rootWorkspaces.some((w) => w.id === lastActiveId)) {
+      if (lastActiveId && rootSpaces.some((w) => w.id === lastActiveId)) {
         await openRoot(lastActiveId);
-        navigate({ to: "/workspace" });
+        navigate({ to: "/space" });
       }
     })();
-  }, [isLoadingRoots, rootWorkspaces, getLastActiveRootId, openRoot, navigate, explicitHome]);
+  }, [isLoadingRoots, rootSpaces, getLastActiveRootId, openRoot, navigate, explicitHome]);
 
   // Keyboard shortcut: Cmd+N to create project
   useEffect(() => {
@@ -71,7 +71,7 @@ export function HomePage() {
   const handleOpenProject = useCallback(
     async (id: string) => {
       await openRoot(id);
-      navigate({ to: "/workspace" });
+      navigate({ to: "/space" });
     },
     [openRoot, navigate],
   );
@@ -82,7 +82,7 @@ export function HomePage() {
         const ws = await createRoot(name, icon, description, path);
         setCreateDialogOpen(false);
         await openRoot(ws.id);
-        navigate({ to: "/workspace" });
+        navigate({ to: "/space" });
       } catch (err) {
         const errStr = String(err);
         if (errStr.includes("Project already exists")) {
@@ -92,7 +92,7 @@ export function HomePage() {
           try {
             const ws = await openRootFolder(path);
             await openRoot(ws.id);
-            navigate({ to: "/workspace" });
+            navigate({ to: "/space" });
           } catch (openErr) {
             console.error("Failed to open existing project:", openErr);
             toast.error(m.toast_error());
@@ -112,7 +112,7 @@ export function HomePage() {
     try {
       const ws = await openRootFolder(selected);
       await openRoot(ws.id);
-      navigate({ to: "/workspace" });
+      navigate({ to: "/space" });
     } catch (err) {
       console.error("Failed to open project folder:", err);
       toast.error(m.home_open_project_error());
@@ -135,21 +135,21 @@ export function HomePage() {
       setCloningProject({ name: repoName, path: targetPath, phase: "Starting", percent: 0 });
 
       const unlisten = await listen<CloneProgress>("clone:progress", (event) => {
-        if (event.payload.workspacePath !== targetPath) return;
+        if (event.payload.spacePath !== targetPath) return;
         setCloningProject((prev) =>
           prev ? { ...prev, phase: event.payload.phase, percent: event.payload.percent } : prev,
         );
       });
 
       try {
-        const ws = await invoke<Workspace>("project_clone", { url, targetPath });
+        const ws = await invoke<SpaceInfo>("project_clone", { url, targetPath });
         setCloningProject(null);
         // Add to local store and open
         useWorkspaceStore.setState((s) => ({
-          rootWorkspaces: [...s.rootWorkspaces, ws],
+          rootSpaces: [...s.rootSpaces, ws],
         }));
         await openRoot(ws.id);
-        navigate({ to: "/workspace" });
+        navigate({ to: "/space" });
       } catch (err) {
         console.error("project_clone failed:", err);
         const message = typeof err === "string" ? err : (err as Error)?.message ?? "error";
@@ -176,7 +176,7 @@ export function HomePage() {
     [deleteRoot],
   );
 
-  const hasProjects = rootWorkspaces.length > 0 || isLoadingRoots;
+  const hasProjects = rootSpaces.length > 0 || isLoadingRoots;
 
   return (
     <div className="flex flex-col h-screen">
@@ -224,7 +224,7 @@ export function HomePage() {
 
         {hasProjects ? (
           <ProjectList
-            projects={rootWorkspaces}
+            projects={rootSpaces}
             isLoading={isLoadingRoots}
             onOpenProject={handleOpenProject}
             onDeleteProject={handleDeleteProject}

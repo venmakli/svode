@@ -7,7 +7,7 @@ import {
 } from "@assistant-ui/react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { useWorkspaceStore, selectActiveWorkspacePath, selectActiveWorkspaceId } from "@/stores/workspace";
+import { useWorkspaceStore, selectActiveSpacePath, selectActiveSpaceId } from "@/stores/workspace";
 import { useChatStatusStore } from "@/stores/chat";
 
 interface TextDeltaPayload {
@@ -109,8 +109,8 @@ export function ChatRuntimeProvider({
 }: {
   children: React.ReactNode;
 }) {
-  const activeWsId = useWorkspaceStore(selectActiveWorkspaceId);
-  const workspacePath = useWorkspaceStore(selectActiveWorkspacePath);
+  const activeWsId = useWorkspaceStore(selectActiveSpaceId);
+  const spacePath = useWorkspaceStore(selectActiveSpacePath);
 
   const [messages, setMessages] = useState<readonly ThreadMessageLike[]>([]);
   const [isRunning, setIsRunning] = useState(false);
@@ -123,11 +123,11 @@ export function ChatRuntimeProvider({
     setIsRunning(false);
     useChatStatusStore.getState().setPendingPermission(null);
 
-    if (workspacePath) {
+    if (spacePath) {
       // Load available models from backend (per-executor)
       invoke<Array<{ id: string; name: string; description: string }>>(
         "agent_list_models",
-        { workspacePath },
+        { spacePath },
       ).then((models) => {
         useChatStatusStore.getState().setAvailableModels(models);
       }).catch(() => {
@@ -136,8 +136,8 @@ export function ChatRuntimeProvider({
 
       // Load default model from workspace config
       invoke<{ agent?: { defaultModel?: string } }>(
-        "get_workspace_config",
-        { workspacePath },
+        "get_space_config",
+        { spacePath },
       ).then((cfg) => {
         const agent = cfg.agent as { defaultModel?: string } | null;
         useChatStatusStore.getState().applyDefaultModel(agent?.defaultModel);
@@ -145,7 +145,7 @@ export function ChatRuntimeProvider({
         useChatStatusStore.getState().applyDefaultModel(undefined);
       });
     }
-  }, [sessionId, workspacePath]);
+  }, [sessionId, spacePath]);
 
   // Listen to Tauri agent events
   useEffect(() => {
@@ -339,7 +339,7 @@ export function ChatRuntimeProvider({
             docMentions.map(async (doc) => {
               try {
                 const entry = await invoke<{ body: string }>("read_entry", {
-                  workspace: workspacePath,
+                  space: spacePath,
                   path: doc.path,
                 });
                 return { path: doc.path, content: entry.body };
@@ -363,7 +363,7 @@ export function ChatRuntimeProvider({
         }
 
         await invoke("agent_send", {
-          workspacePath,
+          spacePath,
           sessionId,
           message: messageWithContext,
           config: { model },
@@ -380,7 +380,7 @@ export function ChatRuntimeProvider({
         useChatStatusStore.getState().setAgentStatus("idle");
       }
     },
-    [workspacePath, sessionId],
+    [spacePath, sessionId],
   );
 
   // Handle cancel

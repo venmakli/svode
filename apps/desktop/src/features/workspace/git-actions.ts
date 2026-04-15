@@ -2,16 +2,16 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { useGitStore } from "@/stores/git";
-import type { SyncResult, WorkspaceGitStatus } from "@/types/git";
-import type { WorkspaceConfig } from "@/types/workspace";
+import type { SyncResult, GitStatus } from "@/types/git";
+import type { SpaceConfig } from "@/types/space";
 
 /**
- * Read the per-workspace `git.autoSync` setting (default: true).
+ * Read the per-space `git.autoSync` setting (default: true).
  */
-async function isAutoSyncEnabled(workspacePath: string): Promise<boolean> {
+async function isAutoSyncEnabled(spacePath: string): Promise<boolean> {
   try {
-    const cfg = await invoke<WorkspaceConfig>("get_workspace_config", {
-      workspacePath,
+    const cfg = await invoke<SpaceConfig>("get_space_config", {
+      spacePath,
     });
     return cfg.git?.autoSync !== false;
   } catch {
@@ -20,19 +20,19 @@ async function isAutoSyncEnabled(workspacePath: string): Promise<boolean> {
 }
 
 /**
- * Run pull+push for the workspace and surface errors as toasts.
- * Updates per-workspace syncing/error state in the git store.
+ * Run pull+push for the space and surface errors as toasts.
+ * Updates per-space syncing/error state in the git store.
  */
-export async function syncWorkspace(workspacePath: string): Promise<void> {
+export async function syncSpace(spacePath: string): Promise<void> {
   const git = useGitStore.getState();
-  git.setSyncing(workspacePath, true);
-  git.setSyncError(workspacePath, null);
+  git.setSyncing(spacePath, true);
+  git.setSyncError(spacePath, null);
   try {
-    const result = await invoke<SyncResult>("git_sync", { workspacePath });
+    const result = await invoke<SyncResult>("git_sync", { spacePath });
     switch (result.type) {
       case "Success":
         // Refresh status to clear any local indicators (file `↻`).
-        await git.refreshStatus(workspacePath);
+        await git.refreshStatus(spacePath);
         break;
       case "NoRemote":
         // Silent — no remote configured is a normal state.
@@ -41,20 +41,20 @@ export async function syncWorkspace(workspacePath: string): Promise<void> {
         toast.error(
           m.git_sync_conflict({ count: String(result.files.length) }),
         );
-        await git.refreshStatus(workspacePath);
-        git.setSyncError(workspacePath, "conflict");
+        await git.refreshStatus(spacePath);
+        git.setSyncError(spacePath, "conflict");
         break;
       case "AuthRequired":
         toast.error(m.git_sync_auth_required());
-        git.setSyncError(workspacePath, "auth");
+        git.setSyncError(spacePath, "auth");
         break;
     }
   } catch (err) {
     console.error("git_sync failed:", err);
     toast.error(m.git_sync_failed());
-    git.setSyncError(workspacePath, String(err));
+    git.setSyncError(spacePath, String(err));
   } finally {
-    git.setSyncing(workspacePath, false);
+    git.setSyncing(spacePath, false);
   }
 }
 
@@ -63,61 +63,61 @@ export async function syncWorkspace(workspacePath: string): Promise<void> {
  * Triggered by ⌘S after the editor wrote the file to disk.
  */
 export async function commitFileAndMaybeSync(
-  workspacePath: string,
+  spacePath: string,
   filePath: string,
 ): Promise<void> {
   try {
-    const status = await invoke<WorkspaceGitStatus>("git_commit_file", {
-      workspacePath,
+    const status = await invoke<GitStatus>("git_commit_file", {
+      spacePath,
       filePath,
     });
-    useGitStore.getState().applyStatus(workspacePath, status);
+    useGitStore.getState().applyStatus(spacePath, status);
   } catch (err) {
     console.error("git_commit_file failed:", err);
     return;
   }
-  if (await isAutoSyncEnabled(workspacePath)) {
-    void syncWorkspace(workspacePath);
+  if (await isAutoSyncEnabled(spacePath)) {
+    void syncSpace(spacePath);
   }
 }
 
 /**
  * Stage all changes, commit, then auto-sync if enabled.
- * Triggered by ⌘⇧S or by the workspace "Save all" menu item.
+ * Triggered by ⌘⇧S or by the space "Save all" menu item.
  */
-export async function commitAllWorkspace(workspacePath: string): Promise<void> {
+export async function commitAllSpace(spacePath: string): Promise<void> {
   try {
-    const status = await invoke<WorkspaceGitStatus>("git_commit_all", {
-      workspacePath,
+    const status = await invoke<GitStatus>("git_commit_all", {
+      spacePath,
     });
-    useGitStore.getState().applyStatus(workspacePath, status);
+    useGitStore.getState().applyStatus(spacePath, status);
   } catch (err) {
     console.error("git_commit_all failed:", err);
     return;
   }
-  if (await isAutoSyncEnabled(workspacePath)) {
-    void syncWorkspace(workspacePath);
+  if (await isAutoSyncEnabled(spacePath)) {
+    void syncSpace(spacePath);
   }
 }
 
 /**
- * Sync on workspace open. Silent on failure (no remote / offline / auth).
+ * Sync on space open. Silent on failure (no remote / offline / auth).
  */
-export async function syncOnOpen(workspacePath: string): Promise<void> {
-  if (!(await isAutoSyncEnabled(workspacePath))) return;
+export async function syncOnOpen(spacePath: string): Promise<void> {
+  if (!(await isAutoSyncEnabled(spacePath))) return;
   const git = useGitStore.getState();
-  git.setSyncing(workspacePath, true);
+  git.setSyncing(spacePath, true);
   // Clear any stuck error from a previous session — a fresh open should
   // re-evaluate the state rather than show the last failure forever.
-  git.setSyncError(workspacePath, null);
+  git.setSyncError(spacePath, null);
   try {
-    const result = await invoke<SyncResult>("git_sync", { workspacePath });
+    const result = await invoke<SyncResult>("git_sync", { spacePath });
     if (result.type === "Success") {
-      await git.refreshStatus(workspacePath);
+      await git.refreshStatus(spacePath);
     }
   } catch (err) {
     console.debug("sync on open failed (silent):", err);
   } finally {
-    git.setSyncing(workspacePath, false);
+    git.setSyncing(spacePath, false);
   }
 }

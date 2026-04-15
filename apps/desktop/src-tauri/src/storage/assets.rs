@@ -10,7 +10,7 @@ use crate::error::AppError;
 pub struct UploadResult {
     /// ULID identifier of the asset record.
     pub id: String,
-    /// Relative path of the asset inside the workspace
+    /// Relative path of the asset inside the space
     /// (e.g. `.assets/<prefix>-<name>`), forward slashes.
     pub asset_path: String,
     pub original_name: String,
@@ -87,12 +87,12 @@ pub(crate) fn mime_for(ext: &str) -> (&'static str, &'static str) {
     }
 }
 
-/// Upload an asset into the workspace `.assets/` directory and register it in
+/// Upload an asset into the space `.assets/` directory and register it in
 /// the SQLite index. Does NOT interact with git — the caller is responsible
 /// for staging via `strategy::stage_new_asset` if needed.
 pub async fn upload(
     pool: &SqlitePool,
-    workspace_dir: &Path,
+    space_dir: &Path,
     bytes: &[u8],
     original_name: &str,
     document_id: Option<&str>,
@@ -114,7 +114,7 @@ pub async fn upload(
         return Err(AppError::PathNotAccessible(asset_name));
     }
 
-    let assets_dir = workspace_dir.join(".assets");
+    let assets_dir = space_dir.join(".assets");
     tokio::fs::create_dir_all(&assets_dir).await?;
 
     let target = assets_dir.join(&asset_name);
@@ -161,7 +161,7 @@ pub async fn upload(
     })
 }
 
-/// List all assets registered in the workspace index, newest first.
+/// List all assets registered in the space index, newest first.
 pub async fn list(pool: &SqlitePool) -> Result<Vec<Asset>, AppError> {
     let rows = sqlx::query(
         r#"

@@ -75,20 +75,20 @@ fn relative_path(from_dir: &Path, to_path: &Path) -> String {
     parts.join("/")
 }
 
-/// Create symlinks from workspace root files to `.combai/` sources.
+/// Create symlinks from space root files to `.combai/` sources.
 ///
-/// For each mapping, creates `workspace/{target}` as a symlink pointing to
+/// For each mapping, creates `space/{target}` as a symlink pointing to
 /// `.combai/{source}` using a relative path. Skips if target already exists.
 pub fn setup_cli_symlinks(
-    workspace_path: &Path,
+    space_path: &Path,
     cli_name: &str,
 ) -> Result<Vec<String>, AppError> {
     let mappings = get_mappings(cli_name);
     let mut created = Vec::new();
 
     for m in &mappings {
-        let source = workspace_path.join(".combai").join(m.source);
-        let target = workspace_path.join(m.target);
+        let source = space_path.join(".combai").join(m.source);
+        let target = space_path.join(m.target);
 
         // Skip if target already exists (symlink or real)
         if target.exists() || target.symlink_metadata().is_ok() {
@@ -101,7 +101,7 @@ pub fn setup_cli_symlinks(
         }
 
         // Compute relative path from target's parent to source
-        let target_parent = target.parent().unwrap_or(workspace_path);
+        let target_parent = target.parent().unwrap_or(space_path);
         let rel = relative_path(target_parent, &source);
 
         std::os::unix::fs::symlink(&rel, &target)?;
@@ -116,13 +116,13 @@ pub fn setup_cli_symlinks(
 /// Only removes targets that are actual symlinks (not real files/dirs).
 /// Cleans up empty `.claude/` directory if applicable.
 pub fn teardown_cli_symlinks(
-    workspace_path: &Path,
+    space_path: &Path,
     cli_name: &str,
 ) -> Result<(), AppError> {
     let mappings = get_mappings(cli_name);
 
     for m in &mappings {
-        let target = workspace_path.join(m.target);
+        let target = space_path.join(m.target);
         if let Ok(meta) = fs::symlink_metadata(&target) {
             if meta.file_type().is_symlink() {
                 fs::remove_file(&target)?;
@@ -131,7 +131,7 @@ pub fn teardown_cli_symlinks(
     }
 
     // Clean up empty .claude/ dir
-    let claude_dir = workspace_path.join(".claude");
+    let claude_dir = space_path.join(".claude");
     if claude_dir.exists() && claude_dir.is_dir() {
         if fs::read_dir(&claude_dir)?.next().is_none() {
             fs::remove_dir(&claude_dir)?;
@@ -148,7 +148,7 @@ pub fn teardown_cli_symlinks(
 /// - Missing or broken -> recreate, restored
 /// - Real file/dir replaced symlink -> move contents to source, recreate, restored
 pub fn health_check_symlinks(
-    workspace_path: &Path,
+    space_path: &Path,
     cli_name: &str,
 ) -> Result<SymlinkHealthReport, AppError> {
     let mappings = get_mappings(cli_name);
@@ -157,10 +157,10 @@ pub fn health_check_symlinks(
     let mut errors = Vec::new();
 
     for m in &mappings {
-        let source = workspace_path.join(".combai").join(m.source);
-        let target = workspace_path.join(m.target);
+        let source = space_path.join(".combai").join(m.source);
+        let target = space_path.join(m.target);
 
-        let target_parent = target.parent().unwrap_or(workspace_path);
+        let target_parent = target.parent().unwrap_or(space_path);
         let rel = relative_path(target_parent, &source);
 
         match fs::symlink_metadata(&target) {

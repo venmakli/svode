@@ -23,9 +23,9 @@ export function ThreadStatusBar({ isRunning }: { isRunning: boolean }) {
   const agentStatus = useChatStatusStore((s) => s.agentStatus);
   const activeSpaceId = useWorkspaceStore((s) => s.activeSpaceId);
   const activeRootName = useWorkspaceStore((s) => s.activeRootName);
-  const workspaces = useWorkspaceStore((s) => s.spaces);
-  const workspaceName = activeSpaceId
-    ? workspaces.find((w) => w.id === activeSpaceId)?.name
+  const spaces = useWorkspaceStore((s) => s.spaces);
+  const spaceName = activeSpaceId
+    ? spaces.find((w) => w.id === activeSpaceId)?.name
     : activeRootName;
 
   const [elapsed, setElapsed] = useState(0);
@@ -68,11 +68,11 @@ export function ThreadStatusBar({ isRunning }: { isRunning: boolean }) {
       </div>
       <span className="text-muted-foreground/50">&middot;</span>
       <span>claude</span>
-      {workspaceName && (
+      {spaceName && (
         <>
           <span className="text-muted-foreground/50">&middot;</span>
-          <span className="truncate max-w-40" title={workspaceName}>
-            📁 {workspaceName}
+          <span className="truncate max-w-40" title={spaceName}>
+            📁 {spaceName}
           </span>
         </>
       )}

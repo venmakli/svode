@@ -23,9 +23,9 @@ export function WindowHeader() {
 
   const chatToggleDisabled = !activeDocument;
 
-  // Check if we're on the /workspace route
-  const isWorkspaceRoute = matches.some(
-    (match) => match.fullPath === "/workspace",
+  // Check if we're on the /space route
+  const isSpaceRoute = matches.some(
+    (match) => match.fullPath === "/space",
   );
 
   function handleGoHome() {
@@ -56,7 +56,7 @@ export function WindowHeader() {
           <TooltipContent side="bottom">Toggle sidebar (⌘\)</TooltipContent>
         </Tooltip>
 
-        {isWorkspaceRoute && (
+        {isSpaceRoute && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

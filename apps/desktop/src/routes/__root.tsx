@@ -3,10 +3,10 @@ import { ThemeProvider } from "@/components/ui/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { useLayoutStore } from "@/stores/layout";
 import { AppSettingsDialog } from "@/features/settings/app-settings-dialog";
-import { WorkspaceSettingsDialog } from "@/features/settings/workspace-settings-dialog";
+import { SpaceSettingsDialog } from "@/features/settings/space-settings-dialog";
 
 function SettingsDialogs() {
-  const { settingsDialog, settingsWorkspacePath, closeSettings } = useLayoutStore();
+  const { settingsDialog, settingsSpacePath, closeSettings } = useLayoutStore();
 
   return (
     <>
@@ -14,9 +14,9 @@ function SettingsDialogs() {
         open={settingsDialog === "app"}
         onOpenChange={(open) => { if (!open) closeSettings(); }}
       />
-      <WorkspaceSettingsDialog
-        open={settingsDialog === "workspace"}
-        workspacePath={settingsWorkspacePath}
+      <SpaceSettingsDialog
+        open={settingsDialog === "space"}
+        spacePath={settingsSpacePath}
         onOpenChange={(open) => { if (!open) closeSettings(); }}
       />
     </>

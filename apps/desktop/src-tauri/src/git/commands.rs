@@ -5,13 +5,13 @@ use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 use super::cli::{GitAvailability, GitCli};
-use super::ops::WorkspaceGitStatus;
+use super::ops::GitStatus;
 use super::sync::SyncResult;
 use crate::index::IndexState;
 use crate::AppError;
 
 /// Helper: read the GitCli reference (clone is cheap — PathBuf only) outside the
-/// per-workspace lock, so async work that needs `&AppHandle` doesn't borrow
+/// per-space lock, so async work that needs `&AppHandle` doesn't borrow
 /// `state`.
 pub(crate) fn require_cli(state: &GitState) -> Result<GitCli, AppError> {
     state.cli.clone().ok_or(AppError::GitNotFound)
@@ -42,8 +42,8 @@ impl GitState {
         self.cli.as_ref().ok_or(AppError::GitNotFound)
     }
 
-    /// Get or create a per-workspace lock. Public so other modules
-    /// (like the workspace creation flow) can serialize git work too.
+    /// Get or create a per-space lock. Public so other modules
+    /// (like the space creation flow) can serialize git work too.
     pub(crate) async fn get_lock(&self, path: &Path) -> Arc<tokio::sync::Mutex<()>> {
         let mut locks = self.locks.lock().await;
         locks
@@ -68,18 +68,18 @@ pub async fn git_check_availability(
 }
 
 #[tauri::command]
-pub async fn git_init_workspace(
+pub async fn git_init_space(
     state: State<'_, GitState>,
-    workspace_path: String,
+    space_path: String,
 ) -> Result<(), AppError> {
-    let path = PathBuf::from(&workspace_path);
+    let path = PathBuf::from(&space_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
     super::ops::init(state.cli()?, &path).await
 }
 
 #[tauri::command]
-pub async fn git_clone_workspace(
+pub async fn git_clone_space(
     state: State<'_, GitState>,
     app: AppHandle,
     url: String,
@@ -95,9 +95,9 @@ pub async fn git_clone_workspace(
 #[tauri::command]
 pub async fn git_get_remote(
     state: State<'_, GitState>,
-    workspace_path: String,
+    space_path: String,
 ) -> Result<Option<String>, AppError> {
-    let path = PathBuf::from(&workspace_path);
+    let path = PathBuf::from(&space_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
     super::ops::get_remote(state.cli()?, &path).await
@@ -106,10 +106,10 @@ pub async fn git_get_remote(
 #[tauri::command]
 pub async fn git_set_remote(
     state: State<'_, GitState>,
-    workspace_path: String,
+    space_path: String,
     url: String,
 ) -> Result<(), AppError> {
-    let path = PathBuf::from(&workspace_path);
+    let path = PathBuf::from(&space_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
     super::ops::set_remote(state.cli()?, &path, &url).await
@@ -118,9 +118,9 @@ pub async fn git_set_remote(
 #[tauri::command]
 pub async fn git_push(
     state: State<'_, GitState>,
-    workspace_path: String,
-) -> Result<WorkspaceGitStatus, AppError> {
-    let path = PathBuf::from(&workspace_path);
+    space_path: String,
+) -> Result<GitStatus, AppError> {
+    let path = PathBuf::from(&space_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
     let cli = state.cli()?;
@@ -131,9 +131,9 @@ pub async fn git_push(
 #[tauri::command]
 pub async fn git_status(
     state: State<'_, GitState>,
-    workspace_path: String,
-) -> Result<WorkspaceGitStatus, AppError> {
-    let path = PathBuf::from(&workspace_path);
+    space_path: String,
+) -> Result<GitStatus, AppError> {
+    let path = PathBuf::from(&space_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
     super::ops::status(state.cli()?, &path).await
@@ -142,10 +142,10 @@ pub async fn git_status(
 #[tauri::command]
 pub async fn git_commit_file(
     state: State<'_, GitState>,
-    workspace_path: String,
+    space_path: String,
     file_path: String,
-) -> Result<WorkspaceGitStatus, AppError> {
-    let path = PathBuf::from(&workspace_path);
+) -> Result<GitStatus, AppError> {
+    let path = PathBuf::from(&space_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
     let cli = state.cli()?;
@@ -156,9 +156,9 @@ pub async fn git_commit_file(
 #[tauri::command]
 pub async fn git_commit_all(
     state: State<'_, GitState>,
-    workspace_path: String,
-) -> Result<WorkspaceGitStatus, AppError> {
-    let path = PathBuf::from(&workspace_path);
+    space_path: String,
+) -> Result<GitStatus, AppError> {
+    let path = PathBuf::from(&space_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
     let cli = state.cli()?;
@@ -170,9 +170,9 @@ pub async fn git_commit_all(
 pub async fn git_sync(
     state: State<'_, GitState>,
     index_state: State<'_, IndexState>,
-    workspace_path: String,
+    space_path: String,
 ) -> Result<SyncResult, AppError> {
-    let path = PathBuf::from(&workspace_path);
+    let path = PathBuf::from(&space_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
     let cli = state.cli()?;
@@ -183,7 +183,7 @@ pub async fn git_sync(
     if matches!(result, SyncResult::Success) {
         if let Ok(changed) = super::ops::diff_after_pull(cli, &path).await {
             if !changed.is_empty() {
-                if let Ok(pool) = index_state.get_or_create(&workspace_path).await {
+                if let Ok(pool) = index_state.get_or_create(&space_path).await {
                     if let Err(e) =
                         crate::index::update::reindex_after_pull(&pool, &path, changed).await
                     {
@@ -200,9 +200,9 @@ pub async fn git_sync(
 #[tauri::command]
 pub async fn git_conflict_files(
     state: State<'_, GitState>,
-    workspace_path: String,
+    space_path: String,
 ) -> Result<Vec<String>, AppError> {
-    let path = PathBuf::from(&workspace_path);
+    let path = PathBuf::from(&space_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
     super::sync::conflict_files(state.cli()?, &path).await
@@ -212,20 +212,20 @@ pub async fn git_conflict_files(
 pub async fn git_resolve_continue(
     state: State<'_, GitState>,
     index_state: State<'_, IndexState>,
-    workspace_path: String,
+    space_path: String,
 ) -> Result<SyncResult, AppError> {
-    let path = PathBuf::from(&workspace_path);
+    let path = PathBuf::from(&space_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
     let cli = state.cli()?;
     let result = super::sync::resolve_and_continue(cli, &path).await?;
 
-    // After conflict resolution + merge commit + push, the workspace tree
+    // After conflict resolution + merge commit + push, the space tree
     // has changed; refresh the index for the diff against the previous HEAD.
     if matches!(result, SyncResult::Success) {
         if let Ok(changed) = super::ops::diff_after_pull(cli, &path).await {
             if !changed.is_empty() {
-                if let Ok(pool) = index_state.get_or_create(&workspace_path).await {
+                if let Ok(pool) = index_state.get_or_create(&space_path).await {
                     if let Err(e) =
                         crate::index::update::reindex_after_pull(&pool, &path, changed).await
                     {
@@ -242,9 +242,9 @@ pub async fn git_resolve_continue(
 #[tauri::command]
 pub async fn git_merge_abort(
     state: State<'_, GitState>,
-    workspace_path: String,
+    space_path: String,
 ) -> Result<(), AppError> {
-    let path = PathBuf::from(&workspace_path);
+    let path = PathBuf::from(&space_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
     super::sync::merge_abort(state.cli()?, &path).await

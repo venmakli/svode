@@ -2,22 +2,22 @@ use std::path::Path;
 
 use crate::error::AppError;
 
-use super::config::write_workspace_config;
-use super::types::WorkspaceConfig;
+use super::config::write_space_config;
+use super::types::SpaceConfig;
 
-/// Scaffold a new workspace at the given path.
+/// Scaffold a new space at the given path.
 /// Creates .combai/config.json and supporting files.
-/// Used for both root workspaces and child workspaces.
-pub fn scaffold_workspace(
+/// Used for both root spaces and child spaces.
+pub fn scaffold_space(
     path: &Path,
     name: &str,
     icon: &str,
     description: &str,
-) -> Result<WorkspaceConfig, AppError> {
+) -> Result<SpaceConfig, AppError> {
     let combai_dir = path.join(".combai");
     std::fs::create_dir_all(&combai_dir)?;
 
-    let ws_config = WorkspaceConfig {
+    let sp_config = SpaceConfig {
         name: name.to_string(),
         description: description.to_string(),
         icon: if icon.is_empty() {
@@ -31,7 +31,7 @@ pub fn scaffold_workspace(
         git: None,
         assets: None,
     };
-    write_workspace_config(path, &ws_config)?;
+    write_space_config(path, &sp_config)?;
 
     // Local config
     let local_config = super::types::LocalConfig::default();
@@ -65,5 +65,5 @@ pub fn scaffold_workspace(
         std::fs::create_dir_all(&agents_dir)?;
     }
 
-    Ok(ws_config)
+    Ok(sp_config)
 }

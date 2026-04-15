@@ -8,7 +8,7 @@ use crate::error::AppError;
 /// index tables on next open (the index is a rebuildable cache).
 const SCHEMA_VERSION: i64 = 1;
 
-/// Create a connection pool for a workspace's index database.
+/// Create a connection pool for a space's index database.
 /// Ensures the parent directory exists and enables WAL mode.
 pub async fn create_pool(db_path: &Path) -> Result<SqlitePool, AppError> {
     if let Some(parent) = db_path.parent() {

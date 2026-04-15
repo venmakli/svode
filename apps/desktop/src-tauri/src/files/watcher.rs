@@ -14,7 +14,7 @@ struct WatcherHandle {
     stop_tx: mpsc::Sender<()>,
 }
 
-/// Manages file watchers per workspace.
+/// Manages file watchers per space.
 pub struct FileWatcher {
     handles: Arc<Mutex<HashMap<String, WatcherHandle>>>,
 }
@@ -26,15 +26,15 @@ impl FileWatcher {
         }
     }
 
-    /// Start watching a workspace directory.
-    pub fn watch(&self, workspace: String, app: AppHandle) -> Result<(), AppError> {
-        let workspace_path = PathBuf::from(&workspace);
-        if !workspace_path.is_dir() {
-            return Err(AppError::FileNotFound(workspace.clone()));
+    /// Start watching a space directory.
+    pub fn watch(&self, space: String, app: AppHandle) -> Result<(), AppError> {
+        let space_path = PathBuf::from(&space);
+        if !space_path.is_dir() {
+            return Err(AppError::FileNotFound(space.clone()));
         }
 
-        // Stop existing watcher for this workspace if any
-        self.unwatch(&workspace)?;
+        // Stop existing watcher for this space if any
+        self.unwatch(&space)?;
 
         let (event_tx, event_rx) = mpsc::channel::<Event>();
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
@@ -47,13 +47,13 @@ impl FileWatcher {
         .map_err(|e| AppError::Watcher(e.to_string()))?;
 
         watcher
-            .watch(&workspace_path, RecursiveMode::Recursive)
+            .watch(&space_path, RecursiveMode::Recursive)
             .map_err(|e| AppError::Watcher(e.to_string()))?;
 
         // Spawn debounce thread
-        let ws = workspace.clone();
+        let sp = space.clone();
         std::thread::spawn(move || {
-            debounce_loop(event_rx, stop_rx, &ws, &app);
+            debounce_loop(event_rx, stop_rx, &sp, &app);
         });
 
         let mut handles = self
@@ -62,7 +62,7 @@ impl FileWatcher {
             .map_err(|e| AppError::General(e.to_string()))?;
 
         handles.insert(
-            workspace,
+            space,
             WatcherHandle {
                 _watcher: watcher,
                 stop_tx,
@@ -72,14 +72,14 @@ impl FileWatcher {
         Ok(())
     }
 
-    /// Stop watching a workspace directory.
-    pub fn unwatch(&self, workspace: &str) -> Result<(), AppError> {
+    /// Stop watching a space directory.
+    pub fn unwatch(&self, space: &str) -> Result<(), AppError> {
         let mut handles = self
             .handles
             .lock()
             .map_err(|e| AppError::General(e.to_string()))?;
 
-        if let Some(handle) = handles.remove(workspace) {
+        if let Some(handle) = handles.remove(space) {
             let _ = handle.stop_tx.send(());
         }
 
@@ -91,7 +91,7 @@ impl FileWatcher {
 fn debounce_loop(
     event_rx: mpsc::Receiver<Event>,
     stop_rx: mpsc::Receiver<()>,
-    workspace: &str,
+    space: &str,
     app: &AppHandle,
 ) {
     let debounce = Duration::from_millis(200);
@@ -116,7 +116,7 @@ fn debounce_loop(
                 }
 
                 // Process collected events
-                process_events(&events, workspace, app);
+                process_events(&events, space, app);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 // No events, check stop signal
@@ -132,7 +132,7 @@ fn debounce_loop(
 }
 
 /// Process a batch of debounced events.
-fn process_events(events: &[Event], workspace: &str, app: &AppHandle) {
+fn process_events(events: &[Event], space: &str, app: &AppHandle) {
     // Deduplicate by path — keep the last event kind per path
     let mut seen: HashMap<PathBuf, &EventKind> = HashMap::new();
     let mut any_dirty = false;
@@ -141,7 +141,7 @@ fn process_events(events: &[Event], workspace: &str, app: &AppHandle) {
             if should_ignore(path) {
                 continue;
             }
-            // Any non-ignored file change → workspace is dirty.
+            // Any non-ignored file change → space is dirty.
             // Includes non-.md assets (frontend uses this to refresh git status).
             any_dirty = true;
             // Per-file file:* events are emitted only for .md files.
@@ -154,14 +154,14 @@ fn process_events(events: &[Event], workspace: &str, app: &AppHandle) {
 
     if any_dirty {
         let _ = app.emit(
-            "workspace:dirty",
-            serde_json::json!({ "workspace": workspace }),
+            "space:dirty",
+            serde_json::json!({ "space": space }),
         );
     }
 
     for (path, kind) in seen {
         let rel_path = path
-            .strip_prefix(workspace)
+            .strip_prefix(space)
             .unwrap_or(&path)
             .to_string_lossy()
             .to_string();

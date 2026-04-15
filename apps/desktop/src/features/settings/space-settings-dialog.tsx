@@ -59,17 +59,17 @@ import { useLayoutStore } from "@/stores/layout";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useChatStatusStore, type ModelOption } from "@/stores/chat";
 import type {
-  WorkspaceConfig,
+  SpaceConfig,
   AgentConfig,
   AvailableAgent,
   SymlinkHealthReport,
   AssetsStrategy,
-} from "@/types/workspace";
+} from "@/types/space";
 import type { GitAvailability } from "@/types/git";
 
-interface WorkspaceSettingsDialogProps {
+interface SpaceSettingsDialogProps {
   open: boolean;
-  workspacePath: string | null;
+  spacePath: string | null;
   onOpenChange: (open: boolean) => void;
 }
 
@@ -79,16 +79,16 @@ const CLI_AUTH_COMMANDS: Record<string, string> = {
 
 type Section = "general" | "ai-agent" | "git" | "storage" | "defaults" | "instructions";
 
-export function WorkspaceSettingsDialog({
+export function SpaceSettingsDialog({
   open,
-  workspacePath: inputPath,
+  spacePath: inputPath,
   onOpenChange,
-}: WorkspaceSettingsDialogProps) {
+}: SpaceSettingsDialogProps) {
   const { openDocument, closeSettings } = useLayoutStore();
   const { activeRootPath, spaces } = useWorkspaceStore();
 
-  const workspacePath = inputPath ?? "";
-  const isRoot = workspacePath === activeRootPath;
+  const spacePath = inputPath ?? "";
+  const isRoot = spacePath === activeRootPath;
   const hasSpaces = isRoot && spaces.length > 0;
 
   const [section, setSection] = useState<Section>("general");
@@ -150,9 +150,9 @@ export function WorkspaceSettingsDialog({
   const [s3TestError, setS3TestError] = useState<string | null>(null);
 
   const loadConfig = useCallback(async () => {
-    if (!workspacePath) return;
+    if (!spacePath) return;
     try {
-      const cfg = await invoke<WorkspaceConfig>("get_workspace_config", { workspacePath });
+      const cfg = await invoke<SpaceConfig>("get_space_config", { spacePath });
       setName(cfg.name);
       setDescription(cfg.description);
       setIcon(cfg.icon);
@@ -181,7 +181,7 @@ export function WorkspaceSettingsDialog({
       setS3TestState("idle");
       setS3TestError(null);
       try {
-        const present = await invoke<boolean>("has_s3_credentials", { workspacePath });
+        const present = await invoke<boolean>("has_s3_credentials", { spacePath });
         setHasSavedS3Credentials(present);
       } catch {
         setHasSavedS3Credentials(false);
@@ -189,7 +189,7 @@ export function WorkspaceSettingsDialog({
     } catch (err) {
       console.error("Failed to load workspace config:", err);
     }
-  }, [workspacePath]);
+  }, [spacePath]);
 
   const loadLfsAvailability = useCallback(async () => {
     try {
@@ -203,10 +203,10 @@ export function WorkspaceSettingsDialog({
   }, []);
 
   const loadGitInfo = useCallback(async () => {
-    if (!workspacePath) return;
+    if (!spacePath) return;
     try {
       const remote = await invoke<string | null>("git_get_remote", {
-        workspacePath,
+        spacePath,
       });
       setRemoteUrl(remote ?? "");
       setSavedRemoteUrl(remote ?? "");
@@ -216,23 +216,23 @@ export function WorkspaceSettingsDialog({
     }
     try {
       const status = await invoke<{ branch: string }>("git_status", {
-        workspacePath,
+        spacePath,
       });
       setBranch(status.branch);
     } catch {
       setBranch(null);
     }
-  }, [workspacePath]);
+  }, [spacePath]);
 
   const loadModels = useCallback(async () => {
-    if (!workspacePath) return;
+    if (!spacePath) return;
     try {
-      const models = await invoke<ModelOption[]>("agent_list_models", { workspacePath });
+      const models = await invoke<ModelOption[]>("agent_list_models", { spacePath });
       setAvailableModels(models);
     } catch {
       setAvailableModels([]);
     }
-  }, [workspacePath]);
+  }, [spacePath]);
 
   const loadAgents = useCallback(async () => {
     try {
@@ -244,27 +244,27 @@ export function WorkspaceSettingsDialog({
   }, []);
 
   const loadAgentsMd = useCallback(async () => {
-    if (!workspacePath) return;
+    if (!spacePath) return;
     try {
-      const content = await invoke<string | null>("read_agents_md", { workspacePath });
+      const content = await invoke<string | null>("read_agents_md", { spacePath });
       setAgentsMdContent(content);
     } catch {
       setAgentsMdContent(null);
     }
-  }, [workspacePath]);
+  }, [spacePath]);
 
   const checkHealth = useCallback(async () => {
-    if (!workspacePath) return;
+    if (!spacePath) return;
     for (const cli of enabledClis) {
       try {
-        const report = await invoke<SymlinkHealthReport>("check_symlink_health", { workspacePath, cliName: cli });
+        const report = await invoke<SymlinkHealthReport>("check_symlink_health", { spacePath, cliName: cli });
         setHealthReport(report);
       } catch { /* ignore */ }
     }
-  }, [workspacePath, enabledClis]);
+  }, [spacePath, enabledClis]);
 
   useEffect(() => {
-    if (open && workspacePath) {
+    if (open && spacePath) {
       loadConfig();
       loadAgents();
       loadModels();
@@ -273,17 +273,17 @@ export function WorkspaceSettingsDialog({
       loadLfsAvailability();
       setSection("general");
     }
-  }, [open, workspacePath, loadConfig, loadAgents, loadModels, loadAgentsMd, loadGitInfo, loadLfsAvailability]);
+  }, [open, spacePath, loadConfig, loadAgents, loadModels, loadAgentsMd, loadGitInfo, loadLfsAvailability]);
 
   useEffect(() => {
     if (open && enabledClis.length > 0) checkHealth();
   }, [open, enabledClis, checkHealth]);
 
-  async function saveConfig(updates: Partial<WorkspaceConfig>) {
-    if (!workspacePath) return false;
+  async function saveConfig(updates: Partial<SpaceConfig>) {
+    if (!spacePath) return false;
     try {
-      const cfg = await invoke<WorkspaceConfig>("get_workspace_config", { workspacePath });
-      await invoke("save_workspace_config", { workspacePath, configData: { ...cfg, ...updates } });
+      const cfg = await invoke<SpaceConfig>("get_space_config", { spacePath });
+      await invoke("save_space_config", { spacePath, configData: { ...cfg, ...updates } });
       return true;
     } catch (err) {
       console.error("Failed to save workspace config:", err);
@@ -292,19 +292,19 @@ export function WorkspaceSettingsDialog({
     }
   }
 
-  function syncWorkspaceStore(updates: { name?: string; icon?: string; description?: string }) {
+  function syncSpaceStore(updates: { name?: string; icon?: string; description?: string }) {
     if (isRoot) {
       useWorkspaceStore.setState({
         ...(updates.name !== undefined ? { activeRootName: updates.name } : {}),
         ...(updates.icon !== undefined ? { activeRootIcon: updates.icon } : {}),
-        rootWorkspaces: useWorkspaceStore.getState().rootWorkspaces.map((w) =>
-          w.path === workspacePath ? { ...w, ...updates } : w
+        rootSpaces: useWorkspaceStore.getState().rootSpaces.map((w) =>
+          w.path === spacePath ? { ...w, ...updates } : w
         ),
       });
     } else {
       useWorkspaceStore.setState({
         spaces: useWorkspaceStore.getState().spaces.map((w) =>
-          w.path === workspacePath ? { ...w, ...updates } : w
+          w.path === spacePath ? { ...w, ...updates } : w
         ),
       });
     }
@@ -317,7 +317,7 @@ export function WorkspaceSettingsDialog({
       if (ok) {
         setSavedName(trimmed);
         setName(trimmed);
-        syncWorkspaceStore({ name: trimmed });
+        syncSpaceStore({ name: trimmed });
       }
     }
   }
@@ -329,7 +329,7 @@ export function WorkspaceSettingsDialog({
       if (ok) {
         setSavedDescription(trimmed);
         setDescription(trimmed);
-        syncWorkspaceStore({ description: trimmed });
+        syncSpaceStore({ description: trimmed });
       }
     }
   }
@@ -337,13 +337,13 @@ export function WorkspaceSettingsDialog({
   async function handleIconChange(newIcon: string) {
     setIcon(newIcon);
     await saveConfig({ icon: newIcon });
-    syncWorkspaceStore({ icon: newIcon });
+    syncSpaceStore({ icon: newIcon });
   }
 
   async function handleDefaultModelChange(modelId: string) {
     setDefaultModel(modelId);
     try {
-      const cfg = await invoke<WorkspaceConfig>("get_workspace_config", { workspacePath });
+      const cfg = await invoke<SpaceConfig>("get_space_config", { spacePath });
       await saveConfig({ agent: { ...cfg.agent, defaultModel: modelId } });
       useChatStatusStore.getState().applyDefaultModel(modelId);
       toast.success(m.toast_settings_saved());
@@ -356,7 +356,7 @@ export function WorkspaceSettingsDialog({
   async function handleSystemPromptBlur() {
     if (systemPrompt === savedSystemPrompt) return;
     try {
-      const cfg = await invoke<WorkspaceConfig>("get_workspace_config", { workspacePath });
+      const cfg = await invoke<SpaceConfig>("get_space_config", { spacePath });
       await saveConfig({ agent: { ...cfg.agent, systemPrompt: systemPrompt || undefined } });
       setSavedSystemPrompt(systemPrompt);
     } catch (err) {
@@ -370,9 +370,9 @@ export function WorkspaceSettingsDialog({
     setEnabledClis(newClis);
     try {
       if (enabled) {
-        await invoke<string[]>("setup_cli_symlinks_cmd", { workspacePath, cliName });
+        await invoke<string[]>("setup_cli_symlinks_cmd", { spacePath, cliName });
       } else {
-        await invoke("teardown_cli_symlinks_cmd", { workspacePath, cliName });
+        await invoke("teardown_cli_symlinks_cmd", { spacePath, cliName });
       }
       await saveConfig({ agent: { clis: newClis } });
       toast.success(m.toast_settings_saved());
@@ -420,7 +420,7 @@ export function WorkspaceSettingsDialog({
 
   async function applyRemote(newUrl: string) {
     try {
-      await invoke("git_set_remote", { workspacePath, url: newUrl });
+      await invoke("git_set_remote", { spacePath, url: newUrl });
       setSavedRemoteUrl(newUrl);
       setRemoteUrl(newUrl);
       toast.success(m.toast_settings_saved());
@@ -464,9 +464,9 @@ export function WorkspaceSettingsDialog({
     // that they will NOT be migrated automatically (see strategy.rs — partial
     // migration is documented in stage-3/PLAN.md).
     let count = 0;
-    if (workspacePath) {
+    if (spacePath) {
       try {
-        count = await invoke<number>("count_assets", { workspacePath });
+        count = await invoke<number>("count_assets", { spacePath });
       } catch (err) {
         console.warn("count_assets failed, continuing without warning:", err);
       }
@@ -512,9 +512,9 @@ export function WorkspaceSettingsDialog({
   async function handleSaveS3() {
     if (!s3FormValid()) return;
     let count = 0;
-    if (workspacePath) {
+    if (spacePath) {
       try {
-        count = await invoke<number>("count_assets", { workspacePath });
+        count = await invoke<number>("count_assets", { spacePath });
       } catch (err) {
         console.warn("count_assets failed, continuing without warning:", err);
       }
@@ -524,12 +524,12 @@ export function WorkspaceSettingsDialog({
   }
 
   async function applyStrategy(next: AssetsStrategy) {
-    if (!workspacePath) return;
+    if (!spacePath) return;
     setApplyingStrategy(true);
     setStrategyInFlight(next);
     try {
       const args: Record<string, unknown> = {
-        workspacePath,
+        spacePath,
         strategy: next,
         s3Config: null,
         s3Credentials: null,
@@ -614,10 +614,10 @@ export function WorkspaceSettingsDialog({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="overflow-hidden p-0 md:max-h-[500px] md:max-w-[700px] lg:max-w-[800px]">
           <DialogTitle className="sr-only">
-            {m.settings_workspace_title({ name: name || "" })}
+            {m.settings_space_title({ name: name || "" })}
           </DialogTitle>
           <DialogDescription className="sr-only">
-            {m.settings_workspace_title({ name: name || "" })}
+            {m.settings_space_title({ name: name || "" })}
           </DialogDescription>
           <SidebarProvider className="items-start">
             <Sidebar collapsible="none" className="hidden md:flex">
@@ -648,7 +648,7 @@ export function WorkspaceSettingsDialog({
                     <BreadcrumbList>
                       <BreadcrumbItem className="hidden md:block">
                         <BreadcrumbLink href="#" onClick={(e) => e.preventDefault()}>
-                          {m.settings_workspace_title({ name: name || "" })}
+                          {m.settings_space_title({ name: name || "" })}
                         </BreadcrumbLink>
                       </BreadcrumbItem>
                       <BreadcrumbSeparator className="hidden md:block" />
@@ -693,7 +693,7 @@ export function WorkspaceSettingsDialog({
                 {section === "ai-agent" && (
                   <div className="space-y-6">
                     <div className="space-y-2 max-w-sm">
-                      <Label>{m.settings_workspace_default_model()}</Label>
+                      <Label>{m.settings_space_default_model()}</Label>
                       <Select value={defaultModel} onValueChange={handleDefaultModelChange}>
                         <SelectTrigger className="w-full">
                           <SelectValue />
@@ -708,7 +708,7 @@ export function WorkspaceSettingsDialog({
                         </SelectContent>
                       </Select>
                       <p className="text-xs text-muted-foreground">
-                        {m.settings_workspace_default_model_desc()}
+                        {m.settings_space_default_model_desc()}
                       </p>
                     </div>
 
@@ -716,10 +716,10 @@ export function WorkspaceSettingsDialog({
 
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
-                        <Label>{m.settings_workspace_cli_agents()}</Label>
+                        <Label>{m.settings_space_cli_agents()}</Label>
                         <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing}>
                           <RefreshCw className={`mr-2 h-3 w-3 ${refreshing ? "animate-spin" : ""}`} />
-                          {m.settings_workspace_cli_refresh()}
+                          {m.settings_space_cli_refresh()}
                         </Button>
                       </div>
                       {agents.map((agent) => {
@@ -742,18 +742,18 @@ export function WorkspaceSettingsDialog({
                                 {status === "authorized" && (
                                   <Badge variant="secondary" className="text-xs font-normal">
                                     <span className="text-green-600 mr-1">&#10003;</span>
-                                    {m.settings_workspace_cli_found_auth({ version: agent.version || "unknown" })}
+                                    {m.settings_space_cli_found_auth({ version: agent.version || "unknown" })}
                                   </Badge>
                                 )}
                                 {status === "unauthorized" && (
                                   <div className="space-y-1">
                                     <Badge variant="secondary" className="text-xs font-normal">
                                       <span className="text-yellow-600 mr-1">&#9888;</span>
-                                      {m.settings_workspace_cli_found_noauth({ version: agent.version || "unknown" })}
+                                      {m.settings_space_cli_found_noauth({ version: agent.version || "unknown" })}
                                     </Badge>
                                     {CLI_AUTH_COMMANDS[agent.name] && (
                                       <p className="text-xs text-muted-foreground">
-                                        {m.settings_workspace_cli_noauth_hint({ command: CLI_AUTH_COMMANDS[agent.name] })}
+                                        {m.settings_space_cli_noauth_hint({ command: CLI_AUTH_COMMANDS[agent.name] })}
                                       </p>
                                     )}
                                   </div>
@@ -762,11 +762,11 @@ export function WorkspaceSettingsDialog({
                                   <div className="flex items-center gap-2">
                                     <Badge variant="destructive" className="text-xs font-normal">
                                       <span className="mr-1">&#10005;</span>
-                                      {m.settings_workspace_cli_not_found()}
+                                      {m.settings_space_cli_not_found()}
                                     </Badge>
                                     <a href={agent.docsUrl} target="_blank" rel="noopener noreferrer"
                                       className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-                                      {m.settings_workspace_cli_install()}
+                                      {m.settings_space_cli_install()}
                                       <ExternalLink className="h-3 w-3" />
                                     </a>
                                   </div>
@@ -779,8 +779,8 @@ export function WorkspaceSettingsDialog({
                       {healthReport && (
                         <span className="text-xs text-muted-foreground">
                           {healthReport.restored > 0
-                            ? m.settings_workspace_symlinks_restored({ count: String(healthReport.restored) })
-                            : m.settings_workspace_symlinks_ok()}
+                            ? m.settings_space_symlinks_restored({ count: String(healthReport.restored) })
+                            : m.settings_space_symlinks_ok()}
                         </span>
                       )}
                     </div>
@@ -1042,7 +1042,7 @@ export function WorkspaceSettingsDialog({
                       {m.settings_defaults_description()}
                     </p>
                     <div className="space-y-2">
-                      <Label>{m.settings_workspace_default_model()}</Label>
+                      <Label>{m.settings_space_default_model()}</Label>
                       <Select value={defaultsModel} onValueChange={handleDefaultsModelChange}>
                         <SelectTrigger className="w-full">
                           <SelectValue placeholder="—" />
@@ -1075,16 +1075,16 @@ export function WorkspaceSettingsDialog({
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-xs text-muted-foreground">
                               {enabledClis.includes("claude")
-                                ? m.settings_workspace_agents_md_symlink({ target: "CLAUDE.md" })
+                                ? m.settings_space_agents_md_symlink({ target: "CLAUDE.md" })
                                 : "AGENTS.md"}
                             </span>
                             <div className="flex items-center gap-2">
                               <span className="text-xs text-muted-foreground">
-                                {m.settings_workspace_agents_md_lines({ count: String(agentsMdLines) })}
+                                {m.settings_space_agents_md_lines({ count: String(agentsMdLines) })}
                               </span>
                               <Button variant="ghost" size="sm" onClick={handleOpenAgentsMd}>
                                 <Pencil className="h-3 w-3 mr-1" />
-                                {m.settings_workspace_agents_md_open()}
+                                {m.settings_space_agents_md_open()}
                               </Button>
                             </div>
                           </div>
@@ -1095,7 +1095,7 @@ export function WorkspaceSettingsDialog({
                       </Card>
                     ) : (
                       <Button variant="outline" onClick={handleOpenAgentsMd}>
-                        {m.settings_workspace_agents_md_create()}
+                        {m.settings_space_agents_md_create()}
                       </Button>
                     )}
                   </div>

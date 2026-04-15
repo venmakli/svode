@@ -6,7 +6,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::error::AppError;
 use crate::git::commands::GitState;
 use crate::index::IndexState;
-use crate::workspace::{config, project, registry, settings, symlinks, types::*};
+use crate::space::{config, project, registry, settings, symlinks, types::*};
 
 // --- App Settings ---
 
@@ -28,53 +28,53 @@ pub fn save_app_settings(app: AppHandle, settings_data: AppSettings) -> Result<(
     settings::write_app_settings(&config_dir, &settings_data)
 }
 
-// --- Root Workspaces ---
+// --- Projects ---
 
 #[tauri::command]
-pub fn list_workspaces(app: AppHandle) -> Result<Vec<WorkspaceInfo>, AppError> {
+pub fn list_projects(app: AppHandle) -> Result<Vec<SpaceInfo>, AppError> {
     let config_dir = app
         .path()
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
     let reg = registry::read_registry(&config_dir)?;
-    let mut workspaces = Vec::new();
-    for ws_ref in &reg.workspaces {
-        let ws_path = Path::new(&ws_ref.path);
-        match config::read_workspace_config(ws_path) {
+    let mut projects = Vec::new();
+    for sp_ref in &reg.spaces {
+        let sp_path = Path::new(&sp_ref.path);
+        match config::read_space_config(sp_path) {
             Ok(cfg) => {
-                workspaces.push(WorkspaceInfo {
-                    id: ws_ref.id.clone(),
+                projects.push(SpaceInfo {
+                    id: sp_ref.id.clone(),
                     name: cfg.name,
                     icon: cfg.icon,
                     description: cfg.description,
-                    path: ws_ref.path.clone(),
+                    path: sp_ref.path.clone(),
                     has_spaces: cfg
                         .spaces
                         .as_ref()
                         .map(|s| !s.is_empty())
                         .unwrap_or(false),
-                    last_opened: ws_ref.last_opened.clone(),
+                    last_opened: sp_ref.last_opened.clone(),
                 });
             }
             Err(_) => continue,
         }
     }
-    Ok(workspaces)
+    Ok(projects)
 }
 
 #[tauri::command]
-pub async fn create_workspace(
+pub async fn create_project(
     app: AppHandle,
     git_state: State<'_, GitState>,
     name: String,
     icon: String,
     description: Option<String>,
     path: String,
-) -> Result<WorkspaceInfo, AppError> {
-    let ws_path = Path::new(&path);
+) -> Result<SpaceInfo, AppError> {
+    let sp_path = Path::new(&path);
 
     // Check if project already exists at this path
-    if ws_path.join(".combai").join("config.json").exists() {
+    if sp_path.join(".combai").join("config.json").exists() {
         return Err(AppError::ProjectAlreadyExists(path.clone()));
     }
 
@@ -82,24 +82,24 @@ pub async fn create_workspace(
         .path()
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
-    let (id, cfg) = project::create_workspace(
+    let (id, cfg) = project::create_project(
         &config_dir,
         &name,
         &icon,
         description.as_deref().unwrap_or(""),
-        ws_path,
+        sp_path,
     )?;
 
     // Auto git init
     if let Some(cli) = &git_state.cli {
-        let lock = git_state.get_lock(ws_path).await;
+        let lock = git_state.get_lock(sp_path).await;
         let _guard = lock.lock().await;
-        if let Err(e) = crate::git::ops::init(cli, ws_path).await {
+        if let Err(e) = crate::git::ops::init(cli, sp_path).await {
             tracing::warn!("git init failed for new project: {e}");
         }
     }
 
-    Ok(WorkspaceInfo {
+    Ok(SpaceInfo {
         id,
         name: cfg.name,
         icon: cfg.icon,
@@ -111,30 +111,30 @@ pub async fn create_workspace(
 }
 
 #[tauri::command]
-pub async fn open_workspace_folder(
+pub async fn open_project_folder(
     app: AppHandle,
     git_state: State<'_, GitState>,
     path: String,
-) -> Result<WorkspaceInfo, AppError> {
+) -> Result<SpaceInfo, AppError> {
     let config_dir = app
         .path()
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
-    let ws_path = Path::new(&path);
-    let (id, cfg) = project::open_workspace_folder(&config_dir, ws_path)?;
+    let sp_path = Path::new(&path);
+    let (id, cfg) = project::open_project_folder(&config_dir, sp_path)?;
 
     // Auto git init if no .git/ exists
-    if !ws_path.join(".git").exists() {
+    if !sp_path.join(".git").exists() {
         if let Some(cli) = &git_state.cli {
-            let lock = git_state.get_lock(ws_path).await;
+            let lock = git_state.get_lock(sp_path).await;
             let _guard = lock.lock().await;
-            if let Err(e) = crate::git::ops::init(cli, ws_path).await {
+            if let Err(e) = crate::git::ops::init(cli, sp_path).await {
                 tracing::warn!("git init failed for opened folder: {e}");
             }
         }
     }
 
-    Ok(WorkspaceInfo {
+    Ok(SpaceInfo {
         id,
         name: cfg.name,
         icon: cfg.icon,
@@ -150,7 +150,7 @@ pub async fn open_workspace_folder(
 }
 
 #[tauri::command]
-pub async fn delete_workspace(
+pub async fn delete_project(
     app: AppHandle,
     index_state: State<'_, IndexState>,
     id: String,
@@ -163,15 +163,15 @@ pub async fn delete_workspace(
 
     // Close the index pool before any filesystem operations so SQLite releases
     // file handles (Windows would otherwise refuse to remove the directory).
-    if let Some(ws_ref) = registry::find_workspace(&config_dir, &id)? {
-        index_state.close(&ws_ref.path).await;
+    if let Some(sp_ref) = registry::find_space(&config_dir, &id)? {
+        index_state.close(&sp_ref.path).await;
     }
 
-    project::delete_workspace(&config_dir, &id, delete_files.unwrap_or(false))
+    project::delete_project(&config_dir, &id, delete_files.unwrap_or(false))
 }
 
 #[tauri::command]
-pub fn get_last_active_workspace(app: AppHandle) -> Result<Option<String>, AppError> {
+pub fn get_last_active_project(app: AppHandle) -> Result<Option<String>, AppError> {
     let config_dir = app
         .path()
         .app_config_dir()
@@ -181,11 +181,11 @@ pub fn get_last_active_workspace(app: AppHandle) -> Result<Option<String>, AppEr
 }
 
 #[tauri::command]
-pub async fn open_workspace(
+pub async fn open_project(
     app: AppHandle,
     index_state: State<'_, IndexState>,
     id: String,
-) -> Result<WorkspaceConfig, AppError> {
+) -> Result<SpaceConfig, AppError> {
     let config_dir = app
         .path()
         .app_config_dir()
@@ -193,23 +193,23 @@ pub async fn open_workspace(
     registry::update_last_active(&config_dir, &id)?;
     registry::update_last_opened(&config_dir, &id)?;
 
-    let ws_ref = registry::find_workspace(&config_dir, &id)?
-        .ok_or_else(|| AppError::WorkspaceNotFound(id.clone()))?;
+    let sp_ref = registry::find_space(&config_dir, &id)?
+        .ok_or_else(|| AppError::SpaceNotFound(id.clone()))?;
 
-    let cfg = config::read_workspace_config(Path::new(&ws_ref.path))?;
+    let cfg = config::read_space_config(Path::new(&sp_ref.path))?;
 
     // Build/refresh the SQLite index in the background so the UI doesn't wait
     // on filesystem walk + N upserts. Failure is logged but does not block
-    // workspace open — the user can always trigger a manual reindex later.
-    let pool = index_state.get_or_create(&ws_ref.path).await?;
-    let reindex_lock = index_state.reindex_lock(&ws_ref.path).await;
-    let workspace_dir: PathBuf = PathBuf::from(&ws_ref.path);
+    // project open — the user can always trigger a manual reindex later.
+    let pool = index_state.get_or_create(&sp_ref.path).await?;
+    let reindex_lock = index_state.reindex_lock(&sp_ref.path).await;
+    let space_dir: PathBuf = PathBuf::from(&sp_ref.path);
     tokio::spawn(async move {
         let _guard = reindex_lock.lock().await;
-        if let Err(e) = crate::index::reindex::full_reindex(&pool, &workspace_dir).await {
+        if let Err(e) = crate::index::reindex::full_reindex(&pool, &space_dir).await {
             tracing::warn!(
                 "background reindex failed for {}: {e}",
-                workspace_dir.display()
+                space_dir.display()
             );
         }
     });
@@ -220,8 +220,8 @@ pub async fn open_workspace(
 // --- Spaces ---
 
 #[tauri::command]
-pub fn list_spaces(workspace_path: String) -> Result<Vec<WorkspaceInfo>, AppError> {
-    let path = Path::new(&workspace_path);
+pub fn list_spaces(space_path: String) -> Result<Vec<SpaceInfo>, AppError> {
+    let path = Path::new(&space_path);
     project::list_spaces(path)
 }
 
@@ -230,7 +230,7 @@ pub fn create_space(
     parent_path: String,
     name: String,
     icon: String,
-) -> Result<WorkspaceInfo, AppError> {
+) -> Result<SpaceInfo, AppError> {
     let path = Path::new(&parent_path);
     project::create_space(path, &name, &icon)
 }
@@ -251,7 +251,7 @@ pub fn register_cloned_space(
     folder_name: String,
     fallback_name: String,
     icon: String,
-) -> Result<WorkspaceInfo, AppError> {
+) -> Result<SpaceInfo, AppError> {
     let path = Path::new(&parent_path);
     project::register_cloned_space(path, &folder_name, &fallback_name, &icon)
 }
@@ -264,7 +264,7 @@ pub async fn project_clone(
     git_state: State<'_, GitState>,
     url: String,
     target_path: String,
-) -> Result<WorkspaceInfo, AppError> {
+) -> Result<SpaceInfo, AppError> {
     let path = PathBuf::from(&target_path);
     let cli = crate::git::commands::require_cli(&git_state)?;
     let lock = git_state.get_lock(&path).await;
@@ -276,9 +276,9 @@ pub async fn project_clone(
         .path()
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
-    let (id, cfg) = project::open_workspace_folder(&config_dir, &path)?;
+    let (id, cfg) = project::open_project_folder(&config_dir, &path)?;
 
-    Ok(WorkspaceInfo {
+    Ok(SpaceInfo {
         id,
         name: cfg.name,
         icon: cfg.icon,
@@ -298,12 +298,12 @@ pub fn path_exists(path: String) -> Result<bool, AppError> {
     Ok(Path::new(&path).exists())
 }
 
-/// Register the `<workspace_path>/.assets` directory with the Tauri asset
+/// Register the `<space_path>/.assets` directory with the Tauri asset
 /// protocol scope so the webview can render images/videos/audio uploaded
-/// to that workspace.
+/// to that space.
 #[tauri::command]
-pub fn ensure_assets_scope(app: AppHandle, workspace_path: String) -> Result<(), AppError> {
-    let assets_dir = Path::new(&workspace_path).join(".assets");
+pub fn ensure_assets_scope(app: AppHandle, space_path: String) -> Result<(), AppError> {
+    let assets_dir = Path::new(&space_path).join(".assets");
     app.asset_protocol_scope()
         .allow_directory(&assets_dir, true)
         .map_err(|e| AppError::General(e.to_string()))
@@ -312,52 +312,52 @@ pub fn ensure_assets_scope(app: AppHandle, workspace_path: String) -> Result<(),
 // --- Config ---
 
 #[tauri::command]
-pub fn get_workspace_config(workspace_path: String) -> Result<WorkspaceConfig, AppError> {
-    let path = Path::new(&workspace_path);
-    config::read_workspace_config(path)
+pub fn get_space_config(space_path: String) -> Result<SpaceConfig, AppError> {
+    let path = Path::new(&space_path);
+    config::read_space_config(path)
 }
 
 #[tauri::command]
-pub fn save_workspace_config(
-    workspace_path: String,
-    config_data: WorkspaceConfig,
+pub fn save_space_config(
+    space_path: String,
+    config_data: SpaceConfig,
 ) -> Result<(), AppError> {
-    let path = Path::new(&workspace_path);
-    config::write_workspace_config(path, &config_data)
+    let path = Path::new(&space_path);
+    config::write_space_config(path, &config_data)
 }
 
 // --- CLI Symlinks ---
 
 #[tauri::command]
 pub fn setup_cli_symlinks_cmd(
-    workspace_path: String,
+    space_path: String,
     cli_name: String,
 ) -> Result<Vec<String>, AppError> {
-    let path = Path::new(&workspace_path);
+    let path = Path::new(&space_path);
     symlinks::setup_cli_symlinks(path, &cli_name)
 }
 
 #[tauri::command]
 pub fn teardown_cli_symlinks_cmd(
-    workspace_path: String,
+    space_path: String,
     cli_name: String,
 ) -> Result<(), AppError> {
-    let path = Path::new(&workspace_path);
+    let path = Path::new(&space_path);
     symlinks::teardown_cli_symlinks(path, &cli_name)
 }
 
 #[tauri::command]
 pub fn check_symlink_health(
-    workspace_path: String,
+    space_path: String,
     cli_name: String,
 ) -> Result<symlinks::SymlinkHealthReport, AppError> {
-    let path = Path::new(&workspace_path);
+    let path = Path::new(&space_path);
     symlinks::health_check_symlinks(path, &cli_name)
 }
 
 #[tauri::command]
-pub fn read_agents_md(workspace_path: String) -> Result<Option<String>, AppError> {
-    let path = Path::new(&workspace_path).join(".combai").join("AGENTS.md");
+pub fn read_agents_md(space_path: String) -> Result<Option<String>, AppError> {
+    let path = Path::new(&space_path).join(".combai").join("AGENTS.md");
     if path.exists() {
         Ok(Some(std::fs::read_to_string(&path)?))
     } else {

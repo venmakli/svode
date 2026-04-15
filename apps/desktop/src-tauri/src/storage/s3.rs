@@ -11,12 +11,12 @@ use opendal::{Operator, services::S3};
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
-use crate::workspace::types::AssetsS3Config;
+use crate::space::types::AssetsS3Config;
 
 /// Keychain service identifier — must match the constant in `lfs-dal`.
 pub const KEYCHAIN_SERVICE: &str = "app.combai.desktop.lfs-s3";
 
-/// Path of the agent config file (relative to the workspace root). The
+/// Path of the agent config file (relative to the space root). The
 /// external lfs-dal binary reads this on init to learn the bucket and the
 /// keychain account name to query. Listed in `.gitignore` so secrets-by-
 /// proxy never leak to the remote.
@@ -52,7 +52,7 @@ pub struct AgentSecrets {
 }
 
 /// Build a stable keychain account identifier for a given S3 target. We use
-/// `<bucket>@<endpoint-host>` so re-pointing a workspace at a different
+/// `<bucket>@<endpoint-host>` so re-pointing a space at a different
 /// bucket creates a fresh entry instead of overwriting the previous one.
 pub fn keychain_account(cfg: &AssetsS3Config) -> String {
     let host = cfg
@@ -103,8 +103,8 @@ pub async fn clear_credentials(account: String) -> Result<(), AppError> {
 
 /// Write the agent config file to disk. Parent directory is created if
 /// missing.
-pub fn write_agent_config(workspace_dir: &Path, cfg: &AgentConfigFile) -> Result<(), AppError> {
-    let path = workspace_dir.join(AGENT_CONFIG_REL);
+pub fn write_agent_config(space_dir: &Path, cfg: &AgentConfigFile) -> Result<(), AppError> {
+    let path = space_dir.join(AGENT_CONFIG_REL);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -115,8 +115,8 @@ pub fn write_agent_config(workspace_dir: &Path, cfg: &AgentConfigFile) -> Result
 
 /// Read the agent config file. Returns `None` when the file does not exist.
 #[allow(dead_code)]
-pub fn read_agent_config(workspace_dir: &Path) -> Result<Option<AgentConfigFile>, AppError> {
-    let path = workspace_dir.join(AGENT_CONFIG_REL);
+pub fn read_agent_config(space_dir: &Path) -> Result<Option<AgentConfigFile>, AppError> {
+    let path = space_dir.join(AGENT_CONFIG_REL);
     if !path.exists() {
         return Ok(None);
     }
@@ -126,8 +126,8 @@ pub fn read_agent_config(workspace_dir: &Path) -> Result<Option<AgentConfigFile>
 }
 
 /// Delete the agent config file. Missing file is fine.
-pub fn delete_agent_config(workspace_dir: &Path) -> Result<(), AppError> {
-    let path = workspace_dir.join(AGENT_CONFIG_REL);
+pub fn delete_agent_config(space_dir: &Path) -> Result<(), AppError> {
+    let path = space_dir.join(AGENT_CONFIG_REL);
     if path.exists() {
         std::fs::remove_file(&path)?;
     }
@@ -137,8 +137,8 @@ pub fn delete_agent_config(workspace_dir: &Path) -> Result<(), AppError> {
 /// Ensure the managed `# combai:lfs-s3-agent` block is present in
 /// `.gitignore` so the agent config file (with its keychain account name) is
 /// never committed. Idempotent.
-pub fn ensure_agent_gitignore(workspace_dir: &Path) -> Result<(), AppError> {
-    let path = workspace_dir.join(".gitignore");
+pub fn ensure_agent_gitignore(space_dir: &Path) -> Result<(), AppError> {
+    let path = space_dir.join(".gitignore");
     let current = match std::fs::read_to_string(&path) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),

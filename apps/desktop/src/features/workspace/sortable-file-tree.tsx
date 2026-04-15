@@ -18,7 +18,7 @@ import { FileText } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useLayoutStore } from "@/stores/layout";
 import { useEditorStore } from "@/stores/editor";
-import type { TreeNode } from "@/types/workspace";
+import type { TreeNode } from "@/types/space";
 import {
   flattenTree,
   removeCollapsedChildren,
@@ -52,7 +52,7 @@ export const TreeDndContext = createContext<TreeDndContextValue>({
 // --- Props ---
 
 interface SortableFileTreeProps {
-  workspaceId: string;
+  spaceId: string;
   tree: TreeNode[];
   children: React.ReactNode;
 }
@@ -97,7 +97,7 @@ function findParentOf(nodes: TreeNode[], childPath: string): TreeNode | null {
 }
 
 export function SortableFileTree({
-  workspaceId,
+  spaceId,
   tree,
   children,
 }: SortableFileTreeProps) {
@@ -138,8 +138,8 @@ export function SortableFileTree({
 
   // Flatten tree and filter out collapsed children
   const expandedSet = useMemo(() => {
-    return new Set(expandedPaths[workspaceId] ?? []);
-  }, [expandedPaths, workspaceId]);
+    return new Set(expandedPaths[spaceId] ?? []);
+  }, [expandedPaths, spaceId]);
 
   const flatItems = useMemo(() => {
     const all = flattenTree(tree);
@@ -259,12 +259,12 @@ export function SortableFileTree({
         const overNode = findNode(tree, newOverId);
         if (overNode && overNode.children.length > 0 && !expandedSet.has(newOverId)) {
           autoExpandTimer.current = setTimeout(() => {
-            toggleExpanded(workspaceId, newOverId);
+            toggleExpanded(spaceId, newOverId);
           }, 500);
         }
       }
     },
-    [tree, workspaceId, toggleExpanded, expandedSet, computeProjection],
+    [tree, spaceId, toggleExpanded, expandedSet, computeProjection],
   );
 
   const resetState = useCallback(() => {
@@ -291,9 +291,9 @@ export function SortableFileTree({
       if (!over || active.id === over.id || !currentProjection) return;
 
       const state = useWorkspaceStore.getState();
-      const workspace = state.spaces.find((w) => w.id === workspaceId)
-        ?? state.rootWorkspaces.find((w) => w.id === workspaceId);
-      if (!workspace) return;
+      const space = state.spaces.find((w) => w.id === spaceId)
+        ?? state.rootSpaces.find((w) => w.id === spaceId);
+      if (!space) return;
 
       const fromPath = active.id as string;
       const fromNode = findNode(tree, fromPath);
@@ -328,13 +328,13 @@ export function SortableFileTree({
             // Suppress file watcher for structural change
             suppressPaths([nestTarget, fromPath]);
             const newNestPath = await invoke<string>("nest_entry", {
-              workspace: workspace.path,
+              space: space.path,
               path: nestTarget,
             });
             suppressPaths([newNestPath]);
             if (activeDocument === nestTarget) {
               clearUnsaved(nestTarget);
-              openDocument(newNestPath, workspaceId);
+              openDocument(newNestPath, spaceId);
             }
             // Update order.json: rename "doc2.md" → "doc2" (file → folder)
             const newName = oldName.replace(/\.md$/i, "");
@@ -347,15 +347,15 @@ export function SortableFileTree({
                   break;
                 }
               }
-              await saveOrder(workspaceId, order);
+              await saveOrder(spaceId, order);
             }
             // Refresh tree after nest — structure changed on disk
-            await refreshTree(workspaceId);
+            await refreshTree(spaceId);
           }
         }
 
         // Use fresh tree from store (may have changed after nest_entry)
-        const currentTree = useWorkspaceStore.getState().fileTrees[workspaceId] ?? tree;
+        const currentTree = useWorkspaceStore.getState().fileTrees[spaceId] ?? tree;
 
         if (fromParent === toParent) {
           // Same parent — reorder
@@ -378,8 +378,8 @@ export function SortableFileTree({
                 0,
                 fromNode.name,
               );
-              await saveOrder(workspaceId, order);
-              await refreshTree(workspaceId);
+              await saveOrder(spaceId, order);
+              await refreshTree(spaceId);
             }
           }
           return;
@@ -407,51 +407,51 @@ export function SortableFileTree({
 
         // Suppress file watcher for structural move
         suppressPaths([fromPath, movePath]);
-        const newPath = await moveEntry(workspaceId, movePath, toParent);
+        const newPath = await moveEntry(spaceId, movePath, toParent);
         if (newPath) suppressPaths([newPath]);
 
         if (activeDocument === fromPath && newPath && !isBareFolder) {
           // moveEntry returns folder path for doc folders, append readme filename (preserve case)
           const readmeFilename = fromPath.split("/").pop() ?? "README.md";
           const newDocPath = isDocFolder ? `${newPath}/${readmeFilename}` : newPath;
-          openDocument(newDocPath, workspaceId);
+          openDocument(newDocPath, spaceId);
         }
 
         // Auto-unnest: if the old parent folder now has no children
         if (oldParentReadme) {
-          const freshTree = useWorkspaceStore.getState().fileTrees[workspaceId] ?? currentTree;
+          const freshTree = useWorkspaceStore.getState().fileTrees[spaceId] ?? currentTree;
           const oldParentNode = findNode(freshTree, oldParentReadme);
           if (oldParentNode && oldParentNode.children.length <= 1) {
             try {
               const currentActive = useLayoutStore.getState().activeDocument;
               useEditorStore.getState().suppressPaths([oldParentReadme]);
               const unnestPath = await invoke<string>("unnest_entry", {
-                workspace: workspace.path,
+                space: space.path,
                 path: oldParentReadme,
               });
               useEditorStore.getState().suppressPaths([unnestPath]);
               if (currentActive === oldParentReadme) {
                 useEditorStore.getState().clearUnsaved(oldParentReadme);
-                useLayoutStore.getState().openDocument(unnestPath, workspaceId);
+                useLayoutStore.getState().openDocument(unnestPath, spaceId);
               }
-              await refreshTree(workspaceId);
+              await refreshTree(spaceId);
             } catch {
               // Unnest may fail if folder still has children (e.g. non-md files on disk)
             }
           }
         }
 
-        const updatedTree = useWorkspaceStore.getState().fileTrees[workspaceId];
+        const updatedTree = useWorkspaceStore.getState().fileTrees[spaceId];
         if (updatedTree) {
           const order = buildOrderMap(updatedTree);
-          await saveOrder(workspaceId, order);
+          await saveOrder(spaceId, order);
         }
       } catch (err) {
         console.error("Failed to move entry:", err);
         toast.error("Failed to move file");
       }
     },
-    [tree, workspaceId, moveEntry, saveOrder, refreshTree, resetState],
+    [tree, spaceId, moveEntry, saveOrder, refreshTree, resetState],
   );
 
   const handleDragCancel = useCallback(() => {
@@ -472,17 +472,17 @@ export function SortableFileTree({
     [activeId, activeFolderPath, overId, projection, flatItems, flatItemsMap],
   );
 
-  // Cross-workspace not-allowed cursor: when dragging starts, mark other workspace trees
+  // Cross-space not-allowed cursor: when dragging starts, mark other space trees
   useEffect(() => {
     if (!activeId) return;
     const others = document.querySelectorAll(
-      `[data-dnd-workspace]:not([data-dnd-workspace="${workspaceId}"])`,
+      `[data-dnd-space]:not([data-dnd-space="${spaceId}"])`,
     );
     others.forEach((el) => el.classList.add("dnd-not-allowed"));
     return () => {
       others.forEach((el) => el.classList.remove("dnd-not-allowed"));
     };
-  }, [activeId, workspaceId]);
+  }, [activeId, spaceId]);
 
   return (
     <TreeDndContext.Provider value={contextValue}>
@@ -496,7 +496,7 @@ export function SortableFileTree({
         onDragCancel={handleDragCancel}
       >
         <SortableContext items={sortableIds}>
-          <div data-dnd-workspace={workspaceId}>
+          <div data-dnd-space={spaceId}>
             {children}
           </div>
         </SortableContext>

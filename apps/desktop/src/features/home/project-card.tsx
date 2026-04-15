@@ -20,10 +20,10 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MoreHorizontal, Settings, Trash2 } from "lucide-react";
 import { relativeTime } from "@/lib/relative-time";
-import type { Workspace } from "@/types/workspace";
+import type { SpaceInfo } from "@/types/space";
 
 interface ProjectCardProps {
-  project: Workspace;
+  project: SpaceInfo;
   onClick: () => void;
   onDelete: (deleteFiles: boolean) => void;
 }

@@ -49,15 +49,15 @@ import {
 } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useLayoutStore } from "@/stores/layout";
-import type { TreeNode, WorkspaceConfig } from "@/types/workspace";
+import type { TreeNode, SpaceConfig } from "@/types/space";
 import { CreateSpaceDialog } from "./create-space-dialog";
 import { SortableFileTree } from "./sortable-file-tree";
 import { FileTreeItem } from "./file-tree-item";
-import { WorkspaceGitIndicatorIcon } from "./git-status-indicator";
-import { WorkspaceGitWatcher } from "./workspace-git-watcher";
+import { GitIndicatorIcon } from "./git-status-indicator";
+import { SpaceGitWatcher } from "./space-git-watcher";
 import { useGitStore } from "@/stores/git";
 import { Progress } from "@/components/ui/progress";
-import { commitAllWorkspace } from "./git-actions";
+import { commitAllSpace } from "./git-actions";
 
 export function NavSpaces() {
   const {
@@ -70,7 +70,7 @@ export function NavSpaces() {
     createPage,
     refreshTree,
   } = useWorkspaceStore();
-  const { openDocument, openWorkspaceSettings } = useLayoutStore();
+  const { openDocument, openSpaceSettings } = useLayoutStore();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{
     id: string;
@@ -95,11 +95,11 @@ export function NavSpaces() {
       return;
     }
     try {
-      const cfg = await invoke<WorkspaceConfig>("get_workspace_config", {
-        workspacePath: ws.path,
+      const cfg = await invoke<SpaceConfig>("get_space_config", {
+        spacePath: ws.path,
       });
-      await invoke("save_workspace_config", {
-        workspacePath: ws.path,
+      await invoke("save_space_config", {
+        spacePath: ws.path,
         configData: { ...cfg, name: editValue.trim() },
       });
       useWorkspaceStore.setState({
@@ -129,7 +129,7 @@ export function NavSpaces() {
   async function handleNewFolder(ws: { id: string; path: string }) {
     try {
       await invoke<string>("create_folder", {
-        workspace: ws.path,
+        space: ws.path,
         parentPath: null,
         name: m.space_new_folder(),
       });
@@ -185,7 +185,7 @@ export function NavSpaces() {
                     handleRenameSpace={handleRenameSpace}
                     handleNewPage={handleNewPage}
                     handleNewFolder={handleNewFolder}
-                    openWorkspaceSettings={openWorkspaceSettings}
+                    openSpaceSettings={openSpaceSettings}
                     openSpace={openSpace}
                     setDeleteTarget={setDeleteTarget}
                     editRef={editRef}
@@ -250,7 +250,7 @@ interface SpaceRowProps {
   handleRenameSpace: () => void;
   handleNewPage: (ws: { id: string; path: string }) => void;
   handleNewFolder: (ws: { id: string; path: string }) => void;
-  openWorkspaceSettings: (path: string) => void;
+  openSpaceSettings: (path: string) => void;
   openSpace: (id: string) => void;
   setDeleteTarget: (t: { id: string; name: string }) => void;
   editRef: React.RefObject<HTMLInputElement | null>;
@@ -267,7 +267,7 @@ function SpaceRow({
   handleRenameSpace,
   handleNewPage,
   handleNewFolder,
-  openWorkspaceSettings,
+  openSpaceSettings,
   openSpace,
   setDeleteTarget,
   editRef,
@@ -280,7 +280,7 @@ function SpaceRow({
 
   return (
     <Collapsible defaultOpen={isActive}>
-      <WorkspaceGitWatcher workspacePath={ws.path} />
+      <SpaceGitWatcher spacePath={ws.path} />
       <SidebarMenuItem>
         <SidebarMenuButton
           isActive={isActive}
@@ -313,7 +313,7 @@ function SpaceRow({
             <span className="flex-1 truncate">{ws.name}</span>
           )}
           <span className="ml-auto flex items-center">
-            <WorkspaceGitIndicatorIcon workspacePath={ws.path} />
+            <GitIndicatorIcon spacePath={ws.path} />
           </span>
         </SidebarMenuButton>
         {cloning && (
@@ -350,14 +350,14 @@ function SpaceRow({
             {dirty && (
               <>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => commitAllWorkspace(ws.path)}>
+                <DropdownMenuItem onClick={() => commitAllSpace(ws.path)}>
                   <Save className="mr-2 h-4 w-4" />
                   {m.git_save_all()}
                 </DropdownMenuItem>
               </>
             )}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => openWorkspaceSettings(ws.path)}>
+            <DropdownMenuItem onClick={() => openSpaceSettings(ws.path)}>
               <Settings className="mr-2 h-4 w-4" />
               {m.space_settings()}
             </DropdownMenuItem>
@@ -381,10 +381,10 @@ function SpaceRow({
           </DropdownMenuContent>
         </DropdownMenu>
         <CollapsibleContent>
-          <SortableFileTree workspaceId={ws.id} tree={tree}>
+          <SortableFileTree spaceId={ws.id} tree={tree}>
             <SidebarMenuSub>
               {tree.map((node) => (
-                <FileTreeItem key={node.path} node={node} workspaceId={ws.id} />
+                <FileTreeItem key={node.path} node={node} spaceId={ws.id} />
               ))}
             </SidebarMenuSub>
           </SortableFileTree>

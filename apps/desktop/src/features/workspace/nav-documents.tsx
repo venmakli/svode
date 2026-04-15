@@ -52,7 +52,7 @@ export function NavDocuments() {
     if (!activeRootId || !activeRootPath) return;
     try {
       await invoke<string>("create_folder", {
-        workspace: activeRootPath,
+        space: activeRootPath,
         parentPath: null,
         name: m.space_new_folder(),
       });
@@ -85,13 +85,13 @@ export function NavDocuments() {
       </DropdownMenu>
       <SidebarGroupContent>
         <SidebarMenu>
-          <SortableFileTree workspaceId={activeRootId} tree={tree}>
+          <SortableFileTree spaceId={activeRootId} tree={tree}>
             <SidebarMenuSub>
               {tree.map((node) => (
                 <FileTreeItem
                   key={node.path}
                   node={node}
-                  workspaceId={activeRootId}
+                  spaceId={activeRootId}
                 />
               ))}
             </SidebarMenuSub>

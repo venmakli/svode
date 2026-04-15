@@ -3,35 +3,35 @@ import { listen } from "@tauri-apps/api/event";
 import { useGitStore } from "@/stores/git";
 
 /**
- * Per-workspace `workspace:dirty` listener + initial `git_status` fetch.
+ * Per-space `space:dirty` listener + initial `git_status` fetch.
  *
  * Stage-3 triggers for status refresh:
- *  1. Git commands (handled by callers — they pass returned WorkspaceGitStatus
+ *  1. Git commands (handled by callers — they pass returned GitStatus
  *     to `applyStatus` directly).
- *  2. `workspace:dirty` event from file watcher (any file change) → debounced
+ *  2. `space:dirty` event from file watcher (any file change) → debounced
  *     `git_status` call — implemented here.
  *  3. Window `focus` event + `syncOnOpen` — implemented ONCE at the app level
- *     (see `useAppGitFocus`), not per workspace row.
+ *     (see `useAppGitFocus`), not per space row.
  */
-export function useGitWatch(workspacePath: string | null) {
+export function useGitWatch(spacePath: string | null) {
   const debounceRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!workspacePath) return;
+    if (!spacePath) return;
     let unlistenDirty: (() => void) | null = null;
     let cancelled = false;
 
     // Initial status fetch — cheap, no network.
-    useGitStore.getState().refreshStatus(workspacePath);
+    useGitStore.getState().refreshStatus(spacePath);
 
-    listen<{ workspace: string }>("workspace:dirty", (event) => {
+    listen<{ space: string }>("space:dirty", (event) => {
       if (cancelled) return;
-      if (event.payload.workspace !== workspacePath) return;
+      if (event.payload.space !== spacePath) return;
       if (debounceRef.current) {
         window.clearTimeout(debounceRef.current);
       }
       debounceRef.current = window.setTimeout(() => {
-        useGitStore.getState().refreshStatus(workspacePath);
+        useGitStore.getState().refreshStatus(spacePath);
       }, 500);
     }).then((unlisten) => {
       if (cancelled) {
@@ -49,5 +49,5 @@ export function useGitWatch(workspacePath: string | null) {
       }
       if (unlistenDirty) unlistenDirty();
     };
-  }, [workspacePath]);
+  }, [spacePath]);
 }

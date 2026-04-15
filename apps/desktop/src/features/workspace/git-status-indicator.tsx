@@ -3,34 +3,34 @@ import {
   selectFileIndicator,
   selectIndicator,
   useGitStore,
-  type WorkspaceGitIndicator,
+  type GitIndicator,
 } from "@/stores/git";
 
-interface WorkspaceIndicatorProps {
-  workspacePath: string;
+interface SpaceIndicatorProps {
+  spacePath: string;
 }
 
 /**
- * Per-workspace git indicator (●/↻/⚠/✕). Renders nothing for clean state.
+ * Per-space git indicator (●/↻/⚠/✕). Renders nothing for clean state.
  * The cloning state is rendered separately by the sidebar (with a progress bar).
  */
-export function WorkspaceGitIndicatorIcon({ workspacePath }: WorkspaceIndicatorProps) {
-  const state = useGitStore((s) => selectIndicator(s, workspacePath));
+export function GitIndicatorIcon({ spacePath }: SpaceIndicatorProps) {
+  const state = useGitStore((s) => selectIndicator(s, spacePath));
   return <IndicatorIcon state={state} />;
 }
 
 interface FileIndicatorProps {
-  workspacePath: string;
+  spacePath: string;
   filePath: string;
 }
 
-export function FileGitIndicatorIcon({ workspacePath, filePath }: FileIndicatorProps) {
-  const state = useGitStore((s) => selectFileIndicator(s, workspacePath, filePath));
+export function FileGitIndicatorIcon({ spacePath, filePath }: FileIndicatorProps) {
+  const state = useGitStore((s) => selectFileIndicator(s, spacePath, filePath));
   if (state === "clean") return null;
   return <IndicatorIcon state={state} />;
 }
 
-function IndicatorIcon({ state }: { state: WorkspaceGitIndicator | "dirty" | "syncing" | "conflict" }) {
+function IndicatorIcon({ state }: { state: GitIndicator | "dirty" | "syncing" | "conflict" }) {
   switch (state) {
     case "dirty":
       return (

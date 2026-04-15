@@ -14,7 +14,7 @@ const GITIGNORE_TEMPLATE: &str = "# CombAI local files
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WorkspaceGitStatus {
+pub struct GitStatus {
     pub branch: String,
     pub ahead: u32,
     pub behind: u32,
@@ -34,9 +34,9 @@ pub struct FileGitStatus {
 }
 
 /// Get configured remote URL (origin).
-pub async fn get_remote(cli: &GitCli, workspace_dir: &Path) -> Result<Option<String>, AppError> {
+pub async fn get_remote(cli: &GitCli, space_dir: &Path) -> Result<Option<String>, AppError> {
     let out = cli
-        .exec(workspace_dir, &["config", "--get", "remote.origin.url"])
+        .exec(space_dir, &["config", "--get", "remote.origin.url"])
         .await?;
     if out.exit_code != 0 {
         return Ok(None);
@@ -52,19 +52,19 @@ pub async fn get_remote(cli: &GitCli, workspace_dir: &Path) -> Result<Option<Str
 /// Set or add the `origin` remote URL.
 pub async fn set_remote(
     cli: &GitCli,
-    workspace_dir: &Path,
+    space_dir: &Path,
     url: &str,
 ) -> Result<(), AppError> {
     // Check if origin exists
     let exists = cli
-        .exec(workspace_dir, &["remote", "get-url", "origin"])
+        .exec(space_dir, &["remote", "get-url", "origin"])
         .await?;
     let args: Vec<&str> = if exists.exit_code == 0 {
         vec!["remote", "set-url", "origin", url]
     } else {
         vec!["remote", "add", "origin", url]
     };
-    let out = cli.exec(workspace_dir, &args).await?;
+    let out = cli.exec(space_dir, &args).await?;
     if out.exit_code != 0 {
         return Err(AppError::GitCommandFailed(format!(
             "git remote failed: {}",
@@ -75,8 +75,8 @@ pub async fn set_remote(
 }
 
 /// Push current branch silently. Used for app-focus auto-push of unpushed commits.
-pub async fn push(cli: &GitCli, workspace_dir: &Path) -> Result<(), AppError> {
-    let out = cli.exec(workspace_dir, &["push"]).await?;
+pub async fn push(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
+    let out = cli.exec(space_dir, &["push"]).await?;
     if out.exit_code != 0 {
         let stderr = out.stderr.trim();
         if stderr.contains("Authentication")
@@ -97,10 +97,10 @@ pub async fn push(cli: &GitCli, workspace_dir: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Initialize a new git repo in workspace_dir.
-pub async fn init(cli: &GitCli, workspace_dir: &Path) -> Result<(), AppError> {
+/// Initialize a new git repo in space_dir.
+pub async fn init(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
     // git init
-    let out = cli.exec(workspace_dir, &["init"]).await?;
+    let out = cli.exec(space_dir, &["init"]).await?;
     if out.exit_code != 0 {
         return Err(AppError::GitCommandFailed(format!(
             "git init failed: {}",
@@ -109,17 +109,17 @@ pub async fn init(cli: &GitCli, workspace_dir: &Path) -> Result<(), AppError> {
     }
 
     // config core.quotePath false (for unicode filenames)
-    cli.exec(workspace_dir, &["config", "core.quotePath", "false"])
+    cli.exec(space_dir, &["config", "core.quotePath", "false"])
         .await?;
 
     // write .gitignore
-    let gitignore_path = workspace_dir.join(".gitignore");
+    let gitignore_path = space_dir.join(".gitignore");
     if !gitignore_path.exists() {
         tokio::fs::write(&gitignore_path, GITIGNORE_TEMPLATE).await?;
     }
 
     // git add .
-    let out = cli.exec(workspace_dir, &["add", "."]).await?;
+    let out = cli.exec(space_dir, &["add", "."]).await?;
     if out.exit_code != 0 {
         return Err(AppError::GitCommandFailed(format!(
             "git add failed: {}",
@@ -128,19 +128,19 @@ pub async fn init(cli: &GitCli, workspace_dir: &Path) -> Result<(), AppError> {
     }
 
     // initial commit
-    let _ = commit(cli, workspace_dir, "Initialize workspace").await?;
+    let _ = commit(cli, space_dir, "Initialize space").await?;
 
-    tracing::info!("Initialized git repo at {}", workspace_dir.display());
+    tracing::info!("Initialized git repo at {}", space_dir.display());
     Ok(())
 }
 
-/// Get workspace git status by parsing `git status --porcelain=v2 --branch`.
+/// Get space git status by parsing `git status --porcelain=v2 --branch`.
 pub async fn status(
     cli: &GitCli,
-    workspace_dir: &Path,
-) -> Result<WorkspaceGitStatus, AppError> {
+    space_dir: &Path,
+) -> Result<GitStatus, AppError> {
     let out = cli
-        .exec(workspace_dir, &["status", "--porcelain=v2", "--branch"])
+        .exec(space_dir, &["status", "--porcelain=v2", "--branch"])
         .await?;
 
     if out.exit_code != 0 {
@@ -234,7 +234,7 @@ pub async fn status(
         }
     }
 
-    Ok(WorkspaceGitStatus {
+    Ok(GitStatus {
         branch,
         ahead,
         behind,
@@ -249,10 +249,10 @@ pub async fn status(
 /// Stage a specific file.
 pub async fn add(
     cli: &GitCli,
-    workspace_dir: &Path,
+    space_dir: &Path,
     path: &str,
 ) -> Result<(), AppError> {
-    let out = cli.exec(workspace_dir, &["add", path]).await?;
+    let out = cli.exec(space_dir, &["add", path]).await?;
     if out.exit_code != 0 {
         return Err(AppError::GitCommandFailed(format!(
             "git add failed: {}",
@@ -265,9 +265,9 @@ pub async fn add(
 /// Stage all changes.
 pub async fn add_all(
     cli: &GitCli,
-    workspace_dir: &Path,
+    space_dir: &Path,
 ) -> Result<(), AppError> {
-    let out = cli.exec(workspace_dir, &["add", "."]).await?;
+    let out = cli.exec(space_dir, &["add", "."]).await?;
     if out.exit_code != 0 {
         return Err(AppError::GitCommandFailed(format!(
             "git add failed: {}",
@@ -281,10 +281,10 @@ pub async fn add_all(
 /// to commit, `Ok(true)` if a commit was created.
 pub async fn commit(
     cli: &GitCli,
-    workspace_dir: &Path,
+    space_dir: &Path,
     message: &str,
 ) -> Result<bool, AppError> {
-    let out = cli.exec(workspace_dir, &["commit", "-m", message]).await?;
+    let out = cli.exec(space_dir, &["commit", "-m", message]).await?;
     if out.exit_code != 0 {
         let combined = format!("{}{}", out.stdout, out.stderr);
         if combined.contains("nothing to commit")
@@ -305,17 +305,17 @@ pub async fn commit(
 /// Returns `true` if a commit was actually created.
 pub async fn commit_file(
     cli: &GitCli,
-    workspace_dir: &Path,
+    space_dir: &Path,
     file_path: &str,
 ) -> Result<bool, AppError> {
-    add(cli, workspace_dir, file_path).await?;
-    let message = generate_commit_message(cli, workspace_dir).await?;
-    let created = commit(cli, workspace_dir, &message).await?;
+    add(cli, space_dir, file_path).await?;
+    let message = generate_commit_message(cli, space_dir).await?;
+    let created = commit(cli, space_dir, &message).await?;
     if created {
         tracing::info!(
             "Auto-committed file {} in {}",
             file_path,
-            workspace_dir.display()
+            space_dir.display()
         );
     }
     Ok(created)
@@ -324,13 +324,13 @@ pub async fn commit_file(
 /// Stage all changes and auto-commit with a generated message.
 pub async fn commit_all(
     cli: &GitCli,
-    workspace_dir: &Path,
+    space_dir: &Path,
 ) -> Result<bool, AppError> {
-    add_all(cli, workspace_dir).await?;
-    let message = generate_commit_message(cli, workspace_dir).await?;
-    let created = commit(cli, workspace_dir, &message).await?;
+    add_all(cli, space_dir).await?;
+    let message = generate_commit_message(cli, space_dir).await?;
+    let created = commit(cli, space_dir, &message).await?;
     if created {
-        tracing::info!("Auto-committed all in {}", workspace_dir.display());
+        tracing::info!("Auto-committed all in {}", space_dir.display());
     }
     Ok(created)
 }
@@ -338,14 +338,14 @@ pub async fn commit_all(
 /// Generate a commit message based on staged changes.
 pub async fn generate_commit_message(
     cli: &GitCli,
-    workspace_dir: &Path,
+    space_dir: &Path,
 ) -> Result<String, AppError> {
     let out = cli
-        .exec(workspace_dir, &["diff", "--cached", "--stat"])
+        .exec(space_dir, &["diff", "--cached", "--stat"])
         .await?;
 
     if out.stdout.trim().is_empty() {
-        return Ok("Update workspace".to_string());
+        return Ok("Update space".to_string());
     }
 
     let mut added: Vec<String> = Vec::new();
@@ -354,7 +354,7 @@ pub async fn generate_commit_message(
 
     // Also check diff --cached --name-status for accurate categorization
     let name_status = cli
-        .exec(workspace_dir, &["diff", "--cached", "--name-status"])
+        .exec(space_dir, &["diff", "--cached", "--name-status"])
         .await?;
 
     for line in name_status.stdout.lines() {
@@ -381,7 +381,7 @@ pub async fn generate_commit_message(
     let total = added.len() + modified.len() + deleted.len();
 
     if total == 0 {
-        return Ok("Update workspace".to_string());
+        return Ok("Update space".to_string());
     }
 
     if total <= 5 {
@@ -428,11 +428,11 @@ pub async fn generate_commit_message(
 /// Get list of files changed since last pull.
 pub async fn diff_after_pull(
     cli: &GitCli,
-    workspace_dir: &Path,
+    space_dir: &Path,
 ) -> Result<Vec<String>, AppError> {
     let out = cli
         .exec(
-            workspace_dir,
+            space_dir,
             &["diff", "--name-only", "HEAD@{1}", "HEAD"],
         )
         .await?;

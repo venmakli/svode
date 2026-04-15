@@ -6,7 +6,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::agent::claude::{self, ClaudeCodeExecutor};
 use crate::agent::executor::AgentExecutor;
 use crate::agent::types::{
-    load_workspace_agent_config, AgentConfig, AgentEvent, AvailableAgent, ModelOption,
+    load_space_agent_config, AgentConfig, AgentEvent, AvailableAgent, ModelOption,
 };
 use crate::agent::AgentSessions;
 use crate::error::AppError;
@@ -20,14 +20,14 @@ const DEFAULT_TIMEOUT_SECS: u64 = 600;
 pub async fn agent_send(
     app: AppHandle,
     sessions: State<'_, AgentSessions>,
-    workspace_path: String,
+    space_path: String,
     session_id: String,
     message: String,
     config: Option<AgentConfig>,
 ) -> Result<(), AppError> {
-    let workspace_dir = Path::new(&workspace_path);
-    if !workspace_dir.exists() || !workspace_dir.is_dir() {
-        return Err(AppError::PathNotAccessible(workspace_path));
+    let space_dir = Path::new(&space_path);
+    if !space_dir.exists() || !space_dir.is_dir() {
+        return Err(AppError::PathNotAccessible(space_path));
     }
 
     // If there's already a running process for this session, stop it first
@@ -38,16 +38,16 @@ pub async fn agent_send(
 
     let agent_config = config.unwrap_or_default();
 
-    // Load workspace-level agent config (best-effort)
-    let ws_config = load_workspace_agent_config(workspace_dir);
+    // Load space-level agent config (best-effort)
+    let sp_config = load_space_agent_config(space_dir);
 
-    // Resolve CLI path: workspace local.json override → PATH detection
+    // Resolve CLI path: space local.json override → PATH detection
     let executor = ClaudeCodeExecutor;
-    let cli_path_override = ws_config.cli_paths.get(executor.name()).cloned();
+    let cli_path_override = sp_config.cli_paths.get(executor.name()).cloned();
 
     // Spawn the CLI process
     let mut process = executor.spawn(
-        workspace_dir,
+        space_dir,
         &agent_config,
         cli_path_override.as_deref(),
     )?;
@@ -288,14 +288,14 @@ pub async fn agent_list_available() -> Result<Vec<AvailableAgent>, AppError> {
     Ok(agents)
 }
 
-/// List available models for the active agent CLI in a workspace.
+/// List available models for the active agent CLI in a space.
 #[tauri::command]
 pub async fn agent_list_models(
-    workspace_path: String,
+    space_path: String,
 ) -> Result<Vec<ModelOption>, AppError> {
-    let workspace_dir = Path::new(&workspace_path);
-    let ws_config = load_workspace_agent_config(workspace_dir);
-    let active_cli = ws_config.clis.first().map(|s| s.as_str()).unwrap_or("claude");
+    let space_dir = Path::new(&space_path);
+    let sp_config = load_space_agent_config(space_dir);
+    let active_cli = sp_config.clis.first().map(|s| s.as_str()).unwrap_or("claude");
 
     let models = match active_cli {
         "claude" => ClaudeCodeExecutor.available_models(),

@@ -3,7 +3,7 @@ import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 
-import { useWorkspaceStore, selectActiveWorkspacePath } from "@/stores/workspace";
+import { useWorkspaceStore, selectActiveSpacePath } from "@/stores/workspace";
 import { useLayoutStore } from "@/stores/layout";
 
 /**
@@ -47,8 +47,8 @@ export function useUploadFile({ onUploadComplete, onUploadError }: UseUploadFile
   const [isUploading, setIsUploading] = React.useState(false);
 
   async function uploadFile(file: File): Promise<UploadedFile | undefined> {
-    const workspacePath = selectActiveWorkspacePath(useWorkspaceStore.getState());
-    if (!workspacePath) {
+    const spacePath = selectActiveSpacePath(useWorkspaceStore.getState());
+    if (!spacePath) {
       const err = new Error("No active workspace");
       toast.error(err.message);
       onUploadError?.(err);
@@ -73,7 +73,7 @@ export function useUploadFile({ onUploadComplete, onUploadError }: UseUploadFile
       setProgress(50);
 
       const result = await invoke<BackendUploadResult>("upload_asset", {
-        workspacePath,
+        spacePath,
         fileName: file.name,
         bytes,
         documentId: activeDocument,

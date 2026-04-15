@@ -11,7 +11,7 @@ import { WindowHeader } from "./window-header";
 import { GitMissingDialog } from "./git-missing-dialog";
 import { useGitAvailability } from "@/hooks/use-git-availability";
 import { useAppGitFocus } from "@/features/workspace/use-app-git-focus";
-import { WorkspaceGitWatcher } from "@/features/workspace/workspace-git-watcher";
+import { SpaceGitWatcher } from "@/features/workspace/space-git-watcher";
 import { useLayoutStore } from "@/stores/layout";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { EmptyProjectState } from "@/features/workspace/empty-project-state";
@@ -30,7 +30,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { TreeNode } from "@/types/workspace";
+import type { TreeNode } from "@/types/space";
 
 
 /** Look up the title for a path segment from the tree. */
@@ -78,7 +78,7 @@ function buildSegments(
 }
 
 function MainBreadcrumbs() {
-  const { activeDocument, activeDocumentWorkspaceId } = useLayoutStore();
+  const { activeDocument, activeDocumentSpaceId } = useLayoutStore();
   const { spaces, activeSpaceId, fileTrees, openSpace } =
     useWorkspaceStore();
   const { openDocument } = useLayoutStore();
@@ -92,7 +92,7 @@ function MainBreadcrumbs() {
     ? `${activeWorkspace.icon} ${activeWorkspace.name}`
     : "";
 
-  const treeId = activeDocumentWorkspaceId;
+  const treeId = activeDocumentSpaceId;
   const tree = treeId ? fileTrees[treeId] ?? [] : [];
   const segments = buildSegments(activeDocument, tree);
 
@@ -260,7 +260,7 @@ export function MainLayout() {
             <MainContent />
           )}
         </SidebarInset>
-        {activeRootPath && <WorkspaceGitWatcher workspacePath={activeRootPath} />}
+        {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
         <GitMissingDialog open={available === false} onRecheck={recheck} />
       </SidebarProvider>
     </TooltipProvider>

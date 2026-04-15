@@ -2,10 +2,10 @@ use std::path::Path;
 
 use crate::error::AppError;
 
-use super::types::{LocalConfig, WorkspaceConfig};
+use super::types::{LocalConfig, SpaceConfig};
 
-/// Read workspace config from {workspace_path}/.combai/config.json.
-pub fn read_workspace_config(path: &Path) -> Result<WorkspaceConfig, AppError> {
+/// Read space config from {space_path}/.combai/config.json.
+pub fn read_space_config(path: &Path) -> Result<SpaceConfig, AppError> {
     let config_path = path.join(".combai").join("config.json");
     if !config_path.exists() {
         return Err(AppError::FileNotFound(
@@ -16,8 +16,8 @@ pub fn read_workspace_config(path: &Path) -> Result<WorkspaceConfig, AppError> {
     Ok(serde_json::from_str(&data)?)
 }
 
-/// Write workspace config to {workspace_path}/.combai/config.json.
-pub fn write_workspace_config(path: &Path, config: &WorkspaceConfig) -> Result<(), AppError> {
+/// Write space config to {space_path}/.combai/config.json.
+pub fn write_space_config(path: &Path, config: &SpaceConfig) -> Result<(), AppError> {
     let dir = path.join(".combai");
     std::fs::create_dir_all(&dir)?;
     let data = serde_json::to_string_pretty(config)?;
@@ -25,7 +25,7 @@ pub fn write_workspace_config(path: &Path, config: &WorkspaceConfig) -> Result<(
     Ok(())
 }
 
-/// Read local config from {workspace_path}/.combai/local.json.
+/// Read local config from {space_path}/.combai/local.json.
 pub fn read_local_config(path: &Path) -> Result<LocalConfig, AppError> {
     let config_path = path.join(".combai").join("local.json");
     if !config_path.exists() {
@@ -35,7 +35,7 @@ pub fn read_local_config(path: &Path) -> Result<LocalConfig, AppError> {
     Ok(serde_json::from_str(&data)?)
 }
 
-/// Write local config to {workspace_path}/.combai/local.json.
+/// Write local config to {space_path}/.combai/local.json.
 pub fn write_local_config(path: &Path, local: &LocalConfig) -> Result<(), AppError> {
     let dir = path.join(".combai");
     std::fs::create_dir_all(&dir)?;

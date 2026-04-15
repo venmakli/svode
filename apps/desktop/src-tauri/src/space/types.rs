@@ -67,19 +67,19 @@ impl Default for AppSettings {
     }
 }
 
-// --- Workspace Registry (workspaces.json) ---
+// --- Space Registry (spaces.json) ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WorkspaceRegistry {
-    pub workspaces: Vec<WorkspaceRef>,
+pub struct SpaceRegistry {
+    pub spaces: Vec<RegistryEntry>,
     pub last_active: Option<String>,
 }
 
-impl Default for WorkspaceRegistry {
+impl Default for SpaceRegistry {
     fn default() -> Self {
         Self {
-            workspaces: Vec::new(),
+            spaces: Vec::new(),
             last_active: None,
         }
     }
@@ -87,17 +87,17 @@ impl Default for WorkspaceRegistry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WorkspaceRef {
+pub struct RegistryEntry {
     pub id: String,
     pub last_opened: Option<String>,
     pub path: String,
 }
 
-// --- Workspace Config (.combai/config.json) ---
+// --- Space Config (.combai/config.json) ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WorkspaceConfig {
+pub struct SpaceConfig {
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -108,11 +108,11 @@ pub struct WorkspaceConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub defaults: Option<WorkspaceDefaults>,
+    pub defaults: Option<SpaceDefaults>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub git: Option<GitWorkspaceConfig>,
+    pub git: Option<GitSpaceConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assets: Option<AssetsWorkspaceConfig>,
+    pub assets: Option<AssetsSpaceConfig>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -127,7 +127,7 @@ pub enum AssetsStrategy {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AssetsWorkspaceConfig {
+pub struct AssetsSpaceConfig {
     #[serde(default)]
     pub strategy: AssetsStrategy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -146,7 +146,7 @@ pub struct AssetsS3Config {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitWorkspaceConfig {
+pub struct GitSpaceConfig {
     /// Whether ⌘S/⌘⇧S should auto-sync after committing. Default: true.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_sync: Option<bool>,
@@ -180,7 +180,7 @@ pub struct AgentConfig {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WorkspaceDefaults {
+pub struct SpaceDefaults {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentConfig>,
 }
@@ -200,7 +200,7 @@ pub struct LocalConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WorkspaceInfo {
+pub struct SpaceInfo {
     pub id: String,
     pub name: String,
     pub icon: String,

@@ -1,6 +1,6 @@
-// --- Unified workspace model ---
+// --- Unified space model ---
 
-export interface Workspace {
+export interface SpaceInfo {
   id: string;
   name: string;
   icon: string;
@@ -10,18 +10,18 @@ export interface Workspace {
   lastOpened: string | null;
 }
 
-export interface WorkspaceConfig {
+export interface SpaceConfig {
   name: string;
   description: string;
   icon: string;
   spaces?: SpaceRef[];
   agent?: AgentConfig;
-  defaults?: WorkspaceDefaults;
-  git?: GitWorkspaceConfig;
-  assets?: AssetsWorkspaceConfig;
+  defaults?: SpaceDefaults;
+  git?: GitSpaceConfig;
+  assets?: AssetsSpaceConfig;
 }
 
-export interface GitWorkspaceConfig {
+export interface GitSpaceConfig {
   /** Auto pull+push after each commit. Default: true. */
   autoSync?: boolean;
 }
@@ -34,7 +34,7 @@ export interface AssetsS3Config {
   region: string;
 }
 
-export interface AssetsWorkspaceConfig {
+export interface AssetsSpaceConfig {
   strategy: AssetsStrategy;
   s3?: AssetsS3Config;
 }
@@ -53,7 +53,7 @@ export interface AgentConfig {
   maxTimeout?: number;
 }
 
-export interface WorkspaceDefaults {
+export interface SpaceDefaults {
   agent?: AgentConfig;
 }
 

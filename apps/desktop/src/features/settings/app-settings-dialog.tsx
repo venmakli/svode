@@ -43,7 +43,7 @@ import { Badge } from "@/components/ui/badge";
 import { useTheme } from "@/components/ui/theme-provider";
 import { ExternalLink, Keyboard, Paintbrush, RefreshCw, Terminal, User } from "lucide-react";
 import { invalidateAppSettings } from "@/hooks/use-app-settings";
-import type { AppSettings, AvailableAgent } from "@/types/workspace";
+import type { AppSettings, AvailableAgent } from "@/types/space";
 
 const AVATAR_COLORS = [
   "#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6",
@@ -321,18 +321,18 @@ export function AppSettingsDialog({ open, onOpenChange }: AppSettingsDialogProps
                                 {status === "authorized" && (
                                   <Badge variant="secondary" className="text-xs font-normal">
                                     <span className="text-green-600 mr-1">&#10003;</span>
-                                    {m.settings_workspace_cli_found_auth({ version: agent.version || "unknown" })}
+                                    {m.settings_space_cli_found_auth({ version: agent.version || "unknown" })}
                                   </Badge>
                                 )}
                                 {status === "unauthorized" && (
                                   <div className="space-y-1">
                                     <Badge variant="secondary" className="text-xs font-normal">
                                       <span className="text-yellow-600 mr-1">&#9888;</span>
-                                      {m.settings_workspace_cli_found_noauth({ version: agent.version || "unknown" })}
+                                      {m.settings_space_cli_found_noauth({ version: agent.version || "unknown" })}
                                     </Badge>
                                     {CLI_AUTH_COMMANDS[agent.name] && (
                                       <p className="text-xs text-muted-foreground">
-                                        {m.settings_workspace_cli_noauth_hint({ command: CLI_AUTH_COMMANDS[agent.name] })}
+                                        {m.settings_space_cli_noauth_hint({ command: CLI_AUTH_COMMANDS[agent.name] })}
                                       </p>
                                     )}
                                   </div>
@@ -341,7 +341,7 @@ export function AppSettingsDialog({ open, onOpenChange }: AppSettingsDialogProps
                                   <div className="flex items-center gap-2">
                                     <Badge variant="destructive" className="text-xs font-normal">
                                       <span className="mr-1">&#10005;</span>
-                                      {m.settings_workspace_cli_not_found()}
+                                      {m.settings_space_cli_not_found()}
                                     </Badge>
                                     <a
                                       href={agent.docsUrl}
@@ -349,7 +349,7 @@ export function AppSettingsDialog({ open, onOpenChange }: AppSettingsDialogProps
                                       rel="noopener noreferrer"
                                       className="text-xs text-primary hover:underline inline-flex items-center gap-1"
                                     >
-                                      {m.settings_workspace_cli_install()}
+                                      {m.settings_space_cli_install()}
                                       <ExternalLink className="h-3 w-3" />
                                     </a>
                                   </div>

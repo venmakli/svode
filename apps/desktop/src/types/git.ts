@@ -11,7 +11,7 @@ export interface FileGitStatus {
   state: FileGitState;
 }
 
-export interface WorkspaceGitStatus {
+export interface GitStatus {
   branch: string;
   ahead: number;
   behind: number;
@@ -29,7 +29,7 @@ export type SyncResult =
   | { type: "AuthRequired" };
 
 export interface CloneProgress {
-  workspacePath: string;
+  spacePath: string;
   phase: string;
   percent: number;
 }

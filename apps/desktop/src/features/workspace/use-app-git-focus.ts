@@ -1,23 +1,23 @@
 import { useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useGitStore } from "@/stores/git";
-import { useWorkspaceStore, selectActiveWorkspacePath } from "@/stores/workspace";
-import type { WorkspaceGitStatus } from "@/types/git";
+import { useWorkspaceStore, selectActiveSpacePath } from "@/stores/workspace";
+import type { GitStatus } from "@/types/git";
 import { syncOnOpen } from "./git-actions";
 
 /**
- * App-level git hooks that run once for the currently-active workspace:
- *  - `syncOnOpen` on workspace switch (silent pull+push if remote configured)
+ * App-level git hooks that run once for the currently-active space:
+ *  - `syncOnOpen` on space switch (silent pull+push if remote configured)
  *  - window `focus` → `git_status` + auto-push if `ahead > 0`
  *
- * Hoisted here so sidebars rendering N workspace rows don't multiply the
+ * Hoisted here so sidebars rendering N space rows don't multiply the
  * number of concurrent `git_sync`/`git_push` calls on startup and focus.
  */
 export function useAppGitFocus() {
-  const activePath = useWorkspaceStore((s) => selectActiveWorkspacePath(s));
+  const activePath = useWorkspaceStore((s) => selectActiveSpacePath(s));
   const lastSynced = useRef<string | null>(null);
 
-  // Silent sync-on-open for the active workspace only.
+  // Silent sync-on-open for the active space only.
   useEffect(() => {
     if (!activePath) return;
     if (lastSynced.current === activePath) return;
@@ -26,20 +26,20 @@ export function useAppGitFocus() {
   }, [activePath]);
 
   // Single window-focus listener that refreshes status for the active
-  // workspace and auto-pushes any unpushed commits.
+  // space and auto-pushes any unpushed commits.
   useEffect(() => {
     const onFocus = async () => {
-      const path = selectActiveWorkspacePath(useWorkspaceStore.getState());
+      const path = selectActiveSpacePath(useWorkspaceStore.getState());
       if (!path) return;
       try {
-        const status = await invoke<WorkspaceGitStatus>("git_status", {
-          workspacePath: path,
+        const status = await invoke<GitStatus>("git_status", {
+          spacePath: path,
         });
         useGitStore.getState().applyStatus(path, status);
         if (status.ahead > 0 && status.tracking) {
           try {
-            const pushed = await invoke<WorkspaceGitStatus>("git_push", {
-              workspacePath: path,
+            const pushed = await invoke<GitStatus>("git_push", {
+              spacePath: path,
             });
             useGitStore.getState().applyStatus(path, pushed);
           } catch (err) {

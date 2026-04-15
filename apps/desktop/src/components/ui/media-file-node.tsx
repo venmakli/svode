@@ -14,7 +14,7 @@ import { Caption, CaptionTextarea } from './caption';
 import { useResolvedAssetUrl } from '@/hooks/use-resolved-asset-url';
 import { getErrorMessage } from '@/hooks/use-upload-file';
 import {
-  selectActiveWorkspacePath,
+  selectActiveSpacePath,
   useWorkspaceStore,
 } from '@/stores/workspace';
 
@@ -40,12 +40,12 @@ export const FileElement = withHOC(
           }
           return;
         }
-        const workspacePath = selectActiveWorkspacePath(
+        const spacePath = selectActiveSpacePath(
           useWorkspaceStore.getState()
         );
-        if (!workspacePath) return;
+        if (!spacePath) return;
         const rel = unsafeUrl.replace(/^\.\//, '');
-        const absolute = `${workspacePath.replace(/\\/g, '/').replace(/\/$/, '')}/${rel}`;
+        const absolute = `${spacePath.replace(/\\/g, '/').replace(/\/$/, '')}/${rel}`;
         try {
           await openPath(absolute);
         } catch (err) {

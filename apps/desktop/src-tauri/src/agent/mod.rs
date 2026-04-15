@@ -17,7 +17,7 @@ pub struct AgentProcess {
     pub child: Child,
     pub session_id: String,
     #[allow(dead_code)]
-    pub workspace_dir: String,
+    pub space_dir: String,
     pub stdin: Option<tokio::process::ChildStdin>,
 }
 

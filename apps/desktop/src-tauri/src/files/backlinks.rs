@@ -110,15 +110,15 @@ impl BacklinkIndex {
         *self.built.lock().unwrap()
     }
 
-    /// Build index by scanning all .md files under workspace_path.
-    pub fn build(&self, workspace_path: &Path) -> Result<(), AppError> {
+    /// Build index by scanning all .md files under space_path.
+    pub fn build(&self, space_path: &Path) -> Result<(), AppError> {
         let mut index: HashMap<String, Vec<(String, Vec<LinkSpan>)>> = HashMap::new();
 
-        let md_files = collect_md_files(workspace_path)?;
+        let md_files = collect_md_files(space_path)?;
 
         for file_path in &md_files {
             let rel_path = file_path
-                .strip_prefix(workspace_path)
+                .strip_prefix(space_path)
                 .unwrap_or(file_path)
                 .to_string_lossy()
                 .to_string();
@@ -151,13 +151,13 @@ impl BacklinkIndex {
     /// Re-index a single file. Removes old entries for this source, then re-parses.
     pub fn update_file(
         &self,
-        workspace_path: &Path,
+        space_path: &Path,
         file_rel_path: &str,
     ) -> Result<(), AppError> {
         // First remove old entries where this file is the source
         self.remove_file(file_rel_path);
 
-        let abs_path = workspace_path.join(file_rel_path);
+        let abs_path = space_path.join(file_rel_path);
         if !abs_path.exists() {
             return Ok(());
         }
@@ -213,7 +213,7 @@ impl BacklinkIndex {
     /// Rewrites files on disk, updates the index. Returns list of modified file paths.
     pub fn update_links_on_rename(
         &self,
-        workspace_path: &Path,
+        space_path: &Path,
         old_path: &str,
         new_path: &str,
     ) -> Result<Vec<String>, AppError> {
@@ -230,7 +230,7 @@ impl BacklinkIndex {
         };
 
         for (source_path, _spans) in &sources {
-            let abs_source = workspace_path.join(source_path);
+            let abs_source = space_path.join(source_path);
             if !abs_source.exists() {
                 continue;
             }
@@ -267,7 +267,7 @@ impl BacklinkIndex {
 
         // Re-index modified files to get correct spans
         for source_path in &modified_files {
-            self.update_file(workspace_path, source_path)?;
+            self.update_file(space_path, source_path)?;
         }
 
         Ok(modified_files)
@@ -395,8 +395,8 @@ pub struct LinkValidation {
 
 /// Validate all internal (.md) links in a document.
 /// Returns a list of {url, exists} for each link found.
-pub fn validate_links(workspace_path: &Path, doc_rel_path: &str) -> Result<Vec<LinkValidation>, AppError> {
-    let abs_path = workspace_path.join(doc_rel_path);
+pub fn validate_links(space_path: &Path, doc_rel_path: &str) -> Result<Vec<LinkValidation>, AppError> {
+    let abs_path = space_path.join(doc_rel_path);
     if !abs_path.exists() {
         return Ok(Vec::new());
     }
@@ -412,7 +412,7 @@ pub fn validate_links(workspace_path: &Path, doc_rel_path: &str) -> Result<Vec<L
         if !seen.insert(resolved.clone()) {
             continue;
         }
-        let target_abs = workspace_path.join(&resolved);
+        let target_abs = space_path.join(&resolved);
         results.push(LinkValidation {
             url: resolved,
             exists: target_abs.exists(),

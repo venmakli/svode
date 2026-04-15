@@ -11,7 +11,7 @@ import { PlateElement, withHOC } from 'platejs/react';
 import { cn } from '@/lib/utils';
 import { resolveAssetUrl } from '@/hooks/use-resolved-asset-url';
 import {
-  selectActiveWorkspacePath,
+  selectActiveSpacePath,
   useWorkspaceStore,
 } from '@/stores/workspace';
 
@@ -28,7 +28,7 @@ export const ImageElement = withHOC(
   function ImageElement(props: PlateElementProps<TImageElement>) {
     const { align = 'center', focused, readOnly, selected } = useMediaState();
     const width = useResizableValue('width');
-    const workspacePath = useWorkspaceStore(selectActiveWorkspacePath);
+    const spacePath = useWorkspaceStore(selectActiveSpacePath);
 
     const { isDragging, handleRef } = useDraggable({
       element: props.element,
@@ -60,7 +60,7 @@ export const ImageElement = withHOC(
                 alt={props.attributes.alt as string | undefined}
                 setProps={({ src, ...rest }) => ({
                   ...rest,
-                  src: resolveAssetUrl(src, workspacePath) ?? src,
+                  src: resolveAssetUrl(src, spacePath) ?? src,
                 })}
               />
               <ResizeHandle

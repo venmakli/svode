@@ -11,12 +11,12 @@ import * as m from "@/paraglide/messages.js";
 
 interface FileEvent {
   path: string;
-  workspace: string;
+  space: string;
 }
 
 interface UseFileWatcherOptions {
   editor: PlateEditor | null;
-  workspacePath: string;
+  spacePath: string;
   activeDocument: string | null;
   onConflict: (path: string) => void;
   justSavedRef: React.RefObject<boolean>;
@@ -25,7 +25,7 @@ interface UseFileWatcherOptions {
 
 export function useFileWatcher({
   editor,
-  workspacePath,
+  spacePath,
   activeDocument,
   onConflict,
   justSavedRef,
@@ -46,24 +46,24 @@ export function useFileWatcher({
     unsavedRef.current = unsavedChanges;
   }, [unsavedChanges]);
 
-  // Watch/unwatch workspace
+  // Watch/unwatch space
   useEffect(() => {
-    if (!workspacePath) return;
+    if (!spacePath) return;
 
-    invoke("watch_workspace", { workspace: workspacePath }).catch((err) =>
-      console.error("Failed to watch workspace:", err),
+    invoke("watch_space", { space: spacePath }).catch((err) =>
+      console.error("Failed to watch space:", err),
     );
 
     return () => {
-      invoke("unwatch_workspace", { workspace: workspacePath }).catch(
-        (err) => console.error("Failed to unwatch workspace:", err),
+      invoke("unwatch_space", { space: spacePath }).catch(
+        (err) => console.error("Failed to unwatch space:", err),
       );
     };
-  }, [workspacePath]);
+  }, [spacePath]);
 
   // Listen to file events
   useEffect(() => {
-    if (!workspacePath) return;
+    if (!spacePath) return;
 
     const unlisteners: Array<() => void> = [];
 
@@ -95,7 +95,7 @@ export function useFileWatcher({
             body: string;
             path: string;
           }>("read_entry", {
-            workspace: workspacePath,
+            space: spacePath,
             path: changedPath,
           })
             .then((entry) => {
@@ -133,7 +133,7 @@ export function useFileWatcher({
     return () => {
       unlisteners.forEach((fn) => fn());
     };
-  }, [editor, workspacePath, onConflict, markAiModified, closeDocument, refreshTree]);
+  }, [editor, spacePath, onConflict, markAiModified, closeDocument, refreshTree]);
 
   // Clear AI modified flag when opening a document
   useEffect(() => {

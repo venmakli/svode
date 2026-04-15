@@ -41,7 +41,7 @@ import * as m from "@/paraglide/messages.js";
 export function AppSidebar() {
   const navigate = useNavigate();
   const {
-    rootWorkspaces,
+    rootSpaces,
     activeRootId,
     activeRootName,
     activeRootIcon,
@@ -50,7 +50,7 @@ export function AppSidebar() {
     deleteRoot,
     goHome,
   } = useWorkspaceStore();
-  const { openAppSettings, openWorkspaceSettings } = useLayoutStore();
+  const { openAppSettings, openSpaceSettings } = useLayoutStore();
   const appSettings = useAppSettings();
 
   const [createWsOpen, setCreateWsOpen] = useState(false);
@@ -100,7 +100,7 @@ export function AppSidebar() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="min-w-[var(--radix-dropdown-menu-trigger-width)]">
                 {activeRootPath && (
-                  <DropdownMenuItem onClick={() => openWorkspaceSettings(activeRootPath)}>
+                  <DropdownMenuItem onClick={() => openSpaceSettings(activeRootPath)}>
                     <Settings className="mr-2 h-4 w-4" />
                     {m.sidebar_project_settings()}
                   </DropdownMenuItem>
@@ -112,7 +112,7 @@ export function AppSidebar() {
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuSeparator />
-                {rootWorkspaces.map((w) => (
+                {rootSpaces.map((w) => (
                   <DropdownMenuItem
                     key={w.id}
                     onClick={() => handleSwitchProject(w.id)}

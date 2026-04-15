@@ -10,8 +10,8 @@ use super::strategy::{self, ApplyStrategyResult};
 use crate::error::AppError;
 use crate::git::GitState;
 use crate::index::IndexState;
-use crate::workspace::config::{read_workspace_config, write_workspace_config};
-use crate::workspace::types::{AssetsS3Config, AssetsStrategy, AssetsWorkspaceConfig};
+use crate::space::config::{read_space_config, write_space_config};
+use crate::space::types::{AssetsS3Config, AssetsSpaceConfig, AssetsStrategy};
 
 /// File data returned to the frontend after reading a user-selected path.
 /// Used to construct a `File` object on the JS side so Plate's media
@@ -60,21 +60,21 @@ pub async fn read_file_for_upload(path: String) -> Result<LocalFileData, AppErro
 
 #[tauri::command]
 pub async fn upload_asset(
-    workspace_path: String,
+    space_path: String,
     file_name: String,
     bytes: Vec<u8>,
     document_id: Option<String>,
     git_state: State<'_, GitState>,
     index_state: State<'_, IndexState>,
 ) -> Result<UploadResult, AppError> {
-    let workspace_dir = Path::new(&workspace_path);
+    let space_dir = Path::new(&space_path);
 
-    let config = read_workspace_config(workspace_dir)?;
-    let pool = index_state.get_or_create(&workspace_path).await?;
+    let config = read_space_config(space_dir)?;
+    let pool = index_state.get_or_create(&space_path).await?;
 
     let result = assets::upload(
         &pool,
-        workspace_dir,
+        space_dir,
         &bytes,
         &file_name,
         document_id.as_deref(),
@@ -83,7 +83,7 @@ pub async fn upload_asset(
 
     strategy::stage_new_asset(
         &git_state,
-        workspace_dir,
+        space_dir,
         config.assets.as_ref(),
         &result.asset_path,
     )
@@ -94,19 +94,19 @@ pub async fn upload_asset(
 
 #[tauri::command]
 pub async fn list_assets(
-    workspace_path: String,
+    space_path: String,
     index_state: State<'_, IndexState>,
 ) -> Result<Vec<Asset>, AppError> {
-    let pool = index_state.get_or_create(&workspace_path).await?;
+    let pool = index_state.get_or_create(&space_path).await?;
     assets::list(&pool).await
 }
 
 #[tauri::command]
 pub async fn get_assets_config(
-    workspace_path: String,
-) -> Result<AssetsWorkspaceConfig, AppError> {
-    let workspace_dir = Path::new(&workspace_path);
-    let config = read_workspace_config(workspace_dir)?;
+    space_path: String,
+) -> Result<AssetsSpaceConfig, AppError> {
+    let space_dir = Path::new(&space_path);
+    let config = read_space_config(space_dir)?;
     Ok(config.assets.unwrap_or_default())
 }
 
@@ -124,15 +124,15 @@ pub struct S3CredentialInput {
 #[tauri::command]
 pub async fn set_assets_strategy(
     app: AppHandle,
-    workspace_path: String,
+    space_path: String,
     strategy: AssetsStrategy,
     s3_config: Option<AssetsS3Config>,
     s3_credentials: Option<S3CredentialInput>,
     git_state: State<'_, GitState>,
 ) -> Result<ApplyStrategyResult, AppError> {
-    let workspace_dir = Path::new(&workspace_path);
+    let space_dir = Path::new(&space_path);
 
-    let mut config = read_workspace_config(workspace_dir)?;
+    let mut config = read_space_config(space_dir)?;
 
     // For LfsS3 we need to (1) stash credentials in keychain and (2) resolve
     // the bundled lfs-dal binary. Both happen *before* apply_strategy so any
@@ -159,7 +159,7 @@ pub async fn set_assets_strategy(
 
     let result = super::strategy::apply_strategy(
         &git_state,
-        workspace_dir,
+        space_dir,
         strategy,
         s3_config.as_ref(),
         lfs_dal_path.as_deref(),
@@ -178,23 +178,23 @@ pub async fn set_assets_strategy(
         }
     }
 
-    config.assets = Some(AssetsWorkspaceConfig {
+    config.assets = Some(AssetsSpaceConfig {
         strategy,
         s3: s3_config,
     });
-    write_workspace_config(workspace_dir, &config)?;
+    write_space_config(space_dir, &config)?;
     Ok(result)
 }
 
-/// Count the assets registered in this workspace's SQLite index. Used by the
+/// Count the assets registered in this space's SQLite index. Used by the
 /// storage confirmation dialog to warn users that existing assets will NOT be
 /// automatically migrated on strategy switch.
 #[tauri::command]
 pub async fn count_assets(
-    workspace_path: String,
+    space_path: String,
     index_state: State<'_, IndexState>,
 ) -> Result<i64, AppError> {
-    let pool = index_state.get_or_create(&workspace_path).await?;
+    let pool = index_state.get_or_create(&space_path).await?;
     let row = sqlx::query("SELECT COUNT(*) as n FROM assets")
         .fetch_one(&pool)
         .await?;
@@ -213,12 +213,12 @@ pub async fn check_s3_connection(
 }
 
 /// Tell the frontend whether the keychain currently holds credentials for
-/// the workspace's saved S3 config — used to render a "credentials saved"
+/// the space's saved S3 config — used to render a "credentials saved"
 /// badge instead of leaving the secret fields looking blank.
 #[tauri::command]
-pub async fn has_s3_credentials(workspace_path: String) -> Result<bool, AppError> {
-    let workspace_dir = Path::new(&workspace_path);
-    let cfg = read_workspace_config(workspace_dir)?;
+pub async fn has_s3_credentials(space_path: String) -> Result<bool, AppError> {
+    let space_dir = Path::new(&space_path);
+    let cfg = read_space_config(space_dir)?;
     let Some(s3_cfg) = cfg.assets.and_then(|a| a.s3) else {
         return Ok(false);
     };

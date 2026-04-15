@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { AppSettings } from "@/types/workspace";
+import type { AppSettings } from "@/types/space";
 
 let cached: AppSettings | null = null;
 

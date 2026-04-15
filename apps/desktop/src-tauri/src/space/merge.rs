@@ -1,9 +1,9 @@
-use super::types::{AgentConfig, WorkspaceConfig, WorkspaceDefaults};
+use super::types::{AgentConfig, SpaceConfig, SpaceDefaults};
 
-/// Merge parent defaults into child workspace config.
+/// Merge parent defaults into child space config.
 /// Child values take priority; falls back to parent defaults.
 #[allow(dead_code)]
-pub fn merge_with_defaults(child: &WorkspaceConfig, defaults: &WorkspaceDefaults) -> WorkspaceConfig {
+pub fn merge_with_defaults(child: &SpaceConfig, defaults: &SpaceDefaults) -> SpaceConfig {
     let merged_agent = match (&child.agent, &defaults.agent) {
         (Some(child_agent), Some(default_agent)) => Some(AgentConfig {
             clis: child_agent.clis.clone().or_else(|| default_agent.clis.clone()),
@@ -23,7 +23,7 @@ pub fn merge_with_defaults(child: &WorkspaceConfig, defaults: &WorkspaceDefaults
         (None, None) => None,
     };
 
-    WorkspaceConfig {
+    SpaceConfig {
         name: child.name.clone(),
         description: child.description.clone(),
         icon: child.icon.clone(),

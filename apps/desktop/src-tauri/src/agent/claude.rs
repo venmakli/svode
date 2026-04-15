@@ -15,7 +15,7 @@ pub struct ClaudeCodeExecutor;
 impl AgentExecutor for ClaudeCodeExecutor {
     fn spawn(
         &self,
-        workspace_dir: &Path,
+        space_dir: &Path,
         config: &AgentConfig,
         cli_path: Option<&Path>,
     ) -> Result<AgentProcess, AppError> {
@@ -26,7 +26,7 @@ impl AgentExecutor for ClaudeCodeExecutor {
             })?,
         };
 
-        let mut cmd = build_command(workspace_dir, config, &resolved_path);
+        let mut cmd = build_command(space_dir, config, &resolved_path);
         let mut child = cmd.spawn().map_err(|e| {
             AppError::AgentSpawnFailed(e.to_string())
         })?;
@@ -36,7 +36,7 @@ impl AgentExecutor for ClaudeCodeExecutor {
         Ok(AgentProcess {
             child,
             session_id: String::new(),
-            workspace_dir: workspace_dir.to_string_lossy().to_string(),
+            space_dir: space_dir.to_string_lossy().to_string(),
             stdin,
         })
     }
@@ -108,7 +108,7 @@ fn detect_cli() -> Option<String> {
 }
 
 /// Build the CLI command with appropriate flags.
-fn build_command(workspace_dir: &Path, config: &AgentConfig, cli_path: &str) -> Command {
+fn build_command(space_dir: &Path, config: &AgentConfig, cli_path: &str) -> Command {
     let mut cmd = Command::new(cli_path);
     cmd.arg("--print")
         .arg("--verbose")
@@ -118,7 +118,7 @@ fn build_command(workspace_dir: &Path, config: &AgentConfig, cli_path: &str) -> 
         .arg("stream-json")
         .arg("--include-partial-messages")
         .arg("--permission-prompt-tool=stdio")
-        .current_dir(workspace_dir)
+        .current_dir(space_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

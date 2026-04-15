@@ -1,34 +1,34 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import type { WorkspaceGitStatus } from "@/types/git";
+import type { GitStatus } from "@/types/git";
 
 /**
- * Per-workspace git state.
+ * Per-space git state.
  *
  * Sources of truth:
- * - `statuses` is the latest `git status` snapshot per workspace path.
- * - `syncing` flags workspaces in the middle of a pull/push.
+ * - `statuses` is the latest `git status` snapshot per space path.
+ * - `syncing` flags spaces in the middle of a pull/push.
  * - `cloning` tracks in-progress `git clone` operations and their percent.
  * - `syncError` is set when sync fails (auth/network) → indicator goes to `✕`.
  */
 interface GitState {
-  statuses: Record<string, WorkspaceGitStatus>;
+  statuses: Record<string, GitStatus>;
   syncing: Record<string, boolean>;
   syncError: Record<string, string>;
   cloning: Record<string, { phase: string; percent: number; error?: string }>;
 
   /** Apply a status returned by a git IPC command. */
-  applyStatus: (workspacePath: string, status: WorkspaceGitStatus) => void;
+  applyStatus: (spacePath: string, status: GitStatus) => void;
   /** Fetch fresh status via `git_status`. */
-  refreshStatus: (workspacePath: string) => Promise<void>;
-  /** Clear local state for a removed workspace. */
-  clear: (workspacePath: string) => void;
+  refreshStatus: (spacePath: string) => Promise<void>;
+  /** Clear local state for a removed space. */
+  clear: (spacePath: string) => void;
 
-  setSyncing: (workspacePath: string, syncing: boolean) => void;
-  setSyncError: (workspacePath: string, error: string | null) => void;
+  setSyncing: (spacePath: string, syncing: boolean) => void;
+  setSyncError: (spacePath: string, error: string | null) => void;
 
   setCloning: (
-    workspacePath: string,
+    spacePath: string,
     progress: { phase: string; percent: number; error?: string } | null,
   ) => void;
 }
@@ -39,61 +39,61 @@ export const useGitStore = create<GitState>((set) => ({
   syncError: {},
   cloning: {},
 
-  applyStatus: (workspacePath, status) =>
+  applyStatus: (spacePath, status) =>
     set((s) => ({
-      statuses: { ...s.statuses, [workspacePath]: status },
+      statuses: { ...s.statuses, [spacePath]: status },
     })),
 
-  refreshStatus: async (workspacePath) => {
+  refreshStatus: async (spacePath) => {
     try {
-      const status = await invoke<WorkspaceGitStatus>("git_status", {
-        workspacePath,
+      const status = await invoke<GitStatus>("git_status", {
+        spacePath,
       });
       set((s) => ({
-        statuses: { ...s.statuses, [workspacePath]: status },
+        statuses: { ...s.statuses, [spacePath]: status },
       }));
     } catch (err) {
-      // Workspace may not have git initialized yet — leave previous status alone
-      console.debug("git_status failed for", workspacePath, err);
+      // Space may not have git initialized yet — leave previous status alone
+      console.debug("git_status failed for", spacePath, err);
     }
   },
 
-  clear: (workspacePath) =>
+  clear: (spacePath) =>
     set((s) => {
-      const { [workspacePath]: _rmStatus, ...statuses } = s.statuses;
-      const { [workspacePath]: _rmSync, ...syncing } = s.syncing;
-      const { [workspacePath]: _rmError, ...syncError } = s.syncError;
-      const { [workspacePath]: _rmClone, ...cloning } = s.cloning;
+      const { [spacePath]: _rmStatus, ...statuses } = s.statuses;
+      const { [spacePath]: _rmSync, ...syncing } = s.syncing;
+      const { [spacePath]: _rmError, ...syncError } = s.syncError;
+      const { [spacePath]: _rmClone, ...cloning } = s.cloning;
       return { statuses, syncing, syncError, cloning };
     }),
 
-  setSyncing: (workspacePath, syncing) =>
+  setSyncing: (spacePath, syncing) =>
     set((s) => {
       const next = { ...s.syncing };
-      if (syncing) next[workspacePath] = true;
-      else delete next[workspacePath];
+      if (syncing) next[spacePath] = true;
+      else delete next[spacePath];
       return { syncing: next };
     }),
 
-  setSyncError: (workspacePath, error) =>
+  setSyncError: (spacePath, error) =>
     set((s) => {
       const next = { ...s.syncError };
-      if (error) next[workspacePath] = error;
-      else delete next[workspacePath];
+      if (error) next[spacePath] = error;
+      else delete next[spacePath];
       return { syncError: next };
     }),
 
-  setCloning: (workspacePath, progress) =>
+  setCloning: (spacePath, progress) =>
     set((s) => {
       const next = { ...s.cloning };
-      if (progress) next[workspacePath] = progress;
-      else delete next[workspacePath];
+      if (progress) next[spacePath] = progress;
+      else delete next[spacePath];
       return { cloning: next };
     }),
 }));
 
 /** Convenience derived selectors. */
-export type WorkspaceGitIndicator =
+export type GitIndicator =
   | "clean"
   | "dirty"
   | "syncing"
@@ -103,30 +103,30 @@ export type WorkspaceGitIndicator =
 
 export function selectIndicator(
   state: GitState,
-  workspacePath: string,
-): WorkspaceGitIndicator {
-  const cloning = state.cloning[workspacePath];
+  spacePath: string,
+): GitIndicator {
+  const cloning = state.cloning[spacePath];
   // A failed clone leaves `cloning.error` populated until the user dismisses
   // it — show `error` (✕) rather than keeping the spinner.
   if (cloning) return cloning.error ? "error" : "cloning";
-  if (state.syncError[workspacePath]) return "error";
-  const status = state.statuses[workspacePath];
+  if (state.syncError[spacePath]) return "error";
+  const status = state.statuses[spacePath];
   if (status?.hasConflicts) return "conflict";
-  if (state.syncing[workspacePath]) return "syncing";
+  if (state.syncing[spacePath]) return "syncing";
   if (status && (status.hasStaged || status.hasUnstaged)) return "dirty";
   return "clean";
 }
 
 export function selectFileIndicator(
   state: GitState,
-  workspacePath: string,
+  spacePath: string,
   filePath: string,
 ): "clean" | "dirty" | "conflict" | "syncing" {
-  const status = state.statuses[workspacePath];
+  const status = state.statuses[spacePath];
   if (!status) return "clean";
   const file = status.files.find((f) => f.path === filePath);
   if (!file) return "clean";
   if (file.state === "conflict") return "conflict";
-  if (state.syncing[workspacePath]) return "syncing";
+  if (state.syncing[spacePath]) return "syncing";
   return "dirty";
 }

@@ -8,10 +8,10 @@ use crate::error::AppError;
 
 /// Trait abstracting over different agent CLI backends (Claude Code, etc.).
 pub trait AgentExecutor: Send + Sync {
-    /// Spawn CLI process in workspace directory.
+    /// Spawn CLI process in space directory.
     fn spawn(
         &self,
-        workspace_dir: &Path,
+        space_dir: &Path,
         config: &AgentConfig,
         cli_path: Option<&Path>,
     ) -> Result<AgentProcess, AppError>;

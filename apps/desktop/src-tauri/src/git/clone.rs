@@ -12,7 +12,7 @@ use crate::AppError;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloneProgress {
-    pub workspace_path: String,
+    pub space_path: String,
     pub phase: String,
     pub percent: u32,
 }
@@ -50,7 +50,7 @@ pub async fn clone_with_progress(
         .take()
         .ok_or_else(|| AppError::GitCommandFailed("Missing stderr".into()))?;
 
-    let workspace_path = target_str.to_string();
+    let space_path = target_str.to_string();
     let app_clone = app.clone();
     let parser = tokio::spawn(async move {
         // Byte-level loop: git --progress writes in-place updates terminated
@@ -77,7 +77,7 @@ pub async fn clone_with_progress(
                             let _ = app_clone.emit(
                                 "clone:progress",
                                 CloneProgress {
-                                    workspace_path: workspace_path.clone(),
+                                    space_path: space_path.clone(),
                                     phase,
                                     percent,
                                 },

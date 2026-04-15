@@ -33,7 +33,7 @@ import { ChevronRight, Ellipsis, FileText, FilePlus, FolderOpen, FolderPlus, Gri
 import { useLayoutStore } from "@/stores/layout";
 import { useEditorStore } from "@/stores/editor";
 import { useWorkspaceStore } from "@/stores/workspace";
-import type { TreeNode } from "@/types/workspace";
+import type { TreeNode } from "@/types/space";
 import { TreeDndContext } from "./sortable-file-tree";
 import { TreeDropIndicator } from "./tree-drop-indicator";
 import { isDescendantOf } from "./tree-dnd-utilities";
@@ -42,7 +42,7 @@ import { selectFileIndicator, useGitStore } from "@/stores/git";
 
 interface FileTreeItemProps {
   node: TreeNode;
-  workspaceId: string;
+  spaceId: string;
 }
 
 /** Bare folder = directory without readme.md (path doesn't end with .md) */
@@ -50,10 +50,10 @@ function isBareFolder(node: TreeNode): boolean {
   return !node.path.endsWith(".md");
 }
 
-export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
+export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
   const { openDocument, activeDocument } = useLayoutStore();
   const { unsavedChanges, aiModified } = useEditorStore();
-  const { expandedPaths, toggleExpanded, refreshTree, spaces: workspaces, rootWorkspaces, activeSpaceId, activeRootId } =
+  const { expandedPaths, toggleExpanded, refreshTree, spaces, rootSpaces, activeSpaceId, activeRootId } =
     useWorkspaceStore();
 
   const bareFolder = isBareFolder(node);
@@ -62,15 +62,15 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
   const isAiModified = !!aiModified[node.path];
   // Conflict always wins — if the file has merge markers, we must show ⚠
   // even if the user is mid-edit locally.
-  const workspaceForGit = workspaces.find((w) => w.id === workspaceId)
-    ?? rootWorkspaces.find((w) => w.id === workspaceId);
+  const spaceForGit = spaces.find((w) => w.id === spaceId)
+    ?? rootSpaces.find((w) => w.id === spaceId);
   const fileGitState = useGitStore((s) =>
-    workspaceForGit ? selectFileIndicator(s, workspaceForGit.path, node.path) : "clean",
+    spaceForGit ? selectFileIndicator(s, spaceForGit.path, node.path) : "clean",
   );
   const inConflict = fileGitState === "conflict";
   const showDot = !inConflict && (isUnsaved || isAiModified);
 
-  const expanded = expandedPaths[workspaceId]?.includes(node.path) ?? false;
+  const expanded = expandedPaths[spaceId]?.includes(node.path) ?? false;
 
   const { activeId, activeFolderPath, overId, projection, flatItemsMap } = useContext(TreeDndContext);
 
@@ -92,7 +92,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
     opacity: isDragging ? 0.4 : undefined,
   };
 
-  const workspace = workspaceForGit;
+  const space = spaceForGit;
 
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
@@ -116,7 +116,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
 
   async function handleRenameSubmit() {
     const newName = editValue.trim();
-    if (!workspace || !newName || newName === node.title) {
+    if (!space || !newName || newName === node.title) {
       setIsEditing(false);
       return;
     }
@@ -128,7 +128,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
           : "";
         const newPath = parent ? `${parent}/${newName}` : newName;
         const modifiedFiles = await invoke<string[]>("rename_entry", {
-          workspace: workspace.path,
+          space: space.path,
           from: node.path,
           to: newPath,
         });
@@ -140,10 +140,10 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
         // Document: always write to disk (updates title + renames file)
         const entry = await invoke<{ meta: { id: string; icon: string | null; extra: Record<string, unknown> }; body: string }>(
           "read_entry",
-          { workspace: workspace.path, path: node.path },
+          { space: space.path, path: node.path },
         );
         const result = await invoke<{ new_path: string | null; modified_files: string[] }>("write_entry", {
-          workspace: workspace.path,
+          space: space.path,
           path: node.path,
           content: entry.body,
           title: newName,
@@ -160,7 +160,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
           useEditorStore.getState().markAiModified(f);
         }
       }
-      await refreshTree(workspaceId);
+      await refreshTree(spaceId);
     } catch (err) {
       console.error("Failed to rename:", err);
       toast.error(m.toast_error());
@@ -179,20 +179,20 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
 
   function handleDocumentClick() {
     if (bareFolder) {
-      toggleExpanded(workspaceId, node.path);
+      toggleExpanded(spaceId, node.path);
       return;
     }
-    const isRootWorkspace = workspaceId === activeRootId;
+    const isRootWorkspace = spaceId === activeRootId;
     if (isRootWorkspace && activeSpaceId) {
       useWorkspaceStore.getState().clearActiveSpace();
-    } else if (!isRootWorkspace && activeSpaceId !== workspaceId) {
-      useWorkspaceStore.getState().openSpace(workspaceId);
+    } else if (!isRootWorkspace && activeSpaceId !== spaceId) {
+      useWorkspaceStore.getState().openSpace(spaceId);
     }
-    openDocument(node.path, workspaceId);
+    openDocument(node.path, spaceId);
   }
 
   async function handleNewPage() {
-    if (!workspace) return;
+    if (!space) return;
     try {
       let parentPath: string;
       let parentNodePath: string;
@@ -207,7 +207,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
       } else {
         // Simple file — nest it first, then create child
         const newPath = await invoke<string>("nest_entry", {
-          workspace: workspace.path,
+          space: space.path,
           path: node.path,
         });
         parentPath = newPath.replace(/\/readme\.md$/i, "");
@@ -215,16 +215,16 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
       }
       // Create the sub-page
       const entry = await invoke<{ path: string }>("create_entry", {
-        workspace: workspace.path,
+        space: space.path,
         parentPath,
         title: "Untitled",
       });
-      await refreshTree(workspaceId);
+      await refreshTree(spaceId);
       // Expand the parent so the new child is visible
-      if (!expandedPaths[workspaceId]?.includes(parentNodePath)) {
-        toggleExpanded(workspaceId, parentNodePath);
+      if (!expandedPaths[spaceId]?.includes(parentNodePath)) {
+        toggleExpanded(spaceId, parentNodePath);
       }
-      openDocument(entry.path, workspaceId);
+      openDocument(entry.path, spaceId);
       toast.success(m.toast_page_created());
     } catch (err) {
       console.error("Failed to create page:", err);
@@ -233,24 +233,24 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
   }
 
   async function handleMakeDocument() {
-    if (!workspace || !bareFolder) return;
+    if (!space || !bareFolder) return;
     try {
       // Create a document inside the bare folder, then rename to readme.md
       const entry = await invoke<{ path: string }>("create_entry", {
-        workspace: workspace.path,
+        space: space.path,
         parentPath: node.path,
         title: node.title,
       });
       const readmePath = `${node.path}/README.md`;
       if (entry.path !== readmePath) {
         await invoke("rename_entry", {
-          workspace: workspace.path,
+          space: space.path,
           from: entry.path,
           to: readmePath,
         });
       }
-      await refreshTree(workspaceId);
-      openDocument(readmePath, workspaceId);
+      await refreshTree(spaceId);
+      openDocument(readmePath, spaceId);
     } catch (err) {
       console.error("Failed to make document:", err);
       toast.error(m.toast_error());
@@ -258,7 +258,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
   }
 
   async function handleNewFolder() {
-    if (!workspace) return;
+    if (!space) return;
     try {
       let parentPath: string;
       let parentNodePath: string;
@@ -271,20 +271,20 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
       } else {
         // Simple file — nest it first, then create folder inside
         const newPath = await invoke<string>("nest_entry", {
-          workspace: workspace.path,
+          space: space.path,
           path: node.path,
         });
         parentPath = newPath.replace(/\/readme\.md$/i, "");
         parentNodePath = newPath;
       }
       await invoke<string>("create_folder", {
-        workspace: workspace.path,
+        space: space.path,
         parentPath,
         name: m.space_new_folder(),
       });
-      await refreshTree(workspaceId);
-      if (!expandedPaths[workspaceId]?.includes(parentNodePath)) {
-        toggleExpanded(workspaceId, parentNodePath);
+      await refreshTree(spaceId);
+      if (!expandedPaths[spaceId]?.includes(parentNodePath)) {
+        toggleExpanded(spaceId, parentNodePath);
       }
     } catch (err) {
       console.error("Failed to create folder:", err);
@@ -293,11 +293,11 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
   }
 
   async function handleDeleteRequest() {
-    if (!workspace) return;
+    if (!space) return;
     try {
       const backlinks = await invoke<{ source_path: string; link_count: number }[]>(
         "get_backlinks",
-        { workspace: workspace.path, targetPath: node.path },
+        { space: space.path, targetPath: node.path },
       );
       setDeleteDialog({ open: true, backlinks });
     } catch {
@@ -307,14 +307,14 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
   }
 
   async function handleDeleteConfirm() {
-    if (!workspace) return;
+    if (!space) return;
     setDeleteDialog({ open: false, backlinks: [] });
     try {
       await invoke("delete_entry", {
-        workspace: workspace.path,
+        space: space.path,
         path: node.path,
       });
-      await refreshTree(workspaceId);
+      await refreshTree(spaceId);
     } catch (err) {
       console.error("Failed to delete entry:", err);
       toast.error(m.toast_error());
@@ -336,10 +336,10 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
     >
       ●
     </span>
-  ) : workspace ? (
+  ) : space ? (
     <span className="ml-auto shrink-0 flex items-center">
       <FileGitIndicatorIcon
-        workspacePath={workspace.path}
+        spacePath={space.path}
         filePath={node.path}
       />
     </span>
@@ -490,7 +490,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
         {dropIndicator}
         <Collapsible
           open={expanded}
-          onOpenChange={() => toggleExpanded(workspaceId, node.path)}
+          onOpenChange={() => toggleExpanded(spaceId, node.path)}
           className="group/collapsible"
         >
           <div className="flex items-center group/tree-item">
@@ -523,7 +523,7 @@ export function FileTreeItem({ node, workspaceId }: FileTreeItemProps) {
                 <FileTreeItem
                   key={child.path}
                   node={child}
-                  workspaceId={workspaceId}
+                  spaceId={spaceId}
                 />
               ))}
             </SidebarMenuSub>

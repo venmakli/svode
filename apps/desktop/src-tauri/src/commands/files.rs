@@ -7,39 +7,39 @@ use tauri::{AppHandle, State};
 use crate::error::AppError;
 use crate::files::{entry, tree, BacklinkIndex, BacklinkInfo, Entry, FileWatcher, LinkValidation, TreeNode, WriteResult};
 use crate::index::{self, IndexState};
-use crate::workspace::config;
+use crate::space::config;
 
 #[tauri::command]
-pub fn list_entries(workspace: String) -> Result<Vec<TreeNode>, AppError> {
-    tree::build_tree(&workspace)
+pub fn list_entries(space: String) -> Result<Vec<TreeNode>, AppError> {
+    tree::build_tree(&space)
 }
 
 #[tauri::command]
 pub fn create_entry(
-    workspace: String,
+    space: String,
     parent_path: Option<String>,
     title: String,
 ) -> Result<Entry, AppError> {
-    entry::create(&workspace, parent_path.as_deref(), &title)
+    entry::create(&space, parent_path.as_deref(), &title)
 }
 
 #[tauri::command]
 pub fn create_folder(
-    workspace: String,
+    space: String,
     parent_path: Option<String>,
     name: String,
 ) -> Result<String, AppError> {
-    entry::create_folder(&workspace, parent_path.as_deref(), &name)
+    entry::create_folder(&space, parent_path.as_deref(), &name)
 }
 
 #[tauri::command]
-pub fn read_entry(workspace: String, path: String) -> Result<Entry, AppError> {
-    entry::read(&workspace, &path)
+pub fn read_entry(space: String, path: String) -> Result<Entry, AppError> {
+    entry::read(&space, &path)
 }
 
 #[tauri::command]
 pub async fn write_entry(
-    workspace: String,
+    space: String,
     path: String,
     content: String,
     title: Option<String>,
@@ -50,7 +50,7 @@ pub async fn write_entry(
     index_state: State<'_, IndexState>,
 ) -> Result<WriteResult, AppError> {
     let result = entry::write(
-        &workspace,
+        &space,
         &path,
         &content,
         title.as_deref(),
@@ -64,7 +64,7 @@ pub async fn write_entry(
     // On rename: delete the stale row first, then upsert the new path. The
     // reverse order would let a concurrent write to the new path get clobbered
     // by the stale-row delete.
-    if let Ok(pool) = index_state.get_or_create(&workspace).await {
+    if let Ok(pool) = index_state.get_or_create(&space).await {
         if result.new_path.is_some() {
             if let Err(e) = index::update::delete_entry_path(&pool, &path).await {
                 tracing::warn!("index delete stale path failed for {path}: {e}");
@@ -72,7 +72,7 @@ pub async fn write_entry(
         }
         let target = result.new_path.clone().unwrap_or_else(|| path.clone());
         if let Err(e) =
-            index::update::update_entry(&pool, Path::new(&workspace), &target).await
+            index::update::update_entry(&pool, Path::new(&space), &target).await
         {
             tracing::warn!("index update_entry failed for {target}: {e}");
         }
@@ -83,14 +83,14 @@ pub async fn write_entry(
 
 #[tauri::command]
 pub async fn delete_entry(
-    workspace: String,
+    space: String,
     path: String,
     backlink_index: State<'_, Arc<BacklinkIndex>>,
     index_state: State<'_, IndexState>,
 ) -> Result<(), AppError> {
-    entry::delete(&workspace, &path, Some(&backlink_index))?;
+    entry::delete(&space, &path, Some(&backlink_index))?;
 
-    if let Ok(pool) = index_state.get_or_create(&workspace).await {
+    if let Ok(pool) = index_state.get_or_create(&space).await {
         if let Err(e) = index::update::delete_entry_path(&pool, &path).await {
             tracing::warn!("index delete_entry_path failed for {path}: {e}");
         }
@@ -100,28 +100,28 @@ pub async fn delete_entry(
 
 #[tauri::command]
 pub fn rename_entry(
-    workspace: String,
+    space: String,
     from: String,
     to: String,
     backlink_index: State<'_, Arc<BacklinkIndex>>,
 ) -> Result<Vec<String>, AppError> {
-    entry::rename(&workspace, &from, &to)?;
+    entry::rename(&space, &from, &to)?;
     let modified = backlink_index
-        .update_links_on_rename(Path::new(&workspace), &from, &to)
+        .update_links_on_rename(Path::new(&space), &from, &to)
         .unwrap_or_default();
-    let _ = backlink_index.update_file(Path::new(&workspace), &to);
+    let _ = backlink_index.update_file(Path::new(&space), &to);
     Ok(modified)
 }
 
 #[tauri::command]
 pub fn move_entry(
-    workspace: String,
+    space: String,
     from: String,
     to_parent: String,
     backlink_index: State<'_, Arc<BacklinkIndex>>,
 ) -> Result<String, AppError> {
     entry::move_entry(
-        Path::new(&workspace),
+        Path::new(&space),
         &from,
         &to_parent,
         Some(&backlink_index),
@@ -130,57 +130,57 @@ pub fn move_entry(
 
 #[tauri::command]
 pub fn get_backlinks(
-    workspace: String,
+    space: String,
     target_path: String,
     backlink_index: State<'_, Arc<BacklinkIndex>>,
 ) -> Result<Vec<BacklinkInfo>, AppError> {
     if !backlink_index.is_built() {
-        backlink_index.build(Path::new(&workspace))?;
+        backlink_index.build(Path::new(&space))?;
     }
     Ok(backlink_index.get_backlinks(&target_path))
 }
 
 #[tauri::command]
 pub fn rebuild_backlinks(
-    workspace: String,
+    space: String,
     backlink_index: State<'_, Arc<BacklinkIndex>>,
 ) -> Result<(), AppError> {
-    backlink_index.build(Path::new(&workspace))
+    backlink_index.build(Path::new(&space))
 }
 
 #[tauri::command]
 pub fn validate_links(
-    workspace: String,
+    space: String,
     path: String,
 ) -> Result<Vec<LinkValidation>, AppError> {
-    crate::files::backlinks::validate_links(Path::new(&workspace), &path)
+    crate::files::backlinks::validate_links(Path::new(&space), &path)
 }
 
 #[tauri::command]
-pub fn watch_workspace(
-    workspace: String,
+pub fn watch_space(
+    space: String,
     app: AppHandle,
     watcher: State<'_, FileWatcher>,
 ) -> Result<(), AppError> {
-    watcher.watch(workspace, app)
+    watcher.watch(space, app)
 }
 
 #[tauri::command]
-pub fn unwatch_workspace(
-    workspace: String,
+pub fn unwatch_space(
+    space: String,
     watcher: State<'_, FileWatcher>,
 ) -> Result<(), AppError> {
-    watcher.unwatch(&workspace)
+    watcher.unwatch(&space)
 }
 
 #[tauri::command]
 pub fn nest_entry(
-    workspace: String,
+    space: String,
     path: String,
     backlink_index: State<'_, Arc<BacklinkIndex>>,
 ) -> Result<String, AppError> {
     entry::nest_entry(
-        Path::new(&workspace),
+        Path::new(&space),
         &path,
         Some(&backlink_index),
     )
@@ -188,39 +188,39 @@ pub fn nest_entry(
 
 #[tauri::command]
 pub fn unnest_entry(
-    workspace: String,
+    space: String,
     path: String,
     backlink_index: State<'_, Arc<BacklinkIndex>>,
 ) -> Result<String, AppError> {
     entry::unnest_entry(
-        Path::new(&workspace),
+        Path::new(&space),
         &path,
         Some(&backlink_index),
     )
 }
 
 #[tauri::command]
-pub fn read_tree_order(workspace: String) -> Result<HashMap<String, Vec<String>>, AppError> {
-    Ok(tree::read_order(Path::new(&workspace)))
+pub fn read_tree_order(space: String) -> Result<HashMap<String, Vec<String>>, AppError> {
+    Ok(tree::read_order(Path::new(&space)))
 }
 
 #[tauri::command]
 pub fn save_tree_order(
-    workspace: String,
+    space: String,
     order: HashMap<String, Vec<String>>,
 ) -> Result<(), AppError> {
-    tree::write_order(Path::new(&workspace), &order)
+    tree::write_order(Path::new(&space), &order)
 }
 
 #[tauri::command]
-pub fn get_expanded_paths(workspace: String) -> Result<Vec<String>, AppError> {
-    let local = config::read_local_config(Path::new(&workspace))?;
+pub fn get_expanded_paths(space: String) -> Result<Vec<String>, AppError> {
+    let local = config::read_local_config(Path::new(&space))?;
     Ok(local.expanded_paths)
 }
 
 #[tauri::command]
-pub fn save_expanded_paths(workspace: String, paths: Vec<String>) -> Result<(), AppError> {
-    let mut local = config::read_local_config(Path::new(&workspace))?;
+pub fn save_expanded_paths(space: String, paths: Vec<String>) -> Result<(), AppError> {
+    let mut local = config::read_local_config(Path::new(&space))?;
     local.expanded_paths = paths;
-    config::write_local_config(Path::new(&workspace), &local)
+    config::write_local_config(Path::new(&space), &local)
 }

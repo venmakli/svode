@@ -14,7 +14,7 @@ import {
 import { FileText } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useLayoutStore } from "@/stores/layout";
-import type { TreeNode } from "@/types/workspace";
+import type { TreeNode } from "@/types/space";
 
 interface DocItem {
   title: string;

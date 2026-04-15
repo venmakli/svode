@@ -12,9 +12,9 @@ import { useLayoutStore } from "@/stores/layout";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useEditorStore } from "@/stores/editor";
 import {
-  commitAllWorkspace,
+  commitAllSpace,
   commitFileAndMaybeSync,
-  syncWorkspace,
+  syncSpace,
 } from "@/features/workspace/git-actions";
 import { useGitStore } from "@/stores/git";
 import { deserializeWithConflicts, hasUnresolvedConflicts } from "../conflict/parse-conflicts";
@@ -50,16 +50,16 @@ interface Entry {
 }
 
 export function PlateDocumentEditor() {
-  const { activeDocument, activeDocumentWorkspaceId, openDocument } = useLayoutStore();
-  const { updateNodeMeta, rootWorkspaces, spaces: childWorkspaces } = useWorkspaceStore();
+  const { activeDocument, activeDocumentSpaceId, openDocument } = useLayoutStore();
+  const { updateNodeMeta, rootSpaces, spaces: childWorkspaces } = useWorkspaceStore();
   const { markUnsaved, clearUnsaved, pendingRename, clearPendingRename, setBrokenLinks } = useEditorStore();
 
   // Resolve workspace path from the document's workspace id
-  const docWs = activeDocumentWorkspaceId
-    ? [...rootWorkspaces, ...childWorkspaces].find((w) => w.id === activeDocumentWorkspaceId)
+  const docWs = activeDocumentSpaceId
+    ? [...rootSpaces, ...childWorkspaces].find((w) => w.id === activeDocumentSpaceId)
     : null;
-  const workspacePath = docWs?.path ?? "";
-  const activeWsId = activeDocumentWorkspaceId;
+  const spacePath = docWs?.path ?? "";
+  const activeWsId = activeDocumentSpaceId;
 
   const isLoadingRef = useRef(false);
   const currentPathRef = useRef<string | null>(null);
@@ -88,7 +88,7 @@ export function PlateDocumentEditor() {
 
   // Load document when activeDocument changes
   useEffect(() => {
-    if (!editor || !activeDocument || !workspacePath) return;
+    if (!editor || !activeDocument || !spacePath) return;
 
     // Cache current editor state before switching
     const prevPath = currentPathRef.current;
@@ -102,7 +102,7 @@ export function PlateDocumentEditor() {
 
     // Validate links in background
     invoke<{ url: string; exists: boolean }[]>("validate_links", {
-      workspace: workspacePath,
+      space: spacePath,
       path: activeDocument,
     })
       .then((results) => {
@@ -120,7 +120,7 @@ export function PlateDocumentEditor() {
 
     if (cached && !wasExternallyModified) {
       invoke<Entry>("read_entry", {
-        workspace: workspacePath,
+        space: spacePath,
         path: activeDocument,
       })
         .then((entry) => {
@@ -140,7 +140,7 @@ export function PlateDocumentEditor() {
     } else {
       docCacheRef.current.delete(activeDocument);
       invoke<Entry>("read_entry", {
-        workspace: workspacePath,
+        space: spacePath,
         path: activeDocument,
       })
         .then((entry) => {
@@ -159,7 +159,7 @@ export function PlateDocumentEditor() {
           isLoadingRef.current = false;
         });
     }
-  }, [editor, activeDocument, workspacePath]);
+  }, [editor, activeDocument, spacePath]);
 
   // Mark unsaved on title/icon change + sync sidebar
   const handleTitleChange = useCallback(
@@ -219,7 +219,7 @@ export function PlateDocumentEditor() {
 
   // Save handler
   const handleSave = useCallback(() => {
-    if (!editor || !activeDocument || !workspacePath) return;
+    if (!editor || !activeDocument || !spacePath) return;
 
     // Prevent saving while unresolved conflict blocks remain — otherwise the
     // markdown serializer would silently drop them.
@@ -233,7 +233,7 @@ export function PlateDocumentEditor() {
     justSavedRef.current = true;
 
     invoke<{ new_path: string | null; modified_files: string[] }>("write_entry", {
-      workspace: workspacePath,
+      space: spacePath,
       path: activeDocument,
       content: markdown,
       title: title || m.editor_untitled(),
@@ -269,23 +269,23 @@ export function PlateDocumentEditor() {
         // Stage 3 — auto-commit the saved file (and auto-sync if enabled).
         // No success toast — the sidebar git indicator is the visible feedback.
         const committedPath = result.new_path ?? activeDocument;
-        if (workspacePath) {
+        if (spacePath) {
           // If the workspace is mid-merge (conflicts present), the file save
           // is actually a conflict-resolution save. Call git_resolve_continue
           // which runs add+commit+push against the pending merge.
-          const status = useGitStore.getState().statuses[workspacePath];
+          const status = useGitStore.getState().statuses[spacePath];
           if (status?.hasConflicts) {
-            invoke("git_resolve_continue", { workspacePath })
+            invoke("git_resolve_continue", { spacePath })
               .then(() => {
-                void useGitStore.getState().refreshStatus(workspacePath);
-                void syncWorkspace(workspacePath);
+                void useGitStore.getState().refreshStatus(spacePath);
+                void syncSpace(spacePath);
               })
               .catch((err) => {
                 console.error("git_resolve_continue failed:", err);
                 toast.error(m.git_sync_failed());
               });
           } else {
-            void commitFileAndMaybeSync(workspacePath, committedPath);
+            void commitFileAndMaybeSync(spacePath, committedPath);
           }
         }
       })
@@ -293,30 +293,30 @@ export function PlateDocumentEditor() {
         console.error("Failed to save document:", err);
         toast.error(m.editor_error_save());
       });
-  }, [editor, activeDocument, workspacePath, title, icon, clearUnsaved]);
+  }, [editor, activeDocument, spacePath, title, icon, clearUnsaved]);
 
   // Save-all (⌘⇧S): flush the currently-open document's in-memory edits to
-  // disk (if dirty), then `git add . && git commit` through commitAllWorkspace
+  // disk (if dirty), then `git add . && git commit` through commitAllSpace
   // — which catches every other on-disk change too (externally-modified files,
   // AI writes, backlink updates).
   //
   // Note: multi-document editors aren't wired yet. When they are, this hook
   // should iterate unsavedChanges and flush each editor instance before
-  // calling commitAllWorkspace.
+  // calling commitAllSpace.
   const handleSaveAll = useCallback(async () => {
-    if (!workspacePath) return;
+    if (!spacePath) return;
     if (!editor || !activeDocument) {
-      void commitAllWorkspace(workspacePath);
+      void commitAllSpace(spacePath);
       return;
     }
     const isDirty = useEditorStore.getState().unsavedChanges[activeDocument];
     if (!isDirty) {
-      void commitAllWorkspace(workspacePath);
+      void commitAllSpace(spacePath);
       return;
     }
     // Prevent double-commit: handleSave would otherwise call
     // commitFileAndMaybeSync on its own. Write the file directly and let
-    // commitAllWorkspace own the single commit.
+    // commitAllSpace own the single commit.
     if (hasUnresolvedConflicts(editor.children)) {
       toast.error(m.git_sync_conflict({ count: "1" }));
       return;
@@ -325,7 +325,7 @@ export function PlateDocumentEditor() {
     justSavedRef.current = true;
     try {
       await invoke("write_entry", {
-        workspace: workspacePath,
+        space: spacePath,
         path: activeDocument,
         content: markdown,
         title: title || m.editor_untitled(),
@@ -334,12 +334,12 @@ export function PlateDocumentEditor() {
         existingId: meta?.id ?? null,
       });
       clearUnsaved(activeDocument);
-      await commitAllWorkspace(workspacePath);
+      await commitAllSpace(spacePath);
     } catch (err) {
       console.error("Save-all failed:", err);
       toast.error(m.editor_error_save());
     }
-  }, [editor, activeDocument, workspacePath, title, icon, meta, clearUnsaved]);
+  }, [editor, activeDocument, spacePath, title, icon, meta, clearUnsaved]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -369,7 +369,7 @@ export function PlateDocumentEditor() {
 
   useFileWatcher({
     editor,
-    workspacePath,
+    spacePath,
     activeDocument,
     onConflict: handleConflict,
     justSavedRef,
@@ -378,10 +378,10 @@ export function PlateDocumentEditor() {
 
   // Conflict resolution: reload from disk
   const handleConflictReload = useCallback(() => {
-    if (!editor || !conflictPath || !workspacePath) return;
+    if (!editor || !conflictPath || !spacePath) return;
 
     invoke<Entry>("read_entry", {
-      workspace: workspacePath,
+      space: spacePath,
       path: conflictPath,
     })
       .then((entry) => {
@@ -399,7 +399,7 @@ export function PlateDocumentEditor() {
       .finally(() => {
         setConflictPath(null);
       });
-  }, [editor, conflictPath, workspacePath, clearUnsaved]);
+  }, [editor, conflictPath, spacePath, clearUnsaved]);
 
   // onChange — mark unsaved only when editor content actually changes
   // (skip selection-only changes like clicking or focusing)

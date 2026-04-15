@@ -57,21 +57,21 @@ impl GitCli {
         self.lfs_available
     }
 
-    /// Execute a git command in the given workspace directory.
+    /// Execute a git command in the given space directory.
     pub async fn exec(
         &self,
-        workspace_dir: &Path,
+        space_dir: &Path,
         args: &[&str],
     ) -> Result<GitOutput, AppError> {
         tracing::debug!(
             "git {} (in {})",
             args.join(" "),
-            workspace_dir.display()
+            space_dir.display()
         );
 
         let output = Command::new(&self.git_path)
             .args(args)
-            .current_dir(workspace_dir)
+            .current_dir(space_dir)
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("LC_ALL", "C.UTF-8")
             .output()

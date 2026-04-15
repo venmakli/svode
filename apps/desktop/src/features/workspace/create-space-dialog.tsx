@@ -107,7 +107,7 @@ export function CreateSpaceDialog({
       try {
         const ws = await createSpace(activeRootPath, name.trim(), icon);
         try {
-          await invoke("git_init_workspace", { workspacePath: ws.path });
+          await invoke("git_init_space", { spacePath: ws.path });
         } catch (err) {
           console.warn("git_init_workspace failed:", err);
         }
@@ -150,7 +150,7 @@ export function CreateSpaceDialog({
     const unlisten = await listen<CloneProgress>(
       "clone:progress",
       (event) => {
-        if (event.payload.workspacePath !== opts.targetPath) return;
+        if (event.payload.spacePath !== opts.targetPath) return;
         useGitStore.getState().setCloning(opts.targetPath, {
           phase: event.payload.phase,
           percent: event.payload.percent,
@@ -159,7 +159,7 @@ export function CreateSpaceDialog({
     );
 
     try {
-      await invoke("git_clone_workspace", {
+      await invoke("git_clone_space", {
         url: opts.url,
         targetPath: opts.targetPath,
       });

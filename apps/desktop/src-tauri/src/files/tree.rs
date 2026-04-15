@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::error::AppError;
 use crate::files::frontmatter;
-use crate::workspace::config::read_workspace_config;
+use crate::space::config::read_space_config;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TreeNode {
@@ -54,23 +54,23 @@ fn read_frontmatter_meta(abs_path: &Path) -> (String, Option<String>) {
     }
 }
 
-/// Read order.json from workspace .combai directory.
+/// Read order.json from space .combai directory.
 /// Returns map: directory relative path -> ordered list of child names.
-/// Key "." means workspace root.
-pub fn read_order(workspace: &Path) -> HashMap<String, Vec<String>> {
-    let order_path = workspace.join(".combai").join("order.json");
+/// Key "." means space root.
+pub fn read_order(space: &Path) -> HashMap<String, Vec<String>> {
+    let order_path = space.join(".combai").join("order.json");
     match fs::read_to_string(&order_path) {
         Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
         Err(_) => HashMap::new(),
     }
 }
 
-/// Write order.json to workspace .combai directory.
+/// Write order.json to space .combai directory.
 pub fn write_order(
-    workspace: &Path,
+    space: &Path,
     order: &HashMap<String, Vec<String>>,
 ) -> Result<(), AppError> {
-    let combai_dir = workspace.join(".combai");
+    let combai_dir = space.join(".combai");
     fs::create_dir_all(&combai_dir)?;
     let data = serde_json::to_string_pretty(order)?;
     fs::write(combai_dir.join("order.json"), data)?;
@@ -103,24 +103,24 @@ fn apply_order(nodes: &mut Vec<TreeNode>, order_list: Option<&Vec<String>>) {
     });
 }
 
-/// Collect relative folder names of child workspaces from config.
-fn child_folder_names(workspace: &Path) -> HashSet<String> {
+/// Collect relative folder names of child spaces from config.
+fn child_folder_names(space: &Path) -> HashSet<String> {
     let mut names = HashSet::new();
-    if let Ok(cfg) = read_workspace_config(workspace) {
+    if let Ok(cfg) = read_space_config(space) {
         if let Some(spaces) = cfg.spaces {
-            for space in spaces {
-                names.insert(space.path);
+            for child in spaces {
+                names.insert(child.path);
             }
         }
     }
     names
 }
 
-/// Build a file tree from a workspace directory.
-pub fn build_tree(workspace: &str) -> Result<Vec<TreeNode>, AppError> {
-    let root = Path::new(workspace);
+/// Build a file tree from a space directory.
+pub fn build_tree(space: &str) -> Result<Vec<TreeNode>, AppError> {
+    let root = Path::new(space);
     if !root.is_dir() {
-        return Err(AppError::FileNotFound(workspace.to_string()));
+        return Err(AppError::FileNotFound(space.to_string()));
     }
     let order = read_order(root);
     let skip_dirs = child_folder_names(root);
@@ -169,7 +169,7 @@ fn read_dir_recursive(
             .to_string();
 
         if abs_path.is_dir() {
-            // Skip child workspace folders (registered in parent config)
+            // Skip child space folders (registered in parent config)
             if skip_dirs.contains(&rel_path) {
                 continue;
             }

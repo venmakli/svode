@@ -6,13 +6,13 @@ use crate::files::entry::slugify;
 use super::config;
 use super::registry;
 use super::scaffold;
-use super::types::{SpaceRef, WorkspaceConfig, WorkspaceInfo};
+use super::types::{SpaceConfig, SpaceInfo, SpaceRef};
 
-/// Where to register a newly created/opened workspace.
+/// Where to register a newly created/opened space.
 enum RegistrationTarget<'a> {
-    /// Global registry (workspaces.json) — for root projects.
+    /// Global registry (spaces.json) — for root projects.
     Registry(&'a Path),
-    /// Parent workspace config.json — for child spaces.
+    /// Parent space config.json — for child spaces.
     ParentSpace(&'a Path, String),
 }
 
@@ -26,41 +26,41 @@ fn create_and_register(
     icon: &str,
     description: &str,
     target: RegistrationTarget,
-) -> Result<(String, WorkspaceConfig), AppError> {
-    let cfg = match config::read_workspace_config(path) {
+) -> Result<(String, SpaceConfig), AppError> {
+    let cfg = match config::read_space_config(path) {
         Ok(cfg) => cfg,
-        Err(_) => scaffold::scaffold_workspace(path, name, icon, description)?,
+        Err(_) => scaffold::scaffold_space(path, name, icon, description)?,
     };
 
     let id = ulid::Ulid::new().to_string().to_lowercase();
 
     match target {
         RegistrationTarget::Registry(config_dir) => {
-            registry::add_workspace(config_dir, &id, &path.to_string_lossy())?;
+            registry::add_space(config_dir, &id, &path.to_string_lossy())?;
         }
         RegistrationTarget::ParentSpace(parent_path, folder_name) => {
-            let mut parent_config = config::read_workspace_config(parent_path)?;
+            let mut parent_config = config::read_space_config(parent_path)?;
             let spaces = parent_config.spaces.get_or_insert_with(Vec::new);
             spaces.push(SpaceRef {
                 id: id.clone(),
                 path: folder_name,
                 repo: None,
             });
-            config::write_workspace_config(parent_path, &parent_config)?;
+            config::write_space_config(parent_path, &parent_config)?;
         }
     }
 
     Ok((id, cfg))
 }
 
-/// Create a new root workspace: scaffold folder, register in workspaces.json.
-pub fn create_workspace(
+/// Create a new root project: scaffold folder, register in spaces.json.
+pub fn create_project(
     config_dir: &Path,
     name: &str,
     icon: &str,
     description: &str,
     path: &Path,
-) -> Result<(String, WorkspaceConfig), AppError> {
+) -> Result<(String, SpaceConfig), AppError> {
     if !path.exists() {
         std::fs::create_dir_all(path)?;
     }
@@ -73,11 +73,11 @@ pub fn create_workspace(
     create_and_register(path, name, icon, description, RegistrationTarget::Registry(config_dir))
 }
 
-/// Register an existing folder as a root workspace (open folder).
-pub fn open_workspace_folder(
+/// Register an existing folder as a root project (open folder).
+pub fn open_project_folder(
     config_dir: &Path,
     path: &Path,
-) -> Result<(String, WorkspaceConfig), AppError> {
+) -> Result<(String, SpaceConfig), AppError> {
     if !path.exists() || !path.is_dir() {
         return Err(AppError::PathNotAccessible(
             path.to_string_lossy().to_string(),
@@ -87,42 +87,42 @@ pub fn open_workspace_folder(
     // Check if already registered
     let reg = registry::read_registry(config_dir)?;
     let path_str = path.to_string_lossy().to_string();
-    if let Some(existing) = reg.workspaces.iter().find(|w| w.path == path_str) {
-        let cfg = config::read_workspace_config(path)?;
+    if let Some(existing) = reg.spaces.iter().find(|w| w.path == path_str) {
+        let cfg = config::read_space_config(path)?;
         return Ok((existing.id.clone(), cfg));
     }
 
     let fallback_name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "Workspace".to_string());
+        .unwrap_or_else(|| "Space".to_string());
 
     create_and_register(path, &fallback_name, "", "", RegistrationTarget::Registry(config_dir))
 }
 
-/// Delete a root workspace: remove from registry, optionally delete files.
-pub fn delete_workspace(
+/// Delete a root project: remove from registry, optionally delete files.
+pub fn delete_project(
     config_dir: &Path,
     id: &str,
     delete_files: bool,
 ) -> Result<(), AppError> {
     if delete_files {
-        if let Some(ws_ref) = registry::find_workspace(config_dir, id)? {
-            let path = Path::new(&ws_ref.path);
+        if let Some(sp_ref) = registry::find_space(config_dir, id)? {
+            let path = Path::new(&sp_ref.path);
             if path.exists() {
                 std::fs::remove_dir_all(path)?;
             }
         }
     }
-    registry::remove_workspace(config_dir, id)
+    registry::remove_space(config_dir, id)
 }
 
-/// Create a space inside a parent workspace folder.
+/// Create a space inside a parent space folder.
 pub fn create_space(
     parent_path: &Path,
     name: &str,
     icon: &str,
-) -> Result<WorkspaceInfo, AppError> {
+) -> Result<SpaceInfo, AppError> {
     let slug = slugify(name);
 
     // Handle collision: try slug, slug-1, slug-2, etc.
@@ -144,7 +144,7 @@ pub fn create_space(
         RegistrationTarget::ParentSpace(parent_path, folder_name),
     )?;
 
-    Ok(WorkspaceInfo {
+    Ok(SpaceInfo {
         id,
         name: cfg.name,
         icon: cfg.icon,
@@ -165,7 +165,7 @@ pub fn register_cloned_space(
     folder_name: &str,
     fallback_name: &str,
     icon: &str,
-) -> Result<WorkspaceInfo, AppError> {
+) -> Result<SpaceInfo, AppError> {
     let space_dir = parent_path.join(folder_name);
     if !space_dir.is_dir() {
         return Err(AppError::PathNotAccessible(
@@ -174,14 +174,14 @@ pub fn register_cloned_space(
     }
 
     // Check if already registered in parent
-    let parent_config = config::read_workspace_config(parent_path)?;
+    let parent_config = config::read_space_config(parent_path)?;
     if let Some(spaces) = &parent_config.spaces {
         if let Some(existing) = spaces.iter().find(|s| s.path == folder_name) {
-            let cfg = match config::read_workspace_config(&space_dir) {
+            let cfg = match config::read_space_config(&space_dir) {
                 Ok(cfg) => cfg,
-                Err(_) => scaffold::scaffold_workspace(&space_dir, fallback_name, icon, "")?,
+                Err(_) => scaffold::scaffold_space(&space_dir, fallback_name, icon, "")?,
             };
-            return Ok(WorkspaceInfo {
+            return Ok(SpaceInfo {
                 id: existing.id.clone(),
                 name: cfg.name,
                 icon: cfg.icon,
@@ -201,7 +201,7 @@ pub fn register_cloned_space(
         RegistrationTarget::ParentSpace(parent_path, folder_name.to_string()),
     )?;
 
-    Ok(WorkspaceInfo {
+    Ok(SpaceInfo {
         id,
         name: cfg.name,
         icon: cfg.icon,
@@ -218,7 +218,7 @@ pub fn delete_space(
     space_id: &str,
     delete_files: bool,
 ) -> Result<(), AppError> {
-    let mut parent_config = config::read_workspace_config(parent_path)?;
+    let mut parent_config = config::read_space_config(parent_path)?;
 
     if delete_files {
         if let Some(spaces) = &parent_config.spaces {
@@ -234,12 +234,12 @@ pub fn delete_space(
     if let Some(ref mut spaces) = parent_config.spaces {
         spaces.retain(|s| s.id != space_id);
     }
-    config::write_workspace_config(parent_path, &parent_config)
+    config::write_space_config(parent_path, &parent_config)
 }
 
-/// List spaces of a workspace by reading its config and resolving paths.
-pub fn list_spaces(parent_path: &Path) -> Result<Vec<WorkspaceInfo>, AppError> {
-    let parent_config = config::read_workspace_config(parent_path)?;
+/// List spaces of a space by reading its config and resolving paths.
+pub fn list_spaces(parent_path: &Path) -> Result<Vec<SpaceInfo>, AppError> {
+    let parent_config = config::read_space_config(parent_path)?;
     let mut result = Vec::new();
 
     if let Some(spaces) = &parent_config.spaces {
@@ -247,12 +247,12 @@ pub fn list_spaces(parent_path: &Path) -> Result<Vec<WorkspaceInfo>, AppError> {
             let space_path = parent_path.join(&space_ref.path);
             let exists = space_path.exists();
             let space_config = if exists {
-                config::read_workspace_config(&space_path).ok()
+                config::read_space_config(&space_path).ok()
             } else {
                 None
             };
 
-            result.push(WorkspaceInfo {
+            result.push(SpaceInfo {
                 id: space_ref.id.clone(),
                 name: space_config
                     .as_ref()

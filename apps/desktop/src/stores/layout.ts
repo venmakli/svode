@@ -1,30 +1,30 @@
 import { create } from "zustand";
 
-type SettingsDialog = "app" | "workspace" | null;
+type SettingsDialog = "app" | "space" | null;
 
 interface LayoutState {
   activeDocument: string | null;
-  /** Workspace id that owns the active document */
-  activeDocumentWorkspaceId: string | null;
+  /** Space id that owns the active document */
+  activeDocumentSpaceId: string | null;
   chatPanelOpen: boolean;
   settingsDialog: SettingsDialog;
-  /** Path of workspace whose settings are open (root or child) */
-  settingsWorkspacePath: string | null;
+  /** Path of space whose settings are open (root or child) */
+  settingsSpacePath: string | null;
 
   toggleChatPanel: () => void;
-  openDocument: (path: string, workspaceId?: string) => void;
+  openDocument: (path: string, spaceId?: string) => void;
   closeDocument: () => void;
   openAppSettings: () => void;
-  openWorkspaceSettings: (workspacePath: string) => void;
+  openSpaceSettings: (spacePath: string) => void;
   closeSettings: () => void;
 }
 
 export const useLayoutStore = create<LayoutState>((set, get) => ({
   activeDocument: null,
-  activeDocumentWorkspaceId: null,
+  activeDocumentSpaceId: null,
   chatPanelOpen: true,
   settingsDialog: null,
-  settingsWorkspacePath: null,
+  settingsSpacePath: null,
 
   toggleChatPanel: () => {
     const { activeDocument } = get();
@@ -32,23 +32,23 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     set((s) => ({ chatPanelOpen: !s.chatPanelOpen }));
   },
 
-  openDocument: (path, workspaceId?) =>
+  openDocument: (path, spaceId?) =>
     set((s) => ({
       activeDocument: path,
       chatPanelOpen: true,
-      // Preserve existing workspace id if not provided (e.g. rename within same workspace)
-      activeDocumentWorkspaceId: workspaceId ?? s.activeDocumentWorkspaceId,
+      // Preserve existing space id if not provided (e.g. rename within same space)
+      activeDocumentSpaceId: spaceId ?? s.activeDocumentSpaceId,
     })),
 
   closeDocument: () =>
-    set({ activeDocument: null, activeDocumentWorkspaceId: null, chatPanelOpen: true }),
+    set({ activeDocument: null, activeDocumentSpaceId: null, chatPanelOpen: true }),
 
   openAppSettings: () =>
-    set({ settingsDialog: "app", settingsWorkspacePath: null }),
+    set({ settingsDialog: "app", settingsSpacePath: null }),
 
-  openWorkspaceSettings: (workspacePath) =>
-    set({ settingsDialog: "workspace", settingsWorkspacePath: workspacePath }),
+  openSpaceSettings: (spacePath) =>
+    set({ settingsDialog: "space", settingsSpacePath: spacePath }),
 
   closeSettings: () =>
-    set({ settingsDialog: null, settingsWorkspacePath: null }),
+    set({ settingsDialog: null, settingsSpacePath: null }),
 }));

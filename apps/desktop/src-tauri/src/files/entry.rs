@@ -33,13 +33,13 @@ pub struct EntryMeta {
 pub struct Entry {
     pub meta: EntryMeta,
     pub body: String,
-    /// Relative path from workspace root.
+    /// Relative path from space root.
     pub path: String,
 }
 
-/// Resolve an absolute path from workspace root + relative path.
-fn resolve(workspace: &str, rel: &str) -> PathBuf {
-    Path::new(workspace).join(rel)
+/// Resolve an absolute path from space root + relative path.
+fn resolve(space: &str, rel: &str) -> PathBuf {
+    Path::new(space).join(rel)
 }
 
 /// Transliterate Cyrillic characters to Latin equivalents.
@@ -172,29 +172,29 @@ fn title_from_stem(stem: &str) -> String {
 }
 
 /// Append a filename to order.json for a given directory key.
-fn order_append(workspace: &Path, dir_key: &str, name: &str) {
-    let mut order = tree::read_order(workspace);
+fn order_append(space: &Path, dir_key: &str, name: &str) {
+    let mut order = tree::read_order(space);
     order
         .entry(dir_key.to_string())
         .or_default()
         .push(name.to_string());
-    let _ = tree::write_order(workspace, &order);
+    let _ = tree::write_order(space, &order);
 }
 
 /// Rename an entry in order.json (replace old_name with new_name in the given directory).
-fn order_rename(workspace: &Path, dir_key: &str, old_name: &str, new_name: &str) {
-    let mut order = tree::read_order(workspace);
+fn order_rename(space: &Path, dir_key: &str, old_name: &str, new_name: &str) {
+    let mut order = tree::read_order(space);
     if let Some(list) = order.get_mut(dir_key) {
         if let Some(pos) = list.iter().position(|n| n == old_name) {
             list[pos] = new_name.to_string();
-            let _ = tree::write_order(workspace, &order);
+            let _ = tree::write_order(space, &order);
         }
     }
 }
 
 /// Create a new entry on disk. Returns the created Entry.
 pub fn create(
-    workspace: &str,
+    space: &str,
     parent_path: Option<&str>,
     title: &str,
 ) -> Result<Entry, AppError> {
@@ -209,7 +209,7 @@ pub fn create(
         };
 
         let base_rel = make_rel(&slug);
-        let base_abs = resolve(workspace, &base_rel);
+        let base_abs = resolve(space, &base_rel);
 
         if !base_abs.exists() {
             (base_rel, base_abs)
@@ -218,7 +218,7 @@ pub fn create(
             for i in 1..=100 {
                 let candidate = format!("{slug}-{i}");
                 let rel = make_rel(&candidate);
-                let abs = resolve(workspace, &rel);
+                let abs = resolve(space, &rel);
                 if !abs.exists() {
                     found = Some((rel, abs));
                     break;
@@ -256,7 +256,7 @@ pub fn create(
         .to_string_lossy()
         .to_string();
     let dir_key = parent_path.unwrap_or(".");
-    order_append(Path::new(workspace), dir_key, &filename);
+    order_append(Path::new(space), dir_key, &filename);
 
     Ok(Entry {
         meta,
@@ -269,7 +269,7 @@ pub fn create(
 /// The folder name is the title as-is (no slugify, no transliteration).
 /// Returns the relative path of the created folder.
 pub fn create_folder(
-    workspace: &str,
+    space: &str,
     parent_path: Option<&str>,
     name: &str,
 ) -> Result<String, AppError> {
@@ -278,7 +278,7 @@ pub fn create_folder(
         None => name.to_string(),
     };
 
-    let abs_path = resolve(workspace, &rel_path);
+    let abs_path = resolve(space, &rel_path);
 
     if abs_path.exists() {
         return Err(AppError::FileAlreadyExists(rel_path));
@@ -288,7 +288,7 @@ pub fn create_folder(
 
     // Append to order.json
     let dir_key = parent_path.unwrap_or(".");
-    order_append(Path::new(workspace), dir_key, name);
+    order_append(Path::new(space), dir_key, name);
 
     Ok(rel_path)
 }
@@ -296,8 +296,8 @@ pub fn create_folder(
 /// Read an entry from disk.
 /// If the file has no frontmatter, generates metadata in memory without modifying the file.
 /// Frontmatter will be written to disk only on the first explicit save (write).
-pub fn read(workspace: &str, path: &str) -> Result<Entry, AppError> {
-    let abs_path = resolve(workspace, path);
+pub fn read(space: &str, path: &str) -> Result<Entry, AppError> {
+    let abs_path = resolve(space, path);
 
     if !abs_path.exists() {
         return Err(AppError::FileNotFound(path.to_string()));
@@ -348,7 +348,7 @@ pub fn read(workspace: &str, path: &str) -> Result<Entry, AppError> {
 /// the id generated during `read()`.
 /// Returns WriteResult with new_path if a rename occurred.
 pub fn write(
-    workspace: &str,
+    space: &str,
     path: &str,
     content: &str,
     title: Option<&str>,
@@ -357,7 +357,7 @@ pub fn write(
     existing_id: Option<&str>,
     backlink_index: Option<&BacklinkIndex>,
 ) -> Result<WriteResult, AppError> {
-    let abs_path = resolve(workspace, path);
+    let abs_path = resolve(space, path);
 
     if !abs_path.exists() {
         return Err(AppError::FileNotFound(path.to_string()));
@@ -471,10 +471,10 @@ pub fn write(
                             } else {
                                 format!("{}/{}", grandparent.display(), new_dir_name)
                             };
-                            let new_dir_abs = resolve(workspace, &new_dir_rel);
+                            let new_dir_abs = resolve(space, &new_dir_rel);
 
                             if !new_dir_abs.exists() {
-                                let old_dir_abs = resolve(workspace, &parent_rel.to_string_lossy());
+                                let old_dir_abs = resolve(space, &parent_rel.to_string_lossy());
                                 fs::rename(&old_dir_abs, &new_dir_abs)?;
                                 let readme_filename = Path::new(path)
                                     .file_name()
@@ -497,7 +497,7 @@ pub fn write(
                     } else {
                         format!("{}/{}", parent_dir.display(), new_filename)
                     };
-                    let new_abs = resolve(workspace, &new_rel);
+                    let new_abs = resolve(space, &new_rel);
 
                     if !new_abs.exists() {
                         fs::rename(&abs_path, &new_abs)?;
@@ -511,7 +511,7 @@ pub fn write(
 
     // Update order.json if file/folder was renamed
     if let Some(ref np) = new_path {
-        let ws_path = Path::new(workspace);
+        let sp_path = Path::new(space);
         let old_name = Path::new(path)
             .file_name()
             .unwrap_or_default()
@@ -546,9 +546,9 @@ pub fn write(
                 grandparent.to_string_lossy().to_string()
             };
             // Rename folder entry in parent's order list
-            order_rename(ws_path, &dir_key, &old_dir_name, &new_dir_name);
+            order_rename(sp_path, &dir_key, &old_dir_name, &new_dir_name);
             // Rename the key itself (children order moves to new dir name)
-            let mut order = tree::read_order(ws_path);
+            let mut order = tree::read_order(sp_path);
             let old_key = if dir_key == "." {
                 old_dir_name.clone()
             } else {
@@ -561,7 +561,7 @@ pub fn write(
                     format!("{}/{}", dir_key, new_dir_name)
                 };
                 order.insert(new_key, children);
-                let _ = tree::write_order(ws_path, &order);
+                let _ = tree::write_order(sp_path, &order);
             }
         } else {
             // Regular file: dir_key is the parent directory
@@ -573,7 +573,7 @@ pub fn write(
             } else {
                 parent_dir.to_string_lossy().to_string()
             };
-            order_rename(ws_path, &dir_key, &old_name, &new_name);
+            order_rename(sp_path, &dir_key, &old_name, &new_name);
         }
     }
 
@@ -584,11 +584,11 @@ pub fn write(
         // If renamed, update links in other files
         if let Some(ref np) = new_path {
             modified_files = index
-                .update_links_on_rename(Path::new(workspace), path, np)
+                .update_links_on_rename(Path::new(space), path, np)
                 .unwrap_or_default();
         }
         // Re-index the written file
-        let _ = index.update_file(Path::new(workspace), current_path);
+        let _ = index.update_file(Path::new(space), current_path);
     }
 
     Ok(WriteResult { new_path, modified_files })
@@ -597,12 +597,12 @@ pub fn write(
 /// Move a file or directory to a new parent directory.
 /// Updates backlinks. Returns the new relative path.
 pub fn move_entry(
-    workspace: &Path,
+    space: &Path,
     from: &str,
     to_parent: &str,
     backlink_index: Option<&BacklinkIndex>,
 ) -> Result<String, AppError> {
-    let abs_from = workspace.join(from);
+    let abs_from = space.join(from);
 
     if !abs_from.exists() {
         return Err(AppError::FileNotFound(from.to_string()));
@@ -618,7 +618,7 @@ pub fn move_entry(
         format!("{}/{}", to_parent, filename.to_string_lossy())
     };
 
-    let abs_to = workspace.join(&new_rel);
+    let abs_to = space.join(&new_rel);
 
     if abs_to.exists() {
         return Err(AppError::FileAlreadyExists(new_rel));
@@ -637,8 +637,8 @@ pub fn move_entry(
     // Update backlinks
     if let Some(index) = backlink_index {
         if is_md {
-            let _ = index.update_links_on_rename(workspace, from, &new_rel);
-            let _ = index.update_file(workspace, &new_rel);
+            let _ = index.update_links_on_rename(space, from, &new_rel);
+            let _ = index.update_file(space, &new_rel);
         }
     }
 
@@ -648,11 +648,11 @@ pub fn move_entry(
 /// Nest an entry: convert `foo.md` → `foo/readme.md`, making it a category.
 /// Returns the new relative path (e.g. "foo/readme.md").
 pub fn nest_entry(
-    workspace: &Path,
+    space: &Path,
     path: &str,
     backlink_index: Option<&BacklinkIndex>,
 ) -> Result<String, AppError> {
-    let abs_path = workspace.join(path);
+    let abs_path = space.join(path);
 
     if !abs_path.exists() {
         return Err(AppError::FileNotFound(path.to_string()));
@@ -680,7 +680,7 @@ pub fn nest_entry(
         .and_then(|s| s.to_str())
         .ok_or_else(|| AppError::General("invalid filename".to_string()))?;
 
-    let parent = abs_path.parent().unwrap_or(workspace);
+    let parent = abs_path.parent().unwrap_or(space);
     let folder = parent.join(stem);
 
     if folder.exists() {
@@ -696,15 +696,15 @@ pub fn nest_entry(
 
     // Compute new relative path
     let new_rel = new_abs
-        .strip_prefix(workspace)
+        .strip_prefix(space)
         .unwrap_or(&new_abs)
         .to_string_lossy()
         .to_string();
 
     // Update backlinks
     if let Some(index) = backlink_index {
-        let _ = index.update_links_on_rename(workspace, path, &new_rel);
-        let _ = index.update_file(workspace, &new_rel);
+        let _ = index.update_links_on_rename(space, path, &new_rel);
+        let _ = index.update_file(space, &new_rel);
     }
 
     Ok(new_rel)
@@ -714,11 +714,11 @@ pub fn nest_entry(
 /// other children. Returns the new relative path (e.g. "foo.md").
 /// If the folder still has children, returns an error.
 pub fn unnest_entry(
-    workspace: &Path,
+    space: &Path,
     path: &str,
     backlink_index: Option<&BacklinkIndex>,
 ) -> Result<String, AppError> {
-    let abs_path = workspace.join(path);
+    let abs_path = space.join(path);
 
     if !abs_path.exists() {
         return Err(AppError::FileNotFound(path.to_string()));
@@ -776,15 +776,15 @@ pub fn unnest_entry(
     let _ = fs::remove_dir(folder); // remove empty dir
 
     let new_rel = new_abs
-        .strip_prefix(workspace)
+        .strip_prefix(space)
         .unwrap_or(&new_abs)
         .to_string_lossy()
         .to_string();
 
     // Update backlinks
     if let Some(index) = backlink_index {
-        let _ = index.update_links_on_rename(workspace, path, &new_rel);
-        let _ = index.update_file(workspace, &new_rel);
+        let _ = index.update_links_on_rename(space, path, &new_rel);
+        let _ = index.update_file(space, &new_rel);
     }
 
     Ok(new_rel)
@@ -792,11 +792,11 @@ pub fn unnest_entry(
 
 /// Delete an entry from disk. Removes from backlink index if provided.
 pub fn delete(
-    workspace: &str,
+    space: &str,
     path: &str,
     backlink_index: Option<&BacklinkIndex>,
 ) -> Result<(), AppError> {
-    let abs_path = resolve(workspace, path);
+    let abs_path = resolve(space, path);
 
     if !abs_path.exists() {
         return Err(AppError::FileNotFound(path.to_string()));
@@ -816,9 +816,9 @@ pub fn delete(
 }
 
 /// Rename/move an entry on disk.
-pub fn rename(workspace: &str, from: &str, to: &str) -> Result<(), AppError> {
-    let abs_from = resolve(workspace, from);
-    let abs_to = resolve(workspace, to);
+pub fn rename(space: &str, from: &str, to: &str) -> Result<(), AppError> {
+    let abs_from = resolve(space, from);
+    let abs_to = resolve(space, to);
 
     if !abs_from.exists() {
         return Err(AppError::FileNotFound(from.to_string()));
@@ -854,12 +854,12 @@ pub fn rename(workspace: &str, from: &str, to: &str) -> Result<(), AppError> {
     } else {
         parent_dir.to_string_lossy().to_string()
     };
-    let ws_path = Path::new(workspace);
-    order_rename(ws_path, &dir_key, &old_name, &new_name);
+    let sp_path = Path::new(space);
+    order_rename(sp_path, &dir_key, &old_name, &new_name);
 
     // If it's a directory, also rename the key in order.json
     if abs_to.is_dir() {
-        let mut order = tree::read_order(ws_path);
+        let mut order = tree::read_order(sp_path);
         let old_key = if dir_key == "." {
             old_name
         } else {
@@ -872,7 +872,7 @@ pub fn rename(workspace: &str, from: &str, to: &str) -> Result<(), AppError> {
                 format!("{}/{}", dir_key, new_name)
             };
             order.insert(new_key, children);
-            let _ = tree::write_order(ws_path, &order);
+            let _ = tree::write_order(sp_path, &order);
         }
     }
 
