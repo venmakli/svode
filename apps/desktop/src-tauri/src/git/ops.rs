@@ -605,7 +605,6 @@ pub fn add_independent_gitignore(project_path: &Path, space_folder: &str) -> Res
 }
 
 /// Remove an independent space path from the managed block.
-#[allow(dead_code)]
 pub fn remove_independent_gitignore(project_path: &Path, space_folder: &str) -> Result<(), AppError> {
     let gitignore = project_path.join(".gitignore");
     if !gitignore.exists() {

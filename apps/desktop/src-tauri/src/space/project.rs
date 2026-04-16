@@ -220,15 +220,20 @@ pub fn delete_space(
 ) -> Result<(), AppError> {
     let mut parent_config = config::read_space_config(parent_path)?;
 
-    if delete_files {
-        if let Some(spaces) = &parent_config.spaces {
-            if let Some(space_ref) = spaces.iter().find(|s| s.id == space_id) {
-                let space_path = parent_path.join(&space_ref.path);
-                if space_path.exists() && space_path.is_dir() {
-                    std::fs::remove_dir_all(&space_path)?;
-                }
+    let folder_name = parent_config
+        .spaces
+        .as_ref()
+        .and_then(|spaces| spaces.iter().find(|s| s.id == space_id))
+        .map(|s| s.path.clone());
+
+    if let Some(ref folder) = folder_name {
+        if delete_files {
+            let space_path = parent_path.join(folder);
+            if space_path.exists() && space_path.is_dir() {
+                std::fs::remove_dir_all(&space_path)?;
             }
         }
+        let _ = crate::git::ops::remove_independent_gitignore(parent_path, folder);
     }
 
     if let Some(ref mut spaces) = parent_config.spaces {
