@@ -51,7 +51,7 @@ interface Entry {
 
 export function PlateDocumentEditor() {
   const { activeDocument, activeDocumentSpaceId, openDocument } = useLayoutStore();
-  const { updateNodeMeta, rootSpaces, spaces: childWorkspaces } = useWorkspaceStore();
+  const { updateNodeMeta, rootSpaces, spaces: childWorkspaces, activeRootPath } = useWorkspaceStore();
   const { markUnsaved, clearUnsaved, pendingRename, clearPendingRename, setBrokenLinks } = useEditorStore();
 
   // Resolve workspace path from the document's workspace id
@@ -285,7 +285,7 @@ export function PlateDocumentEditor() {
                 toast.error(m.git_sync_failed());
               });
           } else {
-            void commitFileAndMaybeSync(spacePath, committedPath);
+            void commitFileAndMaybeSync(spacePath, committedPath, activeRootPath ?? undefined);
           }
         }
       })
@@ -306,12 +306,12 @@ export function PlateDocumentEditor() {
   const handleSaveAll = useCallback(async () => {
     if (!spacePath) return;
     if (!editor || !activeDocument) {
-      void commitAllSpace(spacePath);
+      void commitAllSpace(spacePath, activeRootPath ?? undefined);
       return;
     }
     const isDirty = useEditorStore.getState().unsavedChanges[activeDocument];
     if (!isDirty) {
-      void commitAllSpace(spacePath);
+      void commitAllSpace(spacePath, activeRootPath ?? undefined);
       return;
     }
     // Prevent double-commit: handleSave would otherwise call
@@ -334,12 +334,12 @@ export function PlateDocumentEditor() {
         existingId: meta?.id ?? null,
       });
       clearUnsaved(activeDocument);
-      await commitAllSpace(spacePath);
+      await commitAllSpace(spacePath, activeRootPath ?? undefined);
     } catch (err) {
       console.error("Save-all failed:", err);
       toast.error(m.editor_error_save());
     }
-  }, [editor, activeDocument, spacePath, title, icon, meta, clearUnsaved]);
+  }, [editor, activeDocument, spacePath, activeRootPath, title, icon, meta, clearUnsaved]);
 
   // Keyboard shortcuts
   useEffect(() => {

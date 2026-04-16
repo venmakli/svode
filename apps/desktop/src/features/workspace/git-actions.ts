@@ -61,13 +61,17 @@ export async function syncSpace(spacePath: string): Promise<void> {
 /**
  * Stage one file, commit, then auto-sync if enabled.
  * Triggered by ⌘S after the editor wrote the file to disk.
+ * When projectPath is provided, the backend routes the commit
+ * to the correct repo based on the space's git type.
  */
 export async function commitFileAndMaybeSync(
   spacePath: string,
   filePath: string,
+  projectPath?: string,
 ): Promise<void> {
   try {
     const status = await invoke<GitStatus>("git_commit_file", {
+      projectPath: projectPath ?? null,
       spacePath,
       filePath,
     });
@@ -84,10 +88,16 @@ export async function commitFileAndMaybeSync(
 /**
  * Stage all changes, commit, then auto-sync if enabled.
  * Triggered by ⌘⇧S or by the space "Save all" menu item.
+ * When projectPath is provided, the backend routes the commit
+ * to the correct repo based on the space's git type.
  */
-export async function commitAllSpace(spacePath: string): Promise<void> {
+export async function commitAllSpace(
+  spacePath: string,
+  projectPath?: string,
+): Promise<void> {
   try {
     const status = await invoke<GitStatus>("git_commit_all", {
+      projectPath: projectPath ?? null,
       spacePath,
     });
     useGitStore.getState().applyStatus(spacePath, status);

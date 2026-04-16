@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
 
 use crate::error::AppError;
-use crate::git::commands::GitState;
+use crate::git::commands::{require_cli, GitState};
+use crate::git::ops;
 use crate::index::IndexState;
 use crate::space::{config, project, registry, settings, symlinks, types::*};
 
@@ -54,6 +55,7 @@ pub fn list_projects(app: AppHandle) -> Result<Vec<SpaceInfo>, AppError> {
                         .map(|s| !s.is_empty())
                         .unwrap_or(false),
                     last_opened: sp_ref.last_opened.clone(),
+                    status: SpaceStatus::Ready,
                 });
             }
             Err(_) => continue,
@@ -107,6 +109,7 @@ pub async fn create_project(
         path,
         has_spaces: false,
         last_opened: None,
+        status: SpaceStatus::Ready,
     })
 }
 
@@ -146,6 +149,7 @@ pub async fn open_project_folder(
             .map(|s| !s.is_empty())
             .unwrap_or(false),
         last_opened: None,
+        status: SpaceStatus::Ready,
     })
 }
 
@@ -226,13 +230,50 @@ pub fn list_spaces(space_path: String) -> Result<Vec<SpaceInfo>, AppError> {
 }
 
 #[tauri::command]
-pub fn create_space(
+pub async fn create_space(
+    git_state: State<'_, GitState>,
     parent_path: String,
     name: String,
     icon: String,
+    folder_name: String,
+    git_type: SpaceGitType,
 ) -> Result<SpaceInfo, AppError> {
-    let path = Path::new(&parent_path);
-    project::create_space(path, &name, &icon)
+    let parent = Path::new(&parent_path);
+    let info = project::create_space(parent, &name, &icon, &folder_name)?;
+    let space_dir = parent.join(&folder_name);
+
+    match git_type {
+        SpaceGitType::Inline => {
+            ops::ensure_inline_gitignore(parent)?;
+        }
+        SpaceGitType::Independent => {
+            let cli = require_cli(&git_state)?;
+            let lock = git_state.get_lock(&space_dir).await;
+            let _guard = lock.lock().await;
+            ops::init(&cli, &space_dir).await?;
+            ops::add_independent_gitignore(parent, &folder_name)?;
+        }
+        SpaceGitType::Submodule => {
+            let cli = require_cli(&git_state)?;
+            let lock = git_state.get_lock(&space_dir).await;
+            let _guard = lock.lock().await;
+            ops::init(&cli, &space_dir).await?;
+            drop(_guard);
+            let parent_lock = git_state.get_lock(parent).await;
+            let _parent_guard = parent_lock.lock().await;
+            let out = cli
+                .exec(parent, &["submodule", "add", &format!("./{folder_name}")])
+                .await?;
+            if out.exit_code != 0 {
+                return Err(AppError::GitCommandFailed(format!(
+                    "git submodule add failed: {}",
+                    out.stderr
+                )));
+            }
+        }
+    }
+
+    Ok(info)
 }
 
 #[tauri::command]
@@ -250,10 +291,17 @@ pub fn register_cloned_space(
     parent_path: String,
     folder_name: String,
     fallback_name: String,
-    icon: String,
+    fallback_icon: String,
+    url: String,
+    git_type: String,
 ) -> Result<SpaceInfo, AppError> {
     let path = Path::new(&parent_path);
-    project::register_cloned_space(path, &folder_name, &fallback_name, &icon)
+    let repo = if git_type == "independent" {
+        Some(url)
+    } else {
+        None
+    };
+    project::register_cloned_space(path, &folder_name, &fallback_name, &fallback_icon, repo)
 }
 
 // --- Clone project ---
@@ -290,6 +338,7 @@ pub async fn project_clone(
             .map(|s| !s.is_empty())
             .unwrap_or(false),
         last_opened: None,
+        status: SpaceStatus::Ready,
     })
 }
 
@@ -363,4 +412,89 @@ pub fn read_agents_md(space_path: String) -> Result<Option<String>, AppError> {
     } else {
         Ok(None)
     }
+}
+
+// --- Ghost-state space operations ---
+
+#[tauri::command]
+pub async fn clone_missing_space(
+    app: AppHandle,
+    git_state: State<'_, GitState>,
+    project_path: String,
+    space_id: String,
+) -> Result<(), AppError> {
+    let parent = PathBuf::from(&project_path);
+    let parent_config = config::read_space_config(&parent)?;
+    let space_ref = parent_config
+        .spaces
+        .as_ref()
+        .and_then(|spaces| spaces.iter().find(|s| s.id == space_id))
+        .ok_or_else(|| AppError::SpaceNotFound(space_id.clone()))?
+        .clone();
+
+    let space_dir = parent.join(&space_ref.path);
+
+    if let Some(url) = &space_ref.repo {
+        // Independent: clone + gitignore
+        let cli = require_cli(&git_state)?;
+        let lock = git_state.get_lock(&space_dir).await;
+        let _guard = lock.lock().await;
+        crate::git::clone::clone_with_progress(&cli, &app, url, &space_dir).await?;
+        ops::add_independent_gitignore(&parent, &space_ref.path)?;
+    } else {
+        // Check .gitmodules for submodule
+        let gitmodules = parent.join(".gitmodules");
+        if gitmodules.exists() {
+            let content = std::fs::read_to_string(&gitmodules)?;
+            if content.contains(&format!("path = {}", space_ref.path)) {
+                let cli = require_cli(&git_state)?;
+                let lock = git_state.get_lock(&parent).await;
+                let _guard = lock.lock().await;
+                let out = cli
+                    .exec(&parent, &["submodule", "update", "--init", &space_ref.path])
+                    .await?;
+                if out.exit_code != 0 {
+                    return Err(AppError::GitCommandFailed(format!(
+                        "git submodule update --init failed: {}",
+                        out.stderr
+                    )));
+                }
+                // Checkout default branch in the submodule
+                let space_lock = git_state.get_lock(&space_dir).await;
+                let _space_guard = space_lock.lock().await;
+                let branch_out = cli
+                    .exec(&space_dir, &["symbolic-ref", "refs/remotes/origin/HEAD"])
+                    .await?;
+                if branch_out.exit_code == 0 {
+                    let branch = branch_out
+                        .stdout
+                        .trim()
+                        .strip_prefix("refs/remotes/origin/")
+                        .unwrap_or("main");
+                    let _ = cli.exec(&space_dir, &["checkout", branch]).await;
+                }
+            } else {
+                return Err(AppError::SpaceNotFound(space_id));
+            }
+        } else {
+            return Err(AppError::SpaceNotFound(space_id));
+        }
+    }
+
+    // Scaffold .combai/ if not present
+    let combai_dir = space_dir.join(".combai");
+    if !combai_dir.exists() {
+        crate::space::scaffold::scaffold_space(&space_dir, &space_ref.path, "", "")?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn remove_missing_space(
+    project_path: String,
+    space_id: String,
+) -> Result<(), AppError> {
+    let parent = Path::new(&project_path);
+    project::remove_missing_space(parent, &space_id)
 }

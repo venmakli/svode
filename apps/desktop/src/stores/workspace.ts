@@ -5,6 +5,7 @@ import * as m from "@/paraglide/messages.js";
 import type {
   SpaceInfo,
   SpaceConfig,
+  SpaceGitType,
   TreeNode,
 } from "@/types/space";
 
@@ -54,6 +55,8 @@ interface WorkspaceState {
     parentPath: string,
     name: string,
     icon: string,
+    folderName: string,
+    gitType: SpaceGitType,
   ) => Promise<SpaceInfo>;
   deleteSpace: (parentPath: string, spaceId: string, deleteFiles?: boolean) => Promise<void>;
   clearActiveSpace: () => void;
@@ -215,9 +218,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       });
       set({ spaces });
 
-      // Auto-select first space if none active
-      if (spaces.length > 0 && !get().activeSpaceId) {
-        await get().openSpace(spaces[0].id);
+      // Auto-select first ready space if none active
+      const readySpace = spaces.find((s) => s.status === "ready");
+      if (readySpace && !get().activeSpaceId) {
+        await get().openSpace(readySpace.id);
       }
     } catch (err) {
       console.error("Failed to load spaces:", err);
@@ -228,11 +232,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   openSpace: async (id: string) => {
-    set({ activeSpaceId: id });
-    // Grant the webview access to this space's `.assets/` via
-    // the Tauri asset protocol. Scope is per-app-session and idempotent
-    // — safe to call every time the user activates a space.
     const space = get().spaces.find((w) => w.id === id);
+    if (space?.status && space.status !== "ready") return;
+    set({ activeSpaceId: id });
     if (space?.path) {
       invoke("ensure_assets_scope", { spacePath: space.path }).catch(
         (err) => console.warn("ensure_assets_scope failed:", err),
@@ -250,11 +252,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ activeSpaceId: null });
   },
 
-  createSpace: async (parentPath, name, icon) => {
+  createSpace: async (parentPath, name, icon, folderName, gitType) => {
     const ws = await invoke<SpaceInfo>("create_space", {
       parentPath,
       name,
       icon,
+      folderName,
+      gitType,
     });
     set((s) => ({ spaces: [...s.spaces, ws] }));
     await get().openSpace(ws.id);

@@ -1,19 +1,19 @@
 use std::path::Path;
 
 use crate::error::AppError;
-use crate::files::entry::slugify;
 
 use super::config;
 use super::registry;
 use super::scaffold;
-use super::types::{SpaceConfig, SpaceInfo, SpaceRef};
+use super::types::{SpaceConfig, SpaceInfo, SpaceRef, SpaceStatus};
 
 /// Where to register a newly created/opened space.
 enum RegistrationTarget<'a> {
     /// Global registry (spaces.json) — for root projects.
     Registry(&'a Path),
     /// Parent space config.json — for child spaces.
-    ParentSpace(&'a Path, String),
+    /// (parent_path, folder_name, repo_url)
+    ParentSpace(&'a Path, String, Option<String>),
 }
 
 /// Scaffold (if needed) + generate id + register.
@@ -38,13 +38,13 @@ fn create_and_register(
         RegistrationTarget::Registry(config_dir) => {
             registry::add_space(config_dir, &id, &path.to_string_lossy())?;
         }
-        RegistrationTarget::ParentSpace(parent_path, folder_name) => {
+        RegistrationTarget::ParentSpace(parent_path, folder_name, repo) => {
             let mut parent_config = config::read_space_config(parent_path)?;
             let spaces = parent_config.spaces.get_or_insert_with(Vec::new);
             spaces.push(SpaceRef {
                 id: id.clone(),
                 path: folder_name,
-                repo: None,
+                repo,
             });
             config::write_space_config(parent_path, &parent_config)?;
         }
@@ -122,18 +122,14 @@ pub fn create_space(
     parent_path: &Path,
     name: &str,
     icon: &str,
+    folder_name: &str,
 ) -> Result<SpaceInfo, AppError> {
-    let slug = slugify(name);
-
-    // Handle collision: try slug, slug-1, slug-2, etc.
-    let mut folder_name = slug.clone();
-    let mut counter = 1u32;
-    while parent_path.join(&folder_name).exists() {
-        folder_name = format!("{}-{}", slug, counter);
-        counter += 1;
+    let space_dir = parent_path.join(folder_name);
+    if space_dir.exists() {
+        return Err(AppError::FileAlreadyExists(
+            space_dir.to_string_lossy().to_string(),
+        ));
     }
-
-    let space_dir = parent_path.join(&folder_name);
     std::fs::create_dir_all(&space_dir)?;
 
     let (id, cfg) = create_and_register(
@@ -141,7 +137,7 @@ pub fn create_space(
         name,
         icon,
         "",
-        RegistrationTarget::ParentSpace(parent_path, folder_name),
+        RegistrationTarget::ParentSpace(parent_path, folder_name.to_string(), None),
     )?;
 
     Ok(SpaceInfo {
@@ -152,6 +148,7 @@ pub fn create_space(
         path: space_dir.to_string_lossy().to_string(),
         has_spaces: false,
         last_opened: None,
+        status: SpaceStatus::Ready,
     })
 }
 
@@ -165,6 +162,7 @@ pub fn register_cloned_space(
     folder_name: &str,
     fallback_name: &str,
     icon: &str,
+    repo: Option<String>,
 ) -> Result<SpaceInfo, AppError> {
     let space_dir = parent_path.join(folder_name);
     if !space_dir.is_dir() {
@@ -189,6 +187,7 @@ pub fn register_cloned_space(
                 path: space_dir.to_string_lossy().to_string(),
                 has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
                 last_opened: None,
+                status: SpaceStatus::Ready,
             });
         }
     }
@@ -198,7 +197,7 @@ pub fn register_cloned_space(
         fallback_name,
         icon,
         "",
-        RegistrationTarget::ParentSpace(parent_path, folder_name.to_string()),
+        RegistrationTarget::ParentSpace(parent_path, folder_name.to_string(), repo),
     )?;
 
     Ok(SpaceInfo {
@@ -209,6 +208,7 @@ pub fn register_cloned_space(
         path: space_dir.to_string_lossy().to_string(),
         has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
         last_opened: None,
+        status: SpaceStatus::Ready,
     })
 }
 
@@ -246,41 +246,95 @@ pub fn list_spaces(parent_path: &Path) -> Result<Vec<SpaceInfo>, AppError> {
         for space_ref in spaces {
             let space_path = parent_path.join(&space_ref.path);
             let exists = space_path.exists();
-            let space_config = if exists {
-                config::read_space_config(&space_path).ok()
-            } else {
-                None
-            };
 
-            result.push(SpaceInfo {
-                id: space_ref.id.clone(),
-                name: space_config
-                    .as_ref()
-                    .map(|c| c.name.clone())
-                    .unwrap_or_else(|| {
-                        space_path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_default()
-                    }),
-                icon: space_config
-                    .as_ref()
-                    .map(|c| c.icon.clone())
-                    .unwrap_or_default(),
-                description: space_config
-                    .as_ref()
-                    .map(|c| c.description.clone())
-                    .unwrap_or_default(),
-                path: space_path.to_string_lossy().to_string(),
-                has_spaces: space_config
-                    .as_ref()
-                    .and_then(|c| c.spaces.as_ref())
-                    .map(|s| !s.is_empty())
-                    .unwrap_or(false),
-                last_opened: None,
-            });
+            if exists {
+                let space_config = config::read_space_config(&space_path).ok();
+                result.push(SpaceInfo {
+                    id: space_ref.id.clone(),
+                    name: space_config
+                        .as_ref()
+                        .map(|c| c.name.clone())
+                        .unwrap_or_else(|| {
+                            space_path
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_default()
+                        }),
+                    icon: space_config
+                        .as_ref()
+                        .map(|c| c.icon.clone())
+                        .unwrap_or_default(),
+                    description: space_config
+                        .as_ref()
+                        .map(|c| c.description.clone())
+                        .unwrap_or_default(),
+                    path: space_path.to_string_lossy().to_string(),
+                    has_spaces: space_config
+                        .as_ref()
+                        .and_then(|c| c.spaces.as_ref())
+                        .map(|s| !s.is_empty())
+                        .unwrap_or(false),
+                    last_opened: None,
+                    status: SpaceStatus::Ready,
+                });
+            } else {
+                // Ghost state: folder missing
+                let status = if space_ref.repo.is_some() {
+                    SpaceStatus::Missing
+                } else {
+                    let gitmodules = parent_path.join(".gitmodules");
+                    if gitmodules.exists() {
+                        let content = std::fs::read_to_string(&gitmodules).unwrap_or_default();
+                        if content.contains(&format!("path = {}", space_ref.path)) {
+                            SpaceStatus::Missing
+                        } else {
+                            SpaceStatus::Broken
+                        }
+                    } else {
+                        SpaceStatus::Broken
+                    }
+                };
+                result.push(SpaceInfo {
+                    id: space_ref.id.clone(),
+                    name: space_ref.path.clone(),
+                    icon: String::new(),
+                    description: String::new(),
+                    path: space_path.to_string_lossy().to_string(),
+                    has_spaces: false,
+                    last_opened: None,
+                    status,
+                });
+            }
         }
     }
 
     Ok(result)
+}
+
+/// Update the repo URL for a space in the parent config.
+pub fn reconcile_space_url(
+    parent_path: &Path,
+    space_id: &str,
+    actual_url: Option<&str>,
+) -> Result<(), AppError> {
+    let mut parent_config = config::read_space_config(parent_path)?;
+    if let Some(ref mut spaces) = parent_config.spaces {
+        if let Some(space_ref) = spaces.iter_mut().find(|s| s.id == space_id) {
+            let new_repo = actual_url.map(|u| u.to_string());
+            if space_ref.repo != new_repo {
+                space_ref.repo = new_repo;
+                config::write_space_config(parent_path, &parent_config)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Remove a missing space entry from the parent config (no file deletion).
+pub fn remove_missing_space(parent_path: &Path, space_id: &str) -> Result<(), AppError> {
+    let mut parent_config = config::read_space_config(parent_path)?;
+    if let Some(ref mut spaces) = parent_config.spaces {
+        spaces.retain(|s| s.id != space_id);
+    }
+    config::write_space_config(parent_path, &parent_config)
 }

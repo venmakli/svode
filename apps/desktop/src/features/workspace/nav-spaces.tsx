@@ -40,16 +40,26 @@ import {
   ChevronRight,
   Ellipsis,
   FilePlus,
+  FolderDown,
   FolderPlus,
+  Loader2,
   Plus,
   Save,
   Settings,
   Pencil,
   Trash2,
+  X,
 } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useLayoutStore } from "@/stores/layout";
-import type { TreeNode, SpaceConfig } from "@/types/space";
+import type { TreeNode, SpaceConfig, SpaceInfo } from "@/types/space";
+import { listen } from "@tauri-apps/api/event";
+import type { CloneProgress } from "@/types/git";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { CreateSpaceDialog } from "./create-space-dialog";
 import { SortableFileTree } from "./sortable-file-tree";
 import { FileTreeItem } from "./file-tree-item";
@@ -69,6 +79,7 @@ export function NavSpaces() {
     deleteSpace,
     createPage,
     refreshTree,
+    loadSpaces,
   } = useWorkspaceStore();
   const { openDocument, openSpaceSettings } = useLayoutStore();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -152,6 +163,45 @@ export function NavSpaces() {
     setDeleteFiles(false);
   }
 
+  async function handleCloneMissing(spaceId: string, spacePath: string) {
+    if (!activeRootPath) return;
+    const git = useGitStore.getState();
+    git.setCloning(spacePath, { phase: "Starting", percent: 0 });
+
+    const unlisten = await listen<CloneProgress>("clone:progress", (event) => {
+      if (event.payload.spacePath !== spacePath) return;
+      useGitStore.getState().setCloning(spacePath, {
+        phase: event.payload.phase,
+        percent: event.payload.percent,
+      });
+    });
+
+    try {
+      await invoke("clone_missing_space", { projectPath: activeRootPath, spaceId });
+      await loadSpaces(activeRootPath);
+      git.setCloning(spacePath, null);
+    } catch (err) {
+      console.error("clone_missing_space failed:", err);
+      const message = typeof err === "string" ? err : (err as Error)?.message ?? "error";
+      git.setCloning(spacePath, { phase: m.git_clone_failed(), percent: 0, error: message });
+      toast.error(m.git_clone_failed());
+      window.setTimeout(() => useGitStore.getState().setCloning(spacePath, null), 6000);
+    } finally {
+      unlisten();
+    }
+  }
+
+  async function handleRemoveBroken(spaceId: string) {
+    if (!activeRootPath) return;
+    try {
+      await invoke("remove_missing_space", { projectPath: activeRootPath, spaceId });
+      await loadSpaces(activeRootPath);
+    } catch (err) {
+      console.error("remove_missing_space failed:", err);
+      toast.error(m.toast_error());
+    }
+  }
+
   // Only show spaces section if there are spaces
   if (spaces.length === 0 && !activeRootPath) return null;
 
@@ -188,6 +238,8 @@ export function NavSpaces() {
                     openSpaceSettings={openSpaceSettings}
                     openSpace={openSpace}
                     setDeleteTarget={setDeleteTarget}
+                    handleCloneMissing={handleCloneMissing}
+                    handleRemoveBroken={handleRemoveBroken}
                     editRef={editRef}
                   />
                 );
@@ -240,7 +292,7 @@ export function NavSpaces() {
 }
 
 interface SpaceRowProps {
-  ws: { id: string; name: string; icon: string; path: string };
+  ws: SpaceInfo;
   isActive: boolean;
   tree: TreeNode[];
   editingSpaceId: string | null;
@@ -253,6 +305,8 @@ interface SpaceRowProps {
   openSpaceSettings: (path: string) => void;
   openSpace: (id: string) => void;
   setDeleteTarget: (t: { id: string; name: string }) => void;
+  handleCloneMissing: (spaceId: string, spacePath: string) => void;
+  handleRemoveBroken: (spaceId: string) => void;
   editRef: React.RefObject<HTMLInputElement | null>;
 }
 
@@ -270,6 +324,8 @@ function SpaceRow({
   openSpaceSettings,
   openSpace,
   setDeleteTarget,
+  handleCloneMissing,
+  handleRemoveBroken,
   editRef,
 }: SpaceRowProps) {
   const cloning = useGitStore((s) => s.cloning[ws.path]);
@@ -277,6 +333,51 @@ function SpaceRow({
     (s) =>
       !!(s.statuses[ws.path]?.hasStaged || s.statuses[ws.path]?.hasUnstaged),
   );
+
+  // Ghost-state: missing or broken
+  if (ws.status === "missing" || ws.status === "broken") {
+    return (
+      <SidebarMenuItem>
+        <SidebarMenuButton disabled className="opacity-50">
+          <span>{ws.icon || "\u{1F4C2}"}</span>
+          <span className="flex-1 truncate text-muted-foreground">{ws.name}</span>
+        </SidebarMenuButton>
+        {cloning && (
+          <div className="px-2 pb-1">
+            <Progress value={cloning.percent} className="h-1" />
+            <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
+              {cloning.error ? cloning.error : `${cloning.phase} ${cloning.percent}%`}
+            </p>
+          </div>
+        )}
+        {ws.status === "missing" && !cloning && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <SidebarMenuAction onClick={() => handleCloneMissing(ws.id, ws.path)}>
+                <FolderDown className="h-4 w-4" />
+              </SidebarMenuAction>
+            </TooltipTrigger>
+            <TooltipContent side="right">{m.space_clone_missing()}</TooltipContent>
+          </Tooltip>
+        )}
+        {ws.status === "missing" && cloning && (
+          <SidebarMenuAction disabled>
+            <Loader2 className="h-4 w-4 animate-spin" />
+          </SidebarMenuAction>
+        )}
+        {ws.status === "broken" && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <SidebarMenuAction onClick={() => handleRemoveBroken(ws.id)}>
+                <X className="h-4 w-4" />
+              </SidebarMenuAction>
+            </TooltipTrigger>
+            <TooltipContent side="right">{m.space_remove_broken()}</TooltipContent>
+          </Tooltip>
+        )}
+      </SidebarMenuItem>
+    );
+  }
 
   return (
     <Collapsible defaultOpen={isActive}>
@@ -350,7 +451,7 @@ function SpaceRow({
             {dirty && (
               <>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => commitAllSpace(ws.path)}>
+                <DropdownMenuItem onClick={() => commitAllSpace(ws.path, useWorkspaceStore.getState().activeRootPath ?? undefined)}>
                   <Save className="mr-2 h-4 w-4" />
                   {m.git_save_all()}
                 </DropdownMenuItem>

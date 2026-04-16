@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import * as m from "@/paraglide/messages.js";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
@@ -14,9 +14,18 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+  InputGroupText,
+} from "@/components/ui/input-group";
 import { EmojiPicker } from "@/components/ui/emoji-picker";
+import { Progress } from "@/components/ui/progress";
 import { useWorkspaceStore } from "@/stores/workspace";
-import { useGitStore } from "@/stores/git";
+import type { SpaceGitType } from "@/types/space";
 import type { CloneProgress } from "@/types/git";
 
 interface CreateSpaceDialogProps {
@@ -43,13 +52,24 @@ function slugPreview(name: string): string {
     .replace(/[^a-z0-9-]/g, "")
     .replace(/-{2,}/g, "-")
     .replace(/^-|-$/g, "")
-    .slice(0, 60) || "untitled";
+    .slice(0, 60);
 }
 
-// Accepts: https://, http://, git@host:..., ssh://, file:// (relative paths
-// rejected because clone needs an unambiguous remote location).
+function folderFromUrl(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) return "";
+  const lastSegment = trimmed.split("/").pop() ?? "";
+  return lastSegment.replace(/\.git$/, "").toLowerCase().replace(/[^a-z0-9-]/g, "");
+}
+
 const URL_REGEX =
-  /^(https?:\/\/|ssh:\/\/|git:\/\/|file:\/\/)\S+|^[\w.-]+@[\w.-]+:\S+$/;
+  /^(https?:\/\/)\S+|^[\w.-]+@[\w.-]+:\S+$/;
+
+function sanitizeFolder(value: string): string {
+  return value
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/^[-.]/, "");
+}
 
 export function CreateSpaceDialog({
   open: isOpen,
@@ -57,60 +77,91 @@ export function CreateSpaceDialog({
 }: CreateSpaceDialogProps) {
   const { activeRootPath, createSpace, loadSpaces } = useWorkspaceStore();
 
+  const [tab, setTab] = useState<"create" | "clone">("create");
   const [name, setName] = useState("");
   const [icon, setIcon] = useState("\u{1F4C2}");
   const [url, setUrl] = useState("");
+  const [folder, setFolder] = useState("");
+  const [folderEdited, setFolderEdited] = useState(false);
+  const [gitType, setGitType] = useState<SpaceGitType>("inline");
   const [slugCollision, setSlugCollision] = useState(false);
+  const [cloneProgress, setCloneProgress] = useState<{ phase: string; percent: number } | null>(null);
 
   function resetForm() {
+    setTab("create");
     setName("");
     setIcon("\u{1F4C2}");
     setUrl("");
+    setFolder("");
+    setFolderEdited(false);
+    setGitType("inline");
     setSlugCollision(false);
+    setCloneProgress(null);
   }
 
-  const slug = slugPreview(name);
-  const trimmedUrl = url.trim();
-  const urlValid = trimmedUrl === "" || URL_REGEX.test(trimmedUrl);
-  const targetPath =
-    activeRootPath && slug ? `${activeRootPath}/${slug}` : null;
+  // Auto-fill folder from name (create) or URL (clone) unless user edited it
+  const autoFolder = tab === "create"
+    ? slugPreview(name)
+    : folderFromUrl(url);
 
-  // Debounced slug-collision check — disables submit if target folder exists.
+  const effectiveFolder = folderEdited ? folder : autoFolder;
+  const targetPath = activeRootPath && effectiveFolder
+    ? `${activeRootPath}/${effectiveFolder}`
+    : null;
+
+  const projectFolderName = activeRootPath
+    ? activeRootPath.split("/").pop() ?? ""
+    : "";
+
+  // Reset folderEdited when switching tabs
   useEffect(() => {
-    if (!targetPath || !name.trim()) {
+    setFolderEdited(false);
+    setFolder("");
+    if (tab === "create") {
+      setGitType("inline");
+    } else {
+      setGitType("independent");
+    }
+  }, [tab]);
+
+  // Debounced collision check
+  useEffect(() => {
+    if (!targetPath || !effectiveFolder) {
       setSlugCollision(false);
       return;
     }
     let cancelled = false;
     const timer = window.setTimeout(async () => {
       try {
-        const exists = await invoke<boolean>("path_exists", {
-          path: targetPath,
-        });
+        const exists = await invoke<boolean>("path_exists", { path: targetPath });
         if (!cancelled) setSlugCollision(exists);
       } catch {
         if (!cancelled) setSlugCollision(false);
       }
     }, 200);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [targetPath, name]);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [targetPath, effectiveFolder]);
+
+  const trimmedUrl = url.trim();
+  const urlValid = tab === "create" || URL_REGEX.test(trimmedUrl);
+
+  const isCreateValid = tab === "create" && name.trim() !== "" && effectiveFolder !== "" && !slugCollision;
+  const isCloneValid = tab === "clone" && trimmedUrl !== "" && urlValid && effectiveFolder !== "" && !slugCollision;
+  const isValid = isCreateValid || isCloneValid;
+
+  const handleFolderChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const sanitized = sanitizeFolder(e.target.value);
+    setFolder(sanitized);
+    setFolderEdited(sanitized !== "");
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim() || !activeRootPath || !urlValid) return;
+    if (!activeRootPath || !isValid) return;
 
-    if (trimmedUrl === "") {
-      // No URL → create a new space + git init
+    if (tab === "create") {
       try {
-        const ws = await createSpace(activeRootPath, name.trim(), icon);
-        try {
-          await invoke("git_init_space", { spacePath: ws.path });
-        } catch (err) {
-          console.warn("git_init_workspace failed:", err);
-        }
+        await createSpace(activeRootPath, name.trim(), icon, effectiveFolder, gitType);
         onOpenChange(false);
         resetForm();
       } catch (err) {
@@ -120,19 +171,17 @@ export function CreateSpaceDialog({
       return;
     }
 
-    // Clone path — non-blocking. Close the dialog immediately and let the
-    // sidebar render an inline progress indicator.
+    // Clone tab — keep dialog open, show progress
     if (!targetPath) return;
-    onOpenChange(false);
     void runClone({
       url: trimmedUrl,
       targetPath,
       parentPath: activeRootPath,
-      folderName: slug,
-      fallbackName: name.trim(),
-      icon,
+      folderName: effectiveFolder,
+      fallbackName: effectiveFolder,
+      fallbackIcon: "\u{1F4C2}",
+      gitType,
     });
-    resetForm();
   }
 
   async function runClone(opts: {
@@ -141,17 +190,16 @@ export function CreateSpaceDialog({
     parentPath: string;
     folderName: string;
     fallbackName: string;
-    icon: string;
+    fallbackIcon: string;
+    gitType: SpaceGitType;
   }) {
-    const git = useGitStore.getState();
-    git.setCloning(opts.targetPath, { phase: "Starting", percent: 0 });
+    setCloneProgress({ phase: "Starting", percent: 0 });
 
-    // Listen for progress events for this specific target path
     const unlisten = await listen<CloneProgress>(
       "clone:progress",
       (event) => {
         if (event.payload.spacePath !== opts.targetPath) return;
-        useGitStore.getState().setCloning(opts.targetPath, {
+        setCloneProgress({
           phase: event.payload.phase,
           percent: event.payload.percent,
         });
@@ -162,32 +210,24 @@ export function CreateSpaceDialog({
       await invoke("git_clone_space", {
         url: opts.url,
         targetPath: opts.targetPath,
+        projectPath: opts.parentPath,
+        gitType: opts.gitType,
       });
-      // Register the cloned folder as a space. Backend scaffolds
-      // `.combai/` if the repo didn't ship one, then adds a SpaceRef entry
-      // to the parent's config.json.
       await invoke("register_cloned_space", {
         parentPath: opts.parentPath,
         folderName: opts.folderName,
         fallbackName: opts.fallbackName,
-        icon: opts.icon,
+        fallbackIcon: opts.fallbackIcon,
+        url: opts.url,
+        gitType: opts.gitType,
       });
       await loadSpaces(opts.parentPath);
-      git.setCloning(opts.targetPath, null);
+      onOpenChange(false);
+      resetForm();
     } catch (err) {
-      console.error("git_clone_workspace failed:", err);
-      const message =
-        typeof err === "string" ? err : (err as Error)?.message ?? "error";
-      git.setCloning(opts.targetPath, {
-        phase: m.git_clone_failed(),
-        percent: 0,
-        error: message,
-      });
+      console.error("git_clone_space failed:", err);
       toast.error(m.git_clone_failed());
-      // Auto-clear the error state after a few seconds
-      window.setTimeout(() => {
-        useGitStore.getState().setCloning(opts.targetPath, null);
-      }, 6000);
+      setCloneProgress(null);
     } finally {
       unlisten();
     }
@@ -198,15 +238,11 @@ export function CreateSpaceDialog({
     onOpenChange(value);
   }
 
-  const isValid = name.trim() !== "" && urlValid && !slugCollision;
-  const projectFolderName = activeRootPath
-    ? activeRootPath.split("/").pop() ?? ""
-    : "";
-  const submitLabel = trimmedUrl ? m.git_clone_action() : m.project_create();
+  const submitLabel = tab === "clone" ? m.git_clone_action() : m.project_create();
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[400px]">
+      <DialogContent className="sm:max-w-[420px]">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
             <DialogTitle>{m.space_new_title()}</DialogTitle>
@@ -215,69 +251,150 @@ export function CreateSpaceDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-4 py-4">
-            {/* Name + icon */}
-            <div className="grid gap-2">
-              <Label htmlFor="space-name">
-                {m.space_name_label()}
-              </Label>
-              <div className="flex gap-2">
-                <EmojiPicker value={icon} onChange={setIcon} size="sm" />
-                <Input
-                  id="space-name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder={m.space_name_placeholder()}
-                  autoFocus
-                />
+          <Tabs value={tab} onValueChange={(v) => setTab(v as "create" | "clone")} className="mt-4">
+            <TabsList className="w-full">
+              <TabsTrigger value="create" className="flex-1">{m.space_tab_create()}</TabsTrigger>
+              <TabsTrigger value="clone" className="flex-1">{m.space_tab_clone()}</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="create" className="mt-4">
+              <div className="grid gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="space-name">{m.space_name_label()}</Label>
+                  <div className="flex gap-2">
+                    <EmojiPicker value={icon} onChange={setIcon} size="sm" />
+                    <Input
+                      id="space-name"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder={m.space_name_placeholder()}
+                      autoFocus
+                    />
+                  </div>
+                </div>
+
+                <div className="grid gap-2">
+                  <Label>{m.space_folder_label()}</Label>
+                  <InputGroup>
+                    <InputGroupAddon>
+                      <InputGroupText>{projectFolderName}/</InputGroupText>
+                    </InputGroupAddon>
+                    <InputGroupInput
+                      value={folderEdited ? folder : autoFolder}
+                      onChange={handleFolderChange}
+                      placeholder="folder-name"
+                      className="pl-0.5! text-sm!"
+                    />
+                  </InputGroup>
+                  {slugCollision && (
+                    <p className="text-xs text-destructive">
+                      {m.git_clone_folder_exists({ slug: effectiveFolder })}
+                    </p>
+                  )}
+                </div>
+
+                <div className="grid gap-2">
+                  <Label>{m.space_type_label()}</Label>
+                  <RadioGroup value={gitType} onValueChange={(v) => setGitType(v as SpaceGitType)}>
+                    <label className="flex items-start gap-3 rounded-md border p-3 cursor-pointer has-[[data-state=checked]]:border-ring">
+                      <RadioGroupItem value="inline" className="mt-0.5" />
+                      <div>
+                        <div className="text-sm font-medium">{m.space_type_inline()}</div>
+                        <div className="text-xs text-muted-foreground">{m.space_type_inline_desc()}</div>
+                      </div>
+                    </label>
+                    <label className="flex items-start gap-3 rounded-md border p-3 cursor-pointer has-[[data-state=checked]]:border-ring">
+                      <RadioGroupItem value="independent" className="mt-0.5" />
+                      <div>
+                        <div className="text-sm font-medium">{m.space_type_independent()}</div>
+                        <div className="text-xs text-muted-foreground">{m.space_type_independent_desc()}</div>
+                      </div>
+                    </label>
+                    <label className="flex items-start gap-3 rounded-md border p-3 cursor-pointer has-[[data-state=checked]]:border-ring">
+                      <RadioGroupItem value="submodule" className="mt-0.5" />
+                      <div>
+                        <div className="text-sm font-medium">{m.space_type_submodule()}</div>
+                        <div className="text-xs text-muted-foreground">{m.space_type_submodule_desc()}</div>
+                      </div>
+                    </label>
+                  </RadioGroup>
+                </div>
               </div>
-            </div>
+            </TabsContent>
 
-            {/* Slug preview */}
-            {name.trim() && (
-              <p className="text-xs text-muted-foreground">
-                {m.space_slug_preview({
-                  path: `${projectFolderName}/${slug}/`,
-                })}
+            <TabsContent value="clone" className="mt-4">
+              <div className="grid gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="clone-url">{m.git_clone_url_label()}</Label>
+                  <Input
+                    id="clone-url"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    placeholder="https://github.com/org/repo"
+                    autoFocus
+                  />
+                  {!urlValid && trimmedUrl !== "" && (
+                    <p className="text-xs text-destructive">{m.git_clone_url_invalid()}</p>
+                  )}
+                </div>
+
+                <div className="grid gap-2">
+                  <Label>{m.space_folder_label()}</Label>
+                  <InputGroup>
+                    <InputGroupAddon>
+                      <InputGroupText>{projectFolderName}/</InputGroupText>
+                    </InputGroupAddon>
+                    <InputGroupInput
+                      value={folderEdited ? folder : autoFolder}
+                      onChange={handleFolderChange}
+                      placeholder="folder-name"
+                      className="pl-0.5! text-sm!"
+                    />
+                  </InputGroup>
+                  {slugCollision && (
+                    <p className="text-xs text-destructive">
+                      {m.git_clone_folder_exists({ slug: effectiveFolder })}
+                    </p>
+                  )}
+                </div>
+
+                <div className="grid gap-2">
+                  <Label>{m.space_type_label()}</Label>
+                  <RadioGroup value={gitType} onValueChange={(v) => setGitType(v as SpaceGitType)}>
+                    <label className="flex items-start gap-3 rounded-md border p-3 cursor-pointer has-[[data-state=checked]]:border-ring">
+                      <RadioGroupItem value="independent" className="mt-0.5" />
+                      <div>
+                        <div className="text-sm font-medium">{m.space_type_independent()}</div>
+                        <div className="text-xs text-muted-foreground">{m.space_type_independent_desc()}</div>
+                      </div>
+                    </label>
+                    <label className="flex items-start gap-3 rounded-md border p-3 cursor-pointer has-[[data-state=checked]]:border-ring">
+                      <RadioGroupItem value="submodule" className="mt-0.5" />
+                      <div>
+                        <div className="text-sm font-medium">{m.space_type_submodule()}</div>
+                        <div className="text-xs text-muted-foreground">{m.space_type_submodule_desc()}</div>
+                      </div>
+                    </label>
+                  </RadioGroup>
+                </div>
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          {cloneProgress && (
+            <div className="mt-4 space-y-1">
+              <Progress value={cloneProgress.percent} className="h-1.5" />
+              <p className="text-xs text-muted-foreground truncate">
+                {cloneProgress.phase} {cloneProgress.percent}%
               </p>
-            )}
-            {slugCollision && (
-              <p className="text-xs text-destructive">
-                {m.git_clone_folder_exists({ slug })}
-              </p>
-            )}
-
-            {/* Optional clone URL */}
-            <div className="grid gap-2">
-              <Label htmlFor="space-url">{m.git_clone_url_label()}</Label>
-              <Input
-                id="space-url"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://github.com/org/repo"
-              />
-              {!urlValid && (
-                <p className="text-xs text-destructive">
-                  {m.git_clone_url_invalid()}
-                </p>
-              )}
-              {urlValid && (
-                <p className="text-xs text-muted-foreground">
-                  {m.git_clone_url_hint()}
-                </p>
-              )}
             </div>
-          </div>
+          )}
 
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => handleOpenChange(false)}
-            >
+          <DialogFooter className="mt-4">
+            <Button type="button" variant="outline" onClick={() => handleOpenChange(false)} disabled={!!cloneProgress}>
               {m.project_cancel()}
             </Button>
-            <Button type="submit" disabled={!isValid}>
+            <Button type="submit" disabled={!isValid || !!cloneProgress}>
               {submitLabel}
             </Button>
           </DialogFooter>

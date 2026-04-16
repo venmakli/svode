@@ -196,6 +196,24 @@ pub struct LocalConfig {
     pub expanded_paths: Vec<String>,
 }
 
+// --- Git type & status ---
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SpaceGitType {
+    Inline,
+    Independent,
+    Submodule,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SpaceStatus {
+    Ready,
+    Missing,
+    Broken,
+}
+
 // --- Frontend view type ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -208,4 +226,5 @@ pub struct SpaceInfo {
     pub path: String,
     pub has_spaces: bool,
     pub last_opened: Option<String>,
+    pub status: SpaceStatus,
 }

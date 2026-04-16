@@ -85,7 +85,7 @@ export function SpaceSettingsDialog({
   onOpenChange,
 }: SpaceSettingsDialogProps) {
   const { openDocument, closeSettings } = useLayoutStore();
-  const { activeRootPath, spaces } = useWorkspaceStore();
+  const { activeRootPath, activeRootName, spaces } = useWorkspaceStore();
 
   const spacePath = inputPath ?? "";
   const isRoot = spacePath === activeRootPath;
@@ -121,6 +121,8 @@ export function SpaceSettingsDialog({
   const [savedSystemPrompt, setSavedSystemPrompt] = useState("");
 
   // Git section
+  const [gitType, setGitType] = useState<"inline" | "independent" | "submodule" | null>(null);
+  const [submoduleUrl, setSubmoduleUrl] = useState<string | null>(null);
   const [remoteUrl, setRemoteUrl] = useState("");
   const [savedRemoteUrl, setSavedRemoteUrl] = useState("");
   const [branch, setBranch] = useState<string | null>(null);
@@ -204,6 +206,28 @@ export function SpaceSettingsDialog({
 
   const loadGitInfo = useCallback(async () => {
     if (!spacePath) return;
+    // Detect git type for non-root spaces
+    if (!isRoot && activeRootPath) {
+      try {
+        const t = await invoke<"inline" | "independent" | "submodule">("get_space_git_type", {
+          projectPath: activeRootPath,
+          spacePath,
+        });
+        setGitType(t);
+        if (t === "submodule") {
+          const folder = spacePath.split("/").pop() ?? "";
+          const url = await invoke<string | null>("git_get_submodule_url", {
+            projectPath: activeRootPath,
+            spaceFolder: folder,
+          });
+          setSubmoduleUrl(url);
+        }
+      } catch {
+        setGitType(null);
+      }
+    } else {
+      setGitType(null);
+    }
     try {
       const remote = await invoke<string | null>("git_get_remote", {
         spacePath,
@@ -222,7 +246,7 @@ export function SpaceSettingsDialog({
     } catch {
       setBranch(null);
     }
-  }, [spacePath]);
+  }, [spacePath, isRoot, activeRootPath]);
 
   const loadModels = useCallback(async () => {
     if (!spacePath) return;
@@ -420,14 +444,19 @@ export function SpaceSettingsDialog({
 
   async function applyRemote(newUrl: string) {
     try {
-      await invoke("git_set_remote", { spacePath, url: newUrl });
+      const spaceWs = spaces.find((s) => s.path === spacePath);
+      await invoke("git_set_remote", {
+        spacePath,
+        url: newUrl,
+        projectPath: activeRootPath ?? null,
+        spaceId: spaceWs?.id ?? null,
+      });
       setSavedRemoteUrl(newUrl);
       setRemoteUrl(newUrl);
       toast.success(m.toast_settings_saved());
     } catch (err) {
       console.error("Failed to set remote:", err);
       toast.error(m.toast_error());
-      // Roll back UI to previously-saved value
       setRemoteUrl(savedRemoteUrl);
     }
   }
@@ -802,47 +831,71 @@ export function SpaceSettingsDialog({
 
                 {section === "git" && (
                   <div className="space-y-6 max-w-sm">
-                    <div className="space-y-2">
-                      <Label htmlFor="ws-git-remote">{m.git_remote_label()}</Label>
-                      <Input
-                        id="ws-git-remote"
-                        value={remoteUrl}
-                        onChange={(e) => setRemoteUrl(e.target.value)}
-                        onBlur={handleRemoteBlur}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            (e.target as HTMLInputElement).blur();
-                          }
-                        }}
-                        placeholder={m.git_remote_placeholder()}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{m.git_branch_label()}</Label>
+                    {gitType === "inline" && (
                       <p className="text-sm text-muted-foreground">
-                        {branch ?? "—"}
+                        {m.git_type_inline_note({ name: activeRootName ?? "" })}
                       </p>
-                    </div>
-                    <Separator />
-                    <div className="space-y-2">
-                      <Label>{m.git_auto_sync_label()}</Label>
-                      <label className="flex items-start gap-2 cursor-pointer">
-                        <Checkbox
-                          checked={autoSync}
-                          onCheckedChange={(checked) =>
-                            handleAutoSyncChange(checked === true)
-                          }
-                          className="mt-0.5"
-                        />
-                        <span className="text-sm">
-                          {m.git_auto_sync_checkbox()}
-                          <span className="block text-xs text-muted-foreground">
-                            {m.git_auto_sync_hint()}
-                          </span>
-                        </span>
-                      </label>
-                    </div>
+                    )}
+                    {gitType === "submodule" && (
+                      <>
+                        <p className="text-sm text-muted-foreground">
+                          {m.git_type_submodule_note({ name: activeRootName ?? "" })}
+                        </p>
+                        {submoduleUrl && (
+                          <div className="space-y-2">
+                            <Label>{m.git_remote_label()}</Label>
+                            <p className="text-sm text-muted-foreground break-all">
+                              {submoduleUrl}
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {(isRoot || gitType === "independent" || gitType === null) && (
+                      <>
+                        <div className="space-y-2">
+                          <Label htmlFor="ws-git-remote">{m.git_remote_label()}</Label>
+                          <Input
+                            id="ws-git-remote"
+                            value={remoteUrl}
+                            onChange={(e) => setRemoteUrl(e.target.value)}
+                            onBlur={handleRemoteBlur}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                (e.target as HTMLInputElement).blur();
+                              }
+                            }}
+                            placeholder={m.git_remote_placeholder()}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>{m.git_branch_label()}</Label>
+                          <p className="text-sm text-muted-foreground">
+                            {branch ?? "—"}
+                          </p>
+                        </div>
+                        <Separator />
+                        <div className="space-y-2">
+                          <Label>{m.git_auto_sync_label()}</Label>
+                          <label className="flex items-start gap-2 cursor-pointer">
+                            <Checkbox
+                              checked={autoSync}
+                              onCheckedChange={(checked) =>
+                                handleAutoSyncChange(checked === true)
+                              }
+                              className="mt-0.5"
+                            />
+                            <span className="text-sm">
+                              {m.git_auto_sync_checkbox()}
+                              <span className="block text-xs text-muted-foreground">
+                                {m.git_auto_sync_hint()}
+                              </span>
+                            </span>
+                          </label>
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
 

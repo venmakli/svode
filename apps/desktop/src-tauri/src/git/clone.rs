@@ -119,6 +119,101 @@ pub async fn clone_with_progress(
     Ok(())
 }
 
+/// Run `git submodule add --progress <url> <space_folder>` from the project
+/// root while streaming progress to the frontend.
+pub async fn submodule_add_with_progress(
+    cli: &GitCli,
+    app: &AppHandle,
+    project_path: &Path,
+    url: &str,
+    space_folder: &str,
+) -> Result<(), AppError> {
+    let target_str = project_path
+        .join(space_folder)
+        .to_str()
+        .unwrap_or_default()
+        .to_string();
+
+    let mut child = Command::new(cli.git_path())
+        .args(["submodule", "add", "--progress", "--", url, space_folder])
+        .current_dir(project_path)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("LC_ALL", "C.UTF-8")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| AppError::GitCommandFailed(format!("Failed to spawn git: {e}")))?;
+
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| AppError::GitCommandFailed("Missing stderr".into()))?;
+
+    let space_path = target_str;
+    let app_clone = app.clone();
+    let parser = tokio::spawn(async move {
+        let mut reader = stderr;
+        let mut chunk = [0u8; 256];
+        let mut line = Vec::<u8>::new();
+        let mut collected_stderr = String::new();
+        loop {
+            let n = match reader.read(&mut chunk).await {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(_) => break,
+            };
+            for &byte in &chunk[..n] {
+                if byte == b'\r' || byte == b'\n' {
+                    if !line.is_empty() {
+                        let text = String::from_utf8_lossy(&line).into_owned();
+                        collected_stderr.push_str(&text);
+                        collected_stderr.push('\n');
+                        if let Some((phase, percent)) = parse_progress(text.trim()) {
+                            let _ = app_clone.emit(
+                                "clone:progress",
+                                CloneProgress {
+                                    space_path: space_path.clone(),
+                                    phase,
+                                    percent,
+                                },
+                            );
+                        }
+                        line.clear();
+                    }
+                } else {
+                    line.push(byte);
+                }
+            }
+        }
+        if !line.is_empty() {
+            let text = String::from_utf8_lossy(&line).into_owned();
+            collected_stderr.push_str(&text);
+        }
+        collected_stderr
+    });
+
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| AppError::GitCommandFailed(format!("git submodule add wait failed: {e}")))?;
+    let stderr_text = parser.await.unwrap_or_default();
+
+    if !status.success() {
+        let trimmed = stderr_text.trim().to_string();
+        if trimmed.contains("Authentication")
+            || trimmed.contains("could not read Username")
+            || trimmed.contains("terminal prompts disabled")
+        {
+            return Err(AppError::GitAuthRequired(trimmed));
+        }
+        return Err(AppError::GitCommandFailed(format!(
+            "git submodule add failed: {trimmed}"
+        )));
+    }
+
+    Ok(())
+}
+
 /// Parse a single git --progress line, e.g.
 ///   "Receiving objects:  45% (450/1000), 1.2 MiB"
 /// → ("Receiving objects", 45)

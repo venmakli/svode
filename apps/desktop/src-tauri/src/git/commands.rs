@@ -8,6 +8,7 @@ use super::cli::{GitAvailability, GitCli};
 use super::ops::GitStatus;
 use super::sync::SyncResult;
 use crate::index::IndexState;
+use crate::space::types::SpaceGitType;
 use crate::AppError;
 
 /// Helper: read the GitCli reference (clone is cheap — PathBuf only) outside the
@@ -84,12 +85,43 @@ pub async fn git_clone_space(
     app: AppHandle,
     url: String,
     target_path: String,
+    project_path: String,
+    git_type: String,
 ) -> Result<(), AppError> {
-    let path = PathBuf::from(&target_path);
-    let cli = require_cli(&state)?;
-    let lock = state.get_lock(&path).await;
-    let _guard = lock.lock().await;
-    super::clone::clone_with_progress(&cli, &app, &url, &path).await
+    super::ops::validate_clone_url(&url)?;
+
+    if git_type == "submodule" {
+        let project = PathBuf::from(&project_path);
+        let cli = require_cli(&state)?;
+        let target = PathBuf::from(&target_path);
+        let space_folder = target
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let lock = state.get_lock(&project).await;
+        let _guard = lock.lock().await;
+        super::clone::submodule_add_with_progress(&cli, &app, &project, &url, &space_folder)
+            .await?;
+        // Scaffold .combai/ if not present
+        let combai_dir = target.join(".combai");
+        if !combai_dir.exists() {
+            crate::space::scaffold::scaffold_space(&target, &space_folder, "", "")?;
+        }
+    } else {
+        // independent
+        let path = PathBuf::from(&target_path);
+        let cli = require_cli(&state)?;
+        let lock = state.get_lock(&path).await;
+        let _guard = lock.lock().await;
+        super::clone::clone_with_progress(&cli, &app, &url, &path).await?;
+        let project = PathBuf::from(&project_path);
+        let space_folder = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        super::ops::add_independent_gitignore(&project, &space_folder)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -108,11 +140,20 @@ pub async fn git_set_remote(
     state: State<'_, GitState>,
     space_path: String,
     url: String,
+    project_path: Option<String>,
+    space_id: Option<String>,
 ) -> Result<(), AppError> {
     let path = PathBuf::from(&space_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
-    super::ops::set_remote(state.cli()?, &path, &url).await
+    super::ops::set_remote(state.cli()?, &path, &url).await?;
+
+    if let (Some(proj_path), Some(sid)) = (project_path, space_id) {
+        let parent = Path::new(&proj_path);
+        crate::space::project::reconcile_space_url(parent, &sid, Some(&url))?;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -142,28 +183,49 @@ pub async fn git_status(
 #[tauri::command]
 pub async fn git_commit_file(
     state: State<'_, GitState>,
+    project_path: Option<String>,
     space_path: String,
     file_path: String,
 ) -> Result<GitStatus, AppError> {
     let path = PathBuf::from(&space_path);
-    let lock = state.get_lock(&path).await;
-    let _guard = lock.lock().await;
     let cli = state.cli()?;
-    super::ops::commit_file(cli, &path, &file_path).await?;
-    super::ops::status(cli, &path).await
+
+    if let Some(proj_path) = project_path.filter(|p| !p.is_empty()) {
+        let project = PathBuf::from(&proj_path);
+        let lock = state.get_lock(&path).await;
+        let _guard = lock.lock().await;
+        super::ops::commit_file_routed(cli, &project, &path, &file_path).await?;
+        // Return status of the space itself
+        super::ops::status(cli, &path).await
+    } else {
+        let lock = state.get_lock(&path).await;
+        let _guard = lock.lock().await;
+        super::ops::commit_file(cli, &path, &file_path).await?;
+        super::ops::status(cli, &path).await
+    }
 }
 
 #[tauri::command]
 pub async fn git_commit_all(
     state: State<'_, GitState>,
+    project_path: Option<String>,
     space_path: String,
 ) -> Result<GitStatus, AppError> {
     let path = PathBuf::from(&space_path);
-    let lock = state.get_lock(&path).await;
-    let _guard = lock.lock().await;
     let cli = state.cli()?;
-    super::ops::commit_all(cli, &path).await?;
-    super::ops::status(cli, &path).await
+
+    if let Some(proj_path) = project_path.filter(|p| !p.is_empty()) {
+        let project = PathBuf::from(&proj_path);
+        let lock = state.get_lock(&path).await;
+        let _guard = lock.lock().await;
+        super::ops::commit_all_routed(cli, &project, &path).await?;
+        super::ops::status(cli, &path).await
+    } else {
+        let lock = state.get_lock(&path).await;
+        let _guard = lock.lock().await;
+        super::ops::commit_all(cli, &path).await?;
+        super::ops::status(cli, &path).await
+    }
 }
 
 #[tauri::command]
@@ -248,4 +310,27 @@ pub async fn git_merge_abort(
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
     super::sync::merge_abort(state.cli()?, &path).await
+}
+
+#[tauri::command]
+pub async fn get_space_git_type(
+    state: State<'_, GitState>,
+    project_path: String,
+    space_path: String,
+) -> Result<SpaceGitType, AppError> {
+    let project = PathBuf::from(&project_path);
+    let space = PathBuf::from(&space_path);
+    let cli = state.cli()?;
+    super::ops::detect_space_git_type(cli, &project, &space).await
+}
+
+#[tauri::command]
+pub async fn git_get_submodule_url(
+    state: State<'_, GitState>,
+    project_path: String,
+    space_folder: String,
+) -> Result<Option<String>, AppError> {
+    let project = PathBuf::from(&project_path);
+    let cli = state.cli()?;
+    super::ops::get_submodule_url(cli, &project, &space_folder).await
 }

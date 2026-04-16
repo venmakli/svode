@@ -3,6 +3,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use super::cli::GitCli;
+use crate::space::types::SpaceGitType;
 use crate::AppError;
 
 const GITIGNORE_TEMPLATE: &str = "# CombAI local files
@@ -448,4 +449,280 @@ pub async fn diff_after_pull(
         .filter(|l| !l.is_empty())
         .map(|l| l.to_string())
         .collect())
+}
+
+// --- Per-space git type ---
+
+/// Detect the git type of a space relative to its project.
+pub async fn detect_space_git_type(
+    cli: &GitCli,
+    project_path: &Path,
+    space_path: &Path,
+) -> Result<SpaceGitType, AppError> {
+    let out = cli.exec(space_path, &["rev-parse", "--git-dir"]).await?;
+    if out.exit_code != 0 {
+        return Ok(SpaceGitType::Inline);
+    }
+
+    let gitmodules = project_path.join(".gitmodules");
+    if !gitmodules.exists() {
+        return Ok(SpaceGitType::Independent);
+    }
+
+    let config_out = cli
+        .exec(
+            project_path,
+            &["config", "-f", ".gitmodules", "--get-regexp", "path"],
+        )
+        .await?;
+    if config_out.exit_code != 0 {
+        return Ok(SpaceGitType::Independent);
+    }
+
+    let space_folder = space_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    for line in config_out.stdout.lines() {
+        // Format: "submodule.<name>.path <value>"
+        if let Some(path_val) = line.split_whitespace().nth(1) {
+            if path_val == space_folder {
+                return Ok(SpaceGitType::Submodule);
+            }
+        }
+    }
+
+    Ok(SpaceGitType::Independent)
+}
+
+/// Get the configured URL for a submodule from .gitmodules.
+pub async fn get_submodule_url(
+    cli: &GitCli,
+    root_path: &Path,
+    space_folder: &str,
+) -> Result<Option<String>, AppError> {
+    let key = format!("submodule.{}.url", space_folder);
+    let out = cli
+        .exec(root_path, &["config", "-f", ".gitmodules", "--get", &key])
+        .await?;
+    if out.exit_code != 0 {
+        return Ok(None);
+    }
+    let url = out.stdout.trim().to_string();
+    if url.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(url))
+    }
+}
+
+/// Validate a clone URL (HTTPS or SSH).
+pub fn validate_clone_url(url: &str) -> Result<(), AppError> {
+    let trimmed = url.trim();
+    let valid = trimmed.starts_with("https://")
+        || trimmed.starts_with("http://")
+        || (trimmed.contains('@')
+            && trimmed.contains(':')
+            && !trimmed.starts_with("ssh://")
+            && !trimmed.starts_with("git://")
+            && !trimmed.starts_with("file://"));
+    if !valid {
+        return Err(AppError::InvalidUrl(trimmed.to_string()));
+    }
+    Ok(())
+}
+
+// --- .gitignore managed blocks ---
+
+const INLINE_BLOCK_START: &str = "# combai:inline:start";
+const INLINE_BLOCK_END: &str = "# combai:inline:end";
+const INLINE_BLOCK_CONTENT: &str = "*/.combai/local.json\n*/.combai/*.db\n*/.combai/*.db-*";
+
+const SPACES_BLOCK_START: &str = "# combai:spaces:start";
+const SPACES_BLOCK_END: &str = "# combai:spaces:end";
+
+/// Ensure the inline wildcard block exists in root .gitignore.
+pub fn ensure_inline_gitignore(project_path: &Path) -> Result<(), AppError> {
+    let gitignore = project_path.join(".gitignore");
+    let content = if gitignore.exists() {
+        std::fs::read_to_string(&gitignore)?
+    } else {
+        String::new()
+    };
+
+    if content.contains(INLINE_BLOCK_START) {
+        return Ok(());
+    }
+
+    let mut new_content = content;
+    if !new_content.is_empty() && !new_content.ends_with('\n') {
+        new_content.push('\n');
+    }
+    new_content.push_str(&format!(
+        "{}\n{}\n{}\n",
+        INLINE_BLOCK_START, INLINE_BLOCK_CONTENT, INLINE_BLOCK_END
+    ));
+    std::fs::write(&gitignore, new_content)?;
+    Ok(())
+}
+
+/// Add an independent space path to the managed block in root .gitignore.
+pub fn add_independent_gitignore(project_path: &Path, space_folder: &str) -> Result<(), AppError> {
+    let gitignore = project_path.join(".gitignore");
+    let content = if gitignore.exists() {
+        std::fs::read_to_string(&gitignore)?
+    } else {
+        String::new()
+    };
+
+    let entry = format!("{}/", space_folder);
+
+    if let Some((before, block, after)) = extract_block(&content, SPACES_BLOCK_START, SPACES_BLOCK_END) {
+        if block.lines().any(|l| l.trim() == entry) {
+            return Ok(());
+        }
+        let mut new_block = block.to_string();
+        if !new_block.is_empty() && !new_block.ends_with('\n') {
+            new_block.push('\n');
+        }
+        new_block.push_str(&entry);
+        new_block.push('\n');
+        let new_content = format!("{}{}\n{}{}\n{}", before, SPACES_BLOCK_START, new_block, SPACES_BLOCK_END, after);
+        std::fs::write(&gitignore, new_content)?;
+    } else {
+        let mut new_content = content;
+        if !new_content.is_empty() && !new_content.ends_with('\n') {
+            new_content.push('\n');
+        }
+        new_content.push_str(&format!(
+            "{}\n{}\n{}\n",
+            SPACES_BLOCK_START, entry, SPACES_BLOCK_END
+        ));
+        std::fs::write(&gitignore, new_content)?;
+    }
+    Ok(())
+}
+
+/// Remove an independent space path from the managed block.
+#[allow(dead_code)]
+pub fn remove_independent_gitignore(project_path: &Path, space_folder: &str) -> Result<(), AppError> {
+    let gitignore = project_path.join(".gitignore");
+    if !gitignore.exists() {
+        return Ok(());
+    }
+    let content = std::fs::read_to_string(&gitignore)?;
+    let entry = format!("{}/", space_folder);
+
+    if let Some((before, block, after)) = extract_block(&content, SPACES_BLOCK_START, SPACES_BLOCK_END) {
+        let new_block: String = block
+            .lines()
+            .filter(|l| l.trim() != entry)
+            .map(|l| format!("{}\n", l))
+            .collect();
+        let new_content = format!("{}{}\n{}{}\n{}", before, SPACES_BLOCK_START, new_block, SPACES_BLOCK_END, after);
+        std::fs::write(&gitignore, new_content)?;
+    }
+    Ok(())
+}
+
+/// Extract content between start/end markers. Returns (before, block_content, after).
+fn extract_block<'a>(content: &'a str, start: &str, end: &str) -> Option<(&'a str, &'a str, &'a str)> {
+    let start_idx = content.find(start)?;
+    let block_start = start_idx + start.len();
+    // Skip the newline after the start marker
+    let block_start = if content[block_start..].starts_with('\n') {
+        block_start + 1
+    } else {
+        block_start
+    };
+    let end_idx = content[block_start..].find(end)?;
+    let block_end = block_start + end_idx;
+    let after_end = block_end + end.len();
+    // Skip the newline after end marker
+    let after_end = if content[after_end..].starts_with('\n') {
+        after_end + 1
+    } else {
+        after_end
+    };
+    Some((&content[..start_idx], &content[block_start..block_end], &content[after_end..]))
+}
+
+// --- Routed commit ---
+
+/// Stage and commit a file, routing to the correct repo based on git type.
+pub async fn commit_file_routed(
+    cli: &GitCli,
+    project_path: &Path,
+    space_path: &Path,
+    file_path: &str,
+) -> Result<bool, AppError> {
+    let git_type = detect_space_git_type(cli, project_path, space_path).await?;
+    match git_type {
+        SpaceGitType::Inline => {
+            let space_folder = space_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let relative = format!("{}/{}", space_folder, file_path);
+            add(cli, project_path, &relative).await?;
+            let message = generate_commit_message(cli, project_path).await?;
+            commit(cli, project_path, &message).await
+        }
+        SpaceGitType::Independent => {
+            commit_file(cli, space_path, file_path).await
+        }
+        SpaceGitType::Submodule => {
+            let created = commit_file(cli, space_path, file_path).await?;
+            if created {
+                submodule_update_pointer(cli, project_path, space_path).await?;
+            }
+            Ok(created)
+        }
+    }
+}
+
+/// Stage all and commit, routing to the correct repo based on git type.
+pub async fn commit_all_routed(
+    cli: &GitCli,
+    project_path: &Path,
+    space_path: &Path,
+) -> Result<bool, AppError> {
+    let git_type = detect_space_git_type(cli, project_path, space_path).await?;
+    match git_type {
+        SpaceGitType::Inline => {
+            let space_folder = space_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            add(cli, project_path, &space_folder).await?;
+            let message = generate_commit_message(cli, project_path).await?;
+            commit(cli, project_path, &message).await
+        }
+        SpaceGitType::Independent => {
+            commit_all(cli, space_path).await
+        }
+        SpaceGitType::Submodule => {
+            let created = commit_all(cli, space_path).await?;
+            if created {
+                submodule_update_pointer(cli, project_path, space_path).await?;
+            }
+            Ok(created)
+        }
+    }
+}
+
+/// After committing inside a submodule, update the pointer in the parent repo.
+pub async fn submodule_update_pointer(
+    cli: &GitCli,
+    root_path: &Path,
+    space_path: &Path,
+) -> Result<(), AppError> {
+    let space_folder = space_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    add(cli, root_path, &space_folder).await?;
+    commit(cli, root_path, &format!("Update {}", space_folder)).await?;
+    Ok(())
 }
