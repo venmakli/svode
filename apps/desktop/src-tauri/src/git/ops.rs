@@ -496,6 +496,21 @@ pub async fn detect_space_git_type(
     Ok(SpaceGitType::Independent)
 }
 
+/// Detect git type and resolve which repo should be the commit target.
+/// Inline → project repo, Independent/Submodule → the space's own repo.
+pub async fn resolve_target_repo(
+    cli: &GitCli,
+    project_path: &Path,
+    space_path: &Path,
+) -> Result<(SpaceGitType, std::path::PathBuf), AppError> {
+    let git_type = detect_space_git_type(cli, project_path, space_path).await?;
+    let target = match git_type {
+        SpaceGitType::Inline => project_path.to_path_buf(),
+        SpaceGitType::Independent | SpaceGitType::Submodule => space_path.to_path_buf(),
+    };
+    Ok((git_type, target))
+}
+
 /// Get the configured URL for a submodule from .gitmodules.
 pub async fn get_submodule_url(
     cli: &GitCli,

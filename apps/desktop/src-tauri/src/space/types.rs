@@ -147,7 +147,7 @@ pub struct AssetsS3Config {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitSpaceConfig {
-    /// Whether ⌘S/⌘⇧S should auto-sync after committing. Default: true.
+    /// Whether ⌘S/⌘⇧S should auto-sync after committing. Default: false.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_sync: Option<bool>,
 }

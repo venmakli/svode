@@ -192,6 +192,7 @@ pub async fn git_status(
 #[tauri::command]
 pub async fn git_commit_file(
     state: State<'_, GitState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
     project_path: Option<String>,
     space_path: String,
     file_path: String,
@@ -201,7 +202,11 @@ pub async fn git_commit_file(
 
     if let Some(proj_path) = project_path.filter(|p| !p.is_empty()) {
         let project = PathBuf::from(&proj_path);
-        let lock = state.get_lock(&path).await;
+        // Drain any pending structural batch first so the user commit stays
+        // separate from structural attribution.
+        autocommit.flush_space(&path).await;
+        let (_, target_repo) = super::ops::resolve_target_repo(cli, &project, &path).await?;
+        let lock = state.get_lock(&target_repo).await;
         let _guard = lock.lock().await;
         super::ops::commit_file_routed(cli, &project, &path, &file_path).await?;
         // Return status of the space itself
@@ -217,6 +222,7 @@ pub async fn git_commit_file(
 #[tauri::command]
 pub async fn git_commit_all(
     state: State<'_, GitState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
     project_path: Option<String>,
     space_path: String,
 ) -> Result<GitStatus, AppError> {
@@ -225,7 +231,9 @@ pub async fn git_commit_all(
 
     if let Some(proj_path) = project_path.filter(|p| !p.is_empty()) {
         let project = PathBuf::from(&proj_path);
-        let lock = state.get_lock(&path).await;
+        autocommit.flush_space(&path).await;
+        let (_, target_repo) = super::ops::resolve_target_repo(cli, &project, &path).await?;
+        let lock = state.get_lock(&target_repo).await;
         let _guard = lock.lock().await;
         super::ops::commit_all_routed(cli, &project, &path).await?;
         super::ops::status(cli, &path).await

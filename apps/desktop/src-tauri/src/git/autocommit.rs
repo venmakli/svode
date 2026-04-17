@@ -34,13 +34,16 @@ struct CommittedPayload {
 
 struct PendingBatch {
     project_path: PathBuf,
-    space_path: PathBuf,
+    git_type: SpaceGitType,
+    target_repo: PathBuf,
     ops: Vec<StructuralOp>,
     timer: Option<JoinHandle<()>>,
 }
 
 pub struct AutocommitService {
     app: AppHandle,
+    /// Keyed by `space_path` — different spaces never share a batch even when
+    /// they target the same repo (multiple inline children of one project).
     pending: Arc<Mutex<HashMap<PathBuf, PendingBatch>>>,
 }
 
@@ -62,21 +65,24 @@ impl AutocommitService {
         let app = self.app.clone();
         let pending = self.pending.clone();
         tauri::async_runtime::spawn(async move {
-            let target = match resolve_target_repo(&app, &project_path, &space_path).await {
-                Some(t) => t,
-                None => return,
-            };
+            let (git_type, target_repo) =
+                match resolve_target_repo(&app, &project_path, &space_path).await {
+                    Some(t) => t,
+                    None => return,
+                };
 
             let mut map = pending.lock().await;
-            let entry = map.entry(target.clone()).or_insert_with(|| PendingBatch {
+            let entry = map.entry(space_path.clone()).or_insert_with(|| PendingBatch {
                 project_path: project_path.clone(),
-                space_path: space_path.clone(),
+                git_type,
+                target_repo: target_repo.clone(),
                 ops: Vec::new(),
                 timer: None,
             });
-            // Keep latest project/space paths (they should be stable but just in case).
+            // Project path is stable for a given space, but keep in sync defensively.
             entry.project_path = project_path.clone();
-            entry.space_path = space_path.clone();
+            entry.git_type = git_type;
+            entry.target_repo = target_repo.clone();
             entry.ops.push(op);
 
             if let Some(handle) = entry.timer.take() {
@@ -85,13 +91,28 @@ impl AutocommitService {
 
             let app_fire = app.clone();
             let pending_fire = pending.clone();
-            let target_fire = target.clone();
+            let key_fire = space_path.clone();
             let handle = tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(DEBOUNCE_MS)).await;
-                fire_batch(&app_fire, pending_fire, &target_fire).await;
+                fire_batch(&app_fire, pending_fire, &key_fire).await;
             });
             entry.timer = Some(handle);
         });
+    }
+
+    /// Drain any pending structural batch for this space and commit it
+    /// synchronously. Called before a user ⌘S/⌘⇧S so the two categories
+    /// don't share a commit.
+    pub async fn flush_space(&self, space_path: &Path) {
+        {
+            let mut map = self.pending.lock().await;
+            if let Some(batch) = map.get_mut(space_path) {
+                if let Some(h) = batch.timer.take() {
+                    h.abort();
+                }
+            }
+        }
+        fire_batch(&self.app, self.pending.clone(), space_path).await;
     }
 
     /// Commit a system config change immediately (no debounce).
@@ -119,41 +140,38 @@ impl AutocommitService {
 
     /// Flush all pending timers: cancel each and run the pending commits synchronously.
     pub async fn flush_all(&self) {
-        let targets: Vec<PathBuf> = {
+        let keys: Vec<PathBuf> = {
             let map = self.pending.lock().await;
             map.keys().cloned().collect()
         };
-        for target in targets {
+        for key in keys {
             // Cancel timer to prevent it from racing with us.
             {
                 let mut map = self.pending.lock().await;
-                if let Some(batch) = map.get_mut(&target) {
+                if let Some(batch) = map.get_mut(&key) {
                     if let Some(h) = batch.timer.take() {
                         h.abort();
                     }
                 }
             }
-            fire_batch(&self.app, self.pending.clone(), &target).await;
+            fire_batch(&self.app, self.pending.clone(), &key).await;
         }
     }
 }
 
-/// Determine which repo is the commit target for this (project, space) pair.
+/// Determine the commit target repo and git type for this (project, space).
 async fn resolve_target_repo(
     app: &AppHandle,
     project_path: &Path,
     space_path: &Path,
-) -> Option<PathBuf> {
+) -> Option<(SpaceGitType, PathBuf)> {
     let git_state = app.state::<GitState>();
     let cli = git_state.cli.clone()?;
-    match ops::detect_space_git_type(&cli, project_path, space_path).await {
-        Ok(SpaceGitType::Inline) => Some(project_path.to_path_buf()),
-        Ok(SpaceGitType::Independent) | Ok(SpaceGitType::Submodule) => {
-            Some(space_path.to_path_buf())
-        }
+    match ops::resolve_target_repo(&cli, project_path, space_path).await {
+        Ok(pair) => Some(pair),
         Err(e) => {
             tracing::warn!(
-                "autocommit: detect_space_git_type failed for {}: {}",
+                "autocommit: resolve_target_repo failed for {}: {}",
                 space_path.display(),
                 e
             );
@@ -162,37 +180,42 @@ async fn resolve_target_repo(
     }
 }
 
-/// Drain the pending batch for `target` and commit.
+/// Drain the pending batch for `space_path` and commit.
 async fn fire_batch(
     app: &AppHandle,
     pending: Arc<Mutex<HashMap<PathBuf, PendingBatch>>>,
-    target: &Path,
+    space_path: &Path,
 ) {
     let batch_opt = {
         let mut map = pending.lock().await;
-        map.remove(target)
+        map.remove(space_path)
     };
     let Some(batch) = batch_opt else { return };
     if batch.ops.is_empty() {
         return;
     }
 
-    if !batch.space_path.exists() {
+    if !space_path.exists() {
         tracing::warn!(
             "autocommit: space path missing, skipping commit: {}",
-            batch.space_path.display()
+            space_path.display()
         );
         return;
     }
 
     let message = aggregate_message(&batch.ops);
 
-    if let Err(e) = run_autocommit(app, &batch.project_path, &batch.space_path, &message).await {
-        tracing::warn!(
-            "autocommit failed for {}: {}",
-            batch.space_path.display(),
-            e
-        );
+    if let Err(e) = run_autocommit(
+        app,
+        &batch.project_path,
+        space_path,
+        batch.git_type,
+        &batch.target_repo,
+        &message,
+    )
+    .await
+    {
+        tracing::warn!("autocommit failed for {}: {}", space_path.display(), e);
     }
 }
 
@@ -201,6 +224,8 @@ async fn run_autocommit(
     app: &AppHandle,
     project_path: &Path,
     space_path: &Path,
+    git_type: SpaceGitType,
+    target_repo: &Path,
     message: &str,
 ) -> Result<(), AppError> {
     let git_state = app.state::<GitState>();
@@ -209,34 +234,28 @@ async fn run_autocommit(
         None => return Err(AppError::GitNotFound),
     };
 
-    let git_type = ops::detect_space_git_type(&cli, project_path, space_path).await?;
-    let target_repo: PathBuf = match git_type {
-        SpaceGitType::Inline => project_path.to_path_buf(),
-        SpaceGitType::Independent | SpaceGitType::Submodule => space_path.to_path_buf(),
-    };
-
-    let lock = git_state.get_lock(&target_repo).await;
+    let lock = git_state.get_lock(target_repo).await;
     let _guard = lock.lock().await;
 
     let created =
         ops::commit_all_routed_with_message(&cli, project_path, space_path, message).await?;
 
     if created {
-        emit_committed(app, space_path, &target_repo);
+        emit_committed(app, space_path, target_repo);
         // Pointer update in root for submodule is done inside commit_all_routed_with_message.
         if matches!(git_type, SpaceGitType::Submodule) {
             emit_committed(app, space_path, project_path);
         }
 
-        // Trigger auto-sync if enabled on the target repo.
-        let config_repo = match git_type {
+        // Trigger auto-sync if enabled on the config repo (inline reads root,
+        // independent/submodule read the space's own config).
+        let config_repo: PathBuf = match git_type {
             SpaceGitType::Inline => project_path.to_path_buf(),
-            SpaceGitType::Independent => space_path.to_path_buf(),
-            SpaceGitType::Submodule => space_path.to_path_buf(),
+            SpaceGitType::Independent | SpaceGitType::Submodule => space_path.to_path_buf(),
         };
         if is_auto_sync_enabled(&config_repo) {
             let cli_sync = cli.clone();
-            let sync_target = target_repo.clone();
+            let sync_target = target_repo.to_path_buf();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = crate::git::sync::sync(&cli_sync, &sync_target).await {
                     tracing::warn!(
@@ -285,7 +304,7 @@ async fn do_commit_config(
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    match git_type {
+    let (created, target_repo): (bool, PathBuf) = match git_type {
         SpaceGitType::Inline => {
             let lock = git_state.get_lock(project_path).await;
             let _guard = lock.lock().await;
@@ -294,35 +313,37 @@ async fn do_commit_config(
             } else {
                 format!("{}/.combai/config.json", space_folder)
             };
-            let created = ops::commit_path_with_message(
+            let c = ops::commit_path_with_message(
                 &cli,
                 project_path,
                 &rel,
                 "Update space config",
             )
             .await?;
-            if created {
+            if c {
                 emit_committed(app, space_path, project_path);
             }
+            (c, project_path.to_path_buf())
         }
         SpaceGitType::Independent => {
             let lock = git_state.get_lock(space_path).await;
             let _guard = lock.lock().await;
-            let created = ops::commit_path_with_message(
+            let c = ops::commit_path_with_message(
                 &cli,
                 space_path,
                 ".combai/config.json",
                 "Update space config",
             )
             .await?;
-            if created {
+            if c {
                 emit_committed(app, space_path, space_path);
             }
+            (c, space_path.to_path_buf())
         }
         SpaceGitType::Submodule => {
             let lock = git_state.get_lock(space_path).await;
             let _guard = lock.lock().await;
-            let created = ops::commit_path_with_message(
+            let c = ops::commit_path_with_message(
                 &cli,
                 space_path,
                 ".combai/config.json",
@@ -330,13 +351,49 @@ async fn do_commit_config(
             )
             .await?;
             drop(_guard);
-            if created {
+            if c {
                 emit_committed(app, space_path, space_path);
                 let root_lock = git_state.get_lock(project_path).await;
                 let _root_guard = root_lock.lock().await;
                 ops::submodule_update_pointer(&cli, project_path, space_path).await?;
                 emit_committed(app, space_path, project_path);
             }
+            (c, space_path.to_path_buf())
+        }
+    };
+
+    if created {
+        // Auto-sync mirrors the structural path: commit's own repo if enabled;
+        // for submodule also sync root if its auto-sync is on.
+        let config_repo: PathBuf = match git_type {
+            SpaceGitType::Inline => project_path.to_path_buf(),
+            SpaceGitType::Independent | SpaceGitType::Submodule => space_path.to_path_buf(),
+        };
+        if is_auto_sync_enabled(&config_repo) {
+            let cli_sync = cli.clone();
+            let sync_target = target_repo.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = crate::git::sync::sync(&cli_sync, &sync_target).await {
+                    tracing::warn!(
+                        "auto-sync (config) failed for {}: {}",
+                        sync_target.display(),
+                        e
+                    );
+                }
+            });
+        }
+        if matches!(git_type, SpaceGitType::Submodule) && is_auto_sync_enabled(project_path) {
+            let cli_sync = cli.clone();
+            let root = project_path.to_path_buf();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = crate::git::sync::sync(&cli_sync, &root).await {
+                    tracing::warn!(
+                        "auto-sync (config, root) failed for {}: {}",
+                        root.display(),
+                        e
+                    );
+                }
+            });
         }
     }
 
