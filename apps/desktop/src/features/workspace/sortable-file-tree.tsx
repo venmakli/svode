@@ -330,6 +330,7 @@ export function SortableFileTree({
             const newNestPath = await invoke<string>("nest_entry", {
               space: space.path,
               path: nestTarget,
+              projectPath: useWorkspaceStore.getState().activeRootPath,
             });
             suppressPaths([newNestPath]);
             if (activeDocument === nestTarget) {
@@ -428,6 +429,7 @@ export function SortableFileTree({
               const unnestPath = await invoke<string>("unnest_entry", {
                 space: space.path,
                 path: oldParentReadme,
+                projectPath: useWorkspaceStore.getState().activeRootPath,
               });
               useEditorStore.getState().suppressPaths([unnestPath]);
               if (currentActive === oldParentReadme) {

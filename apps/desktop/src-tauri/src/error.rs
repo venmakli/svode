@@ -50,6 +50,9 @@ pub enum AppError {
     #[error("Git no remote configured")]
     GitNoRemote,
 
+    #[error("Remote repository is not empty")]
+    GitRemoteNotEmpty,
+
     #[error("Invalid URL: {0}")]
     InvalidUrl(String),
 

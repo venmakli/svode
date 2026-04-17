@@ -725,3 +725,166 @@ pub async fn submodule_update_pointer(
     commit(cli, root_path, &format!("Update {}", space_folder)).await?;
     Ok(())
 }
+
+/// Commit routed with an explicit message.
+pub async fn commit_all_routed_with_message(
+    cli: &GitCli,
+    project_path: &Path,
+    space_path: &Path,
+    message: &str,
+) -> Result<bool, AppError> {
+    let git_type = detect_space_git_type(cli, project_path, space_path).await?;
+    match git_type {
+        SpaceGitType::Inline => {
+            let space_folder = space_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            // For root-level ops (project_path == space_path) stage everything.
+            if space_path == project_path {
+                add_all(cli, project_path).await?;
+            } else {
+                add(cli, project_path, &space_folder).await?;
+            }
+            commit(cli, project_path, message).await
+        }
+        SpaceGitType::Independent => {
+            add_all(cli, space_path).await?;
+            commit(cli, space_path, message).await
+        }
+        SpaceGitType::Submodule => {
+            add_all(cli, space_path).await?;
+            let created = commit(cli, space_path, message).await?;
+            if created {
+                submodule_update_pointer(cli, project_path, space_path).await?;
+            }
+            Ok(created)
+        }
+    }
+}
+
+/// Stage a specific path inside a repo and commit with a fixed message.
+pub async fn commit_path_with_message(
+    cli: &GitCli,
+    repo_dir: &Path,
+    path_in_repo: &str,
+    message: &str,
+) -> Result<bool, AppError> {
+    add(cli, repo_dir, path_in_repo).await?;
+    commit(cli, repo_dir, message).await
+}
+
+/// Current branch name (via `git rev-parse --abbrev-ref HEAD`).
+pub async fn current_branch(cli: &GitCli, space_dir: &Path) -> Result<String, AppError> {
+    let out = cli
+        .exec(space_dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .await?;
+    if out.exit_code != 0 {
+        return Err(AppError::GitCommandFailed(format!(
+            "git rev-parse failed: {}",
+            out.stderr
+        )));
+    }
+    Ok(out.stdout.trim().to_string())
+}
+
+/// Push with --set-upstream origin <current-branch>.
+pub async fn push_set_upstream(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
+    let branch = current_branch(cli, space_dir).await?;
+    let out = cli
+        .exec(space_dir, &["push", "-u", "origin", &branch])
+        .await?;
+    if out.exit_code != 0 {
+        let stderr = out.stderr.trim();
+        if stderr.contains("Authentication")
+            || stderr.contains("could not read Username")
+            || stderr.contains("terminal prompts disabled")
+        {
+            return Err(AppError::GitAuthRequired(stderr.to_string()));
+        }
+        if (stderr.contains("rejected")
+            && (stderr.contains("fetch first")
+                || stderr.contains("non-fast-forward")
+                || stderr.contains("Updates were rejected")))
+            || stderr.contains("Updates were rejected")
+        {
+            return Err(AppError::GitRemoteNotEmpty);
+        }
+        if stderr.contains("No configured push destination")
+            || stderr.contains("does not appear to be a git repository")
+        {
+            return Err(AppError::GitNoRemote);
+        }
+        return Err(AppError::GitCommandFailed(format!(
+            "git push failed: {stderr}"
+        )));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnpushedCommit {
+    pub sha: String,
+    pub message: String,
+    pub author: String,
+    pub timestamp: String,
+}
+
+/// List commits on the current branch that are not in origin/<branch>.
+pub async fn unpushed_commits(
+    cli: &GitCli,
+    space_dir: &Path,
+) -> Result<Vec<UnpushedCommit>, AppError> {
+    let branch = match current_branch(cli, space_dir).await {
+        Ok(b) => b,
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    // No origin at all → nothing can be "unpushed" (no push destination exists).
+    let origin_check = cli
+        .exec(space_dir, &["remote", "get-url", "origin"])
+        .await?;
+    if origin_check.exit_code != 0 {
+        return Ok(Vec::new());
+    }
+
+    let upstream_ref = format!("refs/remotes/origin/{}", branch);
+    let upstream_check = cli
+        .exec(space_dir, &["rev-parse", "--verify", &upstream_ref])
+        .await?;
+
+    let format_arg = "--format=%h%x00%s%x00%an%x00%aI";
+
+    let range_arg;
+    let args: Vec<&str> = if upstream_check.exit_code == 0 {
+        range_arg = format!("origin/{}..HEAD", branch);
+        vec!["log", format_arg, &range_arg]
+    } else {
+        // Origin exists but upstream branch not fetched yet (pre-first-push).
+        // All local commits on the current branch are unpushed.
+        vec!["log", format_arg, "--max-count=50", "HEAD"]
+    };
+
+    let out = cli.exec(space_dir, &args).await?;
+    if out.exit_code != 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut result = Vec::new();
+    for line in out.stdout.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.split('\u{0}').collect();
+        if parts.len() >= 4 {
+            result.push(UnpushedCommit {
+                sha: parts[0].to_string(),
+                message: parts[1].to_string(),
+                author: parts[2].to_string(),
+                timestamp: parts[3].to_string(),
+            });
+        }
+    }
+    Ok(result)
+}

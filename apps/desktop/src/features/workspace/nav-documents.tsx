@@ -55,6 +55,7 @@ export function NavDocuments() {
         space: activeRootPath,
         parentPath: null,
         name: m.space_new_folder(),
+        projectPath: activeRootPath,
       });
       await refreshTree(activeRootId);
     } catch (err) {

@@ -11,6 +11,7 @@ import { useLayoutStore } from "@/stores/layout";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useFullscreen } from "@/hooks/use-fullscreen";
 import { cn } from "@/lib/utils";
+import { CloudUploadButton } from "@/features/workspace/cloud-upload-button";
 import * as m from "@/paraglide/messages.js";
 
 export function WindowHeader() {
@@ -74,8 +75,9 @@ export function WindowHeader() {
         )}
       </div>
 
-      {/* Right: chat panel toggle */}
+      {/* Right: cloud upload + chat panel toggle */}
       <div className="flex items-center">
+        {isSpaceRoute && <CloudUploadButton />}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

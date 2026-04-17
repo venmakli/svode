@@ -1,9 +1,11 @@
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use tauri::{AppHandle, Manager, State};
 
 use crate::error::AppError;
+use crate::git::autocommit::AutocommitService;
 use crate::git::commands::{require_cli, GitState};
 use crate::git::ops;
 use crate::index::IndexState;
@@ -287,7 +289,8 @@ pub fn delete_space(
 }
 
 #[tauri::command]
-pub fn register_cloned_space(
+pub async fn register_cloned_space(
+    autocommit: State<'_, Arc<AutocommitService>>,
     parent_path: String,
     folder_name: String,
     fallback_name: String,
@@ -301,7 +304,22 @@ pub fn register_cloned_space(
     } else {
         None
     };
-    project::register_cloned_space(path, &folder_name, &fallback_name, &fallback_icon, repo)
+
+    let space_dir = path.join(&folder_name);
+    let combai_existed_before = space_dir.join(".combai").join("config.json").exists();
+
+    let info = project::register_cloned_space(path, &folder_name, &fallback_name, &fallback_icon, repo)?;
+
+    if !combai_existed_before {
+        if let Err(e) = autocommit
+            .commit_scaffold(PathBuf::from(&parent_path), space_dir.clone())
+            .await
+        {
+            tracing::warn!("commit_scaffold failed after register_cloned_space: {e}");
+        }
+    }
+
+    Ok(info)
 }
 
 // --- Clone project ---
@@ -310,6 +328,7 @@ pub fn register_cloned_space(
 pub async fn project_clone(
     app: AppHandle,
     git_state: State<'_, GitState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
     url: String,
     target_path: String,
 ) -> Result<SpaceInfo, AppError> {
@@ -324,7 +343,18 @@ pub async fn project_clone(
         .path()
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
+
+    // Check if .combai/ existed in the clone before we scaffold it.
+    let combai_existed_before = path.join(".combai").join("config.json").exists();
+
     let (id, cfg) = project::open_project_folder(&config_dir, &path)?;
+
+    // If we just scaffolded .combai/, commit it.
+    if !combai_existed_before {
+        if let Err(e) = autocommit.commit_scaffold(path.clone(), path.clone()).await {
+            tracing::warn!("commit_scaffold failed after project clone: {e}");
+        }
+    }
 
     Ok(SpaceInfo {
         id,
@@ -370,9 +400,15 @@ pub fn get_space_config(space_path: String) -> Result<SpaceConfig, AppError> {
 pub fn save_space_config(
     space_path: String,
     config_data: SpaceConfig,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
     let path = Path::new(&space_path);
-    config::write_space_config(path, &config_data)
+    config::write_space_config(path, &config_data)?;
+    if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
+        autocommit.commit_config_now(PathBuf::from(proj), PathBuf::from(&space_path));
+    }
+    Ok(())
 }
 
 // --- CLI Symlinks ---
@@ -420,6 +456,7 @@ pub fn read_agents_md(space_path: String) -> Result<Option<String>, AppError> {
 pub async fn clone_missing_space(
     app: AppHandle,
     git_state: State<'_, GitState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
     project_path: String,
     space_id: String,
 ) -> Result<(), AppError> {
@@ -483,8 +520,15 @@ pub async fn clone_missing_space(
 
     // Scaffold .combai/ if not present
     let combai_dir = space_dir.join(".combai");
-    if !combai_dir.exists() {
+    let combai_existed_before = combai_dir.exists();
+    if !combai_existed_before {
         crate::space::scaffold::scaffold_space(&space_dir, &space_ref.path, "", "")?;
+        if let Err(e) = autocommit
+            .commit_scaffold(parent.clone(), space_dir.clone())
+            .await
+        {
+            tracing::warn!("commit_scaffold failed after clone_missing_space: {e}");
+        }
     }
 
     Ok(())

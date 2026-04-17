@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, State};
 
+use super::autocommit::AutocommitService;
 use super::cli::{GitAvailability, GitCli};
-use super::ops::GitStatus;
+use super::ops::{GitStatus, UnpushedCommit};
 use super::sync::SyncResult;
 use crate::index::IndexState;
 use crate::space::types::SpaceGitType;
@@ -82,6 +83,7 @@ pub async fn git_init_space(
 #[tauri::command]
 pub async fn git_clone_space(
     state: State<'_, GitState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
     app: AppHandle,
     url: String,
     target_path: String,
@@ -104,8 +106,15 @@ pub async fn git_clone_space(
             .await?;
         // Scaffold .combai/ if not present
         let combai_dir = target.join(".combai");
-        if !combai_dir.exists() {
+        let combai_existed_before = combai_dir.exists();
+        if !combai_existed_before {
             crate::space::scaffold::scaffold_space(&target, &space_folder, "", "")?;
+        }
+        drop(_guard);
+        if !combai_existed_before {
+            if let Err(e) = autocommit.commit_scaffold(project, target).await {
+                tracing::warn!("commit_scaffold failed after submodule clone: {e}");
+            }
         }
     } else {
         // independent
@@ -333,4 +342,38 @@ pub async fn git_get_submodule_url(
     let project = PathBuf::from(&project_path);
     let cli = state.cli()?;
     super::ops::get_submodule_url(cli, &project, &space_folder).await
+}
+
+#[tauri::command]
+pub async fn git_unpushed_commits(
+    state: State<'_, GitState>,
+    space_path: String,
+) -> Result<Vec<UnpushedCommit>, AppError> {
+    let path = PathBuf::from(&space_path);
+    let lock = state.get_lock(&path).await;
+    let _guard = lock.lock().await;
+    super::ops::unpushed_commits(state.cli()?, &path).await
+}
+
+#[tauri::command]
+pub async fn git_publish(
+    state: State<'_, GitState>,
+    space_path: String,
+) -> Result<GitStatus, AppError> {
+    let path = PathBuf::from(&space_path);
+    let lock = state.get_lock(&path).await;
+    let _guard = lock.lock().await;
+    let cli = state.cli()?;
+    super::ops::push_set_upstream(cli, &path).await?;
+    super::ops::status(cli, &path).await
+}
+
+#[tauri::command]
+pub fn git_enable_auto_sync(space_path: String) -> Result<(), AppError> {
+    let path = PathBuf::from(&space_path);
+    let mut cfg = crate::space::config::read_space_config(&path)?;
+    let mut git_cfg = cfg.git.clone().unwrap_or_default();
+    git_cfg.auto_sync = Some(true);
+    cfg.git = Some(git_cfg);
+    crate::space::config::write_space_config(&path, &cfg)
 }

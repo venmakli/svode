@@ -112,6 +112,7 @@ export function NavSpaces() {
       await invoke("save_space_config", {
         spacePath: ws.path,
         configData: { ...cfg, name: editValue.trim() },
+        projectPath: activeRootPath,
       });
       useWorkspaceStore.setState({
         spaces: useWorkspaceStore.getState().spaces.map((w) =>
@@ -143,6 +144,7 @@ export function NavSpaces() {
         space: ws.path,
         parentPath: null,
         name: m.space_new_folder(),
+        projectPath: activeRootPath,
       });
       await refreshTree(ws.id);
     } catch (err) {

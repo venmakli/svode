@@ -53,7 +53,7 @@ function isBareFolder(node: TreeNode): boolean {
 export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
   const { openDocument, activeDocument } = useLayoutStore();
   const { unsavedChanges, aiModified } = useEditorStore();
-  const { expandedPaths, toggleExpanded, refreshTree, spaces, rootSpaces, activeSpaceId, activeRootId } =
+  const { expandedPaths, toggleExpanded, refreshTree, spaces, rootSpaces, activeSpaceId, activeRootId, activeRootPath } =
     useWorkspaceStore();
 
   const bareFolder = isBareFolder(node);
@@ -131,6 +131,7 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
           space: space.path,
           from: node.path,
           to: newPath,
+          projectPath: activeRootPath,
         });
         // Mark files with updated backlinks for reload
         for (const f of modifiedFiles) {
@@ -209,6 +210,7 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
         const newPath = await invoke<string>("nest_entry", {
           space: space.path,
           path: node.path,
+          projectPath: activeRootPath,
         });
         parentPath = newPath.replace(/\/readme\.md$/i, "");
         parentNodePath = newPath; // path changed after nest
@@ -218,6 +220,7 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
         space: space.path,
         parentPath,
         title: "Untitled",
+        projectPath: activeRootPath,
       });
       await refreshTree(spaceId);
       // Expand the parent so the new child is visible
@@ -240,6 +243,7 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
         space: space.path,
         parentPath: node.path,
         title: node.title,
+        projectPath: activeRootPath,
       });
       const readmePath = `${node.path}/README.md`;
       if (entry.path !== readmePath) {
@@ -247,6 +251,7 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
           space: space.path,
           from: entry.path,
           to: readmePath,
+          projectPath: activeRootPath,
         });
       }
       await refreshTree(spaceId);
@@ -273,6 +278,7 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
         const newPath = await invoke<string>("nest_entry", {
           space: space.path,
           path: node.path,
+          projectPath: activeRootPath,
         });
         parentPath = newPath.replace(/\/readme\.md$/i, "");
         parentNodePath = newPath;
@@ -281,6 +287,7 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
         space: space.path,
         parentPath,
         name: m.space_new_folder(),
+        projectPath: activeRootPath,
       });
       await refreshTree(spaceId);
       if (!expandedPaths[spaceId]?.includes(parentNodePath)) {
@@ -313,6 +320,7 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
       await invoke("delete_entry", {
         space: space.path,
         path: node.path,
+        projectPath: activeRootPath,
       });
       await refreshTree(spaceId);
     } catch (err) {

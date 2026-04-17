@@ -1,3 +1,4 @@
+pub mod autocommit;
 pub mod cli;
 pub mod clone;
 pub mod commands;

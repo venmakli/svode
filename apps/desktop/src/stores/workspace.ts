@@ -282,6 +282,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         space: spacePath,
         parentPath: null,
         title,
+        projectPath: get().activeRootPath,
       });
       // Find space id by path and refresh its tree
       const state = get();
@@ -394,6 +395,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       space: spacePath,
       from,
       toParent,
+      projectPath: get().activeRootPath,
     });
     await get().refreshTree(spaceId);
     return newPath;
@@ -408,6 +410,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     await invoke("save_tree_order", {
       space: spacePath,
       order,
+      projectPath: get().activeRootPath,
     });
   },
 }));

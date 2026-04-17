@@ -19,6 +19,7 @@ export function useGitWatch(spacePath: string | null) {
   useEffect(() => {
     if (!spacePath) return;
     let unlistenDirty: (() => void) | null = null;
+    let unlistenCommitted: (() => void) | null = null;
     let cancelled = false;
 
     // Initial status fetch — cheap, no network.
@@ -41,6 +42,23 @@ export function useGitWatch(spacePath: string | null) {
       }
     });
 
+    // Autocommit lands → clear any grey dot shown while the debounce was
+    // pending. Refresh immediately, no debounce.
+    listen<{ spacePath: string; repoPath: string }>(
+      "git:committed",
+      (event) => {
+        if (cancelled) return;
+        if (event.payload.spacePath !== spacePath) return;
+        useGitStore.getState().refreshStatus(spacePath);
+      },
+    ).then((unlisten) => {
+      if (cancelled) {
+        unlisten();
+      } else {
+        unlistenCommitted = unlisten;
+      }
+    });
+
     return () => {
       cancelled = true;
       if (debounceRef.current) {
@@ -48,6 +66,7 @@ export function useGitWatch(spacePath: string | null) {
         debounceRef.current = null;
       }
       if (unlistenDirty) unlistenDirty();
+      if (unlistenCommitted) unlistenCommitted();
     };
   }, [spacePath]);
 }

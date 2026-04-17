@@ -1,13 +1,34 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tauri::{AppHandle, State};
 
 use crate::error::AppError;
 use crate::files::{entry, tree, BacklinkIndex, BacklinkInfo, Entry, FileWatcher, LinkValidation, TreeNode, WriteResult};
+use crate::git::autocommit::{AutocommitService, StructuralOp};
 use crate::index::{self, IndexState};
 use crate::space::config;
+
+fn basename(path: &str) -> String {
+    path.rsplit('/').next().unwrap_or(path).to_string()
+}
+
+fn maybe_autocommit_structural(
+    autocommit: &AutocommitService,
+    project_path: Option<&str>,
+    space_path: &str,
+    op: StructuralOp,
+) {
+    let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
+        return;
+    };
+    autocommit.schedule_structural(
+        PathBuf::from(proj),
+        PathBuf::from(space_path),
+        op,
+    );
+}
 
 #[tauri::command]
 pub fn list_entries(space: String) -> Result<Vec<TreeNode>, AppError> {
@@ -19,8 +40,17 @@ pub fn create_entry(
     space: String,
     parent_path: Option<String>,
     title: String,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
-    entry::create(&space, parent_path.as_deref(), &title)
+    let created = entry::create(&space, parent_path.as_deref(), &title)?;
+    maybe_autocommit_structural(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        StructuralOp::Create(basename(&created.path)),
+    );
+    Ok(created)
 }
 
 #[tauri::command]
@@ -28,8 +58,17 @@ pub fn create_folder(
     space: String,
     parent_path: Option<String>,
     name: String,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
-    entry::create_folder(&space, parent_path.as_deref(), &name)
+    let folder_path = entry::create_folder(&space, parent_path.as_deref(), &name)?;
+    maybe_autocommit_structural(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        StructuralOp::Create(basename(&folder_path)),
+    );
+    Ok(folder_path)
 }
 
 #[tauri::command]
@@ -85,8 +124,10 @@ pub async fn write_entry(
 pub async fn delete_entry(
     space: String,
     path: String,
+    project_path: Option<String>,
     backlink_index: State<'_, Arc<BacklinkIndex>>,
     index_state: State<'_, IndexState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
     entry::delete(&space, &path, Some(&backlink_index))?;
 
@@ -95,6 +136,12 @@ pub async fn delete_entry(
             tracing::warn!("index delete_entry_path failed for {path}: {e}");
         }
     }
+    maybe_autocommit_structural(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        StructuralOp::Delete(basename(&path)),
+    );
     Ok(())
 }
 
@@ -103,13 +150,24 @@ pub fn rename_entry(
     space: String,
     from: String,
     to: String,
+    project_path: Option<String>,
     backlink_index: State<'_, Arc<BacklinkIndex>>,
+    autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Vec<String>, AppError> {
     entry::rename(&space, &from, &to)?;
     let modified = backlink_index
         .update_links_on_rename(Path::new(&space), &from, &to)
         .unwrap_or_default();
     let _ = backlink_index.update_file(Path::new(&space), &to);
+    maybe_autocommit_structural(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        StructuralOp::Rename {
+            old: basename(&from),
+            new: basename(&to),
+        },
+    );
     Ok(modified)
 }
 
@@ -118,14 +176,23 @@ pub fn move_entry(
     space: String,
     from: String,
     to_parent: String,
+    project_path: Option<String>,
     backlink_index: State<'_, Arc<BacklinkIndex>>,
+    autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
-    entry::move_entry(
+    let new_path = entry::move_entry(
         Path::new(&space),
         &from,
         &to_parent,
         Some(&backlink_index),
-    )
+    )?;
+    maybe_autocommit_structural(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        StructuralOp::Move(basename(&new_path)),
+    );
+    Ok(new_path)
 }
 
 #[tauri::command]
@@ -177,26 +244,44 @@ pub fn unwatch_space(
 pub fn nest_entry(
     space: String,
     path: String,
+    project_path: Option<String>,
     backlink_index: State<'_, Arc<BacklinkIndex>>,
+    autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
-    entry::nest_entry(
+    let new_path = entry::nest_entry(
         Path::new(&space),
         &path,
         Some(&backlink_index),
-    )
+    )?;
+    maybe_autocommit_structural(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        StructuralOp::Move(basename(&new_path)),
+    );
+    Ok(new_path)
 }
 
 #[tauri::command]
 pub fn unnest_entry(
     space: String,
     path: String,
+    project_path: Option<String>,
     backlink_index: State<'_, Arc<BacklinkIndex>>,
+    autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
-    entry::unnest_entry(
+    let new_path = entry::unnest_entry(
         Path::new(&space),
         &path,
         Some(&backlink_index),
-    )
+    )?;
+    maybe_autocommit_structural(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        StructuralOp::Move(basename(&new_path)),
+    );
+    Ok(new_path)
 }
 
 #[tauri::command]
@@ -208,8 +293,17 @@ pub fn read_tree_order(space: String) -> Result<HashMap<String, Vec<String>>, Ap
 pub fn save_tree_order(
     space: String,
     order: HashMap<String, Vec<String>>,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
-    tree::write_order(Path::new(&space), &order)
+    tree::write_order(Path::new(&space), &order)?;
+    maybe_autocommit_structural(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        StructuralOp::Reorder,
+    );
+    Ok(())
 }
 
 #[tauri::command]

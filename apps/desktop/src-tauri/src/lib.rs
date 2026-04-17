@@ -9,6 +9,8 @@ mod storage;
 
 use std::sync::Arc;
 
+use tauri::Manager;
+
 pub use error::AppError;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -30,6 +32,11 @@ pub fn run() {
         .manage(Arc::new(files::BacklinkIndex::new()))
         .manage(git::GitState::new())
         .manage(index::IndexState::new())
+        .setup(|app| {
+            let service = Arc::new(git::autocommit::AutocommitService::new(app.handle().clone()));
+            app.manage(service);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::greet::greet,
             commands::files::list_entries,
@@ -94,6 +101,9 @@ pub fn run() {
             git::commands::git_push,
             git::commands::get_space_git_type,
             git::commands::git_get_submodule_url,
+            git::commands::git_unpushed_commits,
+            git::commands::git_publish,
+            git::commands::git_enable_auto_sync,
             index::commands::reindex_space,
             index::commands::search_entries_by_title,
             index::commands::search_entries,
@@ -107,6 +117,14 @@ pub fn run() {
             storage::commands::check_s3_connection,
             storage::commands::has_s3_credentials,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                let autocommit = app_handle.state::<Arc<git::autocommit::AutocommitService>>();
+                tauri::async_runtime::block_on(async {
+                    autocommit.flush_all().await;
+                });
+            }
+        });
 }

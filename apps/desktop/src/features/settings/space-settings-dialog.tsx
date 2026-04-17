@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import {
@@ -126,7 +127,7 @@ export function SpaceSettingsDialog({
   const [remoteUrl, setRemoteUrl] = useState("");
   const [savedRemoteUrl, setSavedRemoteUrl] = useState("");
   const [branch, setBranch] = useState<string | null>(null);
-  const [autoSync, setAutoSync] = useState(true);
+  const [autoSync, setAutoSync] = useState(false);
   const [pendingRemote, setPendingRemote] = useState<string | null>(null);
 
   // Storage section
@@ -170,7 +171,7 @@ export function SpaceSettingsDialog({
         setSavedDefaultsModel(cfg.defaults.agent.defaultModel ?? "");
         setSavedDefaultsPrompt(cfg.defaults.agent.systemPrompt ?? "");
       }
-      setAutoSync(cfg.git?.autoSync !== false);
+      setAutoSync(cfg.git?.autoSync === true);
       const strategy: AssetsStrategy = cfg.assets?.strategy ?? "local";
       setAssetsStrategy(strategy);
       setSavedAssetsStrategy(strategy);
@@ -206,6 +207,13 @@ export function SpaceSettingsDialog({
 
   const loadGitInfo = useCallback(async () => {
     if (!spacePath) return;
+    // Reset so stale values from a previous space don't linger while we
+    // re-fetch (important right after a clone — status/remote may have
+    // just materialized).
+    setRemoteUrl("");
+    setSavedRemoteUrl("");
+    setBranch(null);
+    setSubmoduleUrl(null);
     // Detect git type for non-root spaces
     if (!isRoot && activeRootPath) {
       try {
@@ -242,7 +250,7 @@ export function SpaceSettingsDialog({
       const status = await invoke<{ branch: string }>("git_status", {
         spacePath,
       });
-      setBranch(status.branch);
+      setBranch(status.branch && status.branch !== "HEAD" ? status.branch : null);
     } catch {
       setBranch(null);
     }
@@ -303,11 +311,35 @@ export function SpaceSettingsDialog({
     if (open && enabledClis.length > 0) checkHealth();
   }, [open, enabledClis, checkHealth]);
 
+  // Refresh git info when an autocommit lands on this space (e.g. the
+  // scaffold commit that lands immediately after a clone).
+  useEffect(() => {
+    if (!open || !spacePath) return;
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    listen<{ spacePath: string }>("git:committed", (event) => {
+      if (cancelled) return;
+      if (event.payload.spacePath !== spacePath) return;
+      loadGitInfo();
+    }).then((u) => {
+      if (cancelled) u();
+      else unlisten = u;
+    });
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, [open, spacePath, loadGitInfo]);
+
   async function saveConfig(updates: Partial<SpaceConfig>) {
     if (!spacePath) return false;
     try {
       const cfg = await invoke<SpaceConfig>("get_space_config", { spacePath });
-      await invoke("save_space_config", { spacePath, configData: { ...cfg, ...updates } });
+      await invoke("save_space_config", {
+        spacePath,
+        configData: { ...cfg, ...updates },
+        projectPath: activeRootPath,
+      });
       return true;
     } catch (err) {
       console.error("Failed to save workspace config:", err);
@@ -875,25 +907,29 @@ export function SpaceSettingsDialog({
                             {branch ?? "—"}
                           </p>
                         </div>
-                        <Separator />
-                        <div className="space-y-2">
-                          <Label>{m.git_auto_sync_label()}</Label>
-                          <label className="flex items-start gap-2 cursor-pointer">
-                            <Checkbox
-                              checked={autoSync}
-                              onCheckedChange={(checked) =>
-                                handleAutoSyncChange(checked === true)
-                              }
-                              className="mt-0.5"
-                            />
-                            <span className="text-sm">
-                              {m.git_auto_sync_checkbox()}
-                              <span className="block text-xs text-muted-foreground">
-                                {m.git_auto_sync_hint()}
-                              </span>
-                            </span>
-                          </label>
-                        </div>
+                        {remoteUrl.trim() && (
+                          <>
+                            <Separator />
+                            <div className="space-y-2">
+                              <Label>{m.git_auto_sync_label()}</Label>
+                              <label className="flex items-start gap-2 cursor-pointer">
+                                <Checkbox
+                                  checked={autoSync}
+                                  onCheckedChange={(checked) =>
+                                    handleAutoSyncChange(checked === true)
+                                  }
+                                  className="mt-0.5"
+                                />
+                                <span className="text-sm">
+                                  {m.git_auto_sync_checkbox()}
+                                  <span className="block text-xs text-muted-foreground">
+                                    {m.git_auto_sync_hint()}
+                                  </span>
+                                </span>
+                              </label>
+                            </div>
+                          </>
+                        )}
                       </>
                     )}
                   </div>

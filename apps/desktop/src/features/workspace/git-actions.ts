@@ -6,16 +6,16 @@ import type { SyncResult, GitStatus } from "@/types/git";
 import type { SpaceConfig } from "@/types/space";
 
 /**
- * Read the per-space `git.autoSync` setting (default: true).
+ * Read the per-space `git.autoSync` setting (default: false).
  */
 async function isAutoSyncEnabled(spacePath: string): Promise<boolean> {
   try {
     const cfg = await invoke<SpaceConfig>("get_space_config", {
       spacePath,
     });
-    return cfg.git?.autoSync !== false;
+    return cfg.git?.autoSync === true;
   } catch {
-    return true;
+    return false;
   }
 }
 
