@@ -79,6 +79,7 @@ pub fn run() {
             commands::space::teardown_cli_symlinks_cmd,
             commands::space::check_symlink_health,
             commands::space::read_agents_md,
+            commands::space::write_agents_md,
             commands::space::clone_missing_space,
             commands::space::remove_missing_space,
             agent::commands::agent_send,

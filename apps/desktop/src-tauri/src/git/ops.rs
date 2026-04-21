@@ -129,7 +129,7 @@ pub async fn init(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
     }
 
     // initial commit
-    let _ = commit(cli, space_dir, "Initialize space").await?;
+    let _ = commit(cli, space_dir, "Scaffold .combai").await?;
 
     tracing::info!("Initialized git repo at {}", space_dir.display());
     Ok(())

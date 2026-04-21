@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, State};
 
-use super::autocommit::AutocommitService;
+use super::autocommit::{AutocommitService, SystemCommitKind};
 use super::cli::{GitAvailability, GitCli};
 use super::ops::{GitStatus, UnpushedCommit};
 use super::sync::SyncResult;
@@ -147,19 +147,36 @@ pub async fn git_get_remote(
 #[tauri::command]
 pub async fn git_set_remote(
     state: State<'_, GitState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
     space_path: String,
     url: String,
     project_path: Option<String>,
     space_id: Option<String>,
 ) -> Result<(), AppError> {
     let path = PathBuf::from(&space_path);
-    let lock = state.get_lock(&path).await;
-    let _guard = lock.lock().await;
-    super::ops::set_remote(state.cli()?, &path, &url).await?;
+    {
+        let lock = state.get_lock(&path).await;
+        let _guard = lock.lock().await;
+        super::ops::set_remote(state.cli()?, &path, &url).await?;
+    }
 
-    if let (Some(proj_path), Some(sid)) = (project_path, space_id) {
-        let parent = Path::new(&proj_path);
+    if let (Some(proj_path), Some(sid)) = (project_path.as_deref(), space_id) {
+        let parent = Path::new(proj_path);
         crate::space::project::reconcile_space_url(parent, &sid, Some(&url))?;
+    }
+
+    // Commit the config change (reconcile_space_url may have updated parent
+    // .combai/config.json). Routes per space git type.
+    if let Some(proj_path) = project_path {
+        if !proj_path.is_empty() {
+            autocommit
+                .commit_system_now(
+                    PathBuf::from(&proj_path),
+                    path,
+                    SystemCommitKind::SpaceConfig,
+                )
+                .await?;
+        }
     }
 
     Ok(())
@@ -202,10 +219,26 @@ pub async fn git_commit_file(
 
     if let Some(proj_path) = project_path.filter(|p| !p.is_empty()) {
         let project = PathBuf::from(&proj_path);
-        // Drain any pending structural batch first so the user commit stays
-        // separate from structural attribution.
-        autocommit.flush_space(&path).await;
+        // `.combai/AGENTS.md` is classified as a System change (stage 3.5
+        // temporary rule — see 03-autocommit.md). Route through the system
+        // commit path so the message is `Update agent instructions` and the
+        // commit is isolated from user content.
+        if file_path == ".combai/AGENTS.md" {
+            autocommit
+                .commit_system_now(
+                    project,
+                    path.clone(),
+                    SystemCommitKind::AgentInstructions,
+                )
+                .await?;
+            return super::ops::status(cli, &path).await;
+        }
+        // Drain pending structural batches for every space that targets this
+        // repo — otherwise `git add .` of the user commit sweeps sibling
+        // spaces' structural changes under the user message (happens for
+        // inline-collocated spaces sharing the root repo).
         let (_, target_repo) = super::ops::resolve_target_repo(cli, &project, &path).await?;
+        autocommit.flush_target_repo(&target_repo).await;
         let lock = state.get_lock(&target_repo).await;
         let _guard = lock.lock().await;
         super::ops::commit_file_routed(cli, &project, &path, &file_path).await?;
@@ -231,8 +264,8 @@ pub async fn git_commit_all(
 
     if let Some(proj_path) = project_path.filter(|p| !p.is_empty()) {
         let project = PathBuf::from(&proj_path);
-        autocommit.flush_space(&path).await;
         let (_, target_repo) = super::ops::resolve_target_repo(cli, &project, &path).await?;
+        autocommit.flush_target_repo(&target_repo).await;
         let lock = state.get_lock(&target_repo).await;
         let _guard = lock.lock().await;
         super::ops::commit_all_routed(cli, &project, &path).await?;
@@ -377,11 +410,45 @@ pub async fn git_publish(
 }
 
 #[tauri::command]
-pub fn git_enable_auto_sync(space_path: String) -> Result<(), AppError> {
-    let path = PathBuf::from(&space_path);
-    let mut cfg = crate::space::config::read_space_config(&path)?;
+pub async fn git_enable_auto_sync(
+    state: State<'_, GitState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+    space_path: String,
+    project_path: Option<String>,
+) -> Result<(), AppError> {
+    let space = PathBuf::from(&space_path);
+
+    // For inline spaces autoSync lives in the root project config (inline has
+    // no repo of its own). For independent/submodule — the space's own config.
+    let config_target: PathBuf = match project_path.as_deref() {
+        Some(proj) if !proj.is_empty() => {
+            let project = PathBuf::from(proj);
+            let cli = state.cli()?;
+            let git_type =
+                super::ops::detect_space_git_type(cli, &project, &space).await?;
+            match git_type {
+                crate::space::types::SpaceGitType::Inline => project,
+                _ => space.clone(),
+            }
+        }
+        _ => space.clone(),
+    };
+
+    let mut cfg = crate::space::config::read_space_config(&config_target)?;
     let mut git_cfg = cfg.git.clone().unwrap_or_default();
     git_cfg.auto_sync = Some(true);
     cfg.git = Some(git_cfg);
-    crate::space::config::write_space_config(&path, &cfg)
+    crate::space::config::write_space_config(&config_target, &cfg)?;
+
+    if let Some(proj_path) = project_path.filter(|p| !p.is_empty()) {
+        autocommit
+            .commit_system_now(
+                PathBuf::from(&proj_path),
+                space,
+                SystemCommitKind::SpaceConfig,
+            )
+            .await?;
+    }
+
+    Ok(())
 }

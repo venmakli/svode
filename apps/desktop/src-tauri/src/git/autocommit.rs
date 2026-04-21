@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
 use tauri::async_runtime::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::sync::Mutex;
 
 use super::commands::GitState;
 use super::ops;
@@ -14,6 +13,7 @@ use crate::space::types::SpaceGitType;
 use crate::AppError;
 
 const DEBOUNCE_MS: u64 = 500;
+const FLUSH_ALL_TIMEOUT_SECS: u64 = 10;
 const EVENT_COMMITTED: &str = "git:committed";
 
 #[derive(Debug, Clone)]
@@ -25,6 +25,33 @@ pub enum StructuralOp {
     Reorder,
 }
 
+/// Categories of system-level auto-commits — messages and file scopes.
+#[derive(Debug, Clone, Copy)]
+pub enum SystemCommitKind {
+    SpaceConfig,
+    AgentInstructions,
+    CliIntegration,
+}
+
+impl SystemCommitKind {
+    fn message(self) -> &'static str {
+        match self {
+            SystemCommitKind::SpaceConfig => "Update space config",
+            SystemCommitKind::AgentInstructions => "Update agent instructions",
+            SystemCommitKind::CliIntegration => "Update CLI integration",
+        }
+    }
+
+    /// Paths to stage, relative to the space root.
+    fn paths(self) -> &'static [&'static str] {
+        match self {
+            SystemCommitKind::SpaceConfig => &[".combai/config.json"],
+            SystemCommitKind::AgentInstructions => &[".combai/AGENTS.md"],
+            SystemCommitKind::CliIntegration => &["CLAUDE.md", ".mcp.json", ".claude"],
+        }
+    }
+}
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct CommittedPayload {
@@ -34,8 +61,8 @@ struct CommittedPayload {
 
 struct PendingBatch {
     project_path: PathBuf,
-    git_type: SpaceGitType,
-    target_repo: PathBuf,
+    git_type: Option<SpaceGitType>,
+    target_repo: Option<PathBuf>,
     ops: Vec<StructuralOp>,
     timer: Option<JoinHandle<()>>,
 }
@@ -44,6 +71,8 @@ pub struct AutocommitService {
     app: AppHandle,
     /// Keyed by `space_path` — different spaces never share a batch even when
     /// they target the same repo (multiple inline children of one project).
+    /// Uses a sync Mutex so `schedule_structural` can push synchronously from
+    /// sync IPC handlers without racing against later flush/commit calls.
     pending: Arc<Mutex<HashMap<PathBuf, PendingBatch>>>,
 }
 
@@ -56,80 +85,162 @@ impl AutocommitService {
     }
 
     /// Schedule an autocommit for a structural change in the given space.
+    ///
+    /// The op is pushed into `pending` synchronously, before returning — this
+    /// way any `flush_*` invoked afterwards sees the effect immediately. The
+    /// debounce timer and (eager) target-repo resolution run in background
+    /// tasks and only cache into the batch on completion.
     pub fn schedule_structural(
         &self,
         project_path: PathBuf,
         space_path: PathBuf,
         op: StructuralOp,
     ) {
-        let app = self.app.clone();
-        let pending = self.pending.clone();
-        tauri::async_runtime::spawn(async move {
-            let (git_type, target_repo) =
-                match resolve_target_repo(&app, &project_path, &space_path).await {
-                    Some(t) => t,
-                    None => return,
-                };
-
-            let mut map = pending.lock().await;
+        let needs_resolve = {
+            let mut map = self.pending.lock().unwrap();
             let entry = map.entry(space_path.clone()).or_insert_with(|| PendingBatch {
                 project_path: project_path.clone(),
-                git_type,
-                target_repo: target_repo.clone(),
+                git_type: None,
+                target_repo: None,
                 ops: Vec::new(),
                 timer: None,
             });
-            // Project path is stable for a given space, but keep in sync defensively.
+            // Project path is stable for a given space, keep defensively synced.
             entry.project_path = project_path.clone();
-            entry.git_type = git_type;
-            entry.target_repo = target_repo.clone();
             entry.ops.push(op);
 
             if let Some(handle) = entry.timer.take() {
                 handle.abort();
             }
 
-            let app_fire = app.clone();
-            let pending_fire = pending.clone();
+            let app_fire = self.app.clone();
+            let pending_fire = self.pending.clone();
             let key_fire = space_path.clone();
             let handle = tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(DEBOUNCE_MS)).await;
                 fire_batch(&app_fire, pending_fire, &key_fire).await;
             });
             entry.timer = Some(handle);
-        });
+
+            entry.target_repo.is_none()
+        };
+
+        if needs_resolve {
+            // Background resolution of target_repo — cache-only side-effect,
+            // `fire_batch` will resolve on its own if this hasn't landed yet.
+            let app = self.app.clone();
+            let pending = self.pending.clone();
+            let proj = project_path;
+            let sp = space_path;
+            tauri::async_runtime::spawn(async move {
+                if let Some((git_type, target_repo)) =
+                    resolve_target_repo(&app, &proj, &sp).await
+                {
+                    let mut map = pending.lock().unwrap();
+                    if let Some(batch) = map.get_mut(&sp) {
+                        if batch.git_type.is_none() {
+                            batch.git_type = Some(git_type);
+                        }
+                        if batch.target_repo.is_none() {
+                            batch.target_repo = Some(target_repo);
+                        }
+                    }
+                }
+            });
+        }
     }
 
-    /// Drain any pending structural batch for this space and commit it
-    /// synchronously. Called before a user ⌘S/⌘⇧S so the two categories
-    /// don't share a commit.
-    pub async fn flush_space(&self, space_path: &Path) {
-        {
-            let mut map = self.pending.lock().await;
-            if let Some(batch) = map.get_mut(space_path) {
-                if let Some(h) = batch.timer.take() {
-                    h.abort();
+    /// Drain all pending structural batches whose target repo equals `repo`,
+    /// each as its own commit keyed on its space_path. Called before any user
+    /// commit so structural attribution doesn't leak into the user message —
+    /// in particular for inline-collocated spaces that share the root repo.
+    pub async fn flush_target_repo(&self, repo: &Path) {
+        // Resolve any unresolved batches so we know their target repo.
+        let unresolved: Vec<(PathBuf, PathBuf)> = {
+            let map = self.pending.lock().unwrap();
+            map.iter()
+                .filter(|(_, b)| b.target_repo.is_none())
+                .map(|(sp, b)| (sp.clone(), b.project_path.clone()))
+                .collect()
+        };
+        for (sp, proj) in unresolved {
+            if let Some((git_type, target_repo)) =
+                resolve_target_repo(&self.app, &proj, &sp).await
+            {
+                let mut map = self.pending.lock().unwrap();
+                if let Some(batch) = map.get_mut(&sp) {
+                    batch.git_type = Some(git_type);
+                    batch.target_repo = Some(target_repo);
                 }
             }
         }
-        fire_batch(&self.app, self.pending.clone(), space_path).await;
-    }
 
-    /// Commit a system config change immediately (no debounce).
-    pub fn commit_config_now(&self, project_path: PathBuf, space_path: PathBuf) {
-        let app = self.app.clone();
-        tauri::async_runtime::spawn(async move {
-            if let Err(e) = do_commit_config(&app, &project_path, &space_path).await {
-                tracing::warn!(
-                    "commit_config_now failed for {}: {}",
-                    space_path.display(),
-                    e
-                );
+        // Collect matching keys and abort their debounce timers.
+        let keys: Vec<PathBuf> = {
+            let mut map = self.pending.lock().unwrap();
+            let matching: Vec<PathBuf> = map
+                .iter()
+                .filter(|(_, b)| b.target_repo.as_deref() == Some(repo))
+                .map(|(sp, _)| sp.clone())
+                .collect();
+            for key in &matching {
+                if let Some(batch) = map.get_mut(key) {
+                    if let Some(h) = batch.timer.take() {
+                        h.abort();
+                    }
+                }
             }
-        });
+            matching
+        };
+
+        for key in keys {
+            fire_batch(&self.app, self.pending.clone(), &key).await;
+        }
     }
 
-    /// Commit the scaffolded `.combai/` directory after a clone.
+    /// Commit a system-level change (config / AI settings / CLI integration)
+    /// immediately. Runs inline with the caller so any subsequent IPC call
+    /// sees the commit already landed.
+    pub async fn commit_system_now(
+        &self,
+        project_path: PathBuf,
+        space_path: PathBuf,
+        kind: SystemCommitKind,
+    ) -> Result<(), AppError> {
+        if !space_path.exists() {
+            tracing::warn!(
+                "commit_system_now: space path missing, skipping: {}",
+                space_path.display()
+            );
+            return Ok(());
+        }
+
+        let git_state = self.app.state::<GitState>();
+        let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
+        let git_type =
+            ops::detect_space_git_type(&cli, &project_path, &space_path).await?;
+        let target_repo: PathBuf = match git_type {
+            SpaceGitType::Inline => project_path.clone(),
+            SpaceGitType::Independent | SpaceGitType::Submodule => space_path.clone(),
+        };
+
+        // For inline, drain pending structural of the same target repo first
+        // so our config add doesn't sweep their changes under our message.
+        if matches!(git_type, SpaceGitType::Inline) {
+            self.flush_target_repo(&target_repo).await;
+        }
+
+        do_commit_system(
+            &self.app,
+            &project_path,
+            &space_path,
+            git_type,
+            kind,
+        )
+        .await
+    }
+
+    /// Commit the scaffolded `.combai/` directory.
     pub async fn commit_scaffold(
         &self,
         project_path: PathBuf,
@@ -138,23 +249,34 @@ impl AutocommitService {
         do_commit_scaffold(&self.app, &project_path, &space_path).await
     }
 
-    /// Flush all pending timers: cancel each and run the pending commits synchronously.
+    /// Flush all pending timers on shutdown. Wrapped in a timeout so a hung
+    /// network or lock doesn't prevent process exit.
     pub async fn flush_all(&self) {
-        let keys: Vec<PathBuf> = {
-            let map = self.pending.lock().await;
-            map.keys().cloned().collect()
-        };
-        for key in keys {
-            // Cancel timer to prevent it from racing with us.
-            {
-                let mut map = self.pending.lock().await;
-                if let Some(batch) = map.get_mut(&key) {
-                    if let Some(h) = batch.timer.take() {
-                        h.abort();
+        let fut = async {
+            let keys: Vec<PathBuf> = {
+                let map = self.pending.lock().unwrap();
+                map.keys().cloned().collect()
+            };
+            for key in keys {
+                {
+                    let mut map = self.pending.lock().unwrap();
+                    if let Some(batch) = map.get_mut(&key) {
+                        if let Some(h) = batch.timer.take() {
+                            h.abort();
+                        }
                     }
                 }
+                fire_batch(&self.app, self.pending.clone(), &key).await;
             }
-            fire_batch(&self.app, self.pending.clone(), &key).await;
+        };
+
+        if let Err(_) =
+            tokio::time::timeout(Duration::from_secs(FLUSH_ALL_TIMEOUT_SECS), fut).await
+        {
+            tracing::warn!(
+                "flush_all: timeout after {}s, pending commits dropped",
+                FLUSH_ALL_TIMEOUT_SECS
+            );
         }
     }
 }
@@ -187,7 +309,7 @@ async fn fire_batch(
     space_path: &Path,
 ) {
     let batch_opt = {
-        let mut map = pending.lock().await;
+        let mut map = pending.lock().unwrap();
         map.remove(space_path)
     };
     let Some(batch) = batch_opt else { return };
@@ -203,14 +325,23 @@ async fn fire_batch(
         return;
     }
 
+    // Resolve lazily if the background resolve task hasn't landed yet.
+    let (git_type, target_repo) = match (batch.git_type, batch.target_repo.clone()) {
+        (Some(gt), Some(tr)) => (gt, tr),
+        _ => match resolve_target_repo(app, &batch.project_path, space_path).await {
+            Some(pair) => pair,
+            None => return,
+        },
+    };
+
     let message = aggregate_message(&batch.ops);
 
     if let Err(e) = run_autocommit(
         app,
         &batch.project_path,
         space_path,
-        batch.git_type,
-        &batch.target_repo,
+        git_type,
+        &target_repo,
         &message,
     )
     .await
@@ -282,22 +413,20 @@ async fn run_autocommit(
     Ok(())
 }
 
-async fn do_commit_config(
+/// Stage the paths for a system-kind commit, relative to the space root, and
+/// commit under the right repo lock. `space_path` may equal `project_path`
+/// for root-level spaces (inline).
+async fn do_commit_system(
     app: &AppHandle,
     project_path: &Path,
     space_path: &Path,
+    git_type: SpaceGitType,
+    kind: SystemCommitKind,
 ) -> Result<(), AppError> {
-    if !space_path.exists() {
-        tracing::warn!(
-            "commit_config_now: space path missing, skipping: {}",
-            space_path.display()
-        );
-        return Ok(());
-    }
-
     let git_state = app.state::<GitState>();
     let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
-    let git_type = ops::detect_space_git_type(&cli, project_path, space_path).await?;
+    let message = kind.message();
+    let paths = kind.paths();
 
     let space_folder = space_path
         .file_name()
@@ -308,18 +437,18 @@ async fn do_commit_config(
         SpaceGitType::Inline => {
             let lock = git_state.get_lock(project_path).await;
             let _guard = lock.lock().await;
-            let rel = if space_path == project_path {
-                ".combai/config.json".to_string()
-            } else {
-                format!("{}/.combai/config.json", space_folder)
-            };
-            let c = ops::commit_path_with_message(
-                &cli,
-                project_path,
-                &rel,
-                "Update space config",
-            )
-            .await?;
+            for rel in paths {
+                let staged = if space_path == project_path {
+                    (*rel).to_string()
+                } else {
+                    format!("{}/{}", space_folder, rel)
+                };
+                // Ignore add errors for paths that may not exist (e.g. `.claude`
+                // when no CLI integration is active) — they just contribute
+                // nothing to the commit.
+                let _ = ops::add(&cli, project_path, &staged).await;
+            }
+            let c = ops::commit(&cli, project_path, message).await?;
             if c {
                 emit_committed(app, space_path, project_path);
             }
@@ -328,13 +457,10 @@ async fn do_commit_config(
         SpaceGitType::Independent => {
             let lock = git_state.get_lock(space_path).await;
             let _guard = lock.lock().await;
-            let c = ops::commit_path_with_message(
-                &cli,
-                space_path,
-                ".combai/config.json",
-                "Update space config",
-            )
-            .await?;
+            for rel in paths {
+                let _ = ops::add(&cli, space_path, rel).await;
+            }
+            let c = ops::commit(&cli, space_path, message).await?;
             if c {
                 emit_committed(app, space_path, space_path);
             }
@@ -343,13 +469,10 @@ async fn do_commit_config(
         SpaceGitType::Submodule => {
             let lock = git_state.get_lock(space_path).await;
             let _guard = lock.lock().await;
-            let c = ops::commit_path_with_message(
-                &cli,
-                space_path,
-                ".combai/config.json",
-                "Update space config",
-            )
-            .await?;
+            for rel in paths {
+                let _ = ops::add(&cli, space_path, rel).await;
+            }
+            let c = ops::commit(&cli, space_path, message).await?;
             drop(_guard);
             if c {
                 emit_committed(app, space_path, space_path);
@@ -363,8 +486,6 @@ async fn do_commit_config(
     };
 
     if created {
-        // Auto-sync mirrors the structural path: commit's own repo if enabled;
-        // for submodule also sync root if its auto-sync is on.
         let config_repo: PathBuf = match git_type {
             SpaceGitType::Inline => project_path.to_path_buf(),
             SpaceGitType::Independent | SpaceGitType::Submodule => space_path.to_path_buf(),
@@ -375,7 +496,7 @@ async fn do_commit_config(
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = crate::git::sync::sync(&cli_sync, &sync_target).await {
                     tracing::warn!(
-                        "auto-sync (config) failed for {}: {}",
+                        "auto-sync (system) failed for {}: {}",
                         sync_target.display(),
                         e
                     );
@@ -388,7 +509,7 @@ async fn do_commit_config(
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = crate::git::sync::sync(&cli_sync, &root).await {
                     tracing::warn!(
-                        "auto-sync (config, root) failed for {}: {}",
+                        "auto-sync (system, root) failed for {}: {}",
                         root.display(),
                         e
                     );

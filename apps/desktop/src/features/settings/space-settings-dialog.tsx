@@ -426,9 +426,17 @@ export function SpaceSettingsDialog({
     setEnabledClis(newClis);
     try {
       if (enabled) {
-        await invoke<string[]>("setup_cli_symlinks_cmd", { spacePath, cliName });
+        await invoke<string[]>("setup_cli_symlinks_cmd", {
+          spacePath,
+          cliName,
+          projectPath: activeRootPath,
+        });
       } else {
-        await invoke("teardown_cli_symlinks_cmd", { spacePath, cliName });
+        await invoke("teardown_cli_symlinks_cmd", {
+          spacePath,
+          cliName,
+          projectPath: activeRootPath,
+        });
       }
       await saveConfig({ agent: { clis: newClis } });
       toast.success(m.toast_settings_saved());

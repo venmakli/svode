@@ -33,6 +33,7 @@ interface UnpushedCommit {
 
 export function CloudUploadButton() {
   const spacePath = useWorkspaceStore(selectActiveSpacePath);
+  const activeRootPath = useWorkspaceStore((s) => s.activeRootPath);
   const [visible, setVisible] = useState(false);
   const [open, setOpen] = useState(false);
   const [commits, setCommits] = useState<UnpushedCommit[]>([]);
@@ -110,7 +111,10 @@ export function CloudUploadButton() {
       useGitStore.getState().applyStatus(spacePath, status);
 
       if (enableAutoSync) {
-        await invoke("git_enable_auto_sync", { spacePath });
+        await invoke("git_enable_auto_sync", {
+          spacePath,
+          projectPath: activeRootPath,
+        });
       }
 
       toast.success(m.git_publish_success({ count: String(commits.length) }));

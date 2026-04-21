@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
 
 use crate::error::AppError;
-use crate::git::autocommit::AutocommitService;
+use crate::git::autocommit::{AutocommitService, SystemCommitKind};
 use crate::git::commands::{require_cli, GitState};
 use crate::git::ops;
 use crate::index::IndexState;
@@ -70,6 +70,7 @@ pub fn list_projects(app: AppHandle) -> Result<Vec<SpaceInfo>, AppError> {
 pub async fn create_project(
     app: AppHandle,
     git_state: State<'_, GitState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
     name: String,
     icon: String,
     description: Option<String>,
@@ -94,13 +95,19 @@ pub async fn create_project(
         sp_path,
     )?;
 
-    // Auto git init
+    // Auto git init, then scaffold-commit.
     if let Some(cli) = &git_state.cli {
         let lock = git_state.get_lock(sp_path).await;
         let _guard = lock.lock().await;
         if let Err(e) = crate::git::ops::init(cli, sp_path).await {
             tracing::warn!("git init failed for new project: {e}");
         }
+    }
+    if let Err(e) = autocommit
+        .commit_scaffold(sp_path.to_path_buf(), sp_path.to_path_buf())
+        .await
+    {
+        tracing::warn!("commit_scaffold failed after create_project: {e}");
     }
 
     Ok(SpaceInfo {
@@ -119,6 +126,7 @@ pub async fn create_project(
 pub async fn open_project_folder(
     app: AppHandle,
     git_state: State<'_, GitState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
     path: String,
 ) -> Result<SpaceInfo, AppError> {
     let config_dir = app
@@ -126,16 +134,35 @@ pub async fn open_project_folder(
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
     let sp_path = Path::new(&path);
+
+    // Track whether `.combai/` was present before we touched the folder —
+    // only commit scaffold when we created it (not when opening an existing
+    // combai project).
+    let combai_existed_before = sp_path.join(".combai").join("config.json").exists();
+
     let (id, cfg) = project::open_project_folder(&config_dir, sp_path)?;
 
-    // Auto git init if no .git/ exists
-    if !sp_path.join(".git").exists() {
+    // Auto git init if no .git/ exists. `ops::init` stages everything
+    // (including the fresh .combai/) under a `Scaffold .combai` commit.
+    let had_git_before = sp_path.join(".git").exists();
+    if !had_git_before {
         if let Some(cli) = &git_state.cli {
             let lock = git_state.get_lock(sp_path).await;
             let _guard = lock.lock().await;
             if let Err(e) = crate::git::ops::init(cli, sp_path).await {
                 tracing::warn!("git init failed for opened folder: {e}");
             }
+        }
+    }
+
+    // If the folder was already a git repo but we just scaffolded .combai/
+    // into it, commit the scaffold on top of HEAD.
+    if had_git_before && !combai_existed_before {
+        if let Err(e) = autocommit
+            .commit_scaffold(sp_path.to_path_buf(), sp_path.to_path_buf())
+            .await
+        {
+            tracing::warn!("commit_scaffold failed for opened folder: {e}");
         }
     }
 
@@ -234,6 +261,7 @@ pub fn list_spaces(space_path: String) -> Result<Vec<SpaceInfo>, AppError> {
 #[tauri::command]
 pub async fn create_space(
     git_state: State<'_, GitState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
     parent_path: String,
     name: String,
     icon: String,
@@ -244,48 +272,132 @@ pub async fn create_space(
     let info = project::create_space(parent, &name, &icon, &folder_name)?;
     let space_dir = parent.join(&folder_name);
 
+    // Unified root-commit message — `Add <type> space <folder>`. Type is
+    // visible in history without reading the diff.
+    let type_label = match git_type {
+        SpaceGitType::Inline => "inline",
+        SpaceGitType::Independent => "independent",
+        SpaceGitType::Submodule => "submodule",
+    };
+    let root_message = format!("Add {} space {}", type_label, folder_name);
+
     match git_type {
         SpaceGitType::Inline => {
             ops::ensure_inline_gitignore(parent)?;
+            // Single commit in root: new folder + parent .combai/config.json
+            // update + optionally .gitignore (the inline managed block).
+            if let Some(cli) = &git_state.cli {
+                let lock = git_state.get_lock(parent).await;
+                let _guard = lock.lock().await;
+                ops::add_all(cli, parent).await?;
+                let _ = ops::commit(cli, parent, &root_message).await?;
+            }
         }
         SpaceGitType::Independent => {
             let cli = require_cli(&git_state)?;
-            let lock = git_state.get_lock(&space_dir).await;
-            let _guard = lock.lock().await;
-            ops::init(&cli, &space_dir).await?;
+            {
+                let lock = git_state.get_lock(&space_dir).await;
+                let _guard = lock.lock().await;
+                // ops::init scaffolds the initial commit as `Scaffold .combai`
+                // inside the child repo (auto-sync OFF — the repo has no remote).
+                ops::init(&cli, &space_dir).await?;
+            }
             ops::add_independent_gitignore(parent, &folder_name)?;
+            // Root commit: parent config + .gitignore entry.
+            {
+                let root_lock = git_state.get_lock(parent).await;
+                let _root_guard = root_lock.lock().await;
+                ops::add_all(&cli, parent).await?;
+                let _ = ops::commit(&cli, parent, &root_message).await?;
+            }
         }
         SpaceGitType::Submodule => {
             let cli = require_cli(&git_state)?;
-            let lock = git_state.get_lock(&space_dir).await;
-            let _guard = lock.lock().await;
-            ops::init(&cli, &space_dir).await?;
-            drop(_guard);
-            let parent_lock = git_state.get_lock(parent).await;
-            let _parent_guard = parent_lock.lock().await;
-            let out = cli
-                .exec(parent, &["submodule", "add", &format!("./{folder_name}")])
-                .await?;
-            if out.exit_code != 0 {
-                return Err(AppError::GitCommandFailed(format!(
-                    "git submodule add failed: {}",
-                    out.stderr
-                )));
+            {
+                let lock = git_state.get_lock(&space_dir).await;
+                let _guard = lock.lock().await;
+                // Scaffold commit in the child (auto-sync OFF).
+                ops::init(&cli, &space_dir).await?;
+            }
+            {
+                let parent_lock = git_state.get_lock(parent).await;
+                let _parent_guard = parent_lock.lock().await;
+                let out = cli
+                    .exec(parent, &["submodule", "add", &format!("./{folder_name}")])
+                    .await?;
+                if out.exit_code != 0 {
+                    return Err(AppError::GitCommandFailed(format!(
+                        "git submodule add failed: {}",
+                        out.stderr
+                    )));
+                }
+                // Root commit: .gitmodules, submodule pointer, parent config.
+                ops::add_all(&cli, parent).await?;
+                let _ = ops::commit(&cli, parent, &root_message).await?;
             }
         }
     }
+
+    // Compute git_type for newly created space so the scaffold-sync wiring
+    // triggers properly if the user later sets a remote + enables auto-sync.
+    // No-op here — autocommit is informational via events below.
+    let _ = &autocommit;
 
     Ok(info)
 }
 
 #[tauri::command]
-pub fn delete_space(
+pub async fn delete_space(
+    git_state: State<'_, GitState>,
     parent_path: String,
     space_id: String,
     delete_files: Option<bool>,
 ) -> Result<(), AppError> {
-    let path = Path::new(&parent_path);
-    project::delete_space(path, &space_id, delete_files.unwrap_or(false))
+    let parent = Path::new(&parent_path);
+
+    // Look up folder name + detect git type before deletion so we know which
+    // commit message to use in the root repo.
+    let (folder_name, git_type) = {
+        let parent_cfg = config::read_space_config(parent)?;
+        let folder = parent_cfg
+            .spaces
+            .as_ref()
+            .and_then(|spaces| spaces.iter().find(|s| s.id == space_id))
+            .map(|s| s.path.clone());
+        let Some(folder) = folder else {
+            // Nothing to delete — still call through to remove the registry entry.
+            project::delete_space(parent, &space_id, delete_files.unwrap_or(false))?;
+            return Ok(());
+        };
+        let space_dir = parent.join(&folder);
+        let gt = if let Some(cli) = &git_state.cli {
+            match ops::detect_space_git_type(cli, parent, &space_dir).await {
+                Ok(gt) => gt,
+                Err(_) => SpaceGitType::Inline,
+            }
+        } else {
+            SpaceGitType::Inline
+        };
+        (folder, gt)
+    };
+
+    project::delete_space(parent, &space_id, delete_files.unwrap_or(false))?;
+
+    let type_label = match git_type {
+        SpaceGitType::Inline => "inline",
+        SpaceGitType::Independent => "independent",
+        SpaceGitType::Submodule => "submodule",
+    };
+    let message = format!("Remove {} space {}", type_label, folder_name);
+
+    if let Some(cli) = &git_state.cli {
+        let lock = git_state.get_lock(parent).await;
+        let _guard = lock.lock().await;
+        ops::add_all(cli, parent).await?;
+        let _ = ops::commit(cli, parent, &message).await?;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -397,7 +509,7 @@ pub fn get_space_config(space_path: String) -> Result<SpaceConfig, AppError> {
 }
 
 #[tauri::command]
-pub fn save_space_config(
+pub async fn save_space_config(
     space_path: String,
     config_data: SpaceConfig,
     project_path: Option<String>,
@@ -406,7 +518,13 @@ pub fn save_space_config(
     let path = Path::new(&space_path);
     config::write_space_config(path, &config_data)?;
     if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
-        autocommit.commit_config_now(PathBuf::from(proj), PathBuf::from(&space_path));
+        autocommit
+            .commit_system_now(
+                PathBuf::from(proj),
+                PathBuf::from(&space_path),
+                SystemCommitKind::SpaceConfig,
+            )
+            .await?;
     }
     Ok(())
 }
@@ -414,21 +532,45 @@ pub fn save_space_config(
 // --- CLI Symlinks ---
 
 #[tauri::command]
-pub fn setup_cli_symlinks_cmd(
+pub async fn setup_cli_symlinks_cmd(
     space_path: String,
     cli_name: String,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Vec<String>, AppError> {
     let path = Path::new(&space_path);
-    symlinks::setup_cli_symlinks(path, &cli_name)
+    let created = symlinks::setup_cli_symlinks(path, &cli_name)?;
+    if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
+        autocommit
+            .commit_system_now(
+                PathBuf::from(proj),
+                PathBuf::from(&space_path),
+                SystemCommitKind::CliIntegration,
+            )
+            .await?;
+    }
+    Ok(created)
 }
 
 #[tauri::command]
-pub fn teardown_cli_symlinks_cmd(
+pub async fn teardown_cli_symlinks_cmd(
     space_path: String,
     cli_name: String,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
     let path = Path::new(&space_path);
-    symlinks::teardown_cli_symlinks(path, &cli_name)
+    symlinks::teardown_cli_symlinks(path, &cli_name)?;
+    if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
+        autocommit
+            .commit_system_now(
+                PathBuf::from(proj),
+                PathBuf::from(&space_path),
+                SystemCommitKind::CliIntegration,
+            )
+            .await?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -448,6 +590,32 @@ pub fn read_agents_md(space_path: String) -> Result<Option<String>, AppError> {
     } else {
         Ok(None)
     }
+}
+
+/// Write `.combai/AGENTS.md` and immediately commit it as a System change
+/// (`Update agent instructions`). Stage-3.5 classifies AI-instruction files
+/// as System; a future AI stage may promote them to their own category.
+#[tauri::command]
+pub async fn write_agents_md(
+    space_path: String,
+    content: String,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<(), AppError> {
+    let combai_dir = Path::new(&space_path).join(".combai");
+    std::fs::create_dir_all(&combai_dir)?;
+    std::fs::write(combai_dir.join("AGENTS.md"), content)?;
+
+    if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
+        autocommit
+            .commit_system_now(
+                PathBuf::from(proj),
+                PathBuf::from(&space_path),
+                SystemCommitKind::AgentInstructions,
+            )
+            .await?;
+    }
+    Ok(())
 }
 
 // --- Ghost-state space operations ---

@@ -286,6 +286,12 @@ pub fn create_folder(
 
     fs::create_dir_all(&abs_path)?;
 
+    // Git doesn't track empty directories — drop a `.gitkeep` placeholder so
+    // `Create <folder>` auto-commit has a tracked file to stage. We keep the
+    // file after real children appear (harmless, preserves the structural
+    // commit history).
+    fs::write(abs_path.join(".gitkeep"), "")?;
+
     // Append to order.json
     let dir_key = parent_path.unwrap_or(".");
     order_append(Path::new(space), dir_key, name);
