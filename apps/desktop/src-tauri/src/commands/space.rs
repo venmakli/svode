@@ -70,7 +70,6 @@ pub fn list_projects(app: AppHandle) -> Result<Vec<SpaceInfo>, AppError> {
 pub async fn create_project(
     app: AppHandle,
     git_state: State<'_, GitState>,
-    autocommit: State<'_, Arc<AutocommitService>>,
     name: String,
     icon: String,
     description: Option<String>,
@@ -95,19 +94,15 @@ pub async fn create_project(
         sp_path,
     )?;
 
-    // Auto git init, then scaffold-commit.
+    // `ops::init` stages everything (including the fresh `.combai/`) and
+    // makes the initial `Scaffold .combai` commit — no follow-up commit
+    // needed here.
     if let Some(cli) = &git_state.cli {
         let lock = git_state.get_lock(sp_path).await;
         let _guard = lock.lock().await;
         if let Err(e) = crate::git::ops::init(cli, sp_path).await {
             tracing::warn!("git init failed for new project: {e}");
         }
-    }
-    if let Err(e) = autocommit
-        .commit_scaffold(sp_path.to_path_buf(), sp_path.to_path_buf())
-        .await
-    {
-        tracing::warn!("commit_scaffold failed after create_project: {e}");
     }
 
     Ok(SpaceInfo {
@@ -284,8 +279,10 @@ pub async fn create_space(
     match git_type {
         SpaceGitType::Inline => {
             ops::ensure_inline_gitignore(parent)?;
-            // Single commit in root: new folder + parent .combai/config.json
-            // update + optionally .gitignore (the inline managed block).
+            // Drain pending structural batches in the root repo so they
+            // commit under their own per-space messages instead of being
+            // swept into `Add inline space ...` by `add_all`.
+            autocommit.flush_target_repo(parent).await;
             if let Some(cli) = &git_state.cli {
                 let lock = git_state.get_lock(parent).await;
                 let _guard = lock.lock().await;
@@ -303,7 +300,7 @@ pub async fn create_space(
                 ops::init(&cli, &space_dir).await?;
             }
             ops::add_independent_gitignore(parent, &folder_name)?;
-            // Root commit: parent config + .gitignore entry.
+            autocommit.flush_target_repo(parent).await;
             {
                 let root_lock = git_state.get_lock(parent).await;
                 let _root_guard = root_lock.lock().await;
@@ -319,6 +316,7 @@ pub async fn create_space(
                 // Scaffold commit in the child (auto-sync OFF).
                 ops::init(&cli, &space_dir).await?;
             }
+            autocommit.flush_target_repo(parent).await;
             {
                 let parent_lock = git_state.get_lock(parent).await;
                 let _parent_guard = parent_lock.lock().await;
@@ -331,17 +329,11 @@ pub async fn create_space(
                         out.stderr
                     )));
                 }
-                // Root commit: .gitmodules, submodule pointer, parent config.
                 ops::add_all(&cli, parent).await?;
                 let _ = ops::commit(&cli, parent, &root_message).await?;
             }
         }
     }
-
-    // Compute git_type for newly created space so the scaffold-sync wiring
-    // triggers properly if the user later sets a remote + enables auto-sync.
-    // No-op here — autocommit is informational via events below.
-    let _ = &autocommit;
 
     Ok(info)
 }
@@ -349,6 +341,7 @@ pub async fn create_space(
 #[tauri::command]
 pub async fn delete_space(
     git_state: State<'_, GitState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
     parent_path: String,
     space_id: String,
     delete_files: Option<bool>,
@@ -391,6 +384,10 @@ pub async fn delete_space(
     let message = format!("Remove {} space {}", type_label, folder_name);
 
     if let Some(cli) = &git_state.cli {
+        // Drain pending structural batches in the root repo so they commit
+        // under their own per-space messages instead of being swept into
+        // `Remove ... space ...` by `add_all`.
+        autocommit.flush_target_repo(parent).await;
         let lock = git_state.get_lock(parent).await;
         let _guard = lock.lock().await;
         ops::add_all(cli, parent).await?;
@@ -518,13 +515,16 @@ pub async fn save_space_config(
     let path = Path::new(&space_path);
     config::write_space_config(path, &config_data)?;
     if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
-        autocommit
+        if let Err(e) = autocommit
             .commit_system_now(
                 PathBuf::from(proj),
                 PathBuf::from(&space_path),
                 SystemCommitKind::SpaceConfig,
             )
-            .await?;
+            .await
+        {
+            tracing::warn!("commit_system_now (SpaceConfig) failed: {e}");
+        }
     }
     Ok(())
 }
@@ -541,13 +541,16 @@ pub async fn setup_cli_symlinks_cmd(
     let path = Path::new(&space_path);
     let created = symlinks::setup_cli_symlinks(path, &cli_name)?;
     if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
-        autocommit
+        if let Err(e) = autocommit
             .commit_system_now(
                 PathBuf::from(proj),
                 PathBuf::from(&space_path),
                 SystemCommitKind::CliIntegration,
             )
-            .await?;
+            .await
+        {
+            tracing::warn!("commit_system_now (CliIntegration setup) failed: {e}");
+        }
     }
     Ok(created)
 }
@@ -562,13 +565,16 @@ pub async fn teardown_cli_symlinks_cmd(
     let path = Path::new(&space_path);
     symlinks::teardown_cli_symlinks(path, &cli_name)?;
     if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
-        autocommit
+        if let Err(e) = autocommit
             .commit_system_now(
                 PathBuf::from(proj),
                 PathBuf::from(&space_path),
                 SystemCommitKind::CliIntegration,
             )
-            .await?;
+            .await
+        {
+            tracing::warn!("commit_system_now (CliIntegration teardown) failed: {e}");
+        }
     }
     Ok(())
 }
@@ -607,13 +613,16 @@ pub async fn write_agents_md(
     std::fs::write(combai_dir.join("AGENTS.md"), content)?;
 
     if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
-        autocommit
+        if let Err(e) = autocommit
             .commit_system_now(
                 PathBuf::from(proj),
                 PathBuf::from(&space_path),
                 SystemCommitKind::AgentInstructions,
             )
-            .await?;
+            .await
+        {
+            tracing::warn!("commit_system_now (AgentInstructions) failed: {e}");
+        }
     }
     Ok(())
 }

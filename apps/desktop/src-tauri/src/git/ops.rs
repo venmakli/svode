@@ -454,16 +454,27 @@ pub async fn diff_after_pull(
 // --- Per-space git type ---
 
 /// Detect the git type of a space relative to its project.
+///
+/// Assumes a space is a direct child of the project (no nested spaces) —
+/// `.gitmodules` submodule paths and staged relative paths elsewhere rely on
+/// that topology too.
 pub async fn detect_space_git_type(
     cli: &GitCli,
     project_path: &Path,
     space_path: &Path,
 ) -> Result<SpaceGitType, AppError> {
-    let out = cli.exec(space_path, &["rev-parse", "--git-dir"]).await?;
-    if out.exit_code != 0 {
+    // Inline = no own git entry at the space root. We deliberately do NOT
+    // use `git rev-parse --git-dir` here: for a subfolder of a parent repo,
+    // it walks up and succeeds with the parent's `.git`, which would
+    // misclassify inline as independent. `symlink_metadata` returns Ok for
+    // both `.git` directories (regular repos) and `.git` files (submodule
+    // worktrees), and Err when no `.git` entry exists at all.
+    if space_path.join(".git").symlink_metadata().is_err() {
         return Ok(SpaceGitType::Inline);
     }
 
+    // Has own `.git` — either independent or submodule. Submodule is
+    // identified by the parent repo listing this folder in `.gitmodules`.
     let gitmodules = project_path.join(".gitmodules");
     if !gitmodules.exists() {
         return Ok(SpaceGitType::Independent);

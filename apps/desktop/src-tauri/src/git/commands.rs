@@ -169,13 +169,16 @@ pub async fn git_set_remote(
     // .combai/config.json). Routes per space git type.
     if let Some(proj_path) = project_path {
         if !proj_path.is_empty() {
-            autocommit
+            if let Err(e) = autocommit
                 .commit_system_now(
                     PathBuf::from(&proj_path),
                     path,
                     SystemCommitKind::SpaceConfig,
                 )
-                .await?;
+                .await
+            {
+                tracing::warn!("commit_system_now (set_remote) failed: {e}");
+            }
         }
     }
 
@@ -441,13 +444,16 @@ pub async fn git_enable_auto_sync(
     crate::space::config::write_space_config(&config_target, &cfg)?;
 
     if let Some(proj_path) = project_path.filter(|p| !p.is_empty()) {
-        autocommit
+        if let Err(e) = autocommit
             .commit_system_now(
                 PathBuf::from(&proj_path),
                 space,
                 SystemCommitKind::SpaceConfig,
             )
-            .await?;
+            .await
+        {
+            tracing::warn!("commit_system_now (enable_auto_sync) failed: {e}");
+        }
     }
 
     Ok(())
