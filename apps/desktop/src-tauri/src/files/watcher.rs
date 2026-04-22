@@ -4,9 +4,10 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::error::AppError;
+use crate::files::WriteNonceRegistry;
 
 struct WatcherHandle {
     _watcher: RecommendedWatcher,
@@ -159,6 +160,8 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
         );
     }
 
+    let nonces = app.state::<Arc<WriteNonceRegistry>>();
+
     for (path, kind) in seen {
         let rel_path = path
             .strip_prefix(space)
@@ -166,13 +169,22 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
             .to_string_lossy()
             .to_string();
 
-        let payload = serde_json::json!({ "path": rel_path });
-
         let event_name = match kind {
             EventKind::Create(_) => "file:created",
             EventKind::Modify(_) => "file:changed",
             EventKind::Remove(_) => "file:deleted",
             _ => continue,
+        };
+
+        // Only `file:changed` carries a write-nonce — our own writes surface
+        // as Modify events, so Create/Remove never need echo-guarding here.
+        let payload = if matches!(kind, EventKind::Modify(_)) {
+            match nonces.take(&path) {
+                Some(nonce) => serde_json::json!({ "path": rel_path, "writeNonce": nonce }),
+                None => serde_json::json!({ "path": rel_path }),
+            }
+        } else {
+            serde_json::json!({ "path": rel_path })
         };
 
         let _ = app.emit(event_name, payload);

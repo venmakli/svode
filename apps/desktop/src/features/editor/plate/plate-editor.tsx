@@ -18,21 +18,13 @@ import {
 } from "@/features/workspace/git-actions";
 import { useGitStore } from "@/stores/git";
 import { deserializeWithConflicts, hasUnresolvedConflicts } from "../conflict/parse-conflicts";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Editor, EditorContainer } from "@/components/ui/editor";
 import { FixedToolbar } from "@/components/ui/fixed-toolbar";
 import { FixedToolbarButtons } from "@/components/ui/fixed-toolbar-buttons";
 import { TocSidebar } from "../toc-sidebar";
 import * as m from "@/paraglide/messages.js";
+
+const AUTOSAVE_DEBOUNCE_MS = 1000;
 
 interface EntryMeta {
   id: string;
@@ -49,6 +41,12 @@ interface Entry {
   path: string;
 }
 
+interface WriteResult {
+  new_path: string | null;
+  modified_files: string[];
+  write_nonce: string;
+}
+
 export function PlateDocumentEditor() {
   const { activeDocument, activeDocumentSpaceId, openDocument } = useLayoutStore();
   const { updateNodeMeta, rootSpaces, spaces: childWorkspaces, activeRootPath } = useWorkspaceStore();
@@ -63,16 +61,21 @@ export function PlateDocumentEditor() {
 
   const isLoadingRef = useRef(false);
   const currentPathRef = useRef<string | null>(null);
-  const justSavedRef = useRef(false);
   const titleRef = useRef("");
   const iconRef = useRef<string | null>(null);
+  const extraRef = useRef<Record<string, unknown> | null>(null);
+  const metaIdRef = useRef<string | null>(null);
   const docCacheRef = useRef(new Map<string, Descendant[]>());
+
+  // Debounce auto-save refs
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isDebouncePendingRef = useRef(false);
+  const ownNoncesRef = useRef<Set<string>>(new Set());
 
   const [meta, setMeta] = useState<EntryMeta | null>(null);
   const [title, setTitle] = useState("");
   const [icon, setIcon] = useState<string | null>(null);
   const [frontmatterOpen, setFrontmatterOpen] = useState(false);
-  const [conflictPath, setConflictPath] = useState<string | null>(null);
 
   // Keep refs in sync with state for stable callback access
   useEffect(() => {
@@ -81,24 +84,107 @@ export function PlateDocumentEditor() {
   useEffect(() => {
     iconRef.current = icon;
   }, [icon]);
+  useEffect(() => {
+    extraRef.current = meta?.extra ?? null;
+    metaIdRef.current = meta?.id ?? null;
+  }, [meta]);
 
   const editor = usePlateEditor({
     plugins: EditorKit,
   });
 
+  // Cancel any pending debounced auto-save. Used on document switch / unmount
+  // and before ⌘S materialize.
+  const cancelDebounce = useCallback(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    isDebouncePendingRef.current = false;
+  }, []);
+
+  // Serialize the editor + current meta refs and call `write_entry`. Tracks
+  // the returned write-nonce so the watcher can drop our own file:changed
+  // echo. `skipRename=true` = auto-save (body+frontmatter only). false = ⌘S
+  // materialize (rename + update_links + structural schedule on backend).
+  const performWrite = useCallback(
+    async (skipRename: boolean): Promise<WriteResult | null> => {
+      if (!editor || !currentPathRef.current || !spacePath) return null;
+      const path = currentPathRef.current;
+
+      if (hasUnresolvedConflicts(editor.children)) {
+        // Skip silently during auto-save; surface the error on explicit save.
+        if (!skipRename) {
+          toast.error(m.git_sync_conflict({ count: "1" }));
+        }
+        return null;
+      }
+
+      const markdown = editor.getApi(MarkdownPlugin).markdown.serialize();
+
+      const result = await invoke<WriteResult>("write_entry", {
+        space: spacePath,
+        path,
+        content: markdown,
+        title: titleRef.current || m.editor_untitled(),
+        icon: iconRef.current,
+        extra: extraRef.current,
+        existingId: metaIdRef.current,
+        skipRename,
+        projectPath: activeRootPath ?? null,
+      });
+
+      if (result.write_nonce) {
+        ownNoncesRef.current.add(result.write_nonce);
+      }
+
+      return result;
+    },
+    [editor, spacePath, activeRootPath],
+  );
+
+  // Schedule a debounced auto-save of the active document. Resets the timer
+  // on every call, so continuous typing never triggers mid-stream writes.
+  const scheduleAutoSave = useCallback(() => {
+    if (!currentPathRef.current || !spacePath) return;
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    isDebouncePendingRef.current = true;
+    debounceTimerRef.current = setTimeout(() => {
+      debounceTimerRef.current = null;
+      isDebouncePendingRef.current = false;
+      const path = currentPathRef.current;
+      void performWrite(true)
+        .then((result) => {
+          if (!result || !path) return;
+          // Auto-save only writes the current file; no rename/backlinks.
+          clearUnsaved(path);
+          if (editor) {
+            docCacheRef.current.set(path, editor.children);
+          }
+        })
+        .catch((err) => {
+          console.error("Auto-save failed:", err);
+        });
+    }, AUTOSAVE_DEBOUNCE_MS);
+  }, [performWrite, editor, spacePath, clearUnsaved]);
+
   // Load document when activeDocument changes
   useEffect(() => {
     if (!editor || !activeDocument || !spacePath) return;
 
-    // Cache current editor state before switching
+    // Cache current editor state before switching. Cancel any debounce for
+    // the previous doc — any in-memory edits not yet written are discarded
+    // at switch time (v1 — acceptable loss ≤1s of edits).
     const prevPath = currentPathRef.current;
     if (prevPath && prevPath !== activeDocument) {
       docCacheRef.current.set(prevPath, editor.children);
     }
+    cancelDebounce();
 
     currentPathRef.current = activeDocument;
     isLoadingRef.current = true;
-    justSavedRef.current = false;
 
     // Validate links in background
     invoke<{ url: string; exists: boolean }[]>("validate_links", {
@@ -159,9 +245,12 @@ export function PlateDocumentEditor() {
           isLoadingRef.current = false;
         });
     }
-  }, [editor, activeDocument, spacePath]);
+  }, [editor, activeDocument, spacePath, cancelDebounce, clearUnsaved, setBrokenLinks]);
 
-  // Mark unsaved on title/icon change + sync sidebar
+  // Cancel debounce on unmount
+  useEffect(() => cancelDebounce, [cancelDebounce]);
+
+  // Title / icon / extra edits — mark unsaved + schedule auto-save
   const handleTitleChange = useCallback(
     (newTitle: string) => {
       setTitle(newTitle);
@@ -169,8 +258,9 @@ export function PlateDocumentEditor() {
         markUnsaved(currentPathRef.current);
         updateNodeMeta(activeWsId, currentPathRef.current, newTitle, iconRef.current);
       }
+      scheduleAutoSave();
     },
-    [markUnsaved, updateNodeMeta, activeWsId],
+    [markUnsaved, updateNodeMeta, activeWsId, scheduleAutoSave],
   );
 
   // Apply pending rename from sidebar (file already renamed on disk)
@@ -194,7 +284,7 @@ export function PlateDocumentEditor() {
         updateNodeMeta(activeWsId, currentPathRef.current, newTitle, iconRef.current);
       }
     }
-  }, [pendingRename, activeDocument, editor, clearPendingRename, clearUnsaved, openDocument, updateNodeMeta]);
+  }, [pendingRename, activeDocument, editor, clearPendingRename, clearUnsaved, openDocument, updateNodeMeta, activeWsId]);
 
   const handleIconChange = useCallback(
     (newIcon: string) => {
@@ -203,8 +293,9 @@ export function PlateDocumentEditor() {
         markUnsaved(currentPathRef.current);
         updateNodeMeta(activeWsId, currentPathRef.current, titleRef.current, newIcon);
       }
+      scheduleAutoSave();
     },
-    [markUnsaved, updateNodeMeta, activeWsId],
+    [markUnsaved, updateNodeMeta, activeWsId, scheduleAutoSave],
   );
 
   const handleExtraChange = useCallback(
@@ -213,98 +304,70 @@ export function PlateDocumentEditor() {
       if (currentPathRef.current) {
         markUnsaved(currentPathRef.current);
       }
+      scheduleAutoSave();
     },
-    [markUnsaved],
+    [markUnsaved, scheduleAutoSave],
   );
 
-  // Save handler
-  const handleSave = useCallback(() => {
+  // ⌘S — cancel debounce, materialize (rename + backlinks + structural
+  // schedule on the backend), then commit. `flush_target_repo` inside
+  // git_commit_file drains the structural batch → Rename commit before user.
+  const handleSave = useCallback(async () => {
     if (!editor || !activeDocument || !spacePath) return;
 
-    // Prevent saving while unresolved conflict blocks remain — otherwise the
-    // markdown serializer would silently drop them.
-    if (hasUnresolvedConflicts(editor.children)) {
-      toast.error(m.git_sync_conflict({ count: "1" }));
-      return;
+    cancelDebounce();
+
+    try {
+      const result = await performWrite(false);
+      if (!result) return;
+
+      clearUnsaved(activeDocument);
+
+      if (result.new_path) {
+        docCacheRef.current.delete(activeDocument);
+        docCacheRef.current.set(result.new_path, editor.children);
+        useLayoutStore.getState().openDocument(result.new_path);
+        if (activeWsId) {
+          useWorkspaceStore.getState().refreshTree(activeWsId);
+        }
+      } else {
+        docCacheRef.current.set(activeDocument, editor.children);
+      }
+
+      for (const f of result.modified_files) {
+        useEditorStore.getState().markAiModified(f);
+        docCacheRef.current.delete(f);
+      }
+
+      // Auto-commit the saved file. During mid-merge, route through
+      // git_resolve_continue to finalize the merge instead.
+      const committedPath = result.new_path ?? activeDocument;
+      const status = useGitStore.getState().statuses[spacePath];
+      if (status?.hasConflicts) {
+        try {
+          await invoke("git_resolve_continue", { spacePath });
+          void useGitStore.getState().refreshStatus(spacePath);
+          void syncSpace(spacePath);
+        } catch (err) {
+          console.error("git_resolve_continue failed:", err);
+          toast.error(m.git_sync_failed());
+        }
+      } else {
+        await commitFileAndMaybeSync(spacePath, committedPath, activeRootPath ?? undefined);
+      }
+    } catch (err) {
+      console.error("Failed to save document:", err);
+      toast.error(m.editor_error_save());
     }
+  }, [editor, activeDocument, spacePath, activeWsId, activeRootPath, cancelDebounce, performWrite, clearUnsaved]);
 
-    const markdown = editor.getApi(MarkdownPlugin).markdown.serialize();
-
-    justSavedRef.current = true;
-
-    invoke<{ new_path: string | null; modified_files: string[] }>("write_entry", {
-      space: spacePath,
-      path: activeDocument,
-      content: markdown,
-      title: title || m.editor_untitled(),
-      icon: icon,
-      extra: meta?.extra ?? null,
-      existingId: meta?.id ?? null,
-    })
-      .then((result) => {
-        clearUnsaved(activeDocument);
-
-        if (result.new_path) {
-          // File was renamed — update caches and stores
-          docCacheRef.current.delete(activeDocument);
-          if (editor) {
-            docCacheRef.current.set(result.new_path, editor.children);
-          }
-          useLayoutStore.getState().openDocument(result.new_path);
-          if (activeWsId) {
-            useWorkspaceStore.getState().refreshTree(activeWsId);
-          }
-        } else {
-          if (editor) {
-            docCacheRef.current.set(activeDocument, editor.children);
-          }
-        }
-
-        // Mark files with updated backlinks for reload
-        for (const f of result.modified_files) {
-          useEditorStore.getState().markAiModified(f);
-          docCacheRef.current.delete(f);
-        }
-
-        // Stage 3 — auto-commit the saved file (and auto-sync if enabled).
-        // No success toast — the sidebar git indicator is the visible feedback.
-        const committedPath = result.new_path ?? activeDocument;
-        if (spacePath) {
-          // If the workspace is mid-merge (conflicts present), the file save
-          // is actually a conflict-resolution save. Call git_resolve_continue
-          // which runs add+commit+push against the pending merge.
-          const status = useGitStore.getState().statuses[spacePath];
-          if (status?.hasConflicts) {
-            invoke("git_resolve_continue", { spacePath })
-              .then(() => {
-                void useGitStore.getState().refreshStatus(spacePath);
-                void syncSpace(spacePath);
-              })
-              .catch((err) => {
-                console.error("git_resolve_continue failed:", err);
-                toast.error(m.git_sync_failed());
-              });
-          } else {
-            void commitFileAndMaybeSync(spacePath, committedPath, activeRootPath ?? undefined);
-          }
-        }
-      })
-      .catch((err) => {
-        console.error("Failed to save document:", err);
-        toast.error(m.editor_error_save());
-      });
-  }, [editor, activeDocument, spacePath, title, icon, clearUnsaved]);
-
-  // Save-all (⌘⇧S): flush the currently-open document's in-memory edits to
-  // disk (if dirty), then `git add . && git commit` through commitAllSpace
-  // — which catches every other on-disk change too (externally-modified files,
-  // AI writes, backlink updates).
-  //
-  // Note: multi-document editors aren't wired yet. When they are, this hook
-  // should iterate unsavedChanges and flush each editor instance before
-  // calling commitAllSpace.
+  // ⌘⇧S — flush the active document (if dirty) with materialize, then
+  // `git add . && git commit` via commitAllSpace — catches every other
+  // on-disk change too (externally-modified files, AI writes, backlink updates).
   const handleSaveAll = useCallback(async () => {
     if (!spacePath) return;
+    cancelDebounce();
+
     if (!editor || !activeDocument) {
       void commitAllSpace(spacePath, activeRootPath ?? undefined);
       return;
@@ -314,32 +377,28 @@ export function PlateDocumentEditor() {
       void commitAllSpace(spacePath, activeRootPath ?? undefined);
       return;
     }
-    // Prevent double-commit: handleSave would otherwise call
-    // commitFileAndMaybeSync on its own. Write the file directly and let
-    // commitAllSpace own the single commit.
-    if (hasUnresolvedConflicts(editor.children)) {
-      toast.error(m.git_sync_conflict({ count: "1" }));
-      return;
-    }
-    const markdown = editor.getApi(MarkdownPlugin).markdown.serialize();
-    justSavedRef.current = true;
     try {
-      await invoke("write_entry", {
-        space: spacePath,
-        path: activeDocument,
-        content: markdown,
-        title: title || m.editor_untitled(),
-        icon: icon,
-        extra: meta?.extra ?? null,
-        existingId: meta?.id ?? null,
-      });
+      const result = await performWrite(false);
+      if (!result) return;
       clearUnsaved(activeDocument);
+      if (result.new_path) {
+        docCacheRef.current.delete(activeDocument);
+        docCacheRef.current.set(result.new_path, editor.children);
+        useLayoutStore.getState().openDocument(result.new_path);
+        if (activeWsId) {
+          useWorkspaceStore.getState().refreshTree(activeWsId);
+        }
+      }
+      for (const f of result.modified_files) {
+        useEditorStore.getState().markAiModified(f);
+        docCacheRef.current.delete(f);
+      }
       await commitAllSpace(spacePath, activeRootPath ?? undefined);
     } catch (err) {
       console.error("Save-all failed:", err);
       toast.error(m.editor_error_save());
     }
-  }, [editor, activeDocument, spacePath, activeRootPath, title, icon, meta, clearUnsaved]);
+  }, [editor, activeDocument, spacePath, activeWsId, activeRootPath, cancelDebounce, performWrite, clearUnsaved]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -351,7 +410,7 @@ export function PlateDocumentEditor() {
       }
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
         e.preventDefault();
-        handleSave();
+        void handleSave();
       }
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "p") {
         e.preventDefault();
@@ -362,72 +421,41 @@ export function PlateDocumentEditor() {
     return () => window.removeEventListener("keydown", handler);
   }, [handleSave, handleSaveAll]);
 
-  // File watcher
-  const handleConflict = useCallback((path: string) => {
-    setConflictPath(path);
-  }, []);
-
   useFileWatcher({
     editor,
     spacePath,
     activeDocument,
-    onConflict: handleConflict,
-    justSavedRef,
+    ownNoncesRef,
+    isDebouncePendingRef,
     isLoadingRef,
   });
 
-  // Conflict resolution: reload from disk
-  const handleConflictReload = useCallback(() => {
-    if (!editor || !conflictPath || !spacePath) return;
-
-    invoke<Entry>("read_entry", {
-      space: spacePath,
-      path: conflictPath,
-    })
-      .then((entry) => {
-        setMeta(entry.meta);
-        setTitle(entry.meta.title);
-        setIcon(entry.meta.icon);
-        const value = deserializeWithConflicts(editor, entry.body);
-        editor.tf.setValue(value);
-        clearUnsaved(conflictPath);
-      })
-      .catch((err) => {
-        console.error("Failed to reload document:", err);
-        toast.error(m.editor_error_load());
-      })
-      .finally(() => {
-        setConflictPath(null);
-      });
-  }, [editor, conflictPath, spacePath, clearUnsaved]);
-
-  // onChange — mark unsaved only when editor content actually changes
+  // onChange — mark unsaved + schedule auto-save on actual content changes
   // (skip selection-only changes like clicking or focusing)
   const handleChange = useCallback(
-    ({ value }: { value: Descendant[] }) => {
+    (_: { value: Descendant[] }) => {
       if (!isLoadingRef.current && currentPathRef.current) {
         const hasContentChange = editor.operations.some(
           (op) => op.type !== "set_selection",
         );
         if (hasContentChange) {
-          justSavedRef.current = false;
           markUnsaved(currentPathRef.current);
+          scheduleAutoSave();
         }
       }
     },
-    [editor, markUnsaved],
+    [editor, markUnsaved, scheduleAutoSave],
   );
 
   return (
-    <>
-      <Plate editor={editor} onChange={handleChange}>
-        <div className="flex flex-col h-full w-full">
-          <FixedToolbar>
-            <FixedToolbarButtons />
-          </FixedToolbar>
+    <Plate editor={editor} onChange={handleChange}>
+      <div className="flex flex-col h-full w-full">
+        <FixedToolbar>
+          <FixedToolbarButtons />
+        </FixedToolbar>
 
-          <div className="flex-1 relative overflow-hidden">
-            <EditorContainer className="h-full">
+        <div className="flex-1 relative overflow-hidden">
+          <EditorContainer className="h-full">
             <div className="mx-auto px-16 pt-8 sm:px-[max(64px,calc(50%-350px))]">
               <TitleZone
                 title={title}
@@ -448,35 +476,9 @@ export function PlateDocumentEditor() {
               placeholder={m.editor_placeholder_body()}
             />
           </EditorContainer>
-            <TocSidebar />
-          </div>
+          <TocSidebar />
         </div>
-      </Plate>
-
-      {/* Conflict dialog */}
-      <AlertDialog
-        open={conflictPath !== null}
-        onOpenChange={(open) => {
-          if (!open) setConflictPath(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{m.editor_conflict_title()}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {m.editor_conflict_description()}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setConflictPath(null)}>
-              {m.editor_conflict_keep()}
-            </AlertDialogCancel>
-            <AlertDialogAction onClick={handleConflictReload}>
-              {m.editor_conflict_reload()}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
+      </div>
+    </Plate>
   );
 }

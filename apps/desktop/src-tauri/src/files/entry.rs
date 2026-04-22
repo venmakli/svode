@@ -14,6 +14,9 @@ pub struct WriteResult {
     pub new_path: Option<String>,
     /// Files whose backlinks were updated due to rename.
     pub modified_files: Vec<String>,
+    /// Short-TTL nonce associated with this write; attached to the watcher
+    /// `file:changed` payload so the editor can drop its own echo.
+    pub write_nonce: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -362,12 +365,18 @@ pub fn write(
     extra: Option<HashMap<String, serde_yml::Value>>,
     existing_id: Option<&str>,
     backlink_index: Option<&BacklinkIndex>,
+    skip_rename: bool,
 ) -> Result<WriteResult, AppError> {
     let abs_path = resolve(space, path);
 
     if !abs_path.exists() {
         return Err(AppError::FileNotFound(path.to_string()));
     }
+
+    // Fresh nonce attached to every WriteResult (including no-op early returns)
+    // so the watcher can associate its `file:changed` event with the caller's
+    // write and the frontend can filter own-write echoes.
+    let write_nonce = ulid::Ulid::new().to_string().to_lowercase();
 
     // Read existing frontmatter to preserve metadata
     let existing = fs::read_to_string(&abs_path)?;
@@ -404,10 +413,18 @@ pub fn write(
         // Body-only save on a file without frontmatter — write content as-is,
         // skipping the write entirely if nothing changed (avoids spurious commits).
         if existing == content {
-            return Ok(WriteResult { new_path: None, modified_files: Vec::new() });
+            return Ok(WriteResult {
+                new_path: None,
+                modified_files: Vec::new(),
+                write_nonce,
+            });
         }
         fs::write(&abs_path, content)?;
-        return Ok(WriteResult { new_path: None, modified_files: Vec::new() });
+        return Ok(WriteResult {
+            new_path: None,
+            modified_files: Vec::new(),
+            write_nonce,
+        });
     };
 
     // Update title and icon if provided
@@ -434,7 +451,11 @@ pub fn write(
             && old_meta.created == meta.created
             && old_meta.extra == meta.extra
         {
-            return Ok(WriteResult { new_path: None, modified_files: Vec::new() });
+            return Ok(WriteResult {
+                new_path: None,
+                modified_files: Vec::new(),
+                write_nonce,
+            });
         }
     }
 
@@ -443,6 +464,20 @@ pub fn write(
 
     let full_content = frontmatter::serialize(&meta, content);
     fs::write(&abs_path, full_content)?;
+
+    // Auto-save path: frontmatter + body are already on disk above. Don't
+    // rename, don't touch order.json, don't update backlinks in other files.
+    // Still re-index the current file so link targets stay fresh.
+    if skip_rename {
+        if let Some(index) = backlink_index {
+            let _ = index.update_file(Path::new(space), path);
+        }
+        return Ok(WriteResult {
+            new_path: None,
+            modified_files: Vec::new(),
+            write_nonce,
+        });
+    }
 
     // Check if title changed and we need to rename
     let mut new_path: Option<String> = None;
@@ -597,7 +632,11 @@ pub fn write(
         let _ = index.update_file(Path::new(space), current_path);
     }
 
-    Ok(WriteResult { new_path, modified_files })
+    Ok(WriteResult {
+        new_path,
+        modified_files,
+        write_nonce,
+    })
 }
 
 /// Move a file or directory to a new parent directory.
@@ -988,6 +1027,7 @@ mod tests {
             None,
             None,
             None,
+            false,
         )
         .unwrap();
 
@@ -1014,6 +1054,7 @@ mod tests {
             None,
             None,
             None,
+            false,
         )
         .unwrap();
 
@@ -1038,6 +1079,7 @@ mod tests {
             None,
             None,
             None,
+            false,
         )
         .unwrap();
 

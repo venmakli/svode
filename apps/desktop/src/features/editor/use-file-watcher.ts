@@ -11,15 +11,17 @@ import * as m from "@/paraglide/messages.js";
 
 interface FileEvent {
   path: string;
-  space: string;
+  writeNonce?: string;
 }
 
 interface UseFileWatcherOptions {
   editor: PlateEditor | null;
   spacePath: string;
   activeDocument: string | null;
-  onConflict: (path: string) => void;
-  justSavedRef: React.RefObject<boolean>;
+  /** Nonces emitted by our own `write_entry` calls — own-write echoes are filtered out. */
+  ownNoncesRef: React.RefObject<Set<string>>;
+  /** True while a debounce-auto-save is pending for the active document — local-wins. */
+  isDebouncePendingRef: React.RefObject<boolean>;
   isLoadingRef: React.RefObject<boolean>;
 }
 
@@ -27,24 +29,19 @@ export function useFileWatcher({
   editor,
   spacePath,
   activeDocument,
-  onConflict,
-  justSavedRef,
+  ownNoncesRef,
+  isDebouncePendingRef,
   isLoadingRef,
 }: UseFileWatcherOptions) {
   const { closeDocument } = useLayoutStore();
   const { refreshTree } = useWorkspaceStore();
-  const { unsavedChanges, markAiModified, clearAiModified } = useEditorStore();
+  const { markAiModified, clearAiModified } = useEditorStore();
 
   const activeDocRef = useRef(activeDocument);
-  const unsavedRef = useRef(unsavedChanges);
 
   useEffect(() => {
     activeDocRef.current = activeDocument;
   }, [activeDocument]);
-
-  useEffect(() => {
-    unsavedRef.current = unsavedChanges;
-  }, [unsavedChanges]);
 
   // Watch/unwatch space
   useEffect(() => {
@@ -70,44 +67,43 @@ export function useFileWatcher({
     // file:changed
     listen<FileEvent>("file:changed", (event) => {
       const changedPath = event.payload.path;
+      const nonce = event.payload.writeNonce;
+
+      // Own-write echo filter: drop events produced by our own write_entry.
+      if (nonce && ownNoncesRef.current.has(nonce)) {
+        ownNoncesRef.current.delete(nonce);
+        return;
+      }
 
       // Ignore events from structural operations (nest/move/unnest)
       if (useEditorStore.getState().isSuppressed(changedPath)) {
         return;
       }
 
-      // Ignore file change events triggered by our own save.
-      // Don't reset here — multiple FS events can arrive from a single write.
-      // Cleared by onUpdate (next user edit) or document switch.
-      if (changedPath === activeDocRef.current && justSavedRef.current) {
-        return;
-      }
-
       if (changedPath === activeDocRef.current && editor) {
-        // Document is currently open
-        if (unsavedRef.current[changedPath]) {
-          // Has unsaved edits — show conflict dialog
-          onConflict(changedPath);
-        } else {
-          // No unsaved edits — silently reload
-          invoke<{
-            meta: { id: string; title: string; icon: string | null; created: string; updated: string };
-            body: string;
-            path: string;
-          }>("read_entry", {
-            space: spacePath,
-            path: changedPath,
-          })
-            .then((entry) => {
-              isLoadingRef.current = true;
-              const value = deserializeWithConflicts(editor, entry.body);
-              editor.tf.setValue(value as never);
-              isLoadingRef.current = false;
-            })
-            .catch((err) =>
-              console.error("Failed to reload document:", err),
-            );
+        // Local-wins: debounce pending for this doc — our buffered write will
+        // land within 1s and overwrite the external change on disk.
+        if (isDebouncePendingRef.current) {
+          return;
         }
+        // Debounce not active — reload from disk.
+        invoke<{
+          meta: { id: string; title: string; icon: string | null; created: string; updated: string };
+          body: string;
+          path: string;
+        }>("read_entry", {
+          space: spacePath,
+          path: changedPath,
+        })
+          .then((entry) => {
+            isLoadingRef.current = true;
+            const value = deserializeWithConflicts(editor, entry.body);
+            editor.tf.setValue(value as never);
+            isLoadingRef.current = false;
+          })
+          .catch((err) =>
+            console.error("Failed to reload document:", err),
+          );
       } else {
         // Document not currently open — mark as AI modified
         markAiModified(changedPath);
@@ -133,7 +129,7 @@ export function useFileWatcher({
     return () => {
       unlisteners.forEach((fn) => fn());
     };
-  }, [editor, spacePath, onConflict, markAiModified, closeDocument, refreshTree]);
+  }, [editor, spacePath, markAiModified, closeDocument, refreshTree, ownNoncesRef, isDebouncePendingRef, isLoadingRef]);
 
   // Clear AI modified flag when opening a document
   useEffect(() => {

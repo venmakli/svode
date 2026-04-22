@@ -30,6 +30,7 @@ pub fn run() {
         .manage(files::FileWatcher::new())
         .manage(agent::AgentSessions::new())
         .manage(Arc::new(files::BacklinkIndex::new()))
+        .manage(Arc::new(files::WriteNonceRegistry::new()))
         .manage(git::GitState::new())
         .manage(index::IndexState::new())
         .setup(|app| {

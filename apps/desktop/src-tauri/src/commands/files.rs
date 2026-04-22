@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 use crate::error::AppError;
-use crate::files::{entry, tree, BacklinkIndex, BacklinkInfo, Entry, FileWatcher, LinkValidation, TreeNode, WriteResult};
+use crate::files::{entry, tree, BacklinkIndex, BacklinkInfo, Entry, FileWatcher, LinkValidation, TreeNode, WriteNonceRegistry, WriteResult};
 use crate::git::autocommit::{AutocommitService, StructuralOp};
 use crate::index::{self, IndexState};
 use crate::space::config;
@@ -85,9 +85,14 @@ pub async fn write_entry(
     icon: Option<String>,
     extra: Option<HashMap<String, serde_yml::Value>>,
     existing_id: Option<String>,
+    skip_rename: Option<bool>,
+    project_path: Option<String>,
     backlink_index: State<'_, Arc<BacklinkIndex>>,
     index_state: State<'_, IndexState>,
+    nonces: State<'_, Arc<WriteNonceRegistry>>,
+    autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<WriteResult, AppError> {
+    let skip_rename = skip_rename.unwrap_or(false);
     let result = entry::write(
         &space,
         &path,
@@ -97,7 +102,17 @@ pub async fn write_entry(
         extra,
         existing_id.as_deref(),
         Some(&backlink_index),
+        skip_rename,
     )?;
+
+    // Register the write-nonce against the canonical post-rename path so the
+    // watcher can echo-guard the `file:changed` event that our own write
+    // produces. Fall back to the join if canonicalize fails (e.g. path was
+    // deleted between the write and here).
+    let result_rel = result.new_path.as_deref().unwrap_or(&path);
+    let joined = Path::new(&space).join(result_rel);
+    let canonical = std::fs::canonicalize(&joined).unwrap_or(joined);
+    nonces.register(canonical, result.write_nonce.clone());
 
     // Update SQLite index for the (possibly renamed) target path.
     // On rename: delete the stale row first, then upsert the new path. The
@@ -114,6 +129,22 @@ pub async fn write_entry(
             index::update::update_entry(&pool, Path::new(&space), &target).await
         {
             tracing::warn!("index update_entry failed for {target}: {e}");
+        }
+    }
+
+    // On ⌘S-path rename, schedule the structural commit so `git_commit_file`'s
+    // flush can drain it before the user-commit (Rename before Update).
+    if !skip_rename {
+        if let Some(ref new_path) = result.new_path {
+            maybe_autocommit_structural(
+                &autocommit,
+                project_path.as_deref(),
+                &space,
+                StructuralOp::Rename {
+                    old: basename(&path),
+                    new: basename(new_path),
+                },
+            );
         }
     }
 
