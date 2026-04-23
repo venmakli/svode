@@ -384,8 +384,8 @@ pub fn write(
     let had_frontmatter = parsed_existing.is_some();
     let meta_needs_write = had_frontmatter || title.is_some() || icon.is_some() || extra.is_some();
 
-    let (old_title, mut meta) = if meta_needs_write {
-        let meta = match parsed_existing.clone() {
+    let mut meta = if meta_needs_write {
+        match parsed_existing.clone() {
             Some((meta, _)) => meta,
             None => {
                 // First metadata change on a file without frontmatter — generate meta
@@ -405,10 +405,7 @@ pub fn write(
                     extra: HashMap::new(),
                 }
             }
-        };
-        let old_title = meta.title.clone();
-
-        (old_title, meta)
+        }
     } else {
         // Body-only save on a file without frontmatter — write content as-is,
         // skipping the write entirely if nothing changed (avoids spurious commits).
@@ -440,11 +437,31 @@ pub fn write(
         meta.extra = e;
     }
 
+    // On ⌘S, a rename may be pending even when body/meta match on-disk state —
+    // auto-save debounce (`skip_rename=true`) already persisted the new title
+    // to frontmatter, so `old_meta.title == meta.title` does not imply the
+    // filename matches the slug. Compute rename-needed up-front to keep the
+    // no-op short-circuit from swallowing the ⌘S materialize.
+    let rename_needed = !skip_rename
+        && title.is_some_and(|t| {
+            let new_slug = slugify(t);
+            let current_stem = Path::new(path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            let is_readme = Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.eq_ignore_ascii_case("readme.md"));
+            new_slug != current_stem || is_readme
+        });
+
     // Skip the write entirely if neither body nor meta (ignoring `updated`)
-    // changed. Otherwise every Cmd+S would bump `updated` and create an empty
-    // commit even though the user typed nothing.
+    // changed AND no rename is pending. Otherwise every Cmd+S would bump
+    // `updated` and create an empty commit even though the user typed nothing.
     if let Some((ref old_meta, ref old_body)) = parsed_existing {
-        if old_body == content
+        if !rename_needed
+            && old_body == content
             && old_meta.id == meta.id
             && old_meta.title == meta.title
             && old_meta.icon == meta.icon
@@ -479,73 +496,73 @@ pub fn write(
         });
     }
 
-    // Check if title changed and we need to rename
+    // Materialize rename when slug(title) diverges from filename stem.
+    // Gate by title-change-since-last-read would miss renames when auto-save
+    // debounce already persisted the new title to frontmatter before ⌘S.
     let mut new_path: Option<String> = None;
 
     if let Some(t) = title {
-        if t != old_title {
-            let new_slug = slugify(t);
-            let current_stem = Path::new(path)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
+        let new_slug = slugify(t);
+        let current_stem = Path::new(path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
 
-            // Check if the file is a readme.md (category file)
-            let is_readme = Path::new(path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.eq_ignore_ascii_case("readme.md"));
+        // Check if the file is a readme.md (category file)
+        let is_readme = Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.eq_ignore_ascii_case("readme.md"));
 
-            if new_slug != current_stem || is_readme {
-                if is_readme {
-                    // For readme.md, rename the parent folder
-                    if let Some(parent_rel) = Path::new(path).parent() {
-                        if parent_rel.as_os_str().is_empty() {
-                            // readme.md at root, no parent folder to rename
-                        } else {
-                            let grandparent = parent_rel
-                                .parent()
-                                .unwrap_or(Path::new(""));
-                            let new_dir_name = new_slug.clone();
-                            let new_dir_rel = if grandparent.as_os_str().is_empty() {
-                                new_dir_name.clone()
-                            } else {
-                                format!("{}/{}", grandparent.display(), new_dir_name)
-                            };
-                            let new_dir_abs = resolve(space, &new_dir_rel);
-
-                            if !new_dir_abs.exists() {
-                                let old_dir_abs = resolve(space, &parent_rel.to_string_lossy());
-                                fs::rename(&old_dir_abs, &new_dir_abs)?;
-                                let readme_filename = Path::new(path)
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy();
-                                let renamed_path = format!("{}/{}", new_dir_rel, readme_filename);
-                                new_path = Some(renamed_path);
-                            }
-                            // If collision, content is already saved, just skip rename
-                        }
-                    }
-                } else {
-                    // Regular file: rename slug.md
-                    let parent_dir = Path::new(path)
-                        .parent()
-                        .unwrap_or(Path::new(""));
-                    let new_filename = format!("{new_slug}.md");
-                    let new_rel = if parent_dir.as_os_str().is_empty() {
-                        new_filename
+        if new_slug != current_stem || is_readme {
+            if is_readme {
+                // For readme.md, rename the parent folder
+                if let Some(parent_rel) = Path::new(path).parent() {
+                    if parent_rel.as_os_str().is_empty() {
+                        // readme.md at root, no parent folder to rename
                     } else {
-                        format!("{}/{}", parent_dir.display(), new_filename)
-                    };
-                    let new_abs = resolve(space, &new_rel);
+                        let grandparent = parent_rel
+                            .parent()
+                            .unwrap_or(Path::new(""));
+                        let new_dir_name = new_slug.clone();
+                        let new_dir_rel = if grandparent.as_os_str().is_empty() {
+                            new_dir_name.clone()
+                        } else {
+                            format!("{}/{}", grandparent.display(), new_dir_name)
+                        };
+                        let new_dir_abs = resolve(space, &new_dir_rel);
 
-                    if !new_abs.exists() {
-                        fs::rename(&abs_path, &new_abs)?;
-                        new_path = Some(new_rel);
+                        if !new_dir_abs.exists() {
+                            let old_dir_abs = resolve(space, &parent_rel.to_string_lossy());
+                            fs::rename(&old_dir_abs, &new_dir_abs)?;
+                            let readme_filename = Path::new(path)
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy();
+                            let renamed_path = format!("{}/{}", new_dir_rel, readme_filename);
+                            new_path = Some(renamed_path);
+                        }
+                        // If collision, content is already saved, just skip rename
                     }
-                    // If collision, content is already saved, just skip rename
                 }
+            } else {
+                // Regular file: rename slug.md
+                let parent_dir = Path::new(path)
+                    .parent()
+                    .unwrap_or(Path::new(""));
+                let new_filename = format!("{new_slug}.md");
+                let new_rel = if parent_dir.as_os_str().is_empty() {
+                    new_filename
+                } else {
+                    format!("{}/{}", parent_dir.display(), new_filename)
+                };
+                let new_abs = resolve(space, &new_rel);
+
+                if !new_abs.exists() {
+                    fs::rename(&abs_path, &new_abs)?;
+                    new_path = Some(new_rel);
+                }
+                // If collision, content is already saved, just skip rename
             }
         }
     }
@@ -622,11 +639,37 @@ pub fn write(
     let current_path = new_path.as_deref().unwrap_or(path);
     let mut modified_files = Vec::new();
     if let Some(index) = backlink_index {
-        // If renamed, update links in other files
+        // If renamed, update links in other files. Pass the new title so
+        // display text gets refreshed too when it was derived from the old
+        // filename stem.
         if let Some(ref np) = new_path {
             modified_files = index
-                .update_links_on_rename(Path::new(space), path, np)
+                .update_links_on_rename(Path::new(space), path, np, Some(&meta.title))
                 .unwrap_or_default();
+
+            // Readme rename renames the parent folder — every descendant now
+            // sits under a new path, so backlinks to those descendants must be
+            // rewritten too (URL only, their own titles didn't change).
+            let is_readme = Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.eq_ignore_ascii_case("readme.md"));
+            if is_readme {
+                let old_folder = Path::new(path).parent().map(|p| p.to_string_lossy().to_string());
+                let new_folder = Path::new(np).parent().map(|p| p.to_string_lossy().to_string());
+                if let (Some(of), Some(nf)) = (old_folder, new_folder) {
+                    if !of.is_empty() && of != nf {
+                        let descendants = index
+                            .update_links_on_folder_rename(Path::new(space), &of, &nf)
+                            .unwrap_or_default();
+                        for m in descendants {
+                            if !modified_files.contains(&m) {
+                                modified_files.push(m);
+                            }
+                        }
+                    }
+                }
+            }
         }
         // Re-index the written file
         let _ = index.update_file(Path::new(space), current_path);
@@ -669,7 +712,8 @@ pub fn move_entry(
         return Err(AppError::FileAlreadyExists(new_rel));
     }
 
-    let is_md = abs_from.is_dir()
+    let from_is_dir = abs_from.is_dir();
+    let is_md = from_is_dir
         || Path::new(from).extension().and_then(|e| e.to_str()) == Some("md");
 
     // Ensure target parent directory exists
@@ -679,10 +723,14 @@ pub fn move_entry(
 
     fs::rename(&abs_from, &abs_to)?;
 
-    // Update backlinks
+    // Update backlinks. For folder moves, every .md descendant sits under a
+    // new path now — rewrite their inbound links too, not just the folder itself
+    // (which isn't even a .md target).
     if let Some(index) = backlink_index {
-        if is_md {
-            let _ = index.update_links_on_rename(space, from, &new_rel);
+        if from_is_dir {
+            let _ = index.update_links_on_folder_rename(space, from, &new_rel);
+        } else if is_md {
+            let _ = index.update_links_on_rename(space, from, &new_rel, None);
             let _ = index.update_file(space, &new_rel);
         }
     }
@@ -748,7 +796,7 @@ pub fn nest_entry(
 
     // Update backlinks
     if let Some(index) = backlink_index {
-        let _ = index.update_links_on_rename(space, path, &new_rel);
+        let _ = index.update_links_on_rename(space, path, &new_rel, None);
         let _ = index.update_file(space, &new_rel);
     }
 
@@ -828,7 +876,7 @@ pub fn unnest_entry(
 
     // Update backlinks
     if let Some(index) = backlink_index {
-        let _ = index.update_links_on_rename(space, path, &new_rel);
+        let _ = index.update_links_on_rename(space, path, &new_rel, None);
         let _ = index.update_file(space, &new_rel);
     }
 

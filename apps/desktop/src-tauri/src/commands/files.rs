@@ -187,7 +187,7 @@ pub fn rename_entry(
 ) -> Result<Vec<String>, AppError> {
     entry::rename(&space, &from, &to)?;
     let modified = backlink_index
-        .update_links_on_rename(Path::new(&space), &from, &to)
+        .update_links_on_rename(Path::new(&space), &from, &to, None)
         .unwrap_or_default();
     let _ = backlink_index.update_file(Path::new(&space), &to);
     maybe_autocommit_structural(

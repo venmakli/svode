@@ -138,12 +138,12 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
           useEditorStore.getState().markAiModified(f);
         }
       } else {
-        // Document: always write to disk (updates title + renames file)
+        // Title-edit only: file rename + backlinks are deferred to ⌘S (unified with editor-title-edit).
         const entry = await invoke<{ meta: { id: string; icon: string | null; extra: Record<string, unknown> }; body: string }>(
           "read_entry",
           { space: space.path, path: node.path },
         );
-        const result = await invoke<{ new_path: string | null; modified_files: string[] }>("write_entry", {
+        const result = await invoke<{ new_path: string | null }>("write_entry", {
           space: space.path,
           path: node.path,
           content: entry.body,
@@ -151,14 +151,10 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
           icon: entry.meta.icon,
           extra: entry.meta.extra && Object.keys(entry.meta.extra).length > 0 ? entry.meta.extra : null,
           existingId: entry.meta.id ?? null,
+          skipRename: true,
         });
-        // If document is open in editor, sync its state
         if (activeDocument === node.path) {
           useEditorStore.getState().requestRename(node.path, newName, result.new_path);
-        }
-        // Mark files with updated backlinks for reload
-        for (const f of result.modified_files) {
-          useEditorStore.getState().markAiModified(f);
         }
       }
       await refreshTree(spaceId);

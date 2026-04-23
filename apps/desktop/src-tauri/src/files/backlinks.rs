@@ -7,6 +7,7 @@ use regex::Regex;
 use serde::Serialize;
 
 use crate::error::AppError;
+use crate::files::entry::slugify;
 
 /// Regex matching `[text](url.md)` or `[text](url.md#anchor)`.
 static MD_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -216,7 +217,16 @@ impl BacklinkIndex {
         space_path: &Path,
         old_path: &str,
         new_path: &str,
+        new_title: Option<&str>,
     ) -> Result<Vec<String>, AppError> {
+        // Incremental `update_file` only indexes files the user has touched in
+        // this session; after app startup the map is empty until something
+        // triggers a build. Without this, a rename of a file that no one has
+        // edited since launch silently loses its backlink updates.
+        if !self.is_built() {
+            self.build(space_path)?;
+        }
+
         let normalized_old = normalize_link_path(old_path);
         let mut modified_files = Vec::new();
 
@@ -228,6 +238,12 @@ impl BacklinkIndex {
                 None => return Ok(modified_files),
             }
         };
+
+        // When caller provides a new title, auto-update link text whose slug
+        // matches the old filename stem. Preserves intentional custom texts
+        // like `[click here]`.
+        let old_stem = link_stem_of(old_path);
+        let text_replace = new_title.map(|t| (old_stem.as_str(), t));
 
         for (source_path, _spans) in &sources {
             let abs_source = space_path.join(source_path);
@@ -244,8 +260,7 @@ impl BacklinkIndex {
             let old_rel = make_relative_link(source_dir, old_path);
             let new_rel = make_relative_link(source_dir, new_path);
 
-            // Replace link URLs in content (only the URL part, not the text)
-            let updated = replace_link_urls(&content, &old_rel, &new_rel);
+            let updated = replace_link_urls(&content, &old_rel, &new_rel, text_replace);
 
             if updated != content {
                 fs::write(&abs_source, &updated)?;
@@ -272,12 +287,66 @@ impl BacklinkIndex {
 
         Ok(modified_files)
     }
+
+    /// When a folder is renamed or moved on disk, rewrite backlinks for every
+    /// descendant whose target path now lives under the new prefix. Descendants
+    /// keep their link text as-is (their own title did not change — only the
+    /// ancestor path did); only URLs get rewritten.
+    pub fn update_links_on_folder_rename(
+        &self,
+        space_path: &Path,
+        old_folder: &str,
+        new_folder: &str,
+    ) -> Result<Vec<String>, AppError> {
+        if !self.is_built() {
+            self.build(space_path)?;
+        }
+
+        let normalized_old = normalize_link_path(old_folder);
+        let normalized_new = normalize_link_path(new_folder);
+        if normalized_old == normalized_new {
+            return Ok(Vec::new());
+        }
+        let prefix = format!("{}/", normalized_old);
+
+        // Snapshot keys under the old prefix. We call update_links_on_rename
+        // per descendant, which mutates the map, so iteration must snapshot first.
+        let descendants: Vec<String> = {
+            let guard = self.inner.lock().unwrap();
+            guard
+                .keys()
+                .filter(|k| k.starts_with(&prefix))
+                .cloned()
+                .collect()
+        };
+
+        let mut all_modified: Vec<String> = Vec::new();
+        for old_key in descendants {
+            let remainder = old_key.strip_prefix(&prefix).unwrap_or(&old_key);
+            let new_key = format!("{}/{}", normalized_new, remainder);
+            let modified = self.update_links_on_rename(space_path, &old_key, &new_key, None)?;
+            for m in modified {
+                if !all_modified.contains(&m) {
+                    all_modified.push(m);
+                }
+            }
+        }
+
+        Ok(all_modified)
+    }
 }
 
-/// Replace markdown link URLs from old_rel to new_rel in content.
-/// Only replaces the URL part inside `](...)`, preserving link text.
-fn replace_link_urls(content: &str, old_rel: &str, new_rel: &str) -> String {
-    // Also handle ./prefix variant
+/// Replace markdown link URLs from old_rel to new_rel in content. When
+/// `text_replace` is Some((old_stem, new_text)), link text is also replaced
+/// with new_text for links whose text slugifies to old_stem (i.e. the text was
+/// derived from the target's previous title). Custom texts like `[click here]`
+/// stay intact.
+fn replace_link_urls(
+    content: &str,
+    old_rel: &str,
+    new_rel: &str,
+    text_replace: Option<(&str, &str)>,
+) -> String {
     let old_with_dot = format!("./{old_rel}");
 
     let mut result = String::with_capacity(content.len());
@@ -288,7 +357,6 @@ fn replace_link_urls(content: &str, old_rel: &str, new_rel: &str) -> String {
         let url_match = cap.get(1).unwrap();
         let url = url_match.as_str();
 
-        // Check if the URL path (without anchor) matches old_rel
         let (path_part, anchor) = match url.find('#') {
             Some(pos) => (&url[..pos], &url[pos..]),
             None => (url, ""),
@@ -296,22 +364,56 @@ fn replace_link_urls(content: &str, old_rel: &str, new_rel: &str) -> String {
 
         let matches = path_part == old_rel || path_part == old_with_dot;
 
-        if matches {
-            // Append content before this match
-            result.push_str(&content[last_end..url_match.start()]);
-            // Write the new URL, preserving anchor
-            result.push_str(new_rel);
-            result.push_str(anchor);
-            last_end = url_match.end();
-        } else {
-            // No change needed, but we still need to process
+        if !matches {
             result.push_str(&content[last_end..full_match.end()]);
             last_end = full_match.end();
+            continue;
         }
+
+        // `[text](url)` — text lives between `[` and `](`.
+        let text_start = full_match.start() + 1;
+        let text_end = url_match.start() - 2;
+        let text = &content[text_start..text_end];
+
+        let new_text = text_replace
+            .filter(|(old_stem, _)| !old_stem.is_empty() && slugify(text) == *old_stem)
+            .map(|(_, nt)| nt);
+
+        result.push_str(&content[last_end..full_match.start()]);
+        result.push('[');
+        result.push_str(new_text.unwrap_or(text));
+        result.push_str("](");
+        result.push_str(new_rel);
+        result.push_str(anchor);
+        result.push(')');
+        last_end = full_match.end();
     }
 
     result.push_str(&content[last_end..]);
     result
+}
+
+/// Extract the "name-like" stem from a link target path. For `readme.md`
+/// inside a folder, returns the folder name (what users type as link text);
+/// for regular files, the filename stem; for bare folders, the folder name.
+fn link_stem_of(path: &str) -> String {
+    let p = Path::new(path);
+    let is_readme = p
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.eq_ignore_ascii_case("readme.md"));
+    if is_readme {
+        p.parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string()
+    } else {
+        p.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string()
+    }
 }
 
 /// Make a relative link path from source_dir to target_path.
@@ -612,7 +714,7 @@ mod tests {
         index.build(ws).unwrap();
 
         let modified = index
-            .update_links_on_rename(ws, "b.md", "renamed-b.md")
+            .update_links_on_rename(ws, "b.md", "renamed-b.md", None)
             .unwrap();
         assert_eq!(modified, vec!["a.md"]);
 
