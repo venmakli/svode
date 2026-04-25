@@ -16,7 +16,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { FilePlus, FolderPlus, Plus } from "lucide-react";
-import { useWorkspaceStore } from "@/stores/workspace";
+import { useSpaceStore } from "@/stores/space";
 import { useLayoutStore } from "@/stores/layout";
 import { SortableFileTree } from "./sortable-file-tree";
 import { FileTreeItem } from "./file-tree-item";
@@ -28,7 +28,7 @@ export function NavDocuments() {
     fileTrees,
     createPage,
     refreshTree,
-  } = useWorkspaceStore();
+  } = useSpaceStore();
   const { openDocument } = useLayoutStore();
 
   if (!activeRootId || !activeRootPath) return null;

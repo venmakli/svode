@@ -3,7 +3,7 @@ import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 
-import { useWorkspaceStore, selectActiveSpacePath } from "@/stores/workspace";
+import { useSpaceStore, selectActiveSpacePath } from "@/stores/space";
 import { useLayoutStore } from "@/stores/layout";
 
 /**
@@ -47,7 +47,7 @@ export function useUploadFile({ onUploadComplete, onUploadError }: UseUploadFile
   const [isUploading, setIsUploading] = React.useState(false);
 
   async function uploadFile(file: File): Promise<UploadedFile | undefined> {
-    const spacePath = selectActiveSpacePath(useWorkspaceStore.getState());
+    const spacePath = selectActiveSpacePath(useSpaceStore.getState());
     if (!spacePath) {
       const err = new Error("No active workspace");
       toast.error(err.message);

@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useLayoutStore } from "@/stores/layout";
-import { useWorkspaceStore } from "@/stores/workspace";
+import { useSpaceStore } from "@/stores/space";
 import { useFullscreen } from "@/hooks/use-fullscreen";
 import { cn } from "@/lib/utils";
 import { CloudUploadButton } from "@/features/workspace/cloud-upload-button";
@@ -16,7 +16,7 @@ import * as m from "@/paraglide/messages.js";
 
 export function WindowHeader() {
   const { activeDocument, toggleChatPanel } = useLayoutStore();
-  const { goHome } = useWorkspaceStore();
+  const { goHome } = useSpaceStore();
   const { toggleSidebar } = useSidebar();
   const isFullscreen = useFullscreen();
   const navigate = useNavigate();

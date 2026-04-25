@@ -15,8 +15,8 @@ import { useResolvedAssetUrl } from '@/hooks/use-resolved-asset-url';
 import { getErrorMessage } from '@/hooks/use-upload-file';
 import {
   selectActiveSpacePath,
-  useWorkspaceStore,
-} from '@/stores/workspace';
+  useSpaceStore,
+} from '@/stores/space';
 
 export const FileElement = withHOC(
   ResizableProvider,
@@ -41,7 +41,7 @@ export const FileElement = withHOC(
           return;
         }
         const spacePath = selectActiveSpacePath(
-          useWorkspaceStore.getState()
+          useSpaceStore.getState()
         );
         if (!spacePath) return;
         const rel = unsafeUrl.replace(/^\.\//, '');

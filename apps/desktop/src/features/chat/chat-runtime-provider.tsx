@@ -7,7 +7,7 @@ import {
 } from "@assistant-ui/react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { useWorkspaceStore, selectActiveSpacePath, selectActiveSpaceId } from "@/stores/workspace";
+import { useSpaceStore, selectActiveSpacePath, selectActiveSpaceId } from "@/stores/space";
 import { useChatStatusStore } from "@/stores/chat";
 
 interface TextDeltaPayload {
@@ -109,8 +109,8 @@ export function ChatRuntimeProvider({
 }: {
   children: React.ReactNode;
 }) {
-  const activeWsId = useWorkspaceStore(selectActiveSpaceId);
-  const spacePath = useWorkspaceStore(selectActiveSpacePath);
+  const activeWsId = useSpaceStore(selectActiveSpaceId);
+  const spacePath = useSpaceStore(selectActiveSpacePath);
 
   const [messages, setMessages] = useState<readonly ThreadMessageLike[]>([]);
   const [isRunning, setIsRunning] = useState(false);

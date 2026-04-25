@@ -12,7 +12,7 @@ import {
   InlineComboboxItem,
 } from "@/components/ui/inline-combobox";
 import { FileText } from "lucide-react";
-import { useWorkspaceStore } from "@/stores/workspace";
+import { useSpaceStore } from "@/stores/space";
 import { useLayoutStore } from "@/stores/layout";
 import type { TreeNode } from "@/types/space";
 
@@ -63,7 +63,7 @@ export function DocLinkInputElement(
   props: PlateElementProps<TComboboxInputElement>,
 ) {
   const { editor, element } = props;
-  const { activeSpaceId, fileTrees } = useWorkspaceStore();
+  const { activeSpaceId, fileTrees } = useSpaceStore();
   const { activeDocument } = useLayoutStore();
 
   const tree = activeSpaceId ? fileTrees[activeSpaceId] ?? [] : [];

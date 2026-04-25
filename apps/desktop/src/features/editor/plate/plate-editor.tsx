@@ -9,7 +9,7 @@ import { TitleZone } from "../title-zone";
 import { FrontmatterPanel } from "../frontmatter-panel";
 import { useFileWatcher } from "../use-file-watcher";
 import { useLayoutStore } from "@/stores/layout";
-import { useWorkspaceStore } from "@/stores/workspace";
+import { useSpaceStore } from "@/stores/space";
 import { useEditorStore } from "@/stores/editor";
 import {
   commitAllSpace,
@@ -49,7 +49,7 @@ interface WriteResult {
 
 export function PlateDocumentEditor() {
   const { activeDocument, activeDocumentSpaceId, openDocument } = useLayoutStore();
-  const { updateNodeMeta, rootSpaces, spaces: childWorkspaces, activeRootPath } = useWorkspaceStore();
+  const { updateNodeMeta, rootSpaces, spaces: childWorkspaces, activeRootPath } = useSpaceStore();
   const { markUnsaved, clearUnsaved, pendingRename, clearPendingRename, setBrokenLinks } = useEditorStore();
 
   // Resolve workspace path from the document's workspace id
@@ -69,6 +69,13 @@ export function PlateDocumentEditor() {
 
   // Debounce auto-save refs
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Buffer timer kept after IPC resolves so the delayed watcher echo
+  // (200 ms watcher debounce + Tauri delivery) still sees pending=true and
+  // is dropped by use-file-watcher's local-wins guard. Without this the
+  // backend's nonce/path echo-guard is the only line of defence and it
+  // races on macOS when canonicalize() rewrites the path before notify
+  // delivers the FSEvent (cursor jumps to top-left, slash menu closes).
+  const bufferTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isDebouncePendingRef = useRef(false);
   const ownNoncesRef = useRef<Set<string>>(new Set());
 
@@ -99,6 +106,10 @@ export function PlateDocumentEditor() {
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
+    }
+    if (bufferTimerRef.current) {
+      clearTimeout(bufferTimerRef.current);
+      bufferTimerRef.current = null;
     }
     isDebouncePendingRef.current = false;
   }, []);
@@ -145,30 +156,42 @@ export function PlateDocumentEditor() {
 
   // Schedule a debounced auto-save of the active document. Resets the timer
   // on every call, so continuous typing never triggers mid-stream writes.
+  // pending stays true through the IPC + a 500 ms post-write buffer so the
+  // own-write `file:changed` echo (watcher debounces 200 ms + Tauri delivery)
+  // is dropped by the local-wins branch before it can reload the editor.
+  // Don't clear unsavedChanges here — the file is on disk but still
+  // uncommitted in git, indicator should stay grey until ⌘S commit.
   const scheduleAutoSave = useCallback(() => {
     if (!currentPathRef.current || !spacePath) return;
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
+    if (bufferTimerRef.current) {
+      clearTimeout(bufferTimerRef.current);
+      bufferTimerRef.current = null;
+    }
     isDebouncePendingRef.current = true;
     debounceTimerRef.current = setTimeout(() => {
       debounceTimerRef.current = null;
-      isDebouncePendingRef.current = false;
       const path = currentPathRef.current;
       void performWrite(true)
         .then((result) => {
           if (!result || !path) return;
-          // Auto-save only writes the current file; no rename/backlinks.
-          clearUnsaved(path);
           if (editor) {
             docCacheRef.current.set(path, editor.children);
           }
         })
         .catch((err) => {
           console.error("Auto-save failed:", err);
+        })
+        .finally(() => {
+          bufferTimerRef.current = setTimeout(() => {
+            bufferTimerRef.current = null;
+            isDebouncePendingRef.current = false;
+          }, 500);
         });
     }, AUTOSAVE_DEBOUNCE_MS);
-  }, [performWrite, editor, spacePath, clearUnsaved]);
+  }, [performWrite, editor, spacePath]);
 
   // Load document when activeDocument changes
   useEffect(() => {
@@ -328,7 +351,7 @@ export function PlateDocumentEditor() {
         docCacheRef.current.set(result.new_path, editor.children);
         useLayoutStore.getState().openDocument(result.new_path);
         if (activeWsId) {
-          useWorkspaceStore.getState().refreshTree(activeWsId);
+          useSpaceStore.getState().refreshTree(activeWsId);
         }
       } else {
         docCacheRef.current.set(activeDocument, editor.children);
@@ -386,7 +409,7 @@ export function PlateDocumentEditor() {
         docCacheRef.current.set(result.new_path, editor.children);
         useLayoutStore.getState().openDocument(result.new_path);
         if (activeWsId) {
-          useWorkspaceStore.getState().refreshTree(activeWsId);
+          useSpaceStore.getState().refreshTree(activeWsId);
         }
       }
       for (const f of result.modified_files) {

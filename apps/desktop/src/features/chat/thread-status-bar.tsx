@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useChatStatusStore } from "@/stores/chat";
-import { useWorkspaceStore } from "@/stores/workspace";
+import { useSpaceStore } from "@/stores/space";
 import { cn } from "@/lib/utils";
 
 function formatMs(ms: number): string {
@@ -21,9 +21,9 @@ const statusLabels: Record<string, string> = {
 
 export function ThreadStatusBar({ isRunning }: { isRunning: boolean }) {
   const agentStatus = useChatStatusStore((s) => s.agentStatus);
-  const activeSpaceId = useWorkspaceStore((s) => s.activeSpaceId);
-  const activeRootName = useWorkspaceStore((s) => s.activeRootName);
-  const spaces = useWorkspaceStore((s) => s.spaces);
+  const activeSpaceId = useSpaceStore((s) => s.activeSpaceId);
+  const activeRootName = useSpaceStore((s) => s.activeRootName);
+  const spaces = useSpaceStore((s) => s.spaces);
   const spaceName = activeSpaceId
     ? spaces.find((w) => w.id === activeSpaceId)?.name
     : activeRootName;

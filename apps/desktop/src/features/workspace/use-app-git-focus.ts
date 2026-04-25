@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useGitStore } from "@/stores/git";
-import { useWorkspaceStore, selectActiveSpacePath } from "@/stores/workspace";
+import { useSpaceStore, selectActiveSpacePath } from "@/stores/space";
 import type { GitStatus } from "@/types/git";
 import { syncOnOpen } from "./git-actions";
 
@@ -14,7 +14,7 @@ import { syncOnOpen } from "./git-actions";
  * number of concurrent `git_sync`/`git_push` calls on startup and focus.
  */
 export function useAppGitFocus() {
-  const activePath = useWorkspaceStore((s) => selectActiveSpacePath(s));
+  const activePath = useSpaceStore((s) => selectActiveSpacePath(s));
   const lastSynced = useRef<string | null>(null);
 
   // Silent sync-on-open for the active space only.
@@ -29,7 +29,7 @@ export function useAppGitFocus() {
   // space and auto-pushes any unpushed commits.
   useEffect(() => {
     const onFocus = async () => {
-      const path = selectActiveSpacePath(useWorkspaceStore.getState());
+      const path = selectActiveSpacePath(useSpaceStore.getState());
       if (!path) return;
       try {
         const status = await invoke<GitStatus>("git_status", {

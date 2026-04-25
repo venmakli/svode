@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import type { PlateEditor } from "platejs/react";
 import { deserializeWithConflicts } from "./conflict/parse-conflicts";
 import { useLayoutStore } from "@/stores/layout";
-import { useWorkspaceStore } from "@/stores/workspace";
+import { useSpaceStore } from "@/stores/space";
 import { useEditorStore } from "@/stores/editor";
 import * as m from "@/paraglide/messages.js";
 
@@ -34,7 +34,7 @@ export function useFileWatcher({
   isLoadingRef,
 }: UseFileWatcherOptions) {
   const { closeDocument } = useLayoutStore();
-  const { refreshTree } = useWorkspaceStore();
+  const { refreshTree } = useSpaceStore();
   const { markAiModified, clearAiModified } = useEditorStore();
 
   const activeDocRef = useRef(activeDocument);

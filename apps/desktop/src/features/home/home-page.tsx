@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { FolderPlus, FolderOpen, FolderGit2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { useAppVersion } from "@/hooks/use-app-version";
-import { useWorkspaceStore } from "@/stores/workspace";
+import { useSpaceStore } from "@/stores/space";
 import { ProjectList } from "./project-list";
 import { EmptyState } from "./empty-state";
 import { CreateProjectDialog } from "./create-project-dialog";
@@ -33,7 +33,7 @@ export function HomePage() {
     deleteRoot,
     getLastActiveRootId,
     explicitHome,
-  } = useWorkspaceStore();
+  } = useSpaceStore();
 
   useEffect(() => {
     loadRootSpaces();
@@ -145,7 +145,7 @@ export function HomePage() {
         const ws = await invoke<SpaceInfo>("project_clone", { url, targetPath });
         setCloningProject(null);
         // Add to local store and open
-        useWorkspaceStore.setState((s) => ({
+        useSpaceStore.setState((s) => ({
           rootSpaces: [...s.rootSpaces, ws],
         }));
         await openRoot(ws.id);

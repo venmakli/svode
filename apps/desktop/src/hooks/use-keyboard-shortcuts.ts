@@ -1,11 +1,11 @@
 import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useLayoutStore } from "@/stores/layout";
-import { useWorkspaceStore } from "@/stores/workspace";
+import { useSpaceStore } from "@/stores/space";
 
 export function useKeyboardShortcuts() {
   const { toggleChatPanel, closeDocument, openAppSettings } = useLayoutStore();
-  const goHome = useWorkspaceStore((s) => s.goHome);
+  const goHome = useSpaceStore((s) => s.goHome);
   const navigate = useNavigate();
 
   useEffect(() => {

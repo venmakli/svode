@@ -16,7 +16,7 @@ interface Entry {
   frontmatter: Record<string, unknown>;
 }
 
-interface WorkspaceState {
+interface SpaceState {
   // Root spaces (projects on the home page)
   rootSpaces: SpaceInfo[];
   activeRootId: string | null;
@@ -80,7 +80,7 @@ interface WorkspaceState {
 }
 
 /** Find space path by id from either rootSpaces or spaces */
-function findSpacePath(state: WorkspaceState, id: string): string | null {
+function findSpacePath(state: SpaceState, id: string): string | null {
   const root = state.rootSpaces.find((w) => w.id === id);
   if (root) return root.path;
   const space = state.spaces.find((w) => w.id === id);
@@ -89,12 +89,12 @@ function findSpacePath(state: WorkspaceState, id: string): string | null {
 }
 
 /** Active space id: nested space if selected, otherwise root project */
-export function selectActiveSpaceId(state: WorkspaceState): string | null {
+export function selectActiveSpaceId(state: SpaceState): string | null {
   return state.activeSpaceId ?? state.activeRootId;
 }
 
 /** Active space path: nested space if selected, otherwise root project */
-export function selectActiveSpacePath(state: WorkspaceState): string {
+export function selectActiveSpacePath(state: SpaceState): string {
   if (state.activeSpaceId) {
     const space = state.spaces.find((w) => w.id === state.activeSpaceId);
     if (space) return space.path;
@@ -102,7 +102,7 @@ export function selectActiveSpacePath(state: WorkspaceState): string {
   return state.activeRootPath ?? "";
 }
 
-export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
+export const useSpaceStore = create<SpaceState>((set, get) => ({
   rootSpaces: [],
   activeRootId: null,
   activeRootName: null,

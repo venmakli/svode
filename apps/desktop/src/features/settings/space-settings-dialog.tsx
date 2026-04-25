@@ -57,7 +57,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useLayoutStore } from "@/stores/layout";
-import { useWorkspaceStore } from "@/stores/workspace";
+import { useSpaceStore } from "@/stores/space";
 import { useChatStatusStore, type ModelOption } from "@/stores/chat";
 import type {
   SpaceConfig,
@@ -86,7 +86,7 @@ export function SpaceSettingsDialog({
   onOpenChange,
 }: SpaceSettingsDialogProps) {
   const { openDocument, closeSettings } = useLayoutStore();
-  const { activeRootPath, activeRootName, spaces } = useWorkspaceStore();
+  const { activeRootPath, activeRootName, spaces } = useSpaceStore();
 
   const spacePath = inputPath ?? "";
   const isRoot = spacePath === activeRootPath;
@@ -350,16 +350,16 @@ export function SpaceSettingsDialog({
 
   function syncSpaceStore(updates: { name?: string; icon?: string; description?: string }) {
     if (isRoot) {
-      useWorkspaceStore.setState({
+      useSpaceStore.setState({
         ...(updates.name !== undefined ? { activeRootName: updates.name } : {}),
         ...(updates.icon !== undefined ? { activeRootIcon: updates.icon } : {}),
-        rootSpaces: useWorkspaceStore.getState().rootSpaces.map((w) =>
+        rootSpaces: useSpaceStore.getState().rootSpaces.map((w) =>
           w.path === spacePath ? { ...w, ...updates } : w
         ),
       });
     } else {
-      useWorkspaceStore.setState({
-        spaces: useWorkspaceStore.getState().spaces.map((w) =>
+      useSpaceStore.setState({
+        spaces: useSpaceStore.getState().spaces.map((w) =>
           w.path === spacePath ? { ...w, ...updates } : w
         ),
       });

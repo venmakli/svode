@@ -30,7 +30,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Check, ChevronDown, ChevronUp, Plus, Settings, Trash2 } from "lucide-react";
 
-import { useWorkspaceStore } from "@/stores/workspace";
+import { useSpaceStore } from "@/stores/space";
 import { useLayoutStore } from "@/stores/layout";
 import { NavDocuments } from "@/features/workspace/nav-documents";
 import { NavSpaces } from "@/features/workspace/nav-spaces";
@@ -49,7 +49,7 @@ export function AppSidebar() {
     openRoot,
     deleteRoot,
     goHome,
-  } = useWorkspaceStore();
+  } = useSpaceStore();
   const { openAppSettings, openSpaceSettings } = useLayoutStore();
   const appSettings = useAppSettings();
 

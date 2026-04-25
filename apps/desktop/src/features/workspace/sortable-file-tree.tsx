@@ -15,7 +15,7 @@ import { SortableContext } from "@dnd-kit/sortable";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { FileText } from "lucide-react";
-import { useWorkspaceStore } from "@/stores/workspace";
+import { useSpaceStore } from "@/stores/space";
 import { useLayoutStore } from "@/stores/layout";
 import { useEditorStore } from "@/stores/editor";
 import type { TreeNode } from "@/types/space";
@@ -102,7 +102,7 @@ export function SortableFileTree({
   children,
 }: SortableFileTreeProps) {
   const { moveEntry, saveOrder, refreshTree, toggleExpanded, expandedPaths } =
-    useWorkspaceStore();
+    useSpaceStore();
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -290,7 +290,7 @@ export function SortableFileTree({
       const { active, over } = event;
       if (!over || active.id === over.id || !currentProjection) return;
 
-      const state = useWorkspaceStore.getState();
+      const state = useSpaceStore.getState();
       const space = state.spaces.find((w) => w.id === spaceId)
         ?? state.rootSpaces.find((w) => w.id === spaceId);
       if (!space) return;
@@ -330,7 +330,7 @@ export function SortableFileTree({
             const newNestPath = await invoke<string>("nest_entry", {
               space: space.path,
               path: nestTarget,
-              projectPath: useWorkspaceStore.getState().activeRootPath,
+              projectPath: useSpaceStore.getState().activeRootPath,
             });
             suppressPaths([newNestPath]);
             if (activeDocument === nestTarget) {
@@ -356,7 +356,7 @@ export function SortableFileTree({
         }
 
         // Use fresh tree from store (may have changed after nest_entry)
-        const currentTree = useWorkspaceStore.getState().fileTrees[spaceId] ?? tree;
+        const currentTree = useSpaceStore.getState().fileTrees[spaceId] ?? tree;
 
         if (fromParent === toParent) {
           // Same parent — reorder
@@ -420,7 +420,7 @@ export function SortableFileTree({
 
         // Auto-unnest: if the old parent folder now has no children
         if (oldParentReadme) {
-          const freshTree = useWorkspaceStore.getState().fileTrees[spaceId] ?? currentTree;
+          const freshTree = useSpaceStore.getState().fileTrees[spaceId] ?? currentTree;
           const oldParentNode = findNode(freshTree, oldParentReadme);
           if (oldParentNode && oldParentNode.children.length <= 1) {
             try {
@@ -429,7 +429,7 @@ export function SortableFileTree({
               const unnestPath = await invoke<string>("unnest_entry", {
                 space: space.path,
                 path: oldParentReadme,
-                projectPath: useWorkspaceStore.getState().activeRootPath,
+                projectPath: useSpaceStore.getState().activeRootPath,
               });
               useEditorStore.getState().suppressPaths([unnestPath]);
               if (currentActive === oldParentReadme) {
@@ -443,7 +443,7 @@ export function SortableFileTree({
           }
         }
 
-        const updatedTree = useWorkspaceStore.getState().fileTrees[spaceId];
+        const updatedTree = useSpaceStore.getState().fileTrees[spaceId];
         if (updatedTree) {
           const order = buildOrderMap(updatedTree);
           await saveOrder(spaceId, order);

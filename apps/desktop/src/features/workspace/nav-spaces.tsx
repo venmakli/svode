@@ -50,7 +50,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useWorkspaceStore } from "@/stores/workspace";
+import { useSpaceStore } from "@/stores/space";
 import { useLayoutStore } from "@/stores/layout";
 import type { TreeNode, SpaceConfig, SpaceInfo } from "@/types/space";
 import { listen } from "@tauri-apps/api/event";
@@ -80,7 +80,7 @@ export function NavSpaces() {
     createPage,
     refreshTree,
     loadSpaces,
-  } = useWorkspaceStore();
+  } = useSpaceStore();
   const { openDocument, openSpaceSettings } = useLayoutStore();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{
@@ -114,8 +114,8 @@ export function NavSpaces() {
         configData: { ...cfg, name: editValue.trim() },
         projectPath: activeRootPath,
       });
-      useWorkspaceStore.setState({
-        spaces: useWorkspaceStore.getState().spaces.map((w) =>
+      useSpaceStore.setState({
+        spaces: useSpaceStore.getState().spaces.map((w) =>
           w.id === editingSpaceId ? { ...w, name: editValue.trim() } : w
         ),
       });
@@ -453,7 +453,7 @@ function SpaceRow({
             {dirty && (
               <>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => commitAllSpace(ws.path, useWorkspaceStore.getState().activeRootPath ?? undefined)}>
+                <DropdownMenuItem onClick={() => commitAllSpace(ws.path, useSpaceStore.getState().activeRootPath ?? undefined)}>
                   <Save className="mr-2 h-4 w-4" />
                   {m.git_save_all()}
                 </DropdownMenuItem>

@@ -1,5 +1,5 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { useWorkspaceStore, selectActiveSpacePath } from "@/stores/workspace";
+import { useSpaceStore, selectActiveSpacePath } from "@/stores/space";
 
 /**
  * Resolve a URL stored in a Plate media node to something the webview can
@@ -25,6 +25,6 @@ export function resolveAssetUrl(url: string | undefined, spacePath: string): str
 }
 
 export function useResolvedAssetUrl(url: string | undefined): string | undefined {
-  const spacePath = useWorkspaceStore(selectActiveSpacePath);
+  const spacePath = useSpaceStore(selectActiveSpacePath);
   return resolveAssetUrl(url, spacePath);
 }

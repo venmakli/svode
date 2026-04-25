@@ -32,7 +32,7 @@ import {
 import { ChevronRight, Ellipsis, FileText, FilePlus, FolderOpen, FolderPlus, GripVertical, FileSymlink, Pencil, Trash2 } from "lucide-react";
 import { useLayoutStore } from "@/stores/layout";
 import { useEditorStore } from "@/stores/editor";
-import { useWorkspaceStore } from "@/stores/workspace";
+import { useSpaceStore } from "@/stores/space";
 import type { TreeNode } from "@/types/space";
 import { TreeDndContext } from "./sortable-file-tree";
 import { TreeDropIndicator } from "./tree-drop-indicator";
@@ -54,7 +54,7 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
   const { openDocument, activeDocument } = useLayoutStore();
   const { unsavedChanges, aiModified } = useEditorStore();
   const { expandedPaths, toggleExpanded, refreshTree, spaces, rootSpaces, activeSpaceId, activeRootId, activeRootPath } =
-    useWorkspaceStore();
+    useSpaceStore();
 
   const bareFolder = isBareFolder(node);
   const isActive = !bareFolder && activeDocument === node.path;
@@ -181,9 +181,9 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
     }
     const isRootWorkspace = spaceId === activeRootId;
     if (isRootWorkspace && activeSpaceId) {
-      useWorkspaceStore.getState().clearActiveSpace();
+      useSpaceStore.getState().clearActiveSpace();
     } else if (!isRootWorkspace && activeSpaceId !== spaceId) {
-      useWorkspaceStore.getState().openSpace(spaceId);
+      useSpaceStore.getState().openSpace(spaceId);
     }
     openDocument(node.path, spaceId);
   }
@@ -333,10 +333,16 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
     <FileText className="h-4 w-4 shrink-0" />
   );
 
+  // Phase 4 model: disk = source of truth, "in-memory unsaved" no longer
+  // exists as a distinct state. Both unsaved (autosave pending or post-write
+  // pre-commit) and ai-modified render as the same grey dot the git
+  // indicator uses, so the bridge from `isUnsaved` (cleared on commit) to
+  // `fileGitState === "dirty"` (set after watcher refresh) is invisible —
+  // no more red↔grey flicker.
   const dot = showDot ? (
     <span
-      className={`ml-auto shrink-0 text-xs ${isUnsaved ? "text-red-500" : "text-blue-500"}`}
-      title={isUnsaved ? "Unsaved changes" : "Modified externally"}
+      className={`ml-auto shrink-0 text-xs ${isAiModified ? "text-blue-500" : "text-muted-foreground"}`}
+      title={isAiModified ? "Modified externally" : "Uncommitted changes"}
     >
       ●
     </span>

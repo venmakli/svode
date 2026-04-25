@@ -12,8 +12,8 @@ import { cn } from '@/lib/utils';
 import { resolveAssetUrl } from '@/hooks/use-resolved-asset-url';
 import {
   selectActiveSpacePath,
-  useWorkspaceStore,
-} from '@/stores/workspace';
+  useSpaceStore,
+} from '@/stores/space';
 
 import { Caption, CaptionTextarea } from './caption';
 import { MediaToolbar } from './media-toolbar';
@@ -28,7 +28,7 @@ export const ImageElement = withHOC(
   function ImageElement(props: PlateElementProps<TImageElement>) {
     const { align = 'center', focused, readOnly, selected } = useMediaState();
     const width = useResizableValue('width');
-    const spacePath = useWorkspaceStore(selectActiveSpacePath);
+    const spacePath = useSpaceStore(selectActiveSpacePath);
 
     const { isDragging, handleRef } = useDraggable({
       element: props.element,

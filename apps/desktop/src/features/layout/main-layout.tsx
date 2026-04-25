@@ -13,7 +13,7 @@ import { useGitAvailability } from "@/hooks/use-git-availability";
 import { useAppGitFocus } from "@/features/workspace/use-app-git-focus";
 import { SpaceGitWatcher } from "@/features/workspace/space-git-watcher";
 import { useLayoutStore } from "@/stores/layout";
-import { useWorkspaceStore } from "@/stores/workspace";
+import { useSpaceStore } from "@/stores/space";
 import { EmptyProjectState } from "@/features/workspace/empty-project-state";
 import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";
 import { ChatPanel } from "@/features/chat/chat-panel";
@@ -80,7 +80,7 @@ function buildSegments(
 function MainBreadcrumbs() {
   const { activeDocument, activeDocumentSpaceId } = useLayoutStore();
   const { spaces, activeSpaceId, fileTrees, openSpace } =
-    useWorkspaceStore();
+    useSpaceStore();
   const { openDocument } = useLayoutStore();
 
   if (!activeDocument) return null;
@@ -240,7 +240,7 @@ function MainContent() {
 export function MainLayout() {
   useKeyboardShortcuts();
   useAppGitFocus();
-  const { spaces, activeRootId, activeRootPath, fileTrees } = useWorkspaceStore();
+  const { spaces, activeRootId, activeRootPath, fileTrees } = useSpaceStore();
   const { available, recheck } = useGitAvailability();
 
   const hasChildren = spaces.length > 0;

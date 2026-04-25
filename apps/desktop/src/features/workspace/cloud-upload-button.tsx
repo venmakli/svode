@@ -19,7 +19,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useGitStore } from "@/stores/git";
-import { useWorkspaceStore, selectActiveSpacePath } from "@/stores/workspace";
+import { useSpaceStore, selectActiveSpacePath } from "@/stores/space";
 import type { GitStatus } from "@/types/git";
 import type { SpaceConfig } from "@/types/space";
 import * as m from "@/paraglide/messages.js";
@@ -32,8 +32,8 @@ interface UnpushedCommit {
 }
 
 export function CloudUploadButton() {
-  const spacePath = useWorkspaceStore(selectActiveSpacePath);
-  const activeRootPath = useWorkspaceStore((s) => s.activeRootPath);
+  const spacePath = useSpaceStore(selectActiveSpacePath);
+  const activeRootPath = useSpaceStore((s) => s.activeRootPath);
   const [visible, setVisible] = useState(false);
   const [open, setOpen] = useState(false);
   const [commits, setCommits] = useState<UnpushedCommit[]>([]);

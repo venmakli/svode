@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/input-group";
 import { EmojiPicker } from "@/components/ui/emoji-picker";
 import { Progress } from "@/components/ui/progress";
-import { useWorkspaceStore } from "@/stores/workspace";
+import { useSpaceStore } from "@/stores/space";
 import type { SpaceGitType } from "@/types/space";
 import type { CloneProgress } from "@/types/git";
 
@@ -75,7 +75,7 @@ export function CreateSpaceDialog({
   open: isOpen,
   onOpenChange,
 }: CreateSpaceDialogProps) {
-  const { activeRootPath, createSpace, loadSpaces } = useWorkspaceStore();
+  const { activeRootPath, createSpace, loadSpaces } = useSpaceStore();
 
   const [tab, setTab] = useState<"create" | "clone">("create");
   const [name, setName] = useState("");
