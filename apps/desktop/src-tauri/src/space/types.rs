@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
-    pub user: UserSettings,
     pub appearance: AppearanceSettings,
     pub window: WindowSettings,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -30,12 +29,6 @@ pub struct DetectedCli {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserSettings {
-    pub name: String,
-    pub avatar: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppearanceSettings {
     pub theme: String,
     pub language: String,
@@ -50,10 +43,6 @@ pub struct WindowSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            user: UserSettings {
-                name: String::new(),
-                avatar: "#3B82F6".to_string(),
-            },
             appearance: AppearanceSettings {
                 theme: "system".to_string(),
                 language: "en".to_string(),

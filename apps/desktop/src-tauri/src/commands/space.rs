@@ -298,6 +298,11 @@ pub async fn create_space(
                 // ops::init scaffolds the initial commit as `Scaffold .combai`
                 // inside the child repo (auto-sync OFF — the repo has no remote).
                 ops::init(&cli, &space_dir).await?;
+                if let Err(e) =
+                    crate::identity::scaffold_space_git_identity(&cli, &space_dir, parent).await
+                {
+                    tracing::warn!("scaffold_space_git_identity failed for new independent space: {e}");
+                }
             }
             ops::add_independent_gitignore(parent, &folder_name)?;
             autocommit.flush_target_repo(parent).await;
@@ -315,6 +320,11 @@ pub async fn create_space(
                 let _guard = lock.lock().await;
                 // Scaffold commit in the child (auto-sync OFF).
                 ops::init(&cli, &space_dir).await?;
+                if let Err(e) =
+                    crate::identity::scaffold_space_git_identity(&cli, &space_dir, parent).await
+                {
+                    tracing::warn!("scaffold_space_git_identity failed for new submodule space: {e}");
+                }
             }
             autocommit.flush_target_repo(parent).await;
             {
@@ -654,6 +664,11 @@ pub async fn clone_missing_space(
         let lock = git_state.get_lock(&space_dir).await;
         let _guard = lock.lock().await;
         crate::git::clone::clone_with_progress(&cli, &app, url, &space_dir).await?;
+        if let Err(e) =
+            crate::identity::scaffold_space_git_identity(&cli, &space_dir, &parent).await
+        {
+            tracing::warn!("scaffold_space_git_identity failed after clone: {e}");
+        }
         ops::add_independent_gitignore(&parent, &space_ref.path)?;
     } else {
         // Check .gitmodules for submodule
@@ -686,6 +701,13 @@ pub async fn clone_missing_space(
                         .strip_prefix("refs/remotes/origin/")
                         .unwrap_or("main");
                     let _ = cli.exec(&space_dir, &["checkout", branch]).await;
+                }
+                if let Err(e) =
+                    crate::identity::scaffold_space_git_identity(&cli, &space_dir, &parent).await
+                {
+                    tracing::warn!(
+                        "scaffold_space_git_identity failed after submodule update: {e}"
+                    );
                 }
             } else {
                 return Err(AppError::SpaceNotFound(space_id));

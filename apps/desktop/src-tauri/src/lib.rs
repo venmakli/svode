@@ -3,6 +3,7 @@ mod commands;
 mod error;
 mod files;
 mod git;
+mod identity;
 mod index;
 mod space;
 mod storage;
@@ -106,6 +107,12 @@ pub fn run() {
             git::commands::git_unpushed_commits,
             git::commands::git_publish,
             git::commands::git_enable_auto_sync,
+            identity::commands::get_git_identity,
+            identity::commands::set_git_identity,
+            identity::commands::get_repo_identity,
+            identity::commands::set_repo_identity,
+            identity::commands::get_project_fanout_preview,
+            identity::commands::set_project_identity,
             index::commands::reindex_space,
             index::commands::search_entries_by_title,
             index::commands::search_entries,

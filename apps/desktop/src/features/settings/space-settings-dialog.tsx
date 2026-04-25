@@ -59,6 +59,13 @@ import {
 import { useLayoutStore } from "@/stores/layout";
 import { useSpaceStore } from "@/stores/space";
 import { useChatStatusStore, type ModelOption } from "@/stores/chat";
+import { useIdentityStore } from "@/features/identity/identity-store";
+import { isValidEmail, isValidName } from "@/features/identity/validation";
+import type {
+  RepoIdentityResult,
+  FanoutPreviewEntry,
+} from "@/features/identity/types";
+import { IdentitySection } from "./identity-section";
 import type {
   SpaceConfig,
   AgentConfig,
@@ -129,6 +136,17 @@ export function SpaceSettingsDialog({
   const [branch, setBranch] = useState<string | null>(null);
   const [autoSync, setAutoSync] = useState(false);
   const [pendingRemote, setPendingRemote] = useState<string | null>(null);
+
+  // Identity override
+  const bumpIdentityVersion = useIdentityStore((s) => s.bumpRefreshVersion);
+  const [repoIdentity, setRepoIdentity] = useState<RepoIdentityResult | null>(null);
+  const [identityName, setIdentityName] = useState("");
+  const [identityEmail, setIdentityEmail] = useState("");
+  const [savingIdentity, setSavingIdentity] = useState(false);
+  const [identityFormError, setIdentityFormError] = useState<string | null>(null);
+  const [fanoutEnabled, setFanoutEnabled] = useState(true);
+  const [fanoutPreview, setFanoutPreview] = useState<FanoutPreviewEntry[]>([]);
+  const [fanoutSelected, setFanoutSelected] = useState<Record<string, boolean>>({});
 
   // Storage section
   const [assetsStrategy, setAssetsStrategy] = useState<AssetsStrategy>("local");
@@ -256,6 +274,44 @@ export function SpaceSettingsDialog({
     }
   }, [spacePath, isRoot, activeRootPath]);
 
+  const loadIdentity = useCallback(async () => {
+    if (!spacePath) return;
+    try {
+      const result = await invoke<RepoIdentityResult>("get_repo_identity", {
+        repoPath: spacePath,
+      });
+      setRepoIdentity(result);
+      setIdentityName(result.local?.name ?? "");
+      setIdentityEmail(result.local?.email ?? "");
+      setIdentityFormError(null);
+    } catch (err) {
+      console.warn("get_repo_identity failed:", err);
+      setRepoIdentity(null);
+    }
+  }, [spacePath]);
+
+  const loadFanoutPreview = useCallback(async () => {
+    if (!isRoot || !spacePath) {
+      setFanoutPreview([]);
+      setFanoutSelected({});
+      return;
+    }
+    try {
+      const list = await invoke<FanoutPreviewEntry[]>(
+        "get_project_fanout_preview",
+        { rootPath: spacePath },
+      );
+      setFanoutPreview(list);
+      const initial: Record<string, boolean> = {};
+      for (const e of list) initial[e.spacePath] = true;
+      setFanoutSelected(initial);
+    } catch (err) {
+      console.warn("get_project_fanout_preview failed:", err);
+      setFanoutPreview([]);
+      setFanoutSelected({});
+    }
+  }, [isRoot, spacePath]);
+
   const loadModels = useCallback(async () => {
     if (!spacePath) return;
     try {
@@ -303,9 +359,12 @@ export function SpaceSettingsDialog({
       loadAgentsMd();
       loadGitInfo();
       loadLfsAvailability();
+      loadIdentity();
+      loadFanoutPreview();
       setSection("general");
+      setFanoutEnabled(true);
     }
-  }, [open, spacePath, loadConfig, loadAgents, loadModels, loadAgentsMd, loadGitInfo, loadLfsAvailability]);
+  }, [open, spacePath, loadConfig, loadAgents, loadModels, loadAgentsMd, loadGitInfo, loadLfsAvailability, loadIdentity, loadFanoutPreview]);
 
   useEffect(() => {
     if (open && enabledClis.length > 0) checkHealth();
@@ -516,6 +575,58 @@ export function SpaceSettingsDialog({
   async function handleAutoSyncChange(value: boolean) {
     setAutoSync(value);
     await saveConfig({ git: { autoSync: value } });
+  }
+
+  async function handleSaveIdentity() {
+    if (!spacePath) return;
+    const trimmedName = identityName.trim();
+    const trimmedEmail = identityEmail.trim();
+    const bothEmpty = !trimmedName && !trimmedEmail;
+    const bothFilled = trimmedName && trimmedEmail;
+    if (!bothEmpty && !bothFilled) {
+      setIdentityFormError(m.settings_git_identity_both_required());
+      return;
+    }
+    if (bothFilled && (!isValidName(trimmedName) || !isValidEmail(trimmedEmail))) {
+      setIdentityFormError(
+        !isValidName(trimmedName)
+          ? m.identity_name_empty()
+          : m.identity_email_invalid(),
+      );
+      return;
+    }
+    setIdentityFormError(null);
+    setSavingIdentity(true);
+    try {
+      if (isRoot) {
+        const targets = fanoutEnabled
+          ? fanoutPreview
+              .filter((e) => fanoutSelected[e.spacePath])
+              .map((e) => e.spacePath)
+          : [];
+        await invoke("set_project_identity", {
+          rootPath: spacePath,
+          name: bothFilled ? trimmedName : null,
+          email: bothFilled ? trimmedEmail : null,
+          targetSpaces: targets,
+        });
+      } else {
+        await invoke("set_repo_identity", {
+          repoPath: spacePath,
+          name: bothFilled ? trimmedName : null,
+          email: bothFilled ? trimmedEmail : null,
+        });
+      }
+      await loadIdentity();
+      await loadFanoutPreview();
+      bumpIdentityVersion();
+      toast.success(m.toast_settings_saved());
+    } catch (err) {
+      console.error("identity save failed:", err);
+      toast.error(m.toast_error());
+    } finally {
+      setSavingIdentity(false);
+    }
   }
 
   async function handleStrategySelect(next: AssetsStrategy) {
@@ -938,6 +1049,29 @@ export function SpaceSettingsDialog({
                             </div>
                           </>
                         )}
+                      </>
+                    )}
+                    {gitType !== "inline" && (
+                      <>
+                        <Separator />
+                        <IdentitySection
+                          isRoot={isRoot}
+                          repoIdentity={repoIdentity}
+                          identityName={identityName}
+                          identityEmail={identityEmail}
+                          setIdentityName={setIdentityName}
+                          setIdentityEmail={setIdentityEmail}
+                          identityFormError={identityFormError}
+                          savingIdentity={savingIdentity}
+                          onSave={handleSaveIdentity}
+                          fanoutEnabled={fanoutEnabled}
+                          setFanoutEnabled={setFanoutEnabled}
+                          fanoutPreview={fanoutPreview}
+                          fanoutSelected={fanoutSelected}
+                          setFanoutSelected={setFanoutSelected}
+                          plannedName={identityName.trim()}
+                          plannedEmail={identityEmail.trim()}
+                        />
                       </>
                     )}
                   </div>

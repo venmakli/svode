@@ -35,7 +35,8 @@ import { useLayoutStore } from "@/stores/layout";
 import { NavDocuments } from "@/features/workspace/nav-documents";
 import { NavSpaces } from "@/features/workspace/nav-spaces";
 import { CreateSpaceDialog } from "@/features/workspace/create-space-dialog";
-import { useAppSettings } from "@/hooks/use-app-settings";
+import { useEffectiveIdentity } from "@/features/identity/use-effective-identity";
+import { avatarColorFromEmail } from "@/features/identity/avatar-colors";
 import * as m from "@/paraglide/messages.js";
 
 export function AppSidebar() {
@@ -51,14 +52,14 @@ export function AppSidebar() {
     goHome,
   } = useSpaceStore();
   const { openAppSettings, openSpaceSettings } = useLayoutStore();
-  const appSettings = useAppSettings();
+  const { name: identityName, email: identityEmail } = useEffectiveIdentity();
 
   const [createWsOpen, setCreateWsOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteFiles, setDeleteFiles] = useState(false);
 
-  const userName = appSettings?.user.name || "User";
-  const userAvatar = appSettings?.user.avatar || "#3B82F6";
+  const userName = identityName || "User";
+  const userAvatar = avatarColorFromEmail(identityEmail);
   const initials = userName
     .split(" ")
     .map((w) => w[0])

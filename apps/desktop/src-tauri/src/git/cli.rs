@@ -98,8 +98,8 @@ impl GitCli {
         Ok(result)
     }
 
-    /// Execute a git command without a working directory (e.g. clone).
-    #[allow(dead_code)]
+    /// Execute a git command without a working directory (e.g. clone, or
+    /// `--global` config writes).
     pub async fn exec_no_dir(
         &self,
         args: &[&str],

@@ -82,7 +82,6 @@ export interface AvailableAgent {
 }
 
 export interface AppSettings {
-  user: { name: string; avatar: string };
   appearance: { theme: string; language: string };
   window: { width: number; height: number };
   agents?: AppAgentSettings;

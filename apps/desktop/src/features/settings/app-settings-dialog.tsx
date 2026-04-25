@@ -43,12 +43,9 @@ import { Badge } from "@/components/ui/badge";
 import { useTheme } from "@/components/ui/theme-provider";
 import { ExternalLink, Keyboard, Paintbrush, RefreshCw, Terminal, User } from "lucide-react";
 import { invalidateAppSettings } from "@/hooks/use-app-settings";
+import { useIdentityStore } from "@/features/identity/identity-store";
+import { isValidEmail, isValidName } from "@/features/identity/validation";
 import type { AppSettings, AvailableAgent } from "@/types/space";
-
-const AVATAR_COLORS = [
-  "#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6",
-  "#EC4899", "#06B6D4", "#F97316", "#6366F1", "#14B8A6",
-];
 
 const CLI_AUTH_COMMANDS: Record<string, string> = {
   claude: "claude login",
@@ -72,9 +69,12 @@ export function AppSettingsDialog({ open, onOpenChange }: AppSettingsDialogProps
   const { theme, setTheme } = useTheme();
   const [section, setSection] = useState<Section>("profile");
   const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [name, setName] = useState("");
-  const [avatar, setAvatar] = useState("#3B82F6");
-  const [savedName, setSavedName] = useState("");
+
+  const identityGlobal = useIdentityStore((s) => s.global);
+  const saveGlobalIdentity = useIdentityStore((s) => s.saveGlobal);
+  const [identityName, setIdentityName] = useState("");
+  const [identityEmail, setIdentityEmail] = useState("");
+  const [savingIdentity, setSavingIdentity] = useState(false);
 
   const [agents, setAgents] = useState<AvailableAgent[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -83,9 +83,6 @@ export function AppSettingsDialog({ open, onOpenChange }: AppSettingsDialogProps
     try {
       const s = await invoke<AppSettings>("get_app_settings");
       setSettings(s);
-      setName(s.user.name);
-      setAvatar(s.user.avatar);
-      setSavedName(s.user.name);
     } catch (err) {
       console.error("Failed to load settings:", err);
     }
@@ -106,14 +103,15 @@ export function AppSettingsDialog({ open, onOpenChange }: AppSettingsDialogProps
       loadSettings();
       loadAgents();
       setSection("profile");
+      setIdentityName(identityGlobal?.name ?? "");
+      setIdentityEmail(identityGlobal?.email ?? "");
     }
-  }, [open, loadSettings, loadAgents]);
+  }, [open, loadSettings, loadAgents, identityGlobal]);
 
   async function saveSettings(updated: Partial<AppSettings>) {
     if (!settings) return;
     const merged: AppSettings = {
       ...settings,
-      user: { ...settings.user, ...updated.user },
       appearance: { ...settings.appearance, ...updated.appearance },
       window: { ...settings.window, ...updated.window },
     };
@@ -129,14 +127,25 @@ export function AppSettingsDialog({ open, onOpenChange }: AppSettingsDialogProps
     }
   }
 
-  async function handleNameBlur() {
-    const trimmed = name.trim();
-    if (trimmed && trimmed !== savedName) {
-      const ok = await saveSettings({ user: { name: trimmed, avatar } });
-      if (ok) {
-        setSavedName(trimmed);
-        setName(trimmed);
-      }
+  const identityNameValid = isValidName(identityName);
+  const identityEmailValid = isValidEmail(identityEmail);
+  const identityChanged =
+    identityName.trim() !== (identityGlobal?.name ?? "") ||
+    identityEmail.trim() !== (identityGlobal?.email ?? "");
+  const canSaveIdentity =
+    identityNameValid && identityEmailValid && identityChanged && !savingIdentity;
+
+  async function handleSaveIdentity() {
+    if (!canSaveIdentity) return;
+    setSavingIdentity(true);
+    try {
+      await saveGlobalIdentity(identityName.trim(), identityEmail.trim());
+      toast.success(m.toast_settings_saved());
+    } catch (err) {
+      console.error("set_git_identity failed:", err);
+      toast.error(m.toast_error());
+    } finally {
+      setSavingIdentity(false);
     }
   }
 
@@ -148,11 +157,6 @@ export function AppSettingsDialog({ open, onOpenChange }: AppSettingsDialogProps
   async function handleLanguageChange(value: string) {
     setLocale(value as "en" | "ru");
     await saveSettings({ appearance: { theme: settings?.appearance.theme ?? "system", language: value } });
-  }
-
-  async function handleAvatarChange(color: string) {
-    setAvatar(color);
-    await saveSettings({ user: { name, avatar: color } });
   }
 
   async function handleRefreshAgents() {
@@ -217,31 +221,49 @@ export function AppSettingsDialog({ open, onOpenChange }: AppSettingsDialogProps
               <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
                 {section === "profile" && (
                   <div className="space-y-4 max-w-sm">
-                    <div className="space-y-2">
-                      <Label htmlFor="settings-name">{m.settings_profile_name()}</Label>
-                      <Input
-                        id="settings-name"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        onBlur={handleNameBlur}
-                        placeholder={m.settings_profile_name_placeholder()}
-                      />
+                    <div className="space-y-1">
+                      <Label className="text-sm font-medium">
+                        {m.settings_profile_git_identity_title()}
+                      </Label>
                     </div>
                     <div className="space-y-2">
-                      <Label>{m.settings_profile_avatar()}</Label>
-                      <div className="flex gap-2 flex-wrap">
-                        {AVATAR_COLORS.map((color) => (
-                          <button
-                            key={color}
-                            type="button"
-                            className={`w-8 h-8 rounded-md transition-all ${
-                              avatar === color ? "ring-2 ring-offset-2 ring-primary" : ""
-                            }`}
-                            style={{ backgroundColor: color }}
-                            onClick={() => handleAvatarChange(color)}
-                          />
-                        ))}
-                      </div>
+                      <Label htmlFor="settings-identity-name">
+                        {m.identity_name_label()}
+                      </Label>
+                      <Input
+                        id="settings-identity-name"
+                        value={identityName}
+                        onChange={(e) => setIdentityName(e.target.value)}
+                      />
+                      {identityName && !identityNameValid && (
+                        <p className="text-xs text-destructive">
+                          {m.identity_name_empty()}
+                        </p>
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="settings-identity-email">
+                        {m.identity_email_label()}
+                      </Label>
+                      <Input
+                        id="settings-identity-email"
+                        type="email"
+                        value={identityEmail}
+                        onChange={(e) => setIdentityEmail(e.target.value)}
+                      />
+                      {identityEmail && !identityEmailValid && (
+                        <p className="text-xs text-destructive">
+                          {m.identity_email_invalid()}
+                        </p>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {m.settings_profile_git_identity_hint()}
+                    </p>
+                    <div className="pt-1">
+                      <Button onClick={handleSaveIdentity} disabled={!canSaveIdentity}>
+                        {m.identity_save()}
+                      </Button>
                     </div>
                   </div>
                 )}

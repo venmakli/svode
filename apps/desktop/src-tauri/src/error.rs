@@ -65,6 +65,12 @@ pub enum AppError {
     #[error("Storage: {0}")]
     Storage(String),
 
+    #[error("Git identity not configured")]
+    IdentityMissing,
+
+    #[error("Invalid identity field: {0}")]
+    IdentityInvalid(&'static str),
+
     #[error("{0}")]
     General(String),
 }

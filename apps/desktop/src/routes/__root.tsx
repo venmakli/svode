@@ -4,6 +4,9 @@ import { Toaster } from "@/components/ui/sonner";
 import { useLayoutStore } from "@/stores/layout";
 import { AppSettingsDialog } from "@/features/settings/app-settings-dialog";
 import { SpaceSettingsDialog } from "@/features/settings/space-settings-dialog";
+import { IdentityDialog } from "@/features/identity/identity-dialog";
+import { useIdentityCheck } from "@/features/identity/use-identity-check";
+import { useIdentityStore } from "@/features/identity/identity-store";
 
 function SettingsDialogs() {
   const { settingsDialog, settingsSpacePath, closeSettings } = useLayoutStore();
@@ -23,12 +26,32 @@ function SettingsDialogs() {
   );
 }
 
+function IdentityGate() {
+  useIdentityCheck();
+  const loaded = useIdentityStore((s) => s.loaded);
+  const source = useIdentityStore((s) => s.source);
+
+  if (!loaded) {
+    return <div className="h-screen w-screen" />;
+  }
+
+  if (source === "missing") {
+    return <IdentityDialog open={true} />;
+  }
+
+  return (
+    <>
+      <Outlet />
+      <SettingsDialogs />
+    </>
+  );
+}
+
 export const Route = createRootRoute({
   component: () => (
     <ThemeProvider defaultTheme="system">
-      <Outlet />
+      <IdentityGate />
       <Toaster />
-      <SettingsDialogs />
     </ThemeProvider>
   ),
 });
