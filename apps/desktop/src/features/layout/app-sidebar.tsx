@@ -28,7 +28,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Check, ChevronDown, ChevronUp, Plus, Settings, Trash2 } from "lucide-react";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Check, ChevronDown, ChevronsUpDown, Plus, Settings, Trash2 } from "lucide-react";
 
 import { useSpaceStore } from "@/stores/space";
 import { useLayoutStore } from "@/stores/layout";
@@ -161,14 +162,19 @@ export function AppSidebar() {
               className="w-full"
               onClick={() => openAppSettings()}
             >
-              <span
-                className="flex h-6 w-6 items-center justify-center rounded-md text-xs font-medium text-white shrink-0"
-                style={{ backgroundColor: userAvatar }}
-              >
-                {initials}
-              </span>
-              <span className="truncate">{userName}</span>
-              <ChevronUp className="ml-auto h-4 w-4 opacity-50" />
+              <Avatar className="size-8 rounded-lg after:rounded-lg">
+                <AvatarFallback
+                  className="rounded-lg text-xs font-medium text-white"
+                  style={{ backgroundColor: userAvatar }}
+                >
+                  {initials}
+                </AvatarFallback>
+              </Avatar>
+              <div className="grid flex-1 text-left text-sm leading-tight">
+                <span className="truncate font-medium">{userName}</span>
+                <span className="truncate text-xs">{identityEmail ?? ""}</span>
+              </div>
+              <ChevronsUpDown className="ml-auto size-4 opacity-50" />
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
