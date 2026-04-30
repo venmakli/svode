@@ -46,6 +46,12 @@ pub async fn update_entry(
     let normalized = normalize_rel(&rel_path);
     let abs = dir.join(&normalized);
 
+    // Serialize against `full_reindex` for the same pool. Without this, an
+    // UPSERT can land between full_reindex's FS walk and its DELETE-then-INSERT
+    // transaction, where it is silently overwritten (Stage 3.5 Phase 5 §5.3).
+    let lock = state.reindex_lock(&key).await;
+    let _guard = lock.lock().await;
+
     if !abs.exists() {
         return delete_entry_path(&pool, &normalized).await;
     }
@@ -76,6 +82,8 @@ pub async fn delete_entry(
 ) -> Result<(), AppError> {
     let (key, rel_path) = state.resolve(project, abs_path).await?;
     let pool = state.get_or_create(&key).await?;
+    let lock = state.reindex_lock(&key).await;
+    let _guard = lock.lock().await;
     delete_entry_path(&pool, &rel_path).await
 }
 
@@ -99,6 +107,8 @@ pub async fn reindex_after_pull(
 ) -> Result<(), AppError> {
     let pool = state.get_or_create(key).await?;
     let dir = state.dir_for_key(key).await?;
+    let lock = state.reindex_lock(key).await;
+    let _guard = lock.lock().await;
 
     for rel in changed_files {
         let normalized = normalize_rel(&rel);
