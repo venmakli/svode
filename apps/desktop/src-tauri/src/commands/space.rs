@@ -2,7 +2,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::error::AppError;
 use crate::git::autocommit::{AutocommitService, SystemCommitKind};
@@ -10,6 +10,67 @@ use crate::git::commands::{require_cli, GitState};
 use crate::git::ops;
 use crate::index::IndexState;
 use crate::space::{config, project, registry, settings, symlinks, types::*};
+
+fn detect_status_for_ref(parent: &Path, sp_ref: &SpaceRef) -> SpaceStatus {
+    let space_dir = parent.join(&sp_ref.path);
+    if space_dir.exists() {
+        SpaceStatus::Ready
+    } else if sp_ref.repo.is_some() {
+        SpaceStatus::Missing
+    } else {
+        let gitmodules = parent.join(".gitmodules");
+        if gitmodules.exists() {
+            let content = std::fs::read_to_string(&gitmodules).unwrap_or_default();
+            if content.contains(&format!("path = {}", sp_ref.path)) {
+                SpaceStatus::Missing
+            } else {
+                SpaceStatus::Broken
+            }
+        } else {
+            SpaceStatus::Broken
+        }
+    }
+}
+
+fn emit_space_added(app: &AppHandle, project: &Path, info: &SpaceInfo, folder: &str) {
+    let _ = app.emit(
+        "space:added",
+        serde_json::json!({
+            "projectPath": project.to_string_lossy(),
+            "spaceId": info.id,
+            "spacePath": project.join(folder).to_string_lossy(),
+            "status": info.status,
+        }),
+    );
+}
+
+fn emit_space_removed(app: &AppHandle, project: &Path, space_id: &str) {
+    let _ = app.emit(
+        "space:removed",
+        serde_json::json!({
+            "projectPath": project.to_string_lossy(),
+            "spaceId": space_id,
+        }),
+    );
+}
+
+fn emit_space_status_changed(
+    app: &AppHandle,
+    project: &Path,
+    space_id: &str,
+    old: SpaceStatus,
+    new: SpaceStatus,
+) {
+    let _ = app.emit(
+        "space:status_changed",
+        serde_json::json!({
+            "projectPath": project.to_string_lossy(),
+            "spaceId": space_id,
+            "oldStatus": old,
+            "newStatus": new,
+        }),
+    );
+}
 
 // --- App Settings ---
 
@@ -189,10 +250,11 @@ pub async fn delete_project(
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
 
-    // Close the index pool before any filesystem operations so SQLite releases
-    // file handles (Windows would otherwise refuse to remove the directory).
+    // Close the project's pools before any filesystem operations so SQLite
+    // releases file handles (Windows would otherwise refuse to remove the
+    // directory).
     if let Some(sp_ref) = registry::find_space(&config_dir, &id)? {
-        index_state.close(&sp_ref.path).await;
+        index_state.close_project(Path::new(&sp_ref.path)).await;
     }
 
     project::delete_project(&config_dir, &id, delete_files.unwrap_or(false))
@@ -226,21 +288,18 @@ pub async fn open_project(
 
     let cfg = config::read_space_config(Path::new(&sp_ref.path))?;
 
-    // Build/refresh the SQLite index in the background so the UI doesn't wait
-    // on filesystem walk + N upserts. Failure is logged but does not block
-    // project open — the user can always trigger a manual reindex later.
-    let pool = index_state.get_or_create(&sp_ref.path).await?;
-    let reindex_lock = index_state.reindex_lock(&sp_ref.path).await;
-    let space_dir: PathBuf = PathBuf::from(&sp_ref.path);
-    tokio::spawn(async move {
-        let _guard = reindex_lock.lock().await;
-        if let Err(e) = crate::index::reindex::full_reindex(&pool, &space_dir).await {
-            tracing::warn!(
-                "background reindex failed for {}: {e}",
-                space_dir.display()
-            );
-        }
-    });
+    // Open root + every ready child-space pool, spawn full_reindex per pool
+    // (under reindex lock + bounded concurrency). Failure is logged but does
+    // not block project open — the user can always trigger a manual reindex
+    // later. Initial state is not a transit, so no `space:status_changed`
+    // emit is needed: the cache snapshot during open_project covers it.
+    let project_path = PathBuf::from(&sp_ref.path);
+    if let Err(e) = index_state.open_project(&app, &project_path).await {
+        tracing::warn!(
+            "index_state.open_project failed for {}: {e}",
+            project_path.display()
+        );
+    }
 
     Ok(cfg)
 }
@@ -255,8 +314,10 @@ pub fn list_spaces(space_path: String) -> Result<Vec<SpaceInfo>, AppError> {
 
 #[tauri::command]
 pub async fn create_space(
+    app: AppHandle,
     git_state: State<'_, GitState>,
     autocommit: State<'_, Arc<AutocommitService>>,
+    index_state: State<'_, IndexState>,
     parent_path: String,
     name: String,
     icon: String,
@@ -345,13 +406,20 @@ pub async fn create_space(
         }
     }
 
+    index_state
+        .on_space_added(&app, parent, &info.id, &folder_name, info.status)
+        .await;
+    emit_space_added(&app, parent, &info, &folder_name);
+
     Ok(info)
 }
 
 #[tauri::command]
 pub async fn delete_space(
+    app: AppHandle,
     git_state: State<'_, GitState>,
     autocommit: State<'_, Arc<AutocommitService>>,
+    index_state: State<'_, IndexState>,
     parent_path: String,
     space_id: String,
     delete_files: Option<bool>,
@@ -404,12 +472,17 @@ pub async fn delete_space(
         let _ = ops::commit(cli, parent, &message).await?;
     }
 
+    index_state.on_space_removed(parent, &space_id).await;
+    emit_space_removed(&app, parent, &space_id);
+
     Ok(())
 }
 
 #[tauri::command]
 pub async fn register_cloned_space(
+    app: AppHandle,
     autocommit: State<'_, Arc<AutocommitService>>,
+    index_state: State<'_, IndexState>,
     parent_path: String,
     folder_name: String,
     fallback_name: String,
@@ -437,6 +510,11 @@ pub async fn register_cloned_space(
             tracing::warn!("commit_scaffold failed after register_cloned_space: {e}");
         }
     }
+
+    index_state
+        .on_space_added(&app, path, &info.id, &folder_name, info.status)
+        .await;
+    emit_space_added(&app, path, &info, &folder_name);
 
     Ok(info)
 }
@@ -644,6 +722,7 @@ pub async fn clone_missing_space(
     app: AppHandle,
     git_state: State<'_, GitState>,
     autocommit: State<'_, Arc<AutocommitService>>,
+    index_state: State<'_, IndexState>,
     project_path: String,
     space_id: String,
 ) -> Result<(), AppError> {
@@ -656,6 +735,7 @@ pub async fn clone_missing_space(
         .ok_or_else(|| AppError::SpaceNotFound(space_id.clone()))?
         .clone();
 
+    let old_status = detect_status_for_ref(&parent, &space_ref);
     let space_dir = parent.join(&space_ref.path);
 
     if let Some(url) = &space_ref.repo {
@@ -730,14 +810,24 @@ pub async fn clone_missing_space(
         }
     }
 
+    index_state
+        .on_space_status_changed(&app, &parent, &space_id, SpaceStatus::Ready)
+        .await;
+    emit_space_status_changed(&app, &parent, &space_id, old_status, SpaceStatus::Ready);
+
     Ok(())
 }
 
 #[tauri::command]
-pub fn remove_missing_space(
+pub async fn remove_missing_space(
+    app: AppHandle,
+    index_state: State<'_, IndexState>,
     project_path: String,
     space_id: String,
 ) -> Result<(), AppError> {
     let parent = Path::new(&project_path);
-    project::remove_missing_space(parent, &space_id)
+    project::remove_missing_space(parent, &space_id)?;
+    index_state.on_space_removed(parent, &space_id).await;
+    emit_space_removed(&app, parent, &space_id);
+    Ok(())
 }

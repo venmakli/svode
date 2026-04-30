@@ -30,7 +30,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(files::FileWatcher::new())
         .manage(agent::AgentSessions::new())
-        .manage(Arc::new(files::BacklinkIndex::new()))
         .manage(Arc::new(files::WriteNonceRegistry::new()))
         .manage(git::GitState::new())
         .manage(index::IndexState::new())
@@ -114,9 +113,10 @@ pub fn run() {
             identity::commands::get_project_fanout_preview,
             identity::commands::set_project_identity,
             index::commands::reindex_space,
-            index::commands::search_entries_by_title,
-            index::commands::search_entries,
-            index::commands::recent_entries,
+            index::commands::reindex_project,
+            index::commands::search_project_entries_by_title,
+            index::commands::search_project_entries,
+            index::commands::recent_project_entries,
             storage::commands::upload_asset,
             storage::commands::read_file_for_upload,
             storage::commands::list_assets,

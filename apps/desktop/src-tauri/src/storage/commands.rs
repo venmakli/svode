@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -9,7 +9,7 @@ use super::s3::{self, AgentSecrets};
 use super::strategy::{self, ApplyStrategyResult};
 use crate::error::AppError;
 use crate::git::GitState;
-use crate::index::IndexState;
+use crate::index::{IndexKey, IndexState};
 use crate::space::config::{read_space_config, write_space_config};
 use crate::space::types::{AssetsS3Config, AssetsSpaceConfig, AssetsStrategy};
 
@@ -70,7 +70,11 @@ pub async fn upload_asset(
     let space_dir = Path::new(&space_path);
 
     let config = read_space_config(space_dir)?;
-    let pool = index_state.get_or_create(&space_path).await?;
+    let key = index_state
+        .key_for_space_dir(space_dir)
+        .await
+        .unwrap_or_else(|| IndexKey::Root(PathBuf::from(&space_path)));
+    let pool = index_state.get_or_create(&key).await?;
 
     let result = assets::upload(
         &pool,
@@ -97,7 +101,11 @@ pub async fn list_assets(
     space_path: String,
     index_state: State<'_, IndexState>,
 ) -> Result<Vec<Asset>, AppError> {
-    let pool = index_state.get_or_create(&space_path).await?;
+    let key = index_state
+        .key_for_space_dir(Path::new(&space_path))
+        .await
+        .unwrap_or_else(|| IndexKey::Root(PathBuf::from(&space_path)));
+    let pool = index_state.get_or_create(&key).await?;
     assets::list(&pool).await
 }
 
@@ -194,7 +202,11 @@ pub async fn count_assets(
     space_path: String,
     index_state: State<'_, IndexState>,
 ) -> Result<i64, AppError> {
-    let pool = index_state.get_or_create(&space_path).await?;
+    let key = index_state
+        .key_for_space_dir(Path::new(&space_path))
+        .await
+        .unwrap_or_else(|| IndexKey::Root(PathBuf::from(&space_path)));
+    let pool = index_state.get_or_create(&key).await?;
     let row = sqlx::query("SELECT COUNT(*) as n FROM assets")
         .fetch_one(&pool)
         .await?;

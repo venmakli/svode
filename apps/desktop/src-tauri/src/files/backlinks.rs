@@ -87,9 +87,15 @@ fn normalize_link_path(path: &str) -> String {
 }
 
 /// In-memory backlink index. Key = normalized target path, Value = vec of (source_path, link_positions).
+///
+/// Each instance is per-`IndexKey` (root pool or one child space) — the
+/// project's `IndexState` keeps a `HashMap<IndexKey, Arc<BacklinkIndex>>`.
+/// `skip_top_level` records folders that lazy/auto rebuilds must skip
+/// (the project's root index excludes child-space directories).
 pub struct BacklinkIndex {
     inner: Mutex<HashMap<String, Vec<(String, Vec<LinkSpan>)>>>,
     built: Mutex<bool>,
+    skip_top_level: Mutex<Vec<String>>,
 }
 
 impl Default for BacklinkIndex {
@@ -103,7 +109,25 @@ impl BacklinkIndex {
         Self {
             inner: Mutex::new(HashMap::new()),
             built: Mutex::new(false),
+            skip_top_level: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Replace the list of top-level folders to skip on subsequent builds.
+    /// Called from `IndexState` when the resolver cache changes (open_project,
+    /// space:added/removed) so the root backlink index reflects the current
+    /// child-space layout.
+    pub fn set_skip_top_level(&self, skip: Vec<String>) {
+        if let Ok(mut g) = self.skip_top_level.lock() {
+            *g = skip;
+        }
+    }
+
+    fn current_skip(&self) -> Vec<String> {
+        self.skip_top_level
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default()
     }
 
     /// Whether the index has been built at least once.
@@ -111,11 +135,24 @@ impl BacklinkIndex {
         *self.built.lock().unwrap()
     }
 
-    /// Build index by scanning all .md files under space_path.
+    /// Build index by scanning all .md files under space_path. Honors the
+    /// configured `skip_top_level` (set via `set_skip_top_level`).
     pub fn build(&self, space_path: &Path) -> Result<(), AppError> {
+        let skip = self.current_skip();
+        self.build_with_skip(space_path, &skip)
+    }
+
+    /// Build index by scanning `.md` files under `space_path`, skipping the
+    /// listed top-level folder names. Public for callers that need an
+    /// explicit one-shot skip set; `build` uses the stored configuration.
+    pub fn build_with_skip(
+        &self,
+        space_path: &Path,
+        skip_top_level: &[String],
+    ) -> Result<(), AppError> {
         let mut index: HashMap<String, Vec<(String, Vec<LinkSpan>)>> = HashMap::new();
 
-        let md_files = collect_md_files(space_path)?;
+        let md_files = collect_md_files_filtered(space_path, skip_top_level)?;
 
         for file_path in &md_files {
             let rel_path = file_path
@@ -524,17 +561,29 @@ pub fn validate_links(space_path: &Path, doc_rel_path: &str) -> Result<Vec<LinkV
     Ok(results)
 }
 
-/// Collect all .md files under a directory, recursively.
-fn collect_md_files(dir: &Path) -> Result<Vec<PathBuf>, AppError> {
+/// Collect all .md files under a directory, skipping the listed top-level
+/// folder names directly under `dir` (used to omit child-space directories
+/// from the project's root backlink index).
+fn collect_md_files_filtered(
+    dir: &Path,
+    skip_top_level: &[String],
+) -> Result<Vec<PathBuf>, AppError> {
     let mut files = Vec::new();
-    collect_md_files_recursive(dir, &mut files)?;
+    collect_md_files_recursive(dir, dir, skip_top_level, &mut files)?;
     Ok(files)
 }
 
-fn collect_md_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), AppError> {
+fn collect_md_files_recursive(
+    base: &Path,
+    dir: &Path,
+    skip_top_level: &[String],
+    files: &mut Vec<PathBuf>,
+) -> Result<(), AppError> {
     if !dir.is_dir() {
         return Ok(());
     }
+
+    let at_base = dir == base;
 
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
@@ -549,8 +598,18 @@ fn collect_md_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()
             continue;
         }
 
+        if at_base {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
+            if skip_top_level.iter().any(|s| s == name) {
+                continue;
+            }
+        }
+
         if path.is_dir() {
-            collect_md_files_recursive(&path, files)?;
+            collect_md_files_recursive(base, &path, skip_top_level, files)?;
         } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
             files.push(path);
         }

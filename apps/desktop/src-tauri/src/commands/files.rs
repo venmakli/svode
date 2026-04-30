@@ -7,7 +7,7 @@ use tauri::{AppHandle, State};
 use crate::error::AppError;
 use crate::files::{entry, tree, BacklinkIndex, BacklinkInfo, Entry, FileWatcher, LinkValidation, TreeNode, WriteNonceRegistry, WriteResult};
 use crate::git::autocommit::{AutocommitService, StructuralOp};
-use crate::index::{self, IndexState};
+use crate::index::{self, IndexKey, IndexState};
 use crate::space::config;
 
 fn basename(path: &str) -> String {
@@ -28,6 +28,18 @@ fn maybe_autocommit_structural(
         PathBuf::from(space_path),
         op,
     );
+}
+
+/// Resolve the runtime backlink index that owns `space`. Falls back to a
+/// `Root`-keyed index treating `space` as its own project — covers calls
+/// that arrive before the project's `open_project` cache populates (e.g.
+/// rapid-create flows in tests).
+async fn backlinks_for_space(state: &IndexState, space: &str) -> Arc<BacklinkIndex> {
+    let key = state
+        .key_for_space_dir(Path::new(space))
+        .await
+        .unwrap_or_else(|| IndexKey::Root(PathBuf::from(space)));
+    state.backlinks_for(&key).await
 }
 
 #[tauri::command]
@@ -87,12 +99,12 @@ pub async fn write_entry(
     existing_id: Option<String>,
     skip_rename: Option<bool>,
     project_path: Option<String>,
-    backlink_index: State<'_, Arc<BacklinkIndex>>,
     index_state: State<'_, IndexState>,
     nonces: State<'_, Arc<WriteNonceRegistry>>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<WriteResult, AppError> {
     let skip_rename = skip_rename.unwrap_or(false);
+    let backlink_index = backlinks_for_space(&index_state, &space).await;
     let result = entry::write(
         &space,
         &path,
@@ -114,19 +126,23 @@ pub async fn write_entry(
     let canonical = std::fs::canonicalize(&joined).unwrap_or(joined);
     nonces.register(canonical, result.write_nonce.clone());
 
-    // Update SQLite index for the (possibly renamed) target path.
+    // Update SQLite index for the (possibly renamed) target path. Resolves
+    // through IndexState to the owning pool (root or per-space DB).
     // On rename: delete the stale row first, then upsert the new path. The
     // reverse order would let a concurrent write to the new path get clobbered
     // by the stale-row delete.
-    if let Ok(pool) = index_state.get_or_create(&space).await {
+    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+        let project = Path::new(proj);
         if result.new_path.is_some() {
-            if let Err(e) = index::update::delete_entry_path(&pool, &path).await {
+            let abs_old = Path::new(&space).join(&path);
+            if let Err(e) = index::update::delete_entry(&index_state, project, &abs_old).await {
                 tracing::warn!("index delete stale path failed for {path}: {e}");
             }
         }
         let target = result.new_path.clone().unwrap_or_else(|| path.clone());
+        let abs_target = Path::new(&space).join(&target);
         if let Err(e) =
-            index::update::update_entry(&pool, Path::new(&space), &target).await
+            index::update::update_entry(&index_state, project, &abs_target).await
         {
             tracing::warn!("index update_entry failed for {target}: {e}");
         }
@@ -156,15 +172,17 @@ pub async fn delete_entry(
     space: String,
     path: String,
     project_path: Option<String>,
-    backlink_index: State<'_, Arc<BacklinkIndex>>,
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
+    let backlink_index = backlinks_for_space(&index_state, &space).await;
     entry::delete(&space, &path, Some(&backlink_index))?;
 
-    if let Ok(pool) = index_state.get_or_create(&space).await {
-        if let Err(e) = index::update::delete_entry_path(&pool, &path).await {
-            tracing::warn!("index delete_entry_path failed for {path}: {e}");
+    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+        let project = Path::new(proj);
+        let abs_old = Path::new(&space).join(&path);
+        if let Err(e) = index::update::delete_entry(&index_state, project, &abs_old).await {
+            tracing::warn!("index delete_entry failed for {path}: {e}");
         }
     }
     maybe_autocommit_structural(
@@ -177,14 +195,15 @@ pub async fn delete_entry(
 }
 
 #[tauri::command]
-pub fn rename_entry(
+pub async fn rename_entry(
     space: String,
     from: String,
     to: String,
     project_path: Option<String>,
-    backlink_index: State<'_, Arc<BacklinkIndex>>,
+    index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Vec<String>, AppError> {
+    let backlink_index = backlinks_for_space(&index_state, &space).await;
     entry::rename(&space, &from, &to)?;
     let modified = backlink_index
         .update_links_on_rename(Path::new(&space), &from, &to, None)
@@ -203,14 +222,15 @@ pub fn rename_entry(
 }
 
 #[tauri::command]
-pub fn move_entry(
+pub async fn move_entry(
     space: String,
     from: String,
     to_parent: String,
     project_path: Option<String>,
-    backlink_index: State<'_, Arc<BacklinkIndex>>,
+    index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
+    let backlink_index = backlinks_for_space(&index_state, &space).await;
     let new_path = entry::move_entry(
         Path::new(&space),
         &from,
@@ -227,11 +247,12 @@ pub fn move_entry(
 }
 
 #[tauri::command]
-pub fn get_backlinks(
+pub async fn get_backlinks(
     space: String,
     target_path: String,
-    backlink_index: State<'_, Arc<BacklinkIndex>>,
+    index_state: State<'_, IndexState>,
 ) -> Result<Vec<BacklinkInfo>, AppError> {
+    let backlink_index = backlinks_for_space(&index_state, &space).await;
     if !backlink_index.is_built() {
         backlink_index.build(Path::new(&space))?;
     }
@@ -239,10 +260,11 @@ pub fn get_backlinks(
 }
 
 #[tauri::command]
-pub fn rebuild_backlinks(
+pub async fn rebuild_backlinks(
     space: String,
-    backlink_index: State<'_, Arc<BacklinkIndex>>,
+    index_state: State<'_, IndexState>,
 ) -> Result<(), AppError> {
+    let backlink_index = backlinks_for_space(&index_state, &space).await;
     backlink_index.build(Path::new(&space))
 }
 
@@ -272,13 +294,14 @@ pub fn unwatch_space(
 }
 
 #[tauri::command]
-pub fn nest_entry(
+pub async fn nest_entry(
     space: String,
     path: String,
     project_path: Option<String>,
-    backlink_index: State<'_, Arc<BacklinkIndex>>,
+    index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
+    let backlink_index = backlinks_for_space(&index_state, &space).await;
     let new_path = entry::nest_entry(
         Path::new(&space),
         &path,
@@ -294,13 +317,14 @@ pub fn nest_entry(
 }
 
 #[tauri::command]
-pub fn unnest_entry(
+pub async fn unnest_entry(
     space: String,
     path: String,
     project_path: Option<String>,
-    backlink_index: State<'_, Arc<BacklinkIndex>>,
+    index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
+    let backlink_index = backlinks_for_space(&index_state, &space).await;
     let new_path = entry::unnest_entry(
         Path::new(&space),
         &path,

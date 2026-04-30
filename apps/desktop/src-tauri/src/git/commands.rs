@@ -2,15 +2,35 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 use super::autocommit::{AutocommitService, SystemCommitKind};
 use super::cli::{GitAvailability, GitCli};
 use super::ops::{GitStatus, UnpushedCommit};
 use super::sync::SyncResult;
-use crate::index::IndexState;
+use crate::index::{IndexKey, IndexState};
 use crate::space::types::SpaceGitType;
 use crate::AppError;
+
+/// Emit `space:synced` after a successful `git_sync(space)` finishes (and any
+/// reindex/post-sync work is done). Consumers — file watcher reindex,
+/// cross-space link re-validation — see a fresh index.
+fn emit_space_synced(app: &AppHandle, key: &IndexKey) {
+    let (project_path, space_id) = match key {
+        IndexKey::Root(p) => (p.to_string_lossy().to_string(), None),
+        IndexKey::Space { project, space_id } => (
+            project.to_string_lossy().to_string(),
+            Some(space_id.clone()),
+        ),
+    };
+    let _ = app.emit(
+        "space:synced",
+        serde_json::json!({
+            "projectPath": project_path,
+            "spaceId": space_id,
+        }),
+    );
+}
 
 /// Helper: read the GitCli reference (clone is cheap — PathBuf only) outside the
 /// per-space lock, so async work that needs `&AppHandle` doesn't borrow
@@ -283,6 +303,7 @@ pub async fn git_commit_all(
 
 #[tauri::command]
 pub async fn git_sync(
+    app: AppHandle,
     state: State<'_, GitState>,
     index_state: State<'_, IndexState>,
     space_path: String,
@@ -294,19 +315,33 @@ pub async fn git_sync(
     let result = super::sync::sync(cli, &path).await?;
 
     // On a successful pull (Success means pull+push completed), refresh the
-    // SQLite index for any files that the merge brought in or modified.
+    // SQLite index for any files that the merge brought in or modified, then
+    // emit `space:synced`. The canonical source of `space:synced` is the
+    // git-sync flow — emit AFTER reindex so consumers see a fresh index.
     if matches!(result, SyncResult::Success) {
+        let key = index_state
+            .key_for_space_dir(&path)
+            .await
+            .unwrap_or_else(|| IndexKey::Root(path.clone()));
         if let Ok(changed) = super::ops::diff_after_pull(cli, &path).await {
             if !changed.is_empty() {
-                if let Ok(pool) = index_state.get_or_create(&space_path).await {
-                    if let Err(e) =
-                        crate::index::update::reindex_after_pull(&pool, &path, changed).await
-                    {
-                        tracing::warn!("reindex_after_pull failed: {e}");
-                    }
+                if let Err(e) =
+                    crate::index::update::reindex_after_pull(&index_state, &key, changed).await
+                {
+                    tracing::warn!("reindex_after_pull failed: {e}");
                 }
             }
         }
+        // Root pulls may introduce new inline spaces in `SpaceConfig.spaces`
+        // — open pools for newcomers (5.4). For non-root keys, this is a
+        // no-op since child spaces don't carry their own `spaces` list under
+        // the flat-space invariant.
+        if let IndexKey::Root(ref project) = key {
+            if let Err(e) = index_state.refresh_after_root_pull(&app, project).await {
+                tracing::warn!("refresh_after_root_pull failed: {e}");
+            }
+        }
+        emit_space_synced(&app, &key);
     }
 
     Ok(result)
@@ -325,6 +360,7 @@ pub async fn git_conflict_files(
 
 #[tauri::command]
 pub async fn git_resolve_continue(
+    app: AppHandle,
     state: State<'_, GitState>,
     index_state: State<'_, IndexState>,
     space_path: String,
@@ -336,19 +372,28 @@ pub async fn git_resolve_continue(
     let result = super::sync::resolve_and_continue(cli, &path).await?;
 
     // After conflict resolution + merge commit + push, the space tree
-    // has changed; refresh the index for the diff against the previous HEAD.
+    // has changed; refresh the index for the diff against the previous HEAD,
+    // then emit `space:synced`.
     if matches!(result, SyncResult::Success) {
+        let key = index_state
+            .key_for_space_dir(&path)
+            .await
+            .unwrap_or_else(|| IndexKey::Root(path.clone()));
         if let Ok(changed) = super::ops::diff_after_pull(cli, &path).await {
             if !changed.is_empty() {
-                if let Ok(pool) = index_state.get_or_create(&space_path).await {
-                    if let Err(e) =
-                        crate::index::update::reindex_after_pull(&pool, &path, changed).await
-                    {
-                        tracing::warn!("reindex_after_pull failed: {e}");
-                    }
+                if let Err(e) =
+                    crate::index::update::reindex_after_pull(&index_state, &key, changed).await
+                {
+                    tracing::warn!("reindex_after_pull failed: {e}");
                 }
             }
         }
+        if let IndexKey::Root(ref project) = key {
+            if let Err(e) = index_state.refresh_after_root_pull(&app, project).await {
+                tracing::warn!("refresh_after_root_pull failed: {e}");
+            }
+        }
+        emit_space_synced(&app, &key);
     }
 
     Ok(result)

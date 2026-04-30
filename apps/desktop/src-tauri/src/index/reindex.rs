@@ -17,7 +17,16 @@ fn format_system_time(time: SystemTime) -> String {
 /// Walk a directory, collecting paths of `.md` files while skipping hidden
 /// directories (those with names starting with `.`) such as `.combai`,
 /// `.assets`, and `.git`.
-fn collect_md_files(base: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), AppError> {
+///
+/// `skip_top_level` lists folder names directly under `base` to skip — used
+/// to keep the root walker out of child-space directories (each space owns
+/// its own pool).
+fn collect_md_files(
+    base: &Path,
+    dir: &Path,
+    skip_top_level: &[String],
+    out: &mut Vec<PathBuf>,
+) -> Result<(), AppError> {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) => {
@@ -26,9 +35,15 @@ fn collect_md_files(base: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<(
         }
     };
 
+    let at_base = dir == base;
+
     for entry in entries.filter_map(|e| e.ok()) {
         let name = entry.file_name().to_string_lossy().to_string();
         if name.starts_with('.') {
+            continue;
+        }
+
+        if at_base && skip_top_level.iter().any(|s| s == &name) {
             continue;
         }
 
@@ -42,7 +57,7 @@ fn collect_md_files(base: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<(
         }
 
         if path.is_dir() {
-            collect_md_files(base, &path, out)?;
+            collect_md_files(base, &path, skip_top_level, out)?;
         } else if name.ends_with(".md") {
             out.push(path);
         }
@@ -330,6 +345,10 @@ fn build_asset(space_dir: &Path, abs_path: &Path) -> Result<IndexedAsset, AppErr
 
 /// Full reindex of a space: wipes `entries` and `assets`, then rescans.
 ///
+/// `skip_top_level` lists folder names directly under `space_dir` to exclude
+/// — used by the root project's reindex to keep child-space directories out
+/// of its index (each space owns its own pool).
+///
 /// Atomicity model:
 /// - All filesystem I/O (walks, frontmatter parses) runs BEFORE the transaction
 ///   so the SQLite write lock is held only for a short, pure-SQL window.
@@ -338,12 +357,16 @@ fn build_asset(space_dir: &Path, abs_path: &Path) -> Result<IndexedAsset, AppErr
 /// - Per-file build failures (bad frontmatter, unreadable file) are logged and
 ///   skipped *without* aborting the tx — those entries are absent from the
 ///   resulting index. Skipped count is reported in the final log line.
-pub async fn full_reindex(pool: &SqlitePool, space_dir: &Path) -> Result<(), AppError> {
+pub async fn full_reindex(
+    pool: &SqlitePool,
+    space_dir: &Path,
+    skip_top_level: &[String],
+) -> Result<(), AppError> {
     tracing::debug!("full reindex of space: {}", space_dir.display());
 
     // ── Phase 1: filesystem walk + parse, no locks held ──────────────────
     let mut md_files: Vec<PathBuf> = Vec::new();
-    collect_md_files(space_dir, space_dir, &mut md_files)?;
+    collect_md_files(space_dir, space_dir, skip_top_level, &mut md_files)?;
 
     let assets_dir = space_dir.join(".assets");
     let mut asset_files: Vec<PathBuf> = Vec::new();
