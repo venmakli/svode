@@ -293,5 +293,17 @@
   "settings_git_identity_both_required": "Заполните оба поля или оставьте оба пустыми",
   "settings_git_identity_fanout_checkbox": "Применить ко всем вложенным пространствам",
   "settings_git_identity_fanout_affected_spaces": "Затронутые пространства:",
-  "settings_git_identity_fanout_will_replace": "будет перезаписано"
+  "settings_git_identity_fanout_will_replace": "будет перезаписано",
+
+  "search_tooltip": "Поиск",
+  "search_dialog_title": "Поиск",
+  "search_dialog_description": "Поиск документов по проекту",
+  "search_placeholder": "Поиск документов...",
+  "search_empty_prompt": "Начните вводить для поиска",
+  "search_no_results": "Ничего не найдено",
+  "search_group_titles": "ЗАГОЛОВКИ",
+  "search_group_contents": "СОДЕРЖИМОЕ",
+  "search_group_recent": "НЕДАВНИЕ",
+  "search_indexing_progress": "Индексация: {done} из {total} пространств готово",
+  "search_space_unavailable": "Пространство {name} недоступно"
 }

@@ -17,6 +17,7 @@ import { useSpaceStore } from "@/stores/space";
 import { EmptyProjectState } from "@/features/workspace/empty-project-state";
 import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";
 import { ChatPanel } from "@/features/chat/chat-panel";
+import { CommandPalette } from "@/features/search/command-palette";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -262,6 +263,7 @@ export function MainLayout() {
         </SidebarInset>
         {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
         <GitMissingDialog open={available === false} onRecheck={recheck} />
+        <CommandPalette />
       </SidebarProvider>
     </TooltipProvider>
   );

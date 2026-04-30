@@ -1,5 +1,5 @@
 import { useNavigate, useMatches } from "@tanstack/react-router";
-import { Home, PanelLeft, PanelRight } from "lucide-react";
+import { Home, PanelLeft, PanelRight, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -12,11 +12,13 @@ import { useSpaceStore } from "@/stores/space";
 import { useFullscreen } from "@/hooks/use-fullscreen";
 import { cn } from "@/lib/utils";
 import { CloudUploadButton } from "@/features/workspace/cloud-upload-button";
+import { useCommandPaletteStore } from "@/features/search/store";
 import * as m from "@/paraglide/messages.js";
 
 export function WindowHeader() {
   const { activeDocument, toggleChatPanel } = useLayoutStore();
   const { goHome } = useSpaceStore();
+  const setCommandPaletteOpen = useCommandPaletteStore((s) => s.setOpen);
   const { toggleSidebar } = useSidebar();
   const isFullscreen = useFullscreen();
   const navigate = useNavigate();
@@ -70,6 +72,23 @@ export function WindowHeader() {
             </TooltipTrigger>
             <TooltipContent side="bottom">
               {m.nav_all_projects()} ({"\u2318\u21E7"}O)
+            </TooltipContent>
+          </Tooltip>
+        )}
+
+        {isSpaceRoute && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => setCommandPaletteOpen(true)}
+              >
+                <Search className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {m.search_tooltip()} ({"\u2318"}P)
             </TooltipContent>
           </Tooltip>
         )}

@@ -293,5 +293,17 @@
   "settings_git_identity_both_required": "Fill both name and email, or leave both empty",
   "settings_git_identity_fanout_checkbox": "Apply to all nested spaces",
   "settings_git_identity_fanout_affected_spaces": "Affected spaces:",
-  "settings_git_identity_fanout_will_replace": "will be replaced"
+  "settings_git_identity_fanout_will_replace": "will be replaced",
+
+  "search_tooltip": "Search",
+  "search_dialog_title": "Search",
+  "search_dialog_description": "Search documents across the project",
+  "search_placeholder": "Search documents...",
+  "search_empty_prompt": "Start typing to search",
+  "search_no_results": "Nothing found",
+  "search_group_titles": "TITLES",
+  "search_group_contents": "CONTENT",
+  "search_group_recent": "RECENT",
+  "search_indexing_progress": "Indexing: {done} of {total} spaces ready",
+  "search_space_unavailable": "Space {name} is unavailable"
 }
