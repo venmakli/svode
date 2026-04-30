@@ -56,6 +56,13 @@ pub struct ProjectSpacesCache {
     folder_by_id: HashMap<String, String>,
     /// space_id → ready/missing/broken (resolver to surface ghost-state)
     status_by_id: HashMap<String, SpaceStatus>,
+    /// Display name of the root project (`SpaceConfig.name`), surfaced as
+    /// `SearchItem.spaceName` for root-pool entries.
+    root_name: String,
+    /// space_id → display name (read from each child's `.combai/config.json`).
+    /// Populated only for `Ready` spaces; falls back to `folder_name` if the
+    /// child config can't be read.
+    name_by_id: HashMap<String, String>,
 }
 
 impl ProjectSpacesCache {
@@ -63,6 +70,7 @@ impl ProjectSpacesCache {
         let mut by_folder = HashMap::new();
         let mut folder_by_id = HashMap::new();
         let mut status_by_id = HashMap::new();
+        let mut name_by_id = HashMap::new();
         if let Some(spaces) = &cfg.spaces {
             for sp in spaces {
                 let folder = sp.path.clone();
@@ -84,6 +92,10 @@ impl ProjectSpacesCache {
                         SpaceStatus::Broken
                     }
                 };
+                if matches!(status, SpaceStatus::Ready) {
+                    let display = read_child_space_name(&space_dir, &folder);
+                    name_by_id.insert(sp.id.clone(), display);
+                }
                 by_folder.insert(folder.clone(), sp.id.clone());
                 folder_by_id.insert(sp.id.clone(), folder);
                 status_by_id.insert(sp.id.clone(), status);
@@ -93,6 +105,24 @@ impl ProjectSpacesCache {
             by_folder,
             folder_by_id,
             status_by_id,
+            root_name: cfg.name.clone(),
+            name_by_id,
+        }
+    }
+}
+
+/// Read a child space's display name from its `.combai/config.json`. Falls
+/// back to `folder_name` and logs a warning if the read fails — name is a
+/// UI nicety, not a critical path.
+fn read_child_space_name(space_dir: &Path, folder_name: &str) -> String {
+    match config::read_space_config(space_dir) {
+        Ok(cfg) => cfg.name,
+        Err(e) => {
+            tracing::warn!(
+                "read child space name failed for {}: {e}",
+                space_dir.display()
+            );
+            folder_name.to_string()
         }
     }
 }
@@ -194,6 +224,28 @@ impl IndexState {
             .unwrap_or_default();
         drop(cache_guard);
         resolve_index_target(project, &cache, abs_path)
+    }
+
+    /// Display name for this pool's source: project name for `Root`, child
+    /// `SpaceConfig.name` for `Space`. Falls back to folder name if the cache
+    /// has no entry (treated as a soft miss).
+    pub async fn space_name(&self, key: &IndexKey) -> String {
+        let cache = self.spaces_cache.lock().await;
+        match key {
+            IndexKey::Root(project) => cache
+                .get(project)
+                .map(|c| c.root_name.clone())
+                .unwrap_or_default(),
+            IndexKey::Space { project, space_id } => cache
+                .get(project)
+                .and_then(|c| {
+                    c.name_by_id
+                        .get(space_id)
+                        .cloned()
+                        .or_else(|| c.folder_by_id.get(space_id).cloned())
+                })
+                .unwrap_or_default(),
+        }
     }
 
     /// Returns the directory whose `.combai/index.db` backs this key — i.e.,
@@ -416,6 +468,13 @@ impl IndexState {
                 .folder_by_id
                 .insert(space_id.to_string(), folder_name.to_string());
             entry.status_by_id.insert(space_id.to_string(), status);
+            if matches!(status, SpaceStatus::Ready) {
+                let space_dir = project.join(folder_name);
+                let display = read_child_space_name(&space_dir, folder_name);
+                entry.name_by_id.insert(space_id.to_string(), display);
+            } else {
+                entry.name_by_id.remove(space_id);
+            }
         }
 
         if !matches!(status, SpaceStatus::Ready) {
@@ -467,6 +526,7 @@ impl IndexState {
                     entry.by_folder.remove(&folder);
                 }
                 entry.status_by_id.remove(space_id);
+                entry.name_by_id.remove(space_id);
             }
         }
         let key = IndexKey::Space {
@@ -491,6 +551,18 @@ impl IndexState {
                 entry
                     .status_by_id
                     .insert(space_id.to_string(), new_status);
+                match new_status {
+                    SpaceStatus::Ready => {
+                        if let Some(folder) = entry.folder_by_id.get(space_id).cloned() {
+                            let space_dir = project.join(&folder);
+                            let display = read_child_space_name(&space_dir, &folder);
+                            entry.name_by_id.insert(space_id.to_string(), display);
+                        }
+                    }
+                    SpaceStatus::Missing | SpaceStatus::Broken => {
+                        entry.name_by_id.remove(space_id);
+                    }
+                }
             }
         }
         let key = IndexKey::Space {

@@ -3,6 +3,12 @@ use sqlx::{Row, SqlitePool};
 
 use crate::error::AppError;
 
+/// Per-pool query row carrier. Crosses module boundaries internally; the
+/// wire-shape returned to the frontend is `SearchItem` (built by
+/// `index::commands` after fan-out merge).
+///
+/// `updated_at` is captured for cross-pool tie-break (FTS round-robin) and
+/// is not serialized.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchResult {
@@ -13,6 +19,8 @@ pub struct SearchResult {
     pub entry_type: String,
     pub snippet: Option<String>,
     pub table_name: Option<String>,
+    #[serde(skip)]
+    pub updated_at: Option<String>,
 }
 
 /// Escape `%` and `_` in a LIKE pattern so user input is treated literally.
@@ -78,7 +86,7 @@ pub async fn search_by_title(
 
     let rows = sqlx::query(
         r#"
-        SELECT id, path, COALESCE(title, '') AS title, type, table_name
+        SELECT id, path, COALESCE(title, '') AS title, type, table_name, updated_at
         FROM entries
         WHERE title LIKE ? ESCAPE '\'
         ORDER BY
@@ -103,6 +111,7 @@ pub async fn search_by_title(
             entry_type: r.get::<String, _>("type"),
             snippet: None,
             table_name: r.get::<Option<String>, _>("table_name"),
+            updated_at: r.get::<Option<String>, _>("updated_at"),
         })
         .collect())
 }
@@ -131,6 +140,7 @@ pub async fn search_fts(
             COALESCE(e.title, '') AS title,
             e.type,
             e.table_name,
+            e.updated_at AS updated_at,
             snippet(entries_fts, 1, '<mark>', '</mark>', '...', 32) AS snippet
         FROM entries_fts
         JOIN entries e ON e.rowid = entries_fts.rowid
@@ -173,6 +183,7 @@ pub async fn search_fts(
             entry_type: r.get::<String, _>("type"),
             snippet: r.get::<Option<String>, _>("snippet"),
             table_name: r.get::<Option<String>, _>("table_name"),
+            updated_at: r.get::<Option<String>, _>("updated_at"),
         })
         .collect())
 }
@@ -181,7 +192,7 @@ pub async fn search_fts(
 pub async fn recent(pool: &SqlitePool, limit: i64) -> Result<Vec<SearchResult>, AppError> {
     let rows = sqlx::query(
         r#"
-        SELECT id, path, COALESCE(title, '') AS title, type, table_name
+        SELECT id, path, COALESCE(title, '') AS title, type, table_name, updated_at
         FROM entries
         ORDER BY updated_at DESC
         LIMIT ?
@@ -201,6 +212,7 @@ pub async fn recent(pool: &SqlitePool, limit: i64) -> Result<Vec<SearchResult>, 
             entry_type: r.get::<String, _>("type"),
             snippet: None,
             table_name: r.get::<Option<String>, _>("table_name"),
+            updated_at: r.get::<Option<String>, _>("updated_at"),
         })
         .collect())
 }
