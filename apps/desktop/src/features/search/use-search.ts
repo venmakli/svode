@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { dedupKey } from "./utils";
 import type { SearchItem, SearchResponse } from "./types";
 
 const DEBOUNCE_MS = 150;
@@ -16,9 +17,14 @@ export interface SearchState {
   totalSpaces: number;
 }
 
-function dedupKey(item: SearchItem): string {
-  return `${item.spaceId ?? ""}::${item.path}`;
-}
+const EMPTY_STATE: Omit<SearchState, "query" | "isEmpty"> = {
+  isLoading: false,
+  titles: [],
+  contents: [],
+  recent: [],
+  indexedSpaces: 0,
+  totalSpaces: 0,
+};
 
 export function useSearch(
   query: string,
@@ -27,36 +33,23 @@ export function useSearch(
   const [state, setState] = useState<SearchState>({
     query,
     isEmpty: true,
-    isLoading: false,
-    titles: [],
-    contents: [],
-    recent: [],
-    indexedSpaces: 0,
-    totalSpaces: 0,
+    ...EMPTY_STATE,
   });
   const reqId = useRef(0);
 
   useEffect(() => {
     if (!projectPath) {
-      setState({
-        query,
-        isEmpty: true,
-        isLoading: false,
-        titles: [],
-        contents: [],
-        recent: [],
-        indexedSpaces: 0,
-        totalSpaces: 0,
-      });
+      setState({ query, isEmpty: true, ...EMPTY_STATE });
       return;
     }
 
     const trimmed = query.trim();
     const id = ++reqId.current;
+    const isEmpty = trimmed.length === 0;
+    setState((s) => ({ ...s, query, isEmpty, isLoading: true }));
 
     // Empty query → fetch recent immediately (no debounce).
-    if (trimmed.length === 0) {
-      setState((s) => ({ ...s, query, isEmpty: true, isLoading: true }));
+    if (isEmpty) {
       invoke<SearchResponse>("recent_project_entries", {
         projectPath,
         limit: LIMIT,
@@ -66,9 +59,7 @@ export function useSearch(
           setState({
             query,
             isEmpty: true,
-            isLoading: false,
-            titles: [],
-            contents: [],
+            ...EMPTY_STATE,
             recent: res.items,
             indexedSpaces: res.indexedSpaces,
             totalSpaces: res.totalSpaces,
@@ -77,22 +68,12 @@ export function useSearch(
         .catch((err) => {
           console.error("recent_project_entries failed:", err);
           if (id !== reqId.current) return;
-          setState({
-            query,
-            isEmpty: true,
-            isLoading: false,
-            titles: [],
-            contents: [],
-            recent: [],
-            indexedSpaces: 0,
-            totalSpaces: 0,
-          });
+          setState({ query, isEmpty: true, ...EMPTY_STATE });
         });
       return;
     }
 
     // Non-empty → debounce 150ms then run title + FTS in parallel.
-    setState((s) => ({ ...s, query, isEmpty: false, isLoading: true }));
     const timer = setTimeout(() => {
       Promise.all([
         invoke<SearchResponse>("search_project_entries_by_title", {
@@ -112,6 +93,10 @@ export function useSearch(
           const dedupedFts = ftsRes.items.filter(
             (it) => !titleKeys.has(dedupKey(it)),
           );
+          // Both responses fan out over the same project state, so
+          // total/indexed counts agree (modulo a reindex completing between
+          // the two parallel calls — within ~150ms of each other). Pick
+          // titleRes as the source.
           setState({
             query,
             isEmpty: false,
@@ -119,26 +104,14 @@ export function useSearch(
             titles: titleRes.items,
             contents: dedupedFts,
             recent: [],
-            indexedSpaces: Math.min(
-              titleRes.indexedSpaces,
-              ftsRes.indexedSpaces,
-            ),
-            totalSpaces: Math.max(titleRes.totalSpaces, ftsRes.totalSpaces),
+            indexedSpaces: titleRes.indexedSpaces,
+            totalSpaces: titleRes.totalSpaces,
           });
         })
         .catch((err) => {
           console.error("search failed:", err);
           if (id !== reqId.current) return;
-          setState({
-            query,
-            isEmpty: false,
-            isLoading: false,
-            titles: [],
-            contents: [],
-            recent: [],
-            indexedSpaces: 0,
-            totalSpaces: 0,
-          });
+          setState({ query, isEmpty: false, ...EMPTY_STATE });
         });
     }, DEBOUNCE_MS);
 
