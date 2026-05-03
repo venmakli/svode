@@ -7,6 +7,7 @@ pub mod update;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 use tokio::sync::{Mutex, Semaphore};
@@ -191,6 +192,11 @@ pub struct IndexState {
     /// DB — correct under SQLite serialization, but doubles the work and
     /// exposes a brief empty-index window twice.
     reindex_locks: Mutex<HashMap<IndexKey, Arc<Mutex<()>>>>,
+    /// Per-key flag toggled by `run_full_reindex` (true while the reindex
+    /// transaction is in flight). `fan_out` reads this to skip mid-reindex
+    /// pools per §Q3 — separate from `reindex_locks` so that concurrent
+    /// search reads don't serialize against each other on the same Mutex.
+    reindex_active: Mutex<HashMap<IndexKey, Arc<AtomicBool>>>,
     /// Per-key runtime backlink index. Mirrors `pools` lifecycle. Lazy-build:
     /// `BacklinkIndex::build` runs on first access (preserves current
     /// behaviour — not eager at `open_project`).
@@ -200,11 +206,21 @@ pub struct IndexState {
     spaces_cache: Mutex<HashMap<PathBuf, ProjectSpacesCache>>,
 }
 
+/// RAII guard: clears the `reindex_active` flag when dropped, even on panic.
+struct ReindexActiveGuard(Arc<AtomicBool>);
+
+impl Drop for ReindexActiveGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 impl IndexState {
     pub fn new() -> Self {
         Self {
             pools: Mutex::new(HashMap::new()),
             reindex_locks: Mutex::new(HashMap::new()),
+            reindex_active: Mutex::new(HashMap::new()),
             backlinks: Mutex::new(HashMap::new()),
             spaces_cache: Mutex::new(HashMap::new()),
         }
@@ -273,6 +289,31 @@ impl IndexState {
             .clone()
     }
 
+    /// Get (or create) the per-key `reindex_active` flag. Read-only check
+    /// surface for `fan_out`; writers go through `run_full_reindex`.
+    pub async fn reindex_active_flag(&self, key: &IndexKey) -> Arc<AtomicBool> {
+        let mut map = self.reindex_active.lock().await;
+        map.entry(key.clone())
+            .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+            .clone()
+    }
+
+    /// Run `full_reindex` for `key` under the per-key serialization lock and
+    /// with the `reindex_active` flag raised for the duration. Centralizes the
+    /// "open pool + dir + skip + lock + flag" boilerplate that every
+    /// `full_reindex` caller needs.
+    pub async fn run_full_reindex(&self, key: &IndexKey) -> Result<(), AppError> {
+        let pool = self.get_or_create(key).await?;
+        let dir = self.dir_for_key(key).await?;
+        let skip = self.skip_folders_for(key).await;
+        let lock = self.reindex_lock(key).await;
+        let flag = self.reindex_active_flag(key).await;
+        let _guard = lock.lock().await;
+        flag.store(true, Ordering::SeqCst);
+        let _flag_guard = ReindexActiveGuard(flag);
+        reindex::full_reindex(&pool, &dir, &skip).await
+    }
+
     /// Get an existing pool for the key, or open one (creating the DB
     /// file and schema if necessary).
     pub async fn get_or_create(&self, key: &IndexKey) -> Result<SqlitePool, AppError> {
@@ -325,6 +366,7 @@ impl IndexState {
         }
         self.backlinks.lock().await.remove(key);
         self.reindex_locks.lock().await.remove(key);
+        self.reindex_active.lock().await.remove(key);
     }
 
     /// Open root + all ready child-space pools for `project` and spawn a
@@ -385,28 +427,8 @@ impl IndexState {
                     Err(_) => return,
                 };
                 let state = app.state::<IndexState>();
-                let pool = match state.get_or_create(&key).await {
-                    Ok(p) => p,
-                    Err(e) => {
-                        tracing::warn!("background reindex: get_or_create failed for {:?}: {e}", key);
-                        return;
-                    }
-                };
-                let dir = match state.dir_for_key(&key).await {
-                    Ok(d) => d,
-                    Err(e) => {
-                        tracing::warn!("background reindex: dir_for_key failed for {:?}: {e}", key);
-                        return;
-                    }
-                };
-                let skip = state.skip_folders_for(&key).await;
-                let lock = state.reindex_lock(&key).await;
-                let _guard = lock.lock().await;
-                if let Err(e) = reindex::full_reindex(&pool, &dir, &skip).await {
-                    tracing::warn!(
-                        "background reindex failed for {}: {e}",
-                        dir.display()
-                    );
+                if let Err(e) = state.run_full_reindex(&key).await {
+                    tracing::warn!("background reindex failed for {:?}: {e}", key);
                 }
             });
         }
@@ -493,24 +515,7 @@ impl IndexState {
         let app_handle = app.clone();
         tokio::spawn(async move {
             let state = app_handle.state::<IndexState>();
-            let pool = match state.get_or_create(&key).await {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::warn!("on_space_added reindex: get_or_create failed: {e}");
-                    return;
-                }
-            };
-            let dir = match state.dir_for_key(&key).await {
-                Ok(d) => d,
-                Err(e) => {
-                    tracing::warn!("on_space_added reindex: dir_for_key failed: {e}");
-                    return;
-                }
-            };
-            let skip = state.skip_folders_for(&key).await;
-            let lock = state.reindex_lock(&key).await;
-            let _guard = lock.lock().await;
-            if let Err(e) = reindex::full_reindex(&pool, &dir, &skip).await {
+            if let Err(e) = state.run_full_reindex(&key).await {
                 tracing::warn!("on_space_added full_reindex failed: {e}");
             }
         });
@@ -578,18 +583,7 @@ impl IndexState {
                 let app_handle = app.clone();
                 tokio::spawn(async move {
                     let state = app_handle.state::<IndexState>();
-                    let pool = match state.get_or_create(&key).await {
-                        Ok(p) => p,
-                        Err(_) => return,
-                    };
-                    let dir = match state.dir_for_key(&key).await {
-                        Ok(d) => d,
-                        Err(_) => return,
-                    };
-                    let skip = state.skip_folders_for(&key).await;
-                    let lock = state.reindex_lock(&key).await;
-                    let _guard = lock.lock().await;
-                    if let Err(e) = reindex::full_reindex(&pool, &dir, &skip).await {
+                    if let Err(e) = state.run_full_reindex(&key).await {
                         tracing::warn!("status_changed→Ready full_reindex failed: {e}");
                     }
                 });

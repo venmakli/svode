@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -8,7 +9,7 @@ use tokio::task::JoinSet;
 
 use crate::error::AppError;
 use crate::index::search::{self, SearchResult};
-use crate::index::{reindex, IndexKey, IndexState};
+use crate::index::{IndexKey, IndexState};
 
 const DEFAULT_LIMIT: i64 = 20;
 const REINDEX_PARALLELISM: usize = 4;
@@ -85,10 +86,15 @@ struct PoolHits {
 }
 
 /// Run `query_fn` against every key in parallel, skipping pools whose
-/// reindex lock is currently held (full_reindex in progress). Returns the
-/// per-pool results plus the count of pools that actually contributed —
-/// `total_spaces` is the input length, `indexed_spaces` is the returned
-/// `Vec<PoolHits>` length.
+/// `full_reindex` is currently in flight (per §Q3). Returns the per-pool
+/// results plus the count of pools that actually contributed — `total_spaces`
+/// is the input length, `indexed_spaces` is the returned `Vec<PoolHits>`
+/// length.
+///
+/// The skip is a non-blocking flag check, not a mutex acquisition: parallel
+/// search IPCs (title + FTS fired together via `Promise.all`) must not
+/// serialize against each other on the same pool. SQLite handles concurrent
+/// reads safely.
 async fn fan_out<F, Fut>(
     app: &AppHandle,
     keys: Vec<IndexKey>,
@@ -104,13 +110,10 @@ where
         let q = query_fn.clone();
         set.spawn(async move {
             let state = app.state::<IndexState>();
-            let lock = state.reindex_lock(&key).await;
-            // Skip pools that are mid-reindex — their results will arrive in
-            // a later query (Phase 6 §Q3).
-            let _guard = match lock.try_lock_owned() {
-                Ok(g) => g,
-                Err(_) => return None,
-            };
+            let flag = state.reindex_active_flag(&key).await;
+            if flag.load(Ordering::SeqCst) {
+                return None;
+            }
             let pool = match state.get_or_create(&key).await {
                 Ok(p) => p,
                 Err(e) => {
@@ -183,40 +186,28 @@ pub async fn reindex_space(
         },
         None => IndexKey::Root(project.clone()),
     };
-
-    let pool = state.get_or_create(&key).await?;
-    let dir = state.dir_for_key(&key).await?;
-    let skip = state.skip_folders_for(&key).await;
-    let lock = state.reindex_lock(&key).await;
-    let _guard = lock.lock().await;
-    reindex::full_reindex(&pool, &dir, &skip).await
+    state.run_full_reindex(&key).await
 }
 
 /// Reindex root + every ready child space pool. Bounded parallelism (4).
 #[tauri::command]
-pub async fn reindex_project(
-    state: State<'_, IndexState>,
-    project_path: String,
-) -> Result<(), AppError> {
+pub async fn reindex_project(app: AppHandle, project_path: String) -> Result<(), AppError> {
     let project = PathBuf::from(&project_path);
-    let keys = state.keys_for_project(&project).await;
+    let keys = app
+        .state::<IndexState>()
+        .keys_for_project(&project)
+        .await;
 
     let semaphore = Arc::new(Semaphore::new(REINDEX_PARALLELISM));
     let mut handles = Vec::new();
     for key in keys {
-        let pool = state.get_or_create(&key).await?;
-        let dir = state.dir_for_key(&key).await?;
-        let skip = state.skip_folders_for(&key).await;
-        let lock = state.reindex_lock(&key).await;
         let sem = semaphore.clone();
+        let app = app.clone();
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire_owned().await.ok();
-            let _guard = lock.lock().await;
-            if let Err(e) = reindex::full_reindex(&pool, &dir, &skip).await {
-                tracing::warn!(
-                    "reindex_project: full_reindex failed for {}: {e}",
-                    dir.display()
-                );
+            let state = app.state::<IndexState>();
+            if let Err(e) = state.run_full_reindex(&key).await {
+                tracing::warn!("reindex_project: full_reindex failed for {:?}: {e}", key);
             }
         }));
     }
