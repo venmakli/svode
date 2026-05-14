@@ -133,9 +133,13 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
           to: newPath,
           projectPath: activeRootPath,
         });
-        // Mark files with updated backlinks for reload
-        for (const f of modifiedFiles) {
-          useEditorStore.getState().markAiModified(f);
+        // Backlinks files: invalidate Plate cache (markStale) + suppress
+        // watcher so it doesn't re-mark them as aiModified (no blue dot —
+        // the user just initiated this rename, no review needed).
+        if (modifiedFiles.length > 0) {
+          const editor = useEditorStore.getState();
+          for (const f of modifiedFiles) editor.markStale(f);
+          editor.suppressPaths(modifiedFiles);
         }
       } else {
         // Title-edit only: file rename + backlinks are deferred to ⌘S (unified with editor-title-edit).

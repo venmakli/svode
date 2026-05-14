@@ -223,9 +223,11 @@ export function PlateDocumentEditor() {
       .catch(() => setBrokenLinks(new Set()));
 
     // Use cached Plate value if available and file wasn't modified externally
+    // (visual aiModified flag) or invalidated by a prior backlinks update (staleCache).
     const cached = docCacheRef.current.get(activeDocument);
+    const editorState = useEditorStore.getState();
     const wasExternallyModified =
-      useEditorStore.getState().aiModified[activeDocument];
+      editorState.aiModified[activeDocument] || editorState.staleCache[activeDocument];
 
     if (cached && !wasExternallyModified) {
       invoke<Entry>("read_entry", {
@@ -248,6 +250,7 @@ export function PlateDocumentEditor() {
         });
     } else {
       docCacheRef.current.delete(activeDocument);
+      useEditorStore.getState().clearStale(activeDocument);
       invoke<Entry>("read_entry", {
         space: spacePath,
         path: activeDocument,
@@ -357,9 +360,14 @@ export function PlateDocumentEditor() {
         docCacheRef.current.set(activeDocument, editor.children);
       }
 
-      for (const f of result.modified_files) {
-        useEditorStore.getState().markAiModified(f);
-        docCacheRef.current.delete(f);
+      // Backlinks files: invalidate cache so next open re-reads from disk,
+      // and suppress the watcher so it doesn't re-mark them as aiModified
+      // (no spurious blue dot — the user initiated this rename).
+      if (result.modified_files.length > 0) {
+        for (const f of result.modified_files) {
+          docCacheRef.current.delete(f);
+        }
+        useEditorStore.getState().suppressPaths(result.modified_files);
       }
 
       // Auto-commit the saved file. During mid-merge, route through
@@ -412,9 +420,12 @@ export function PlateDocumentEditor() {
           useSpaceStore.getState().refreshTree(activeWsId);
         }
       }
-      for (const f of result.modified_files) {
-        useEditorStore.getState().markAiModified(f);
-        docCacheRef.current.delete(f);
+      // See handleSave: same backlinks suppress + cache-invalidate.
+      if (result.modified_files.length > 0) {
+        for (const f of result.modified_files) {
+          docCacheRef.current.delete(f);
+        }
+        useEditorStore.getState().suppressPaths(result.modified_files);
       }
       await commitAllSpace(spacePath, activeRootPath ?? undefined);
     } catch (err) {

@@ -3,8 +3,10 @@ import { create } from "zustand";
 interface EditorState {
   /** Tracks unsaved user edits per file path */
   unsavedChanges: Record<string, boolean>;
-  /** Tracks files modified externally (AI/IDE) that user hasn't viewed */
+  /** Tracks files modified externally (AI/IDE) that user hasn't viewed — drives the blue dot */
   aiModified: Record<string, boolean>;
+  /** Cache-invalidation-only flag: forces Plate to re-read from disk on next open. No visual side effect. */
+  staleCache: Record<string, boolean>;
   /** Pending title rename from sidebar — editor picks it up and applies */
   pendingRename: { path: string; title: string; newPath: string | null } | null;
   /** Set of broken link target paths for the currently open document */
@@ -16,6 +18,8 @@ interface EditorState {
   clearUnsaved: (path: string) => void;
   markAiModified: (path: string) => void;
   clearAiModified: (path: string) => void;
+  markStale: (path: string) => void;
+  clearStale: (path: string) => void;
   hasIndicator: (path: string) => boolean;
   /** Suppress file watcher indicators for these paths (auto-cleared after 2s) */
   suppressPaths: (paths: string[]) => void;
@@ -29,6 +33,7 @@ interface EditorState {
 export const useEditorStore = create<EditorState>((set, get) => ({
   unsavedChanges: {},
   aiModified: {},
+  staleCache: {},
   pendingRename: null,
   brokenLinks: new Set<string>(),
   suppressedPaths: new Set<string>(),
@@ -53,6 +58,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((s) => {
       const { [path]: _removed, ...rest } = s.aiModified;
       return { aiModified: rest };
+    }),
+
+  markStale: (path) =>
+    set((s) => ({
+      staleCache: { ...s.staleCache, [path]: true },
+    })),
+
+  clearStale: (path) =>
+    set((s) => {
+      const { [path]: _removed, ...rest } = s.staleCache;
+      return { staleCache: rest };
     }),
 
   hasIndicator: (path) => {
