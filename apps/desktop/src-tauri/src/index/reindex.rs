@@ -106,6 +106,9 @@ pub(crate) struct IndexedEntry {
     pub cover_json: Option<String>,
     pub created: String,
     pub updated: String,
+    pub collection_root_path: Option<String>,
+    pub in_collection: bool,
+    pub is_entry_head: bool,
     pub fields_json: String,
     pub body_preview: String,
 }
@@ -181,6 +184,19 @@ pub(crate) fn build_entry(space_dir: &Path, abs_path: &Path) -> Result<IndexedEn
             }
         };
 
+    let collection_root_path = match crate::properties::resolve_collection_schema_result(
+        &space_dir.to_string_lossy(),
+        &rel_path,
+    ) {
+        Ok(Some((_, root))) => Some(root_path_for_index(&root)),
+        Ok(None) => None,
+        Err(e) => {
+            tracing::warn!("schema resolver failed for {rel_path}; indexing as standalone: {e}");
+            None
+        }
+    };
+    let in_collection = collection_root_path.is_some();
+
     Ok(IndexedEntry {
         id,
         parent_path: parent_path_for(&rel_path),
@@ -191,9 +207,17 @@ pub(crate) fn build_entry(space_dir: &Path, abs_path: &Path) -> Result<IndexedEn
         cover_json,
         created,
         updated,
+        collection_root_path,
+        in_collection,
+        is_entry_head: true,
         fields_json,
         body_preview,
     })
+}
+
+fn root_path_for_index(path: &Path) -> String {
+    let rel = normalize_rel(&path.to_string_lossy());
+    if rel.is_empty() { ".".to_string() } else { rel }
 }
 
 fn parent_path_for(rel_path: &str) -> String {
@@ -259,7 +283,7 @@ where
             id, file_path, parent_path, title, icon, description, cover, created, updated,
             collection_root_path, in_collection, is_entry_head, fields, body_preview
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 1, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(file_path) DO UPDATE SET
             id = excluded.id,
             parent_path = excluded.parent_path,
@@ -285,6 +309,9 @@ where
     .bind(&entry.cover_json)
     .bind(&entry.created)
     .bind(&entry.updated)
+    .bind(&entry.collection_root_path)
+    .bind(if entry.in_collection { 1_i64 } else { 0_i64 })
+    .bind(if entry.is_entry_head { 1_i64 } else { 0_i64 })
     .bind(&entry.fields_json)
     .bind(&entry.body_preview)
     .execute(executor)

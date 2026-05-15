@@ -25,6 +25,18 @@ interface UseFileWatcherOptions {
   isLoadingRef: React.RefObject<boolean>;
 }
 
+function isSchemaPath(path: string) {
+  return path.split("/").pop() === "schema.yaml";
+}
+
+function reindexProjectForSchemaChange() {
+  const projectPath = useSpaceStore.getState().activeRootPath;
+  if (!projectPath) return;
+  invoke("reindex_project", { projectPath }).catch((err) =>
+    console.warn("Failed to reindex after schema change:", err),
+  );
+}
+
 export function useFileWatcher({
   editor,
   spacePath,
@@ -68,6 +80,12 @@ export function useFileWatcher({
     listen<FileEvent>("file:changed", (event) => {
       const changedPath = event.payload.path;
       const nonce = event.payload.writeNonce;
+
+      if (isSchemaPath(changedPath)) {
+        reindexProjectForSchemaChange();
+        refreshTree();
+        return;
+      }
 
       // Own-write echo filter: drop events produced by our own write_entry.
       if (nonce && ownNoncesRef.current.has(nonce)) {
@@ -114,6 +132,12 @@ export function useFileWatcher({
     listen<FileEvent>("file:deleted", (event) => {
       const deletedPath = event.payload.path;
 
+      if (isSchemaPath(deletedPath)) {
+        reindexProjectForSchemaChange();
+        refreshTree();
+        return;
+      }
+
       if (deletedPath === activeDocRef.current) {
         closeDocument();
         toast.error(m.editor_file_deleted());
@@ -122,7 +146,10 @@ export function useFileWatcher({
     }).then((unlisten) => unlisteners.push(unlisten));
 
     // file:created
-    listen<FileEvent>("file:created", () => {
+    listen<FileEvent>("file:created", (event) => {
+      if (isSchemaPath(event.payload.path)) {
+        reindexProjectForSchemaChange();
+      }
       refreshTree();
     }).then((unlisten) => unlisteners.push(unlisten));
 

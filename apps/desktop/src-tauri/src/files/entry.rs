@@ -272,6 +272,120 @@ fn order_rename(space: &Path, dir_key: &str, old_name: &str, new_name: &str) {
     }
 }
 
+fn order_insert_after(space: &Path, dir_key: &str, after_name: &str, name: &str) {
+    let mut order = tree::read_order(space);
+    let list = order.entry(dir_key.to_string()).or_default();
+    if list.iter().any(|item| item == name) {
+        return;
+    }
+    if let Some(pos) = list.iter().position(|item| item == after_name) {
+        list.insert(pos + 1, name.to_string());
+    } else {
+        list.push(name.to_string());
+    }
+    let _ = tree::write_order(space, &order);
+}
+
+fn order_remove_key(space: &Path, dir_key: &str) {
+    let mut order = tree::read_order(space);
+    if order.remove(dir_key).is_some() {
+        let _ = tree::write_order(space, &order);
+    }
+}
+
+fn dir_key_for(parent: &Path) -> String {
+    if parent.as_os_str().is_empty() {
+        ".".to_string()
+    } else {
+        parent.to_string_lossy().replace('\\', "/")
+    }
+}
+
+fn rel_from_abs(space: &Path, path: &Path) -> String {
+    path.strip_prefix(space)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn humanize_slug(name: &str) -> String {
+    let mut chars = name.replace(['-', '_'], " ").chars().collect::<Vec<_>>();
+    if let Some(first) = chars.first_mut() {
+        first.make_ascii_uppercase();
+    }
+    chars.into_iter().collect()
+}
+
+fn unique_child_path(parent: &Path, stem: &str, extension: Option<&str>) -> PathBuf {
+    let make = |candidate: &str| match extension {
+        Some(ext) => parent.join(format!("{candidate}.{ext}")),
+        None => parent.join(candidate),
+    };
+    let first = make(stem);
+    if !first.exists() {
+        return first;
+    }
+    for i in 1..=1000 {
+        let candidate = make(&format!("{stem}-{i}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    make(&format!(
+        "{stem}-{}",
+        ulid::Ulid::new().to_string().to_lowercase()
+    ))
+}
+
+fn collect_entry_md_files(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), AppError> {
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.') {
+            continue;
+        }
+        if path.is_dir() {
+            collect_entry_md_files(&path, out)?;
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn find_entry_path_by_id(space: &Path, entry_id: &str) -> Result<String, AppError> {
+    let mut files = Vec::new();
+    collect_entry_md_files(space, &mut files)?;
+    for file in files {
+        let raw = fs::read_to_string(&file)?;
+        let Some((meta, _)) = frontmatter::try_parse(&raw)? else {
+            continue;
+        };
+        if meta.id == entry_id {
+            return Ok(rel_from_abs(space, &file));
+        }
+    }
+    Err(AppError::FileNotFound(entry_id.to_string()))
+}
+
+fn refresh_markdown_identity(path: &Path, title_suffix: Option<&str>) -> Result<(), AppError> {
+    let raw = fs::read_to_string(path)?;
+    let Some((mut meta, body)) = frontmatter::try_parse(&raw)? else {
+        return Ok(());
+    };
+    meta.id = ulid::Ulid::new().to_string().to_lowercase();
+    let now = now_rfc3339();
+    meta.created = now.clone();
+    meta.updated = now;
+    if let Some(suffix) = title_suffix {
+        meta.title.push_str(suffix);
+    }
+    fs::write(path, frontmatter::serialize(&meta, &body))?;
+    Ok(())
+}
+
 /// Create a new entry on disk. Returns the created Entry.
 pub fn create(space: &str, parent_path: Option<&str>, title: &str) -> Result<Entry, AppError> {
     let id = ulid::Ulid::new().to_string().to_lowercase();
@@ -1101,6 +1215,333 @@ pub fn unnest_entry(
     }
 
     Ok(new_rel)
+}
+
+pub fn convert_entry_to_folder(
+    space: &Path,
+    entry_id: &str,
+    backlink_index: Option<&BacklinkIndex>,
+) -> Result<Entry, AppError> {
+    let path = find_entry_path_by_id(space, entry_id)?;
+    let abs_path = space.join(&path);
+    if abs_path.is_dir()
+        || path
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
+    {
+        return Err(AppError::General("entry is already a folder".to_string()));
+    }
+    if abs_path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+        return Err(AppError::General(
+            "entry must be a markdown leaf".to_string(),
+        ));
+    }
+
+    let stem = abs_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or_else(|| AppError::General("invalid entry filename".to_string()))?;
+    let parent_abs = abs_path.parent().unwrap_or(space);
+    let folder_abs = parent_abs.join(stem);
+    if folder_abs.exists() {
+        return Err(AppError::FileAlreadyExists(rel_from_abs(
+            space,
+            &folder_abs,
+        )));
+    }
+    fs::create_dir_all(&folder_abs)?;
+    let new_abs = folder_abs.join("README.md");
+    fs::rename(&abs_path, &new_abs)?;
+    let new_rel = rel_from_abs(space, &new_abs);
+
+    let parent_rel = Path::new(&path).parent().unwrap_or(Path::new(""));
+    let dir_key = dir_key_for(parent_rel);
+    let old_name = Path::new(&path)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    order_rename(space, &dir_key, &old_name, stem);
+
+    if let Some(index) = backlink_index {
+        let _ = index.update_links_on_rename(space, &path, &new_rel, None);
+        let _ = index.update_file(space, &new_rel);
+    }
+    read(&space.to_string_lossy(), &new_rel)
+}
+
+pub fn convert_entry_to_leaf(
+    space: &Path,
+    entry_id: &str,
+    backlink_index: Option<&BacklinkIndex>,
+) -> Result<Entry, AppError> {
+    let path = find_entry_path_by_id(space, entry_id)?;
+    let readme_abs = space.join(&path);
+    if !readme_abs
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
+    {
+        return Err(AppError::General(
+            "only folder README.md can be converted to leaf".to_string(),
+        ));
+    }
+    let folder_abs = readme_abs
+        .parent()
+        .ok_or_else(|| AppError::General("README.md has no parent folder".to_string()))?;
+    if folder_abs.join("schema.yaml").exists() {
+        return Err(AppError::General(
+            "EntryNotEmpty { entries: [], folders: [], other: [\"schema.yaml\"] }".to_string(),
+        ));
+    }
+
+    let mut entries = Vec::new();
+    let mut folders = Vec::new();
+    let mut other = Vec::new();
+    for item in fs::read_dir(folder_abs)? {
+        let item = item?;
+        let name = item.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || name.eq_ignore_ascii_case("README.md") {
+            continue;
+        }
+        let item_path = item.path();
+        if item_path.is_dir() {
+            folders.push(name);
+        } else if item_path.extension().and_then(|ext| ext.to_str()) == Some("md") {
+            entries.push(name);
+        } else {
+            other.push(name);
+        }
+    }
+    if !entries.is_empty() || !folders.is_empty() || !other.is_empty() {
+        return Err(AppError::General(format!(
+            "EntryNotEmpty {{ entries: {:?}, folders: {:?}, other: {:?} }}",
+            entries, folders, other
+        )));
+    }
+
+    let folder_name = folder_abs
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::General("invalid folder name".to_string()))?;
+    let parent_abs = folder_abs
+        .parent()
+        .ok_or_else(|| AppError::General("folder has no parent".to_string()))?;
+    let leaf_abs = parent_abs.join(format!("{folder_name}.md"));
+    if leaf_abs.exists() {
+        return Err(AppError::FileAlreadyExists(rel_from_abs(space, &leaf_abs)));
+    }
+    fs::rename(&readme_abs, &leaf_abs)?;
+    let _ = fs::remove_dir_all(folder_abs);
+    let new_rel = rel_from_abs(space, &leaf_abs);
+
+    let parent_rel = Path::new(&path)
+        .parent()
+        .and_then(Path::parent)
+        .unwrap_or(Path::new(""));
+    let dir_key = dir_key_for(parent_rel);
+    order_rename(space, &dir_key, folder_name, &format!("{folder_name}.md"));
+    let child_key = if dir_key == "." {
+        folder_name.to_string()
+    } else {
+        format!("{}/{}", dir_key, folder_name)
+    };
+    order_remove_key(space, &child_key);
+
+    if let Some(index) = backlink_index {
+        let _ = index.update_links_on_rename(space, &path, &new_rel, None);
+        let _ = index.update_file(space, &new_rel);
+    }
+    read(&space.to_string_lossy(), &new_rel)
+}
+
+pub fn convert_entry_to_nested_collection(
+    space: &Path,
+    entry_id: &str,
+) -> Result<String, AppError> {
+    let path = find_entry_path_by_id(space, entry_id)?;
+    let readme_abs = space.join(&path);
+    if !readme_abs
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
+    {
+        return Err(AppError::General(
+            "entry must be converted to folder before making a collection".to_string(),
+        ));
+    }
+    let folder_rel = Path::new(&path)
+        .parent()
+        .map(|parent| parent.to_string_lossy().replace('\\', "/"))
+        .ok_or_else(|| AppError::General("README.md has no parent folder".to_string()))?;
+    let schema_abs = space.join(&folder_rel).join("schema.yaml");
+    if schema_abs.exists() {
+        return Err(AppError::FileAlreadyExists(rel_from_abs(
+            space,
+            &schema_abs,
+        )));
+    }
+    crate::properties::write_default_collection_schema(&space.to_string_lossy(), &folder_rel)?;
+    Ok(folder_rel)
+}
+
+pub fn convert_bare_folder_to_collection(
+    space: &Path,
+    folder_path: &str,
+) -> Result<Entry, AppError> {
+    let rel = folder_path.trim_matches('/').replace('\\', "/");
+    let folder_abs = space.join(&rel);
+    if !folder_abs.is_dir() {
+        return Err(AppError::FileNotFound(rel));
+    }
+    let readme_abs = folder_abs.join("README.md");
+    let schema_abs = folder_abs.join("schema.yaml");
+    if readme_abs.exists() {
+        return Err(AppError::FileAlreadyExists(rel_from_abs(
+            space,
+            &readme_abs,
+        )));
+    }
+    if schema_abs.exists() {
+        return Err(AppError::FileAlreadyExists(rel_from_abs(
+            space,
+            &schema_abs,
+        )));
+    }
+
+    let folder_name = folder_abs
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("Collection");
+    let now = now_rfc3339();
+    let mut meta = EntryMeta {
+        id: ulid::Ulid::new().to_string().to_lowercase(),
+        title: humanize_slug(folder_name),
+        icon: None,
+        description: None,
+        cover: None,
+        created: now.clone(),
+        updated: now,
+        extra: HashMap::new(),
+    };
+    crate::properties::apply_schema_defaults_for_path(
+        &space.to_string_lossy(),
+        &format!("{rel}/README.md"),
+        &mut meta,
+    )?;
+    fs::write(&readme_abs, frontmatter::serialize(&meta, ""))?;
+    crate::properties::write_default_collection_schema(&space.to_string_lossy(), &rel)?;
+    read(&space.to_string_lossy(), &format!("{rel}/README.md"))
+}
+
+pub fn duplicate_entry(space: &Path, file_path: &str) -> Result<Entry, AppError> {
+    let rel = file_path.trim_matches('/').replace('\\', "/");
+    let source_abs = space.join(&rel);
+    if !source_abs.exists() {
+        return Err(AppError::FileNotFound(rel));
+    }
+
+    let (root_source_abs, source_order_name, parent_abs, root_head_rel) = if source_abs.is_dir() {
+        let parent = source_abs.parent().unwrap_or(space).to_path_buf();
+        let order_name = source_abs
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let head = source_abs.join("README.md");
+        let head_rel = rel_from_abs(space, &head);
+        (source_abs.clone(), order_name, parent, head_rel)
+    } else if source_abs
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
+    {
+        let folder = source_abs
+            .parent()
+            .ok_or_else(|| AppError::General("README.md has no parent folder".to_string()))?;
+        let parent = folder.parent().unwrap_or(space).to_path_buf();
+        let order_name = folder
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        (folder.to_path_buf(), order_name, parent, rel.clone())
+    } else {
+        let parent = source_abs.parent().unwrap_or(space).to_path_buf();
+        let order_name = source_abs
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        (source_abs.clone(), order_name, parent, rel.clone())
+    };
+
+    let copy_title = read(&space.to_string_lossy(), &root_head_rel)
+        .map(|entry| format!("{} (copy)", entry.meta.title))
+        .unwrap_or_else(|_| format!("{} (copy)", source_order_name));
+    let copy_stem = slugify(&copy_title);
+    let dest_abs = if root_source_abs.is_dir() {
+        unique_child_path(&parent_abs, &copy_stem, None)
+    } else {
+        unique_child_path(&parent_abs, &copy_stem, Some("md"))
+    };
+
+    if root_source_abs.is_dir() {
+        copy_dir_recursive(&root_source_abs, &dest_abs)?;
+        let head = dest_abs.join("README.md");
+        if head.exists() {
+            refresh_markdown_identity(&head, Some(" (copy)"))?;
+        }
+        let mut files = Vec::new();
+        collect_entry_md_files(&dest_abs, &mut files)?;
+        for file in files {
+            if file != head {
+                refresh_markdown_identity(&file, None)?;
+            }
+        }
+    } else {
+        fs::copy(&root_source_abs, &dest_abs)?;
+        refresh_markdown_identity(&dest_abs, Some(" (copy)"))?;
+    }
+
+    let dir_key = rel_from_abs(space, &parent_abs);
+    let dir_key = if dir_key.is_empty() {
+        ".".to_string()
+    } else {
+        dir_key
+    };
+    let dest_order_name = dest_abs
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    order_insert_after(space, &dir_key, &source_order_name, &dest_order_name);
+
+    let entry_rel = if dest_abs.is_dir() {
+        rel_from_abs(space, &dest_abs.join("README.md"))
+    } else {
+        rel_from_abs(space, &dest_abs)
+    };
+    read(&space.to_string_lossy(), &entry_rel)
+}
+
+fn copy_dir_recursive(source: &Path, dest: &Path) -> Result<(), AppError> {
+    fs::create_dir_all(dest)?;
+    for item in fs::read_dir(source)? {
+        let item = item?;
+        if item.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+        let source_path = item.path();
+        let dest_path = dest.join(item.file_name());
+        if source_path.is_dir() {
+            copy_dir_recursive(&source_path, &dest_path)?;
+        } else {
+            fs::copy(&source_path, &dest_path)?;
+        }
+    }
+    Ok(())
 }
 
 /// Delete an entry from disk. Removes from backlink index if provided.

@@ -14,12 +14,34 @@ use crate::git::autocommit::{AutocommitService, StructuralOp};
 use crate::git::commands::{GitState, require_cli};
 use crate::index::{self, IndexKey, IndexState, ResolvedDocLink};
 use crate::properties::{
-    self, CollectionSchema, Column, EntrySchemaResponse, Person, PropertyOption, PropertyType,
+    self, CollectionInfo, CollectionSchema, Column, EntrySchemaResponse, Filter, Person,
+    PropertyOption, PropertyType, Sort, View,
 };
 use crate::space::config;
 
 fn basename(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
+}
+
+fn entry_history_name(path: &str) -> String {
+    let normalized = path.trim_matches('/').replace('\\', "/");
+    let path = Path::new(&normalized);
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
+    {
+        return path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("README.md")
+            .to_string();
+    }
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(&normalized)
+        .to_string()
 }
 
 fn maybe_autocommit_structural(
@@ -196,6 +218,34 @@ async fn maybe_autocommit_schema(
         .await
     {
         tracing::warn!("schema autocommit failed: {e}");
+    }
+}
+
+async fn pool_for_space(
+    index_state: &IndexState,
+    space: &str,
+    project_path: Option<&str>,
+) -> Result<sqlx::SqlitePool, AppError> {
+    let key = if let Some(key) = index_state.key_for_space_dir(Path::new(space)).await {
+        key
+    } else if let Some(project_path) = project_path.filter(|path| !path.is_empty()) {
+        index_state
+            .resolve(Path::new(project_path), Path::new(space))
+            .await?
+            .0
+    } else {
+        IndexKey::Root(PathBuf::from(space))
+    };
+    index_state.get_or_create(&key).await
+}
+
+async fn reindex_space_dir(index_state: &IndexState, space: &str) {
+    let key = index_state
+        .key_for_space_dir(Path::new(space))
+        .await
+        .unwrap_or_else(|| IndexKey::Root(PathBuf::from(space)));
+    if let Err(e) = index_state.run_full_reindex(&key).await {
+        tracing::warn!("collection operation reindex failed for {:?}: {e}", key);
     }
 }
 
@@ -456,6 +506,188 @@ pub async fn update_document_label(
     )
     .await;
     Ok(schema)
+}
+
+#[tauri::command]
+pub fn get_collection_schema(
+    space: String,
+    collection_path: String,
+) -> Result<CollectionSchema, AppError> {
+    properties::read_collection_schema(&space, &collection_path)
+}
+
+#[tauri::command]
+pub async fn add_view(
+    space: String,
+    collection_path: String,
+    view: View,
+    position: Option<usize>,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    let message = format!("Add view \"{}\"", view.name());
+    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
+    let schema = properties::add_view(&space, &collection_path, view, position)?;
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    Ok(schema)
+}
+
+#[tauri::command]
+pub async fn rename_view(
+    space: String,
+    collection_path: String,
+    old_name: String,
+    new_name: String,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
+    let schema = properties::rename_view(&space, &collection_path, &old_name, &new_name)?;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        format!("Rename view \"{old_name}\" \u{2192} \"{new_name}\""),
+    )
+    .await;
+    Ok(schema)
+}
+
+#[tauri::command]
+pub async fn update_view(
+    space: String,
+    collection_path: String,
+    view_name: String,
+    patch: serde_json::Value,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
+    let patch = json_to_yaml_value(patch)?;
+    let schema = properties::update_view(&space, &collection_path, &view_name, patch)?;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        format!("Update view \"{view_name}\""),
+    )
+    .await;
+    Ok(schema)
+}
+
+#[tauri::command]
+pub async fn delete_view(
+    space: String,
+    collection_path: String,
+    view_name: String,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
+    let schema = properties::delete_view(&space, &collection_path, &view_name)?;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        format!("Delete view \"{view_name}\""),
+    )
+    .await;
+    Ok(schema)
+}
+
+#[tauri::command]
+pub async fn duplicate_view(
+    space: String,
+    collection_path: String,
+    view_name: String,
+    new_name: String,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
+    let schema = properties::duplicate_view(&space, &collection_path, &view_name, &new_name)?;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        format!("Duplicate view \"{view_name}\" \u{2192} \"{new_name}\""),
+    )
+    .await;
+    Ok(schema)
+}
+
+#[tauri::command]
+pub async fn reorder_views(
+    space: String,
+    collection_path: String,
+    new_order: Vec<String>,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
+    let schema = properties::reorder_views(&space, &collection_path, new_order)?;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        "Reorder views".to_string(),
+    )
+    .await;
+    Ok(schema)
+}
+
+#[tauri::command]
+pub async fn list_entries_for_view(
+    space: String,
+    collection_path: String,
+    view_name: String,
+    include_nested: Option<bool>,
+    project_path: Option<String>,
+    index_state: State<'_, IndexState>,
+) -> Result<Vec<Entry>, AppError> {
+    let pool = pool_for_space(&index_state, &space, project_path.as_deref()).await?;
+    properties::list_entries_for_view(
+        &pool,
+        &space,
+        &collection_path,
+        &view_name,
+        include_nested.unwrap_or(false),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn query_entries(
+    space: String,
+    collection_path: String,
+    filters: Option<Vec<Filter>>,
+    sort: Option<Vec<Sort>>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    project_path: Option<String>,
+    index_state: State<'_, IndexState>,
+) -> Result<Vec<Entry>, AppError> {
+    let pool = pool_for_space(&index_state, &space, project_path.as_deref()).await?;
+    properties::query_entries(
+        &pool,
+        &space,
+        &collection_path,
+        filters,
+        sort,
+        limit,
+        offset,
+    )
+    .await
+}
+
+#[tauri::command]
+pub fn list_collections(space: String) -> Result<Vec<CollectionInfo>, AppError> {
+    properties::list_collections(&space)
 }
 
 #[tauri::command]
@@ -1061,6 +1293,110 @@ pub async fn unnest_entry(
         StructuralOp::Move(basename(&new_path)),
     );
     Ok(new_path)
+}
+
+#[tauri::command]
+pub async fn convert_entry_to_folder(
+    space: String,
+    entry_id: String,
+    project_path: Option<String>,
+    index_state: State<'_, IndexState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<Entry, AppError> {
+    let backlink_index = backlinks_for_space(&index_state, &space).await;
+    ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
+    let entry =
+        entry::convert_entry_to_folder(Path::new(&space), &entry_id, Some(&backlink_index))?;
+    reindex_space_dir(&index_state, &space).await;
+    maybe_autocommit_structural(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        StructuralOp::ConvertToFolder(entry_history_name(&entry.path)),
+    );
+    Ok(entry)
+}
+
+#[tauri::command]
+pub async fn convert_entry_to_leaf(
+    space: String,
+    entry_id: String,
+    project_path: Option<String>,
+    index_state: State<'_, IndexState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<Entry, AppError> {
+    let backlink_index = backlinks_for_space(&index_state, &space).await;
+    ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
+    let entry = entry::convert_entry_to_leaf(Path::new(&space), &entry_id, Some(&backlink_index))?;
+    reindex_space_dir(&index_state, &space).await;
+    maybe_autocommit_structural(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        StructuralOp::ConvertToLeaf(entry_history_name(&entry.path)),
+    );
+    Ok(entry)
+}
+
+#[tauri::command]
+pub async fn convert_entry_to_nested_collection(
+    space: String,
+    entry_id: String,
+    project_path: Option<String>,
+    index_state: State<'_, IndexState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<(), AppError> {
+    let collection_path = entry::convert_entry_to_nested_collection(Path::new(&space), &entry_id)?;
+    reindex_space_dir(&index_state, &space).await;
+    maybe_autocommit_structural(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        StructuralOp::MakeCollection(entry_history_name(&collection_path)),
+    );
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn convert_bare_folder_to_collection(
+    space: String,
+    folder_path: String,
+    project_path: Option<String>,
+    index_state: State<'_, IndexState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<Entry, AppError> {
+    let entry = entry::convert_bare_folder_to_collection(Path::new(&space), &folder_path)?;
+    reindex_space_dir(&index_state, &space).await;
+    maybe_autocommit_structural(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        StructuralOp::MakeCollection(entry_history_name(&folder_path)),
+    );
+    Ok(entry)
+}
+
+#[tauri::command]
+pub async fn duplicate_entry(
+    space: String,
+    file_path: String,
+    project_path: Option<String>,
+    index_state: State<'_, IndexState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<Entry, AppError> {
+    let old_name = entry_history_name(&file_path);
+    let entry = entry::duplicate_entry(Path::new(&space), &file_path)?;
+    reindex_space_dir(&index_state, &space).await;
+    maybe_autocommit_structural(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        StructuralOp::Duplicate {
+            old: old_name,
+            new: entry_history_name(&entry.path),
+        },
+    );
+    Ok(entry)
 }
 
 #[tauri::command]

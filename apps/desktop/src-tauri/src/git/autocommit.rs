@@ -23,6 +23,10 @@ pub enum StructuralOp {
     Rename { old: String, new: String },
     Move(String),
     Reorder,
+    ConvertToFolder(String),
+    ConvertToLeaf(String),
+    MakeCollection(String),
+    Duplicate { old: String, new: String },
 }
 
 /// Categories of system-level auto-commits — messages and file scopes.
@@ -723,6 +727,10 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
     let mut deletes: Vec<&String> = Vec::new();
     let mut moves: Vec<&String> = Vec::new();
     let mut renames: Vec<(&String, &String)> = Vec::new();
+    let mut converts_to_folder: Vec<&String> = Vec::new();
+    let mut converts_to_leaf: Vec<&String> = Vec::new();
+    let mut make_collections: Vec<&String> = Vec::new();
+    let mut duplicates: Vec<(&String, &String)> = Vec::new();
 
     for op in &non_reorder {
         match op {
@@ -731,7 +739,22 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
             StructuralOp::Move(n) => moves.push(n),
             StructuralOp::Rename { old, new } => renames.push((old, new)),
             StructuralOp::Reorder => {}
+            StructuralOp::ConvertToFolder(n) => converts_to_folder.push(n),
+            StructuralOp::ConvertToLeaf(n) => converts_to_leaf.push(n),
+            StructuralOp::MakeCollection(n) => make_collections.push(n),
+            StructuralOp::Duplicate { old, new } => duplicates.push((old, new)),
         }
+    }
+
+    // UI "Make collection from leaf" is implemented as convert-to-folder
+    // followed by make-collection. Collapse that batch to the user-facing op.
+    let mut collapsed_converts_to_folder = converts_to_folder.clone();
+    if !make_collections.is_empty() {
+        collapsed_converts_to_folder.retain(|name| {
+            !make_collections
+                .iter()
+                .any(|collection| *collection == *name)
+        });
     }
 
     // How many distinct kinds are non-empty?
@@ -746,6 +769,18 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
         kinds += 1;
     }
     if !renames.is_empty() {
+        kinds += 1;
+    }
+    if !collapsed_converts_to_folder.is_empty() {
+        kinds += 1;
+    }
+    if !converts_to_leaf.is_empty() {
+        kinds += 1;
+    }
+    if !make_collections.is_empty() {
+        kinds += 1;
+    }
+    if !duplicates.is_empty() {
         kinds += 1;
     }
     if has_reorder {
@@ -781,6 +816,34 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
             n => format!("Rename {} files", n),
         }
     };
+    let render_convert_to_folder = |items: &[&String]| -> String {
+        match items.len() {
+            0 => String::new(),
+            1 => format!("Convert {} to folder", items[0]),
+            n => format!("Convert {} entries to folder", n),
+        }
+    };
+    let render_convert_to_leaf = |items: &[&String]| -> String {
+        match items.len() {
+            0 => String::new(),
+            1 => format!("Convert {} to leaf", items[0]),
+            n => format!("Convert {} entries to leaf", n),
+        }
+    };
+    let render_make_collections = |items: &[&String]| -> String {
+        match items.len() {
+            0 => String::new(),
+            1 => format!("Make collection {}", items[0]),
+            n => format!("Make {} collections", n),
+        }
+    };
+    let render_duplicates = |items: &[(&String, &String)]| -> String {
+        match items.len() {
+            0 => String::new(),
+            1 => format!("Duplicate {} \u{2192} {}", items[0].0, items[0].1),
+            n => format!("Duplicate {} entries", n),
+        }
+    };
 
     // Single kind path — cleanest.
     if kinds == 1 {
@@ -796,13 +859,32 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
         if !renames.is_empty() {
             return render_renames(&renames);
         }
+        if !collapsed_converts_to_folder.is_empty() {
+            return render_convert_to_folder(&collapsed_converts_to_folder);
+        }
+        if !converts_to_leaf.is_empty() {
+            return render_convert_to_leaf(&converts_to_leaf);
+        }
+        if !make_collections.is_empty() {
+            return render_make_collections(&make_collections);
+        }
+        if !duplicates.is_empty() {
+            return render_duplicates(&duplicates);
+        }
         if has_reorder {
             return "Reorder files".to_string();
         }
     }
 
     // Mixed kinds. If total individual items is small (≤5), join per-op messages.
-    let total: usize = creates.len() + deletes.len() + moves.len() + renames.len();
+    let total: usize = creates.len()
+        + deletes.len()
+        + moves.len()
+        + renames.len()
+        + collapsed_converts_to_folder.len()
+        + converts_to_leaf.len()
+        + make_collections.len()
+        + duplicates.len();
     let total_with_reorder = total + if has_reorder { 1 } else { 0 };
 
     if total_with_reorder <= 5 {
@@ -815,6 +897,16 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
                 StructuralOp::Move(n) => segs.push(format!("Move {}", n)),
                 StructuralOp::Rename { old, new } => {
                     segs.push(format!("Rename {} \u{2192} {}", old, new))
+                }
+                StructuralOp::ConvertToFolder(n) => {
+                    if !make_collections.iter().any(|collection| *collection == n) {
+                        segs.push(format!("Convert {} to folder", n));
+                    }
+                }
+                StructuralOp::ConvertToLeaf(n) => segs.push(format!("Convert {} to leaf", n)),
+                StructuralOp::MakeCollection(n) => segs.push(format!("Make collection {}", n)),
+                StructuralOp::Duplicate { old, new } => {
+                    segs.push(format!("Duplicate {} \u{2192} {}", old, new))
                 }
                 StructuralOp::Reorder => {
                     // Collapse — only keep first reorder occurrence.
@@ -842,6 +934,22 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
         parts.push(s);
     }
     let s = render_renames(&renames);
+    if !s.is_empty() {
+        parts.push(s);
+    }
+    let s = render_convert_to_folder(&collapsed_converts_to_folder);
+    if !s.is_empty() {
+        parts.push(s);
+    }
+    let s = render_convert_to_leaf(&converts_to_leaf);
+    if !s.is_empty() {
+        parts.push(s);
+    }
+    let s = render_make_collections(&make_collections);
+    if !s.is_empty() {
+        parts.push(s);
+    }
+    let s = render_duplicates(&duplicates);
     if !s.is_empty() {
         parts.push(s);
     }
@@ -954,6 +1062,36 @@ mod tests {
         assert_eq!(
             aggregate_message(&ops),
             "Create meeting.md; Delete draft.md"
+        );
+    }
+
+    #[test]
+    fn collection_conversion_messages() {
+        let ops = vec![StructuralOp::ConvertToFolder(s("tasks"))];
+        assert_eq!(aggregate_message(&ops), "Convert tasks to folder");
+
+        let ops = vec![StructuralOp::ConvertToLeaf(s("tasks.md"))];
+        assert_eq!(aggregate_message(&ops), "Convert tasks.md to leaf");
+    }
+
+    #[test]
+    fn make_collection_chain_collapses() {
+        let ops = vec![
+            StructuralOp::ConvertToFolder(s("tasks")),
+            StructuralOp::MakeCollection(s("tasks")),
+        ];
+        assert_eq!(aggregate_message(&ops), "Make collection tasks");
+    }
+
+    #[test]
+    fn duplicate_entry_message() {
+        let ops = vec![StructuralOp::Duplicate {
+            old: s("tasks"),
+            new: s("tasks-copy"),
+        }];
+        assert_eq!(
+            aggregate_message(&ops),
+            "Duplicate tasks \u{2192} tasks-copy"
         );
     }
 

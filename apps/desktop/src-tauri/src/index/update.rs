@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::error::AppError;
 use crate::index::normalize_rel;
-use crate::index::reindex::{build_entry, upsert_entry};
+use crate::index::reindex::{build_entry, full_reindex, upsert_entry};
 use crate::index::{IndexKey, IndexState};
 
 /// Verify that an absolute path resolves inside the space root, guarding
@@ -109,6 +109,16 @@ pub async fn reindex_after_pull(
     let dir = state.dir_for_key(key).await?;
     let lock = state.reindex_lock(key).await;
     let _guard = lock.lock().await;
+
+    if changed_files.iter().any(|rel| {
+        Path::new(rel)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name == "schema.yaml")
+    }) {
+        let skip = state.skip_folders_for(key).await;
+        return full_reindex(&pool, &dir, &skip).await;
+    }
 
     for rel in changed_files {
         let normalized = normalize_rel(&rel);

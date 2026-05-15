@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use chrono::{NaiveDate, NaiveDateTime};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_yml::{Mapping, Value};
+use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 
 use crate::error::AppError;
 use crate::files::entry::{ColorName, EntryMeta};
@@ -123,29 +124,191 @@ pub struct Column {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct SystemFieldOverride {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct SystemFields {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<SystemFieldOverride>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct DocumentConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct TemplatesConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FilterOp {
+    Eq,
+    Neq,
+    Contains,
+    NotContains,
+    ContainsAny,
+    NotContainsAny,
+    In,
+    NotIn,
+    Gt,
+    Lt,
+    Gte,
+    Lte,
+    Before,
+    After,
+    IsEmpty,
+    IsNotEmpty,
+    GroupEq,
+    GroupNeq,
+    GroupIn,
+    GroupNotIn,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Filter {
+    pub field: String,
+    pub op: FilterOp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub values: Option<Vec<Value>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sort {
+    pub field: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub desc: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum View {
+    Table {
+        name: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        filter: Vec<Filter>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        sort: Vec<Sort>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        visible_fields: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        show_nested: Option<bool>,
+    },
+    Board {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group_by: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        card_fields: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        filter: Vec<Filter>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        sort: Vec<Sort>,
+    },
+    Calendar {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        date_field: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color_field: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        default_scope: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        card_fields: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        filter: Vec<Filter>,
+    },
+    List {
+        name: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        card_fields: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        density: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        sort: Vec<Sort>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        filter: Vec<Filter>,
+    },
+    Gallery {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        card_cover: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cover_fit: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cover_aspect: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        card_fields: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        size: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        sort: Vec<Sort>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        filter: Vec<Filter>,
+    },
+}
+
+impl View {
+    pub fn name(&self) -> &str {
+        match self {
+            View::Table { name, .. }
+            | View::Board { name, .. }
+            | View::Calendar { name, .. }
+            | View::List { name, .. }
+            | View::Gallery { name, .. } => name,
+        }
+    }
+
+    fn name_mut(&mut self) -> &mut String {
+        match self {
+            View::Table { name, .. }
+            | View::Board { name, .. }
+            | View::Calendar { name, .. }
+            | View::List { name, .. }
+            | View::Gallery { name, .. } => name,
+        }
+    }
+
+    pub fn filters(&self) -> &[Filter] {
+        match self {
+            View::Table { filter, .. }
+            | View::Board { filter, .. }
+            | View::Calendar { filter, .. }
+            | View::List { filter, .. }
+            | View::Gallery { filter, .. } => filter,
+        }
+    }
+
+    pub fn sorts(&self) -> &[Sort] {
+        match self {
+            View::Table { sort, .. }
+            | View::Board { sort, .. }
+            | View::List { sort, .. }
+            | View::Gallery { sort, .. } => sort,
+            View::Calendar { .. } => &[],
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -159,7 +322,7 @@ pub struct CollectionSchema {
     #[serde(default)]
     pub columns: Vec<Column>,
     #[serde(default)]
-    pub views: Vec<Value>,
+    pub views: Vec<View>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -361,8 +524,9 @@ fn collection_rel(collection_path: &str) -> PathBuf {
 
 fn read_schema_at(path: &Path) -> Result<CollectionSchema, AppError> {
     let raw = fs::read_to_string(path)?;
-    let schema: CollectionSchema =
+    let mut schema: CollectionSchema =
         serde_yml::from_str(&raw).map_err(|e| schema_error(format!("invalid schema YAML: {e}")))?;
+    normalize_schema(&mut schema);
     validate_schema(&schema)?;
     Ok(schema)
 }
@@ -379,15 +543,24 @@ fn read_schema_or_default(
     }
 }
 
+pub fn read_collection_schema(
+    space: &str,
+    collection_path: &str,
+) -> Result<CollectionSchema, AppError> {
+    read_schema_at(&collection_dir(space, collection_path).join(SCHEMA_FILE))
+}
+
 fn write_schema(
     space: &str,
     collection_path: &str,
     schema: &CollectionSchema,
 ) -> Result<(), AppError> {
-    validate_schema(schema)?;
+    let mut schema = schema.clone();
+    normalize_schema(&mut schema);
+    validate_schema(&schema)?;
     let dir = collection_dir(space, collection_path);
     fs::create_dir_all(&dir)?;
-    let yaml = serde_yml::to_string(schema)
+    let yaml = serde_yml::to_string(&schema)
         .map_err(|e| schema_error(format!("could not serialize schema: {e}")))?;
     fs::write(dir.join(SCHEMA_FILE), yaml)?;
     Ok(())
@@ -408,6 +581,7 @@ pub fn schema_mutation_paths(
 pub fn validate_schema(schema: &CollectionSchema) -> Result<(), AppError> {
     let mut names = HashSet::new();
     let mut status_count = 0;
+    let mut column_names = HashSet::new();
 
     for column in &schema.columns {
         let trimmed = column.name.trim();
@@ -423,6 +597,7 @@ pub fn validate_schema(schema: &CollectionSchema) -> Result<(), AppError> {
                 column.name
             )));
         }
+        column_names.insert(column.name.clone());
 
         match column.type_ {
             PropertyType::Select | PropertyType::MultiSelect => {
@@ -464,7 +639,390 @@ pub fn validate_schema(schema: &CollectionSchema) -> Result<(), AppError> {
         }
     }
 
+    validate_views(schema, &column_names)?;
+
     Ok(())
+}
+
+pub fn normalize_schema(schema: &mut CollectionSchema) {
+    if let Some(system_fields) = schema.system_fields.as_mut() {
+        if let Some(title) = system_fields.title.as_mut() {
+            title.label = title.label.take().and_then(|label| {
+                let trimmed = label.trim().to_string();
+                (!trimmed.is_empty()).then_some(trimmed)
+            });
+        }
+        if system_fields
+            .title
+            .as_ref()
+            .is_some_and(|title| title.label.is_none())
+        {
+            system_fields.title = None;
+        }
+        if system_fields.title.is_none() {
+            schema.system_fields = None;
+        }
+    }
+    if let Some(document) = schema.document.as_mut() {
+        document.label = document.label.take().and_then(|label| {
+            let trimmed = label.trim().to_string();
+            (!trimmed.is_empty()).then_some(trimmed)
+        });
+        if document.label.is_none() {
+            schema.document = None;
+        }
+    }
+
+    let autopick_board = autopick_board_group_by(schema);
+    let autopick_date = autopick_calendar_date_field(schema);
+    for view in &mut schema.views {
+        normalize_view(view, autopick_board.as_deref(), autopick_date.as_deref());
+    }
+}
+
+fn normalize_view(
+    view: &mut View,
+    board_group_by: Option<&str>,
+    calendar_date_field: Option<&str>,
+) {
+    match view {
+        View::Table { visible_fields, .. } => ensure_field(visible_fields, "title"),
+        View::Board {
+            group_by,
+            card_fields,
+            ..
+        } => {
+            if group_by.as_deref().is_none_or(str::is_empty) {
+                *group_by = board_group_by.map(ToOwned::to_owned);
+            }
+            ensure_field(card_fields, "title");
+        }
+        View::Calendar {
+            date_field,
+            card_fields,
+            ..
+        } => {
+            if date_field.as_deref().is_none_or(str::is_empty) {
+                *date_field = calendar_date_field.map(ToOwned::to_owned);
+            }
+            ensure_field(card_fields, "title");
+        }
+        View::List { card_fields, .. } => ensure_field(card_fields, "title"),
+        View::Gallery { card_cover, .. } => {
+            if card_cover.is_none() {
+                *card_cover = Some(vec!["cover".into(), "icon".into(), "title".into()]);
+            }
+        }
+    }
+}
+
+fn ensure_field(fields: &mut Vec<String>, field: &str) {
+    if !fields.iter().any(|item| item == field) {
+        fields.insert(0, field.to_string());
+    }
+}
+
+fn autopick_board_group_by(schema: &CollectionSchema) -> Option<String> {
+    for ty in [
+        PropertyType::Status,
+        PropertyType::Select,
+        PropertyType::Person,
+    ] {
+        if let Some(column) = schema.columns.iter().find(|column| column.type_ == ty) {
+            return Some(column.name.clone());
+        }
+    }
+    None
+}
+
+fn autopick_calendar_date_field(schema: &CollectionSchema) -> Option<String> {
+    schema
+        .columns
+        .iter()
+        .find(|column| column.type_ == PropertyType::Date)
+        .map(|column| column.name.clone())
+}
+
+fn validate_views(
+    schema: &CollectionSchema,
+    column_names: &HashSet<String>,
+) -> Result<(), AppError> {
+    let mut view_names = HashSet::new();
+    for view in &schema.views {
+        let name = view.name().trim();
+        if name.is_empty() {
+            return Err(schema_error("view name cannot be empty"));
+        }
+        if !view_names.insert(view.name().to_string()) {
+            return Err(schema_error(format!(
+                "duplicate view name '{}'",
+                view.name()
+            )));
+        }
+        validate_view(schema, column_names, view)?;
+    }
+    Ok(())
+}
+
+fn validate_view(
+    schema: &CollectionSchema,
+    column_names: &HashSet<String>,
+    view: &View,
+) -> Result<(), AppError> {
+    for filter in view.filters() {
+        validate_field_ref(schema, column_names, &filter.field, FieldContext::Filter)?;
+        validate_filter_op(schema, filter)?;
+    }
+    for sort in view.sorts() {
+        validate_field_ref(schema, column_names, &sort.field, FieldContext::Sort)?;
+    }
+
+    match view {
+        View::Table { visible_fields, .. } => {
+            for field in visible_fields {
+                validate_field_ref(schema, column_names, field, FieldContext::VisibleField)?;
+            }
+        }
+        View::Board {
+            group_by,
+            card_fields,
+            ..
+        } => {
+            if let Some(group_by) = group_by.as_deref().filter(|field| !field.is_empty()) {
+                validate_field_ref(schema, column_names, group_by, FieldContext::GroupBy)?;
+            }
+            for field in card_fields {
+                validate_field_ref(schema, column_names, field, FieldContext::CardField)?;
+            }
+        }
+        View::Calendar {
+            date_field,
+            color_field,
+            card_fields,
+            ..
+        } => {
+            if let Some(date_field) = date_field.as_deref().filter(|field| !field.is_empty()) {
+                validate_field_ref(schema, column_names, date_field, FieldContext::DateField)?;
+            }
+            if let Some(color_field) = color_field.as_deref().filter(|field| !field.is_empty()) {
+                validate_field_ref(schema, column_names, color_field, FieldContext::ColorField)?;
+            }
+            for field in card_fields {
+                validate_field_ref(schema, column_names, field, FieldContext::CardField)?;
+            }
+        }
+        View::List { card_fields, .. } => {
+            for field in card_fields {
+                validate_field_ref(schema, column_names, field, FieldContext::CardField)?;
+            }
+        }
+        View::Gallery {
+            card_cover,
+            card_fields,
+            ..
+        } => {
+            if let Some(card_cover) = card_cover {
+                for field in card_cover {
+                    validate_field_ref(schema, column_names, field, FieldContext::CardCover)?;
+                }
+            }
+            for field in card_fields {
+                validate_field_ref(schema, column_names, field, FieldContext::CardField)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum FieldContext {
+    Filter,
+    Sort,
+    VisibleField,
+    CardField,
+    GroupBy,
+    DateField,
+    ColorField,
+    CardCover,
+}
+
+fn validate_field_ref(
+    schema: &CollectionSchema,
+    column_names: &HashSet<String>,
+    field: &str,
+    context: FieldContext,
+) -> Result<(), AppError> {
+    if column_names.contains(field) {
+        return validate_custom_field_context(schema, field, context);
+    }
+
+    let allowed = match context {
+        FieldContext::Filter => matches!(field, "title" | "description" | "created" | "updated"),
+        FieldContext::Sort => matches!(field, "title" | "created" | "updated"),
+        FieldContext::VisibleField => matches!(
+            field,
+            "title" | "icon" | "description" | "created" | "updated"
+        ),
+        FieldContext::CardField => matches!(
+            field,
+            "title" | "icon" | "description" | "created" | "updated"
+        ),
+        FieldContext::DateField => matches!(field, "created" | "updated"),
+        FieldContext::CardCover => matches!(field, "cover" | "icon" | "title"),
+        FieldContext::GroupBy | FieldContext::ColorField => false,
+    };
+    if allowed {
+        Ok(())
+    } else {
+        Err(schema_error(format!(
+            "field '{field}' is not valid in this view context"
+        )))
+    }
+}
+
+fn validate_custom_field_context(
+    schema: &CollectionSchema,
+    field: &str,
+    context: FieldContext,
+) -> Result<(), AppError> {
+    let column = schema
+        .columns
+        .iter()
+        .find(|column| column.name == field)
+        .ok_or_else(|| schema_error(format!("field '{field}' not found")))?;
+    let allowed = match context {
+        FieldContext::Filter | FieldContext::VisibleField | FieldContext::CardField => true,
+        FieldContext::Sort => !matches!(column.type_, PropertyType::MultiSelect),
+        FieldContext::GroupBy => matches!(
+            column.type_,
+            PropertyType::Select | PropertyType::Status | PropertyType::Person
+        ),
+        FieldContext::DateField => column.type_ == PropertyType::Date,
+        FieldContext::ColorField => {
+            matches!(column.type_, PropertyType::Select | PropertyType::Status)
+        }
+        FieldContext::CardCover => matches!(column.type_, PropertyType::Url | PropertyType::Text),
+    };
+    if allowed {
+        Ok(())
+    } else {
+        Err(schema_error(format!(
+            "field '{field}' has incompatible type for this view context"
+        )))
+    }
+}
+
+fn validate_filter_op(schema: &CollectionSchema, filter: &Filter) -> Result<(), AppError> {
+    let ty = field_type(schema, &filter.field, FieldContext::Filter)?;
+    let op_allowed = match ty {
+        FieldType::TextLike => matches!(
+            filter.op,
+            FilterOp::Eq
+                | FilterOp::Neq
+                | FilterOp::Contains
+                | FilterOp::NotContains
+                | FilterOp::IsEmpty
+                | FilterOp::IsNotEmpty
+        ),
+        FieldType::Number => matches!(
+            filter.op,
+            FilterOp::Eq
+                | FilterOp::Neq
+                | FilterOp::Gt
+                | FilterOp::Lt
+                | FilterOp::Gte
+                | FilterOp::Lte
+                | FilterOp::IsEmpty
+                | FilterOp::IsNotEmpty
+        ),
+        FieldType::Date => matches!(
+            filter.op,
+            FilterOp::Eq
+                | FilterOp::Neq
+                | FilterOp::Before
+                | FilterOp::After
+                | FilterOp::IsEmpty
+                | FilterOp::IsNotEmpty
+        ),
+        FieldType::Checkbox => matches!(filter.op, FilterOp::Eq | FilterOp::Neq),
+        FieldType::SelectLike | FieldType::Person => matches!(
+            filter.op,
+            FilterOp::Eq
+                | FilterOp::Neq
+                | FilterOp::In
+                | FilterOp::NotIn
+                | FilterOp::IsEmpty
+                | FilterOp::IsNotEmpty
+        ),
+        FieldType::Multi => matches!(
+            filter.op,
+            FilterOp::Contains
+                | FilterOp::NotContains
+                | FilterOp::ContainsAny
+                | FilterOp::NotContainsAny
+                | FilterOp::IsEmpty
+                | FilterOp::IsNotEmpty
+        ),
+        FieldType::Status => matches!(
+            filter.op,
+            FilterOp::Eq
+                | FilterOp::Neq
+                | FilterOp::In
+                | FilterOp::NotIn
+                | FilterOp::IsEmpty
+                | FilterOp::IsNotEmpty
+                | FilterOp::GroupEq
+                | FilterOp::GroupNeq
+                | FilterOp::GroupIn
+                | FilterOp::GroupNotIn
+        ),
+    };
+    if op_allowed {
+        Ok(())
+    } else {
+        Err(schema_error(format!(
+            "operator {:?} is not valid for field '{}'",
+            filter.op, filter.field
+        )))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FieldType {
+    TextLike,
+    Number,
+    Date,
+    Checkbox,
+    SelectLike,
+    Multi,
+    Status,
+    Person,
+}
+
+fn field_type(
+    schema: &CollectionSchema,
+    field: &str,
+    _context: FieldContext,
+) -> Result<FieldType, AppError> {
+    if let Some(column) = schema.columns.iter().find(|column| column.name == field) {
+        return Ok(match column.type_ {
+            PropertyType::Text | PropertyType::Url | PropertyType::Email | PropertyType::Phone => {
+                FieldType::TextLike
+            }
+            PropertyType::Number => FieldType::Number,
+            PropertyType::Select => FieldType::SelectLike,
+            PropertyType::MultiSelect => FieldType::Multi,
+            PropertyType::Status => FieldType::Status,
+            PropertyType::Date => FieldType::Date,
+            PropertyType::Person => FieldType::Person,
+            PropertyType::Checkbox => FieldType::Checkbox,
+        });
+    }
+    match field {
+        "title" | "description" => Ok(FieldType::TextLike),
+        "created" | "updated" => Ok(FieldType::Date),
+        _ => Err(schema_error(format!("field '{field}' has no query type"))),
+    }
 }
 
 fn validate_options(
@@ -1086,6 +1644,840 @@ pub fn update_document_label(
     })
 }
 
+pub fn default_collection_schema() -> CollectionSchema {
+    CollectionSchema {
+        system_fields: None,
+        document: None,
+        templates: None,
+        columns: Vec::new(),
+        views: vec![View::Table {
+            name: "Все".to_string(),
+            filter: Vec::new(),
+            sort: Vec::new(),
+            visible_fields: vec!["title".to_string()],
+            show_nested: None,
+        }],
+    }
+}
+
+pub fn write_default_collection_schema(space: &str, collection_path: &str) -> Result<(), AppError> {
+    write_schema(space, collection_path, &default_collection_schema())
+}
+
+pub fn add_view(
+    space: &str,
+    collection_path: &str,
+    mut view: View,
+    position: Option<usize>,
+) -> Result<CollectionSchema, AppError> {
+    let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
+    with_rollback(vec![schema_path], || {
+        let mut schema = read_schema_or_default(space, collection_path)?;
+        if schema
+            .views
+            .iter()
+            .any(|existing| existing.name() == view.name())
+        {
+            return Err(schema_error(format!(
+                "view '{}' already exists",
+                view.name()
+            )));
+        }
+        normalize_view_for_schema(&schema, &mut view);
+        let index = position
+            .unwrap_or(schema.views.len())
+            .min(schema.views.len());
+        schema.views.insert(index, view);
+        normalize_schema(&mut schema);
+        write_schema(space, collection_path, &schema)?;
+        Ok(schema)
+    })
+}
+
+pub fn rename_view(
+    space: &str,
+    collection_path: &str,
+    old_name: &str,
+    new_name: &str,
+) -> Result<CollectionSchema, AppError> {
+    let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
+    with_rollback(vec![schema_path], || {
+        let mut schema = read_schema_or_default(space, collection_path)?;
+        if schema.views.iter().any(|view| view.name() == new_name) {
+            return Err(schema_error(format!("view '{new_name}' already exists")));
+        }
+        let view = find_view_mut(&mut schema, old_name)?;
+        *view.name_mut() = new_name.trim().to_string();
+        write_schema(space, collection_path, &schema)?;
+        Ok(schema)
+    })
+}
+
+pub fn update_view(
+    space: &str,
+    collection_path: &str,
+    view_name: &str,
+    patch: Value,
+) -> Result<CollectionSchema, AppError> {
+    let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
+    with_rollback(vec![schema_path], || {
+        let mut schema = read_schema_or_default(space, collection_path)?;
+        let pos = schema
+            .views
+            .iter()
+            .position(|view| view.name() == view_name)
+            .ok_or_else(|| schema_error(format!("view '{view_name}' not found")))?;
+        let mut raw = serde_yml::to_value(&schema.views[pos])
+            .map_err(|e| schema_error(format!("could not encode view: {e}")))?;
+        merge_mapping_patch(&mut raw, patch)?;
+        let mut view: View = serde_yml::from_value(raw)
+            .map_err(|e| schema_error(format!("invalid view patch: {e}")))?;
+        normalize_view_for_schema(&schema, &mut view);
+        schema.views[pos] = view;
+        write_schema(space, collection_path, &schema)?;
+        Ok(schema)
+    })
+}
+
+pub fn delete_view(
+    space: &str,
+    collection_path: &str,
+    view_name: &str,
+) -> Result<CollectionSchema, AppError> {
+    let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
+    with_rollback(vec![schema_path], || {
+        let mut schema = read_schema_or_default(space, collection_path)?;
+        let before = schema.views.len();
+        schema.views.retain(|view| view.name() != view_name);
+        if schema.views.len() == before {
+            return Err(schema_error(format!("view '{view_name}' not found")));
+        }
+        write_schema(space, collection_path, &schema)?;
+        Ok(schema)
+    })
+}
+
+pub fn duplicate_view(
+    space: &str,
+    collection_path: &str,
+    view_name: &str,
+    new_name: &str,
+) -> Result<CollectionSchema, AppError> {
+    let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
+    with_rollback(vec![schema_path], || {
+        let mut schema = read_schema_or_default(space, collection_path)?;
+        if schema.views.iter().any(|view| view.name() == new_name) {
+            return Err(schema_error(format!("view '{new_name}' already exists")));
+        }
+        let mut view = schema
+            .views
+            .iter()
+            .find(|view| view.name() == view_name)
+            .cloned()
+            .ok_or_else(|| schema_error(format!("view '{view_name}' not found")))?;
+        *view.name_mut() = new_name.trim().to_string();
+        schema.views.push(view);
+        write_schema(space, collection_path, &schema)?;
+        Ok(schema)
+    })
+}
+
+pub fn reorder_views(
+    space: &str,
+    collection_path: &str,
+    new_order: Vec<String>,
+) -> Result<CollectionSchema, AppError> {
+    let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
+    with_rollback(vec![schema_path], || {
+        let mut schema = read_schema_or_default(space, collection_path)?;
+        if new_order.len() != schema.views.len() {
+            return Err(schema_error(
+                "view order must include every view exactly once",
+            ));
+        }
+        let mut reordered = Vec::with_capacity(schema.views.len());
+        let mut seen = HashSet::new();
+        for name in new_order {
+            if !seen.insert(name.clone()) {
+                return Err(schema_error(format!("duplicate view in order '{name}'")));
+            }
+            let idx = schema
+                .views
+                .iter()
+                .position(|view| view.name() == name)
+                .ok_or_else(|| schema_error(format!("view '{name}' not found")))?;
+            reordered.push(schema.views[idx].clone());
+        }
+        schema.views = reordered;
+        write_schema(space, collection_path, &schema)?;
+        Ok(schema)
+    })
+}
+
+fn find_view_mut<'a>(
+    schema: &'a mut CollectionSchema,
+    view_name: &str,
+) -> Result<&'a mut View, AppError> {
+    schema
+        .views
+        .iter_mut()
+        .find(|view| view.name() == view_name)
+        .ok_or_else(|| schema_error(format!("view '{view_name}' not found")))
+}
+
+fn normalize_view_for_schema(schema: &CollectionSchema, view: &mut View) {
+    let group_by = autopick_board_group_by(schema);
+    let date_field = autopick_calendar_date_field(schema);
+    normalize_view(view, group_by.as_deref(), date_field.as_deref());
+}
+
+fn merge_mapping_patch(target: &mut Value, patch: Value) -> Result<(), AppError> {
+    let target = target
+        .as_mapping_mut()
+        .ok_or_else(|| schema_error("view target must be an object"))?;
+    let patch = patch
+        .as_mapping()
+        .ok_or_else(|| schema_error("view patch must be an object"))?;
+    for (key, value) in patch {
+        if value.is_null() {
+            target.remove(key);
+        } else {
+            target.insert(key.clone(), value.clone());
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionInfo {
+    pub path: String,
+    pub title: String,
+    pub row_count: usize,
+    pub nested: bool,
+}
+
+pub fn list_collections(space: &str) -> Result<Vec<CollectionInfo>, AppError> {
+    let root = Path::new(space);
+    let mut infos = Vec::new();
+    if root.join(SCHEMA_FILE).is_file() {
+        infos.push(CollectionInfo {
+            path: ".".to_string(),
+            title: collection_title(
+                root,
+                root.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("Collection"),
+            ),
+            row_count: collection_markdown_files(space, ".")?.len(),
+            nested: false,
+        });
+    }
+    collect_collections(root, root, &mut infos)?;
+    infos.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(infos)
+}
+
+fn collect_collections(
+    space: &Path,
+    dir: &Path,
+    out: &mut Vec<CollectionInfo>,
+) -> Result<(), AppError> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.') {
+            continue;
+        }
+        if !path.is_dir() {
+            continue;
+        }
+
+        if path.join(SCHEMA_FILE).is_file() {
+            let rel = path
+                .strip_prefix(space)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let title = collection_title(&path, &name);
+            let row_count = collection_markdown_files(&space.to_string_lossy(), &rel)?.len();
+            let nested =
+                find_collection_root(space, &format!("{}/README.md", normalize_rel_path(&rel)))
+                    .is_some();
+            out.push(CollectionInfo {
+                path: rel.clone(),
+                title,
+                row_count,
+                nested,
+            });
+        }
+
+        collect_collections(space, &path, out)?;
+    }
+    Ok(())
+}
+
+fn collection_title(collection_dir: &Path, fallback_name: &str) -> String {
+    let readme = collection_dir.join("README.md");
+    if let Ok(raw) = fs::read_to_string(readme) {
+        if let Ok(Some((meta, _))) = frontmatter::try_parse(&raw) {
+            if !meta.title.trim().is_empty() {
+                return meta.title;
+            }
+        }
+    }
+    fallback_name.replace(['-', '_'], " ")
+}
+
+pub async fn list_entries_for_view(
+    pool: &SqlitePool,
+    space: &str,
+    collection_path: &str,
+    view_name: &str,
+    include_nested: bool,
+) -> Result<Vec<entry::Entry>, AppError> {
+    let schema = read_schema_at(&collection_dir(space, collection_path).join(SCHEMA_FILE))?;
+    let view = schema
+        .views
+        .iter()
+        .find(|view| view.name() == view_name)
+        .ok_or_else(|| schema_error(format!("view '{view_name}' not found")))?;
+    let rows = query_entry_rows(
+        pool,
+        &schema,
+        collection_path,
+        view.filters(),
+        view.sorts(),
+        None,
+        None,
+    )
+    .await?;
+    entries_from_rows(
+        space,
+        collection_path,
+        rows,
+        include_nested,
+        view.sorts().is_empty(),
+    )
+}
+
+pub async fn query_entries(
+    pool: &SqlitePool,
+    space: &str,
+    collection_path: &str,
+    filters: Option<Vec<Filter>>,
+    sort: Option<Vec<Sort>>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<Vec<entry::Entry>, AppError> {
+    let schema = read_schema_at(&collection_dir(space, collection_path).join(SCHEMA_FILE))?;
+    let filters = filters.unwrap_or_default();
+    let sort = sort.unwrap_or_default();
+    validate_ad_hoc_query(&schema, &filters, &sort)?;
+    let rows = query_entry_rows(
+        pool,
+        &schema,
+        collection_path,
+        &filters,
+        &sort,
+        limit,
+        offset,
+    )
+    .await?;
+    entries_from_rows(space, collection_path, rows, false, sort.is_empty())
+}
+
+#[derive(Debug, Clone)]
+struct EntryQueryRow {
+    file_path: String,
+    title: String,
+}
+
+async fn query_entry_rows(
+    pool: &SqlitePool,
+    schema: &CollectionSchema,
+    collection_path: &str,
+    filters: &[Filter],
+    sort: &[Sort],
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<Vec<EntryQueryRow>, AppError> {
+    let collection = collection_root_for_sql(collection_path);
+    let mut query = QueryBuilder::<Sqlite>::new(
+        "SELECT file_path, title FROM entries WHERE collection_root_path = ",
+    );
+    query.push_bind(collection);
+    query.push(" AND in_collection = 1 AND is_entry_head = 1");
+    for filter in filters {
+        push_filter_sql(&mut query, schema, filter)?;
+    }
+    if !sort.is_empty() {
+        query.push(" ORDER BY ");
+        for (idx, item) in sort.iter().enumerate() {
+            if idx > 0 {
+                query.push(", ");
+            }
+            push_sort_sql(&mut query, &item.field, item.desc)?;
+        }
+    }
+    if let Some(limit) = limit {
+        query.push(" LIMIT ");
+        query.push_bind(limit.max(0));
+    }
+    if let Some(offset) = offset {
+        query.push(" OFFSET ");
+        query.push_bind(offset.max(0));
+    }
+
+    let rows = query
+        .build()
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AppError::Index(format!("collection query failed: {e}")))?;
+    Ok(rows
+        .into_iter()
+        .map(|row| EntryQueryRow {
+            file_path: row.get("file_path"),
+            title: row.get("title"),
+        })
+        .collect())
+}
+
+fn push_filter_sql(
+    query: &mut QueryBuilder<'_, Sqlite>,
+    schema: &CollectionSchema,
+    filter: &Filter,
+) -> Result<(), AppError> {
+    validate_filter_op(schema, filter)?;
+    query.push(" AND ");
+    match filter.op {
+        FilterOp::Eq => {
+            push_field_expr(query, &filter.field);
+            query.push(" = ");
+            push_filter_value(query, filter)?;
+        }
+        FilterOp::Neq => {
+            push_field_expr(query, &filter.field);
+            query.push(" IS NOT NULL AND ");
+            push_field_expr(query, &filter.field);
+            query.push(" != ");
+            push_filter_value(query, filter)?;
+        }
+        FilterOp::Contains => push_like_filter(query, filter, false)?,
+        FilterOp::NotContains => push_like_filter(query, filter, true)?,
+        FilterOp::In => push_in_filter(query, filter, false)?,
+        FilterOp::NotIn => push_in_filter(query, filter, true)?,
+        FilterOp::Gt | FilterOp::After => push_cmp_filter(query, filter, ">")?,
+        FilterOp::Lt | FilterOp::Before => push_cmp_filter(query, filter, "<")?,
+        FilterOp::Gte => push_cmp_filter(query, filter, ">=")?,
+        FilterOp::Lte => push_cmp_filter(query, filter, "<=")?,
+        FilterOp::IsEmpty => {
+            query.push("(");
+            push_field_expr(query, &filter.field);
+            query.push(" IS NULL OR ");
+            push_field_expr(query, &filter.field);
+            query.push(" = '')");
+        }
+        FilterOp::IsNotEmpty => {
+            query.push("(");
+            push_field_expr(query, &filter.field);
+            query.push(" IS NOT NULL AND ");
+            push_field_expr(query, &filter.field);
+            query.push(" != '')");
+        }
+        FilterOp::ContainsAny | FilterOp::NotContainsAny => push_array_contains_filter(
+            query,
+            filter,
+            matches!(filter.op, FilterOp::NotContainsAny),
+        )?,
+        FilterOp::GroupEq | FilterOp::GroupNeq | FilterOp::GroupIn | FilterOp::GroupNotIn => {
+            push_status_group_filter(query, schema, filter)?
+        }
+    }
+    Ok(())
+}
+
+fn push_field_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str) {
+    match field {
+        "title" | "description" | "created" | "updated" => {
+            query.push(field);
+        }
+        _ => {
+            query.push("json_extract(fields, ");
+            query.push_bind(json_path(field));
+            query.push(")");
+        }
+    }
+}
+
+fn push_filter_value(
+    query: &mut QueryBuilder<'_, Sqlite>,
+    filter: &Filter,
+) -> Result<(), AppError> {
+    let value = filter
+        .value
+        .as_ref()
+        .or_else(|| filter.values.as_ref().and_then(|values| values.first()))
+        .ok_or_else(|| schema_error(format!("filter '{}' requires value", filter.field)))?;
+    push_yaml_value(query, value);
+    Ok(())
+}
+
+fn push_yaml_value(query: &mut QueryBuilder<'_, Sqlite>, value: &Value) {
+    if let Some(value) = value.as_str() {
+        query.push_bind(value.to_string());
+    } else if let Some(value) = value.as_bool() {
+        query.push_bind(value);
+    } else if let Some(value) = value.as_i64() {
+        query.push_bind(value);
+    } else if let Some(value) = value.as_f64() {
+        query.push_bind(value);
+    } else {
+        query.push_bind(serde_json::to_string(value).unwrap_or_default());
+    }
+}
+
+fn push_like_filter(
+    query: &mut QueryBuilder<'_, Sqlite>,
+    filter: &Filter,
+    negated: bool,
+) -> Result<(), AppError> {
+    let value = filter
+        .value
+        .as_ref()
+        .and_then(Value::as_str)
+        .ok_or_else(|| schema_error(format!("filter '{}' requires string value", filter.field)))?;
+    if negated {
+        push_field_expr(query, &filter.field);
+        query.push(" IS NOT NULL AND ");
+    }
+    push_field_expr(query, &filter.field);
+    if negated {
+        query.push(" NOT");
+    }
+    query.push(" LIKE ");
+    query.push_bind(format!("%{}%", escape_like(value)));
+    query.push(" ESCAPE '\\'");
+    Ok(())
+}
+
+fn push_in_filter(
+    query: &mut QueryBuilder<'_, Sqlite>,
+    filter: &Filter,
+    negated: bool,
+) -> Result<(), AppError> {
+    let values = filter_values(filter)?;
+    if negated {
+        push_field_expr(query, &filter.field);
+        query.push(" IS NOT NULL AND ");
+    }
+    push_field_expr(query, &filter.field);
+    if negated {
+        query.push(" NOT");
+    }
+    query.push(" IN (");
+    for (idx, value) in values.iter().enumerate() {
+        if idx > 0 {
+            query.push(", ");
+        }
+        push_yaml_value(query, value);
+    }
+    query.push(")");
+    Ok(())
+}
+
+fn push_cmp_filter(
+    query: &mut QueryBuilder<'_, Sqlite>,
+    filter: &Filter,
+    op: &str,
+) -> Result<(), AppError> {
+    push_field_expr(query, &filter.field);
+    query.push(" ");
+    query.push(op);
+    query.push(" ");
+    push_filter_value(query, filter)
+}
+
+fn push_array_contains_filter(
+    query: &mut QueryBuilder<'_, Sqlite>,
+    filter: &Filter,
+    negated: bool,
+) -> Result<(), AppError> {
+    let values = filter_values(filter)?;
+    if negated {
+        query.push("NOT ");
+    }
+    query.push("EXISTS (SELECT 1 FROM json_each(");
+    push_field_expr(query, &filter.field);
+    query.push(") WHERE json_each.value IN (");
+    for (idx, value) in values.iter().enumerate() {
+        if idx > 0 {
+            query.push(", ");
+        }
+        push_yaml_value(query, value);
+    }
+    query.push("))");
+    Ok(())
+}
+
+fn push_status_group_filter(
+    query: &mut QueryBuilder<'_, Sqlite>,
+    schema: &CollectionSchema,
+    filter: &Filter,
+) -> Result<(), AppError> {
+    let column = schema
+        .columns
+        .iter()
+        .find(|column| column.name == filter.field)
+        .ok_or_else(|| schema_error(format!("status field '{}' not found", filter.field)))?;
+    let wanted: HashSet<String> = filter_values(filter)?
+        .into_iter()
+        .filter_map(|value| value.as_str().map(ToOwned::to_owned))
+        .collect();
+    let mut option_names = Vec::new();
+    for option in column.options.as_deref().unwrap_or_default() {
+        let Some(group) = option.group else { continue };
+        let group = serde_yml::to_value(group)
+            .ok()
+            .and_then(|value| value.as_str().map(ToOwned::to_owned))
+            .unwrap_or_default();
+        if wanted.contains(&group) {
+            option_names.push(Value::String(option.name.clone()));
+        }
+    }
+    let rewritten = Filter {
+        field: filter.field.clone(),
+        op: match filter.op {
+            FilterOp::GroupNeq | FilterOp::GroupNotIn => FilterOp::NotIn,
+            _ => FilterOp::In,
+        },
+        value: None,
+        values: Some(option_names),
+    };
+    push_in_filter(query, &rewritten, matches!(rewritten.op, FilterOp::NotIn))
+}
+
+fn push_sort_sql(
+    query: &mut QueryBuilder<'_, Sqlite>,
+    field: &str,
+    desc: bool,
+) -> Result<(), AppError> {
+    query.push("(");
+    push_field_expr(query, field);
+    query.push(" IS NULL OR ");
+    push_field_expr(query, field);
+    query.push(" = '') ASC, ");
+    push_field_expr(query, field);
+    query.push(" COLLATE NOCASE ");
+    query.push(if desc { "DESC" } else { "ASC" });
+    Ok(())
+}
+
+fn filter_values(filter: &Filter) -> Result<Vec<Value>, AppError> {
+    if let Some(values) = filter.values.clone() {
+        if values.is_empty() {
+            return Err(schema_error(format!(
+                "filter '{}' requires non-empty values",
+                filter.field
+            )));
+        }
+        return Ok(values);
+    }
+    filter
+        .value
+        .clone()
+        .map(|value| match value {
+            Value::Sequence(values) => values,
+            value => vec![value],
+        })
+        .filter(|values| !values.is_empty())
+        .ok_or_else(|| schema_error(format!("filter '{}' requires values", filter.field)))
+}
+
+fn validate_ad_hoc_query(
+    schema: &CollectionSchema,
+    filters: &[Filter],
+    sort: &[Sort],
+) -> Result<(), AppError> {
+    let column_names: HashSet<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
+    for filter in filters {
+        validate_field_ref(schema, &column_names, &filter.field, FieldContext::Filter)?;
+        validate_filter_op(schema, filter)?;
+    }
+    for sort in sort {
+        validate_field_ref(schema, &column_names, &sort.field, FieldContext::Sort)?;
+    }
+    Ok(())
+}
+
+fn entries_from_rows(
+    space: &str,
+    collection_path: &str,
+    rows: Vec<EntryQueryRow>,
+    include_nested: bool,
+    manual_order: bool,
+) -> Result<Vec<entry::Entry>, AppError> {
+    let collection = collection_root_for_sql(collection_path);
+    let mut entries = Vec::new();
+    for row in rows {
+        if !include_nested && entry_parent_dir(&row.file_path) != collection {
+            continue;
+        }
+        let entry = entry::read(space, &row.file_path)?;
+        entries.push((row, entry));
+    }
+    if manual_order {
+        return order_entries(space, &collection, entries, include_nested);
+    }
+    Ok(entries.into_iter().map(|(_, entry)| entry).collect())
+}
+
+fn order_entries(
+    space: &str,
+    collection: &str,
+    entries: Vec<(EntryQueryRow, entry::Entry)>,
+    include_nested: bool,
+) -> Result<Vec<entry::Entry>, AppError> {
+    let order = crate::files::tree::read_order(Path::new(space));
+    if !include_nested {
+        let mut entries = entries;
+        sort_sibling_entries(&mut entries, &order, collection);
+        return Ok(entries.into_iter().map(|(_, entry)| entry).collect());
+    }
+
+    let mut by_parent: HashMap<String, Vec<(EntryQueryRow, entry::Entry)>> = HashMap::new();
+    for item in entries {
+        by_parent
+            .entry(entry_parent_dir(&item.0.file_path))
+            .or_default()
+            .push(item);
+    }
+    let mut out = Vec::new();
+    flatten_ordered(collection, &order, &mut by_parent, &mut out);
+    Ok(out)
+}
+
+fn flatten_ordered(
+    dir: &str,
+    order: &HashMap<String, Vec<String>>,
+    by_parent: &mut HashMap<String, Vec<(EntryQueryRow, entry::Entry)>>,
+    out: &mut Vec<entry::Entry>,
+) {
+    let mut entries = by_parent.remove(dir).unwrap_or_default();
+    sort_sibling_entries(&mut entries, order, dir);
+    for (row, entry) in entries {
+        let child_dir = entry_folder_dir(&row.file_path);
+        out.push(entry);
+        if let Some(child_dir) = child_dir {
+            flatten_ordered(&child_dir, order, by_parent, out);
+        }
+    }
+}
+
+fn sort_sibling_entries(
+    entries: &mut [(EntryQueryRow, entry::Entry)],
+    order: &HashMap<String, Vec<String>>,
+    dir: &str,
+) {
+    let key = if dir.is_empty() { "." } else { dir };
+    let positions: HashMap<&str, usize> = order
+        .get(key)
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .map(|(idx, name)| (name.as_str(), idx))
+        .collect();
+    entries.sort_by(|a, b| {
+        let an = entry_order_name(&a.0.file_path);
+        let bn = entry_order_name(&b.0.file_path);
+        match (positions.get(an.as_str()), positions.get(bn.as_str())) {
+            (Some(a), Some(b)) => a.cmp(b),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => an
+                .to_lowercase()
+                .cmp(&bn.to_lowercase())
+                .then_with(|| a.0.title.to_lowercase().cmp(&b.0.title.to_lowercase())),
+        }
+    });
+}
+
+fn entry_parent_dir(file_path: &str) -> String {
+    let path = Path::new(file_path);
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
+    {
+        path.parent()
+            .and_then(Path::parent)
+            .map(|p| normalize_rel_path(&p.to_string_lossy()))
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| ".".to_string())
+    } else {
+        path.parent()
+            .map(|p| normalize_rel_path(&p.to_string_lossy()))
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| ".".to_string())
+    }
+}
+
+fn entry_folder_dir(file_path: &str) -> Option<String> {
+    let path = Path::new(file_path);
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
+        .then(|| {
+            path.parent()
+                .map(|p| normalize_rel_path(&p.to_string_lossy()))
+                .unwrap_or_default()
+        })
+        .filter(|p| !p.is_empty())
+}
+
+fn entry_order_name(file_path: &str) -> String {
+    let path = Path::new(file_path);
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
+    {
+        return path
+            .parent()
+            .and_then(Path::file_name)
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "README.md".to_string());
+    }
+    path.file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| file_path.to_string())
+}
+
+fn collection_root_for_sql(collection_path: &str) -> String {
+    let rel = normalize_rel_path(collection_path);
+    if rel.is_empty() { ".".to_string() } else { rel }
+}
+
+fn json_path(field: &str) -> String {
+    format!("$.\"{}\"", field.replace('"', "\\\""))
+}
+
+fn escape_like(query: &str) -> String {
+    let mut out = String::with_capacity(query.len());
+    for c in query.chars() {
+        match c {
+            '\\' | '%' | '_' => {
+                out.push('\\');
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 fn find_column_mut<'a>(
     schema: &'a mut CollectionSchema,
     column_name: &str,
@@ -1241,65 +2633,158 @@ fn value_to_bool(value: &Value) -> Option<bool> {
     }
 }
 
-fn replace_string_refs_in_views(views: &mut [Value], old: &str, new: &str) {
+fn replace_string_refs_in_views(views: &mut [View], old: &str, new: &str) {
     for view in views {
-        replace_string_ref(view, old, new);
+        replace_string_refs_in_view(view, old, new);
     }
 }
 
-fn replace_string_ref(value: &mut Value, old: &str, new: &str) {
-    match value {
-        Value::String(value) if value == old => *value = new.to_string(),
-        Value::Sequence(sequence) => {
-            for item in sequence {
-                replace_string_ref(item, old, new);
-            }
+fn replace_string_refs_in_view(view: &mut View, old: &str, new: &str) {
+    for filter in filters_mut(view) {
+        if filter.field == old {
+            filter.field = new.to_string();
         }
-        Value::Mapping(mapping) => {
-            for (_, item) in mapping.iter_mut() {
-                replace_string_ref(item, old, new);
-            }
+    }
+    replace_sort_refs_in_view(view, old, new);
+    match view {
+        View::Table { visible_fields, .. } => replace_field_list(visible_fields, old, new),
+        View::Board {
+            group_by,
+            card_fields,
+            ..
+        } => {
+            replace_opt_field(group_by, old, new);
+            replace_field_list(card_fields, old, new);
         }
-        _ => {}
+        View::Calendar {
+            date_field,
+            color_field,
+            card_fields,
+            ..
+        } => {
+            replace_opt_field(date_field, old, new);
+            replace_opt_field(color_field, old, new);
+            replace_field_list(card_fields, old, new);
+        }
+        View::List { card_fields, .. } => replace_field_list(card_fields, old, new),
+        View::Gallery {
+            card_cover,
+            card_fields,
+            ..
+        } => {
+            if let Some(card_cover) = card_cover {
+                replace_field_list(card_cover, old, new);
+            }
+            replace_field_list(card_fields, old, new);
+        }
     }
 }
 
-fn strip_string_refs_in_views(views: &mut [Value], target: &str) {
+fn filters_mut(view: &mut View) -> &mut Vec<Filter> {
+    match view {
+        View::Table { filter, .. }
+        | View::Board { filter, .. }
+        | View::Calendar { filter, .. }
+        | View::List { filter, .. }
+        | View::Gallery { filter, .. } => filter,
+    }
+}
+
+fn replace_sort_refs_in_view(view: &mut View, old: &str, new: &str) {
+    let sorts = match view {
+        View::Table { sort, .. }
+        | View::Board { sort, .. }
+        | View::List { sort, .. }
+        | View::Gallery { sort, .. } => Some(sort),
+        View::Calendar { .. } => None,
+    };
+    if let Some(sorts) = sorts {
+        for sort in sorts {
+            if sort.field == old {
+                sort.field = new.to_string();
+            }
+        }
+    }
+}
+
+fn retain_sort_refs_in_view(view: &mut View, target: &str) {
+    let sorts = match view {
+        View::Table { sort, .. }
+        | View::Board { sort, .. }
+        | View::List { sort, .. }
+        | View::Gallery { sort, .. } => Some(sort),
+        View::Calendar { .. } => None,
+    };
+    if let Some(sorts) = sorts {
+        sorts.retain(|sort| sort.field != target);
+    }
+}
+
+fn replace_field_list(fields: &mut [String], old: &str, new: &str) {
+    for field in fields {
+        if field == old {
+            *field = new.to_string();
+        }
+    }
+}
+
+fn replace_opt_field(field: &mut Option<String>, old: &str, new: &str) {
+    if field.as_deref() == Some(old) {
+        *field = Some(new.to_string());
+    }
+}
+
+fn strip_string_refs_in_views(views: &mut [View], target: &str) {
     for view in views {
-        strip_string_ref(view, target);
+        strip_string_refs_in_view(view, target);
     }
 }
 
-fn strip_string_ref(value: &mut Value, target: &str) {
-    match value {
-        Value::String(value) if value == target => *value = String::new(),
-        Value::Sequence(sequence) => {
-            sequence.retain(|item| item.as_str() != Some(target));
-            for item in sequence {
-                strip_string_ref(item, target);
+fn strip_string_refs_in_view(view: &mut View, target: &str) {
+    filters_mut(view).retain(|filter| filter.field != target);
+    retain_sort_refs_in_view(view, target);
+    match view {
+        View::Table { visible_fields, .. } => retain_not_field(visible_fields, target),
+        View::Board {
+            group_by,
+            card_fields,
+            ..
+        } => {
+            if group_by.as_deref() == Some(target) {
+                *group_by = None;
             }
+            retain_not_field(card_fields, target);
         }
-        Value::Mapping(mapping) => {
-            let keys: Vec<Value> = mapping
-                .iter()
-                .filter_map(|(key, value)| {
-                    let key_name = key.as_str()?;
-                    let removable_key = matches!(
-                        key_name,
-                        "field" | "group_by" | "date_field" | "color_field"
-                    );
-                    (removable_key && value.as_str() == Some(target)).then(|| key.clone())
-                })
-                .collect();
-            for key in keys {
-                mapping.remove(key);
+        View::Calendar {
+            date_field,
+            color_field,
+            card_fields,
+            ..
+        } => {
+            if date_field.as_deref() == Some(target) {
+                *date_field = None;
             }
-            for (_, item) in mapping.iter_mut() {
-                strip_string_ref(item, target);
+            if color_field.as_deref() == Some(target) {
+                *color_field = None;
             }
+            retain_not_field(card_fields, target);
         }
-        _ => {}
+        View::List { card_fields, .. } => retain_not_field(card_fields, target),
+        View::Gallery {
+            card_cover,
+            card_fields,
+            ..
+        } => {
+            if let Some(card_cover) = card_cover {
+                retain_not_field(card_cover, target);
+            }
+            retain_not_field(card_fields, target);
+        }
     }
+}
+
+fn retain_not_field(fields: &mut Vec<String>, target: &str) {
+    fields.retain(|field| field != target);
 }
 
 fn replace_option_value(value: &mut Value, old: &str, new: &str) {
@@ -1393,7 +2878,7 @@ fn collect_md_files_inner(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), AppE
         let path = entry.path();
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name == ".git" || name == ".combai" || name == ".assets" {
+        if name.starts_with('.') {
             continue;
         }
         if path.is_dir() {

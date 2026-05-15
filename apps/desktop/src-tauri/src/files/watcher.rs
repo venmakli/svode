@@ -152,8 +152,10 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
             if is_under_assets(path, space_root) {
                 any_assets_changed = true;
             }
-            // Per-file file:* events are emitted only for .md files.
-            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            // Per-file file:* events are emitted for document entries and
+            // collection schemas. Schema changes are derived-state inputs only;
+            // they do not trigger autocommit from the watcher.
+            if !is_document_or_schema(path) {
                 continue;
             }
             seen.insert(path.clone(), &event.kind);
@@ -161,10 +163,7 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
     }
 
     if any_dirty {
-        let _ = app.emit(
-            "space:dirty",
-            serde_json::json!({ "space": space }),
-        );
+        let _ = app.emit("space:dirty", serde_json::json!({ "space": space }));
     }
     if any_assets_changed {
         let _ = app.emit(
@@ -237,4 +236,17 @@ fn is_under_assets(path: &Path, space_root: &Path) -> bool {
     rel.components().next().is_some_and(|c| {
         matches!(c, std::path::Component::Normal(name) if name == std::ffi::OsStr::new(".assets"))
     })
+}
+
+fn is_document_or_schema(path: &Path) -> bool {
+    if path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+    {
+        return true;
+    }
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == "schema.yaml")
 }
