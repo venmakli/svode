@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicoverbruggen/tauri-settings-schema/refs/heads/v2/schema.json",
   "productName": "CombAI",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "identifier": "app.combai.desktop",
   "build": {
     "frontendDist": "../dist",

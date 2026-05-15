@@ -90,7 +90,7 @@ pub async fn delete_entry(
 /// Delete an entry row by its relative path inside an already-resolved pool.
 pub async fn delete_entry_path(pool: &SqlitePool, rel_path: &str) -> Result<(), AppError> {
     let normalized = normalize_rel(rel_path);
-    sqlx::query("DELETE FROM entries WHERE path = ?")
+    sqlx::query("DELETE FROM entries WHERE file_path = ?")
         .bind(&normalized)
         .execute(pool)
         .await?;

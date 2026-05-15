@@ -1,4 +1,4 @@
-import { useContext, useState, useRef, useEffect } from "react";
+import { useContext, useState, useRef, useEffect, type KeyboardEvent, type ReactElement } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
@@ -29,6 +29,11 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ChevronRight, Ellipsis, FileText, FilePlus, FolderOpen, FolderPlus, GripVertical, FileSymlink, Pencil, Trash2 } from "lucide-react";
 import { useLayoutStore } from "@/stores/layout";
 import { useEditorStore } from "@/stores/editor";
@@ -185,7 +190,7 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
     setIsEditing(false);
   }
 
-  function handleRenameKeyDown(e: React.KeyboardEvent) {
+  function handleRenameKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter") {
       e.preventDefault();
       handleRenameSubmit();
@@ -390,6 +395,8 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
     <span className="truncate">{node.title}</span>
   );
 
+  const hasDescription = !bareFolder && !!node.description?.trim();
+
   const dragHandle = (
     <button
       className="absolute -left-4 top-0 z-10 flex h-7 w-4 items-center justify-center opacity-0 group-hover/tree-item:opacity-50 hover:!opacity-100 cursor-grab active:cursor-grabbing"
@@ -491,6 +498,21 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
     </AlertDialog>
   );
 
+  function withDescriptionTooltip(element: ReactElement) {
+    if (!hasDescription) return element;
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{element}</TooltipTrigger>
+        <TooltipContent side="right" className="flex flex-col items-start gap-0.5">
+          <span>{node.title}</span>
+          <span className="text-xs text-muted-foreground">
+            {node.description}
+          </span>
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
   // Leaf node (simple file or empty bare folder with no children)
   if (node.children.length === 0 && !bareFolder) {
     return (
@@ -499,16 +521,18 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
           {dropIndicator}
           <div className="flex items-center group/tree-item">
             {dragHandle}
-            <SidebarMenuSubButton
-              isActive={isActive}
-              className={`flex-1 ${nestHighlight}`}
-              onClick={handleDocumentClick}
-              onDoubleClick={handleStartRename}
-            >
-              {iconElement}
-              {titleElement}
-              {dot}
-            </SidebarMenuSubButton>
+            {withDescriptionTooltip(
+              <SidebarMenuSubButton
+                isActive={isActive}
+                className={`flex-1 ${nestHighlight}`}
+                onClick={handleDocumentClick}
+                onDoubleClick={handleStartRename}
+              >
+                {iconElement}
+                {titleElement}
+                {dot}
+              </SidebarMenuSubButton>,
+            )}
             {contextMenu}
           </div>
         </SidebarMenuSubItem>
@@ -529,26 +553,28 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
         >
           <div className="flex items-center group/tree-item">
             {dragHandle}
-            <SidebarMenuSubButton
-              isActive={isActive}
-              className={`flex-1 ${nestHighlight}`}
-              onClick={handleDocumentClick}
-              onDoubleClick={handleStartRename}
-            >
-              <CollapsibleTrigger
-                asChild
-                onClick={(e) => e.stopPropagation()}
+            {withDescriptionTooltip(
+              <SidebarMenuSubButton
+                isActive={isActive}
+                className={`flex-1 ${nestHighlight}`}
+                onClick={handleDocumentClick}
+                onDoubleClick={handleStartRename}
               >
-                <button className="relative h-4 w-4 shrink-0 flex items-center justify-center">
-                  <span className="group-hover/tree-item:opacity-0 transition-opacity">
-                    {iconElement}
-                  </span>
-                  <ChevronRight className="absolute inset-0 m-auto h-3 w-3 opacity-0 group-hover/tree-item:opacity-100 transition-all group-data-[state=open]/collapsible:rotate-90" />
-                </button>
-              </CollapsibleTrigger>
-              {titleElement}
-              {dot}
-            </SidebarMenuSubButton>
+                <CollapsibleTrigger
+                  asChild
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button className="relative h-4 w-4 shrink-0 flex items-center justify-center">
+                    <span className="group-hover/tree-item:opacity-0 transition-opacity">
+                      {iconElement}
+                    </span>
+                    <ChevronRight className="absolute inset-0 m-auto h-3 w-3 opacity-0 group-hover/tree-item:opacity-100 transition-all group-data-[state=open]/collapsible:rotate-90" />
+                  </button>
+                </CollapsibleTrigger>
+                {titleElement}
+                {dot}
+              </SidebarMenuSubButton>,
+            )}
             {contextMenu}
           </div>
           <CollapsibleContent>

@@ -8,6 +8,52 @@ use crate::files::backlinks::{BacklinkIndex, ModifiedLinkSource};
 use crate::files::frontmatter;
 use crate::files::tree;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ColorName {
+    Neutral,
+    Gray,
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Blue,
+    Purple,
+    Pink,
+    Brown,
+}
+
+impl ColorName {
+    fn from_name(value: &str) -> Option<Self> {
+        match value {
+            "neutral" => Some(Self::Neutral),
+            "gray" => Some(Self::Gray),
+            "red" => Some(Self::Red),
+            "orange" => Some(Self::Orange),
+            "yellow" => Some(Self::Yellow),
+            "green" => Some(Self::Green),
+            "blue" => Some(Self::Blue),
+            "purple" => Some(Self::Purple),
+            "pink" => Some(Self::Pink),
+            "brown" => Some(Self::Brown),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum Cover {
+    Color {
+        value: ColorName,
+    },
+    Image {
+        path: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        position: Option<u8>,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WriteResult {
     /// New relative path if file was renamed, None if path unchanged.
@@ -29,6 +75,10 @@ pub struct EntryMeta {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover: Option<Cover>,
     pub created: String,
     pub updated: String,
     /// User-defined custom fields from frontmatter YAML.
@@ -168,6 +218,29 @@ fn system_time_to_rfc3339(st: std::io::Result<std::time::SystemTime>) -> String 
         .unwrap_or_else(now_rfc3339)
 }
 
+fn meta_for_file_without_frontmatter(abs_path: &Path, path: &str) -> Result<EntryMeta, AppError> {
+    let fs_meta = fs::metadata(abs_path)?;
+    let created = system_time_to_rfc3339(fs_meta.created());
+    let updated = system_time_to_rfc3339(fs_meta.modified());
+
+    let stem = Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("untitled");
+    let title = title_from_stem(stem);
+
+    Ok(EntryMeta {
+        id: ulid::Ulid::new().to_string().to_lowercase(),
+        title,
+        icon: None,
+        description: None,
+        cover: None,
+        created,
+        updated,
+        extra: HashMap::new(),
+    })
+}
+
 /// Generate a title from a filename stem: "my-notes" → "My notes".
 fn title_from_stem(stem: &str) -> String {
     let s = stem.replace('-', " ").replace('_', " ");
@@ -241,6 +314,8 @@ pub fn create(space: &str, parent_path: Option<&str>, title: &str) -> Result<Ent
         id,
         title: title.to_string(),
         icon: None,
+        description: None,
+        cover: None,
         created: now.clone(),
         updated: now,
         extra: HashMap::new(),
@@ -320,24 +395,7 @@ pub fn read(space: &str, path: &str) -> Result<Entry, AppError> {
         }),
         None => {
             // No frontmatter — generate meta in memory, don't touch the file
-            let fs_meta = fs::metadata(&abs_path)?;
-            let created = system_time_to_rfc3339(fs_meta.created());
-            let updated = system_time_to_rfc3339(fs_meta.modified());
-
-            let stem = Path::new(path)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("untitled");
-            let title = title_from_stem(stem);
-
-            let meta = EntryMeta {
-                id: ulid::Ulid::new().to_string().to_lowercase(),
-                title,
-                icon: None,
-                created,
-                updated,
-                extra: HashMap::new(),
-            };
+            let meta = meta_for_file_without_frontmatter(&abs_path, path)?;
 
             Ok(Entry {
                 meta,
@@ -401,6 +459,8 @@ pub fn write(
                             .unwrap_or("untitled"),
                     ),
                     icon: None,
+                    description: None,
+                    cover: None,
                     created,
                     updated: String::new(),
                     extra: HashMap::new(),
@@ -468,6 +528,8 @@ pub fn write(
             && old_meta.id == meta.id
             && old_meta.title == meta.title
             && old_meta.icon == meta.icon
+            && old_meta.description == meta.description
+            && old_meta.cover == meta.cover
             && old_meta.created == meta.created
             && old_meta.extra == meta.extra
         {
@@ -689,6 +751,150 @@ pub fn write(
             .collect(),
         modified_files,
         write_nonce,
+    })
+}
+
+fn invalid_entry_field(message: impl Into<String>) -> AppError {
+    AppError::General(format!("invalid entry field: {}", message.into()))
+}
+
+fn expect_string(value: serde_json::Value, field: &str) -> Result<String, AppError> {
+    match value {
+        serde_json::Value::String(s) => Ok(s),
+        _ => Err(invalid_entry_field(format!("{field} must be a string"))),
+    }
+}
+
+fn cover_from_json(value: serde_json::Value) -> Result<Cover, AppError> {
+    let serde_json::Value::Object(mut object) = value else {
+        return Err(invalid_entry_field("cover must be an object or null"));
+    };
+
+    let cover_type = object
+        .remove("type")
+        .and_then(|v| v.as_str().map(ToOwned::to_owned))
+        .ok_or_else(|| invalid_entry_field("cover.type must be 'color' or 'image'"))?;
+
+    match cover_type.as_str() {
+        "color" => {
+            let value = object
+                .remove("value")
+                .and_then(|v| v.as_str().map(ToOwned::to_owned))
+                .ok_or_else(|| invalid_entry_field("cover.value must be a color name"))?;
+            let value = ColorName::from_name(&value).ok_or_else(|| {
+                invalid_entry_field(
+                    "cover.value must be one of neutral, gray, red, orange, yellow, green, blue, purple, pink, brown",
+                )
+            })?;
+            Ok(Cover::Color { value })
+        }
+        "image" => {
+            let path = object
+                .remove("path")
+                .and_then(|v| v.as_str().map(ToOwned::to_owned))
+                .ok_or_else(|| invalid_entry_field("cover.path must be a string"))?;
+            let position = match object.remove("position") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(serde_json::Value::Number(n)) => {
+                    let pos = n
+                        .as_u64()
+                        .ok_or_else(|| invalid_entry_field("cover.position must be 0..=100"))?;
+                    if pos > 100 {
+                        return Err(invalid_entry_field("cover.position must be 0..=100"));
+                    }
+                    Some(pos as u8)
+                }
+                Some(_) => return Err(invalid_entry_field("cover.position must be 0..=100")),
+            };
+            Ok(Cover::Image { path, position })
+        }
+        _ => Err(invalid_entry_field(
+            "cover.type must be either 'color' or 'image'",
+        )),
+    }
+}
+
+pub(crate) fn apply_entry_field_update(
+    meta: &mut EntryMeta,
+    field: &str,
+    value: serde_json::Value,
+) -> Result<(), AppError> {
+    match field {
+        "id" | "created" | "updated" => Err(invalid_entry_field(format!("{field} is read-only"))),
+        "title" => {
+            meta.title = expect_string(value, "title")?;
+            Ok(())
+        }
+        "icon" => {
+            meta.icon = match value {
+                serde_json::Value::Null => None,
+                v => Some(expect_string(v, "icon")?),
+            };
+            Ok(())
+        }
+        "description" => {
+            meta.description = match value {
+                serde_json::Value::Null => None,
+                serde_json::Value::String(s) => {
+                    if s.chars().count() > 500 {
+                        return Err(invalid_entry_field(
+                            "description must be at most 500 characters",
+                        ));
+                    }
+                    if s.is_empty() { None } else { Some(s) }
+                }
+                _ => return Err(invalid_entry_field("description must be a string or null")),
+            };
+            Ok(())
+        }
+        "cover" => {
+            meta.cover = match value {
+                serde_json::Value::Null => None,
+                v => Some(cover_from_json(v)?),
+            };
+            Ok(())
+        }
+        custom => {
+            if value.is_null() {
+                meta.extra.remove(custom);
+            } else {
+                let yaml_value = serde_yml::to_value(value)
+                    .map_err(|e| invalid_entry_field(format!("{custom}: {e}")))?;
+                meta.extra.insert(custom.to_string(), yaml_value);
+            }
+            Ok(())
+        }
+    }
+}
+
+pub fn update_field(
+    space: &str,
+    path: &str,
+    field: &str,
+    value: serde_json::Value,
+) -> Result<Entry, AppError> {
+    let abs_path = resolve(space, path);
+
+    if !abs_path.exists() {
+        return Err(AppError::FileNotFound(path.to_string()));
+    }
+
+    let content = fs::read_to_string(&abs_path)?;
+    let (mut meta, body) = match frontmatter::try_parse(&content)? {
+        Some((meta, body)) => (meta, body),
+        None => (meta_for_file_without_frontmatter(&abs_path, path)?, content),
+    };
+
+    apply_entry_field_update(&mut meta, field, value)?;
+    meta.updated = now_rfc3339();
+
+    let full_content = frontmatter::serialize(&meta, &body);
+    fs::write(&abs_path, full_content)?;
+
+    Ok(Entry {
+        meta,
+        body,
+        path: path.to_string(),
     })
 }
 
@@ -1026,6 +1232,86 @@ mod tests {
         let long_word = "a".repeat(80);
         let slug = slugify(&long_word);
         assert_eq!(slug.len(), 60);
+    }
+
+    fn test_meta() -> EntryMeta {
+        EntryMeta {
+            id: "01abc".into(),
+            title: "Title".into(),
+            icon: None,
+            description: None,
+            cover: None,
+            created: "2026-03-17T00:00:00Z".into(),
+            updated: "2026-03-17T00:00:00Z".into(),
+            extra: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_update_field_validates_description() {
+        let mut meta = test_meta();
+        apply_entry_field_update(
+            &mut meta,
+            "description",
+            serde_json::Value::String("Summary".into()),
+        )
+        .unwrap();
+        assert_eq!(meta.description.as_deref(), Some("Summary"));
+
+        apply_entry_field_update(
+            &mut meta,
+            "description",
+            serde_json::Value::String(String::new()),
+        )
+        .unwrap();
+        assert_eq!(meta.description, None);
+
+        let err = apply_entry_field_update(
+            &mut meta,
+            "description",
+            serde_json::Value::String("x".repeat(501)),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("500"));
+    }
+
+    #[test]
+    fn test_update_field_validates_cover() {
+        let mut meta = test_meta();
+        apply_entry_field_update(
+            &mut meta,
+            "cover",
+            serde_json::json!({ "type": "color", "value": "blue" }),
+        )
+        .unwrap();
+        assert_eq!(
+            meta.cover,
+            Some(Cover::Color {
+                value: ColorName::Blue,
+            })
+        );
+
+        apply_entry_field_update(
+            &mut meta,
+            "cover",
+            serde_json::json!({ "type": "image", "path": ".assets/cover.jpg", "position": 100 }),
+        )
+        .unwrap();
+        assert_eq!(
+            meta.cover,
+            Some(Cover::Image {
+                path: ".assets/cover.jpg".into(),
+                position: Some(100),
+            })
+        );
+
+        let err = apply_entry_field_update(
+            &mut meta,
+            "cover",
+            serde_json::json!({ "type": "image", "path": ".assets/cover.jpg", "position": 101 }),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("0..=100"));
     }
 
     #[test]

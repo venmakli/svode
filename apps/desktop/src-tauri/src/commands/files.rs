@@ -138,6 +138,28 @@ pub fn read_entry(space: String, path: String) -> Result<Entry, AppError> {
 }
 
 #[tauri::command]
+pub async fn update_entry_field(
+    space: String,
+    file_path: String,
+    field: String,
+    value: serde_json::Value,
+    project_path: Option<String>,
+    index_state: State<'_, IndexState>,
+) -> Result<Entry, AppError> {
+    let updated = entry::update_field(&space, &file_path, &field, value)?;
+
+    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+        let project = Path::new(proj);
+        let abs_target = Path::new(&space).join(&file_path);
+        if let Err(e) = index::update::update_entry(&index_state, project, &abs_target).await {
+            tracing::warn!("index update_entry failed for {file_path}: {e}");
+        }
+    }
+
+    Ok(updated)
+}
+
+#[tauri::command]
 pub async fn write_entry(
     space: String,
     path: String,

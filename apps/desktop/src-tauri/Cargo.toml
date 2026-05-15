@@ -1,6 +1,6 @@
 [package]
 name = "combai-desktop"
-version = "0.0.3"
+version = "0.0.4"
 authors = ["Kamnev Ilya"]
 edition = "2024"
 repository = "https://github.com/venmakli/combai"

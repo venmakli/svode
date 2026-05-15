@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { EditorKit } from "@/components/editor/editor-kit";
 import { TitleZone } from "../title-zone";
+import { CoverBanner } from "../cover-banner";
 import { FrontmatterPanel } from "../frontmatter-panel";
 import { useFileWatcher } from "../use-file-watcher";
 import { useLayoutStore } from "@/stores/layout";
@@ -25,31 +26,11 @@ import { Editor, EditorContainer } from "@/components/ui/editor";
 import { FixedToolbar } from "@/components/ui/fixed-toolbar";
 import { FixedToolbarButtons } from "@/components/ui/fixed-toolbar-buttons";
 import { TocSidebar } from "../toc-sidebar";
+import type { Entry, EntryCover, EntryMeta, WriteResult } from "../types";
 import * as m from "@/paraglide/messages.js";
 
 const AUTOSAVE_DEBOUNCE_MS = 1000;
-
-interface EntryMeta {
-  id: string;
-  title: string;
-  icon: string | null;
-  created: string;
-  updated: string;
-  extra: Record<string, unknown>;
-}
-
-interface Entry {
-  meta: EntryMeta;
-  body: string;
-  path: string;
-}
-
-interface WriteResult {
-  new_path: string | null;
-  modified_files: string[];
-  modified_sources?: { spaceId: string | null; path: string }[];
-  write_nonce: string;
-}
+const FIELD_UPDATE_DEBOUNCE_MS = 500;
 
 export function PlateDocumentEditor() {
   const { activeDocument, activeDocumentSpaceId, openDocument } =
@@ -82,12 +63,14 @@ export function PlateDocumentEditor() {
   const currentPathRef = useRef<string | null>(null);
   const titleRef = useRef("");
   const iconRef = useRef<string | null>(null);
+  const descriptionRef = useRef("");
   const extraRef = useRef<Record<string, unknown> | null>(null);
   const metaIdRef = useRef<string | null>(null);
   const docCacheRef = useRef(new Map<string, Descendant[]>());
 
   // Debounce auto-save refs
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fieldUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Buffer timer kept after IPC resolves so the delayed watcher echo
   // (200 ms watcher debounce + Tauri delivery) still sees pending=true and
   // is dropped by use-file-watcher's local-wins guard. Without this the
@@ -101,6 +84,8 @@ export function PlateDocumentEditor() {
   const [meta, setMeta] = useState<EntryMeta | null>(null);
   const [title, setTitle] = useState("");
   const [icon, setIcon] = useState<string | null>(null);
+  const [description, setDescription] = useState("");
+  const [cover, setCover] = useState<EntryCover | null>(null);
   const [frontmatterOpen, setFrontmatterOpen] = useState(false);
 
   // Keep refs in sync with state for stable callback access
@@ -110,6 +95,9 @@ export function PlateDocumentEditor() {
   useEffect(() => {
     iconRef.current = icon;
   }, [icon]);
+  useEffect(() => {
+    descriptionRef.current = description;
+  }, [description]);
   useEffect(() => {
     extraRef.current = meta?.extra ?? null;
     metaIdRef.current = meta?.id ?? null;
@@ -130,8 +118,39 @@ export function PlateDocumentEditor() {
       clearTimeout(bufferTimerRef.current);
       bufferTimerRef.current = null;
     }
+    if (fieldUpdateTimerRef.current) {
+      clearTimeout(fieldUpdateTimerRef.current);
+      fieldUpdateTimerRef.current = null;
+    }
     isDebouncePendingRef.current = false;
   }, []);
+
+  const updateEntryField = useCallback(
+    async (field: string, value: unknown): Promise<Entry | null> => {
+      if (!currentPathRef.current || !spacePath) return null;
+      const path = currentPathRef.current;
+      if (bufferTimerRef.current) {
+        clearTimeout(bufferTimerRef.current);
+        bufferTimerRef.current = null;
+      }
+      isDebouncePendingRef.current = true;
+      try {
+        return await invoke<Entry>("update_entry_field", {
+          space: spacePath,
+          filePath: path,
+          field,
+          value,
+          projectPath: activeRootPath ?? null,
+        });
+      } finally {
+        bufferTimerRef.current = setTimeout(() => {
+          bufferTimerRef.current = null;
+          isDebouncePendingRef.current = false;
+        }, 500);
+      }
+    },
+    [spacePath, activeRootPath],
+  );
 
   // Serialize the editor + current meta refs and call `write_entry`. Tracks
   // the returned write-nonce so the watcher can drop our own file:changed
@@ -141,6 +160,12 @@ export function PlateDocumentEditor() {
     async (skipRename: boolean): Promise<WriteResult | null> => {
       if (!editor || !currentPathRef.current || !spacePath) return null;
       const path = currentPathRef.current;
+
+      if (fieldUpdateTimerRef.current) {
+        clearTimeout(fieldUpdateTimerRef.current);
+        fieldUpdateTimerRef.current = null;
+        await updateEntryField("description", descriptionRef.current);
+      }
 
       if (hasUnresolvedConflicts(editor.children)) {
         // Skip silently during auto-save; surface the error on explicit save.
@@ -170,7 +195,7 @@ export function PlateDocumentEditor() {
 
       return result;
     },
-    [editor, spacePath, activeRootPath],
+    [editor, spacePath, activeRootPath, updateEntryField],
   );
 
   const handleModifiedSources = useCallback(
@@ -288,6 +313,8 @@ export function PlateDocumentEditor() {
           setMeta(entry.meta);
           setTitle(entry.meta.title);
           setIcon(entry.meta.icon);
+          setDescription(entry.meta.description ?? "");
+          setCover(entry.meta.cover ?? null);
           editor.tf.setValue(cached);
           clearUnsaved(activeDocument);
         })
@@ -309,6 +336,8 @@ export function PlateDocumentEditor() {
           setMeta(entry.meta);
           setTitle(entry.meta.title);
           setIcon(entry.meta.icon);
+          setDescription(entry.meta.description ?? "");
+          setCover(entry.meta.cover ?? null);
           const value = deserializeWithConflicts(editor, entry.body);
           editor.tf.setValue(value);
           clearUnsaved(activeDocument);
@@ -407,15 +436,51 @@ export function PlateDocumentEditor() {
     [markUnsaved, updateNodeMeta, activeWsId, scheduleAutoSave],
   );
 
-  const handleExtraChange = useCallback(
-    (newExtra: Record<string, unknown>) => {
-      setMeta((prev) => (prev ? { ...prev, extra: newExtra } : prev));
+  const handleDescriptionChange = useCallback(
+    (newDescription: string) => {
+      setDescription(newDescription);
+      setMeta((prev) =>
+        prev ? { ...prev, description: newDescription.trim() ? newDescription : null } : prev,
+      );
+      if (currentPathRef.current) {
+        markUnsaved(currentPathRef.current);
+        if (activeWsId) {
+          updateNodeMeta(
+            activeWsId,
+            currentPathRef.current,
+            titleRef.current,
+            iconRef.current,
+            newDescription,
+          );
+        }
+      }
+      if (fieldUpdateTimerRef.current) {
+        clearTimeout(fieldUpdateTimerRef.current);
+      }
+      fieldUpdateTimerRef.current = setTimeout(() => {
+        fieldUpdateTimerRef.current = null;
+        void updateEntryField("description", newDescription).catch((err) => {
+          console.error("Failed to update description:", err);
+          toast.error(m.editor_error_save());
+        });
+      }, FIELD_UPDATE_DEBOUNCE_MS);
+    },
+    [activeWsId, markUnsaved, updateEntryField, updateNodeMeta],
+  );
+
+  const handleCoverChange = useCallback(
+    (nextCover: EntryCover | null) => {
+      setCover(nextCover);
+      setMeta((prev) => (prev ? { ...prev, cover: nextCover } : prev));
       if (currentPathRef.current) {
         markUnsaved(currentPathRef.current);
       }
-      scheduleAutoSave();
+      void updateEntryField("cover", nextCover).catch((err) => {
+        console.error("Failed to update cover:", err);
+        toast.error(m.editor_error_save());
+      });
     },
-    [markUnsaved, scheduleAutoSave],
+    [markUnsaved, updateEntryField],
   );
 
   // ⌘S — cancel debounce, materialize (rename + backlinks + structural
@@ -592,18 +657,26 @@ export function PlateDocumentEditor() {
         <div className="flex-1 relative overflow-hidden">
           <EditorContainer className="h-full">
             <div className="mx-auto px-16 pt-8 sm:px-[max(64px,calc(50%-350px))]">
+              <CoverBanner
+                cover={cover}
+                projectPath={activeRootPath ?? null}
+                spacePath={spacePath}
+                documentPath={activeDocument}
+                onCoverChange={handleCoverChange}
+              />
               <TitleZone
                 title={title}
                 icon={icon}
+                description={description}
                 onTitleChange={handleTitleChange}
                 onIconChange={handleIconChange}
-                onEnter={() => editor.tf.focus({ edge: "start" })}
+                onDescriptionChange={handleDescriptionChange}
+                onBodyFocus={() => editor.tf.focus({ edge: "start" })}
               />
               <FrontmatterPanel
                 meta={meta}
                 isOpen={frontmatterOpen}
                 onOpenChange={setFrontmatterOpen}
-                onExtraChange={handleExtraChange}
               />
             </div>
             <Editor

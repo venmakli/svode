@@ -64,7 +64,13 @@ interface SpaceState {
   // Document/tree methods
   createPage: (spacePath: string, title: string) => Promise<Entry | null>;
   refreshTree: (spaceId?: string) => Promise<void>;
-  updateNodeMeta: (spaceId: string, path: string, title: string, icon: string | null) => void;
+  updateNodeMeta: (
+    spaceId: string,
+    path: string,
+    title: string,
+    icon: string | null,
+    description?: string | null,
+  ) => void;
   goHome: () => void;
   loadExpandedPaths: (spaceId: string) => Promise<void>;
   toggleExpanded: (spaceId: string, path: string) => void;
@@ -323,7 +329,13 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     }
   },
 
-  updateNodeMeta: (spaceId: string, path: string, title: string, icon: string | null) => {
+  updateNodeMeta: (
+    spaceId: string,
+    path: string,
+    title: string,
+    icon: string | null,
+    description?: string | null,
+  ) => {
     const trees = get().fileTrees;
     const tree = trees[spaceId];
     if (!tree) return;
@@ -331,7 +343,12 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     const update = (nodes: TreeNode[]): TreeNode[] =>
       nodes.map((node) => {
         if (node.path === path) {
-          return { ...node, title, icon };
+          return {
+            ...node,
+            title,
+            icon,
+            ...(description !== undefined ? { description } : {}),
+          };
         }
         if (node.children.length > 0) {
           return { ...node, children: update(node.children) };

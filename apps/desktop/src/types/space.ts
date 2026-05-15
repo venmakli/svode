@@ -72,6 +72,7 @@ export interface TreeNode {
   path: string;
   title: string;
   icon: string | null;
+  description?: string | null;
   has_changes: boolean;
   children: TreeNode[];
 }

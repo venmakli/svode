@@ -46,6 +46,7 @@ pub fn run() {
             commands::files::create_entry,
             commands::files::create_folder,
             commands::files::read_entry,
+            commands::files::update_entry_field,
             commands::files::write_entry,
             commands::files::delete_entry,
             commands::files::rename_entry,

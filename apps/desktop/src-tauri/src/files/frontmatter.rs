@@ -31,7 +31,6 @@ pub fn parse(content: &str) -> Result<(EntryMeta, String), AppError> {
 }
 
 fn parse_inner(trimmed: &str) -> Result<(EntryMeta, String), AppError> {
-
     // Find the closing delimiter
     let after_first = &trimmed[FRONTMATTER_DELIMITER.len()..];
     let after_first = after_first.strip_prefix('\n').unwrap_or(after_first);
@@ -48,9 +47,8 @@ fn parse_inner(trimmed: &str) -> Result<(EntryMeta, String), AppError> {
         .strip_prefix('\n')
         .unwrap_or(&after_first[body_start..]);
 
-    let meta: EntryMeta = serde_yml::from_str(yaml_str).map_err(|e| {
-        AppError::FrontmatterParse(format!("invalid YAML frontmatter: {e}"))
-    })?;
+    let meta: EntryMeta = serde_yml::from_str(yaml_str)
+        .map_err(|e| AppError::FrontmatterParse(format!("invalid YAML frontmatter: {e}")))?;
 
     Ok((meta, body.to_string()))
 }
@@ -72,6 +70,10 @@ mod tests {
             id: "01ABC".into(),
             title: "Hello World".into(),
             icon: None,
+            description: Some("A short summary".into()),
+            cover: Some(crate::files::entry::Cover::Color {
+                value: crate::files::entry::ColorName::Blue,
+            }),
             created: "2026-03-17T00:00:00Z".into(),
             updated: "2026-03-17T00:00:00Z".into(),
             extra: std::collections::HashMap::new(),
@@ -81,6 +83,34 @@ mod tests {
         let (parsed_meta, parsed_body) = parse(&raw).unwrap();
         assert_eq!(parsed_meta.id, meta.id);
         assert_eq!(parsed_meta.title, meta.title);
+        assert_eq!(parsed_meta.description, meta.description);
+        assert_eq!(parsed_meta.cover, meta.cover);
         assert_eq!(parsed_body, body);
+    }
+
+    #[test]
+    fn image_cover_roundtrip() {
+        let raw = r#"---
+id: 01ABC
+title: With Cover
+cover:
+  type: image
+  path: .assets/a1b2c3d4-cover.jpg
+  position: 50
+created: 2026-03-17T00:00:00Z
+updated: 2026-03-17T00:00:00Z
+---
+Body
+"#;
+
+        let (parsed_meta, parsed_body) = parse(raw).unwrap();
+        assert_eq!(
+            parsed_meta.cover,
+            Some(crate::files::entry::Cover::Image {
+                path: ".assets/a1b2c3d4-cover.jpg".into(),
+                position: Some(50),
+            })
+        );
+        assert_eq!(parsed_body, "Body\n");
     }
 }

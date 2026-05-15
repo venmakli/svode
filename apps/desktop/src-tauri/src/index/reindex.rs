@@ -99,20 +99,20 @@ fn collect_asset_files(assets_dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), 
 pub(crate) struct IndexedEntry {
     pub id: String,
     pub rel_path: String,
-    pub entry_type: String,
-    pub table_name: Option<String>,
+    pub parent_path: String,
     pub title: String,
-    pub metadata_json: String,
-    pub content: String,
-    pub updated_at: String,
+    pub icon: Option<String>,
+    pub description: Option<String>,
+    pub cover_json: Option<String>,
+    pub created: String,
+    pub updated: String,
+    pub fields_json: String,
+    pub body_preview: String,
 }
 
 /// Build an `IndexedEntry` from an absolute file path. Parses frontmatter,
 /// falling back to synthesized values if absent or invalid.
-pub(crate) fn build_entry(
-    space_dir: &Path,
-    abs_path: &Path,
-) -> Result<IndexedEntry, AppError> {
+pub(crate) fn build_entry(space_dir: &Path, abs_path: &Path) -> Result<IndexedEntry, AppError> {
     let rel_path = abs_path
         .strip_prefix(space_dir)
         .unwrap_or(abs_path)
@@ -122,91 +122,117 @@ pub(crate) fn build_entry(
 
     let raw = fs::read_to_string(abs_path)?;
 
-    let (id, title, metadata_json, content, updated_at) = match frontmatter::try_parse(&raw) {
-        Ok(Some((meta, body))) => {
-            let metadata_json = serialize_full_metadata(&meta, &rel_path);
-            let updated_at = if meta.updated.is_empty() {
-                file_modified_iso(abs_path)
-            } else {
-                meta.updated.clone()
-            };
-            (meta.id, meta.title, metadata_json, body, updated_at)
-        }
-        _ => {
-            let id = ulid::Ulid::new().to_string().to_lowercase();
-            let title = abs_path
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            let updated_at = file_modified_iso(abs_path);
-            (id, title, "{}".to_string(), raw, updated_at)
-        }
-    };
-
-    // Detect table_row vs page by looking for `_schema.yaml` in the parent dir.
-    let (entry_type, table_name) = match abs_path.parent() {
-        Some(parent) if parent.join("_schema.yaml").is_file() => {
-            let name = parent
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            ("table_row".to_string(), Some(name))
-        }
-        _ => ("page".to_string(), None),
-    };
+    let (id, title, icon, description, cover_json, created, updated, fields_json, body_preview) =
+        match frontmatter::try_parse(&raw) {
+            Ok(Some((meta, body))) => {
+                let fields_json = serialize_fields(&meta, &rel_path);
+                let cover_json = meta.cover.as_ref().and_then(|cover| {
+                    serde_json::to_string(cover)
+                        .map_err(|e| {
+                            tracing::warn!(
+                                "cover field in {rel_path} could not be JSON-encoded: {e}"
+                            );
+                            e
+                        })
+                        .ok()
+                });
+                let updated = if meta.updated.is_empty() {
+                    file_modified_iso(abs_path)
+                } else {
+                    meta.updated.clone()
+                };
+                let created = if meta.created.is_empty() {
+                    file_created_iso(abs_path)
+                } else {
+                    meta.created.clone()
+                };
+                (
+                    meta.id,
+                    meta.title,
+                    meta.icon,
+                    meta.description,
+                    cover_json,
+                    created,
+                    updated,
+                    fields_json,
+                    body,
+                )
+            }
+            _ => {
+                let id = ulid::Ulid::new().to_string().to_lowercase();
+                let title = abs_path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                let created = file_created_iso(abs_path);
+                let updated = file_modified_iso(abs_path);
+                (
+                    id,
+                    title,
+                    None,
+                    None,
+                    None,
+                    created,
+                    updated,
+                    "{}".to_string(),
+                    raw,
+                )
+            }
+        };
 
     Ok(IndexedEntry {
         id,
+        parent_path: parent_path_for(&rel_path),
         rel_path,
-        entry_type,
-        table_name,
         title,
-        metadata_json,
-        content,
-        updated_at,
+        icon,
+        description,
+        cover_json,
+        created,
+        updated,
+        fields_json,
+        body_preview,
     })
 }
 
-/// Serialize the full frontmatter (id/title/icon/created/updated + extra) as JSON.
-///
-/// Per spec `metadata` stores the *whole* frontmatter, not just custom fields.
+fn parent_path_for(rel_path: &str) -> String {
+    Path::new(rel_path)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| normalize_rel(&p.to_string_lossy()))
+        .unwrap_or_else(|| ".".to_string())
+}
+
+/// Serialize custom frontmatter fields as JSON for the `fields` column.
+/// System fields are stored in dedicated columns.
 /// `serde_yml::Value` round-trips through `serde_json::Value` for normal scalars,
 /// sequences, and string-keyed mappings. YAML-only constructs (tags, non-string
 /// keys) fail; we log and fall back to `{}` rather than crash a reindex.
-fn serialize_full_metadata(meta: &crate::files::EntryMeta, rel_path: &str) -> String {
+fn serialize_fields(meta: &crate::files::EntryMeta, rel_path: &str) -> String {
     let mut map = serde_json::Map::new();
-    map.insert("id".into(), serde_json::Value::String(meta.id.clone()));
-    map.insert("title".into(), serde_json::Value::String(meta.title.clone()));
-    if let Some(icon) = &meta.icon {
-        map.insert("icon".into(), serde_json::Value::String(icon.clone()));
-    }
-    map.insert(
-        "created".into(),
-        serde_json::Value::String(meta.created.clone()),
-    );
-    map.insert(
-        "updated".into(),
-        serde_json::Value::String(meta.updated.clone()),
-    );
-
     for (key, value) in &meta.extra {
         match serde_json::to_value(value) {
             Ok(v) => {
                 map.insert(key.clone(), v);
             }
             Err(e) => {
-                tracing::warn!(
-                    "metadata field {key:?} in {rel_path} could not be JSON-encoded: {e}"
-                );
+                tracing::warn!("fields field {key:?} in {rel_path} could not be JSON-encoded: {e}");
             }
         }
     }
 
     serde_json::to_string(&map).unwrap_or_else(|e| {
-        tracing::warn!("metadata serialization failed for {rel_path}: {e}");
+        tracing::warn!("fields serialization failed for {rel_path}: {e}");
         "{}".to_string()
     })
+}
+
+fn file_created_iso(path: &Path) -> String {
+    fs::metadata(path)
+        .and_then(|m| m.created())
+        .map(format_system_time)
+        .unwrap_or_else(|_| file_modified_iso(path))
 }
 
 fn file_modified_iso(path: &Path) -> String {
@@ -219,40 +245,48 @@ fn file_modified_iso(path: &Path) -> String {
         })
 }
 
-/// Insert or update an indexed entry (UPSERT on path).
+/// Insert or update an indexed entry (UPSERT on file_path).
 ///
 /// Generic over `Executor` so the same code path works for a connection pool,
-/// a single connection, or a transaction. The `git_hash` column is preserved
-/// across UPSERTs (will be populated by future git integration).
-pub(crate) async fn upsert_entry<'e, E>(
-    executor: E,
-    entry: &IndexedEntry,
-) -> Result<(), AppError>
+/// a single connection, or a transaction.
+pub(crate) async fn upsert_entry<'e, E>(executor: E, entry: &IndexedEntry) -> Result<(), AppError>
 where
     E: Executor<'e, Database = Sqlite>,
 {
     sqlx::query(
         r#"
-        INSERT INTO entries (id, path, type, table_name, title, metadata, content, updated_at, git_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
-        ON CONFLICT(path) DO UPDATE SET
+        INSERT INTO entries (
+            id, file_path, parent_path, title, icon, description, cover, created, updated,
+            collection_root_path, in_collection, is_entry_head, fields, body_preview
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 1, ?, ?)
+        ON CONFLICT(file_path) DO UPDATE SET
             id = excluded.id,
-            type = excluded.type,
-            table_name = excluded.table_name,
+            parent_path = excluded.parent_path,
             title = excluded.title,
-            metadata = excluded.metadata,
-            content = excluded.content,
-            updated_at = excluded.updated_at
+            icon = excluded.icon,
+            description = excluded.description,
+            cover = excluded.cover,
+            created = excluded.created,
+            updated = excluded.updated,
+            collection_root_path = excluded.collection_root_path,
+            in_collection = excluded.in_collection,
+            is_entry_head = excluded.is_entry_head,
+            fields = excluded.fields,
+            body_preview = excluded.body_preview
         "#,
     )
     .bind(&entry.id)
     .bind(&entry.rel_path)
-    .bind(&entry.entry_type)
-    .bind(&entry.table_name)
+    .bind(&entry.parent_path)
     .bind(&entry.title)
-    .bind(&entry.metadata_json)
-    .bind(&entry.content)
-    .bind(&entry.updated_at)
+    .bind(&entry.icon)
+    .bind(&entry.description)
+    .bind(&entry.cover_json)
+    .bind(&entry.created)
+    .bind(&entry.updated)
+    .bind(&entry.fields_json)
+    .bind(&entry.body_preview)
     .execute(executor)
     .await?;
     Ok(())
@@ -312,13 +346,10 @@ fn build_asset(space_dir: &Path, abs_path: &Path) -> Result<IndexedAsset, AppErr
 
     let meta = fs::metadata(abs_path)?;
     let size_bytes = meta.len() as i64;
-    let created_at = meta
-        .modified()
-        .map(format_system_time)
-        .unwrap_or_else(|_| {
-            let now: DateTime<Utc> = SystemTime::now().into();
-            now.to_rfc3339_opts(SecondsFormat::Secs, true)
-        });
+    let created_at = meta.modified().map(format_system_time).unwrap_or_else(|_| {
+        let now: DateTime<Utc> = SystemTime::now().into();
+        now.to_rfc3339_opts(SecondsFormat::Secs, true)
+    });
 
     Ok(IndexedAsset {
         id: ulid::Ulid::new().to_string().to_lowercase(),

@@ -14,7 +14,10 @@ use crate::error::AppError;
 /// rewritten with renamed columns (`path → rel_path`, `original_name →
 /// file_name`, `mime_type → mime`, `size → size_bytes`) and `asset_type`
 /// is dropped (derived from mime at render time).
-const SCHEMA_VERSION: i64 = 3;
+///
+/// Bumped to 4 in stage-4 Phase 1: entries use the page metadata schema
+/// with description/cover system fields and collection placeholder columns.
+const SCHEMA_VERSION: i64 = 4;
 
 /// Create a connection pool for a space's index database.
 /// Ensures the parent directory exists and enables WAL mode.
@@ -77,40 +80,45 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
     let ddl = [
         r#"
         CREATE TABLE IF NOT EXISTS entries (
-            id TEXT PRIMARY KEY,
-            path TEXT NOT NULL UNIQUE,
-            type TEXT NOT NULL,
-            table_name TEXT,
-            title TEXT,
-            metadata JSON,
-            content TEXT,
-            updated_at TEXT,
-            git_hash TEXT
+            id                   TEXT PRIMARY KEY,
+            file_path            TEXT NOT NULL UNIQUE,
+            parent_path          TEXT NOT NULL,
+            title                TEXT NOT NULL,
+            icon                 TEXT,
+            description          TEXT,
+            cover                TEXT,
+            created              TEXT NOT NULL,
+            updated              TEXT NOT NULL,
+            collection_root_path TEXT,
+            in_collection        INTEGER NOT NULL,
+            is_entry_head        INTEGER NOT NULL,
+            fields               TEXT NOT NULL,
+            body_preview         TEXT
         )
         "#,
         r#"
         CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
-            title, content, content=entries, content_rowid=rowid
+            title, description, body_preview, content=entries, content_rowid=rowid
         )
         "#,
         r#"
         CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
-            INSERT INTO entries_fts(rowid, title, content)
-            VALUES (new.rowid, new.title, new.content);
+            INSERT INTO entries_fts(rowid, title, description, body_preview)
+            VALUES (new.rowid, new.title, new.description, new.body_preview);
         END
         "#,
         r#"
         CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN
-            INSERT INTO entries_fts(entries_fts, rowid, title, content)
-            VALUES ('delete', old.rowid, old.title, old.content);
+            INSERT INTO entries_fts(entries_fts, rowid, title, description, body_preview)
+            VALUES ('delete', old.rowid, old.title, old.description, old.body_preview);
         END
         "#,
         r#"
         CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN
-            INSERT INTO entries_fts(entries_fts, rowid, title, content)
-            VALUES ('delete', old.rowid, old.title, old.content);
-            INSERT INTO entries_fts(rowid, title, content)
-            VALUES (new.rowid, new.title, new.content);
+            INSERT INTO entries_fts(entries_fts, rowid, title, description, body_preview)
+            VALUES ('delete', old.rowid, old.title, old.description, old.body_preview);
+            INSERT INTO entries_fts(rowid, title, description, body_preview)
+            VALUES (new.rowid, new.title, new.description, new.body_preview);
         END
         "#,
         r#"
@@ -124,8 +132,10 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
             created_at TEXT NOT NULL
         )
         "#,
-        "CREATE INDEX IF NOT EXISTS idx_entries_type ON entries(type)",
-        "CREATE INDEX IF NOT EXISTS idx_entries_table ON entries(table_name)",
+        "CREATE INDEX IF NOT EXISTS idx_entries_parent ON entries(parent_path)",
+        "CREATE INDEX IF NOT EXISTS idx_entries_collection_root ON entries(collection_root_path)",
+        "CREATE INDEX IF NOT EXISTS idx_entries_in_collection ON entries(in_collection)",
+        "CREATE INDEX IF NOT EXISTS idx_entries_is_entry_head ON entries(is_entry_head)",
         "CREATE INDEX IF NOT EXISTS idx_assets_document ON assets(document_id)",
         // Per-pool broken-link registry (Stage 3.5 Phase 5 §5.6). Source side
         // owns the row — `source_space_id` is the pool; `target_space_id`

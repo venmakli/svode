@@ -86,16 +86,22 @@ pub async fn search_by_title(
 
     let rows = sqlx::query(
         r#"
-        SELECT id, path, COALESCE(title, '') AS title, type, table_name, updated_at
+        SELECT
+            id,
+            file_path AS path,
+            COALESCE(title, '') AS title,
+            'page' AS type,
+            NULL AS table_name,
+            updated AS updated_at
         FROM entries
-        WHERE title LIKE ? ESCAPE '\' OR path LIKE ? ESCAPE '\'
+        WHERE title LIKE ? ESCAPE '\' OR file_path LIKE ? ESCAPE '\'
         ORDER BY
             CASE
                 WHEN title LIKE ? ESCAPE '\' THEN 0
-                WHEN path LIKE ? ESCAPE '\' THEN 1
+                WHEN file_path LIKE ? ESCAPE '\' THEN 1
                 ELSE 2
             END,
-            updated_at DESC
+            updated DESC
         LIMIT ?
         "#,
     )
@@ -131,6 +137,10 @@ pub async fn search_fts(
     table_name_filter: Option<&str>,
     limit: i64,
 ) -> Result<Vec<SearchResult>, AppError> {
+    if entry_type_filter.is_some_and(|t| t != "page") || table_name_filter.is_some() {
+        return Ok(Vec::new());
+    }
+
     let fts_query = build_fts_query(query);
     if fts_query.is_empty() {
         return Ok(Vec::new());
@@ -142,33 +152,20 @@ pub async fn search_fts(
         r#"
         SELECT
             e.id,
-            e.path,
+            e.file_path AS path,
             COALESCE(e.title, '') AS title,
-            e.type,
-            e.table_name,
-            e.updated_at AS updated_at,
-            snippet(entries_fts, 1, '<mark>', '</mark>', '...', 32) AS snippet
+            'page' AS type,
+            NULL AS table_name,
+            e.updated AS updated_at,
+            snippet(entries_fts, 2, '<mark>', '</mark>', '...', 32) AS snippet
         FROM entries_fts
         JOIN entries e ON e.rowid = entries_fts.rowid
         WHERE entries_fts MATCH ?
         "#,
     );
-
-    if entry_type_filter.is_some() {
-        sql.push_str(" AND e.type = ? ");
-    }
-    if table_name_filter.is_some() {
-        sql.push_str(" AND e.table_name = ? ");
-    }
     sql.push_str(" ORDER BY bm25(entries_fts) ASC LIMIT ?");
 
     let mut q = sqlx::query(&sql).bind(fts_query);
-    if let Some(t) = entry_type_filter {
-        q = q.bind(t.to_string());
-    }
-    if let Some(tn) = table_name_filter {
-        q = q.bind(tn.to_string());
-    }
     q = q.bind(limit);
 
     let rows = q
@@ -198,9 +195,15 @@ pub async fn search_fts(
 pub async fn recent(pool: &SqlitePool, limit: i64) -> Result<Vec<SearchResult>, AppError> {
     let rows = sqlx::query(
         r#"
-        SELECT id, path, COALESCE(title, '') AS title, type, table_name, updated_at
+        SELECT
+            id,
+            file_path AS path,
+            COALESCE(title, '') AS title,
+            'page' AS type,
+            NULL AS table_name,
+            updated AS updated_at
         FROM entries
-        ORDER BY updated_at DESC
+        ORDER BY updated DESC
         LIMIT ?
         "#,
     )

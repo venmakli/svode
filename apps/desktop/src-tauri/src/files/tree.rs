@@ -13,6 +13,7 @@ pub struct TreeNode {
     pub path: String,
     pub title: String,
     pub icon: Option<String>,
+    pub description: Option<String>,
     pub has_changes: bool,
     pub children: Vec<TreeNode>,
 }
@@ -25,18 +26,21 @@ fn is_hidden(name: &str) -> bool {
 /// Find a readme.md file inside a directory (case-insensitive).
 /// Returns the absolute path if found.
 fn find_readme(dir: &Path) -> Option<std::path::PathBuf> {
-    fs::read_dir(dir).ok()?.filter_map(|e| e.ok()).find_map(|e| {
-        let name = e.file_name();
-        if name.to_string_lossy().eq_ignore_ascii_case("readme.md") && e.path().is_file() {
-            Some(e.path())
-        } else {
-            None
-        }
-    })
+    fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .find_map(|e| {
+            let name = e.file_name();
+            if name.to_string_lossy().eq_ignore_ascii_case("readme.md") && e.path().is_file() {
+                Some(e.path())
+            } else {
+                None
+            }
+        })
 }
 
-/// Read title and icon from frontmatter. Falls back to filename without .md on error.
-fn read_frontmatter_meta(abs_path: &Path) -> (String, Option<String>) {
+/// Read sidebar metadata from frontmatter. Falls back to filename without .md on error.
+fn read_frontmatter_meta(abs_path: &Path) -> (String, Option<String>, Option<String>) {
     let fallback = abs_path
         .file_stem()
         .unwrap_or_default()
@@ -45,12 +49,12 @@ fn read_frontmatter_meta(abs_path: &Path) -> (String, Option<String>) {
 
     let content = match fs::read_to_string(abs_path) {
         Ok(c) => c,
-        Err(_) => return (fallback, None),
+        Err(_) => return (fallback, None, None),
     };
 
     match frontmatter::parse(&content) {
-        Ok((meta, _)) => (meta.title, meta.icon),
-        Err(_) => (fallback, None),
+        Ok((meta, _)) => (meta.title, meta.icon, meta.description),
+        Err(_) => (fallback, None, None),
     }
 }
 
@@ -66,10 +70,7 @@ pub fn read_order(space: &Path) -> HashMap<String, Vec<String>> {
 }
 
 /// Write order.json to space .combai directory.
-pub fn write_order(
-    space: &Path,
-    order: &HashMap<String, Vec<String>>,
-) -> Result<(), AppError> {
+pub fn write_order(space: &Path, order: &HashMap<String, Vec<String>>) -> Result<(), AppError> {
     let combai_dir = space.join(".combai");
     fs::create_dir_all(&combai_dir)?;
     let data = serde_json::to_string_pretty(order)?;
@@ -94,7 +95,10 @@ fn apply_order(nodes: &mut Vec<TreeNode>, order_list: Option<&Vec<String>>) {
         .collect();
 
     nodes.sort_by(|a, b| {
-        match (positions.get(a.name.as_str()), positions.get(b.name.as_str())) {
+        match (
+            positions.get(a.name.as_str()),
+            positions.get(b.name.as_str()),
+        ) {
             (Some(pa), Some(pb)) => pa.cmp(pb),
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
@@ -176,16 +180,16 @@ fn read_dir_recursive(
 
             let readme = find_readme(&abs_path);
 
-            let (title, icon) = if let Some(ref rp) = readme {
-                let (t, i) = read_frontmatter_meta(rp);
+            let (title, icon, description) = if let Some(ref rp) = readme {
+                let (t, i, d) = read_frontmatter_meta(rp);
                 // If frontmatter missing, title falls back to "README" — use folder name instead
                 if i.is_none() && t.eq_ignore_ascii_case("readme") {
-                    (name.clone(), None)
+                    (name.clone(), None, None)
                 } else {
-                    (t, i)
+                    (t, i, d)
                 }
             } else {
-                (name.clone(), None)
+                (name.clone(), None, None)
             };
 
             // For document folders: path = "dir/README.md" (actual filename)
@@ -208,16 +212,18 @@ fn read_dir_recursive(
                 path: node_path,
                 title,
                 icon,
+                description,
                 has_changes: false,
                 children,
             });
         } else if name.ends_with(".md") {
-            let (title, icon) = read_frontmatter_meta(&abs_path);
+            let (title, icon, description) = read_frontmatter_meta(&abs_path);
             nodes.push(TreeNode {
                 name,
                 path: rel_path,
                 title,
                 icon,
+                description,
                 has_changes: false,
                 children: vec![],
             });
