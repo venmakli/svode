@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{Duration, Local, NaiveDate, NaiveDateTime};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_yml::{Mapping, Value};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
@@ -153,7 +153,7 @@ pub struct TemplatesConfig {
     pub order: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FilterOp {
     Eq,
@@ -892,7 +892,7 @@ fn validate_custom_field_context(
         .ok_or_else(|| schema_error(format!("field '{field}' not found")))?;
     let allowed = match context {
         FieldContext::Filter | FieldContext::VisibleField | FieldContext::CardField => true,
-        FieldContext::Sort => !matches!(column.type_, PropertyType::MultiSelect),
+        FieldContext::Sort => true,
         FieldContext::GroupBy => matches!(
             column.type_,
             PropertyType::Select | PropertyType::Status | PropertyType::Person
@@ -977,17 +977,16 @@ fn validate_filter_op(schema: &CollectionSchema, filter: &Filter) -> Result<(), 
                 | FilterOp::GroupNotIn
         ),
     };
-    if op_allowed {
-        Ok(())
-    } else {
+    if !op_allowed {
         Err(schema_error(format!(
             "operator {:?} is not valid for field '{}'",
             filter.op, filter.field
-        )))
+        )))?
     }
+    validate_filter_payload(schema, filter, ty)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum FieldType {
     TextLike,
     Number,
@@ -997,6 +996,200 @@ enum FieldType {
     Multi,
     Status,
     Person,
+}
+
+enum FilterArity {
+    None,
+    One,
+    Many,
+}
+
+fn validate_filter_payload(
+    schema: &CollectionSchema,
+    filter: &Filter,
+    ty: FieldType,
+) -> Result<(), AppError> {
+    match filter_arity(filter.op) {
+        FilterArity::None => {
+            if filter.value.is_some() || filter.values.is_some() {
+                return Err(schema_error(format!(
+                    "filter '{}' does not accept values",
+                    filter.field
+                )));
+            }
+            Ok(())
+        }
+        FilterArity::One => {
+            let value = single_filter_value(filter)?;
+            validate_filter_value(schema, filter, ty, value)
+        }
+        FilterArity::Many => {
+            let values = filter_values(filter)?;
+            for value in &values {
+                validate_filter_value(schema, filter, ty, value)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn filter_arity(op: FilterOp) -> FilterArity {
+    match op {
+        FilterOp::IsEmpty | FilterOp::IsNotEmpty => FilterArity::None,
+        FilterOp::In
+        | FilterOp::NotIn
+        | FilterOp::ContainsAny
+        | FilterOp::NotContainsAny
+        | FilterOp::GroupIn
+        | FilterOp::GroupNotIn => FilterArity::Many,
+        FilterOp::Eq
+        | FilterOp::Neq
+        | FilterOp::Contains
+        | FilterOp::NotContains
+        | FilterOp::Gt
+        | FilterOp::Lt
+        | FilterOp::Gte
+        | FilterOp::Lte
+        | FilterOp::Before
+        | FilterOp::After
+        | FilterOp::GroupEq
+        | FilterOp::GroupNeq => FilterArity::One,
+    }
+}
+
+fn single_filter_value(filter: &Filter) -> Result<&Value, AppError> {
+    if let Some(values) = filter.values.as_ref() {
+        if values.len() == 1 {
+            return Ok(&values[0]);
+        }
+        return Err(schema_error(format!(
+            "filter '{}' requires exactly one value",
+            filter.field
+        )));
+    }
+    let value = filter
+        .value
+        .as_ref()
+        .ok_or_else(|| schema_error(format!("filter '{}' requires value", filter.field)))?;
+    if matches!(value, Value::Sequence(_)) {
+        return Err(schema_error(format!(
+            "filter '{}' requires a scalar value",
+            filter.field
+        )));
+    }
+    Ok(value)
+}
+
+fn validate_filter_value(
+    schema: &CollectionSchema,
+    filter: &Filter,
+    ty: FieldType,
+    value: &Value,
+) -> Result<(), AppError> {
+    if matches!(
+        filter.op,
+        FilterOp::GroupEq | FilterOp::GroupNeq | FilterOp::GroupIn | FilterOp::GroupNotIn
+    ) {
+        let raw = value.as_str().ok_or_else(|| {
+            schema_error(format!(
+                "filter '{}' requires status group value",
+                filter.field
+            ))
+        })?;
+        parse_status_group_name(raw)
+            .ok_or_else(|| schema_error(format!("invalid status group '{raw}'")))?;
+        return Ok(());
+    }
+
+    match ty {
+        FieldType::TextLike => {
+            value.as_str().ok_or_else(|| {
+                schema_error(format!("filter '{}' requires string value", filter.field))
+            })?;
+        }
+        FieldType::Number => {
+            if value.as_f64().is_none() {
+                return Err(schema_error(format!(
+                    "filter '{}' requires numeric value",
+                    filter.field
+                )));
+            }
+        }
+        FieldType::Date => validate_date_filter_value(&filter.field, value)?,
+        FieldType::Checkbox => {
+            if value.as_bool().is_none() {
+                return Err(schema_error(format!(
+                    "filter '{}' requires boolean value",
+                    filter.field
+                )));
+            }
+        }
+        FieldType::SelectLike | FieldType::Status => {
+            let raw = value.as_str().ok_or_else(|| {
+                schema_error(format!("filter '{}' requires option value", filter.field))
+            })?;
+            validate_declared_option(schema, &filter.field, raw)?;
+        }
+        FieldType::Multi => {
+            let raw = value.as_str().ok_or_else(|| {
+                schema_error(format!("filter '{}' requires option value", filter.field))
+            })?;
+            validate_declared_option(schema, &filter.field, raw)?;
+        }
+        FieldType::Person => {
+            value.as_str().ok_or_else(|| {
+                schema_error(format!("filter '{}' requires person email", filter.field))
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_date_filter_value(field: &str, value: &Value) -> Result<(), AppError> {
+    let raw = value
+        .as_str()
+        .ok_or_else(|| schema_error(format!("filter '{field}' requires date value")))?;
+    if today_macro_offset(raw)?.is_some() {
+        return Ok(());
+    }
+    parse_date_cell(raw)
+        .ok_or_else(|| schema_error(format!("filter '{field}' requires ISO date or datetime")))?;
+    Ok(())
+}
+
+fn validate_declared_option(
+    schema: &CollectionSchema,
+    field: &str,
+    value: &str,
+) -> Result<(), AppError> {
+    let Some(column) = schema.columns.iter().find(|column| column.name == field) else {
+        return Ok(());
+    };
+    if option_names(column).contains(value) {
+        Ok(())
+    } else {
+        Err(schema_error(format!(
+            "filter '{}' value '{}' is not declared in options",
+            field, value
+        )))
+    }
+}
+
+fn parse_status_group_name(raw: &str) -> Option<StatusGroup> {
+    match raw {
+        "todo" => Some(StatusGroup::Todo),
+        "in_progress" => Some(StatusGroup::InProgress),
+        "done" => Some(StatusGroup::Done),
+        _ => None,
+    }
+}
+
+fn status_group_name(group: StatusGroup) -> &'static str {
+    match group {
+        StatusGroup::Todo => "todo",
+        StatusGroup::InProgress => "in_progress",
+        StatusGroup::Done => "done",
+    }
 }
 
 fn field_type(
@@ -1222,6 +1415,36 @@ fn parse_date_cell(raw: &str) -> Option<bool> {
     }
 
     None
+}
+
+fn today_macro_offset(raw: &str) -> Result<Option<i64>, AppError> {
+    let Some(rest) = raw.strip_prefix("@today") else {
+        return Ok(None);
+    };
+    if rest.is_empty() {
+        return Ok(Some(0));
+    }
+
+    let (sign, digits) = rest.split_at(1);
+    if digits.is_empty() || !matches!(sign, "+" | "-") {
+        return Err(schema_error(format!("invalid @today macro '{raw}'")));
+    }
+
+    let offset = digits
+        .parse::<i64>()
+        .map_err(|_| schema_error(format!("invalid @today macro '{raw}'")))?;
+    Ok(Some(if sign == "-" { -offset } else { offset }))
+}
+
+fn resolve_today_macro(raw: &str) -> Result<Option<String>, AppError> {
+    let Some(offset) = today_macro_offset(raw)? else {
+        return Ok(None);
+    };
+    Ok(Some(
+        (Local::now().date_naive() + Duration::days(offset))
+            .format("%Y-%m-%d")
+            .to_string(),
+    ))
 }
 
 pub fn apply_schema_defaults_for_path(
@@ -1931,8 +2154,119 @@ fn collection_title(collection_dir: &Path, fallback_name: &str) -> String {
     fallback_name.replace(['-', '_'], " ")
 }
 
+async fn resolve_query_filters(
+    git_cli: Option<&GitCli>,
+    space_path: &Path,
+    schema: &CollectionSchema,
+    filters: &[Filter],
+) -> Result<Vec<Filter>, AppError> {
+    let me_email = if query_filters_need_me(schema, filters)? {
+        Some(resolve_current_person_email(git_cli, space_path).await?)
+    } else {
+        None
+    };
+
+    let mut resolved = Vec::with_capacity(filters.len());
+    for filter in filters {
+        let ty = field_type(schema, &filter.field, FieldContext::Filter)?;
+        let mut filter = filter.clone();
+        if let Some(value) = filter.value.as_mut() {
+            resolve_filter_macro_container(ty, value, me_email.as_deref())?;
+        }
+        if let Some(values) = filter.values.as_mut() {
+            for value in values {
+                resolve_filter_macro_container(ty, value, me_email.as_deref())?;
+            }
+        }
+        resolved.push(filter);
+    }
+    Ok(resolved)
+}
+
+fn query_filters_need_me(schema: &CollectionSchema, filters: &[Filter]) -> Result<bool, AppError> {
+    for filter in filters {
+        if field_type(schema, &filter.field, FieldContext::Filter)? != FieldType::Person {
+            continue;
+        }
+        if filter_value_refs(filter)
+            .into_iter()
+            .any(|value| value.as_str() == Some("@me"))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn filter_value_refs(filter: &Filter) -> Vec<&Value> {
+    let mut values = Vec::new();
+    if let Some(value) = filter.value.as_ref() {
+        collect_filter_value_refs(value, &mut values);
+    }
+    if let Some(items) = filter.values.as_ref() {
+        for value in items {
+            collect_filter_value_refs(value, &mut values);
+        }
+    }
+    values
+}
+
+fn collect_filter_value_refs<'a>(value: &'a Value, values: &mut Vec<&'a Value>) {
+    if let Some(sequence) = value.as_sequence() {
+        values.extend(sequence);
+    } else {
+        values.push(value);
+    }
+}
+
+async fn resolve_current_person_email(
+    git_cli: Option<&GitCli>,
+    space_path: &Path,
+) -> Result<String, AppError> {
+    let cli = git_cli.ok_or_else(|| schema_error("@me requires Git to be available"))?;
+    let (name, email) = current_git_person(cli, space_path)
+        .await?
+        .ok_or_else(|| schema_error("@me requires git user.email"))?;
+    canonicalize_person(cli, space_path, &name, &email).await
+}
+
+fn resolve_filter_macro_value(
+    ty: FieldType,
+    value: &Value,
+    me_email: Option<&str>,
+) -> Result<Value, AppError> {
+    let Some(raw) = value.as_str() else {
+        return Ok(value.clone());
+    };
+    match ty {
+        FieldType::Date => resolve_today_macro(raw)
+            .map(|resolved| resolved.map(Value::String).unwrap_or_else(|| value.clone())),
+        FieldType::Person if raw == "@me" => me_email
+            .map(|email| Value::String(email.to_string()))
+            .ok_or_else(|| schema_error("@me requires git user.email")),
+        FieldType::Person => Ok(Value::String(raw.to_lowercase())),
+        _ => Ok(value.clone()),
+    }
+}
+
+fn resolve_filter_macro_container(
+    ty: FieldType,
+    value: &mut Value,
+    me_email: Option<&str>,
+) -> Result<(), AppError> {
+    if let Value::Sequence(sequence) = value {
+        for item in sequence {
+            *item = resolve_filter_macro_value(ty, item, me_email)?;
+        }
+    } else {
+        *value = resolve_filter_macro_value(ty, value, me_email)?;
+    }
+    Ok(())
+}
+
 pub async fn list_entries_for_view(
     pool: &SqlitePool,
+    git_cli: Option<&GitCli>,
     space: &str,
     collection_path: &str,
     view_name: &str,
@@ -1944,11 +2278,12 @@ pub async fn list_entries_for_view(
         .iter()
         .find(|view| view.name() == view_name)
         .ok_or_else(|| schema_error(format!("view '{view_name}' not found")))?;
+    let filters = resolve_query_filters(git_cli, Path::new(space), &schema, view.filters()).await?;
     let rows = query_entry_rows(
         pool,
         &schema,
         collection_path,
-        view.filters(),
+        &filters,
         view.sorts(),
         None,
         None,
@@ -1965,6 +2300,7 @@ pub async fn list_entries_for_view(
 
 pub async fn query_entries(
     pool: &SqlitePool,
+    git_cli: Option<&GitCli>,
     space: &str,
     collection_path: &str,
     filters: Option<Vec<Filter>>,
@@ -1976,6 +2312,7 @@ pub async fn query_entries(
     let filters = filters.unwrap_or_default();
     let sort = sort.unwrap_or_default();
     validate_ad_hoc_query(&schema, &filters, &sort)?;
+    let filters = resolve_query_filters(git_cli, Path::new(space), &schema, &filters).await?;
     let rows = query_entry_rows(
         pool,
         &schema,
@@ -2019,7 +2356,7 @@ async fn query_entry_rows(
             if idx > 0 {
                 query.push(", ");
             }
-            push_sort_sql(&mut query, &item.field, item.desc)?;
+            push_sort_sql(&mut query, schema, &item.field, item.desc)?;
         }
     }
     if let Some(limit) = limit {
@@ -2051,44 +2388,42 @@ fn push_filter_sql(
     filter: &Filter,
 ) -> Result<(), AppError> {
     validate_filter_op(schema, filter)?;
+    let ty = field_type(schema, &filter.field, FieldContext::Filter)?;
     query.push(" AND ");
     match filter.op {
-        FilterOp::Eq => {
-            push_field_expr(query, &filter.field);
-            query.push(" = ");
-            push_filter_value(query, filter)?;
+        FilterOp::Eq if ty == FieldType::Date => {
+            push_date_range_eq_filter(query, schema, filter, false)?
         }
-        FilterOp::Neq => {
-            push_field_expr(query, &filter.field);
-            query.push(" IS NOT NULL AND ");
-            push_field_expr(query, &filter.field);
-            query.push(" != ");
-            push_filter_value(query, filter)?;
+        FilterOp::Neq if ty == FieldType::Date => {
+            push_date_range_eq_filter(query, schema, filter, true)?
         }
-        FilterOp::Contains => push_like_filter(query, filter, false)?,
-        FilterOp::NotContains => push_like_filter(query, filter, true)?,
-        FilterOp::In => push_in_filter(query, filter, false)?,
-        FilterOp::NotIn => push_in_filter(query, filter, true)?,
-        FilterOp::Gt | FilterOp::After => push_cmp_filter(query, filter, ">")?,
-        FilterOp::Lt | FilterOp::Before => push_cmp_filter(query, filter, "<")?,
-        FilterOp::Gte => push_cmp_filter(query, filter, ">=")?,
-        FilterOp::Lte => push_cmp_filter(query, filter, "<=")?,
+        FilterOp::Eq => push_binary_filter(query, schema, filter, ty, "=")?,
+        FilterOp::Neq => push_binary_filter(query, schema, filter, ty, "!=")?,
+        FilterOp::Contains if ty == FieldType::Multi => {
+            push_array_contains_filter(query, schema, filter, false)?
+        }
+        FilterOp::NotContains if ty == FieldType::Multi => {
+            push_array_contains_filter(query, schema, filter, true)?
+        }
+        FilterOp::Contains => push_like_filter(query, schema, filter, false)?,
+        FilterOp::NotContains => push_like_filter(query, schema, filter, true)?,
+        FilterOp::In => push_in_filter(query, schema, filter, false)?,
+        FilterOp::NotIn => push_in_filter(query, schema, filter, true)?,
+        FilterOp::After => push_date_cmp_filter(query, filter, false, ">")?,
+        FilterOp::Before => push_date_cmp_filter(query, filter, true, "<")?,
+        FilterOp::Gt => push_cmp_filter(query, schema, filter, ty, ">")?,
+        FilterOp::Lt => push_cmp_filter(query, schema, filter, ty, "<")?,
+        FilterOp::Gte => push_cmp_filter(query, schema, filter, ty, ">=")?,
+        FilterOp::Lte => push_cmp_filter(query, schema, filter, ty, "<=")?,
         FilterOp::IsEmpty => {
-            query.push("(");
-            push_field_expr(query, &filter.field);
-            query.push(" IS NULL OR ");
-            push_field_expr(query, &filter.field);
-            query.push(" = '')");
+            push_empty_expr(query, schema, &filter.field)?;
         }
         FilterOp::IsNotEmpty => {
-            query.push("(");
-            push_field_expr(query, &filter.field);
-            query.push(" IS NOT NULL AND ");
-            push_field_expr(query, &filter.field);
-            query.push(" != '')");
+            push_not_empty_expr(query, schema, &filter.field)?;
         }
         FilterOp::ContainsAny | FilterOp::NotContainsAny => push_array_contains_filter(
             query,
+            schema,
             filter,
             matches!(filter.op, FilterOp::NotContainsAny),
         )?,
@@ -2110,6 +2445,85 @@ fn push_field_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str) {
             query.push(")");
         }
     }
+}
+
+fn push_date_field_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str) {
+    match field {
+        "created" | "updated" => push_field_expr(query, field),
+        _ => {
+            query.push("COALESCE(json_extract(fields, ");
+            query.push_bind(json_nested_path(field, "start"));
+            query.push("), ");
+            push_field_expr(query, field);
+            query.push(")");
+        }
+    }
+}
+
+fn push_date_end_field_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str) {
+    match field {
+        "created" | "updated" => push_field_expr(query, field),
+        _ => {
+            query.push("COALESCE(json_extract(fields, ");
+            query.push_bind(json_nested_path(field, "end"));
+            query.push("), ");
+            push_field_expr(query, field);
+            query.push(")");
+        }
+    }
+}
+
+fn push_number_field_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str) {
+    query.push("CAST(");
+    push_field_expr(query, field);
+    query.push(" AS REAL)");
+}
+
+fn push_filter_field_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str, ty: FieldType) {
+    match ty {
+        FieldType::Number => push_number_field_expr(query, field),
+        FieldType::Date => push_date_field_expr(query, field),
+        _ => push_field_expr(query, field),
+    }
+}
+
+fn push_text_sort_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str) {
+    query.push("LOWER(CAST(");
+    push_field_expr(query, field);
+    query.push(" AS TEXT)) COLLATE NOCASE");
+}
+
+fn push_empty_expr(
+    query: &mut QueryBuilder<'_, Sqlite>,
+    schema: &CollectionSchema,
+    field: &str,
+) -> Result<(), AppError> {
+    let ty = field_type(schema, field, FieldContext::Filter)?;
+    query.push("(");
+    push_field_expr(query, field);
+    query.push(" IS NULL OR ");
+    match ty {
+        FieldType::Multi => {
+            query.push("json_array_length(");
+            push_field_expr(query, field);
+            query.push(") = 0");
+        }
+        _ => {
+            push_field_expr(query, field);
+            query.push(" = ''");
+        }
+    }
+    query.push(")");
+    Ok(())
+}
+
+fn push_not_empty_expr(
+    query: &mut QueryBuilder<'_, Sqlite>,
+    schema: &CollectionSchema,
+    field: &str,
+) -> Result<(), AppError> {
+    query.push("NOT ");
+    push_empty_expr(query, schema, field)
 }
 
 fn push_filter_value(
@@ -2139,21 +2553,62 @@ fn push_yaml_value(query: &mut QueryBuilder<'_, Sqlite>, value: &Value) {
     }
 }
 
-fn push_like_filter(
+fn push_binary_filter(
     query: &mut QueryBuilder<'_, Sqlite>,
+    schema: &CollectionSchema,
+    filter: &Filter,
+    ty: FieldType,
+    op: &str,
+) -> Result<(), AppError> {
+    if op == "!=" {
+        push_not_empty_expr(query, schema, &filter.field)?;
+        query.push(" AND ");
+    }
+    push_filter_field_expr(query, &filter.field, ty);
+    query.push(" ");
+    query.push(op);
+    query.push(" ");
+    push_filter_value(query, filter)
+}
+
+fn push_date_range_eq_filter(
+    query: &mut QueryBuilder<'_, Sqlite>,
+    schema: &CollectionSchema,
     filter: &Filter,
     negated: bool,
 ) -> Result<(), AppError> {
-    let value = filter
-        .value
-        .as_ref()
-        .and_then(Value::as_str)
+    if negated {
+        push_not_empty_expr(query, schema, &filter.field)?;
+        query.push(" AND NOT ");
+    }
+    query.push("(");
+    push_date_field_expr(query, &filter.field);
+    query.push(" <= ");
+    push_filter_value(query, filter)?;
+    query.push(" AND ");
+    push_date_end_field_expr(query, &filter.field);
+    query.push(" >= ");
+    push_filter_value(query, filter)?;
+    query.push(")");
+    Ok(())
+}
+
+fn push_like_filter(
+    query: &mut QueryBuilder<'_, Sqlite>,
+    schema: &CollectionSchema,
+    filter: &Filter,
+    negated: bool,
+) -> Result<(), AppError> {
+    let value = single_filter_value(filter)?
+        .as_str()
         .ok_or_else(|| schema_error(format!("filter '{}' requires string value", filter.field)))?;
     if negated {
-        push_field_expr(query, &filter.field);
-        query.push(" IS NOT NULL AND ");
+        push_not_empty_expr(query, schema, &filter.field)?;
+        query.push(" AND ");
     }
+    query.push("CAST(");
     push_field_expr(query, &filter.field);
+    query.push(" AS TEXT)");
     if negated {
         query.push(" NOT");
     }
@@ -2165,15 +2620,17 @@ fn push_like_filter(
 
 fn push_in_filter(
     query: &mut QueryBuilder<'_, Sqlite>,
+    schema: &CollectionSchema,
     filter: &Filter,
     negated: bool,
 ) -> Result<(), AppError> {
     let values = filter_values(filter)?;
+    let ty = field_type(schema, &filter.field, FieldContext::Filter)?;
     if negated {
-        push_field_expr(query, &filter.field);
-        query.push(" IS NOT NULL AND ");
+        push_not_empty_expr(query, schema, &filter.field)?;
+        query.push(" AND ");
     }
-    push_field_expr(query, &filter.field);
+    push_filter_field_expr(query, &filter.field, ty);
     if negated {
         query.push(" NOT");
     }
@@ -2190,10 +2647,29 @@ fn push_in_filter(
 
 fn push_cmp_filter(
     query: &mut QueryBuilder<'_, Sqlite>,
+    _schema: &CollectionSchema,
     filter: &Filter,
+    ty: FieldType,
     op: &str,
 ) -> Result<(), AppError> {
-    push_field_expr(query, &filter.field);
+    push_filter_field_expr(query, &filter.field, ty);
+    query.push(" ");
+    query.push(op);
+    query.push(" ");
+    push_filter_value(query, filter)
+}
+
+fn push_date_cmp_filter(
+    query: &mut QueryBuilder<'_, Sqlite>,
+    filter: &Filter,
+    use_end: bool,
+    op: &str,
+) -> Result<(), AppError> {
+    if use_end {
+        push_date_end_field_expr(query, &filter.field);
+    } else {
+        push_date_field_expr(query, &filter.field);
+    }
     query.push(" ");
     query.push(op);
     query.push(" ");
@@ -2202,12 +2678,14 @@ fn push_cmp_filter(
 
 fn push_array_contains_filter(
     query: &mut QueryBuilder<'_, Sqlite>,
+    schema: &CollectionSchema,
     filter: &Filter,
     negated: bool,
 ) -> Result<(), AppError> {
     let values = filter_values(filter)?;
     if negated {
-        query.push("NOT ");
+        push_not_empty_expr(query, schema, &filter.field)?;
+        query.push(" AND NOT ");
     }
     query.push("EXISTS (SELECT 1 FROM json_each(");
     push_field_expr(query, &filter.field);
@@ -2239,13 +2717,17 @@ fn push_status_group_filter(
     let mut option_names = Vec::new();
     for option in column.options.as_deref().unwrap_or_default() {
         let Some(group) = option.group else { continue };
-        let group = serde_yml::to_value(group)
-            .ok()
-            .and_then(|value| value.as_str().map(ToOwned::to_owned))
-            .unwrap_or_default();
-        if wanted.contains(&group) {
+        if wanted.contains(status_group_name(group)) {
             option_names.push(Value::String(option.name.clone()));
         }
+    }
+    if option_names.is_empty() {
+        if matches!(filter.op, FilterOp::GroupNeq | FilterOp::GroupNotIn) {
+            push_not_empty_expr(query, schema, &filter.field)?;
+        } else {
+            query.push("0 = 1");
+        }
+        return Ok(());
     }
     let rewritten = Filter {
         field: filter.field.clone(),
@@ -2256,23 +2738,147 @@ fn push_status_group_filter(
         value: None,
         values: Some(option_names),
     };
-    push_in_filter(query, &rewritten, matches!(rewritten.op, FilterOp::NotIn))
+    push_in_filter(
+        query,
+        schema,
+        &rewritten,
+        matches!(rewritten.op, FilterOp::NotIn),
+    )
 }
 
 fn push_sort_sql(
     query: &mut QueryBuilder<'_, Sqlite>,
+    schema: &CollectionSchema,
     field: &str,
     desc: bool,
 ) -> Result<(), AppError> {
-    query.push("(");
-    push_field_expr(query, field);
-    query.push(" IS NULL OR ");
-    push_field_expr(query, field);
-    query.push(" = '') ASC, ");
-    push_field_expr(query, field);
-    query.push(" COLLATE NOCASE ");
-    query.push(if desc { "DESC" } else { "ASC" });
+    let ty = field_type(schema, field, FieldContext::Sort)?;
+    push_empty_expr(query, schema, field)?;
+    query.push(" ASC, ");
+    match ty {
+        FieldType::TextLike | FieldType::Person => {
+            push_text_sort_expr(query, field);
+            query.push(sort_direction(desc));
+        }
+        FieldType::Number => {
+            push_number_field_expr(query, field);
+            query.push(sort_direction(desc));
+        }
+        FieldType::Date => {
+            push_date_field_expr(query, field);
+            query.push(sort_direction(desc));
+        }
+        FieldType::Checkbox => {
+            push_field_expr(query, field);
+            query.push(sort_direction(desc));
+        }
+        FieldType::SelectLike | FieldType::Status => {
+            push_option_sort_sql(query, schema, field, desc)?;
+        }
+        FieldType::Multi => {
+            push_multi_select_sort_sql(query, schema, field, desc)?;
+        }
+    }
     Ok(())
+}
+
+fn sort_direction(desc: bool) -> &'static str {
+    if desc { " DESC" } else { " ASC" }
+}
+
+fn column_for_field<'a>(schema: &'a CollectionSchema, field: &str) -> Result<&'a Column, AppError> {
+    schema
+        .columns
+        .iter()
+        .find(|column| column.name == field)
+        .ok_or_else(|| schema_error(format!("field '{field}' not found")))
+}
+
+fn push_option_sort_sql(
+    query: &mut QueryBuilder<'_, Sqlite>,
+    schema: &CollectionSchema,
+    field: &str,
+    desc: bool,
+) -> Result<(), AppError> {
+    let column = column_for_field(schema, field)?;
+    push_option_index_expr(query, field, column);
+    query.push(" IS NULL ASC, ");
+    push_option_index_expr(query, field, column);
+    query.push(sort_direction(desc));
+    query.push(", ");
+    push_text_sort_expr(query, field);
+    query.push(sort_direction(desc));
+    Ok(())
+}
+
+fn push_option_index_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str, column: &Column) {
+    query.push("(CASE ");
+    push_field_expr(query, field);
+    for (idx, option) in column
+        .options
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .enumerate()
+    {
+        query.push(" WHEN ");
+        query.push_bind(option.name.clone());
+        query.push(" THEN ");
+        query.push(idx.to_string());
+    }
+    query.push(" ELSE NULL END)");
+}
+
+fn push_multi_select_sort_sql(
+    query: &mut QueryBuilder<'_, Sqlite>,
+    schema: &CollectionSchema,
+    field: &str,
+    desc: bool,
+) -> Result<(), AppError> {
+    let column = column_for_field(schema, field)?;
+    push_multi_valid_key_expr(query, field, column);
+    query.push(" IS NULL ASC, ");
+    push_multi_valid_key_expr(query, field, column);
+    query.push(sort_direction(desc));
+    query.push(", ");
+    push_multi_lex_key_expr(query, field);
+    query.push(sort_direction(desc));
+    Ok(())
+}
+
+fn push_multi_valid_key_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str, column: &Column) {
+    query.push(
+        "(SELECT group_concat(CASE WHEN option_index IS NOT NULL THEN printf('%08d', option_index) END, ',') FROM (SELECT ",
+    );
+    push_json_each_option_index_case(query, column);
+    query.push(" AS option_index FROM json_each(");
+    push_field_expr(query, field);
+    query.push(") ORDER BY option_index))");
+}
+
+fn push_json_each_option_index_case(query: &mut QueryBuilder<'_, Sqlite>, column: &Column) {
+    query.push("CASE json_each.value");
+    for (idx, option) in column
+        .options
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .enumerate()
+    {
+        query.push(" WHEN ");
+        query.push_bind(option.name.clone());
+        query.push(" THEN ");
+        query.push(idx.to_string());
+    }
+    query.push(" ELSE NULL END");
+}
+
+fn push_multi_lex_key_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str) {
+    query.push(
+        "(SELECT group_concat(value, ',') FROM (SELECT LOWER(CAST(json_each.value AS TEXT)) AS value FROM json_each(",
+    );
+    push_field_expr(query, field);
+    query.push(") ORDER BY value))");
 }
 
 fn filter_values(filter: &Filter) -> Result<Vec<Value>, AppError> {
@@ -2332,6 +2938,53 @@ fn entries_from_rows(
         return order_entries(space, &collection, entries, include_nested);
     }
     Ok(entries.into_iter().map(|(_, entry)| entry).collect())
+}
+
+#[allow(dead_code)]
+pub fn reorder_visible_entry_names(
+    full_order: &[String],
+    visible_order: &[String],
+    moved_name: &str,
+    to_visible_index: usize,
+) -> Result<Vec<String>, AppError> {
+    let mut visible = HashSet::new();
+    for name in visible_order {
+        if !visible.insert(name.as_str()) {
+            return Err(schema_error(format!("duplicate visible entry '{name}'")));
+        }
+        if !full_order.iter().any(|item| item == name) {
+            return Err(schema_error(format!(
+                "visible entry '{name}' is not in order"
+            )));
+        }
+    }
+    if !visible.contains(moved_name) {
+        return Err(schema_error(format!(
+            "moved entry '{moved_name}' is not visible"
+        )));
+    }
+
+    let mut next: Vec<String> = full_order
+        .iter()
+        .filter(|name| name.as_str() != moved_name)
+        .cloned()
+        .collect();
+    let visible_without_moved: Vec<&String> = full_order
+        .iter()
+        .filter(|name| visible.contains(name.as_str()) && name.as_str() != moved_name)
+        .collect();
+    let target = to_visible_index.min(visible_without_moved.len());
+
+    if let Some(anchor) = visible_without_moved.get(target) {
+        let insert_at = next
+            .iter()
+            .position(|name| name == *anchor)
+            .unwrap_or(next.len());
+        next.insert(insert_at, moved_name.to_string());
+    } else {
+        next.push(moved_name.to_string());
+    }
+    Ok(next)
 }
 
 fn order_entries(
@@ -2462,6 +3115,10 @@ fn collection_root_for_sql(collection_path: &str) -> String {
 
 fn json_path(field: &str) -> String {
     format!("$.\"{}\"", field.replace('"', "\\\""))
+}
+
+fn json_nested_path(field: &str, nested: &str) -> String {
+    format!("{}.\"{}\"", json_path(field), nested.replace('"', "\\\""))
 }
 
 fn escape_like(query: &str) -> String {
@@ -3289,5 +3946,253 @@ views: []
 
         let bad: Value = serde_yml::from_str("start: 2026-04-20T09:00\nend: 2026-04-22\n").unwrap();
         assert!(validate_property_value(&column, &bad).is_err());
+    }
+
+    #[test]
+    fn query_validation_enforces_operator_matrix_and_macros() {
+        let raw = r#"
+columns:
+  - { name: Effort, type: number }
+  - { name: Due, type: date }
+  - name: Status
+    type: status
+    options:
+      - { name: Todo, group: todo }
+      - { name: Doing, group: in_progress }
+      - { name: Done, group: done }
+  - name: Tags
+    type: multi_select
+    options: [Bug, Feature]
+views:
+  - type: table
+    name: Valid
+    filter:
+      - { field: Due, op: before, value: "@today+3" }
+      - { field: Status, op: group_in, values: [todo, done] }
+    sort:
+      - { field: Tags }
+    visible_fields: [title]
+"#;
+        let schema: CollectionSchema = serde_yml::from_str(raw).unwrap();
+        validate_schema(&schema).unwrap();
+
+        let bad_op = r#"
+columns:
+  - { name: Effort, type: number }
+views:
+  - type: table
+    name: Bad
+    filter:
+      - { field: Effort, op: contains, value: "1" }
+"#;
+        let schema: CollectionSchema = serde_yml::from_str(bad_op).unwrap();
+        assert!(validate_schema(&schema).is_err());
+
+        let bad_macro = r#"
+columns:
+  - { name: Due, type: date }
+views:
+  - type: table
+    name: Bad
+    filter:
+      - { field: Due, op: before, value: "@today+soon" }
+"#;
+        let schema: CollectionSchema = serde_yml::from_str(bad_macro).unwrap();
+        assert!(validate_schema(&schema).is_err());
+    }
+
+    #[test]
+    fn filtered_reorder_inserts_against_visible_positions() {
+        let full = vec![
+            "a.md".to_string(),
+            "hidden-1.md".to_string(),
+            "b.md".to_string(),
+            "hidden-2.md".to_string(),
+            "c.md".to_string(),
+        ];
+        let visible = vec!["a.md".to_string(), "b.md".to_string(), "c.md".to_string()];
+
+        let reordered = reorder_visible_entry_names(&full, &visible, "c.md", 1).unwrap();
+        assert_eq!(
+            reordered,
+            vec![
+                "a.md".to_string(),
+                "hidden-1.md".to_string(),
+                "c.md".to_string(),
+                "b.md".to_string(),
+                "hidden-2.md".to_string(),
+            ]
+        );
+
+        let reordered = reorder_visible_entry_names(&full, &visible, "a.md", 2).unwrap();
+        assert_eq!(
+            reordered,
+            vec![
+                "hidden-1.md".to_string(),
+                "b.md".to_string(),
+                "hidden-2.md".to_string(),
+                "c.md".to_string(),
+                "a.md".to_string(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn query_sql_filters_groups_and_sorts_option_indexes() {
+        let schema: CollectionSchema = serde_yml::from_str(
+            r#"
+columns:
+  - name: Priority
+    type: select
+    options: [Low, High]
+  - name: Status
+    type: status
+    options:
+      - { name: Todo, group: todo }
+      - { name: Doing, group: in_progress }
+      - { name: Done, group: done }
+  - name: Tags
+    type: multi_select
+    options: [Bug, Feature]
+  - name: Due
+    type: date
+views: []
+"#,
+        )
+        .unwrap();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            r#"
+            CREATE TABLE entries (
+                file_path TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                created TEXT NOT NULL,
+                updated TEXT NOT NULL,
+                collection_root_path TEXT,
+                in_collection INTEGER NOT NULL,
+                is_entry_head INTEGER NOT NULL,
+                fields TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        for (path, title, fields) in [
+            (
+                "tasks/a.md",
+                "A",
+                serde_json::json!({"Priority":"High","Status":"Doing","Tags":["Feature"],"Due":{"start":"2026-01-10","end":"2026-01-20"}}),
+            ),
+            (
+                "tasks/b.md",
+                "B",
+                serde_json::json!({"Priority":"Low","Status":"Doing","Tags":["Feature"],"Due":"2026-01-05"}),
+            ),
+            (
+                "tasks/c.md",
+                "C",
+                serde_json::json!({"Priority":"Unknown","Status":"Doing","Tags":["Feature"],"Due":{"start":"2026-02-01","end":"2026-02-03"}}),
+            ),
+            (
+                "tasks/d.md",
+                "D",
+                serde_json::json!({"Status":"Doing","Tags":["Feature"]}),
+            ),
+            (
+                "tasks/e.md",
+                "E",
+                serde_json::json!({"Priority":"Low","Status":"Todo","Tags":["Feature"],"Due":"2025-12-31"}),
+            ),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO entries (
+                    file_path, title, description, created, updated, collection_root_path,
+                    in_collection, is_entry_head, fields
+                ) VALUES (?, ?, NULL, '2026-01-01', '2026-01-01', 'tasks', 1, 1, ?)
+                "#,
+            )
+            .bind(path)
+            .bind(title)
+            .bind(fields.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let filters = vec![
+            Filter {
+                field: "Status".into(),
+                op: FilterOp::GroupEq,
+                value: Some(Value::String("in_progress".into())),
+                values: None,
+            },
+            Filter {
+                field: "Tags".into(),
+                op: FilterOp::Contains,
+                value: Some(Value::String("Feature".into())),
+                values: None,
+            },
+        ];
+        let sort = vec![Sort {
+            field: "Priority".into(),
+            desc: false,
+        }];
+        let rows = query_entry_rows(&pool, &schema, "tasks", &filters, &sort, None, None)
+            .await
+            .unwrap();
+        let titles: Vec<String> = rows.into_iter().map(|row| row.title).collect();
+        assert_eq!(titles, vec!["B", "A", "C", "D"]);
+
+        let date_eq = vec![Filter {
+            field: "Due".into(),
+            op: FilterOp::Eq,
+            value: Some(Value::String("2026-01-15".into())),
+            values: None,
+        }];
+        let rows = query_entry_rows(&pool, &schema, "tasks", &date_eq, &[], None, None)
+            .await
+            .unwrap();
+        let titles: Vec<String> = rows.into_iter().map(|row| row.title).collect();
+        assert_eq!(titles, vec!["A"]);
+
+        let date_before = vec![Filter {
+            field: "Due".into(),
+            op: FilterOp::Before,
+            value: Some(Value::String("2026-01-06".into())),
+            values: None,
+        }];
+        let title_sort = vec![Sort {
+            field: "title".into(),
+            desc: false,
+        }];
+        let rows = query_entry_rows(
+            &pool,
+            &schema,
+            "tasks",
+            &date_before,
+            &title_sort,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let titles: Vec<String> = rows.into_iter().map(|row| row.title).collect();
+        assert_eq!(titles, vec!["B", "E"]);
+
+        let date_after = vec![Filter {
+            field: "Due".into(),
+            op: FilterOp::After,
+            value: Some(Value::String("2026-01-31".into())),
+            values: None,
+        }];
+        let rows = query_entry_rows(&pool, &schema, "tasks", &date_after, &[], None, None)
+            .await
+            .unwrap();
+        let titles: Vec<String> = rows.into_iter().map(|row| row.title).collect();
+        assert_eq!(titles, vec!["C"]);
     }
 }
