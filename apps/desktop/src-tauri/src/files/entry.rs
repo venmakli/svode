@@ -320,6 +320,8 @@ pub fn create(space: &str, parent_path: Option<&str>, title: &str) -> Result<Ent
         updated: now,
         extra: HashMap::new(),
     };
+    let mut meta = meta;
+    crate::properties::apply_schema_defaults_for_path(space, &rel_path, &mut meta)?;
 
     let body = "";
     let content = frontmatter::serialize(&meta, body);
@@ -885,6 +887,16 @@ pub fn update_field(
         None => (meta_for_file_without_frontmatter(&abs_path, path)?, content),
     };
 
+    if !matches!(
+        field,
+        "id" | "created" | "updated" | "title" | "icon" | "description" | "cover"
+    ) && !value.is_null()
+    {
+        let yaml_value = serde_yml::to_value(value.clone())
+            .map_err(|e| invalid_entry_field(format!("{field}: {e}")))?;
+        crate::properties::validate_entry_field_value(space, path, field, &yaml_value)?;
+    }
+
     apply_entry_field_update(&mut meta, field, value)?;
     meta.updated = now_rfc3339();
 
@@ -937,6 +949,7 @@ pub fn move_entry(
     }
 
     fs::rename(&abs_from, &abs_to)?;
+    crate::properties::apply_schema_defaults_to_entry_tree(space, &new_rel)?;
 
     // Update backlinks. For folder moves, every .md descendant sits under a
     // new path now — rewrite their inbound links too, not just the folder itself

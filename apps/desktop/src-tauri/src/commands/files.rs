@@ -11,7 +11,11 @@ use crate::files::{
     WriteNonceRegistry, WriteResult, entry, tree,
 };
 use crate::git::autocommit::{AutocommitService, StructuralOp};
+use crate::git::commands::{GitState, require_cli};
 use crate::index::{self, IndexKey, IndexState, ResolvedDocLink};
+use crate::properties::{
+    self, CollectionSchema, Column, EntrySchemaResponse, Person, PropertyOption, PropertyType,
+};
 use crate::space::config;
 
 fn basename(path: &str) -> String {
@@ -138,6 +142,14 @@ pub fn read_entry(space: String, path: String) -> Result<Entry, AppError> {
 }
 
 #[tauri::command]
+pub fn get_entry_schema(
+    space: String,
+    file_path: String,
+) -> Result<Option<EntrySchemaResponse>, AppError> {
+    properties::schema_response(&space, &file_path)
+}
+
+#[tauri::command]
 pub async fn update_entry_field(
     space: String,
     file_path: String,
@@ -157,6 +169,320 @@ pub async fn update_entry_field(
     }
 
     Ok(updated)
+}
+
+fn json_to_yaml_value(value: serde_json::Value) -> Result<serde_yml::Value, AppError> {
+    serde_yml::to_value(value)
+        .map_err(|e| AppError::General(format!("could not convert JSON to YAML value: {e}")))
+}
+
+async fn maybe_autocommit_schema(
+    autocommit: &AutocommitService,
+    project_path: Option<&str>,
+    space: &str,
+    paths: Vec<PathBuf>,
+    message: String,
+) {
+    let Some(project_path) = project_path.filter(|path| !path.is_empty()) else {
+        return;
+    };
+    if let Err(e) = autocommit
+        .commit_paths_now(
+            PathBuf::from(project_path),
+            PathBuf::from(space),
+            paths,
+            message,
+        )
+        .await
+    {
+        tracing::warn!("schema autocommit failed: {e}");
+    }
+}
+
+#[tauri::command]
+pub async fn add_schema_column(
+    space: String,
+    collection_path: String,
+    column: Column,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    let message = format!("Add column \"{}\"", column.name);
+    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
+    let schema = properties::add_schema_column(&space, &collection_path, column)?;
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    Ok(schema)
+}
+
+#[tauri::command]
+pub async fn change_schema_type(
+    space: String,
+    collection_path: String,
+    column_name: String,
+    new_type: PropertyType,
+    conversion_strategy: Option<serde_json::Value>,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    let message = format!("Change column \"{column_name}\" type to {new_type:?}");
+    let paths = properties::schema_mutation_paths(&space, &collection_path, true)?;
+    let conversion_strategy = conversion_strategy.map(json_to_yaml_value).transpose()?;
+    let schema = properties::change_schema_type(
+        &space,
+        &collection_path,
+        &column_name,
+        new_type,
+        conversion_strategy,
+    )?;
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    Ok(schema)
+}
+
+#[tauri::command]
+pub async fn rename_schema_column(
+    space: String,
+    collection_path: String,
+    old_name: String,
+    new_name: String,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    let paths = properties::schema_mutation_paths(&space, &collection_path, true)?;
+    let schema = properties::rename_schema_column(&space, &collection_path, &old_name, &new_name)?;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        format!("Rename column \"{old_name}\" to \"{new_name}\""),
+    )
+    .await;
+    Ok(schema)
+}
+
+#[tauri::command]
+pub async fn delete_schema_column(
+    space: String,
+    collection_path: String,
+    column_name: String,
+    delete_values: Option<bool>,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    let delete_values = delete_values.unwrap_or(false);
+    let paths = properties::schema_mutation_paths(&space, &collection_path, delete_values)?;
+    let schema =
+        properties::delete_schema_column(&space, &collection_path, &column_name, delete_values)?;
+    let suffix = if delete_values { " and values" } else { "" };
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        format!("Delete column \"{column_name}\"{suffix}"),
+    )
+    .await;
+    Ok(schema)
+}
+
+#[tauri::command]
+pub async fn add_option(
+    space: String,
+    collection_path: String,
+    column_name: String,
+    option: PropertyOption,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    let message = format!("Add option \"{}\" to \"{column_name}\"", option.name);
+    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
+    let schema = properties::add_option(&space, &collection_path, &column_name, option)?;
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    Ok(schema)
+}
+
+#[tauri::command]
+pub async fn rename_option(
+    space: String,
+    collection_path: String,
+    column_name: String,
+    old_option_name: String,
+    new_option_name: String,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    let paths = properties::schema_mutation_paths(&space, &collection_path, true)?;
+    let schema = properties::rename_option(
+        &space,
+        &collection_path,
+        &column_name,
+        &old_option_name,
+        &new_option_name,
+    )?;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        format!("Rename option \"{column_name}\": \"{old_option_name}\" to \"{new_option_name}\""),
+    )
+    .await;
+    Ok(schema)
+}
+
+#[tauri::command]
+pub async fn delete_option(
+    space: String,
+    collection_path: String,
+    column_name: String,
+    option_name: String,
+    delete_values: Option<bool>,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    let delete_values = delete_values.unwrap_or(false);
+    let paths = properties::schema_mutation_paths(&space, &collection_path, delete_values)?;
+    let schema = properties::delete_option(
+        &space,
+        &collection_path,
+        &column_name,
+        &option_name,
+        delete_values,
+    )?;
+    let suffix = if delete_values { " and values" } else { "" };
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        format!("Delete option \"{column_name}\": \"{option_name}\"{suffix}"),
+    )
+    .await;
+    Ok(schema)
+}
+
+#[tauri::command]
+pub async fn update_option(
+    space: String,
+    collection_path: String,
+    column_name: String,
+    option_name: String,
+    option: Option<PropertyOption>,
+    patch: Option<serde_json::Value>,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
+    let patch = patch.map(json_to_yaml_value).transpose()?;
+    let schema = properties::update_option(
+        &space,
+        &collection_path,
+        &column_name,
+        &option_name,
+        option,
+        patch,
+    )?;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        format!("Update option \"{column_name}\": \"{option_name}\""),
+    )
+    .await;
+    Ok(schema)
+}
+
+#[tauri::command]
+pub async fn promote_orphan(
+    space: String,
+    collection_path: String,
+    entry_id: String,
+    field: String,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
+    let schema = properties::promote_orphan(&space, &collection_path, &entry_id, &field)?;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        format!("Add column \"{field}\""),
+    )
+    .await;
+    Ok(schema)
+}
+
+#[tauri::command]
+pub async fn update_system_field_label(
+    space: String,
+    collection_path: String,
+    field: String,
+    label: Option<String>,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
+    let schema = properties::update_system_field_label(&space, &collection_path, &field, label)?;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        format!("Update system field \"{field}\""),
+    )
+    .await;
+    Ok(schema)
+}
+
+#[tauri::command]
+pub async fn update_document_label(
+    space: String,
+    collection_path: String,
+    label: Option<String>,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
+    let schema = properties::update_document_label(&space, &collection_path, label)?;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        "Update document tab label".to_string(),
+    )
+    .await;
+    Ok(schema)
+}
+
+#[tauri::command]
+pub async fn list_persons(
+    space_path: String,
+    all_time: Option<bool>,
+    git_state: State<'_, GitState>,
+    person_cache: State<'_, properties::PersonCacheState>,
+) -> Result<Vec<Person>, AppError> {
+    let cli = require_cli(&git_state)?;
+    properties::list_persons(
+        &person_cache,
+        &cli,
+        Path::new(&space_path),
+        all_time.unwrap_or(false),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn refresh_persons(
+    space_path: String,
+    git_state: State<'_, GitState>,
+    person_cache: State<'_, properties::PersonCacheState>,
+) -> Result<Vec<Person>, AppError> {
+    let cli = require_cli(&git_state)?;
+    properties::refresh_persons(&person_cache, &cli, Path::new(&space_path), false).await
 }
 
 #[tauri::command]

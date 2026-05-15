@@ -5,6 +5,7 @@ mod files;
 mod git;
 mod identity;
 mod index;
+mod properties;
 mod space;
 mod storage;
 
@@ -33,6 +34,7 @@ pub fn run() {
         .manage(Arc::new(files::WriteNonceRegistry::new()))
         .manage(git::GitState::new())
         .manage(index::IndexState::new())
+        .manage(properties::PersonCacheState::new())
         .setup(|app| {
             let service = Arc::new(git::autocommit::AutocommitService::new(
                 app.handle().clone(),
@@ -46,7 +48,21 @@ pub fn run() {
             commands::files::create_entry,
             commands::files::create_folder,
             commands::files::read_entry,
+            commands::files::get_entry_schema,
             commands::files::update_entry_field,
+            commands::files::add_schema_column,
+            commands::files::change_schema_type,
+            commands::files::rename_schema_column,
+            commands::files::delete_schema_column,
+            commands::files::add_option,
+            commands::files::rename_option,
+            commands::files::delete_option,
+            commands::files::update_option,
+            commands::files::promote_orphan,
+            commands::files::update_system_field_label,
+            commands::files::update_document_label,
+            commands::files::list_persons,
+            commands::files::refresh_persons,
             commands::files::write_entry,
             commands::files::delete_entry,
             commands::files::rename_entry,

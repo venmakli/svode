@@ -483,6 +483,19 @@ export function PlateDocumentEditor() {
     [markUnsaved, updateEntryField],
   );
 
+  const handlePropertyChange = useCallback(
+    async (field: string, value: unknown) => {
+      const updated = await updateEntryField(field, value);
+      if (updated) {
+        setMeta(updated.meta);
+        if (currentPathRef.current) {
+          markUnsaved(currentPathRef.current);
+        }
+      }
+    },
+    [markUnsaved, updateEntryField],
+  );
+
   // ⌘S — cancel debounce, materialize (rename + backlinks + structural
   // schedule on the backend), then commit. `flush_target_repo` inside
   // git_commit_file drains the structural batch → Rename commit before user.
@@ -675,8 +688,12 @@ export function PlateDocumentEditor() {
               />
               <FrontmatterPanel
                 meta={meta}
+                spacePath={spacePath}
+                projectPath={activeRootPath}
+                filePath={activeDocument}
                 isOpen={frontmatterOpen}
                 onOpenChange={setFrontmatterOpen}
+                onPropertyChange={handlePropertyChange}
               />
             </div>
             <Editor

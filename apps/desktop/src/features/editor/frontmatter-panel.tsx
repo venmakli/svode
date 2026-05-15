@@ -4,13 +4,21 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Separator } from "@/components/ui/separator";
+import { invoke } from "@tauri-apps/api/core";
 import type { EntryMeta } from "./types";
+import { PropertyPanel } from "@/features/properties/property-panel";
+import type { EntrySchemaResult } from "@/features/properties/types";
 import * as m from "@/paraglide/messages.js";
+import { useEffect, useState } from "react";
 
 interface FrontmatterPanelProps {
   meta: EntryMeta | null;
+  spacePath: string;
+  projectPath?: string | null;
+  filePath: string | null;
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
+  onPropertyChange: (field: string, value: unknown) => Promise<void>;
 }
 
 function formatDate(dateStr: string): string {
@@ -37,9 +45,36 @@ function formatValue(value: unknown): string {
 
 export function FrontmatterPanel({
   meta,
+  spacePath,
+  projectPath,
+  filePath,
   isOpen,
   onOpenChange,
+  onPropertyChange,
 }: FrontmatterPanelProps) {
+  const [schemaResult, setSchemaResult] = useState<EntrySchemaResult | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!spacePath || !filePath) {
+      setSchemaResult(null);
+      return;
+    }
+    invoke<EntrySchemaResult | null>("get_entry_schema", {
+      space: spacePath,
+      filePath,
+    })
+      .then((result) => {
+        if (!cancelled) setSchemaResult(result);
+      })
+      .catch(() => {
+        if (!cancelled) setSchemaResult(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [filePath, spacePath]);
+
   if (!meta) return null;
 
   const extraEntries = Object.entries((meta.extra ?? {}) ?? {});
@@ -74,7 +109,20 @@ export function FrontmatterPanel({
             </span>
           </div>
 
-          {extraEntries.length > 0 && (
+          {schemaResult && filePath ? (
+            <div className="mt-3">
+              <PropertyPanel
+                spacePath={spacePath}
+                projectPath={projectPath}
+                filePath={filePath}
+                metaId={meta.id}
+                schemaResult={schemaResult}
+                values={meta.extra ?? {}}
+                onValueChange={onPropertyChange}
+                onSchemaChange={setSchemaResult}
+              />
+            </div>
+          ) : extraEntries.length > 0 ? (
             <details className="mt-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
               <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
                 {m.editor_raw_yaml_toggle({ count: String(extraEntries.length) })}
@@ -90,7 +138,7 @@ export function FrontmatterPanel({
                 ))}
               </dl>
             </details>
-          )}
+          ) : null}
         </div>
       </CollapsibleContent>
     </Collapsible>

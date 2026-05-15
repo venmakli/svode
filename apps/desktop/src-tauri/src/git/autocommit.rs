@@ -9,8 +9,8 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use super::commands::GitState;
 use super::ops;
-use crate::space::types::SpaceGitType;
 use crate::AppError;
+use crate::space::types::SpaceGitType;
 
 const DEBOUNCE_MS: u64 = 500;
 const FLUSH_ALL_TIMEOUT_SECS: u64 = 10;
@@ -103,13 +103,15 @@ impl AutocommitService {
     ) {
         let needs_resolve = {
             let mut map = self.pending.lock().unwrap();
-            let entry = map.entry(space_path.clone()).or_insert_with(|| PendingBatch {
-                project_path: project_path.clone(),
-                git_type: None,
-                target_repo: None,
-                ops: Vec::new(),
-                timer: None,
-            });
+            let entry = map
+                .entry(space_path.clone())
+                .or_insert_with(|| PendingBatch {
+                    project_path: project_path.clone(),
+                    git_type: None,
+                    target_repo: None,
+                    ops: Vec::new(),
+                    timer: None,
+                });
             // Project path is stable for a given space, keep defensively synced.
             entry.project_path = project_path.clone();
             entry.ops.push(op);
@@ -138,9 +140,7 @@ impl AutocommitService {
             let proj = project_path;
             let sp = space_path;
             tauri::async_runtime::spawn(async move {
-                if let Some((git_type, target_repo)) =
-                    resolve_target_repo(&app, &proj, &sp).await
-                {
+                if let Some((git_type, target_repo)) = resolve_target_repo(&app, &proj, &sp).await {
                     let mut map = pending.lock().unwrap();
                     if let Some(batch) = map.get_mut(&sp) {
                         if batch.git_type.is_none() {
@@ -169,8 +169,7 @@ impl AutocommitService {
                 .collect()
         };
         for (sp, proj) in unresolved {
-            if let Some((git_type, target_repo)) =
-                resolve_target_repo(&self.app, &proj, &sp).await
+            if let Some((git_type, target_repo)) = resolve_target_repo(&self.app, &proj, &sp).await
             {
                 let mut map = self.pending.lock().unwrap();
                 if let Some(batch) = map.get_mut(&sp) {
@@ -222,8 +221,7 @@ impl AutocommitService {
 
         let git_state = self.app.state::<GitState>();
         let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
-        let git_type =
-            ops::detect_space_git_type(&cli, &project_path, &space_path).await?;
+        let git_type = ops::detect_space_git_type(&cli, &project_path, &space_path).await?;
         let target_repo: PathBuf = match git_type {
             SpaceGitType::Inline => project_path.clone(),
             SpaceGitType::Independent | SpaceGitType::Submodule => space_path.clone(),
@@ -235,12 +233,42 @@ impl AutocommitService {
             self.flush_target_repo(&target_repo).await;
         }
 
-        do_commit_system(
+        do_commit_system(&self.app, &project_path, &space_path, git_type, kind).await
+    }
+
+    /// Commit an explicit touched-path set with a fixed operational message.
+    /// Stage-4 schema mutations use this when `schema.yaml` and migrated
+    /// markdown entries must land in one path-scoped commit.
+    pub async fn commit_paths_now(
+        &self,
+        project_path: PathBuf,
+        space_path: PathBuf,
+        paths: Vec<PathBuf>,
+        message: String,
+    ) -> Result<(), AppError> {
+        if paths.is_empty() || !space_path.exists() {
+            return Ok(());
+        }
+
+        let git_state = self.app.state::<GitState>();
+        let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
+        let git_type = ops::detect_space_git_type(&cli, &project_path, &space_path).await?;
+        let target_repo: PathBuf = match git_type {
+            SpaceGitType::Inline => project_path.clone(),
+            SpaceGitType::Independent | SpaceGitType::Submodule => space_path.clone(),
+        };
+
+        if matches!(git_type, SpaceGitType::Inline) {
+            self.flush_target_repo(&target_repo).await;
+        }
+
+        do_commit_paths(
             &self.app,
             &project_path,
             &space_path,
             git_type,
-            kind,
+            paths,
+            &message,
         )
         .await
     }
@@ -275,8 +303,7 @@ impl AutocommitService {
             }
         };
 
-        if let Err(_) =
-            tokio::time::timeout(Duration::from_secs(FLUSH_ALL_TIMEOUT_SECS), fut).await
+        if let Err(_) = tokio::time::timeout(Duration::from_secs(FLUSH_ALL_TIMEOUT_SECS), fut).await
         {
             tracing::warn!(
                 "flush_all: timeout after {}s, pending commits dropped",
@@ -394,11 +421,7 @@ async fn run_autocommit(
             let sync_target = target_repo.to_path_buf();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = crate::git::sync::sync(&cli_sync, &sync_target).await {
-                    tracing::warn!(
-                        "auto-sync failed for {}: {}",
-                        sync_target.display(),
-                        e
-                    );
+                    tracing::warn!("auto-sync failed for {}: {}", sync_target.display(), e);
                 }
             });
         }
@@ -421,6 +444,78 @@ async fn run_autocommit(
 /// Stage the paths for a system-kind commit, relative to the space root, and
 /// commit under the right repo lock. `space_path` may equal `project_path`
 /// for root-level spaces (inline).
+async fn do_commit_paths(
+    app: &AppHandle,
+    project_path: &Path,
+    space_path: &Path,
+    git_type: SpaceGitType,
+    paths: Vec<PathBuf>,
+    message: &str,
+) -> Result<(), AppError> {
+    let git_state = app.state::<GitState>();
+    let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
+
+    let (repo, needs_pointer_update) = match git_type {
+        SpaceGitType::Inline => (project_path, false),
+        SpaceGitType::Independent => (space_path, false),
+        SpaceGitType::Submodule => (space_path, true),
+    };
+
+    let lock = git_state.get_lock(repo).await;
+    let guard = lock.lock().await;
+    for abs_path in &paths {
+        let rel = abs_path
+            .strip_prefix(repo)
+            .unwrap_or(abs_path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let _ = ops::add(&cli, repo, &rel).await;
+    }
+    let created = ops::commit(&cli, repo, message).await?;
+    drop(guard);
+
+    if created {
+        emit_committed(app, space_path, repo);
+
+        if needs_pointer_update {
+            let root_lock = git_state.get_lock(project_path).await;
+            let _root_guard = root_lock.lock().await;
+            ops::submodule_update_pointer(&cli, project_path, space_path).await?;
+            emit_committed(app, space_path, project_path);
+        }
+
+        if is_auto_sync_enabled(repo) {
+            let cli_sync = cli.clone();
+            let sync_target = repo.to_path_buf();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = crate::git::sync::sync(&cli_sync, &sync_target).await {
+                    tracing::warn!(
+                        "auto-sync (paths) failed for {}: {}",
+                        sync_target.display(),
+                        e
+                    );
+                }
+            });
+        }
+
+        if needs_pointer_update && is_auto_sync_enabled(project_path) {
+            let cli_sync = cli.clone();
+            let root = project_path.to_path_buf();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = crate::git::sync::sync(&cli_sync, &root).await {
+                    tracing::warn!(
+                        "auto-sync (paths, root) failed for {}: {}",
+                        root.display(),
+                        e
+                    );
+                }
+            });
+        }
+    }
+
+    Ok(())
+}
+
 async fn do_commit_system(
     app: &AppHandle,
     project_path: &Path,
