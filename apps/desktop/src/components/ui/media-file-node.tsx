@@ -11,12 +11,14 @@ import { PlateElement, useReadOnly, withHOC } from 'platejs/react';
 import { toast } from 'sonner';
 
 import { Caption, CaptionTextarea } from './caption';
-import { useResolvedAssetUrl } from '@/hooks/use-resolved-asset-url';
-import { getErrorMessage } from '@/hooks/use-upload-file';
 import {
-  selectActiveSpacePath,
-  useSpaceStore,
-} from '@/stores/space';
+  resolveAssetAbsPath,
+  useResolvedAssetUrl,
+} from '@/hooks/use-resolved-asset-url';
+import { getErrorMessage } from '@/hooks/use-upload-file';
+import { useLayoutStore } from '@/stores/layout';
+import { useSpaceStore } from '@/stores/space';
+import { joinAbs } from '@/features/editor/doc-link-utils';
 
 export const FileElement = withHOC(
   ResizableProvider,
@@ -29,9 +31,10 @@ export const FileElement = withHOC(
       async (e: React.MouseEvent) => {
         e.preventDefault();
         if (!unsafeUrl) return;
-        // For workspace-relative assets, shell-open the absolute on-disk path
-        // so the file launches in the OS default app. For external http(s)
-        // URLs we also use openPath (it handles them).
+        // For workspace-relative assets, ask the backend to resolve the abs
+        // path through the same per-space resolver as the editor uses, then
+        // shell-open. External URLs (http(s)/data/blob/file/asset) launch via
+        // openPath directly.
         if (/^(https?:|data:|blob:|asset:|file:)/i.test(unsafeUrl)) {
           try {
             await openPath(unsafeUrl);
@@ -40,14 +43,27 @@ export const FileElement = withHOC(
           }
           return;
         }
-        const spacePath = selectActiveSpacePath(
-          useSpaceStore.getState()
-        );
-        if (!spacePath) return;
-        const rel = unsafeUrl.replace(/^\.\//, '');
-        const absolute = `${spacePath.replace(/\\/g, '/').replace(/\/$/, '')}/${rel}`;
+        const projectPath = useSpaceStore.getState().activeRootPath;
+        const { activeDocument, activeDocumentSpaceId } =
+          useLayoutStore.getState();
+        if (!projectPath || !activeDocument) return;
+        const { rootSpaces, spaces, activeRootId } = useSpaceStore.getState();
+        const owner =
+          !activeDocumentSpaceId || activeDocumentSpaceId === activeRootId
+            ? rootSpaces.find((r) => r.id === activeDocumentSpaceId)?.path ??
+              projectPath
+            : spaces.find((s) => s.id === activeDocumentSpaceId)?.path;
+        if (!owner) return;
+        const documentAbsPath = activeDocument.startsWith('/')
+          ? activeDocument
+          : joinAbs(owner, activeDocument);
         try {
-          await openPath(absolute);
+          const abs = await resolveAssetAbsPath(
+            unsafeUrl,
+            projectPath,
+            documentAbsPath
+          );
+          await openPath(abs);
         } catch (err) {
           toast.error(getErrorMessage(err));
         }

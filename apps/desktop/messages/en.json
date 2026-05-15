@@ -6,21 +6,18 @@
   "common_theme_dark": "Dark",
   "common_theme_system": "System",
   "common_loading": "Loading...",
-
   "sidebar_documents": "DOCUMENTS",
   "sidebar_spaces": "SPACES",
   "sidebar_project_settings": "Project settings",
   "sidebar_add_space": "Add space",
   "sidebar_all_projects": "All projects",
   "sidebar_delete_project": "Delete project",
-
   "chat_title": "AI Chat",
   "chat_welcome_title": "Hello there!",
   "chat_welcome_subtitle": "How can I help you today?",
   "chat_composer_placeholder": "Send a message...",
   "chat_error_cli_not_found": "Claude CLI not found. Install it with: npm install -g @anthropic-ai/claude-code",
   "chat_error_agent": "Agent encountered an error",
-
   "editor_title": "Document Editor",
   "editor_placeholder": "Editor will be implemented in Phase 3",
   "editor_untitled": "Untitled",
@@ -65,7 +62,6 @@
   "editor_file_deleted": "File was deleted from disk",
   "editor_error_load": "Failed to load document",
   "editor_error_save": "Failed to save document",
-
   "home_title": "CombAI",
   "home_empty_subtitle": "AI Space Platform",
   "home_empty_description": "Documents, smart tables, teams and AI agents — all in one place. Your data is stored locally as Git repositories.",
@@ -83,7 +79,6 @@
   "home_clone_action": "Clone",
   "home_clone_cancel": "Cancel",
   "home_cloning": "Cloning...",
-
   "project_new_title": "New project",
   "project_name_label": "Name",
   "project_name_placeholder": "Project name",
@@ -100,7 +95,6 @@
   "project_delete_files": "Also delete files from disk",
   "project_settings": "Settings",
   "project_remove": "Remove from list",
-
   "space_add_first_title": "Add your first space",
   "space_add_first_description": "A space is a place for documents with an AI agent that knows the entire context and helps at every stage.",
   "space_create": "Create space",
@@ -127,13 +121,11 @@
   "space_not_found": "Directory not found: {path}",
   "space_not_found_action_update": "Update path",
   "space_not_found_action_remove": "Remove from list",
-
   "file_delete_title": "Delete document?",
   "file_delete_description": "This document will be permanently deleted.",
   "file_delete_has_backlinks": "The following documents link to this one:",
   "file_delete_confirm": "Delete",
   "file_delete_cancel": "Cancel",
-
   "toast_project_created": "Project created",
   "toast_space_created": "Space added",
   "toast_space_opened": "Space added",
@@ -141,9 +133,7 @@
   "toast_project_deleted": "Project removed",
   "toast_page_created": "Page created",
   "toast_error": "Something went wrong",
-
   "nav_all_projects": "All projects",
-
   "settings_title": "Settings",
   "settings_profile": "Profile",
   "settings_appearance": "Appearance",
@@ -163,7 +153,6 @@
   "settings_unsaved_description": "You have unsaved changes. What would you like to do?",
   "settings_unsaved_save": "Save",
   "settings_unsaved_discard": "Discard",
-
   "settings_space_title": "Settings: {name}",
   "settings_general": "General",
   "settings_ai_agent": "AI Agent",
@@ -177,31 +166,27 @@
   "settings_reset_inherit": "Reset to inherited",
   "settings_space_cli_agents": "CLI Agents",
   "settings_space_instructions": "Instructions file",
-  "settings_space_cli_found_auth": "{version} \u00b7 authorized",
-  "settings_space_cli_found_noauth": "{version} \u00b7 not authorized",
+  "settings_space_cli_found_auth": "{version} · authorized",
+  "settings_space_cli_found_noauth": "{version} · not authorized",
   "settings_space_cli_noauth_hint": "Run `{command}` in terminal",
   "settings_space_cli_not_found": "not found",
   "settings_space_cli_install": "How to install",
   "settings_space_cli_refresh": "Refresh status",
   "settings_space_agents_md_open": "Open",
   "settings_space_agents_md_create": "Create AGENTS.md",
-  "settings_space_agents_md_symlink": "AGENTS.md \u2192 {target}",
+  "settings_space_agents_md_symlink": "AGENTS.md → {target}",
   "settings_space_agents_md_lines": "{count} lines",
   "settings_space_symlinks_ok": "Symlinks OK",
   "settings_space_symlinks_restored": "Restored {count} symlinks",
   "settings_health_broken_links": "Broken cross-space links",
   "settings_health_broken_links_desc": "Revalidated after documents are opened or backlinks are rebuilt.",
   "settings_health_broken_links_count": "{count} broken",
-
   "settings_configure_agent": "Configure AI agent",
   "settings_configure_agent_desc": "Select CLI and configure",
-
   "settings_space_model": "Model",
   "settings_space_default_model": "Default model",
   "settings_space_default_model_desc": "Model used by default in the chat composer",
-
   "toast_settings_saved": "Settings saved",
-
   "git_missing_title": "Git not found",
   "git_missing_description": "CombAI stores data as Git repositories. Install git to continue.",
   "git_missing_recheck": "Check again",
@@ -291,7 +276,6 @@
   "storage_confirm_action": "Change",
   "storage_apply_failed": "Failed to apply storage strategy",
   "storage_apply_warnings": "Storage strategy applied with {count} warning(s)",
-
   "identity_dialog_title": "Set up Git Identity",
   "identity_dialog_description": "CombAI uses git for every project. Commits need a name and email.",
   "identity_name_label": "Name",
@@ -299,7 +283,6 @@
   "identity_save": "Save",
   "identity_name_empty": "Name is required",
   "identity_email_invalid": "Invalid email address",
-
   "settings_git_identity_override_title": "Identity (optional override)",
   "settings_git_identity_override_hint": "Leave empty to inherit. Both fields are required when overriding.",
   "settings_git_identity_name_placeholder": "Using global identity",
@@ -312,7 +295,6 @@
   "settings_git_identity_fanout_checkbox": "Apply to all nested spaces",
   "settings_git_identity_fanout_affected_spaces": "Affected spaces:",
   "settings_git_identity_fanout_will_replace": "will be replaced",
-
   "search_tooltip": "Search",
   "search_dialog_title": "Search",
   "search_dialog_description": "Search documents across the project",
@@ -323,5 +305,17 @@
   "search_group_contents": "CONTENT",
   "search_group_recent": "RECENT",
   "search_indexing_progress": "Indexing: {done} of {total} spaces ready",
-  "search_space_unavailable": "Space {name} is unavailable"
+  "search_space_unavailable": "Space {name} is unavailable",
+  "storage_inherited_from_project": "Inherited from project «{name}» (strategy: {strategy})",
+  "storage_inherited_hint": "Inline spaces share the project's storage strategy. Change it in the project settings.",
+  "storage_used_by_inline_spaces": "Used by inline spaces: {names}",
+  "storage_used_by_inline_spaces_none": "No inline spaces use this strategy yet.",
+  "storage_repair_lfs": "Download binaries",
+  "storage_repair_lfs_pulling": "Pulling binaries…",
+  "storage_lfs_banner_missing_s3_title": "S3 credentials needed to load binaries",
+  "storage_lfs_banner_missing_s3_desc": "Enter the S3 access key and secret key for the configured bucket. Existing settings are kept; only credentials are updated.",
+  "storage_lfs_banner_missing_remote_title": "The Git LFS server requires authentication",
+  "storage_lfs_banner_missing_remote_desc": "The system git credential helper (or your ssh-agent) will prompt for credentials.",
+  "storage_lfs_retry": "Retry",
+  "storage_lfs_banner_ready": "LFS binaries are ready."
 }

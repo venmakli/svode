@@ -72,6 +72,7 @@ import type {
   AvailableAgent,
   SymlinkHealthReport,
   AssetsStrategy,
+  LfsState,
 } from "@/types/space";
 import type { GitAvailability } from "@/types/git";
 
@@ -98,6 +99,14 @@ export function SpaceSettingsDialog({
   const spacePath = inputPath ?? "";
   const isRoot = spacePath === activeRootPath;
   const hasSpaces = isRoot && spaces.length > 0;
+  // `set_assets_strategy` / `count_assets` / `has_s3_credentials` /
+  // `get_lfs_state` / `repair_lfs` all key off (projectPath, spaceId) — null
+  // means the project root. We always pass `activeRootPath` as the project,
+  // matching the per-pool resolver in Ф.5.
+  const currentSpaceId: string | null = isRoot
+    ? null
+    : spaces.find((s) => s.path === spacePath)?.id ?? null;
+  const projectPath = activeRootPath ?? "";
 
   const [section, setSection] = useState<Section>("general");
 
@@ -171,6 +180,13 @@ export function SpaceSettingsDialog({
   const [s3TestError, setS3TestError] = useState<string | null>(null);
   const [brokenLinksCount, setBrokenLinksCount] = useState<number | null>(null);
   const [linkHealthLoading, setLinkHealthLoading] = useState(false);
+  // LFS runtime state for this pool. `n/a` is the harmless default — the UI
+  // only surfaces banners/buttons for `missing-creds` and `pulling`.
+  const [lfsState, setLfsState] = useState<LfsState>("n/a");
+  const [lfsRepairInFlight, setLfsRepairInFlight] = useState(false);
+  // Inline spaces of the root project. Loaded on the root storage view so the
+  // user can see which spaces inherit the project-level strategy.
+  const [inlineSpaceNames, setInlineSpaceNames] = useState<string[]>([]);
 
   const loadConfig = useCallback(async () => {
     if (!spacePath) return;
@@ -204,7 +220,10 @@ export function SpaceSettingsDialog({
       setS3TestState("idle");
       setS3TestError(null);
       try {
-        const present = await invoke<boolean>("has_s3_credentials", { spacePath });
+        const present = await invoke<boolean>("has_s3_credentials", {
+          projectPath,
+          spaceId: currentSpaceId,
+        });
         setHasSavedS3Credentials(present);
       } catch {
         setHasSavedS3Credentials(false);
@@ -212,7 +231,47 @@ export function SpaceSettingsDialog({
     } catch (err) {
       console.error("Failed to load workspace config:", err);
     }
-  }, [spacePath]);
+  }, [spacePath, projectPath, currentSpaceId]);
+
+  const loadLfsState = useCallback(async () => {
+    if (!projectPath) return;
+    try {
+      const state = await invoke<LfsState>("get_lfs_state", {
+        projectPath,
+        spaceId: currentSpaceId,
+      });
+      setLfsState(state);
+    } catch (err) {
+      console.warn("get_lfs_state failed:", err);
+      setLfsState("n/a");
+    }
+  }, [projectPath, currentSpaceId]);
+
+  const loadInlineSpaceNames = useCallback(async () => {
+    if (!isRoot || !projectPath || spaces.length === 0) {
+      setInlineSpaceNames([]);
+      return;
+    }
+    // Probe git type for every child space so we can list the ones that
+    // inherit the project's storage strategy. Independent / submodule spaces
+    // own their own strategy and shouldn't appear here.
+    const types = await Promise.all(
+      spaces.map(async (s) => {
+        try {
+          const t = await invoke<"inline" | "independent" | "submodule">(
+            "get_space_git_type",
+            { projectPath, spacePath: s.path },
+          );
+          return { space: s, type: t };
+        } catch {
+          return { space: s, type: null };
+        }
+      }),
+    );
+    setInlineSpaceNames(
+      types.filter((t) => t.type === "inline").map((t) => t.space.name),
+    );
+  }, [isRoot, projectPath, spaces]);
 
   const loadLfsAvailability = useCallback(async () => {
     try {
@@ -377,12 +436,38 @@ export function SpaceSettingsDialog({
       loadAgentsMd();
       loadGitInfo();
       loadLfsAvailability();
+      loadLfsState();
+      loadInlineSpaceNames();
       loadIdentity();
       loadFanoutPreview();
       setSection("general");
       setFanoutEnabled(true);
     }
-  }, [open, spacePath, loadConfig, loadAgents, loadModels, loadAgentsMd, loadGitInfo, loadLfsAvailability, loadIdentity, loadFanoutPreview]);
+  }, [open, spacePath, loadConfig, loadAgents, loadModels, loadAgentsMd, loadGitInfo, loadLfsAvailability, loadLfsState, loadInlineSpaceNames, loadIdentity, loadFanoutPreview]);
+
+  // Subscribe to `space:lfs_state_changed` while the dialog is open so the
+  // banner / Repair button / progress indicator reflect background pulls.
+  useEffect(() => {
+    if (!open || !projectPath) return;
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    listen<{ projectPath: string; spaceId: string | null; state: LfsState }>(
+      "space:lfs_state_changed",
+      (event) => {
+        if (cancelled) return;
+        if (event.payload.projectPath !== projectPath) return;
+        if ((event.payload.spaceId ?? null) !== currentSpaceId) return;
+        setLfsState(event.payload.state);
+      },
+    ).then((u) => {
+      if (cancelled) u();
+      else unlisten = u;
+    });
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, [open, projectPath, currentSpaceId]);
 
   useEffect(() => {
     if (open && enabledClis.length > 0) checkHealth();
@@ -668,7 +753,10 @@ export function SpaceSettingsDialog({
     let count = 0;
     if (spacePath) {
       try {
-        count = await invoke<number>("count_assets", { spacePath });
+        count = await invoke<number>("count_assets", {
+          projectPath,
+          spaceId: currentSpaceId,
+        });
       } catch (err) {
         console.warn("count_assets failed, continuing without warning:", err);
       }
@@ -716,7 +804,10 @@ export function SpaceSettingsDialog({
     let count = 0;
     if (spacePath) {
       try {
-        count = await invoke<number>("count_assets", { spacePath });
+        count = await invoke<number>("count_assets", {
+          projectPath,
+          spaceId: currentSpaceId,
+        });
       } catch (err) {
         console.warn("count_assets failed, continuing without warning:", err);
       }
@@ -725,13 +816,31 @@ export function SpaceSettingsDialog({
     setPendingStrategy("lfs-s3");
   }
 
+  async function handleRepairLfs() {
+    if (!projectPath || lfsRepairInFlight) return;
+    setLfsRepairInFlight(true);
+    try {
+      const next = await invoke<LfsState>("repair_lfs", {
+        projectPath,
+        spaceId: currentSpaceId,
+      });
+      setLfsState(next);
+    } catch (err) {
+      console.error("repair_lfs failed:", err);
+      toast.error(m.toast_error());
+    } finally {
+      setLfsRepairInFlight(false);
+    }
+  }
+
   async function applyStrategy(next: AssetsStrategy) {
     if (!spacePath) return;
     setApplyingStrategy(true);
     setStrategyInFlight(next);
     try {
       const args: Record<string, unknown> = {
-        spacePath,
+        projectPath,
+        spaceId: currentSpaceId,
         strategy: next,
         s3Config: null,
         s3Credentials: null,
@@ -783,6 +892,9 @@ export function SpaceSettingsDialog({
     } finally {
       setApplyingStrategy(false);
       setStrategyInFlight(null);
+      // Strategy may have moved between LFS / non-LFS — re-probe so the
+      // banner / Repair button reflect the new pool state.
+      loadLfsState();
     }
   }
 
@@ -1100,7 +1212,26 @@ export function SpaceSettingsDialog({
                   </div>
                 )}
 
-                {section === "storage" && (
+                {section === "storage" && gitType === "inline" && (
+                  <div className="space-y-3 max-w-md">
+                    <div>
+                      <Label className="text-sm font-medium">{m.storage_title()}</Label>
+                    </div>
+                    <div className="rounded-md border p-3 space-y-1">
+                      <p className="text-sm">
+                        {m.storage_inherited_from_project({
+                          name: activeRootName ?? "",
+                          strategy: savedAssetsStrategy,
+                        })}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {m.storage_inherited_hint()}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {section === "storage" && gitType !== "inline" && (
                   <div className="space-y-4 max-w-md">
                     <div>
                       <Label className="text-sm font-medium">{m.storage_title()}</Label>
@@ -1287,6 +1418,24 @@ export function SpaceSettingsDialog({
                         )}
                       </div>
                     )}
+
+                    {(savedAssetsStrategy === "lfs-s3" ||
+                      savedAssetsStrategy === "lfs-remote") && (
+                      <LfsStatePanel
+                        state={lfsState}
+                        strategy={savedAssetsStrategy}
+                        repairing={lfsRepairInFlight}
+                        onRepair={handleRepairLfs}
+                      />
+                    )}
+
+                    {isRoot && inlineSpaceNames.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {m.storage_used_by_inline_spaces({
+                          names: inlineSpaceNames.join(", "),
+                        })}
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -1470,5 +1619,72 @@ export function SpaceSettingsDialog({
           </AlertDialogContent>
         </AlertDialog>
       </Dialog>
+  );
+}
+
+function LfsStatePanel({
+  state,
+  strategy,
+  repairing,
+  onRepair,
+}: {
+  state: LfsState;
+  strategy: "lfs-remote" | "lfs-s3";
+  repairing: boolean;
+  onRepair: () => void;
+}) {
+  if (state === "n/a") return null;
+  // Banner copy is strategy-specific (lfs-s3 references the form above, while
+  // lfs-remote leans on the system git credential helper).
+  const missingTitle =
+    strategy === "lfs-s3"
+      ? m.storage_lfs_banner_missing_s3_title()
+      : m.storage_lfs_banner_missing_remote_title();
+  const missingDesc =
+    strategy === "lfs-s3"
+      ? m.storage_lfs_banner_missing_s3_desc()
+      : m.storage_lfs_banner_missing_remote_desc();
+
+  if (state === "pulling") {
+    return (
+      <div className="rounded-md border border-primary/40 bg-primary/5 p-3 text-sm flex items-center gap-2">
+        <Loader2 className="size-4 animate-spin text-primary" />
+        <span>{m.storage_repair_lfs_pulling()}</span>
+      </div>
+    );
+  }
+  if (state === "missing-creds") {
+    return (
+      <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 space-y-2">
+        <p className="text-sm font-medium">{missingTitle}</p>
+        <p className="text-xs text-muted-foreground">{missingDesc}</p>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={onRepair}
+          disabled={repairing}
+        >
+          {repairing && <Loader2 className="mr-1 size-3 animate-spin" />}
+          {m.storage_lfs_retry()}
+        </Button>
+      </div>
+    );
+  }
+  // Ready — give the user a manual "re-pull binaries" affordance per Q8c.
+  return (
+    <div className="rounded-md border p-3 flex items-center justify-between gap-2">
+      <p className="text-xs text-muted-foreground">{m.storage_lfs_banner_ready()}</p>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={onRepair}
+        disabled={repairing}
+      >
+        {repairing && <Loader2 className="mr-1 size-3 animate-spin" />}
+        {m.storage_repair_lfs()}
+      </Button>
+    </div>
   );
 }

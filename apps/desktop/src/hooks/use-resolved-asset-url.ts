@@ -1,30 +1,115 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { useSpaceStore, selectActiveSpacePath } from "@/stores/space";
+import { useEffect, useState } from "react";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+
+import { useLayoutStore } from "@/stores/layout";
+import {
+  useSpaceStore,
+  selectActiveSpacePath,
+} from "@/stores/space";
+import { joinAbs } from "@/features/editor/doc-link-utils";
+
+const EXTERNAL = /^(https?:|data:|blob:|asset:|file:)/i;
 
 /**
- * Resolve a URL stored in a Plate media node to something the webview can
- * actually load. For assets uploaded via `upload_asset`, the stored `url`
- * is a workspace-relative path like `.assets/<prefix>-name.png` — we join
- * it against the active workspace directory and pipe it through Tauri's
- * asset protocol so the file is served off disk.
- *
- * Non-relative URLs (http(s), blob:, data:, asset://) pass through unchanged,
- * so existing Plate features like URL embeds or ephemeral blob previews
- * keep working.
+ * Resolve the absolute filesystem path of an asset referenced from the active
+ * document. Returns the path the backend computed via `resolve_index_target`
+ * — callers feed it to `convertFileSrc` for the webview or `openPath` for the
+ * shell.
  */
-export function resolveAssetUrl(url: string | undefined, spacePath: string): string | undefined {
-  if (!url) return url;
-  if (/^(https?:|data:|blob:|asset:|file:)/i.test(url)) return url;
-  if (!spacePath) return url;
-  // Normalize: strip any leading "./"
-  const rel = url.replace(/^\.\//, "");
-  // Join workspace dir + relative path. Use forward slashes — convertFileSrc
-  // handles platform-specific normalization.
-  const absolute = `${spacePath.replace(/\\/g, "/").replace(/\/$/, "")}/${rel}`;
-  return convertFileSrc(absolute);
+export async function resolveAssetAbsPath(
+  url: string,
+  projectPath: string,
+  documentAbsPath: string,
+): Promise<string> {
+  return invoke<string>("resolve_asset_url", {
+    projectPath,
+    documentAbsPath,
+    assetPath: url,
+  });
 }
 
+interface ActiveContext {
+  projectPath: string;
+  documentAbsPath: string;
+}
+
+function useActiveContext(): ActiveContext | null {
+  const projectPath = useSpaceStore((s) => s.activeRootPath);
+  const activeDocument = useLayoutStore((s) => s.activeDocument);
+  const activeDocumentSpaceId = useLayoutStore((s) => s.activeDocumentSpaceId);
+  const activeRootId = useSpaceStore((s) => s.activeRootId);
+  const rootSpaces = useSpaceStore((s) => s.rootSpaces);
+  const spaces = useSpaceStore((s) => s.spaces);
+
+  if (!projectPath || !activeDocument) return null;
+
+  const ownerId = activeDocumentSpaceId;
+  let spacePath: string | undefined;
+  if (!ownerId || ownerId === activeRootId) {
+    spacePath = rootSpaces.find((r) => r.id === ownerId)?.path ?? projectPath;
+  } else {
+    spacePath = spaces.find((s) => s.id === ownerId)?.path;
+  }
+  if (!spacePath) return null;
+
+  const documentAbsPath = activeDocument.startsWith("/")
+    ? activeDocument
+    : joinAbs(spacePath, activeDocument);
+  return { projectPath, documentAbsPath };
+}
+
+/**
+ * Resolve an asset URL stored in a Plate media node into a webview-loadable
+ * URL. Pass-through for external URLs (http(s), data:, blob:, file:, asset:).
+ * Otherwise routes through the backend `resolve_asset_url` IPC which uses the
+ * same per-space resolver as document links — so cross-space references like
+ * `../engineering/.assets/x.png` work out of the box.
+ *
+ * Returns `undefined` while the resolver is in flight; callers should treat
+ * that as "render the broken image" (e.g. an LFS pointer file resolving to an
+ * absolute path that the `<img>` element cannot load is the expected broken
+ * state — no auto-pull).
+ */
 export function useResolvedAssetUrl(url: string | undefined): string | undefined {
-  const spacePath = useSpaceStore(selectActiveSpacePath);
-  return resolveAssetUrl(url, spacePath);
+  const context = useActiveContext();
+  const spacePathFallback = useSpaceStore(selectActiveSpacePath);
+  const [resolved, setResolved] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (!url) {
+      setResolved(undefined);
+      return;
+    }
+    if (EXTERNAL.test(url)) {
+      setResolved(url);
+      return;
+    }
+    if (!context) {
+      // No active document yet — fall back to the workspace-relative join so
+      // standalone previews (e.g. media preview dialog before the editor is
+      // fully mounted) still render.
+      if (spacePathFallback) {
+        const rel = url.replace(/^\.\//, "");
+        const absolute = `${spacePathFallback.replace(/\\/g, "/").replace(/\/$/, "")}/${rel}`;
+        setResolved(convertFileSrc(absolute));
+      } else {
+        setResolved(undefined);
+      }
+      return;
+    }
+    let cancelled = false;
+    resolveAssetAbsPath(url, context.projectPath, context.documentAbsPath)
+      .then((abs) => {
+        if (!cancelled) setResolved(convertFileSrc(abs));
+      })
+      .catch((err) => {
+        console.warn("resolve_asset_url failed:", err);
+        if (!cancelled) setResolved(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [url, context?.projectPath, context?.documentAbsPath, spacePathFallback, context]);
+
+  return resolved;
 }

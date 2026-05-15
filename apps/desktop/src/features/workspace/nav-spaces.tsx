@@ -38,6 +38,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   ChevronRight,
+  CloudOff,
   Ellipsis,
   FilePlus,
   FolderDown,
@@ -52,7 +53,12 @@ import {
 } from "lucide-react";
 import { useSpaceStore } from "@/stores/space";
 import { useLayoutStore } from "@/stores/layout";
-import type { TreeNode, SpaceConfig, SpaceInfo } from "@/types/space";
+import type {
+  TreeNode,
+  SpaceConfig,
+  SpaceInfo,
+  LfsState,
+} from "@/types/space";
 import { listen } from "@tauri-apps/api/event";
 import type { CloneProgress } from "@/types/git";
 import {
@@ -98,6 +104,36 @@ export function NavSpaces() {
       editRef.current.select();
     }
   }, [editingSpaceId]);
+
+  // Bridge `space:lfs_state_changed` (emitted by IndexState whenever the
+  // backend probes / pulls / fails an LFS-flavoured pool) into the spaces
+  // store so the sidebar decorators below stay live.
+  useEffect(() => {
+    if (!activeRootPath) return;
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    listen<{ projectPath: string; spaceId: string | null; state: LfsState }>(
+      "space:lfs_state_changed",
+      (event) => {
+        if (cancelled) return;
+        if (event.payload.projectPath !== activeRootPath) return;
+        const targetId = event.payload.spaceId;
+        if (!targetId) return;
+        useSpaceStore.setState((s) => ({
+          spaces: s.spaces.map((ws) =>
+            ws.id === targetId ? { ...ws, lfsState: event.payload.state } : ws,
+          ),
+        }));
+      },
+    ).then((u) => {
+      if (cancelled) u();
+      else unlisten = u;
+    });
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, [activeRootPath]);
 
   async function handleRenameSpace() {
     const ws = spaces.find((w) => w.id === editingSpaceId);
@@ -415,7 +451,8 @@ function SpaceRow({
           ) : (
             <span className="flex-1 truncate">{ws.name}</span>
           )}
-          <span className="ml-auto flex items-center">
+          <span className="ml-auto flex items-center gap-1">
+            <LfsIndicatorIcon lfsState={ws.lfsState} />
             <GitIndicatorIcon spacePath={ws.path} />
           </span>
         </SidebarMenuButton>
@@ -424,6 +461,14 @@ function SpaceRow({
             <Progress value={cloning.percent} className="h-1" />
             <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
               {cloning.error ? cloning.error : `${cloning.phase} ${cloning.percent}%`}
+            </p>
+          </div>
+        )}
+        {!cloning && ws.lfsState === "pulling" && (
+          <div className="px-2 pb-1 flex items-center gap-1.5">
+            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+            <p className="text-[10px] text-muted-foreground truncate">
+              {m.storage_repair_lfs_pulling()}
             </p>
           </div>
         )}
@@ -494,5 +539,24 @@ function SpaceRow({
         </CollapsibleContent>
       </SidebarMenuItem>
     </Collapsible>
+  );
+}
+
+function LfsIndicatorIcon({ lfsState }: { lfsState: LfsState }) {
+  // Only surface attention-worthy states. `ready` and `n/a` are the silent
+  // happy paths — `pulling` already has the inline spinner row beneath the
+  // space card, so this slot is reserved for `missing-creds`.
+  if (lfsState !== "missing-creds") return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex">
+          <CloudOff className="h-3.5 w-3.5 text-destructive" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="right">
+        {m.storage_lfs_banner_missing_remote_title()}
+      </TooltipContent>
+    </Tooltip>
   );
 }

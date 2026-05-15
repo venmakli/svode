@@ -9,11 +9,7 @@ import { ResizableProvider, useResizableValue } from '@platejs/resizable';
 import { PlateElement, withHOC } from 'platejs/react';
 
 import { cn } from '@/lib/utils';
-import { resolveAssetUrl } from '@/hooks/use-resolved-asset-url';
-import {
-  selectActiveSpacePath,
-  useSpaceStore,
-} from '@/stores/space';
+import { useResolvedAssetUrl } from '@/hooks/use-resolved-asset-url';
 
 import { Caption, CaptionTextarea } from './caption';
 import { MediaToolbar } from './media-toolbar';
@@ -26,9 +22,9 @@ import {
 export const ImageElement = withHOC(
   ResizableProvider,
   function ImageElement(props: PlateElementProps<TImageElement>) {
-    const { align = 'center', focused, readOnly, selected } = useMediaState();
+    const { align = 'center', focused, readOnly, selected, unsafeUrl } = useMediaState();
     const width = useResizableValue('width');
-    const spacePath = useSpaceStore(selectActiveSpacePath);
+    const resolvedUrl = useResolvedAssetUrl(unsafeUrl);
 
     const { isDragging, handleRef } = useDraggable({
       element: props.element,
@@ -60,7 +56,7 @@ export const ImageElement = withHOC(
                 alt={props.attributes.alt as string | undefined}
                 setProps={({ src, ...rest }) => ({
                   ...rest,
-                  src: resolveAssetUrl(src, spacePath) ?? src,
+                  src: resolvedUrl ?? src,
                 })}
               />
               <ResizeHandle

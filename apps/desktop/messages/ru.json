@@ -6,21 +6,18 @@
   "common_theme_dark": "Тёмная",
   "common_theme_system": "Системная",
   "common_loading": "Загрузка...",
-
   "sidebar_documents": "ДОКУМЕНТЫ",
   "sidebar_spaces": "ПРОСТРАНСТВА",
   "sidebar_project_settings": "Настройки проекта",
   "sidebar_add_space": "Добавить пространство",
   "sidebar_all_projects": "Все проекты",
   "sidebar_delete_project": "Удалить проект",
-
   "chat_title": "AI Чат",
   "chat_welcome_title": "Привет!",
   "chat_welcome_subtitle": "Чем могу помочь?",
   "chat_composer_placeholder": "Сообщение...",
   "chat_error_cli_not_found": "Claude CLI не найден. Установите: npm install -g @anthropic-ai/claude-code",
   "chat_error_agent": "Агент столкнулся с ошибкой",
-
   "editor_title": "Редактор документов",
   "editor_placeholder": "Редактор будет реализован в Фазе 3",
   "editor_untitled": "Без названия",
@@ -65,7 +62,6 @@
   "editor_file_deleted": "Файл был удалён с диска",
   "editor_error_load": "Не удалось загрузить документ",
   "editor_error_save": "Не удалось сохранить документ",
-
   "home_title": "CombAI",
   "home_empty_subtitle": "AI Space Platform",
   "home_empty_description": "Документы, умные таблицы, команды и AI-агенты — всё в одном месте. Данные хранятся локально как Git-репозитории.",
@@ -83,7 +79,6 @@
   "home_clone_action": "Клонировать",
   "home_clone_cancel": "Отмена",
   "home_cloning": "Клонируется...",
-
   "project_new_title": "Новый проект",
   "project_name_label": "Название",
   "project_name_placeholder": "Название проекта",
@@ -100,7 +95,6 @@
   "project_delete_files": "Также удалить файлы с диска",
   "project_settings": "Настройки",
   "project_remove": "Удалить из списка",
-
   "space_add_first_title": "Добавьте первое пространство",
   "space_add_first_description": "Пространство — место для документов с AI-агентом, который знает весь контекст и помогает на каждом этапе работы.",
   "space_create": "Создать пространство",
@@ -127,13 +121,11 @@
   "space_not_found": "Директория не найдена: {path}",
   "space_not_found_action_update": "Обновить путь",
   "space_not_found_action_remove": "Удалить из списка",
-
   "file_delete_title": "Удалить документ?",
   "file_delete_description": "Документ будет удалён безвозвратно.",
   "file_delete_has_backlinks": "На этот документ ссылаются:",
   "file_delete_confirm": "Удалить",
   "file_delete_cancel": "Отмена",
-
   "toast_project_created": "Проект создан",
   "toast_space_created": "Пространство добавлено",
   "toast_space_opened": "Пространство добавлено",
@@ -141,9 +133,7 @@
   "toast_project_deleted": "Проект удалён",
   "toast_page_created": "Страница создана",
   "toast_error": "Что-то пошло не так",
-
   "nav_all_projects": "Все проекты",
-
   "settings_title": "Настройки",
   "settings_profile": "Профиль",
   "settings_appearance": "Оформление",
@@ -163,7 +153,6 @@
   "settings_unsaved_description": "У вас есть несохранённые изменения. Что вы хотите сделать?",
   "settings_unsaved_save": "Сохранить",
   "settings_unsaved_discard": "Не сохранять",
-
   "settings_space_title": "Настройки: {name}",
   "settings_general": "Общие",
   "settings_ai_agent": "AI-агент",
@@ -177,31 +166,27 @@
   "settings_reset_inherit": "Сбросить на наследуемое",
   "settings_space_cli_agents": "CLI-агенты",
   "settings_space_instructions": "Файл инструкций",
-  "settings_space_cli_found_auth": "{version} \u00b7 авторизован",
-  "settings_space_cli_found_noauth": "{version} \u00b7 не авторизован",
+  "settings_space_cli_found_auth": "{version} · авторизован",
+  "settings_space_cli_found_noauth": "{version} · не авторизован",
   "settings_space_cli_noauth_hint": "Выполните `{command}` в терминале",
   "settings_space_cli_not_found": "не найден",
   "settings_space_cli_install": "Как установить",
   "settings_space_cli_refresh": "Обновить статус",
   "settings_space_agents_md_open": "Открыть",
   "settings_space_agents_md_create": "Создать AGENTS.md",
-  "settings_space_agents_md_symlink": "AGENTS.md \u2192 {target}",
+  "settings_space_agents_md_symlink": "AGENTS.md → {target}",
   "settings_space_agents_md_lines": "{count} строк",
   "settings_space_symlinks_ok": "Симлинки в порядке",
   "settings_space_symlinks_restored": "Восстановлено {count} симлинков",
   "settings_health_broken_links": "Битые ссылки между пространствами",
   "settings_health_broken_links_desc": "Перепроверяются после открытия документов или пересборки обратных ссылок.",
   "settings_health_broken_links_count": "{count} битых",
-
   "settings_configure_agent": "Настроить AI-агента",
   "settings_configure_agent_desc": "Выбрать CLI и настроить",
-
   "settings_space_model": "Модель",
   "settings_space_default_model": "Модель по умолчанию",
   "settings_space_default_model_desc": "Модель, используемая по умолчанию в чате",
-
   "toast_settings_saved": "Настройки сохранены",
-
   "git_missing_title": "Git не найден",
   "git_missing_description": "CombAI хранит данные как Git-репозитории. Установите git, чтобы продолжить.",
   "git_missing_recheck": "Проверить снова",
@@ -291,7 +276,6 @@
   "storage_confirm_action": "Изменить",
   "storage_apply_failed": "Не удалось применить стратегию",
   "storage_apply_warnings": "Стратегия применена с предупреждениями ({count})",
-
   "identity_dialog_title": "Настройка Git Identity",
   "identity_dialog_description": "CombAI использует git для каждого проекта. Для коммитов нужны имя и email.",
   "identity_name_label": "Имя",
@@ -299,7 +283,6 @@
   "identity_save": "Сохранить",
   "identity_name_empty": "Имя обязательно",
   "identity_email_invalid": "Некорректный email",
-
   "settings_git_identity_override_title": "Identity (необязательное переопределение)",
   "settings_git_identity_override_hint": "Оставьте пустым, чтобы наследовать. При переопределении нужны оба поля.",
   "settings_git_identity_name_placeholder": "Используется глобальная identity",
@@ -312,7 +295,6 @@
   "settings_git_identity_fanout_checkbox": "Применить ко всем вложенным пространствам",
   "settings_git_identity_fanout_affected_spaces": "Затронутые пространства:",
   "settings_git_identity_fanout_will_replace": "будет перезаписано",
-
   "search_tooltip": "Поиск",
   "search_dialog_title": "Поиск",
   "search_dialog_description": "Поиск документов по проекту",
@@ -323,5 +305,17 @@
   "search_group_contents": "СОДЕРЖИМОЕ",
   "search_group_recent": "НЕДАВНИЕ",
   "search_indexing_progress": "Индексация: {done} из {total} пространств готово",
-  "search_space_unavailable": "Пространство {name} недоступно"
+  "search_space_unavailable": "Пространство {name} недоступно",
+  "storage_inherited_from_project": "Наследуется от проекта «{name}» (стратегия: {strategy})",
+  "storage_inherited_hint": "Inline-пространства используют стратегию проекта. Изменить её можно в настройках проекта.",
+  "storage_used_by_inline_spaces": "Используется inline-пространствами: {names}",
+  "storage_used_by_inline_spaces_none": "Пока ни одно inline-пространство не использует эту стратегию.",
+  "storage_repair_lfs": "Скачать бинарники",
+  "storage_repair_lfs_pulling": "Скачивание бинарников…",
+  "storage_lfs_banner_missing_s3_title": "Нужны S3 credentials для загрузки бинарников",
+  "storage_lfs_banner_missing_s3_desc": "Введите Access Key и Secret Key для настроенного bucket'а. Остальные параметры останутся без изменений; обновятся только credentials.",
+  "storage_lfs_banner_missing_remote_title": "Git LFS server требует аутентификации",
+  "storage_lfs_banner_missing_remote_desc": "Системный git credential helper (или ssh-agent) запросит credentials при необходимости.",
+  "storage_lfs_retry": "Повторить",
+  "storage_lfs_banner_ready": "LFS-бинарники готовы."
 }

@@ -3,14 +3,16 @@ import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 
-import { useSpaceStore, selectActiveSpacePath } from "@/stores/space";
+import { joinAbs, makeRelativeDocUrl } from "@/features/editor/doc-link-utils";
 import { useLayoutStore } from "@/stores/layout";
+import { useSpaceStore } from "@/stores/space";
 
 /**
  * Shape returned by `useUploadFile` — matches the subset of Plate's
  * `UploadedFile` contract that the media node components consume. The `url`
- * is the workspace-relative `.assets/<prefix>-name` path; rendering code uses
- * `useResolvedAssetUrl` to convert it into a webview-loadable URL.
+ * is the markdown link path the editor stores in the node: relative to the
+ * source document and routed through `make_relative_link` so cross-space
+ * uploads (when they land) render as `../other-space/.assets/x.png`.
  */
 export interface UploadedFile {
   key: string;
@@ -21,12 +23,11 @@ export interface UploadedFile {
 }
 
 interface BackendUploadResult {
-  id: string;
-  assetPath: string;
-  originalName: string;
-  size: number;
-  mimeType: string;
-  assetType: "image" | "video" | "audio" | "file";
+  spaceId: string | null;
+  relPath: string;
+  fileName: string;
+  sizeBytes: number;
+  mime: string;
 }
 
 interface UseUploadFileProps {
@@ -36,9 +37,9 @@ interface UseUploadFileProps {
 
 /**
  * Tauri-backed upload hook. Reads the file's bytes, ships them to the
- * `upload_asset` IPC, and returns a record whose `url` is the workspace-
- * relative asset path. The rest of the editor resolves that path to a real
- * asset:// URL at render time.
+ * `upload_asset` IPC, and returns a record whose `url` is the markdown link
+ * Plate writes into the document body. The editor resolves that link back to
+ * an absolute filesystem path at render time via `useResolvedAssetUrl`.
  */
 export function useUploadFile({ onUploadComplete, onUploadError }: UseUploadFileProps = {}) {
   const [uploadedFile, setUploadedFile] = React.useState<UploadedFile>();
@@ -47,17 +48,39 @@ export function useUploadFile({ onUploadComplete, onUploadError }: UseUploadFile
   const [isUploading, setIsUploading] = React.useState(false);
 
   async function uploadFile(file: File): Promise<UploadedFile | undefined> {
-    const spacePath = selectActiveSpacePath(useSpaceStore.getState());
-    if (!spacePath) {
-      const err = new Error("No active workspace");
+    const projectPath = useSpaceStore.getState().activeRootPath;
+    if (!projectPath) {
+      const err = new Error("No active project");
       toast.error(err.message);
       onUploadError?.(err);
       return undefined;
     }
     // Snapshot the active document at upload initiation. If the user switches
-    // documents while `file.arrayBuffer()` is resolving, we still attribute the
-    // asset to the document where the upload was started.
-    const activeDocument = useLayoutStore.getState().activeDocument ?? undefined;
+    // documents while `file.arrayBuffer()` is resolving, we still attribute
+    // the asset to the document where the upload was started.
+    const { activeDocument, activeDocumentSpaceId } =
+      useLayoutStore.getState();
+    if (!activeDocument) {
+      const err = new Error("No active document");
+      toast.error(err.message);
+      onUploadError?.(err);
+      return undefined;
+    }
+    const { rootSpaces, spaces, activeRootId } = useSpaceStore.getState();
+    const ownerSpacePath =
+      !activeDocumentSpaceId || activeDocumentSpaceId === activeRootId
+        ? rootSpaces.find((r) => r.id === activeDocumentSpaceId)?.path ??
+          projectPath
+        : spaces.find((s) => s.id === activeDocumentSpaceId)?.path;
+    if (!ownerSpacePath) {
+      const err = new Error("Active document's space is unavailable");
+      toast.error(err.message);
+      onUploadError?.(err);
+      return undefined;
+    }
+    const documentAbsPath = activeDocument.startsWith("/")
+      ? activeDocument
+      : joinAbs(ownerSpacePath, activeDocument);
 
     setIsUploading(true);
     setUploadingFile(file);
@@ -73,7 +96,8 @@ export function useUploadFile({ onUploadComplete, onUploadError }: UseUploadFile
       setProgress(50);
 
       const result = await invoke<BackendUploadResult>("upload_asset", {
-        spacePath,
+        projectPath,
+        documentAbsPath,
         fileName: file.name,
         bytes,
         documentId: activeDocument,
@@ -81,14 +105,24 @@ export function useUploadFile({ onUploadComplete, onUploadError }: UseUploadFile
 
       setProgress(100);
 
+      // Compute the markdown link from the source document to the asset's
+      // absolute path. Backend `make_relative_link` mirrors how doc-link
+      // insertion builds cross-space `../space/foo.md` paths (Ф.7); for
+      // intra-space uploads (MVP, Q3=A) this collapses to `.assets/x.ext`.
+      // The asset's owning space is identified by `result.spaceId` (null =
+      // project root); look it up to build the abs filesystem path.
+      const assetOwnerPath = result.spaceId
+        ? spaces.find((s) => s.id === result.spaceId)?.path ?? ownerSpacePath
+        : projectPath;
+      const targetAbsPath = joinAbs(assetOwnerPath, result.relPath);
+      const link = await makeRelativeDocUrl(documentAbsPath, targetAbsPath);
+
       const uploaded: UploadedFile = {
-        key: result.id,
-        // Store the relative .assets/ path — consumers must pass it through
-        // useResolvedAssetUrl when rendering.
-        url: result.assetPath,
-        name: result.originalName,
-        size: result.size,
-        type: result.mimeType,
+        key: result.relPath,
+        url: link,
+        name: result.fileName,
+        size: result.sizeBytes,
+        type: result.mime,
       };
 
       setUploadedFile(uploaded);

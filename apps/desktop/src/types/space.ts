@@ -4,6 +4,8 @@ export type SpaceGitType = "inline" | "independent" | "submodule";
 
 export type SpaceStatus = "ready" | "missing" | "broken";
 
+export type LfsState = "n/a" | "ready" | "missing-creds" | "pulling";
+
 export interface SpaceInfo {
   id: string;
   name: string;
@@ -13,6 +15,7 @@ export interface SpaceInfo {
   hasSpaces: boolean;
   lastOpened: string | null;
   status: SpaceStatus;
+  lfsState: LfsState;
 }
 
 export interface SpaceConfig {
