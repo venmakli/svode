@@ -2,12 +2,16 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::error::AppError;
-use crate::files::{entry, tree, BacklinkIndex, BacklinkInfo, Entry, FileWatcher, LinkValidation, TreeNode, WriteNonceRegistry, WriteResult};
+use crate::files::{
+    BacklinkIndex, BacklinkInfo, Entry, FileWatcher, LinkValidation, ModifiedLinkSource, TreeNode,
+    WriteNonceRegistry, WriteResult, entry, tree,
+};
 use crate::git::autocommit::{AutocommitService, StructuralOp};
-use crate::index::{self, IndexKey, IndexState};
+use crate::index::{self, IndexKey, IndexState, ResolvedDocLink};
 use crate::space::config;
 
 fn basename(path: &str) -> String {
@@ -23,11 +27,56 @@ fn maybe_autocommit_structural(
     let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
         return;
     };
-    autocommit.schedule_structural(
-        PathBuf::from(proj),
-        PathBuf::from(space_path),
-        op,
-    );
+    autocommit.schedule_structural(PathBuf::from(proj), PathBuf::from(space_path), op);
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkFixSuggestion {
+    pub path: String,
+    pub label: String,
+    pub reason: String,
+}
+
+async fn space_id_for_dir(state: &IndexState, space: &str) -> Option<String> {
+    state
+        .key_for_space_dir(Path::new(space))
+        .await
+        .and_then(|key| IndexState::space_id_for_key(&key))
+}
+
+async fn schedule_modified_source_spaces(
+    state: &IndexState,
+    autocommit: &AutocommitService,
+    project_path: Option<&str>,
+    modified: &[ModifiedLinkSource],
+    op: StructuralOp,
+) {
+    let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
+        return;
+    };
+    let project = Path::new(proj);
+    let mut seen = std::collections::HashSet::new();
+    for item in modified {
+        if !seen.insert(item.space_id.clone()) {
+            continue;
+        }
+        match state.space_path_of(project, item.space_id.as_deref()).await {
+            Ok(space_path) => {
+                autocommit.schedule_structural(project.to_path_buf(), space_path, op.clone())
+            }
+            Err(e) => tracing::warn!("schedule modified backlink source failed: {e}"),
+        }
+    }
+}
+
+async fn ensure_backlinks_before_structural(state: &IndexState, project_path: Option<&str>) {
+    let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
+        return;
+    };
+    if let Err(e) = state.ensure_project_backlinks_built(Path::new(proj)).await {
+        tracing::warn!("pre-structural backlink rebuild failed: {e}");
+    }
 }
 
 /// Resolve the runtime backlink index that owns `space`. Falls back to a
@@ -105,7 +154,12 @@ pub async fn write_entry(
 ) -> Result<WriteResult, AppError> {
     let skip_rename = skip_rename.unwrap_or(false);
     let backlink_index = backlinks_for_space(&index_state, &space).await;
-    let result = entry::write(
+    let project = project_path.as_deref().filter(|p| !p.is_empty());
+    let project_aware = project.is_some();
+    if project_aware && !skip_rename {
+        ensure_backlinks_before_structural(&index_state, project).await;
+    }
+    let mut result = entry::write(
         &space,
         &path,
         &content,
@@ -113,7 +167,11 @@ pub async fn write_entry(
         icon.as_deref(),
         extra,
         existing_id.as_deref(),
-        Some(&backlink_index),
+        if project_aware {
+            None
+        } else {
+            Some(&backlink_index)
+        },
         skip_rename,
     )?;
 
@@ -133,6 +191,104 @@ pub async fn write_entry(
     // by the stale-row delete.
     if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
+        let target_space_id = space_id_for_dir(&index_state, &space).await;
+        if !skip_rename {
+            if let Some(ref new_path) = result.new_path {
+                match index_state
+                    .update_links_on_rename_project(
+                        project,
+                        target_space_id.as_deref(),
+                        &path,
+                        new_path,
+                        title.as_deref(),
+                    )
+                    .await
+                {
+                    Ok(modified) => {
+                        result.modified_files = modified.iter().map(|m| m.path.clone()).collect();
+                        result.modified_sources = modified.clone();
+                        schedule_modified_source_spaces(
+                            &index_state,
+                            &autocommit,
+                            project_path.as_deref(),
+                            &modified,
+                            StructuralOp::Rename {
+                                old: basename(&path),
+                                new: basename(new_path),
+                            },
+                        )
+                        .await;
+                    }
+                    Err(e) => tracing::warn!("cross-space backlink rewrite failed: {e}"),
+                }
+
+                let is_readme = Path::new(&path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.eq_ignore_ascii_case("readme.md"));
+                if is_readme {
+                    let old_folder = Path::new(&path)
+                        .parent()
+                        .map(|p| p.to_string_lossy().to_string());
+                    let new_folder = Path::new(new_path)
+                        .parent()
+                        .map(|p| p.to_string_lossy().to_string());
+                    if let (Some(of), Some(nf)) = (old_folder, new_folder) {
+                        if !of.is_empty() && of != nf {
+                            match index_state
+                                .update_links_on_folder_rename_project(
+                                    project,
+                                    target_space_id.as_deref(),
+                                    &of,
+                                    &nf,
+                                )
+                                .await
+                            {
+                                Ok(extra) => {
+                                    schedule_modified_source_spaces(
+                                        &index_state,
+                                        &autocommit,
+                                        project_path.as_deref(),
+                                        &extra,
+                                        StructuralOp::Rename {
+                                            old: basename(&of),
+                                            new: basename(&nf),
+                                        },
+                                    )
+                                    .await;
+                                    for item in extra {
+                                        if !result.modified_sources.contains(&item) {
+                                            result.modified_files.push(item.path.clone());
+                                            result.modified_sources.push(item);
+                                        }
+                                    }
+                                }
+                                Err(e) => tracing::warn!(
+                                    "cross-space folder backlink rewrite failed: {e}"
+                                ),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if result.new_path.is_some() {
+            if let Err(e) = index_state
+                .remove_file_backlinks(project, target_space_id.as_deref(), &path)
+                .await
+            {
+                tracing::warn!("remove stale backlinks source failed for {path}: {e}");
+            }
+        }
+        let current = result.new_path.as_deref().unwrap_or(&path);
+        if let Err(e) = index_state
+            .update_file_backlinks(project, target_space_id.as_deref(), current)
+            .await
+        {
+            tracing::warn!("update file backlinks failed for {current}: {e}");
+        }
+
         if result.new_path.is_some() {
             let abs_old = Path::new(&space).join(&path);
             if let Err(e) = index::update::delete_entry(&index_state, project, &abs_old).await {
@@ -141,9 +297,7 @@ pub async fn write_entry(
         }
         let target = result.new_path.clone().unwrap_or_else(|| path.clone());
         let abs_target = Path::new(&space).join(&target);
-        if let Err(e) =
-            index::update::update_entry(&index_state, project, &abs_target).await
-        {
+        if let Err(e) = index::update::update_entry(&index_state, project, &abs_target).await {
             tracing::warn!("index update_entry failed for {target}: {e}");
         }
     }
@@ -180,6 +334,13 @@ pub async fn delete_entry(
 
     if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
+        let source_space_id = space_id_for_dir(&index_state, &space).await;
+        if let Err(e) = index_state
+            .remove_file_backlinks(project, source_space_id.as_deref(), &path)
+            .await
+        {
+            tracing::warn!("remove backlinks for deleted entry failed: {e}");
+        }
         let abs_old = Path::new(&space).join(&path);
         if let Err(e) = index::update::delete_entry(&index_state, project, &abs_old).await {
             tracing::warn!("index delete_entry failed for {path}: {e}");
@@ -204,11 +365,70 @@ pub async fn rename_entry(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Vec<String>, AppError> {
     let backlink_index = backlinks_for_space(&index_state, &space).await;
+    let was_dir = Path::new(&space).join(&from).is_dir();
+    ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
     entry::rename(&space, &from, &to)?;
-    let modified = backlink_index
-        .update_links_on_rename(Path::new(&space), &from, &to, None)
-        .unwrap_or_default();
-    let _ = backlink_index.update_file(Path::new(&space), &to);
+    let modified = if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+        let project = Path::new(proj);
+        let target_space_id = space_id_for_dir(&index_state, &space).await;
+        let cross = if was_dir {
+            index_state
+                .update_links_on_folder_rename_project(
+                    project,
+                    target_space_id.as_deref(),
+                    &from,
+                    &to,
+                )
+                .await
+        } else {
+            index_state
+                .update_links_on_rename_project(
+                    project,
+                    target_space_id.as_deref(),
+                    &from,
+                    &to,
+                    None,
+                )
+                .await
+        }
+        .unwrap_or_else(|e| {
+            tracing::warn!("cross-space rename backlink rewrite failed: {e}");
+            Vec::new()
+        });
+        schedule_modified_source_spaces(
+            &index_state,
+            &autocommit,
+            project_path.as_deref(),
+            &cross,
+            StructuralOp::Rename {
+                old: basename(&from),
+                new: basename(&to),
+            },
+        )
+        .await;
+        let key = index_state
+            .key_for_project_space_id(project, target_space_id.as_deref())
+            .await?;
+        if was_dir {
+            if let Err(e) = index_state.rebuild_source_backlinks(&key).await {
+                tracing::warn!("rebuild backlinks after folder rename failed: {e}");
+            }
+        } else {
+            let _ = index_state
+                .remove_file_backlinks(project, target_space_id.as_deref(), &from)
+                .await;
+            let _ = index_state
+                .update_file_backlinks(project, target_space_id.as_deref(), &to)
+                .await;
+        }
+        cross.iter().map(|m| m.path.clone()).collect()
+    } else {
+        let modified = backlink_index
+            .update_links_on_rename(Path::new(&space), &from, &to, None)
+            .unwrap_or_default();
+        let _ = backlink_index.update_file(Path::new(&space), &to);
+        modified
+    };
     maybe_autocommit_structural(
         &autocommit,
         project_path.as_deref(),
@@ -231,12 +451,67 @@ pub async fn move_entry(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
     let backlink_index = backlinks_for_space(&index_state, &space).await;
+    let was_dir = Path::new(&space).join(&from).is_dir();
+    ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
     let new_path = entry::move_entry(
         Path::new(&space),
         &from,
         &to_parent,
-        Some(&backlink_index),
+        if project_path.as_deref().filter(|p| !p.is_empty()).is_some() {
+            None
+        } else {
+            Some(&backlink_index)
+        },
     )?;
+    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+        let project = Path::new(proj);
+        let target_space_id = space_id_for_dir(&index_state, &space).await;
+        let cross = if was_dir {
+            index_state
+                .update_links_on_folder_rename_project(
+                    project,
+                    target_space_id.as_deref(),
+                    &from,
+                    &new_path,
+                )
+                .await
+        } else {
+            index_state
+                .update_links_on_rename_project(
+                    project,
+                    target_space_id.as_deref(),
+                    &from,
+                    &new_path,
+                    None,
+                )
+                .await
+        }
+        .unwrap_or_else(|e| {
+            tracing::warn!("cross-space move backlink rewrite failed: {e}");
+            Vec::new()
+        });
+        schedule_modified_source_spaces(
+            &index_state,
+            &autocommit,
+            project_path.as_deref(),
+            &cross,
+            StructuralOp::Move(basename(&new_path)),
+        )
+        .await;
+        let key = index_state
+            .key_for_project_space_id(project, target_space_id.as_deref())
+            .await?;
+        if was_dir {
+            let _ = index_state.rebuild_source_backlinks(&key).await;
+        } else {
+            let _ = index_state
+                .remove_file_backlinks(project, target_space_id.as_deref(), &from)
+                .await;
+            let _ = index_state
+                .update_file_backlinks(project, target_space_id.as_deref(), &new_path)
+                .await;
+        }
+    }
     maybe_autocommit_structural(
         &autocommit,
         project_path.as_deref(),
@@ -250,10 +525,15 @@ pub async fn move_entry(
 pub async fn get_backlinks(
     space: String,
     target_path: String,
+    project_path: Option<String>,
     index_state: State<'_, IndexState>,
 ) -> Result<Vec<BacklinkInfo>, AppError> {
     let backlink_index = backlinks_for_space(&index_state, &space).await;
-    if !backlink_index.is_built() {
+    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+        index_state
+            .ensure_project_backlinks_built(Path::new(proj))
+            .await?;
+    } else if !backlink_index.is_built() {
         backlink_index.build(Path::new(&space))?;
     }
     Ok(backlink_index.get_backlinks(&target_path))
@@ -269,11 +549,38 @@ pub async fn rebuild_backlinks(
 }
 
 #[tauri::command]
-pub fn validate_links(
+pub async fn validate_links(
     space: String,
     path: String,
+    project_path: Option<String>,
+    index_state: State<'_, IndexState>,
 ) -> Result<Vec<LinkValidation>, AppError> {
-    crate::files::backlinks::validate_links(Path::new(&space), &path)
+    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+        let source_space_id = space_id_for_dir(&index_state, &space).await;
+        let abs = Path::new(&space).join(&path);
+        if !abs.exists() {
+            return Ok(Vec::new());
+        }
+        let content = std::fs::read_to_string(abs)?;
+        let links = crate::files::backlinks::parse_markdown_links(&content);
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for (url, _) in links {
+            if !seen.insert(url.clone()) {
+                continue;
+            }
+            let resolved = index_state
+                .resolve_doc_link(Path::new(proj), source_space_id.as_deref(), &path, &url)
+                .await?;
+            out.push(LinkValidation {
+                url,
+                exists: resolved.exists,
+            });
+        }
+        Ok(out)
+    } else {
+        crate::files::backlinks::validate_links(Path::new(&space), &path)
+    }
 }
 
 #[tauri::command]
@@ -286,10 +593,7 @@ pub fn watch_space(
 }
 
 #[tauri::command]
-pub fn unwatch_space(
-    space: String,
-    watcher: State<'_, FileWatcher>,
-) -> Result<(), AppError> {
+pub fn unwatch_space(space: String, watcher: State<'_, FileWatcher>) -> Result<(), AppError> {
     watcher.unwatch(&space)
 }
 
@@ -302,11 +606,47 @@ pub async fn nest_entry(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
     let backlink_index = backlinks_for_space(&index_state, &space).await;
+    ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
     let new_path = entry::nest_entry(
         Path::new(&space),
         &path,
-        Some(&backlink_index),
+        if project_path.as_deref().filter(|p| !p.is_empty()).is_some() {
+            None
+        } else {
+            Some(&backlink_index)
+        },
     )?;
+    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+        let project = Path::new(proj);
+        let target_space_id = space_id_for_dir(&index_state, &space).await;
+        let cross = index_state
+            .update_links_on_rename_project(
+                project,
+                target_space_id.as_deref(),
+                &path,
+                &new_path,
+                None,
+            )
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("cross-space nest backlink rewrite failed: {e}");
+                Vec::new()
+            });
+        schedule_modified_source_spaces(
+            &index_state,
+            &autocommit,
+            project_path.as_deref(),
+            &cross,
+            StructuralOp::Move(basename(&new_path)),
+        )
+        .await;
+        let _ = index_state
+            .remove_file_backlinks(project, target_space_id.as_deref(), &path)
+            .await;
+        let _ = index_state
+            .update_file_backlinks(project, target_space_id.as_deref(), &new_path)
+            .await;
+    }
     maybe_autocommit_structural(
         &autocommit,
         project_path.as_deref(),
@@ -325,11 +665,47 @@ pub async fn unnest_entry(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
     let backlink_index = backlinks_for_space(&index_state, &space).await;
+    ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
     let new_path = entry::unnest_entry(
         Path::new(&space),
         &path,
-        Some(&backlink_index),
+        if project_path.as_deref().filter(|p| !p.is_empty()).is_some() {
+            None
+        } else {
+            Some(&backlink_index)
+        },
     )?;
+    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+        let project = Path::new(proj);
+        let target_space_id = space_id_for_dir(&index_state, &space).await;
+        let cross = index_state
+            .update_links_on_rename_project(
+                project,
+                target_space_id.as_deref(),
+                &path,
+                &new_path,
+                None,
+            )
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("cross-space unnest backlink rewrite failed: {e}");
+                Vec::new()
+            });
+        schedule_modified_source_spaces(
+            &index_state,
+            &autocommit,
+            project_path.as_deref(),
+            &cross,
+            StructuralOp::Move(basename(&new_path)),
+        )
+        .await;
+        let _ = index_state
+            .remove_file_backlinks(project, target_space_id.as_deref(), &path)
+            .await;
+        let _ = index_state
+            .update_file_backlinks(project, target_space_id.as_deref(), &new_path)
+            .await;
+    }
     maybe_autocommit_structural(
         &autocommit,
         project_path.as_deref(),
@@ -372,4 +748,168 @@ pub fn save_expanded_paths(space: String, paths: Vec<String>) -> Result<(), AppE
     let mut local = config::read_local_config(Path::new(&space))?;
     local.expanded_paths = paths;
     config::write_local_config(Path::new(&space), &local)
+}
+
+#[tauri::command]
+pub async fn resolve_doc_link(
+    project_path: String,
+    source_space_id: Option<String>,
+    source_path: String,
+    url: String,
+    index_state: State<'_, IndexState>,
+) -> Result<ResolvedDocLink, AppError> {
+    index_state
+        .resolve_doc_link(
+            Path::new(&project_path),
+            source_space_id.as_deref(),
+            &source_path,
+            &url,
+        )
+        .await
+}
+
+#[tauri::command]
+pub fn make_relative_link(
+    source_doc_path: String,
+    target_doc_path: String,
+) -> Result<String, AppError> {
+    Ok(crate::files::backlinks::make_relative_link_between(
+        Path::new(&source_doc_path),
+        Path::new(&target_doc_path),
+    ))
+}
+
+#[tauri::command]
+pub async fn suggest_link_fix(
+    project_path: String,
+    target_space_id: Option<String>,
+    broken_path: String,
+    index_state: State<'_, IndexState>,
+) -> Result<Vec<LinkFixSuggestion>, AppError> {
+    let project = Path::new(&project_path);
+    let target_dir = index_state
+        .space_path_of(project, target_space_id.as_deref())
+        .await?;
+
+    let mut suggestions = Vec::new();
+    if let Some((path, reason)) = git_rename_suggestion(&target_dir, &broken_path) {
+        suggestions.push(LinkFixSuggestion {
+            label: label_for_path(&path),
+            path,
+            reason,
+        });
+    }
+
+    for path in similar_path_suggestions(&target_dir, &broken_path)? {
+        if suggestions.iter().any(|s| s.path == path) {
+            continue;
+        }
+        suggestions.push(LinkFixSuggestion {
+            label: label_for_path(&path),
+            path,
+            reason: "similar name".to_string(),
+        });
+        if suggestions.len() >= 3 {
+            break;
+        }
+    }
+
+    Ok(suggestions)
+}
+
+fn git_rename_suggestion(space_dir: &Path, broken_path: &str) -> Option<(String, String)> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(space_dir)
+        .args([
+            "log",
+            "--diff-filter=R",
+            "--name-status",
+            "--pretty=format:%ct",
+            "--all",
+            "--",
+            "*.md",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut current_ts: Option<i64> = None;
+    for line in stdout.lines() {
+        if let Ok(ts) = line.trim().parse::<i64>() {
+            current_ts = Some(ts);
+            continue;
+        }
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() >= 3 && cols[0].starts_with('R') && cols[1] == broken_path {
+            let days = current_ts
+                .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0))
+                .map(|dt| (chrono::Utc::now() - dt).num_days().max(0))
+                .unwrap_or(0);
+            return Some((cols[2].to_string(), format!("renamed {days} days ago")));
+        }
+    }
+    None
+}
+
+fn similar_path_suggestions(space_dir: &Path, broken_path: &str) -> Result<Vec<String>, AppError> {
+    let broken_stem = Path::new(broken_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let mut candidates = Vec::new();
+    for file in crate::files::backlinks::collect_md_files(space_dir, &[])? {
+        let rel = file
+            .strip_prefix(space_dir)
+            .unwrap_or(&file)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let stem = Path::new(&rel)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let mut score = levenshtein(&broken_stem, &stem) as i64;
+        if stem.starts_with(&broken_stem) || broken_stem.starts_with(&stem) {
+            score -= 3;
+        }
+        if stem.ends_with(&broken_stem) || broken_stem.ends_with(&stem) {
+            score -= 2;
+        }
+        candidates.push((score, rel));
+    }
+    candidates.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    Ok(candidates.into_iter().take(3).map(|(_, rel)| rel).collect())
+}
+
+fn label_for_path(path: &str) -> String {
+    Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path)
+        .replace(['-', '_'], " ")
+}
+
+fn levenshtein(a: &str, b: &str) -> usize {
+    if a.is_empty() {
+        return b.chars().count();
+    }
+    if b.is_empty() {
+        return a.chars().count();
+    }
+    let b_chars: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b_chars.len()).collect();
+    let mut curr = vec![0; b_chars.len() + 1];
+    for (i, ca) in a.chars().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in b_chars.iter().enumerate() {
+            let cost = usize::from(ca != *cb);
+            curr[j + 1] = (curr[j] + 1).min(prev[j + 1] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b_chars.len()]
 }

@@ -5,7 +5,7 @@ pub mod nonce;
 pub mod tree;
 pub mod watcher;
 
-pub use backlinks::{BacklinkIndex, BacklinkInfo, LinkValidation};
+pub use backlinks::{BacklinkIndex, BacklinkInfo, LinkValidation, ModifiedLinkSource};
 pub use entry::{Entry, EntryMeta, WriteResult};
 pub use nonce::WriteNonceRegistry;
 pub use tree::TreeNode;

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
@@ -193,10 +193,7 @@ pub async fn reindex_space(
 #[tauri::command]
 pub async fn reindex_project(app: AppHandle, project_path: String) -> Result<(), AppError> {
     let project = PathBuf::from(&project_path);
-    let keys = app
-        .state::<IndexState>()
-        .keys_for_project(&project)
-        .await;
+    let keys = app.state::<IndexState>().keys_for_project(&project).await;
 
     let semaphore = Arc::new(Semaphore::new(REINDEX_PARALLELISM));
     let mut handles = Vec::new();
@@ -324,12 +321,14 @@ pub async fn search_project_entries(
                 bucket.push((p.key.clone(), hit.clone()));
             }
         }
-        bucket.sort_by(|a, b| match (b.1.updated_at.as_deref(), a.1.updated_at.as_deref()) {
-            (Some(x), Some(y)) => x.cmp(y),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        });
+        bucket.sort_by(
+            |a, b| match (b.1.updated_at.as_deref(), a.1.updated_at.as_deref()) {
+                (Some(x), Some(y)) => x.cmp(y),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            },
+        );
         for (key, hit) in bucket {
             items.push(enrich(&state, &key, hit).await);
             if items.len() >= lim as usize {
@@ -371,12 +370,14 @@ pub async fn recent_project_entries(
             merged.push((p.key.clone(), hit));
         }
     }
-    merged.sort_by(|a, b| match (b.1.updated_at.as_deref(), a.1.updated_at.as_deref()) {
-        (Some(x), Some(y)) => x.cmp(y),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
-    });
+    merged.sort_by(
+        |a, b| match (b.1.updated_at.as_deref(), a.1.updated_at.as_deref()) {
+            (Some(x), Some(y)) => x.cmp(y),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        },
+    );
     merged.truncate(lim as usize);
 
     let mut items = Vec::with_capacity(merged.len());
@@ -389,4 +390,29 @@ pub async fn recent_project_entries(
         indexed_spaces: indexed,
         total_spaces: total,
     })
+}
+
+#[tauri::command]
+pub async fn count_broken_links(
+    state: State<'_, IndexState>,
+    project_path: String,
+) -> Result<i64, AppError> {
+    let project = PathBuf::from(&project_path);
+    state.ensure_project_backlinks_built(&project).await?;
+    let keys = state.keys_for_project(&project).await;
+    let mut total = 0i64;
+    for key in keys {
+        let pool = match state.get_or_create(&key).await {
+            Ok(pool) => pool,
+            Err(e) => {
+                tracing::warn!("count_broken_links: opening pool failed for {:?}: {e}", key);
+                continue;
+            }
+        };
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM broken_links")
+            .fetch_one(&pool)
+            .await?;
+        total += count;
+    }
+    Ok(total)
 }

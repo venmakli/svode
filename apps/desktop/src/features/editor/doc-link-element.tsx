@@ -1,64 +1,65 @@
 import type { TLinkElement } from "platejs";
 import type { PlateElementProps } from "platejs/react";
 
+import * as React from "react";
 import { getLinkAttributes } from "@platejs/link";
 import { SuggestionPlugin } from "@platejs/suggestion/react";
 import { PlateElement } from "platejs/react";
 import { FileText } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useLayoutStore } from "@/stores/layout";
 import { useEditorStore } from "@/stores/editor";
+import { useSpaceStore } from "@/stores/space";
+import { GhostCloneDialog } from "@/features/space/ghost-clone-dialog";
+import * as m from "@/paraglide/messages.js";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  absoluteDocumentPath,
+  findSpaceById,
+  isDocLink,
+  relativeDocumentPath,
+  resolveRelativeDocPath,
+} from "./doc-link-utils";
 
-/** Check if a URL is an internal document link (relative .md path). */
-function isDocLink(url: string | undefined): boolean {
-  if (!url) return false;
-  if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("mailto:")) {
-    return false;
-  }
-  // Strip anchor fragment before checking extension
-  const pathPart = url.split("#")[0];
-  return pathPart.endsWith(".md");
-}
-
-/**
- * Resolve a relative link URL to an absolute workspace path,
- * given the current document's path.
- */
-function resolveDocPath(currentDoc: string, relativeUrl: string): string {
-  const url = relativeUrl.split("#")[0]; // strip anchor
-  const parts = currentDoc.split("/");
-  parts.pop(); // remove filename → directory
-
-  for (const segment of url.split("/")) {
-    if (segment === "..") {
-      parts.pop();
-    } else if (segment !== "." && segment !== "") {
-      parts.push(segment);
-    }
-  }
-
-  return parts.join("/");
+interface LinkResolveResult {
+  targetSpaceId: string | null;
+  targetSpacePath: string | null;
+  targetPath: string | null;
+  status: "ready" | "missing" | "broken" | "external";
+  exists: boolean;
+  spaceName: string;
 }
 
 export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
   const { element, editor, children } = props;
   const { openDocument } = useLayoutStore();
   const activeDocument = useLayoutStore((s) => s.activeDocument);
+  const activeDocumentSpaceId = useLayoutStore((s) => s.activeDocumentSpaceId);
+  const activeRootId = useSpaceStore((s) => s.activeRootId);
+  const activeRootPath = useSpaceStore((s) => s.activeRootPath);
+  const rootSpaces = useSpaceStore((s) => s.rootSpaces);
+  const spaces = useSpaceStore((s) => s.spaces);
+  const activeSpaceId = useSpaceStore((s) => s.activeSpaceId);
+  const openSpace = useSpaceStore((s) => s.openSpace);
+  const clearActiveSpace = useSpaceStore((s) => s.clearActiveSpace);
+  const loadSpaces = useSpaceStore((s) => s.loadSpaces);
   const brokenLinks = useEditorStore((s) => s.brokenLinks);
+  const [cloneTarget, setCloneTarget] =
+    React.useState<LinkResolveResult | null>(null);
+  const [isCloning, setIsCloning] = React.useState(false);
   const url = element.url as string | undefined;
   const isDoc = isDocLink(url);
 
   const suggestionData = editor
     .getApi(SuggestionPlugin)
-    .suggestion.suggestionData(element) as
-    | { type?: string }
-    | undefined;
+    .suggestion.suggestionData(element) as { type?: string } | undefined;
 
   // External link — standard rendering
   if (!isDoc) {
@@ -69,7 +70,8 @@ export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
         className={cn(
           "font-medium text-primary underline decoration-primary underline-offset-4",
           suggestionData?.type === "remove" && "bg-red-100 text-red-700",
-          suggestionData?.type === "insert" && "bg-emerald-100 text-emerald-700",
+          suggestionData?.type === "insert" &&
+            "bg-emerald-100 text-emerald-700",
         )}
         attributes={{
           ...props.attributes,
@@ -85,16 +87,86 @@ export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
   }
 
   // Doc link — pill rendering
-  const resolvedPath = activeDocument && url ? resolveDocPath(activeDocument, url) : url;
-  const isBroken = resolvedPath ? brokenLinks.has(resolvedPath) : false;
+  const currentSpace = findSpaceById(rootSpaces, spaces, activeDocumentSpaceId);
+  const currentSpacePath = currentSpace?.path ?? activeRootPath ?? "";
+  const activeRel =
+    activeDocument && currentSpacePath
+      ? relativeDocumentPath(activeDocument, currentSpacePath)
+      : activeDocument;
+  const activeAbs =
+    activeDocument && currentSpacePath
+      ? absoluteDocumentPath(activeDocument, currentSpacePath)
+      : activeDocument;
+  const resolvedPath =
+    activeRel && url ? resolveRelativeDocPath(activeRel, url) : url;
+  const sourceSpaceId =
+    activeDocumentSpaceId === activeRootId ? null : activeDocumentSpaceId;
+  const isBroken =
+    !!url &&
+    (brokenLinks.has(url) ||
+      (resolvedPath ? brokenLinks.has(resolvedPath) : false));
 
-  const handleClick = (e: React.MouseEvent) => {
+  async function openResolvedLink(resolved: LinkResolveResult) {
+    if (!resolved.targetPath) return;
+    if (resolved.targetSpaceId === null) {
+      clearActiveSpace();
+      openDocument(resolved.targetPath, activeRootId ?? undefined);
+      return;
+    }
+    if (resolved.targetSpaceId !== activeSpaceId) {
+      await openSpace(resolved.targetSpaceId);
+    }
+    openDocument(resolved.targetPath, resolved.targetSpaceId);
+  }
+
+  const handleClick = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (resolvedPath && !isBroken) {
-      openDocument(resolvedPath);
+    if (!url || !activeRel || !activeRootPath) {
+      if (resolvedPath && !isBroken) openDocument(resolvedPath);
+      return;
+    }
+
+    try {
+      const resolved = await invoke<LinkResolveResult>("resolve_doc_link", {
+        projectPath: activeRootPath,
+        sourceSpaceId,
+        sourcePath: activeRel,
+        url,
+      });
+      if (resolved.status === "ready" && resolved.exists) {
+        await openResolvedLink(resolved);
+      } else if (resolved.status === "missing") {
+        setCloneTarget(resolved);
+      } else if (resolved.status === "broken") {
+        toast.error(m.doc_link_space_unavailable({ name: resolved.spaceName }));
+      }
+    } catch (err) {
+      console.error("resolve_doc_link failed:", err);
+      if (resolvedPath && !isBroken) {
+        openDocument(resolvedPath);
+      }
     }
   };
+
+  async function handleCloneMissing() {
+    if (!cloneTarget || !activeRootPath) return;
+    setIsCloning(true);
+    try {
+      await invoke("clone_missing_space", {
+        projectPath: activeRootPath,
+        spaceId: cloneTarget.targetSpaceId,
+      });
+      await loadSpaces(activeRootPath);
+      await openResolvedLink({ ...cloneTarget, status: "ready", exists: true });
+      setCloneTarget(null);
+    } catch (err) {
+      console.error("clone_missing_space failed:", err);
+      toast.error(m.doc_link_clone_missing_failed());
+    } finally {
+      setIsCloning(false);
+    }
+  }
 
   const pill = (
     <PlateElement
@@ -105,7 +177,7 @@ export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
         "text-accent-foreground text-sm font-medium",
         "cursor-pointer hover:bg-accent/80 transition-colors",
         "no-underline",
-        isBroken && "opacity-50 line-through cursor-not-allowed",
+        isBroken && "opacity-50 line-through",
         suggestionData?.type === "remove" && "bg-red-100 text-red-700",
         suggestionData?.type === "insert" && "bg-emerald-100 text-emerald-700",
       )}
@@ -124,12 +196,27 @@ export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
   // Wrap in tooltip showing the resolved path
   if (resolvedPath) {
     return (
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>{pill}</TooltipTrigger>
-          <TooltipContent side="bottom">{resolvedPath}</TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+      <>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>{pill}</TooltipTrigger>
+            <TooltipContent side="bottom">
+              {activeAbs && url
+                ? resolveRelativeDocPath(activeAbs, url)
+                : resolvedPath}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+        <GhostCloneDialog
+          open={cloneTarget !== null}
+          spaceName={cloneTarget?.spaceName ?? ""}
+          cloning={isCloning}
+          onOpenChange={(open) => {
+            if (!open && !isCloning) setCloneTarget(null);
+          }}
+          onConfirm={handleCloneMissing}
+        />
+      </>
     );
   }
 

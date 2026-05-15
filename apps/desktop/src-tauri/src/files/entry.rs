@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
-use crate::files::backlinks::BacklinkIndex;
+use crate::files::backlinks::{BacklinkIndex, ModifiedLinkSource};
 use crate::files::frontmatter;
 use crate::files::tree;
 
@@ -14,6 +14,10 @@ pub struct WriteResult {
     pub new_path: Option<String>,
     /// Files whose backlinks were updated due to rename.
     pub modified_files: Vec<String>,
+    /// Files whose backlinks were updated, including cross-space source
+    /// identity when project-aware rewrites are available.
+    #[serde(default)]
+    pub modified_sources: Vec<ModifiedLinkSource>,
     /// Short-TTL nonce associated with this write; attached to the watcher
     /// `file:changed` payload so the editor can drop its own echo.
     pub write_nonce: String,
@@ -196,11 +200,7 @@ fn order_rename(space: &Path, dir_key: &str, old_name: &str, new_name: &str) {
 }
 
 /// Create a new entry on disk. Returns the created Entry.
-pub fn create(
-    space: &str,
-    parent_path: Option<&str>,
-    title: &str,
-) -> Result<Entry, AppError> {
+pub fn create(space: &str, parent_path: Option<&str>, title: &str) -> Result<Entry, AppError> {
     let id = ulid::Ulid::new().to_string().to_lowercase();
     let slug = slugify(title);
 
@@ -227,9 +227,7 @@ pub fn create(
                     break;
                 }
             }
-            found.ok_or_else(|| {
-                AppError::FileAlreadyExists(make_rel(&slug))
-            })?
+            found.ok_or_else(|| AppError::FileAlreadyExists(make_rel(&slug)))?
         }
     };
 
@@ -397,7 +395,10 @@ pub fn write(
                 EntryMeta {
                     id,
                     title: title_from_stem(
-                        Path::new(path).file_stem().and_then(|s| s.to_str()).unwrap_or("untitled"),
+                        Path::new(path)
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("untitled"),
                     ),
                     icon: None,
                     created,
@@ -413,6 +414,7 @@ pub fn write(
             return Ok(WriteResult {
                 new_path: None,
                 modified_files: Vec::new(),
+                modified_sources: Vec::new(),
                 write_nonce,
             });
         }
@@ -420,6 +422,7 @@ pub fn write(
         return Ok(WriteResult {
             new_path: None,
             modified_files: Vec::new(),
+            modified_sources: Vec::new(),
             write_nonce,
         });
     };
@@ -471,6 +474,7 @@ pub fn write(
             return Ok(WriteResult {
                 new_path: None,
                 modified_files: Vec::new(),
+                modified_sources: Vec::new(),
                 write_nonce,
             });
         }
@@ -492,6 +496,7 @@ pub fn write(
         return Ok(WriteResult {
             new_path: None,
             modified_files: Vec::new(),
+            modified_sources: Vec::new(),
             write_nonce,
         });
     }
@@ -521,9 +526,7 @@ pub fn write(
                     if parent_rel.as_os_str().is_empty() {
                         // readme.md at root, no parent folder to rename
                     } else {
-                        let grandparent = parent_rel
-                            .parent()
-                            .unwrap_or(Path::new(""));
+                        let grandparent = parent_rel.parent().unwrap_or(Path::new(""));
                         let new_dir_name = new_slug.clone();
                         let new_dir_rel = if grandparent.as_os_str().is_empty() {
                             new_dir_name.clone()
@@ -547,9 +550,7 @@ pub fn write(
                 }
             } else {
                 // Regular file: rename slug.md
-                let parent_dir = Path::new(path)
-                    .parent()
-                    .unwrap_or(Path::new(""));
+                let parent_dir = Path::new(path).parent().unwrap_or(Path::new(""));
                 let new_filename = format!("{new_slug}.md");
                 let new_rel = if parent_dir.as_os_str().is_empty() {
                     new_filename
@@ -623,9 +624,7 @@ pub fn write(
             }
         } else {
             // Regular file: dir_key is the parent directory
-            let parent_dir = Path::new(path)
-                .parent()
-                .unwrap_or(Path::new(""));
+            let parent_dir = Path::new(path).parent().unwrap_or(Path::new(""));
             let dir_key = if parent_dir.as_os_str().is_empty() {
                 ".".to_string()
             } else {
@@ -655,8 +654,12 @@ pub fn write(
                 .and_then(|n| n.to_str())
                 .is_some_and(|n| n.eq_ignore_ascii_case("readme.md"));
             if is_readme {
-                let old_folder = Path::new(path).parent().map(|p| p.to_string_lossy().to_string());
-                let new_folder = Path::new(np).parent().map(|p| p.to_string_lossy().to_string());
+                let old_folder = Path::new(path)
+                    .parent()
+                    .map(|p| p.to_string_lossy().to_string());
+                let new_folder = Path::new(np)
+                    .parent()
+                    .map(|p| p.to_string_lossy().to_string());
                 if let (Some(of), Some(nf)) = (old_folder, new_folder) {
                     if !of.is_empty() && of != nf {
                         let descendants = index
@@ -677,6 +680,13 @@ pub fn write(
 
     Ok(WriteResult {
         new_path,
+        modified_sources: modified_files
+            .iter()
+            .map(|path| ModifiedLinkSource {
+                space_id: None,
+                path: path.clone(),
+            })
+            .collect(),
         modified_files,
         write_nonce,
     })
@@ -713,8 +723,7 @@ pub fn move_entry(
     }
 
     let from_is_dir = abs_from.is_dir();
-    let is_md = from_is_dir
-        || Path::new(from).extension().and_then(|e| e.to_str()) == Some("md");
+    let is_md = from_is_dir || Path::new(from).extension().and_then(|e| e.to_str()) == Some("md");
 
     // Ensure target parent directory exists
     if let Some(parent_dir) = abs_to.parent() {
@@ -753,16 +762,11 @@ pub fn nest_entry(
 
     // Only works on .md files, not directories
     if abs_path.is_dir() {
-        return Err(AppError::General(
-            "Path is already a directory".to_string(),
-        ));
+        return Err(AppError::General("Path is already a directory".to_string()));
     }
 
     // Already a readme.md inside a folder — nothing to do
-    let filename = abs_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let filename = abs_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if filename.eq_ignore_ascii_case("readme.md") {
         return Ok(path.to_string());
     }
@@ -818,10 +822,7 @@ pub fn unnest_entry(
     }
 
     // Must be a readme.md inside a folder
-    let filename = abs_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let filename = abs_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if !filename.eq_ignore_ascii_case("readme.md") {
         return Err(AppError::General(
             "Only readme.md inside a folder can be unnested".to_string(),
@@ -939,9 +940,7 @@ pub fn rename(space: &str, from: &str, to: &str) -> Result<(), AppError> {
         .unwrap_or_default()
         .to_string_lossy()
         .to_string();
-    let parent_dir = Path::new(from)
-        .parent()
-        .unwrap_or(Path::new(""));
+    let parent_dir = Path::new(from).parent().unwrap_or(Path::new(""));
     let dir_key = if parent_dir.as_os_str().is_empty() {
         ".".to_string()
     } else {
@@ -1010,7 +1009,8 @@ mod tests {
     #[test]
     fn test_slugify_max_length() {
         // 70-char slug should be truncated at word boundary
-        let long_title = "this is a very long title that should be truncated at a word boundary somewhere";
+        let long_title =
+            "this is a very long title that should be truncated at a word boundary somewhere";
         let slug = slugify(long_title);
         assert!(slug.len() <= 60);
         assert!(!slug.ends_with('-'));

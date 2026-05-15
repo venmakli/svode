@@ -34,7 +34,9 @@ pub fn run() {
         .manage(git::GitState::new())
         .manage(index::IndexState::new())
         .setup(|app| {
-            let service = Arc::new(git::autocommit::AutocommitService::new(app.handle().clone()));
+            let service = Arc::new(git::autocommit::AutocommitService::new(
+                app.handle().clone(),
+            ));
             app.manage(service);
             Ok(())
         })
@@ -59,6 +61,9 @@ pub fn run() {
             commands::files::save_tree_order,
             commands::files::get_expanded_paths,
             commands::files::save_expanded_paths,
+            commands::files::resolve_doc_link,
+            commands::files::make_relative_link,
+            commands::files::suggest_link_fix,
             commands::space::get_app_settings,
             commands::space::save_app_settings,
             commands::space::list_projects,
@@ -117,6 +122,7 @@ pub fn run() {
             index::commands::search_project_entries_by_title,
             index::commands::search_project_entries,
             index::commands::recent_project_entries,
+            index::commands::count_broken_links,
             storage::commands::upload_asset,
             storage::commands::read_file_for_upload,
             storage::commands::list_assets,

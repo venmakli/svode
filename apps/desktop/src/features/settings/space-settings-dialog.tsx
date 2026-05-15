@@ -44,7 +44,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmojiPicker } from "@/components/ui/emoji-picker";
-import { Bot, ExternalLink, FileText, GitBranch, HardDrive, Loader2, Pencil, RefreshCw, Settings } from "lucide-react";
+import { Activity, Bot, ExternalLink, FileText, GitBranch, HardDrive, Loader2, Pencil, RefreshCw, Settings } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   AlertDialog,
@@ -85,7 +85,7 @@ const CLI_AUTH_COMMANDS: Record<string, string> = {
   claude: "claude login",
 };
 
-type Section = "general" | "ai-agent" | "git" | "storage" | "defaults" | "instructions";
+type Section = "general" | "ai-agent" | "git" | "storage" | "health" | "defaults" | "instructions";
 
 export function SpaceSettingsDialog({
   open,
@@ -169,6 +169,8 @@ export function SpaceSettingsDialog({
   const [hasSavedS3Credentials, setHasSavedS3Credentials] = useState(false);
   const [s3TestState, setS3TestState] = useState<"idle" | "testing" | "ok" | "fail">("idle");
   const [s3TestError, setS3TestError] = useState<string | null>(null);
+  const [brokenLinksCount, setBrokenLinksCount] = useState<number | null>(null);
+  const [linkHealthLoading, setLinkHealthLoading] = useState(false);
 
   const loadConfig = useCallback(async () => {
     if (!spacePath) return;
@@ -351,6 +353,22 @@ export function SpaceSettingsDialog({
     }
   }, [spacePath, enabledClis]);
 
+  const loadLinkHealth = useCallback(async () => {
+    if (!activeRootPath || !isRoot) return;
+    setLinkHealthLoading(true);
+    try {
+      const count = await invoke<number>("count_broken_links", {
+        projectPath: activeRootPath,
+      });
+      setBrokenLinksCount(count);
+    } catch (err) {
+      console.warn("count_broken_links failed:", err);
+      setBrokenLinksCount(null);
+    } finally {
+      setLinkHealthLoading(false);
+    }
+  }, [activeRootPath, isRoot]);
+
   useEffect(() => {
     if (open && spacePath) {
       loadConfig();
@@ -369,6 +387,10 @@ export function SpaceSettingsDialog({
   useEffect(() => {
     if (open && enabledClis.length > 0) checkHealth();
   }, [open, enabledClis, checkHealth]);
+
+  useEffect(() => {
+    if (open && section === "health") loadLinkHealth();
+  }, [open, section, loadLinkHealth]);
 
   // Refresh git info when an autocommit lands on this space (e.g. the
   // scaffold commit that lands immediately after a clone).
@@ -783,6 +805,7 @@ export function SpaceSettingsDialog({
     { key: "ai-agent", label: m.settings_ai_agent(), icon: Bot, show: true },
     { key: "git", label: m.git_section(), icon: GitBranch, show: true },
     { key: "storage", label: m.storage_section(), icon: HardDrive, show: true },
+    { key: "health", label: m.settings_health(), icon: Activity, show: isRoot },
     { key: "defaults", label: m.settings_defaults(), icon: Settings, show: hasSpaces },
     { key: "instructions", label: m.settings_instructions(), icon: FileText, show: true },
   ];
@@ -1264,6 +1287,37 @@ export function SpaceSettingsDialog({
                         )}
                       </div>
                     )}
+                  </div>
+                )}
+
+                {section === "health" && isRoot && (
+                  <div className="space-y-4 max-w-md">
+                    <div className="space-y-1">
+                      <Label>{m.settings_health_broken_links()}</Label>
+                      <p className="text-sm text-muted-foreground">
+                        {m.settings_health_broken_links_desc()}
+                      </p>
+                    </div>
+                    <div className="flex items-center justify-between rounded-md border p-3">
+                      <span className="text-sm">
+                        {brokenLinksCount === null
+                          ? m.common_loading()
+                          : m.settings_health_broken_links_count({
+                              count: String(brokenLinksCount),
+                            })}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={loadLinkHealth}
+                        disabled={linkHealthLoading}
+                      >
+                        {linkHealthLoading && (
+                          <Loader2 className="mr-1 size-3 animate-spin" />
+                        )}
+                        {m.settings_space_cli_refresh()}
+                      </Button>
+                    </div>
                   </div>
                 )}
 

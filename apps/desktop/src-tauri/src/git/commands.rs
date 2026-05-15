@@ -341,6 +341,9 @@ pub async fn git_sync(
                 tracing::warn!("refresh_after_root_pull failed: {e}");
             }
         }
+        index_state
+            .invalidate_project_backlinks(key.project())
+            .await;
         emit_space_synced(&app, &key);
     }
 
@@ -393,6 +396,9 @@ pub async fn git_resolve_continue(
                 tracing::warn!("refresh_after_root_pull failed: {e}");
             }
         }
+        index_state
+            .invalidate_project_backlinks(key.project())
+            .await;
         emit_space_synced(&app, &key);
     }
 

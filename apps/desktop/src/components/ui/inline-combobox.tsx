@@ -213,9 +213,10 @@ const InlineCombobox = ({
 
 const InlineComboboxInput = ({
   className,
+  placeholder,
   ref: propRef,
   ...props
-}: React.HTMLAttributes<HTMLInputElement> & {
+}: React.InputHTMLAttributes<HTMLInputElement> & {
   ref?: React.RefObject<HTMLInputElement | null>;
 }) => {
   const {
@@ -246,7 +247,7 @@ const InlineComboboxInput = ({
           className="invisible overflow-hidden text-nowrap"
           aria-hidden="true"
         >
-          {value || '\u200B'}
+          {value || placeholder || '\u200B'}
         </span>
 
         <Combobox
@@ -255,6 +256,7 @@ const InlineComboboxInput = ({
             'absolute top-0 left-0 size-full bg-transparent outline-none',
             className
           )}
+          placeholder={placeholder}
           value={value}
           autoSelect
           {...inputProps}

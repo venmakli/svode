@@ -1,23 +1,21 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 use crate::files::entry::slugify;
 
 /// Regex matching `[text](url.md)` or `[text](url.md#anchor)`.
-static MD_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\[(?:[^\[\]]|\\\[|\\\])*\]\(([^)]+\.md(?:#[^)]*)?)\)").unwrap()
-});
+static MD_LINK_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[(?:[^\[\]]|\\\[|\\\])*\]\(([^)]+\.md(?:#[^)]*)?)\)").unwrap());
 
 /// Regex matching any `[text](url)` markdown link.
-static ANY_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\[(?:[^\[\]]|\\\[|\\\])*\]\(([^)]+)\)").unwrap()
-});
+static ANY_LINK_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[(?:[^\[\]]|\\\[|\\\])*\]\(([^)]+)\)").unwrap());
 
 /// Byte span of a markdown link `[text](url)` in the source content.
 #[derive(Debug, Clone, Serialize)]
@@ -26,11 +24,30 @@ pub struct LinkSpan {
     pub byte_end: usize,
 }
 
+/// Identity of the document that contains a link. `None` means the root
+/// project pool; `Some(id)` means a child space pool.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkSource {
+    pub source_space_id: Option<String>,
+    pub source_path: String,
+}
+
 /// Info about backlinks pointing to a target file.
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BacklinkInfo {
+    pub source_space_id: Option<String>,
     pub source_path: String,
     pub link_count: usize,
+}
+
+/// File modified by a backlink rewrite.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModifiedLinkSource {
+    pub space_id: Option<String>,
+    pub path: String,
 }
 
 /// Parse standard markdown links `[text](./path.md)` from content.
@@ -55,7 +72,7 @@ pub fn parse_markdown_links(content: &str) -> Vec<(String, LinkSpan)> {
         // Strip anchor fragment for path normalization
         let path_part = url.split('#').next().unwrap_or(url);
 
-        let normalized = normalize_link_path(path_part);
+        let normalized = normalize_link_path_preserve_parent(path_part);
 
         results.push((
             normalized,
@@ -69,7 +86,9 @@ pub fn parse_markdown_links(content: &str) -> Vec<(String, LinkSpan)> {
     results
 }
 
-/// Normalize a relative link path: strip leading `./`, collapse `..` segments.
+/// Normalize a relative link path for target-key lookup. Escaping parents are
+/// dropped for compatibility with pre-cross-space callers that only operate
+/// inside one space.
 fn normalize_link_path(path: &str) -> String {
     let p = path.strip_prefix("./").unwrap_or(path);
     // Use PathBuf to normalize path components
@@ -86,14 +105,40 @@ fn normalize_link_path(path: &str) -> String {
     parts.join("/")
 }
 
-/// In-memory backlink index. Key = normalized target path, Value = vec of (source_path, link_positions).
+/// Normalize a link URL while preserving leading `..` segments. This is the
+/// parser-facing form; resolver code decides whether the path escapes a root.
+fn normalize_link_path_preserve_parent(path: &str) -> String {
+    let p = path.strip_prefix("./").unwrap_or(path);
+    let mut parts: Vec<&str> = Vec::new();
+    let mut leading_parents = 0usize;
+    for segment in p.split('/') {
+        match segment {
+            "." | "" => continue,
+            ".." => {
+                if parts.pop().is_none() {
+                    leading_parents += 1;
+                }
+            }
+            s => parts.push(s),
+        }
+    }
+    let mut out: Vec<String> = Vec::with_capacity(leading_parents + parts.len());
+    for _ in 0..leading_parents {
+        out.push("..".to_string());
+    }
+    out.extend(parts.into_iter().map(ToString::to_string));
+    out.join("/")
+}
+
+/// In-memory backlink index. Key = normalized target path, Value = vec of
+/// (source identity, link_positions).
 ///
 /// Each instance is per-`IndexKey` (root pool or one child space) — the
 /// project's `IndexState` keeps a `HashMap<IndexKey, Arc<BacklinkIndex>>`.
 /// `skip_top_level` records folders that lazy/auto rebuilds must skip
 /// (the project's root index excludes child-space directories).
 pub struct BacklinkIndex {
-    inner: Mutex<HashMap<String, Vec<(String, Vec<LinkSpan>)>>>,
+    inner: Mutex<HashMap<String, Vec<(LinkSource, Vec<LinkSpan>)>>>,
     built: Mutex<bool>,
     skip_top_level: Mutex<Vec<String>>,
 }
@@ -135,6 +180,15 @@ impl BacklinkIndex {
         *self.built.lock().unwrap()
     }
 
+    pub fn mark_built(&self) {
+        *self.built.lock().unwrap() = true;
+    }
+
+    pub fn mark_stale(&self) {
+        *self.built.lock().unwrap() = false;
+        self.inner.lock().unwrap().clear();
+    }
+
     /// Build index by scanning all .md files under space_path. Honors the
     /// configured `skip_top_level` (set via `set_skip_top_level`).
     pub fn build(&self, space_path: &Path) -> Result<(), AppError> {
@@ -150,7 +204,7 @@ impl BacklinkIndex {
         space_path: &Path,
         skip_top_level: &[String],
     ) -> Result<(), AppError> {
-        let mut index: HashMap<String, Vec<(String, Vec<LinkSpan>)>> = HashMap::new();
+        let mut index: HashMap<String, Vec<(LinkSource, Vec<LinkSpan>)>> = HashMap::new();
 
         let md_files = collect_md_files_filtered(space_path, skip_top_level)?;
 
@@ -173,10 +227,13 @@ impl BacklinkIndex {
             }
 
             for (target, spans) in by_target {
-                index
-                    .entry(target)
-                    .or_default()
-                    .push((rel_path.clone(), spans));
+                index.entry(target).or_default().push((
+                    LinkSource {
+                        source_space_id: None,
+                        source_path: rel_path.clone(),
+                    },
+                    spans,
+                ));
             }
         }
 
@@ -187,11 +244,7 @@ impl BacklinkIndex {
     }
 
     /// Re-index a single file. Removes old entries for this source, then re-parses.
-    pub fn update_file(
-        &self,
-        space_path: &Path,
-        file_rel_path: &str,
-    ) -> Result<(), AppError> {
+    pub fn update_file(&self, space_path: &Path, file_rel_path: &str) -> Result<(), AppError> {
         // First remove old entries where this file is the source
         self.remove_file(file_rel_path);
 
@@ -211,10 +264,13 @@ impl BacklinkIndex {
 
         let mut guard = self.inner.lock().unwrap();
         for (target, spans) in by_target {
-            guard
-                .entry(target)
-                .or_default()
-                .push((file_rel_path.to_string(), spans));
+            guard.entry(target).or_default().push((
+                LinkSource {
+                    source_space_id: None,
+                    source_path: file_rel_path.to_string(),
+                },
+                spans,
+            ));
         }
 
         Ok(())
@@ -222,12 +278,61 @@ impl BacklinkIndex {
 
     /// Remove all entries where file_rel_path is the source.
     pub fn remove_file(&self, file_rel_path: &str) {
+        self.remove_source(&LinkSource {
+            source_space_id: None,
+            source_path: file_rel_path.to_string(),
+        });
+    }
+
+    /// Remove all entries for one source identity.
+    pub fn remove_source(&self, source: &LinkSource) {
         let mut guard = self.inner.lock().unwrap();
         for entries in guard.values_mut() {
-            entries.retain(|(src, _)| src != file_rel_path);
+            entries.retain(|(src, _)| src != source);
         }
         // Remove empty target entries
         guard.retain(|_, v| !v.is_empty());
+    }
+
+    pub fn remove_sources_in_space(&self, source_space_id: Option<&str>) {
+        let mut guard = self.inner.lock().unwrap();
+        for entries in guard.values_mut() {
+            entries.retain(|(src, _)| src.source_space_id.as_deref() != source_space_id);
+        }
+        guard.retain(|_, v| !v.is_empty());
+    }
+
+    /// Add source spans to a target in this target-space index.
+    pub fn add_source_links(&self, target_path: &str, source: LinkSource, spans: Vec<LinkSpan>) {
+        if spans.is_empty() {
+            return;
+        }
+        let normalized = normalize_link_path(target_path);
+        let mut guard = self.inner.lock().unwrap();
+        let entries = guard.entry(normalized).or_default();
+        if let Some((_, existing)) = entries.iter_mut().find(|(src, _)| src == &source) {
+            existing.extend(spans);
+        } else {
+            entries.push((source, spans));
+        }
+    }
+
+    /// Snapshot all sources that link to `target_path`.
+    pub fn sources_for_target(&self, target_path: &str) -> Vec<(LinkSource, Vec<LinkSpan>)> {
+        let guard = self.inner.lock().unwrap();
+        let normalized = normalize_link_path(target_path);
+        guard.get(&normalized).cloned().unwrap_or_default()
+    }
+
+    pub fn target_paths_under(&self, folder_path: &str) -> Vec<String> {
+        let guard = self.inner.lock().unwrap();
+        let normalized = normalize_link_path(folder_path);
+        let prefix = format!("{}/", normalized);
+        guard
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect()
     }
 
     /// Get all files that link to the given target path.
@@ -239,7 +344,8 @@ impl BacklinkIndex {
             Some(entries) => entries
                 .iter()
                 .map(|(src, spans)| BacklinkInfo {
-                    source_path: src.clone(),
+                    source_space_id: src.source_space_id.clone(),
+                    source_path: src.source_path.clone(),
                     link_count: spans.len(),
                 })
                 .collect(),
@@ -268,7 +374,7 @@ impl BacklinkIndex {
         let mut modified_files = Vec::new();
 
         // Get source files that link to old_path
-        let sources: Vec<(String, Vec<LinkSpan>)> = {
+        let sources: Vec<(LinkSource, Vec<LinkSpan>)> = {
             let guard = self.inner.lock().unwrap();
             match guard.get(&normalized_old) {
                 Some(entries) => entries.clone(),
@@ -282,7 +388,8 @@ impl BacklinkIndex {
         let old_stem = link_stem_of(old_path);
         let text_replace = new_title.map(|t| (old_stem.as_str(), t));
 
-        for (source_path, _spans) in &sources {
+        for (source, _spans) in &sources {
+            let source_path = &source.source_path;
             let abs_source = space_path.join(source_path);
             if !abs_source.exists() {
                 continue;
@@ -291,9 +398,7 @@ impl BacklinkIndex {
             let content = fs::read_to_string(&abs_source)?;
 
             // Compute relative path from source's directory to old and new targets
-            let source_dir = Path::new(source_path)
-                .parent()
-                .unwrap_or(Path::new(""));
+            let source_dir = Path::new(source_path).parent().unwrap_or(Path::new(""));
             let old_rel = make_relative_link(source_dir, old_path);
             let new_rel = make_relative_link(source_dir, new_path);
 
@@ -310,10 +415,7 @@ impl BacklinkIndex {
             let mut guard = self.inner.lock().unwrap();
             if let Some(entries) = guard.remove(&normalized_old) {
                 let normalized_new = normalize_link_path(new_path);
-                guard
-                    .entry(normalized_new)
-                    .or_default()
-                    .extend(entries);
+                guard.entry(normalized_new).or_default().extend(entries);
             }
         }
 
@@ -501,9 +603,7 @@ fn make_relative_link(source_dir: &Path, target_path: &str) -> String {
 /// e.g. source = "docs/intro.md", target = "../readme.md" => "readme.md"
 /// e.g. source = "docs/intro.md", target = "other.md" => "docs/other.md"
 fn resolve_relative_to(source_rel_path: &str, target_link: &str) -> String {
-    let source_dir = Path::new(source_rel_path)
-        .parent()
-        .unwrap_or(Path::new(""));
+    let source_dir = Path::new(source_rel_path).parent().unwrap_or(Path::new(""));
 
     let combined = source_dir.join(target_link);
 
@@ -534,7 +634,10 @@ pub struct LinkValidation {
 
 /// Validate all internal (.md) links in a document.
 /// Returns a list of {url, exists} for each link found.
-pub fn validate_links(space_path: &Path, doc_rel_path: &str) -> Result<Vec<LinkValidation>, AppError> {
+pub fn validate_links(
+    space_path: &Path,
+    doc_rel_path: &str,
+) -> Result<Vec<LinkValidation>, AppError> {
     let abs_path = space_path.join(doc_rel_path);
     if !abs_path.exists() {
         return Ok(Vec::new());
@@ -561,6 +664,67 @@ pub fn validate_links(space_path: &Path, doc_rel_path: &str) -> Result<Vec<LinkV
     Ok(results)
 }
 
+/// Return true for URLs that are outside CombAI's local markdown-link domain.
+pub fn is_external_or_anchor_url(url: &str) -> bool {
+    url.starts_with("http://")
+        || url.starts_with("https://")
+        || url.starts_with("mailto:")
+        || url.starts_with('#')
+}
+
+/// Strip the fragment from a markdown URL and normalize separators while
+/// preserving leading `..` for the resolver.
+pub fn markdown_url_path(url: &str) -> String {
+    let path_part = url.split('#').next().unwrap_or(url);
+    normalize_link_path_preserve_parent(path_part)
+}
+
+/// Make a relative markdown URL from a source document absolute path to a
+/// target document absolute path.
+pub fn make_relative_link_between(source_doc_abs: &Path, target_doc_abs: &Path) -> String {
+    let source_dir = source_doc_abs.parent().unwrap_or(Path::new(""));
+    make_relative_path(source_dir, target_doc_abs)
+}
+
+/// Make a relative markdown URL from an absolute source directory to an
+/// absolute target path.
+pub fn make_relative_path(source_dir: &Path, target_path: &Path) -> String {
+    let source_components = path_components(source_dir);
+    let target_components = path_components(target_path);
+
+    let common_len = source_components
+        .iter()
+        .zip(target_components.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    let mut parts: Vec<String> = Vec::new();
+    for _ in common_len..source_components.len() {
+        parts.push("..".to_string());
+    }
+    for comp in &target_components[common_len..] {
+        parts.push(comp.clone());
+    }
+    if parts.is_empty() {
+        target_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string()
+    } else {
+        parts.join("/")
+    }
+}
+
+fn path_components(path: &Path) -> Vec<String> {
+    path.components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => Some(s.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Collect all .md files under a directory, skipping the listed top-level
 /// folder names directly under `dir` (used to omit child-space directories
 /// from the project's root backlink index).
@@ -571,6 +735,41 @@ fn collect_md_files_filtered(
     let mut files = Vec::new();
     collect_md_files_recursive(dir, dir, skip_top_level, &mut files)?;
     Ok(files)
+}
+
+/// Public walker for project-aware backlink rebuilds.
+pub fn collect_md_files(dir: &Path, skip_top_level: &[String]) -> Result<Vec<PathBuf>, AppError> {
+    collect_md_files_filtered(dir, skip_top_level)
+}
+
+/// Replace a link URL using absolute source/target paths.
+pub fn replace_link_urls_between(
+    content: &str,
+    source_doc_abs: &Path,
+    old_target_abs: &Path,
+    new_target_abs: &Path,
+    text_replace: Option<(&str, &str)>,
+) -> String {
+    let source_dir = source_doc_abs.parent().unwrap_or(Path::new(""));
+    let old_rel = make_relative_path(source_dir, old_target_abs);
+    let new_rel = make_relative_path(source_dir, new_target_abs);
+    replace_link_urls(content, &old_rel, &new_rel, text_replace)
+}
+
+pub fn link_stem(path: &str) -> String {
+    link_stem_of(path)
+}
+
+/// Deduplicate modified sources while preserving discovery order.
+pub fn dedupe_modified_sources(items: Vec<ModifiedLinkSource>) -> Vec<ModifiedLinkSource> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for item in items {
+        if seen.insert(item.clone()) {
+            out.push(item);
+        }
+    }
+    out
 }
 
 fn collect_md_files_recursive(
@@ -653,8 +852,8 @@ mod tests {
         let content = "See [deep](../other/file.md).";
         let links = parse_markdown_links(content);
         assert_eq!(links.len(), 1);
-        // The raw path without resolution context
-        assert_eq!(links[0].0, "other/file.md");
+        // Preserve leading parent segments so resolver can apply source context.
+        assert_eq!(links[0].0, "../other/file.md");
     }
 
     #[test]
@@ -677,7 +876,10 @@ mod tests {
         let content = "Hello [link](test.md) world";
         let links = parse_markdown_links(content);
         assert_eq!(links.len(), 1);
-        assert_eq!(&content[links[0].1.byte_start..links[0].1.byte_end], "[link](test.md)");
+        assert_eq!(
+            &content[links[0].1.byte_start..links[0].1.byte_end],
+            "[link](test.md)"
+        );
     }
 
     #[test]
@@ -697,10 +899,7 @@ mod tests {
             resolve_relative_to("docs/intro.md", "../readme.md"),
             "readme.md"
         );
-        assert_eq!(
-            resolve_relative_to("intro.md", "other.md"),
-            "other.md"
-        );
+        assert_eq!(resolve_relative_to("intro.md", "other.md"), "other.md");
     }
 
     #[test]
@@ -796,6 +995,16 @@ mod tests {
         assert_eq!(
             make_relative_link(Path::new("docs"), "docs/guide.md"),
             "guide.md"
+        );
+    }
+
+    #[test]
+    fn test_make_relative_link_between_spaces() {
+        let source = Path::new("/project/space-a/docs/source.md");
+        let target = Path::new("/project/space-b/target.md");
+        assert_eq!(
+            make_relative_link_between(source, target),
+            "../../space-b/target.md"
         );
     }
 }

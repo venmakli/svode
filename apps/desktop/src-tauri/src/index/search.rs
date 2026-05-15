@@ -88,14 +88,20 @@ pub async fn search_by_title(
         r#"
         SELECT id, path, COALESCE(title, '') AS title, type, table_name, updated_at
         FROM entries
-        WHERE title LIKE ? ESCAPE '\'
+        WHERE title LIKE ? ESCAPE '\' OR path LIKE ? ESCAPE '\'
         ORDER BY
-            CASE WHEN title LIKE ? ESCAPE '\' THEN 0 ELSE 1 END,
+            CASE
+                WHEN title LIKE ? ESCAPE '\' THEN 0
+                WHEN path LIKE ? ESCAPE '\' THEN 1
+                ELSE 2
+            END,
             updated_at DESC
         LIMIT ?
         "#,
     )
     .bind(&contains_pat)
+    .bind(&contains_pat)
+    .bind(&prefix_pat)
     .bind(&prefix_pat)
     .bind(limit)
     .fetch_all(pool)

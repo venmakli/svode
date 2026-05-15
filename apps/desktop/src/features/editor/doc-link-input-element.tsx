@@ -1,6 +1,7 @@
 import type { PlateElementProps } from "platejs/react";
 import type { TComboboxInputElement } from "platejs";
 
+import { useEffect, useMemo, useState } from "react";
 import { PlateElement } from "platejs/react";
 import * as m from "@/paraglide/messages.js";
 import {
@@ -14,81 +15,95 @@ import {
 import { FileText } from "lucide-react";
 import { useSpaceStore } from "@/stores/space";
 import { useLayoutStore } from "@/stores/layout";
-import type { TreeNode } from "@/types/space";
-
-interface DocItem {
-  title: string;
-  path: string;
-  icon: string | null;
-}
-
-/** Flatten tree into a list of documents. */
-function flattenTree(nodes: TreeNode[]): DocItem[] {
-  const items: DocItem[] = [];
-  for (const node of nodes) {
-    items.push({ title: node.title, path: node.path, icon: node.icon });
-    if (node.children.length > 0) {
-      items.push(...flattenTree(node.children));
-    }
-  }
-  return items;
-}
-
-/** Compute relative path from source document to target. */
-function makeRelativePath(fromPath: string, toPath: string): string {
-  const fromParts = fromPath.split("/");
-  fromParts.pop(); // Remove filename to get directory
-  const toParts = toPath.split("/");
-
-  // Find common prefix
-  let common = 0;
-  while (
-    common < fromParts.length &&
-    common < toParts.length &&
-    fromParts[common] === toParts[common]
-  ) {
-    common++;
-  }
-
-  // Build relative path
-  const ups = fromParts.length - common;
-  const parts = [
-    ...Array(ups).fill(".."),
-    ...toParts.slice(common),
-  ];
-  return parts.join("/") || toPath;
-}
+import type { SearchItem } from "@/features/search/types";
+import {
+  absoluteDocumentPath,
+  findSpaceById,
+  joinAbs,
+  makeRelativeDocUrl,
+  searchDocLinkTargets,
+} from "./doc-link-utils";
 
 export function DocLinkInputElement(
   props: PlateElementProps<TComboboxInputElement>,
 ) {
   const { editor, element } = props;
-  const { activeSpaceId, fileTrees } = useSpaceStore();
-  const { activeDocument } = useLayoutStore();
+  const activeRootId = useSpaceStore((s) => s.activeRootId);
+  const activeRootPath = useSpaceStore((s) => s.activeRootPath);
+  const rootSpaces = useSpaceStore((s) => s.rootSpaces);
+  const spaces = useSpaceStore((s) => s.spaces);
+  const fileTrees = useSpaceStore((s) => s.fileTrees);
+  const activeDocument = useLayoutStore((s) => s.activeDocument);
+  const activeDocumentSpaceId = useLayoutStore((s) => s.activeDocumentSpaceId);
+  const [items, setItems] = useState<SearchItem[]>([]);
+  const sourceSpaceId =
+    activeDocumentSpaceId === activeRootId ? null : activeDocumentSpaceId;
+  const sourceSpace =
+    sourceSpaceId === null ? null : findSpaceById(rootSpaces, spaces, sourceSpaceId);
+  const localCurrentSpace = useMemo(
+    () =>
+      sourceSpaceId !== null && sourceSpace
+        ? {
+            spaceId: sourceSpaceId,
+            spacePath: sourceSpace.path,
+            spaceName: sourceSpace.name,
+            tree: fileTrees[sourceSpaceId] ?? [],
+          }
+        : null,
+    [fileTrees, sourceSpace, sourceSpaceId],
+  );
 
-  const tree = activeSpaceId ? fileTrees[activeSpaceId] ?? [] : [];
-  const docItems = flattenTree(tree);
+  useEffect(() => {
+    if (!activeRootPath) {
+      setItems([]);
+      return;
+    }
+    let cancelled = false;
+    searchDocLinkTargets(activeRootPath, sourceSpaceId, "", localCurrentSpace)
+      .then((next) => {
+        if (!cancelled) setItems(next);
+      })
+      .catch((err) => {
+        console.error("doc link input search failed:", err);
+        if (!cancelled) setItems([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRootPath, sourceSpaceId, localCurrentSpace]);
+
+  const currentSpace = findSpaceById(rootSpaces, spaces, activeDocumentSpaceId);
+  const currentSpacePath = currentSpace?.path ?? activeRootPath ?? "";
 
   return (
     <PlateElement {...props} as="span">
       <InlineCombobox element={element} trigger="/doc" showTrigger={false}>
-        <InlineComboboxInput />
+        <InlineComboboxInput
+          aria-label={m.editor_doc_link_search()}
+          className="placeholder:text-muted-foreground"
+          placeholder={m.editor_doc_link_search()}
+        />
         <InlineComboboxContent>
           <InlineComboboxEmpty>
             {m.editor_doc_link_no_results()}
           </InlineComboboxEmpty>
           <InlineComboboxGroup>
-            {docItems.map((item) => (
+            {items.map((item) => (
               <InlineComboboxItem
-                key={item.path}
+                key={`${item.spaceId ?? "root"}:${item.path}`}
                 value={item.path}
                 label={item.title}
                 focusEditor
-                keywords={[item.title, item.path]}
-                onClick={() => {
-                  // Insert a standard link node
-                  const relativePath = activeDocument
-                    ? makeRelativePath(activeDocument, item.path)
+                keywords={[item.title, item.path, item.spaceName]}
+                className="h-auto min-h-[38px] items-center gap-2 py-1"
+                onClick={async () => {
+                  const sourceAbs =
+                    activeDocument && currentSpacePath
+                      ? absoluteDocumentPath(activeDocument, currentSpacePath)
+                      : null;
+                  const targetAbs = joinAbs(item.spacePath, item.path);
+                  const relativePath = sourceAbs
+                    ? await makeRelativeDocUrl(sourceAbs, targetAbs)
                     : item.path;
                   editor.tf.insertNodes({
                     type: "a",
@@ -97,14 +112,24 @@ export function DocLinkInputElement(
                   });
                 }}
               >
-                <div className="mr-2 text-muted-foreground">
-                  {item.icon ? (
-                    <span className="text-sm">{item.icon}</span>
+                <div className="flex size-4 shrink-0 items-center justify-center text-muted-foreground">
+                  {item.icon && item.icon !== "📄" ? (
+                    <span className="text-sm leading-none">{item.icon}</span>
                   ) : (
                     <FileText className="h-4 w-4" />
                   )}
                 </div>
-                {item.title}
+                <span className="flex min-w-0 flex-1 flex-col justify-center leading-none">
+                  <span className="truncate text-sm font-medium leading-4">
+                    {item.title}
+                  </span>
+                  <span className="truncate text-[11px] leading-3 text-muted-foreground">
+                    {item.spaceId === sourceSpaceId ||
+                    (item.spaceId === null && sourceSpaceId === null)
+                      ? item.path
+                      : `${item.spaceName} · ${item.path}`}
+                  </span>
+                </span>
               </InlineComboboxItem>
             ))}
           </InlineComboboxGroup>

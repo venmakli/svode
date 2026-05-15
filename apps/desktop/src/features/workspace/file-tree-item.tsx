@@ -45,6 +45,12 @@ interface FileTreeItemProps {
   spaceId: string;
 }
 
+interface BacklinkInfo {
+  sourceSpaceId: string | null;
+  sourcePath: string;
+  linkCount: number;
+}
+
 /** Bare folder = directory without readme.md (path doesn't end with .md) */
 function isBareFolder(node: TreeNode): boolean {
   return !node.path.endsWith(".md");
@@ -99,8 +105,18 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
   const editRef = useRef<HTMLInputElement>(null);
   const [deleteDialog, setDeleteDialog] = useState<{
     open: boolean;
-    backlinks: { source_path: string; link_count: number }[];
+    backlinks: BacklinkInfo[];
   }>({ open: false, backlinks: [] });
+
+  function backlinkLabel(backlink: BacklinkInfo): string {
+    if (!backlink.sourceSpaceId) return backlink.sourcePath;
+    const sourceSpace = [...rootSpaces, ...spaces].find(
+      (item) => item.id === backlink.sourceSpaceId,
+    );
+    return sourceSpace
+      ? `${sourceSpace.name} · ${backlink.sourcePath}`
+      : backlink.sourcePath;
+  }
 
   useEffect(() => {
     if (isEditing && editRef.current) {
@@ -302,10 +318,11 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
   async function handleDeleteRequest() {
     if (!space) return;
     try {
-      const backlinks = await invoke<{ source_path: string; link_count: number }[]>(
-        "get_backlinks",
-        { space: space.path, targetPath: node.path },
-      );
+      const backlinks = await invoke<BacklinkInfo[]>("get_backlinks", {
+        space: space.path,
+        targetPath: node.path,
+        projectPath: activeRootPath ?? null,
+      });
       setDeleteDialog({ open: true, backlinks });
     } catch {
       // If backlinks check fails, show dialog anyway without backlinks
@@ -449,8 +466,11 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
                 {m.file_delete_has_backlinks()}
                 <ul className="mt-2 list-disc pl-5">
                   {deleteDialog.backlinks.map((bl) => (
-                    <li key={bl.source_path} className="text-foreground">
-                      {bl.source_path}
+                    <li
+                      key={`${bl.sourceSpaceId ?? "root"}:${bl.sourcePath}`}
+                      className="text-foreground"
+                    >
+                      {backlinkLabel(bl)}
                     </li>
                   ))}
                 </ul>

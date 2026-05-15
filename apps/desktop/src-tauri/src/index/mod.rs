@@ -7,13 +7,17 @@ pub mod update;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Manager};
 use tokio::sync::{Mutex, Semaphore};
 
 use crate::error::AppError;
 use crate::files::BacklinkIndex;
+use crate::files::backlinks::{
+    LinkSource, ModifiedLinkSource, collect_md_files, dedupe_modified_sources,
+    is_external_or_anchor_url, link_stem, markdown_url_path, replace_link_urls_between,
+};
 use crate::space::config;
 use crate::space::types::{SpaceConfig, SpaceStatus};
 
@@ -32,10 +36,18 @@ pub(crate) fn normalize_rel(path: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum IndexKey {
     Root(PathBuf),
-    Space {
-        project: PathBuf,
-        space_id: String,
-    },
+    Space { project: PathBuf, space_id: String },
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedDocLink {
+    pub target_space_id: Option<String>,
+    pub target_space_path: Option<String>,
+    pub target_path: Option<String>,
+    pub status: String,
+    pub exists: bool,
+    pub space_name: String,
 }
 
 impl IndexKey {
@@ -140,10 +152,7 @@ pub fn resolve_index_target(
     abs_path: &Path,
 ) -> Result<(IndexKey, String), AppError> {
     let rel = abs_path.strip_prefix(project).map_err(|_| {
-        AppError::Index(format!(
-            "path outside project root: {}",
-            abs_path.display()
-        ))
+        AppError::Index(format!("path outside project root: {}", abs_path.display()))
     })?;
 
     let segments: Vec<&str> = rel
@@ -159,10 +168,7 @@ pub fn resolve_index_target(
     }
 
     if let Some(space_id) = cache.by_folder.get(segments[0]) {
-        if !matches!(
-            cache.status_by_id.get(space_id),
-            Some(SpaceStatus::Ready)
-        ) {
+        if !matches!(cache.status_by_id.get(space_id), Some(SpaceStatus::Ready)) {
             return Err(AppError::Index(format!(
                 "target space unavailable: {}",
                 segments[0]
@@ -179,6 +185,24 @@ pub fn resolve_index_target(
     }
 
     Ok((IndexKey::Root(project.to_path_buf()), segments.join("/")))
+}
+
+fn normalize_abs_path(path: &Path) -> Option<PathBuf> {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(p) => out.push(p.as_os_str()),
+            Component::RootDir => out.push(std::path::MAIN_SEPARATOR.to_string()),
+            Component::CurDir => {}
+            Component::Normal(s) => out.push(s),
+            Component::ParentDir => {
+                if !out.pop() {
+                    return None;
+                }
+            }
+        }
+    }
+    Some(out)
 }
 
 /// Per-project SQLite + backlink state managed by Tauri.
@@ -234,10 +258,7 @@ impl IndexState {
         abs_path: &Path,
     ) -> Result<(IndexKey, String), AppError> {
         let cache_guard = self.spaces_cache.lock().await;
-        let cache = cache_guard
-            .get(project)
-            .cloned()
-            .unwrap_or_default();
+        let cache = cache_guard.get(project).cloned().unwrap_or_default();
         drop(cache_guard);
         resolve_index_target(project, &cache, abs_path)
     }
@@ -278,6 +299,487 @@ impl IndexState {
                 Ok(project.join(folder))
             }
         }
+    }
+
+    pub fn space_id_for_key(key: &IndexKey) -> Option<String> {
+        match key {
+            IndexKey::Root(_) => None,
+            IndexKey::Space { space_id, .. } => Some(space_id.clone()),
+        }
+    }
+
+    fn source_for_key(key: &IndexKey, rel_path: &str) -> LinkSource {
+        LinkSource {
+            source_space_id: Self::space_id_for_key(key),
+            source_path: normalize_rel(rel_path),
+        }
+    }
+
+    pub async fn key_for_project_space_id(
+        &self,
+        project: &Path,
+        space_id: Option<&str>,
+    ) -> Result<IndexKey, AppError> {
+        match space_id {
+            None => Ok(IndexKey::Root(project.to_path_buf())),
+            Some(id) => {
+                let cache = self.spaces_cache.lock().await;
+                let ready = cache
+                    .get(project)
+                    .and_then(|c| c.status_by_id.get(id))
+                    .is_some_and(|s| matches!(s, SpaceStatus::Ready));
+                if ready {
+                    Ok(IndexKey::Space {
+                        project: project.to_path_buf(),
+                        space_id: id.to_string(),
+                    })
+                } else {
+                    Err(AppError::SpaceNotFound(id.to_string()))
+                }
+            }
+        }
+    }
+
+    pub async fn space_path_of(
+        &self,
+        project: &Path,
+        space_id: Option<&str>,
+    ) -> Result<PathBuf, AppError> {
+        let key = self.key_for_project_space_id(project, space_id).await?;
+        self.dir_for_key(&key).await
+    }
+
+    pub async fn invalidate_project_backlinks(&self, project: &Path) {
+        let keys = self.keys_for_project(&project.to_path_buf()).await;
+        let map = self.backlinks.lock().await;
+        for key in keys {
+            if let Some(index) = map.get(&key) {
+                index.mark_stale();
+            }
+        }
+    }
+
+    pub async fn resolve_doc_link(
+        &self,
+        project: &Path,
+        source_space_id: Option<&str>,
+        source_path: &str,
+        url: &str,
+    ) -> Result<ResolvedDocLink, AppError> {
+        if is_external_or_anchor_url(url) {
+            return Ok(ResolvedDocLink {
+                target_space_id: source_space_id.map(ToString::to_string),
+                target_space_path: None,
+                target_path: None,
+                status: "external".to_string(),
+                exists: false,
+                space_name: String::new(),
+            });
+        }
+
+        let source_key = self
+            .key_for_project_space_id(project, source_space_id)
+            .await?;
+        let source_dir = self.dir_for_key(&source_key).await?;
+        let source_rel = normalize_rel(source_path);
+        let target_link = markdown_url_path(url);
+        let source_parent_rel = Path::new(&source_rel).parent().unwrap_or(Path::new(""));
+        let source_parent_abs = source_dir.join(source_parent_rel);
+        let Some(target_abs) = normalize_abs_path(&source_parent_abs.join(&target_link)) else {
+            return Ok(ResolvedDocLink {
+                target_space_id: None,
+                target_space_path: None,
+                target_path: None,
+                status: "broken".to_string(),
+                exists: false,
+                space_name: String::new(),
+            });
+        };
+        if !target_abs.starts_with(project) {
+            return Ok(ResolvedDocLink {
+                target_space_id: None,
+                target_space_path: None,
+                target_path: None,
+                status: "broken".to_string(),
+                exists: false,
+                space_name: String::new(),
+            });
+        }
+
+        let rel = target_abs.strip_prefix(project).map_err(|_| {
+            AppError::Index(format!(
+                "path outside project root: {}",
+                target_abs.display()
+            ))
+        })?;
+        let segments: Vec<String> = rel
+            .components()
+            .filter_map(|c| match c {
+                Component::Normal(s) => s.to_str().map(ToString::to_string),
+                _ => None,
+            })
+            .collect();
+        if segments.is_empty() {
+            return Ok(ResolvedDocLink {
+                target_space_id: None,
+                target_space_path: Some(project.to_string_lossy().to_string()),
+                target_path: None,
+                status: "broken".to_string(),
+                exists: false,
+                space_name: self
+                    .space_name(&IndexKey::Root(project.to_path_buf()))
+                    .await,
+            });
+        }
+
+        let cache_guard = self.spaces_cache.lock().await;
+        let cache = cache_guard.get(project).cloned().unwrap_or_default();
+        drop(cache_guard);
+
+        if let Some(space_id) = cache.by_folder.get(&segments[0]) {
+            let folder = &segments[0];
+            let target_rel = normalize_rel(&segments[1..].join("/"));
+            let status = cache
+                .status_by_id
+                .get(space_id)
+                .copied()
+                .unwrap_or(SpaceStatus::Broken);
+            let target_space_path = project.join(folder);
+            let space_name = cache
+                .name_by_id
+                .get(space_id)
+                .cloned()
+                .unwrap_or_else(|| folder.clone());
+            let exists = matches!(status, SpaceStatus::Ready)
+                && !target_rel.is_empty()
+                && target_space_path.join(&target_rel).exists();
+            let status = match status {
+                SpaceStatus::Ready => "ready",
+                SpaceStatus::Missing => "missing",
+                SpaceStatus::Broken => "broken",
+            };
+            return Ok(ResolvedDocLink {
+                target_space_id: Some(space_id.clone()),
+                target_space_path: Some(target_space_path.to_string_lossy().to_string()),
+                target_path: Some(target_rel),
+                status: status.to_string(),
+                exists,
+                space_name,
+            });
+        }
+
+        let target_rel = normalize_rel(&segments.join("/"));
+        let exists = target_abs.exists();
+        Ok(ResolvedDocLink {
+            target_space_id: None,
+            target_space_path: Some(project.to_string_lossy().to_string()),
+            target_path: Some(target_rel),
+            status: "ready".to_string(),
+            exists,
+            space_name: cache.root_name,
+        })
+    }
+
+    async fn resolve_link_target_key(
+        &self,
+        project: &Path,
+        source_space_id: Option<&str>,
+        source_path: &str,
+        url: &str,
+    ) -> Result<Option<(IndexKey, String)>, AppError> {
+        if is_external_or_anchor_url(url) {
+            return Ok(None);
+        }
+        let source_key = self
+            .key_for_project_space_id(project, source_space_id)
+            .await?;
+        let source_dir = self.dir_for_key(&source_key).await?;
+        let source_rel = normalize_rel(source_path);
+        let target_link = markdown_url_path(url);
+
+        let source_parent_rel = Path::new(&source_rel).parent().unwrap_or(Path::new(""));
+        let source_parent_abs = source_dir.join(source_parent_rel);
+        let target_abs = match normalize_abs_path(&source_parent_abs.join(&target_link)) {
+            Some(p) if p.starts_with(project) => p,
+            _ => return Ok(None),
+        };
+
+        let cache_guard = self.spaces_cache.lock().await;
+        let cache = cache_guard.get(project).cloned().unwrap_or_default();
+        drop(cache_guard);
+        match resolve_index_target(project, &cache, &target_abs) {
+            Ok((key, rel)) if !rel.is_empty() => Ok(Some((key, normalize_rel(&rel)))),
+            Ok(_) => Ok(None),
+            Err(_) => Ok(None),
+        }
+    }
+
+    async fn remove_source_from_project(&self, project: &Path, source: &LinkSource) {
+        let keys = self.keys_for_project(&project.to_path_buf()).await;
+        for key in keys {
+            let index = self.backlinks_for(&key).await;
+            index.remove_source(source);
+        }
+    }
+
+    pub async fn update_file_backlinks(
+        &self,
+        project: &Path,
+        source_space_id: Option<&str>,
+        source_rel_path: &str,
+    ) -> Result<(), AppError> {
+        let source_key = self
+            .key_for_project_space_id(project, source_space_id)
+            .await?;
+        let source_dir = self.dir_for_key(&source_key).await?;
+        let source_rel = normalize_rel(source_rel_path);
+        let source = Self::source_for_key(&source_key, &source_rel);
+        self.remove_source_from_project(project, &source).await;
+
+        let pool = self.get_or_create(&source_key).await?;
+        sqlx::query("DELETE FROM broken_links WHERE source_rel_path = ?")
+            .bind(&source_rel)
+            .execute(&pool)
+            .await?;
+
+        let abs = source_dir.join(&source_rel);
+        if !abs.exists() {
+            return Ok(());
+        }
+
+        let content = std::fs::read_to_string(&abs)?;
+        let links = crate::files::backlinks::parse_markdown_links(&content);
+        let mut grouped: HashMap<
+            IndexKey,
+            HashMap<String, Vec<crate::files::backlinks::LinkSpan>>,
+        > = HashMap::new();
+
+        for (url_path, span) in links {
+            let raw_url = url_path;
+            let target = self
+                .resolve_link_target_key(project, source_space_id, &source_rel, &raw_url)
+                .await?;
+            let Some((target_key, target_rel)) = target else {
+                let resolved = self
+                    .resolve_doc_link(project, source_space_id, &source_rel, &raw_url)
+                    .await?;
+                self.insert_broken_link(
+                    &pool,
+                    &source_rel,
+                    resolved.target_space_id.as_deref(),
+                    &raw_url,
+                )
+                .await?;
+                continue;
+            };
+            let target_dir = self.dir_for_key(&target_key).await?;
+            if !target_dir.join(&target_rel).exists() {
+                let target_space_id = Self::space_id_for_key(&target_key);
+                self.insert_broken_link(&pool, &source_rel, target_space_id.as_deref(), &raw_url)
+                    .await?;
+                continue;
+            }
+            grouped
+                .entry(target_key)
+                .or_default()
+                .entry(target_rel)
+                .or_default()
+                .push(span);
+        }
+
+        for (target_key, by_target) in grouped {
+            let target_index = self.backlinks_for(&target_key).await;
+            for (target_rel, spans) in by_target {
+                target_index.add_source_links(&target_rel, source.clone(), spans);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn remove_file_backlinks(
+        &self,
+        project: &Path,
+        source_space_id: Option<&str>,
+        source_rel_path: &str,
+    ) -> Result<(), AppError> {
+        let source_key = self
+            .key_for_project_space_id(project, source_space_id)
+            .await?;
+        let source_rel = normalize_rel(source_rel_path);
+        let source = Self::source_for_key(&source_key, &source_rel);
+        self.remove_source_from_project(project, &source).await;
+        let pool = self.get_or_create(&source_key).await?;
+        sqlx::query("DELETE FROM broken_links WHERE source_rel_path = ?")
+            .bind(&source_rel)
+            .execute(&pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn insert_broken_link(
+        &self,
+        pool: &SqlitePool,
+        source_rel: &str,
+        target_space_id: Option<&str>,
+        target_url: &str,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            "INSERT OR REPLACE INTO broken_links \
+             (source_rel_path, target_space_id, target_url, detected_at) \
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(source_rel)
+        .bind(target_space_id)
+        .bind(target_url)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn rebuild_source_backlinks(&self, key: &IndexKey) -> Result<(), AppError> {
+        let dir = self.dir_for_key(key).await?;
+        let skip = self.skip_folders_for(key).await;
+        let files = collect_md_files(&dir, &skip)?;
+        let source_space_id = Self::space_id_for_key(key);
+        let keys = self.keys_for_project(&key.project().to_path_buf()).await;
+        for target_key in keys {
+            self.backlinks_for(&target_key)
+                .await
+                .remove_sources_in_space(source_space_id.as_deref());
+        }
+        let pool = self.get_or_create(key).await?;
+        sqlx::query("DELETE FROM broken_links")
+            .execute(&pool)
+            .await?;
+
+        for file in files {
+            let rel = file
+                .strip_prefix(&dir)
+                .unwrap_or(&file)
+                .to_string_lossy()
+                .to_string();
+            self.update_file_backlinks(key.project(), source_space_id.as_deref(), &rel)
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn ensure_project_backlinks_built(&self, project: &Path) -> Result<(), AppError> {
+        let keys = self.keys_for_project(&project.to_path_buf()).await;
+        let all_built = {
+            let map = self.backlinks.lock().await;
+            keys.iter()
+                .all(|key| map.get(key).is_some_and(|idx| idx.is_built()))
+        };
+        if all_built {
+            return Ok(());
+        }
+
+        {
+            let map = self.backlinks.lock().await;
+            for key in &keys {
+                if let Some(index) = map.get(key) {
+                    index.mark_stale();
+                }
+            }
+        }
+
+        for key in &keys {
+            self.rebuild_source_backlinks(key).await?;
+        }
+        for key in &keys {
+            self.backlinks_for(key).await.mark_built();
+        }
+        Ok(())
+    }
+
+    pub async fn update_links_on_rename_project(
+        &self,
+        project: &Path,
+        target_space_id: Option<&str>,
+        old_path: &str,
+        new_path: &str,
+        new_title: Option<&str>,
+    ) -> Result<Vec<ModifiedLinkSource>, AppError> {
+        self.ensure_project_backlinks_built(project).await?;
+        let target_key = self
+            .key_for_project_space_id(project, target_space_id)
+            .await?;
+        let target_dir = self.dir_for_key(&target_key).await?;
+        let target_index = self.backlinks_for(&target_key).await;
+        let sources = target_index.sources_for_target(old_path);
+        if sources.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let old_abs = target_dir.join(old_path);
+        let new_abs = target_dir.join(new_path);
+        let old_stem = link_stem(old_path);
+        let text_replace = new_title.map(|title| (old_stem.as_str(), title));
+        let mut modified = Vec::new();
+
+        for (source, _) in sources {
+            let source_dir = self
+                .space_path_of(project, source.source_space_id.as_deref())
+                .await?;
+            let source_abs = source_dir.join(&source.source_path);
+            if !source_abs.exists() {
+                continue;
+            }
+            let content = std::fs::read_to_string(&source_abs)?;
+            let updated =
+                replace_link_urls_between(&content, &source_abs, &old_abs, &new_abs, text_replace);
+            if updated != content {
+                std::fs::write(&source_abs, updated)?;
+                modified.push(ModifiedLinkSource {
+                    space_id: source.source_space_id.clone(),
+                    path: source.source_path.clone(),
+                });
+            }
+        }
+
+        let modified = dedupe_modified_sources(modified);
+        for item in &modified {
+            self.update_file_backlinks(project, item.space_id.as_deref(), &item.path)
+                .await?;
+        }
+        Ok(modified)
+    }
+
+    pub async fn update_links_on_folder_rename_project(
+        &self,
+        project: &Path,
+        target_space_id: Option<&str>,
+        old_folder: &str,
+        new_folder: &str,
+    ) -> Result<Vec<ModifiedLinkSource>, AppError> {
+        self.ensure_project_backlinks_built(project).await?;
+        let target_key = self
+            .key_for_project_space_id(project, target_space_id)
+            .await?;
+        let target_index = self.backlinks_for(&target_key).await;
+        let old_norm = normalize_rel(old_folder);
+        let new_norm = normalize_rel(new_folder);
+        let mut all = Vec::new();
+        for old_target in target_index.target_paths_under(&old_norm) {
+            let remainder = old_target
+                .strip_prefix(&format!("{}/", old_norm))
+                .unwrap_or(&old_target);
+            let new_target = format!("{}/{}", new_norm, remainder);
+            all.extend(
+                self.update_links_on_rename_project(
+                    project,
+                    target_space_id,
+                    &old_target,
+                    &new_target,
+                    None,
+                )
+                .await?,
+            );
+        }
+        Ok(dedupe_modified_sources(all))
     }
 
     /// Get (or create) the per-key reindex serialization lock.
@@ -377,11 +879,7 @@ impl IndexState {
     /// arriving during reindex can be safely dropped — the full_reindex will
     /// pick up everything; events after the snapshot are handled by
     /// subsequent `update_entry` calls.
-    pub async fn open_project(
-        &self,
-        app: &AppHandle,
-        project: &Path,
-    ) -> Result<(), AppError> {
+    pub async fn open_project(&self, app: &AppHandle, project: &Path) -> Result<(), AppError> {
         let cfg = config::read_space_config(project)?;
         let cache = ProjectSpacesCache::from_config(project, &cfg);
         let ready_ids: Vec<String> = cache
@@ -399,6 +897,7 @@ impl IndexState {
             .lock()
             .await
             .insert(project.to_path_buf(), cache);
+        self.invalidate_project_backlinks(project).await;
 
         let mut keys: Vec<IndexKey> = vec![IndexKey::Root(project.to_path_buf())];
         for space_id in &ready_ids {
@@ -498,6 +997,7 @@ impl IndexState {
                 entry.name_by_id.remove(space_id);
             }
         }
+        self.invalidate_project_backlinks(project).await;
 
         if !matches!(status, SpaceStatus::Ready) {
             return;
@@ -534,6 +1034,7 @@ impl IndexState {
                 entry.name_by_id.remove(space_id);
             }
         }
+        self.invalidate_project_backlinks(project).await;
         let key = IndexKey::Space {
             project: project.to_path_buf(),
             space_id: space_id.to_string(),
@@ -553,9 +1054,7 @@ impl IndexState {
         {
             let mut cache = self.spaces_cache.lock().await;
             if let Some(entry) = cache.get_mut(project) {
-                entry
-                    .status_by_id
-                    .insert(space_id.to_string(), new_status);
+                entry.status_by_id.insert(space_id.to_string(), new_status);
                 match new_status {
                     SpaceStatus::Ready => {
                         if let Some(folder) = entry.folder_by_id.get(space_id).cloned() {
@@ -570,6 +1069,7 @@ impl IndexState {
                 }
             }
         }
+        self.invalidate_project_backlinks(project).await;
         let key = IndexKey::Space {
             project: project.to_path_buf(),
             space_id: space_id.to_string(),
@@ -625,16 +1125,13 @@ impl IndexState {
         for (id, status) in &fresh.status_by_id {
             match known.get(id) {
                 None => {
-                    let folder = fresh
-                        .folder_by_id
-                        .get(id)
-                        .cloned()
-                        .unwrap_or_default();
+                    let folder = fresh.folder_by_id.get(id).cloned().unwrap_or_default();
                     self.on_space_added(app, project, id, &folder, *status)
                         .await;
                 }
                 Some(prev) if prev != status => {
-                    self.on_space_status_changed(app, project, id, *status).await;
+                    self.on_space_status_changed(app, project, id, *status)
+                        .await;
                 }
                 _ => {}
             }
@@ -645,6 +1142,7 @@ impl IndexState {
                 self.on_space_removed(project, id).await;
             }
         }
+        self.invalidate_project_backlinks(project).await;
 
         Ok(())
     }
