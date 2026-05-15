@@ -137,6 +137,8 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
     // Deduplicate by path — keep the last event kind per path
     let mut seen: HashMap<PathBuf, &EventKind> = HashMap::new();
     let mut any_dirty = false;
+    let mut any_assets_changed = false;
+    let space_root = Path::new(space);
     for event in events {
         for path in &event.paths {
             if should_ignore(path) {
@@ -145,6 +147,11 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
             // Any non-ignored file change → space is dirty.
             // Includes non-.md assets (frontend uses this to refresh git status).
             any_dirty = true;
+            // Detect `.assets/`-scoped changes so we can emit a targeted
+            // event for the storage reactor to re-scan the assets table.
+            if is_under_assets(path, space_root) {
+                any_assets_changed = true;
+            }
             // Per-file file:* events are emitted only for .md files.
             if path.extension().and_then(|e| e.to_str()) != Some("md") {
                 continue;
@@ -156,6 +163,12 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
     if any_dirty {
         let _ = app.emit(
             "space:dirty",
+            serde_json::json!({ "space": space }),
+        );
+    }
+    if any_assets_changed {
+        let _ = app.emit(
+            "space:assets_changed",
             serde_json::json!({ "space": space }),
         );
     }
@@ -192,14 +205,36 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
 }
 
 /// Check if a path should be ignored by the watcher.
+///
+/// We skip anything inside a dotted directory (`.git`, `.combai`, …) with one
+/// exception: `.assets/` is allowed through so we can re-index uploads and
+/// detect LFS pointer changes after a sync.
 fn should_ignore(path: &Path) -> bool {
+    let mut first_dot_seen = false;
     for component in path.components() {
         if let std::path::Component::Normal(name) = component {
-            let name = name.to_string_lossy();
-            if name.starts_with('.') {
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with('.') {
+                if !first_dot_seen && name_str == ".assets" {
+                    first_dot_seen = true;
+                    continue;
+                }
                 return true;
             }
+            first_dot_seen = false;
         }
     }
     false
+}
+
+/// True iff `path` is inside the watched space's `.assets/` directory.
+/// Uses the literal space root so unrelated `.assets` folders nested deeper
+/// don't trip this (the watcher only fires on paths under the root anyway).
+fn is_under_assets(path: &Path, space_root: &Path) -> bool {
+    let Ok(rel) = path.strip_prefix(space_root) else {
+        return false;
+    };
+    rel.components().next().is_some_and(|c| {
+        matches!(c, std::path::Component::Normal(name) if name == std::ffi::OsStr::new(".assets"))
+    })
 }

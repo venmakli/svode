@@ -6,6 +6,7 @@ use super::config;
 use super::registry;
 use super::scaffold;
 use super::types::{SpaceConfig, SpaceInfo, SpaceRef, SpaceStatus};
+use crate::storage::lfs::LfsState;
 
 /// Where to register a newly created/opened space.
 enum RegistrationTarget<'a> {
@@ -149,6 +150,7 @@ pub fn create_space(
         has_spaces: false,
         last_opened: None,
         status: SpaceStatus::Ready,
+        lfs_state: LfsState::NotApplicable,
     })
 }
 
@@ -188,6 +190,7 @@ pub fn register_cloned_space(
                 has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
                 last_opened: None,
                 status: SpaceStatus::Ready,
+                lfs_state: LfsState::NotApplicable,
             });
         }
     }
@@ -209,6 +212,7 @@ pub fn register_cloned_space(
         has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
         last_opened: None,
         status: SpaceStatus::Ready,
+        lfs_state: LfsState::NotApplicable,
     })
 }
 
@@ -281,6 +285,7 @@ pub fn list_spaces(parent_path: &Path) -> Result<Vec<SpaceInfo>, AppError> {
                         .unwrap_or(false),
                     last_opened: None,
                     status: SpaceStatus::Ready,
+                    lfs_state: LfsState::NotApplicable,
                 });
             } else {
                 // Ghost state: folder missing
@@ -308,6 +313,7 @@ pub fn list_spaces(parent_path: &Path) -> Result<Vec<SpaceInfo>, AppError> {
                     has_spaces: false,
                     last_opened: None,
                     status,
+                    lfs_state: LfsState::NotApplicable,
                 });
             }
         }

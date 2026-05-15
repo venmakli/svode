@@ -131,6 +131,9 @@ pub fn run() {
             storage::commands::set_assets_strategy,
             storage::commands::check_s3_connection,
             storage::commands::has_s3_credentials,
+            storage::commands::resolve_asset_url,
+            storage::lfs::repair_lfs,
+            storage::lfs::get_lfs_state,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

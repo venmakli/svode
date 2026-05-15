@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{Mutex, Semaphore};
 
 use crate::error::AppError;
@@ -20,6 +20,7 @@ use crate::files::backlinks::{
 };
 use crate::space::config;
 use crate::space::types::{SpaceConfig, SpaceStatus};
+use crate::storage::lfs::LfsState;
 
 const REINDEX_PARALLELISM: usize = 4;
 
@@ -228,6 +229,10 @@ pub struct IndexState {
     /// Per-project resolver cache. Refreshed on `open_project` and on every
     /// `space:*` lifecycle event.
     spaces_cache: Mutex<HashMap<PathBuf, ProjectSpacesCache>>,
+    /// Per-key LFS runtime state. Initial value for any key is
+    /// `NotApplicable`; the actual probe is lazy (triggered by user gestures
+    /// or post-clone/sync events). See `storage/lfs.rs`.
+    lfs_states: Mutex<HashMap<IndexKey, LfsState>>,
 }
 
 /// RAII guard: clears the `reindex_active` flag when dropped, even on panic.
@@ -247,7 +252,40 @@ impl IndexState {
             reindex_active: Mutex::new(HashMap::new()),
             backlinks: Mutex::new(HashMap::new()),
             spaces_cache: Mutex::new(HashMap::new()),
+            lfs_states: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Read the cached LFS state for `key`. Defaults to `NotApplicable` for
+    /// unknown keys — callers should treat this as "not probed yet".
+    pub async fn get_lfs_state(&self, key: &IndexKey) -> LfsState {
+        let map = self.lfs_states.lock().await;
+        map.get(key).copied().unwrap_or_default()
+    }
+
+    /// Cache the LFS state for `key` and emit `space:lfs_state_changed` via
+    /// the provided `AppHandle`. All setters route through this so the
+    /// frontend never misses a transition.
+    pub async fn set_lfs_state_with(
+        &self,
+        app: &AppHandle,
+        key: &IndexKey,
+        state: LfsState,
+    ) {
+        {
+            let mut map = self.lfs_states.lock().await;
+            map.insert(key.clone(), state);
+        }
+        let project_path = key.project().to_string_lossy().to_string();
+        let space_id = Self::space_id_for_key(key);
+        let _ = app.emit(
+            "space:lfs_state_changed",
+            serde_json::json!({
+                "projectPath": project_path,
+                "spaceId": space_id,
+                "state": state,
+            }),
+        );
     }
 
     /// Resolve an absolute path into the owning `IndexKey` and rel-path.
@@ -869,6 +907,7 @@ impl IndexState {
         self.backlinks.lock().await.remove(key);
         self.reindex_locks.lock().await.remove(key);
         self.reindex_active.lock().await.remove(key);
+        self.lfs_states.lock().await.remove(key);
     }
 
     /// Open root + all ready child-space pools for `project` and spawn a
@@ -1089,6 +1128,8 @@ impl IndexState {
                 });
             }
             SpaceStatus::Missing | SpaceStatus::Broken => {
+                self.set_lfs_state_with(app, &key, LfsState::NotApplicable)
+                    .await;
                 self.close_key(&key).await;
             }
         }

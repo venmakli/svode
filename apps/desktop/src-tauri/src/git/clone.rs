@@ -36,10 +36,16 @@ pub async fn clone_with_progress(
     }
 
     // Re-build the command manually since we need stdio piping.
+    //
+    // `GIT_LFS_SKIP_SMUDGE=1` keeps LFS pointers as plain text on clone — we
+    // defer the actual content fetch to the explicit Repair LFS gesture or
+    // post-clone probe in `storage/lfs.rs`. Without this, a missing/wrong
+    // LFS credential would fail the entire clone.
     let mut child = Command::new(cli.git_path())
         .args(["clone", "--progress", "--", url, target_str])
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("LC_ALL", "C.UTF-8")
+        .env("GIT_LFS_SKIP_SMUDGE", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -139,6 +145,7 @@ pub async fn submodule_add_with_progress(
         .current_dir(project_path)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("LC_ALL", "C.UTF-8")
+        .env("GIT_LFS_SKIP_SMUDGE", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

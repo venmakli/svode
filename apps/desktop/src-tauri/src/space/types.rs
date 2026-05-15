@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::storage::lfs::LfsState;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -216,4 +218,6 @@ pub struct SpaceInfo {
     pub has_spaces: bool,
     pub last_opened: Option<String>,
     pub status: SpaceStatus,
+    #[serde(default)]
+    pub lfs_state: LfsState,
 }

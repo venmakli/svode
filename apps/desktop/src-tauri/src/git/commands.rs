@@ -323,10 +323,12 @@ pub async fn git_sync(
             .key_for_space_dir(&path)
             .await
             .unwrap_or_else(|| IndexKey::Root(path.clone()));
-        if let Ok(changed) = super::ops::diff_after_pull(cli, &path).await {
+        let changed = super::ops::diff_after_pull(cli, &path).await.ok();
+        if let Some(changed) = &changed {
             if !changed.is_empty() {
                 if let Err(e) =
-                    crate::index::update::reindex_after_pull(&index_state, &key, changed).await
+                    crate::index::update::reindex_after_pull(&index_state, &key, changed.clone())
+                        .await
                 {
                     tracing::warn!("reindex_after_pull failed: {e}");
                 }
@@ -345,6 +347,12 @@ pub async fn git_sync(
             .invalidate_project_backlinks(key.project())
             .await;
         emit_space_synced(&app, &key);
+        // Explicit-trigger LFS auto-pull: if the merge brought in pointer
+        // files under `.assets/` and credentials are present, fetch the
+        // bytes in the background (Stage 3.5 Phase 8 §8.5 / Q8c).
+        if let Some(changed) = changed {
+            crate::storage::lfs::maybe_auto_pull_after_sync(&app, &key, &path, &changed);
+        }
     }
 
     Ok(result)
@@ -382,10 +390,12 @@ pub async fn git_resolve_continue(
             .key_for_space_dir(&path)
             .await
             .unwrap_or_else(|| IndexKey::Root(path.clone()));
-        if let Ok(changed) = super::ops::diff_after_pull(cli, &path).await {
+        let changed = super::ops::diff_after_pull(cli, &path).await.ok();
+        if let Some(changed) = &changed {
             if !changed.is_empty() {
                 if let Err(e) =
-                    crate::index::update::reindex_after_pull(&index_state, &key, changed).await
+                    crate::index::update::reindex_after_pull(&index_state, &key, changed.clone())
+                        .await
                 {
                     tracing::warn!("reindex_after_pull failed: {e}");
                 }
@@ -400,6 +410,9 @@ pub async fn git_resolve_continue(
             .invalidate_project_backlinks(key.project())
             .await;
         emit_space_synced(&app, &key);
+        if let Some(changed) = changed {
+            crate::storage::lfs::maybe_auto_pull_after_sync(&app, &key, &path, &changed);
+        }
     }
 
     Ok(result)

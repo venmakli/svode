@@ -10,6 +10,7 @@ use crate::git::commands::{require_cli, GitState};
 use crate::git::ops;
 use crate::index::IndexState;
 use crate::space::{config, project, registry, settings, symlinks, types::*};
+use crate::storage::lfs::LfsState;
 
 fn detect_status_for_ref(parent: &Path, sp_ref: &SpaceRef) -> SpaceStatus {
     let space_dir = parent.join(&sp_ref.path);
@@ -119,6 +120,7 @@ pub fn list_projects(app: AppHandle) -> Result<Vec<SpaceInfo>, AppError> {
                         .unwrap_or(false),
                     last_opened: sp_ref.last_opened.clone(),
                     status: SpaceStatus::Ready,
+                    lfs_state: LfsState::NotApplicable,
                 });
             }
             Err(_) => continue,
@@ -175,6 +177,7 @@ pub async fn create_project(
         has_spaces: false,
         last_opened: None,
         status: SpaceStatus::Ready,
+        lfs_state: LfsState::NotApplicable,
     })
 }
 
@@ -235,6 +238,7 @@ pub async fn open_project_folder(
             .unwrap_or(false),
         last_opened: None,
         status: SpaceStatus::Ready,
+        lfs_state: LfsState::NotApplicable,
     })
 }
 
@@ -566,6 +570,7 @@ pub async fn project_clone(
             .unwrap_or(false),
         last_opened: None,
         status: SpaceStatus::Ready,
+        lfs_state: LfsState::NotApplicable,
     })
 }
 
@@ -760,7 +765,11 @@ pub async fn clone_missing_space(
                 let lock = git_state.get_lock(&parent).await;
                 let _guard = lock.lock().await;
                 let out = cli
-                    .exec(&parent, &["submodule", "update", "--init", &space_ref.path])
+                    .exec_with_env(
+                        &parent,
+                        &["submodule", "update", "--init", &space_ref.path],
+                        &[("GIT_LFS_SKIP_SMUDGE", "1")],
+                    )
                     .await?;
                 if out.exit_code != 0 {
                     return Err(AppError::GitCommandFailed(format!(
@@ -814,6 +823,32 @@ pub async fn clone_missing_space(
         .on_space_status_changed(&app, &parent, &space_id, SpaceStatus::Ready)
         .await;
     emit_space_status_changed(&app, &parent, &space_id, old_status, SpaceStatus::Ready);
+
+    // Spawn a background LFS probe — if the cloned space uses an LFS-flavoured
+    // strategy, the frontend will see the right CTA without polling. We
+    // deliberately do NOT run `git lfs pull` here; that's the user gesture
+    // wired up via `storage::lfs::repair_lfs`.
+    let app_handle = app.clone();
+    let project_for_probe = parent.clone();
+    let space_id_for_probe = space_id.clone();
+    let target_dir = space_dir.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app_handle.state::<IndexState>();
+        let key = match state
+            .key_for_project_space_id(&project_for_probe, Some(&space_id_for_probe))
+            .await
+        {
+            Ok(k) => k,
+            Err(e) => {
+                tracing::warn!("post-clone probe: key resolution failed: {e}");
+                return;
+            }
+        };
+        let probed =
+            crate::storage::lfs::probe_lfs(&app_handle, &project_for_probe, &key, &target_dir)
+                .await;
+        state.set_lfs_state_with(&app_handle, &key, probed).await;
+    });
 
     Ok(())
 }

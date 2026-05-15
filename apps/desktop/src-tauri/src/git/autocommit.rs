@@ -31,6 +31,7 @@ pub enum SystemCommitKind {
     SpaceConfig,
     AgentInstructions,
     CliIntegration,
+    AssetsStrategy,
 }
 
 impl SystemCommitKind {
@@ -39,6 +40,7 @@ impl SystemCommitKind {
             SystemCommitKind::SpaceConfig => "Update space config",
             SystemCommitKind::AgentInstructions => "Update agent instructions",
             SystemCommitKind::CliIntegration => "Update CLI integration",
+            SystemCommitKind::AssetsStrategy => "Update assets strategy",
         }
     }
 
@@ -48,6 +50,9 @@ impl SystemCommitKind {
             SystemCommitKind::SpaceConfig => &[".combai/config.json"],
             SystemCommitKind::AgentInstructions => &[".combai/AGENTS.md"],
             SystemCommitKind::CliIntegration => &["CLAUDE.md", ".mcp.json", ".claude"],
+            SystemCommitKind::AssetsStrategy => {
+                &[".gitattributes", ".gitignore", ".combai/config.json"]
+            }
         }
     }
 }

@@ -65,6 +65,9 @@ pub enum AppError {
     #[error("Storage: {0}")]
     Storage(String),
 
+    #[error("strategy is inherited from project")]
+    StrategyInherited,
+
     #[error("Git identity not configured")]
     IdentityMissing,
 

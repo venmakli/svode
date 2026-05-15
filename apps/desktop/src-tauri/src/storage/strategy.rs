@@ -6,7 +6,7 @@ use super::s3;
 use crate::error::AppError;
 use crate::git::GitState;
 use crate::git::commands::require_cli;
-use crate::space::types::{AssetsS3Config, AssetsSpaceConfig, AssetsStrategy};
+use crate::space::types::{AssetsS3Config, AssetsStrategy};
 
 /// Non-fatal diagnostics produced by `apply_strategy` — surfaced to the UI so
 /// the user sees e.g. a silent `git lfs migrate import` failure instead of a
@@ -24,45 +24,6 @@ const LFS_END: &str = "# combai:assets-lfs:end";
 
 const IGNORE_BODY: &str = ".assets/";
 const LFS_BODY: &str = ".assets/** filter=lfs diff=lfs merge=lfs -text";
-
-/// Stage a newly uploaded asset via `git add` when the active strategy needs
-/// it to be tracked. For `Local`, assets live outside git entirely and this
-/// is a no-op. For `InGit`/`LfsRemote`/`LfsS3` the asset must end up in the
-/// index — if git is unavailable, we surface an error so the caller can warn
-/// the user (strategy promises tracking, the upload broke that promise).
-pub async fn stage_new_asset(
-    git_state: &GitState,
-    space_dir: &Path,
-    cfg: Option<&AssetsSpaceConfig>,
-    asset_rel_path: &str,
-) -> Result<(), AppError> {
-    let strategy = cfg.map(|c| c.strategy).unwrap_or_default();
-    if matches!(strategy, AssetsStrategy::Local) {
-        return Ok(());
-    }
-
-    let cli = require_cli(git_state).map_err(|_| {
-        AppError::Storage(format!(
-            "assets strategy requires git, but git is not available; cannot stage {asset_rel_path}"
-        ))
-    })?;
-
-    let lock = git_state.get_lock(space_dir).await;
-    let _guard = lock.lock().await;
-
-    let output = cli
-        .exec(space_dir, &["add", asset_rel_path])
-        .await
-        .map_err(|e| AppError::Storage(format!("git add {asset_rel_path} errored: {e}")))?;
-    if output.exit_code != 0 {
-        return Err(AppError::Storage(format!(
-            "git add {asset_rel_path} failed ({}): {}",
-            output.exit_code,
-            output.stderr.trim()
-        )));
-    }
-    Ok(())
-}
 
 /// Read a file to a string, returning an empty string if the file does not
 /// exist. Any other IO error is propagated.
@@ -386,32 +347,8 @@ pub async fn apply_strategy(
         }
     }
 
-    // Stage the updated meta files so the user sees them in "Changes".
-    // Only add files that actually exist on disk now.
-    let mut to_add: Vec<&str> = Vec::new();
-    if gitignore_path.exists() {
-        to_add.push(".gitignore");
-    }
-    if gitattributes_path.exists() {
-        to_add.push(".gitattributes");
-    }
-    if !to_add.is_empty() {
-        let mut args: Vec<&str> = vec!["add"];
-        args.extend(to_add);
-        match cli.exec(space_dir, &args).await {
-            Ok(o) if o.exit_code != 0 => {
-                let msg = format!("git add meta files failed: {}", o.stderr.trim());
-                tracing::warn!("{msg}");
-                result.warnings.push(msg);
-            }
-            Err(e) => {
-                let msg = format!("git add meta files errored: {e}");
-                tracing::warn!("{msg}");
-                result.warnings.push(msg);
-            }
-            _ => {}
-        }
-    }
-
+    // Staging of `.gitignore`/`.gitattributes`/`.combai/config.json` is now
+    // done by the caller via `AutocommitService::commit_system_now` with
+    // `SystemCommitKind::AssetsStrategy` — see `storage::commands`.
     Ok(result)
 }

@@ -63,17 +63,34 @@ impl GitCli {
         space_dir: &Path,
         args: &[&str],
     ) -> Result<GitOutput, AppError> {
+        self.exec_with_env(space_dir, args, &[]).await
+    }
+
+    /// Execute a git command with extra environment variables. Used e.g. for
+    /// `submodule update` calls that need `GIT_LFS_SKIP_SMUDGE=1` to defer
+    /// LFS content fetches to the explicit Repair flow.
+    pub async fn exec_with_env(
+        &self,
+        space_dir: &Path,
+        args: &[&str],
+        extra_env: &[(&str, &str)],
+    ) -> Result<GitOutput, AppError> {
         tracing::debug!(
             "git {} (in {})",
             args.join(" "),
             space_dir.display()
         );
 
-        let output = Command::new(&self.git_path)
-            .args(args)
+        let mut cmd = Command::new(&self.git_path);
+        cmd.args(args)
             .current_dir(space_dir)
             .env("GIT_TERMINAL_PROMPT", "0")
-            .env("LC_ALL", "C.UTF-8")
+            .env("LC_ALL", "C.UTF-8");
+        for (k, v) in extra_env {
+            cmd.env(k, v);
+        }
+
+        let output = cmd
             .output()
             .await
             .map_err(|e| {

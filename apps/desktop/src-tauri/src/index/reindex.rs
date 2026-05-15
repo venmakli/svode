@@ -258,16 +258,6 @@ where
     Ok(())
 }
 
-/// Derive an asset type bucket from file extension.
-fn asset_type_from_ext(ext: &str) -> &'static str {
-    match ext.to_ascii_lowercase().as_str() {
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" => "image",
-        "mp4" | "mov" | "webm" => "video",
-        "mp3" | "wav" | "ogg" | "m4a" => "audio",
-        _ => "file",
-    }
-}
-
 /// Guess a MIME type from extension. Keep simple; extend as needed.
 fn mime_from_ext(ext: &str) -> Option<&'static str> {
     Some(match ext.to_ascii_lowercase().as_str() {
@@ -292,10 +282,9 @@ fn mime_from_ext(ext: &str) -> Option<&'static str> {
 struct IndexedAsset {
     id: String,
     rel_path: String,
-    original_name: String,
-    asset_type: &'static str,
-    mime_type: Option<&'static str>,
-    size: i64,
+    file_name: String,
+    mime: Option<&'static str>,
+    size_bytes: i64,
     created_at: String,
 }
 
@@ -310,7 +299,7 @@ fn build_asset(space_dir: &Path, abs_path: &Path) -> Result<IndexedAsset, AppErr
         .to_string();
     let rel_path = normalize_rel(&rel_path);
 
-    let original_name = abs_path
+    let file_name = abs_path
         .file_name()
         .unwrap_or_default()
         .to_string_lossy()
@@ -319,11 +308,10 @@ fn build_asset(space_dir: &Path, abs_path: &Path) -> Result<IndexedAsset, AppErr
         .extension()
         .map(|e| e.to_string_lossy().to_string())
         .unwrap_or_default();
-    let asset_type = asset_type_from_ext(&ext);
-    let mime_type = mime_from_ext(&ext);
+    let mime = mime_from_ext(&ext);
 
     let meta = fs::metadata(abs_path)?;
-    let size = meta.len() as i64;
+    let size_bytes = meta.len() as i64;
     let created_at = meta
         .modified()
         .map(format_system_time)
@@ -335,10 +323,9 @@ fn build_asset(space_dir: &Path, abs_path: &Path) -> Result<IndexedAsset, AppErr
     Ok(IndexedAsset {
         id: ulid::Ulid::new().to_string().to_lowercase(),
         rel_path,
-        original_name,
-        asset_type,
-        mime_type,
-        size,
+        file_name,
+        mime,
+        size_bytes,
         created_at,
     })
 }
@@ -430,21 +417,19 @@ where
 {
     sqlx::query(
         r#"
-        INSERT INTO assets (id, path, original_name, document_id, asset_type, mime_type, size, created_at)
-        VALUES (?, ?, ?, NULL, ?, ?, ?, ?)
-        ON CONFLICT(path) DO UPDATE SET
-            original_name = excluded.original_name,
-            asset_type = excluded.asset_type,
-            mime_type = excluded.mime_type,
-            size = excluded.size
+        INSERT INTO assets (id, rel_path, file_name, mime, size_bytes, document_id, created_at)
+        VALUES (?, ?, ?, ?, ?, NULL, ?)
+        ON CONFLICT(rel_path) DO UPDATE SET
+            file_name = excluded.file_name,
+            mime = excluded.mime,
+            size_bytes = excluded.size_bytes
         "#,
     )
     .bind(&asset.id)
     .bind(&asset.rel_path)
-    .bind(&asset.original_name)
-    .bind(asset.asset_type)
-    .bind(asset.mime_type)
-    .bind(asset.size)
+    .bind(&asset.file_name)
+    .bind(asset.mime)
+    .bind(asset.size_bytes)
     .bind(&asset.created_at)
     .execute(executor)
     .await?;

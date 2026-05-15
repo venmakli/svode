@@ -9,7 +9,12 @@ use crate::error::AppError;
 ///
 /// Bumped to 2 in stage-3.5 Phase 5: adds the `broken_links` table that
 /// Phase 7 will populate during cross-space link validation.
-const SCHEMA_VERSION: i64 = 2;
+///
+/// Bumped to 3 in stage-3.5 Phase 8: the per-pool `assets` table is
+/// rewritten with renamed columns (`path → rel_path`, `original_name →
+/// file_name`, `mime_type → mime`, `size → size_bytes`) and `asset_type`
+/// is dropped (derived from mime at render time).
+const SCHEMA_VERSION: i64 = 3;
 
 /// Create a connection pool for a space's index database.
 /// Ensures the parent directory exists and enables WAL mode.
@@ -111,12 +116,11 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         r#"
         CREATE TABLE IF NOT EXISTS assets (
             id TEXT PRIMARY KEY,
-            path TEXT NOT NULL UNIQUE,
-            original_name TEXT,
+            rel_path TEXT NOT NULL UNIQUE,
+            file_name TEXT NOT NULL,
+            mime TEXT,
+            size_bytes INTEGER,
             document_id TEXT,
-            asset_type TEXT NOT NULL,
-            mime_type TEXT,
-            size INTEGER,
             created_at TEXT NOT NULL
         )
         "#,
