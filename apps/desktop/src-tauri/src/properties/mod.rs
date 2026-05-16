@@ -1593,6 +1593,23 @@ pub fn rename_schema_column(
     })
 }
 
+pub fn update_schema_column(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+    patch: Value,
+) -> Result<CollectionSchema, AppError> {
+    let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
+    with_rollback(vec![schema_path], || {
+        let mut schema = read_schema_or_default(space, collection_path)?;
+        let column = find_column_mut(&mut schema, column_name)?;
+        apply_column_patch(column, patch)?;
+        validate_schema(&schema)?;
+        write_schema(space, collection_path, &schema)?;
+        Ok(schema)
+    })
+}
+
 pub fn delete_schema_column(
     space: &str,
     collection_path: &str,
@@ -1898,13 +1915,13 @@ pub fn add_view(
         let mut schema = read_schema_or_default(space, collection_path)?;
         let base_name = {
             let trimmed = view.name().trim();
-            if trimmed.is_empty() {
-                "Table"
-            } else {
-                trimmed
-            }
+            if trimmed.is_empty() { "Table" } else { trimmed }
         };
-        if schema.views.iter().any(|existing| existing.name() == base_name) {
+        if schema
+            .views
+            .iter()
+            .any(|existing| existing.name() == base_name)
+        {
             let existing_names: HashSet<String> = schema
                 .views
                 .iter()
@@ -2284,7 +2301,7 @@ pub async fn list_entries_for_view(
     space: &str,
     collection_path: &str,
     view_name: &str,
-    include_nested: bool,
+    include_nested: Option<bool>,
 ) -> Result<Vec<entry::Entry>, AppError> {
     let schema = read_schema_at(&collection_dir(space, collection_path).join(SCHEMA_FILE))?;
     let view = schema
@@ -2292,6 +2309,10 @@ pub async fn list_entries_for_view(
         .iter()
         .find(|view| view.name() == view_name)
         .ok_or_else(|| schema_error(format!("view '{view_name}' not found")))?;
+    let include_nested = include_nested.unwrap_or_else(|| match view {
+        View::Table { show_nested, .. } => show_nested.unwrap_or(true),
+        _ => false,
+    });
     let filters = resolve_query_filters(git_cli, Path::new(space), &schema, view.filters()).await?;
     let rows = query_entry_rows(
         pool,
@@ -2319,12 +2340,14 @@ pub async fn query_entries(
     collection_path: &str,
     filters: Option<Vec<Filter>>,
     sort: Option<Vec<Sort>>,
+    include_nested: Option<bool>,
     limit: Option<i64>,
     offset: Option<i64>,
 ) -> Result<Vec<entry::Entry>, AppError> {
     let schema = read_schema_at(&collection_dir(space, collection_path).join(SCHEMA_FILE))?;
     let filters = filters.unwrap_or_default();
     let sort = sort.unwrap_or_default();
+    let include_nested = include_nested.unwrap_or(false);
     validate_ad_hoc_query(&schema, &filters, &sort)?;
     let filters = resolve_query_filters(git_cli, Path::new(space), &schema, &filters).await?;
     let rows = query_entry_rows(
@@ -2337,7 +2360,13 @@ pub async fn query_entries(
         offset,
     )
     .await?;
-    entries_from_rows(space, collection_path, rows, false, sort.is_empty())
+    entries_from_rows(
+        space,
+        collection_path,
+        rows,
+        include_nested,
+        sort.is_empty(),
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -3493,6 +3522,35 @@ fn apply_option_patch(option: &mut PropertyOption, patch: Value) -> Result<(), A
     }
     if mapping.contains_key("group") {
         option.group = nullable_from_mapping(mapping, "group")?;
+    }
+    Ok(())
+}
+
+fn apply_column_patch(column: &mut Column, patch: Value) -> Result<(), AppError> {
+    let mapping = patch
+        .as_mapping()
+        .ok_or_else(|| schema_error("column patch must be an object"))?;
+
+    if mapping.contains_key("display") {
+        column.display = nullable_from_mapping(mapping, "display")?;
+    }
+    if mapping.contains_key("min") {
+        column.min = nullable_from_mapping(mapping, "min")?;
+    }
+    if mapping.contains_key("max") {
+        column.max = nullable_from_mapping(mapping, "max")?;
+    }
+    if mapping.contains_key("color") {
+        column.color = nullable_from_mapping(mapping, "color")?;
+    }
+    if mapping.contains_key("time_by_default") {
+        column.time_by_default = nullable_from_mapping(mapping, "time_by_default")?;
+    }
+    if mapping.contains_key("range_by_default") {
+        column.range_by_default = nullable_from_mapping(mapping, "range_by_default")?;
+    }
+    if mapping.contains_key("options") {
+        column.options = nullable_from_mapping(mapping, "options")?;
     }
     Ok(())
 }

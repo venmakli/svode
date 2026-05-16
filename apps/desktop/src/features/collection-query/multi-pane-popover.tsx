@@ -81,7 +81,7 @@ export function MultiPanePopover<TPane extends string>({
       <PopoverContent
         align={align}
         className={cn(
-          "flex w-80 max-h-[min(640px,var(--radix-popover-content-available-height))] flex-col gap-0 overflow-hidden p-0",
+          "flex w-80 max-h-[min(640px,var(--radix-popover-content-available-height))] flex-col gap-0 overflow-hidden !rounded-[10px] !p-0 !shadow-[0_0_0_1px_rgba(0,0,0,0.08),0_12px_32px_-8px_rgba(0,0,0,0.18),0_4px_8px_-2px_rgba(0,0,0,0.08)]",
           className,
         )}
       >

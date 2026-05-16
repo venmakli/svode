@@ -1,0 +1,31 @@
+import {
+  Calendar,
+  Check,
+  Circle,
+  Flag,
+  Hash,
+  Link,
+  Mail,
+  Phone,
+  Tag,
+  Type,
+  User,
+  type LucideIcon,
+} from "lucide-react";
+import type { PropertyType } from "@/features/properties/types";
+
+export const PROPERTY_TYPE_ICONS: Record<PropertyType, LucideIcon> = {
+  text: Type,
+  number: Hash,
+  select: Circle,
+  multi_select: Tag,
+  status: Flag,
+  date: Calendar,
+  person: User,
+  checkbox: Check,
+  url: Link,
+  email: Mail,
+  phone: Phone,
+};
+
+export const TITLE_ICON = Type;

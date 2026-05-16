@@ -31,7 +31,11 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
-import type { Person, PropertyOption, PropertyType } from "@/features/properties/types";
+import type {
+  Person,
+  PropertyOption,
+  PropertyType,
+} from "@/features/properties/types";
 import { PropertyBadge } from "@/features/properties/property-badge";
 import {
   initialsForPerson,
@@ -106,7 +110,9 @@ export function ViewQueryPopover({
   const [innerOpen, setInnerOpen] = useState(false);
   const [filterDraft, setFilterDraft] = useState<FilterDraft | null>(null);
   const [sortDraft, setSortDraft] = useState<SortDraft | null>(null);
-  const [groupDraft, setGroupDraft] = useState<string | null>(query.merged.groupBy);
+  const [groupDraft, setGroupDraft] = useState<string | null>(
+    query.merged.groupBy,
+  );
   const effectiveOpen = open ?? innerOpen;
   const setEffectiveOpen = (nextOpen: boolean) => {
     setInnerOpen(nextOpen);
@@ -116,8 +122,9 @@ export function ViewQueryPopover({
   const activeFilters = query.ephemeral?.filter ?? query.persistent.filter;
   const activeSort = query.ephemeral?.sort ?? query.persistent.sort;
   const activeGroupBy =
-    query.ephemeral && Object.prototype.hasOwnProperty.call(query.ephemeral, "groupBy")
-      ? query.ephemeral.groupBy ?? null
+    query.ephemeral &&
+    Object.prototype.hasOwnProperty.call(query.ephemeral, "groupBy")
+      ? (query.ephemeral.groupBy ?? null)
       : query.persistent.groupBy;
 
   function openNewFilter(field?: QueryField) {
@@ -150,7 +157,9 @@ export function ViewQueryPopover({
       setPane("filter");
       return;
     }
-    query.setLocalQuery({ filter: activeFilters.filter((_, index) => index !== filterDraft.index) });
+    query.setLocalQuery({
+      filter: activeFilters.filter((_, index) => index !== filterDraft.index),
+    });
     setPane("filter");
   }
 
@@ -181,7 +190,9 @@ export function ViewQueryPopover({
       setPane("sort");
       return;
     }
-    query.setLocalQuery({ sort: activeSort.filter((_, index) => index !== sortDraft.index) });
+    query.setLocalQuery({
+      sort: activeSort.filter((_, index) => index !== sortDraft.index),
+    });
     setPane("sort");
   }
 
@@ -267,7 +278,9 @@ export function ViewQueryPopover({
           ) : null}
         </div>
       ),
-      notice: query.hasLocalChanges ? <Notice sharedChanged={query.sharedChanged} /> : null,
+      notice: query.hasLocalChanges ? (
+        <Notice sharedChanged={query.sharedChanged} />
+      ) : null,
     },
     {
       id: "filter" as const,
@@ -290,7 +303,12 @@ export function ViewQueryPopover({
         />
       ),
       footer: (
-        <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => setPane("filterField")}>
+        <Button
+          type="button"
+          variant="ghost"
+          className="w-full justify-start"
+          onClick={() => setPane("filterField")}
+        >
           <Plus data-icon="inline-start" />
           {m.view_query_add_filter()}
         </Button>
@@ -323,11 +341,20 @@ export function ViewQueryPopover({
       ) : null,
       footer: filterDraft ? (
         <div className="flex flex-col gap-1">
-          <Button type="button" className="w-full justify-start" onClick={applyFilter}>
+          <Button
+            type="button"
+            className="w-full justify-start"
+            onClick={applyFilter}
+          >
             <Check data-icon="inline-start" />
             {m.view_query_apply_filter()}
           </Button>
-          <Button type="button" variant="ghost" className="w-full justify-start" onClick={clearFilter}>
+          <Button
+            type="button"
+            variant="ghost"
+            className="w-full justify-start"
+            onClick={clearFilter}
+          >
             <Trash2 data-icon="inline-start" />
             {m.view_query_clear_filter()}
           </Button>
@@ -348,7 +375,9 @@ export function ViewQueryPopover({
               key: `${sort.field}-${index}`,
               icon: GripVertical,
               label: field?.label ?? sort.field,
-              meta: sort.desc ? m.view_query_sort_desc() : m.view_query_sort_asc(),
+              meta: sort.desc
+                ? m.view_query_sort_desc()
+                : m.view_query_sort_asc(),
               warning: query.invalidSorts.includes(sort),
               onClick: () => openExistingSort(sort, index),
             };
@@ -356,7 +385,12 @@ export function ViewQueryPopover({
         />
       ),
       footer: (
-        <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => setPane("sortField")}>
+        <Button
+          type="button"
+          variant="ghost"
+          className="w-full justify-start"
+          onClick={() => setPane("sortField")}
+        >
           <Plus data-icon="inline-start" />
           {m.view_query_add_sort()}
         </Button>
@@ -386,11 +420,20 @@ export function ViewQueryPopover({
       ) : null,
       footer: sortDraft ? (
         <div className="flex flex-col gap-1">
-          <Button type="button" className="w-full justify-start" onClick={applySort}>
+          <Button
+            type="button"
+            className="w-full justify-start"
+            onClick={applySort}
+          >
             <Check data-icon="inline-start" />
             {m.view_query_apply_sort()}
           </Button>
-          <Button type="button" variant="ghost" className="w-full justify-start" onClick={clearSort}>
+          <Button
+            type="button"
+            variant="ghost"
+            className="w-full justify-start"
+            onClick={clearSort}
+          >
             <Trash2 data-icon="inline-start" />
             {m.view_query_delete_sort()}
           </Button>
@@ -456,7 +499,11 @@ export function ViewQueryPopover({
       ),
       footer: (
         <div className="flex flex-col gap-1">
-          <Button type="button" className="w-full justify-start" onClick={applyGroup}>
+          <Button
+            type="button"
+            className="w-full justify-start"
+            onClick={applyGroup}
+          >
             <Check data-icon="inline-start" />
             {m.view_query_apply_group()}
           </Button>
@@ -483,10 +530,12 @@ export function ViewQueryPopover({
 function isEditableTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
   const tagName = target.tagName.toLowerCase();
-  return tagName === "input" || tagName === "textarea" || target.isContentEditable;
+  return (
+    tagName === "input" || tagName === "textarea" || target.isContentEditable
+  );
 }
 
-function QueryList({
+export function QueryList({
   rows,
   emptyIcon,
   emptyLabel,
@@ -502,7 +551,8 @@ function QueryList({
   emptyIcon: LucideIcon;
   emptyLabel: string;
 }) {
-  if (rows.length === 0) return <EmptyPane icon={emptyIcon} label={emptyLabel} />;
+  if (rows.length === 0)
+    return <EmptyPane icon={emptyIcon} label={emptyLabel} />;
   return (
     <ScrollArea className="h-64">
       <div className="flex flex-col p-1">
@@ -521,7 +571,7 @@ function QueryList({
   );
 }
 
-function FieldChoiceList({
+export function FieldChoiceList({
   fields,
   onSelect,
 }: {
@@ -545,7 +595,7 @@ function FieldChoiceList({
   );
 }
 
-function FilterEditor({
+export function FilterEditor({
   schema,
   draft,
   persons,
@@ -596,7 +646,9 @@ function FilterEditor({
           onChange={onChange}
         />
       ) : (
-        <div className="text-sm text-muted-foreground">{m.view_query_filter_no_value_needed()}</div>
+        <div className="text-sm text-muted-foreground">
+          {m.view_query_filter_no_value_needed()}
+        </div>
       )}
     </div>
   );
@@ -615,8 +667,13 @@ function FilterValueControl({
   onRequestPersons?: (allTime?: boolean) => Promise<Person[]>;
   onChange: (filter: QueryFilter) => void;
 }) {
-  if (field.type === "select" || field.type === "status" || field.type === "multi_select") {
-    const options = statusGroupOptions(field, filter.op) ?? field.column?.options ?? [];
+  if (
+    field.type === "select" ||
+    field.type === "status" ||
+    field.type === "multi_select"
+  ) {
+    const options =
+      statusGroupOptions(field, filter.op) ?? field.column?.options ?? [];
     return (
       <OptionChecklist
         options={options}
@@ -639,8 +696,12 @@ function FilterValueControl({
     return (
       <ToggleGroup
         type="single"
-        value={filter.value === true ? "true" : filter.value === false ? "false" : ""}
-        onValueChange={(value) => onChange({ ...filter, value: value === "true" })}
+        value={
+          filter.value === true ? "true" : filter.value === false ? "false" : ""
+        }
+        onValueChange={(value) =>
+          onChange({ ...filter, value: value === "true" })
+        }
       >
         <ToggleGroupItem value="true">{m.view_query_yes()}</ToggleGroupItem>
         <ToggleGroupItem value="false">{m.view_query_no()}</ToggleGroupItem>
@@ -651,8 +712,14 @@ function FilterValueControl({
     return (
       <Input
         type="number"
-        value={typeof filter.value === "number" || typeof filter.value === "string" ? filter.value : ""}
-        onChange={(event) => onChange({ ...filter, value: Number(event.target.value) })}
+        value={
+          typeof filter.value === "number" || typeof filter.value === "string"
+            ? filter.value
+            : ""
+        }
+        onChange={(event) =>
+          onChange({ ...filter, value: Number(event.target.value) })
+        }
       />
     );
   }
@@ -700,7 +767,10 @@ function OptionChecklist({
       </div>
       <div className="flex max-h-44 flex-col overflow-auto">
         {visible.map((option) => (
-          <label key={option.name} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted">
+          <label
+            key={option.name}
+            className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+          >
             <Checkbox
               checked={selected.has(option.name)}
               onCheckedChange={(checked) => {
@@ -753,7 +823,10 @@ function PersonChecklist({
       </div>
       <div className="flex max-h-44 flex-col overflow-auto">
         {visible.map((person) => (
-          <label key={person.email} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted">
+          <label
+            key={person.email}
+            className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+          >
             <Checkbox
               checked={selected.has(person.email)}
               onCheckedChange={(checked) => {
@@ -766,7 +839,9 @@ function PersonChecklist({
             <Avatar className="size-6">
               <AvatarFallback>{initialsForPerson(person)}</AvatarFallback>
             </Avatar>
-            <span className="min-w-0 truncate">{personDisplayName(person)}</span>
+            <span className="min-w-0 truncate">
+              {personDisplayName(person)}
+            </span>
           </label>
         ))}
       </div>
@@ -774,7 +849,7 @@ function PersonChecklist({
   );
 }
 
-function SortEditor({
+export function SortEditor({
   sort,
   onChange,
 }: {
@@ -799,7 +874,7 @@ function SortEditor({
   );
 }
 
-function SaveButton({
+export function SaveButton({
   query,
   onSaved,
 }: {
@@ -830,7 +905,7 @@ function SaveButton({
   );
 }
 
-function PaneRow({
+export function PaneRow({
   icon: Icon,
   label,
   meta,
@@ -857,7 +932,11 @@ function PaneRow({
       <Icon />
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {warning ? <AlertTriangle className="text-warning" /> : null}
-      {meta ? <span className="max-w-28 truncate text-xs text-muted-foreground">{meta}</span> : null}
+      {meta ? (
+        <span className="max-w-28 truncate text-xs text-muted-foreground">
+          {meta}
+        </span>
+      ) : null}
       <ChevronRight className="text-muted-foreground" />
     </button>
   );
@@ -891,7 +970,12 @@ function fieldTypeLabel(type: PropertyType) {
 function filterValues(filter: QueryFilter) {
   if (Array.isArray(filter.values)) return filter.values;
   if (Array.isArray(filter.value)) return filter.value;
-  if (filter.value === undefined || filter.value === null || filter.value === "") return [];
+  if (
+    filter.value === undefined ||
+    filter.value === null ||
+    filter.value === ""
+  )
+    return [];
   return [filter.value];
 }
 
@@ -902,12 +986,18 @@ function filterWithValues(filter: QueryFilter, values: string[]): QueryFilter {
   return { ...filter, value: values[0] ?? "", values: undefined };
 }
 
-function statusGroupOptions(field: QueryField, op: FilterOp): PropertyOption[] | null {
+function statusGroupOptions(
+  field: QueryField,
+  op: FilterOp,
+): PropertyOption[] | null {
   if (field.type !== "status" || !op.startsWith("group_")) return null;
   const groups = new Map<string, PropertyOption>();
   for (const option of field.column?.options ?? []) {
     if (option.group && !groups.has(option.group)) {
-      groups.set(option.group, { name: option.group, color: option.color ?? null });
+      groups.set(option.group, {
+        name: option.group,
+        color: option.color ?? null,
+      });
     }
   }
   return [...groups.values()];

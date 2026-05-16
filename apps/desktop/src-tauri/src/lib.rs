@@ -54,6 +54,7 @@ pub fn run() {
             commands::files::add_schema_column,
             commands::files::change_schema_type,
             commands::files::rename_schema_column,
+            commands::files::update_schema_column,
             commands::files::delete_schema_column,
             commands::files::add_option,
             commands::files::rename_option,

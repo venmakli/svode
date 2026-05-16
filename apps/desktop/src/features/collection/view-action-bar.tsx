@@ -81,10 +81,18 @@ export function ViewActionBar({
   onDeleteViewRequest: () => void;
   onSchemaChange: (schema: CollectionSchema) => void;
   autoConfigForType: (type: ViewType) => Record<string, unknown>;
-  onCreateEntry: () => void;
+  onCreateEntry: (asFolder: boolean) => void;
 }) {
-  const filterActive = settingsOpen && settingsPane === "filter";
-  const sortActive = settingsOpen && settingsPane === "sort";
+  const filterActive =
+    settingsOpen &&
+    (settingsPane === "filter" ||
+      settingsPane === "filterField" ||
+      settingsPane === "filterEditor");
+  const sortActive =
+    settingsOpen &&
+    (settingsPane === "sort" ||
+      settingsPane === "sortField" ||
+      settingsPane === "sortEditor");
   const groupBy =
     activeView && "group_by" in activeView
       ? ((activeView.group_by ?? activeView.groupBy) as string | undefined)
@@ -115,82 +123,84 @@ export function ViewActionBar({
           </span>
         </Button>
       ) : null}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className={cn(
+              (query.merged.filter.length > 0 || filterActive) && "relative",
+              filterActive && "bg-accent text-accent-foreground",
+            )}
+            onClick={() => {
+              onSettingsPaneChange("filter");
+              onSettingsOpenChange(!filterActive);
+            }}
+          >
+            <Filter />
+            <span className="sr-only">{m.view_query_filter_title()}</span>
+            {query.merged.filter.length > 0 ? (
+              <Badge className="absolute -right-1 -top-1 h-4 min-w-4 justify-center rounded-full px-1 text-[10px]">
+                {query.merged.filter.length}
+              </Badge>
+            ) : null}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{m.view_query_filter_title()}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className={cn(
+              (query.merged.sort.length > 0 || sortActive) && "relative",
+              sortActive && "bg-accent text-accent-foreground",
+            )}
+            onClick={() => {
+              onSettingsPaneChange("sort");
+              onSettingsOpenChange(!sortActive);
+            }}
+          >
+            <ArrowUpDown />
+            <span className="sr-only">{m.view_query_sort_title()}</span>
+            {query.merged.sort.length > 0 ? (
+              <Badge className="absolute -right-1 -top-1 h-4 min-w-4 justify-center rounded-full px-1 text-[10px]">
+                {query.merged.sort.length}
+              </Badge>
+            ) : null}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{m.view_query_sort_title()}</TooltipContent>
+      </Tooltip>
+      <ViewSettingsPopover
+        open={settingsOpen}
+        pane={settingsPane}
+        view={activeView}
+        renameValue={renameValue}
+        onOpenChange={onSettingsOpenChange}
+        onPaneChange={onSettingsPaneChange}
+        onRenameValueChange={onRenameValueChange}
+        onRename={onRename}
+        onUpdateView={onUpdateView}
+        onDuplicate={onDuplicateView}
+        onDeleteRequest={onDeleteViewRequest}
+        schema={schema}
+        query={query}
+        collectionPath={collectionPath}
+        spacePath={spacePath}
+        projectPath={projectPath}
+        onSchemaChange={onSchemaChange}
+        autoConfigForType={autoConfigForType}
+      />
       <ButtonGroup>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className={cn(
-                (query.merged.filter.length > 0 || filterActive) && "relative",
-                filterActive && "bg-accent text-accent-foreground",
-              )}
-              onClick={() => {
-                onSettingsPaneChange("filter");
-                onSettingsOpenChange(!filterActive);
-              }}
-            >
-              <Filter />
-              <span className="sr-only">{m.view_query_filter_title()}</span>
-              {query.merged.filter.length > 0 ? (
-                <Badge className="absolute -right-1 -top-1 h-4 min-w-4 justify-center rounded-full px-1 text-[10px]">
-                  {query.merged.filter.length}
-                </Badge>
-              ) : null}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{m.view_query_filter_title()}</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className={cn(
-                (query.merged.sort.length > 0 || sortActive) && "relative",
-                sortActive && "bg-accent text-accent-foreground",
-              )}
-              onClick={() => {
-                onSettingsPaneChange("sort");
-                onSettingsOpenChange(!sortActive);
-              }}
-            >
-              <ArrowUpDown />
-              <span className="sr-only">{m.view_query_sort_title()}</span>
-              {query.merged.sort.length > 0 ? (
-                <Badge className="absolute -right-1 -top-1 h-4 min-w-4 justify-center rounded-full px-1 text-[10px]">
-                  {query.merged.sort.length}
-                </Badge>
-              ) : null}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{m.view_query_sort_title()}</TooltipContent>
-        </Tooltip>
-        <ViewSettingsPopover
-          open={settingsOpen}
-          pane={settingsPane}
-          view={activeView}
-          renameValue={renameValue}
-          onOpenChange={onSettingsOpenChange}
-          onPaneChange={onSettingsPaneChange}
-          onRenameValueChange={onRenameValueChange}
-          onRename={onRename}
-          onUpdateView={onUpdateView}
-          onDuplicate={onDuplicateView}
-          onDeleteRequest={onDeleteViewRequest}
-          schema={schema}
-          query={query}
-          collectionPath={collectionPath}
-          spacePath={spacePath}
-          projectPath={projectPath}
-          onSchemaChange={onSchemaChange}
-          autoConfigForType={autoConfigForType}
-        />
-      </ButtonGroup>
-      <ButtonGroup>
-        <Button type="button" size="sm" onClick={onCreateEntry}>
+        <Button
+          type="button"
+          size="sm"
+          onClick={(event) => onCreateEntry(event.shiftKey)}
+        >
           <Plus data-icon="inline-start" />
           {m.collection_new_entry()}
         </Button>

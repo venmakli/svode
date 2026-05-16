@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -41,6 +47,7 @@ import {
   Link,
   Mail,
   PhoneCall,
+  Text,
 } from "lucide-react";
 import type { Column, DateRangeValue, Person, PropertyOption } from "./types";
 import { PropertyBadge } from "./property-badge";
@@ -74,6 +81,7 @@ interface PropertyControlProps {
   value: unknown;
   invalid?: boolean;
   disabled?: boolean;
+  autoOpen?: boolean;
   persons?: Person[];
   onRequestPersons?: (allTime: boolean) => Promise<Person[]>;
   onChange: (value: unknown) => void | Promise<void>;
@@ -84,6 +92,7 @@ export function PropertyControl({
   value,
   invalid,
   disabled,
+  autoOpen,
   persons = [],
   onRequestPersons,
   onChange,
@@ -96,6 +105,7 @@ export function PropertyControl({
           value={value}
           invalid={invalid}
           disabled={disabled}
+          autoOpen={autoOpen}
           onChange={onChange}
         />
       );
@@ -106,6 +116,7 @@ export function PropertyControl({
           value={value}
           invalid={invalid}
           disabled={disabled}
+          autoOpen={autoOpen}
           onChange={onChange}
         />
       );
@@ -116,6 +127,7 @@ export function PropertyControl({
           value={value}
           invalid={invalid}
           disabled={disabled}
+          autoOpen={autoOpen}
           onChange={onChange}
         />
       );
@@ -126,6 +138,7 @@ export function PropertyControl({
           value={value}
           invalid={invalid}
           disabled={disabled}
+          autoOpen={autoOpen}
           onChange={onChange}
         />
       );
@@ -142,9 +155,11 @@ export function PropertyControl({
     case "person":
       return (
         <PersonControl
+          column={column}
           value={value}
           invalid={invalid}
           disabled={disabled}
+          autoOpen={autoOpen}
           persons={persons}
           onRequestPersons={onRequestPersons}
           onChange={onChange}
@@ -167,6 +182,7 @@ export function PropertyControl({
           value={value}
           invalid={invalid}
           disabled={disabled}
+          autoOpen={autoOpen}
           onChange={onChange}
         />
       );
@@ -250,8 +266,11 @@ function NumberControl({
   const min = column.min ?? 0;
   const max = column.max ?? 100;
   const ratio = max === min ? 0 : ((numeric - min) / (max - min)) * 100;
-  const clamped = Number.isFinite(ratio) ? Math.min(100, Math.max(0, ratio)) : 0;
-  const outOfRange = Number.isFinite(numeric) && (numeric < min || numeric > max);
+  const clamped = Number.isFinite(ratio)
+    ? Math.min(100, Math.max(0, ratio))
+    : 0;
+  const outOfRange =
+    Number.isFinite(numeric) && (numeric < min || numeric > max);
 
   if (display === "bar" || display === "ring") {
     return (
@@ -273,10 +292,7 @@ function NumberControl({
                   style={colorStyle(column.color ?? "blue")}
                 />
               ) : (
-                <RingProgress
-                  value={clamped}
-                  color={column.color ?? "blue"}
-                />
+                <RingProgress value={clamped} color={column.color ?? "blue"} />
               )}
             </div>
           </TooltipTrigger>
@@ -350,14 +366,22 @@ function InlineNumberInput({
   );
 }
 
-function RingProgress({ value, color }: { value: number; color: Column["color"] }) {
+function RingProgress({
+  value,
+  color,
+}: {
+  value: number;
+  color: Column["color"];
+}) {
   return (
     <div
       className="grid size-7 shrink-0 place-items-center rounded-full bg-[conic-gradient(var(--property-color)_var(--progress),var(--muted)_0)] text-[10px] font-medium text-muted-foreground"
-      style={{
-        ...colorStyle(color ?? "blue"),
-        "--progress": `${value}%`,
-      } as CSSProperties}
+      style={
+        {
+          ...colorStyle(color ?? "blue"),
+          "--progress": `${value}%`,
+        } as CSSProperties
+      }
     >
       <div className="grid size-5 place-items-center rounded-full bg-background">
         {Math.round(value)}
@@ -371,8 +395,10 @@ function SelectControl({
   value,
   invalid,
   disabled,
+  autoOpen,
   onChange,
 }: PropertyControlProps) {
+  const [open, setOpen] = useState(Boolean(autoOpen));
   const selected = optionByName(column, value);
   const invalidOption = typeof value === "string" && value && !selected;
   const triggerOption =
@@ -381,8 +407,12 @@ function SelectControl({
       ? { name: value, color: "neutral" as const }
       : null);
 
+  useEffect(() => {
+    if (autoOpen) setOpen(true);
+  }, [autoOpen]);
+
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
@@ -394,7 +424,10 @@ function SelectControl({
           )}
         >
           {triggerOption ? (
-            <PropertyBadge option={triggerOption} invalid={invalidOption || invalid} />
+            <PropertyBadge
+              option={triggerOption}
+              invalid={invalidOption || invalid}
+            />
           ) : (
             <span className="text-muted-foreground">{m.property_empty()}</span>
           )}
@@ -412,7 +445,7 @@ function SelectControl({
                 {option.icon ? `${option.icon} ` : ""}
                 {option.name}
               </span>
-              {option.name === value ? <Check /> : null}
+              {option.name === value ? <Check data-icon="inline-end" /> : null}
             </DropdownMenuItem>
           ))}
           <DropdownMenuSeparator />
@@ -430,8 +463,10 @@ function StatusControl({
   value,
   invalid,
   disabled,
+  autoOpen,
   onChange,
 }: PropertyControlProps) {
+  const [open, setOpen] = useState(Boolean(autoOpen));
   const selected = optionByName(column, value);
   const invalidOption = typeof value === "string" && value && !selected;
   const triggerOption =
@@ -440,8 +475,12 @@ function StatusControl({
       ? { name: value, color: "neutral" as const }
       : null);
 
+  useEffect(() => {
+    if (autoOpen) setOpen(true);
+  }, [autoOpen]);
+
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
@@ -453,7 +492,10 @@ function StatusControl({
           )}
         >
           {triggerOption ? (
-            <PropertyBadge option={triggerOption} invalid={invalidOption || invalid} />
+            <PropertyBadge
+              option={triggerOption}
+              invalid={invalidOption || invalid}
+            />
           ) : (
             <span className="text-muted-foreground">{m.property_empty()}</span>
           )}
@@ -476,7 +518,9 @@ function StatusControl({
                     {option.icon ? `${option.icon} ` : ""}
                     {option.name}
                   </span>
-                  {option.name === value ? <Check /> : null}
+                  {option.name === value ? (
+                    <Check data-icon="inline-end" />
+                  ) : null}
                 </DropdownMenuItem>
               ))}
           </DropdownMenuGroup>
@@ -495,11 +539,20 @@ function MultiSelectControl({
   value,
   invalid,
   disabled,
+  autoOpen,
   onChange,
 }: PropertyControlProps) {
-  const values = Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+  const [open, setOpen] = useState(Boolean(autoOpen));
+  const values = Array.isArray(value)
+    ? value.filter((item) => typeof item === "string")
+    : [];
   const selected = values.map((name) => {
-    return column.options?.find((option) => option.name === name) ?? { name, color: "neutral" as const };
+    return (
+      column.options?.find((option) => option.name === name) ?? {
+        name,
+        color: "neutral" as const,
+      }
+    );
   });
   const selectedSet = new Set(values);
 
@@ -507,8 +560,12 @@ function MultiSelectControl({
     void onChange(values.filter((item) => item !== name));
   };
 
+  useEffect(() => {
+    if (autoOpen) setOpen(true);
+  }, [autoOpen]);
+
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <div
           role="button"
@@ -530,7 +587,9 @@ function MultiSelectControl({
                 />
               ))
             ) : (
-              <span className="text-muted-foreground">{m.property_empty()}</span>
+              <span className="text-muted-foreground">
+                {m.property_empty()}
+              </span>
             )}
           </div>
         </div>
@@ -572,15 +631,21 @@ function DateControl({
   value,
   invalid,
   disabled,
+  autoOpen,
   onChange,
 }: PropertyControlProps) {
+  const [open, setOpen] = useState(Boolean(autoOpen));
   const normalized = normalizeDateInput(value);
   const [startDate, setStartDate] = useState(datePart(normalized.start));
   const [startTime, setStartTime] = useState(timePart(normalized.start));
   const [endDate, setEndDate] = useState(datePart(normalized.end));
   const [endTime, setEndTime] = useState(timePart(normalized.end));
-  const [hasTime, setHasTime] = useState(normalized.hasTime || Boolean(column.timeByDefault));
-  const [isRange, setIsRange] = useState(normalized.isRange || Boolean(column.rangeByDefault));
+  const [hasTime, setHasTime] = useState(
+    normalized.hasTime || Boolean(column.timeByDefault),
+  );
+  const [isRange, setIsRange] = useState(
+    normalized.isRange || Boolean(column.rangeByDefault),
+  );
 
   useEffect(() => {
     const next = normalizeDateInput(value);
@@ -588,18 +653,28 @@ function DateControl({
     setStartTime(timePart(next.start));
     setEndDate(datePart(next.end));
     setEndTime(timePart(next.end));
-    setHasTime(next.hasTime || (isEmptyValue(value) && Boolean(column.timeByDefault)));
-    setIsRange(next.isRange || (isEmptyValue(value) && Boolean(column.rangeByDefault)));
+    setHasTime(
+      next.hasTime || (isEmptyValue(value) && Boolean(column.timeByDefault)),
+    );
+    setIsRange(
+      next.isRange || (isEmptyValue(value) && Boolean(column.rangeByDefault)),
+    );
   }, [column.rangeByDefault, column.timeByDefault, value]);
 
-  const apply = (next?: Partial<{
-    startDate: string;
-    startTime: string;
-    endDate: string;
-    endTime: string;
-    hasTime: boolean;
-    isRange: boolean;
-  }>) => {
+  useEffect(() => {
+    if (autoOpen) setOpen(true);
+  }, [autoOpen]);
+
+  const apply = (
+    next?: Partial<{
+      startDate: string;
+      startTime: string;
+      endDate: string;
+      endTime: string;
+      hasTime: boolean;
+      isRange: boolean;
+    }>,
+  ) => {
     const nextStartDate = next?.startDate ?? startDate;
     const nextStartTime = next?.startTime ?? startTime;
     const nextEndDate = next?.endDate ?? endDate;
@@ -615,18 +690,25 @@ function DateControl({
       void onChange(start);
       return;
     }
-    const end = combineDateTime(nextEndDate || nextStartDate, nextEndTime || nextStartTime, nextHasTime);
+    const end = combineDateTime(
+      nextEndDate || nextStartDate,
+      nextEndTime || nextStartTime,
+      nextHasTime,
+    );
     void onChange({ start, end } satisfies DateRangeValue);
   };
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
           type="button"
           variant="outline"
           disabled={disabled}
-          className={cn("w-full min-w-0 justify-start", invalid && "border-warning")}
+          className={cn(
+            "w-full min-w-0 justify-start",
+            invalid && "border-warning",
+          )}
         >
           <span className="truncate">
             {formatDateValue(value, column.display) || m.property_empty()}
@@ -680,7 +762,9 @@ function DateControl({
             </div>
           ) : null}
           <div className="flex items-center justify-between gap-2">
-            <span className="text-sm text-muted-foreground">{m.property_date_time()}</span>
+            <span className="text-sm text-muted-foreground">
+              {m.property_date_time()}
+            </span>
             <Switch
               checked={hasTime}
               onCheckedChange={(checked) => {
@@ -690,7 +774,9 @@ function DateControl({
             />
           </div>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-sm text-muted-foreground">{m.property_date_range()}</span>
+            <span className="text-sm text-muted-foreground">
+              {m.property_date_range()}
+            </span>
             <Switch
               checked={isRange}
               onCheckedChange={(checked) => {
@@ -746,28 +832,50 @@ function DateControl({
 }
 
 function PersonControl({
+  column,
   value,
   invalid,
   disabled,
+  autoOpen,
   persons = [],
   onRequestPersons,
   onChange,
 }: Pick<
   PropertyControlProps,
-  "value" | "invalid" | "disabled" | "persons" | "onRequestPersons" | "onChange"
->) {
+  | "value"
+  | "invalid"
+  | "disabled"
+  | "persons"
+  | "onRequestPersons"
+  | "onChange"
+  | "autoOpen"
+> & { column: Column }) {
+  const [open, setOpen] = useState(Boolean(autoOpen));
   const email = typeof value === "string" ? value : "";
   const selected =
-    persons.find((person) => person.email.toLowerCase() === email.toLowerCase()) ??
-    (email ? { email, name: email, commitCount: 0, isMe: false } : null);
-  const [allTime, setAllTime] = useState(false);
+    persons.find(
+      (person) => person.email.toLowerCase() === email.toLowerCase(),
+    ) ?? (email ? { email, name: email, commitCount: 0, isMe: false } : null);
+  const [allTime, setAllTime] = useState(column.display === "all_time");
   const [freeform, setFreeform] = useState("");
+
+  useEffect(() => {
+    const sourceAllTime = column.display === "all_time";
+    setAllTime(sourceAllTime);
+    if (sourceAllTime) void onRequestPersons?.(true);
+  }, [column.display, onRequestPersons]);
+
+  useEffect(() => {
+    if (autoOpen) setOpen(true);
+  }, [autoOpen]);
 
   const sortedPersons = useMemo(() => {
     const me = persons.filter(personIsMe);
     const recent = persons
       .filter((person) => !personIsMe(person))
-      .sort((a, b) => (personLastCommitAt(b) ?? 0) - (personLastCommitAt(a) ?? 0))
+      .sort(
+        (a, b) => (personLastCommitAt(b) ?? 0) - (personLastCommitAt(a) ?? 0),
+      )
       .slice(0, 5);
     const recentSet = new Set(recent.map((person) => person.email));
     const all = persons
@@ -777,34 +885,33 @@ function PersonControl({
   }, [persons]);
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
           type="button"
           variant="ghost"
           disabled={disabled}
-          className={cn("min-w-0 justify-start px-1.5", invalid && "ring-1 ring-warning")}
+          className={cn(
+            "min-w-0 justify-start px-1.5",
+            invalid && "ring-1 ring-warning",
+          )}
         >
-          {selected ? <PersonInline person={selected} /> : <span className="text-muted-foreground">{m.property_empty()}</span>}
+          {selected ? (
+            <PersonInline person={selected} />
+          ) : (
+            <span className="text-muted-foreground">{m.property_empty()}</span>
+          )}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72 p-0">
-        <Command shouldFilter={false}>
+        <Command>
           <CommandInput
             value={freeform}
             onValueChange={setFreeform}
             placeholder={m.property_person_search()}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && isValidEmail(freeform)) {
-                void onChange(freeform.trim().toLowerCase());
-                setFreeform("");
-              }
-            }}
           />
           <CommandList>
-            <CommandEmpty>
-              {isValidEmail(freeform) ? m.property_person_enter_to_assign() : m.property_no_options()}
-            </CommandEmpty>
+            <CommandEmpty>{m.property_no_options()}</CommandEmpty>
             <PersonGroup
               heading="Me"
               persons={sortedPersons.me}
@@ -825,7 +932,9 @@ function PersonControl({
             />
           </CommandList>
           <div className="flex items-center justify-between border-t px-3 py-2">
-            <span className="text-xs text-muted-foreground">{m.property_person_all_time()}</span>
+            <span className="text-xs text-muted-foreground">
+              {m.property_person_all_time()}
+            </span>
             <Switch
               checked={allTime}
               onCheckedChange={(checked) => {
@@ -855,14 +964,34 @@ function UrlControl({
   value,
   invalid,
   disabled,
+  autoOpen,
   onChange,
-}: Pick<PropertyControlProps, "value" | "invalid" | "disabled" | "onChange">) {
-  const [draft, setDraft] = useState(valueToString(value));
-  const [text, setText] = useState("");
-  useEffect(() => setDraft(valueToString(value)), [value]);
-  const warning = invalid || !isValidUrl(draft);
+}: Pick<
+  PropertyControlProps,
+  "value" | "invalid" | "disabled" | "autoOpen" | "onChange"
+>) {
+  const [open, setOpen] = useState(Boolean(autoOpen));
+  const normalized = normalizeUrlValue(value);
+  const [draft, setDraft] = useState(normalized.href);
+  const [text, setText] = useState(normalized.title);
+  useEffect(() => {
+    const next = normalizeUrlValue(value);
+    setDraft(next.href);
+    setText(next.title);
+  }, [value]);
+  useEffect(() => {
+    if (autoOpen) setOpen(true);
+  }, [autoOpen]);
+  const warning = invalid || (draft ? !isValidUrl(draft) : false);
+  const commit = () => {
+    const href = draft.trim();
+    const title = text.trim();
+    void onChange(
+      href ? { href, title: title || fallbackUrlTitle(href) } : null,
+    );
+  };
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <div className="group/control relative">
           <Input
@@ -870,7 +999,7 @@ function UrlControl({
             disabled={disabled}
             aria-invalid={warning || undefined}
             onChange={(event) => setDraft(event.target.value)}
-            onBlur={() => void onChange(draft || null)}
+            onBlur={commit}
             className="pr-16"
           />
           <div className="absolute top-1/2 right-1 flex -translate-y-1/2 opacity-0 group-focus-within/control:opacity-100 group-hover/control:opacity-100">
@@ -898,13 +1027,14 @@ function UrlControl({
             value={draft}
             placeholder={m.doc_link_url_placeholder()}
             onChange={(event) => setDraft(event.target.value)}
-            onBlur={() => void onChange(draft || null)}
+            onBlur={commit}
           />
-          <span className="text-xs text-muted-foreground">text</span>
+          <Text className="text-muted-foreground" />
           <Input
             value={text}
             placeholder={m.doc_link_text_placeholder()}
             onChange={(event) => setText(event.target.value)}
+            onBlur={commit}
           />
         </div>
       </PopoverContent>
@@ -1007,12 +1137,16 @@ function PersonGroup({
       {persons.map((person) => (
         <CommandItem
           key={person.email}
-          data-checked={person.email.toLowerCase() === selectedEmail.toLowerCase()}
+          data-checked={
+            person.email.toLowerCase() === selectedEmail.toLowerCase()
+          }
           value={`${person.name} ${person.email}`}
           onSelect={() => onSelect(person)}
         >
           <PersonAvatar person={person} />
-          <span className="min-w-0 flex-1 truncate">{personDisplayName(person)}</span>
+          <span className="min-w-0 flex-1 truncate">
+            {personDisplayName(person)}
+          </span>
           {personCommitCount(person) === 0 ? (
             <span className="text-xs text-muted-foreground">new</span>
           ) : null}
@@ -1041,11 +1175,16 @@ function PersonAvatar({ person }: { person: Person }) {
       <AvatarFallback
         className={cn(
           "text-[10px] font-medium",
-          color === "blue" && "bg-[var(--property-blue-soft)] text-[var(--property-blue)]",
-          color === "green" && "bg-[var(--property-green-soft)] text-[var(--property-green)]",
-          color === "purple" && "bg-[var(--property-purple-soft)] text-[var(--property-purple)]",
-          color === "orange" && "bg-[var(--property-orange-soft)] text-[var(--property-orange)]",
-          color === "pink" && "bg-[var(--property-pink-soft)] text-[var(--property-pink)]",
+          color === "blue" &&
+            "bg-[var(--property-blue-soft)] text-[var(--property-blue)]",
+          color === "green" &&
+            "bg-[var(--property-green-soft)] text-[var(--property-green)]",
+          color === "purple" &&
+            "bg-[var(--property-purple-soft)] text-[var(--property-purple)]",
+          color === "orange" &&
+            "bg-[var(--property-orange-soft)] text-[var(--property-orange)]",
+          color === "pink" &&
+            "bg-[var(--property-pink-soft)] text-[var(--property-pink)]",
         )}
       >
         {initialsForPerson(person)}
@@ -1102,7 +1241,10 @@ function IconAction({
   );
 }
 
-function commitNumber(value: string, onChange: PropertyControlProps["onChange"]) {
+function commitNumber(
+  value: string,
+  onChange: PropertyControlProps["onChange"],
+) {
   if (value.trim() === "") {
     void onChange(null);
     return;
@@ -1118,11 +1260,33 @@ function datePart(value: string): string {
 }
 
 function timePart(value: string): string {
-  return value.includes("T") ? value.split("T")[1]?.slice(0, 5) ?? "" : "";
+  return value.includes("T") ? (value.split("T")[1]?.slice(0, 5) ?? "") : "";
 }
 
 function combineDateTime(date: string, time: string, hasTime: boolean): string {
   return hasTime ? `${date}T${time || "09:00"}` : date;
+}
+
+function normalizeUrlValue(value: unknown) {
+  if (typeof value === "string") {
+    return { href: value, title: fallbackUrlTitle(value) };
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const href = typeof record.href === "string" ? record.href : "";
+    const title = typeof record.title === "string" ? record.title : "";
+    return { href, title };
+  }
+  return { href: "", title: "" };
+}
+
+function fallbackUrlTitle(href: string) {
+  try {
+    const url = new URL(href);
+    return `${url.hostname}${url.pathname === "/" ? "" : url.pathname}`;
+  } catch {
+    return href.replace(/^https?:\/\//, "");
+  }
 }
 
 function copyValue(value: string) {
@@ -1135,7 +1299,10 @@ function openExternal(value: string) {
   window.open(value, "_blank", "noopener,noreferrer");
 }
 
-export function validatePropertyValue(column: Column, value: unknown): {
+export function validatePropertyValue(
+  column: Column,
+  value: unknown,
+): {
   invalid: boolean;
   message?: string;
 } {
@@ -1152,7 +1319,9 @@ export function validatePropertyValue(column: Column, value: unknown): {
         : { invalid: true, message: m.property_state_invalid_option() };
     case "multi_select":
       return Array.isArray(value) &&
-        value.every((item) => typeof item === "string" && hasOption(column, item))
+        value.every(
+          (item) => typeof item === "string" && hasOption(column, item),
+        )
         ? { invalid: false }
         : { invalid: true, message: m.property_state_invalid_option() };
     case "checkbox":
@@ -1172,7 +1341,10 @@ export function validatePropertyValue(column: Column, value: unknown): {
         ? { invalid: false }
         : { invalid: true, message: m.property_state_invalid_email_phone() };
     case "url":
-      return typeof value === "string" && isValidUrl(value)
+      return (typeof value === "string" && isValidUrl(value)) ||
+        (value !== null &&
+          typeof value === "object" &&
+          isValidUrl(normalizeUrlValue(value).href))
         ? { invalid: false }
         : { invalid: true, message: m.property_state_type_conflict() };
     default:

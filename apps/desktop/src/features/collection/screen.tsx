@@ -15,7 +15,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { invoke } from "@tauri-apps/api/core";
-import { Database, FileText, Plus } from "lucide-react";
+import { Database, FileText, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
@@ -42,6 +42,7 @@ import {
   SortableViewTab,
 } from "./view-tabs";
 import { ViewPlaceholder } from "./view-placeholder";
+import { TableView } from "./table-view";
 import { ViewActionBar } from "./view-action-bar";
 import {
   type ActiveTab,
@@ -101,7 +102,12 @@ export function CollectionScreen({
   const [documentLabel, setDocumentLabel] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteEntry, setDeleteEntry] = useState<Entry | null>(null);
+  const [peekNestedEntry, setPeekNestedEntry] = useState<Entry | null>(null);
   const [entriesVersion, setEntriesVersion] = useState(0);
+  const [tableCreateRequest, setTableCreateRequest] = useState({
+    signal: 0,
+    asFolder: false,
+  });
   const initializedCollectionRef = useRef<string | null>(null);
   const tabScrollerRef = useRef<HTMLDivElement | null>(null);
 
@@ -407,11 +413,15 @@ export function CollectionScreen({
     if (created) selectTab(created.name);
   }
 
-  async function createEntry(asFolder = false) {
+  async function createEntry(
+    asFolder = false,
+    title: string = String(m.editor_untitled()),
+    openAfterCreate = true,
+  ) {
     const created = await invoke<Entry>("create_entry", {
       space: spacePath,
       parentPath: collectionPath,
-      title: m.editor_untitled(),
+      title,
       projectPath: projectPath ?? null,
     });
     let nextEntry = created;
@@ -424,7 +434,17 @@ export function CollectionScreen({
     }
     setEntriesVersion((version) => version + 1);
     await refreshTree(spaceId);
-    openDocument(nextEntry.path, spaceId);
+    if (openAfterCreate) {
+      openDocument(nextEntry.path, spaceId);
+    }
+    return nextEntry;
+  }
+
+  function focusTableCreate(asFolder: boolean) {
+    setTableCreateRequest((request) => ({
+      signal: request.signal + 1,
+      asFolder,
+    }));
   }
 
   async function duplicateRow(entryToDuplicate: Entry) {
@@ -567,11 +587,19 @@ export function CollectionScreen({
       }
       if (!event.shiftKey && event.key.toLowerCase() === "n") {
         event.preventDefault();
+        if (activeView && viewType(activeView) === "table") {
+          focusTableCreate(false);
+          return;
+        }
         void createEntry(false).catch(handleError);
         return;
       }
       if (event.shiftKey && event.key.toLowerCase() === "n") {
         event.preventDefault();
+        if (activeView && viewType(activeView) === "table") {
+          focusTableCreate(true);
+          return;
+        }
         void createEntry(true).catch(handleError);
       }
     }
@@ -781,7 +809,13 @@ export function CollectionScreen({
                 setSchema(normalizeSchema(nextSchema))
               }
               autoConfigForType={autoConfigForType}
-              onCreateEntry={() => void createEntry(false).catch(handleError)}
+              onCreateEntry={(asFolder) => {
+                if (activeView && viewType(activeView) === "table") {
+                  focusTableCreate(asFolder);
+                  return;
+                }
+                void createEntry(asFolder).catch(handleError);
+              }}
             />
           )}
         </div>
@@ -795,25 +829,66 @@ export function CollectionScreen({
           <TabsContent
             key={view.name}
             value={view.name}
-            className="min-h-0 overflow-auto"
+            className={
+              viewType(view) === "table"
+                ? "min-h-0 overflow-hidden"
+                : "min-h-0 overflow-auto"
+            }
           >
-            <ViewPlaceholder
-              type={viewType(view)}
-              name={view.name}
-              schema={schema}
-              collectionPath={collectionPath}
-              projectPath={projectPath}
-              spacePath={spacePath}
-              searchQuery={searchQuery}
-              refreshToken={entriesVersion}
-              onOpenEntry={(entryToOpen) =>
-                openDocument(entryToOpen.path, spaceId)
-              }
-              onDuplicateEntry={(entryToDuplicate) =>
-                void duplicateRow(entryToDuplicate).catch(handleError)
-              }
-              onDeleteEntry={setDeleteEntry}
-            />
+            {viewType(view) === "table" ? (
+              <TableView
+                name={view.name}
+                view={view}
+                query={query}
+                schema={schema}
+                collectionPath={collectionPath}
+                projectPath={projectPath}
+                spacePath={spacePath}
+                searchQuery={searchQuery}
+                filters={query.merged.filter}
+                sort={query.merged.sort}
+                refreshToken={entriesVersion}
+                createFocusSignal={tableCreateRequest.signal}
+                createAsFolder={tableCreateRequest.asFolder}
+                onClearSearch={() => setSearchQuery("")}
+                onOpenEntry={(entryToOpen) =>
+                  openDocument(entryToOpen.path, spaceId)
+                }
+                onOpenNestedPeek={setPeekNestedEntry}
+                onOpenNestedCollection={(entryToOpen) =>
+                  openDocument(entryToOpen.path, spaceId)
+                }
+                onDuplicateEntry={(entryToDuplicate) =>
+                  void duplicateRow(entryToDuplicate).catch(handleError)
+                }
+                onDeleteEntry={setDeleteEntry}
+                onSchemaChange={(nextSchema) =>
+                  setSchema(normalizeSchema(nextSchema))
+                }
+                onUpdateView={updateView}
+                onCreateEntry={(title, asFolder) =>
+                  createEntry(asFolder, title, false)
+                }
+              />
+            ) : (
+              <ViewPlaceholder
+                type={viewType(view)}
+                name={view.name}
+                schema={schema}
+                collectionPath={collectionPath}
+                projectPath={projectPath}
+                spacePath={spacePath}
+                searchQuery={searchQuery}
+                refreshToken={entriesVersion}
+                onOpenEntry={(entryToOpen) =>
+                  openDocument(entryToOpen.path, spaceId)
+                }
+                onDuplicateEntry={(entryToDuplicate) =>
+                  void duplicateRow(entryToDuplicate).catch(handleError)
+                }
+                onDeleteEntry={setDeleteEntry}
+              />
+            )}
           </TabsContent>
         ))}
       </Tabs>
@@ -830,6 +905,38 @@ export function CollectionScreen({
           void deleteRow(entryToDelete).catch(handleError)
         }
       />
+      {peekNestedEntry ? (
+        <div
+          className="fixed inset-0 z-50 flex justify-end bg-black/25"
+          onMouseDown={() => setPeekNestedEntry(null)}
+        >
+          <div
+            className="h-full w-[min(1080px,84vw)] border-l bg-background shadow-2xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex h-10 items-center justify-end border-b px-3">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => setPeekNestedEntry(null)}
+              >
+                <X />
+                <span className="sr-only">{m.settings_cancel()}</span>
+              </Button>
+            </div>
+            <div className="h-[calc(100%-2.5rem)]">
+              <CollectionScreen
+                spacePath={spacePath}
+                projectPath={projectPath}
+                documentPath={peekNestedEntry.path}
+                spaceId={spaceId}
+                hasReadme
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

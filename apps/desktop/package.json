@@ -67,6 +67,7 @@
     "@streamdown/code": "^1.1.1",
     "@tailwindcss/vite": "^4.2.1",
     "@tanstack/react-router": "^1",
+    "@tanstack/react-table": "^8.21.3",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-shell": "^2",

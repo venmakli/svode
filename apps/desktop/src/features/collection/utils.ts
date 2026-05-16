@@ -1,21 +1,24 @@
 import type { LucideIcon } from "lucide-react";
-import {
-  Calendar,
-  Columns3,
-  LayoutGrid,
-  List,
-  Table,
-} from "lucide-react";
+import { Calendar, Columns3, LayoutGrid, List, Table } from "lucide-react";
 import type { Entry } from "@/features/editor/types";
-import type { CollectionView, ViewType } from "@/features/collection-query/types";
+import type {
+  CollectionView,
+  ViewType,
+} from "@/features/collection-query/types";
 
 export type ActiveTab = "document" | string;
 export type SettingsPane =
   | "main"
   | "layout"
   | "properties"
+  | "propertyAddType"
+  | "propertyEdit"
   | "filter"
+  | "filterField"
+  | "filterEditor"
   | "sort"
+  | "sortField"
+  | "sortEditor"
   | "group";
 
 export const viewIcons: Record<ViewType, LucideIcon> = {

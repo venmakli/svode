@@ -311,6 +311,29 @@ pub async fn rename_schema_column(
 }
 
 #[tauri::command]
+pub async fn update_schema_column(
+    space: String,
+    collection_path: String,
+    column_name: String,
+    patch: serde_json::Value,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
+    let patch = json_to_yaml_value(patch)?;
+    let schema = properties::update_schema_column(&space, &collection_path, &column_name, patch)?;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        format!("Update column \"{column_name}\""),
+    )
+    .await;
+    Ok(schema)
+}
+
+#[tauri::command]
 pub async fn delete_schema_column(
     space: String,
     collection_path: String,
@@ -659,7 +682,7 @@ pub async fn list_entries_for_view(
         &space,
         &collection_path,
         &view_name,
-        include_nested.unwrap_or(false),
+        include_nested,
     )
     .await
 }
@@ -670,6 +693,7 @@ pub async fn query_entries(
     collection_path: String,
     filters: Option<Vec<Filter>>,
     sort: Option<Vec<Sort>>,
+    include_nested: Option<bool>,
     limit: Option<i64>,
     offset: Option<i64>,
     project_path: Option<String>,
@@ -685,6 +709,7 @@ pub async fn query_entries(
         &collection_path,
         filters,
         sort,
+        include_nested,
         limit,
         offset,
     )

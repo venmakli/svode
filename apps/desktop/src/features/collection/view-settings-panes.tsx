@@ -41,6 +41,7 @@ export function FieldVisibilityRow({
   visible,
   locked,
   onClick,
+  onToggle,
 }: {
   icon: LucideIcon;
   label: string;
@@ -48,6 +49,7 @@ export function FieldVisibilityRow({
   visible: boolean;
   locked?: boolean;
   onClick: () => void;
+  onToggle?: () => void;
 }) {
   const EyeIcon = visible ? Eye : EyeOff;
   return (
@@ -55,15 +57,23 @@ export function FieldVisibilityRow({
       icon={Icon}
       label={label}
       meta={meta}
-      disabled={locked}
       onClick={onClick}
       right={
-        <EyeIcon
+        <button
+          type="button"
           className={cn(
+            "rounded p-1 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             !visible && "text-muted-foreground",
             locked && "opacity-40",
           )}
-        />
+          disabled={locked}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (!locked) (onToggle ?? onClick)();
+          }}
+        >
+          <EyeIcon />
+        </button>
       }
     />
   );

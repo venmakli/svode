@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   closestCenter,
@@ -15,8 +16,11 @@ import {
 import {
   ArrowUpDown,
   Calendar,
+  Check,
   Columns3,
   Copy,
+  Eye,
+  EyeOff,
   FileText,
   Filter,
   LayoutGrid,
@@ -33,26 +37,42 @@ import { cn } from "@/lib/utils";
 import { MultiPanePopover } from "@/features/collection-query/multi-pane-popover";
 import {
   defaultFilterOp,
+  queryField,
   queryFields,
 } from "@/features/collection-query/query-utils";
 import type {
   CollectionView,
+  QueryField,
+  QueryFilter,
+  QuerySort,
   UseViewQueryResult,
   ViewType,
 } from "@/features/collection-query/types";
-import type { CollectionSchema } from "@/features/properties/types";
+import {
+  FieldChoiceList,
+  FilterEditor,
+  QueryList,
+  SaveButton,
+  SortEditor,
+} from "@/features/collection-query/view-query-popover";
+import type {
+  CollectionSchema,
+  Person,
+  PropertyType,
+} from "@/features/properties/types";
+import { normalizeSchema } from "@/features/properties/utils";
 import { handleError } from "./errors";
 import { type SettingsPane, viewType } from "./utils";
-import { QueryAddButton, QuerySettingsPane } from "./query-settings-pane";
+import { QueryAddButton } from "./query-settings-pane";
 import { SettingsRow, SettingsSection } from "./settings-row";
 import {
-  FieldVisibilityRow,
   GroupPane,
   SortableFieldVisibilityRow,
   TypeSettingsRows,
   ViewTypeRows,
   viewTypeLabel,
 } from "./view-settings-panes";
+import { TypePane } from "./table/column-menu-panes";
 import * as m from "@/paraglide/messages.js";
 
 export function ViewSettingsPopover({
@@ -124,6 +144,33 @@ export function ViewSettingsPopover({
   );
   const systemFieldIds = systemFields.map((field) => field.name);
   const customFieldIds = schema.columns.map((column) => column.name);
+  const [filterDraft, setFilterDraft] = useState<{
+    index: number | null;
+    filter: QueryFilter;
+  } | null>(null);
+  const [sortDraft, setSortDraft] = useState<{
+    index: number | null;
+    sort: QuerySort;
+  } | null>(null);
+  const [selectedProperty, setSelectedProperty] = useState("title");
+  const [queryPersons, setQueryPersons] = useState<Person[]>([]);
+
+  const loadQueryPersons = useCallback(
+    async (allTime = false) => {
+      const list = await invoke<Person[]>("list_persons", {
+        spacePath,
+        allTime,
+      });
+      setQueryPersons(list);
+      return list;
+    },
+    [spacePath],
+  );
+
+  useEffect(() => {
+    if (pane !== "filterEditor") setFilterDraft(null);
+    if (pane !== "sortEditor") setSortDraft(null);
+  }, [pane]);
 
   function toggleField(field: string, locked?: boolean) {
     if (!view || locked) return;
@@ -168,22 +215,78 @@ export function ViewSettingsPopover({
   }
 
   function addFilterRule() {
-    const field = queryFields(schema, "filter")[0];
-    if (!field) return;
-    query.setLocalQuery({
-      filter: [
-        ...query.merged.filter,
-        { field: field.name, op: defaultFilterOp(field.type) },
-      ],
+    onPaneChange("filterField");
+  }
+
+  function openNewFilter(field?: QueryField) {
+    const selected = field ?? queryFields(schema, "filter")[0];
+    if (!selected) return;
+    setFilterDraft({
+      index: null,
+      filter: { field: selected.name, op: defaultFilterOp(selected.type) },
     });
+    onPaneChange("filterEditor");
+  }
+
+  function openExistingFilter(filter: QueryFilter, index: number) {
+    setFilterDraft({ index, filter: { ...filter } });
+    onPaneChange("filterEditor");
+  }
+
+  function applyFilterDraft() {
+    if (!filterDraft) return;
+    const next = [...query.merged.filter];
+    if (filterDraft.index === null) next.push(filterDraft.filter);
+    else next[filterDraft.index] = filterDraft.filter;
+    query.setLocalQuery({ filter: next });
+    onPaneChange("filter");
+  }
+
+  function clearFilterDraft() {
+    if (!filterDraft) return;
+    if (filterDraft.index !== null) {
+      query.setLocalQuery({
+        filter: query.merged.filter.filter(
+          (_, index) => index !== filterDraft.index,
+        ),
+      });
+    }
+    onPaneChange("filter");
   }
 
   function addSortRule() {
-    const field = queryFields(schema, "sort")[0];
-    if (!field) return;
-    query.setLocalQuery({
-      sort: [...query.merged.sort, { field: field.name, desc: false }],
-    });
+    onPaneChange("sortField");
+  }
+
+  function openNewSort(field?: QueryField) {
+    const selected = field ?? queryFields(schema, "sort")[0];
+    if (!selected) return;
+    setSortDraft({ index: null, sort: { field: selected.name, desc: false } });
+    onPaneChange("sortEditor");
+  }
+
+  function openExistingSort(sort: QuerySort, index: number) {
+    setSortDraft({ index, sort: { ...sort } });
+    onPaneChange("sortEditor");
+  }
+
+  function applySortDraft() {
+    if (!sortDraft) return;
+    const next = [...query.merged.sort];
+    if (sortDraft.index === null) next.push(sortDraft.sort);
+    else next[sortDraft.index] = sortDraft.sort;
+    query.setLocalQuery({ sort: next });
+    onPaneChange("sort");
+  }
+
+  function clearSortDraft() {
+    if (!sortDraft) return;
+    if (sortDraft.index !== null) {
+      query.setLocalQuery({
+        sort: query.merged.sort.filter((_, index) => index !== sortDraft.index),
+      });
+    }
+    onPaneChange("sort");
   }
 
   function nextColumnName() {
@@ -197,8 +300,12 @@ export function ViewSettingsPopover({
     return name;
   }
 
-  async function addColumn() {
-    const column = { name: nextColumnName(), type: "text" };
+  function addColumn() {
+    onPaneChange("propertyAddType");
+  }
+
+  async function addColumnWithType(type: PropertyType) {
+    const column = { name: nextColumnName(), type };
     const next = await invoke<CollectionSchema>("add_schema_column", {
       space: spacePath,
       collectionPath,
@@ -212,6 +319,43 @@ export function ViewSettingsPopover({
         : [...savedFields, column.name];
       await onUpdateView(view.name, { [visibleFieldKey]: nextFields });
     }
+    setSelectedProperty(column.name);
+    onPaneChange("propertyEdit");
+  }
+
+  function openProperty(field: string) {
+    setSelectedProperty(field);
+    onPaneChange("propertyEdit");
+  }
+
+  function openFieldFilter(field: string) {
+    const existingIndex = query.merged.filter.findIndex(
+      (item) => item.field === field,
+    );
+    const existing =
+      existingIndex >= 0 ? query.merged.filter[existingIndex] : null;
+    const fieldInfo = queryField(schema, field, "filter");
+    if (!existing && !fieldInfo) return;
+    setFilterDraft({
+      index: existingIndex >= 0 ? existingIndex : null,
+      filter: existing
+        ? { ...existing }
+        : { field, op: defaultFilterOp(fieldInfo?.type ?? "text") },
+    });
+    onPaneChange("filterEditor");
+  }
+
+  function openFieldSort(field: string) {
+    const existingIndex = query.merged.sort.findIndex(
+      (item) => item.field === field,
+    );
+    const existing =
+      existingIndex >= 0 ? query.merged.sort[existingIndex] : null;
+    setSortDraft({
+      index: existingIndex >= 0 ? existingIndex : null,
+      sort: existing ? { ...existing } : { field, desc: false },
+    });
+    onPaneChange("sortEditor");
   }
 
   const panes = [
@@ -337,7 +481,8 @@ export function ViewSettingsPopover({
                   label={field.label}
                   visible={savedFields.includes(field.name)}
                   locked={field.locked}
-                  onClick={() => toggleField(field.name, field.locked)}
+                  onClick={() => openProperty(field.name)}
+                  onToggle={() => toggleField(field.name, field.locked)}
                 />
               ))}
             </SortableContext>
@@ -365,7 +510,8 @@ export function ViewSettingsPopover({
                     label={column.name}
                     meta={column.type}
                     visible={savedFields.includes(column.name)}
-                    onClick={() => toggleField(column.name)}
+                    onClick={() => openProperty(column.name)}
+                    onToggle={() => toggleField(column.name)}
                   />
                 ))}
               </SortableContext>
@@ -376,20 +522,106 @@ export function ViewSettingsPopover({
             icon={Plus}
             label={m.collection_add_property()}
             right={null}
-            onClick={() => void addColumn().catch(handleError)}
+            onClick={addColumn}
           />
         </div>
       ),
       notice: m.collection_properties_notice(),
     },
     {
+      id: "propertyAddType" as const,
+      title: m.table_property_type_title(),
+      content: (
+        <TypePane
+          activeType="text"
+          onSelect={(nextType) =>
+            void addColumnWithType(nextType).catch(handleError)
+          }
+        />
+      ),
+      notice: m.table_property_type_notice(),
+    },
+    {
+      id: "propertyEdit" as const,
+      title: selectedProperty,
+      content: (
+        <div className="flex flex-col p-1">
+          <SettingsSection label={m.collection_properties_label()} />
+          {selectedProperty === "title" ? (
+            <SettingsRow
+              icon={FileText}
+              label={m.collection_field_title()}
+              meta={
+                schema.systemFields?.title?.label ?? m.collection_field_title()
+              }
+              onClick={() => undefined}
+            />
+          ) : (
+            <SettingsRow
+              icon={LayoutGrid}
+              label={m.table_column_type()}
+              meta={
+                schema.columns.find(
+                  (column) => column.name === selectedProperty,
+                )?.type ?? "-"
+              }
+              onClick={() => undefined}
+            />
+          )}
+          <SettingsRow
+            icon={savedFields.includes(selectedProperty) ? Eye : EyeOff}
+            label={m.table_visible()}
+            meta={
+              savedFields.includes(selectedProperty)
+                ? m.view_query_yes()
+                : m.view_query_no()
+            }
+            onClick={() =>
+              selectedProperty !== "title" && toggleField(selectedProperty)
+            }
+          />
+          <SettingsSection label={m.table_query_section()} />
+          <SettingsRow
+            icon={Filter}
+            label={m.table_filter()}
+            meta={
+              query.merged.filter.find(
+                (filter) => filter.field === selectedProperty,
+              )?.op ?? m.collection_none()
+            }
+            onClick={() => openFieldFilter(selectedProperty)}
+          />
+          <SettingsRow
+            icon={ArrowUpDown}
+            label={m.view_query_sort_title()}
+            meta={
+              query.merged.sort.find((sort) => sort.field === selectedProperty)
+                ? m.collection_rules_count({ count: 1 })
+                : m.collection_none()
+            }
+            onClick={() => openFieldSort(selectedProperty)}
+          />
+        </div>
+      ),
+    },
+    {
       id: "filter" as const,
       title: m.view_query_filter_title(),
       content: (
-        <QuerySettingsPane
-          items={query.merged.filter}
-          empty={m.collection_no_filters()}
-          icon={Filter}
+        <QueryList
+          emptyIcon={Filter}
+          emptyLabel={m.view_query_filter_empty()}
+          rows={query.merged.filter.map((filter, index) => {
+            const field = queryField(schema, filter.field, "filter");
+            return {
+              key: `${filter.field}-${index}`,
+              icon: Filter,
+              label: field?.label ?? filter.field,
+              meta: filter.op,
+              warning: query.invalidFilters.includes(filter),
+              onClick: () => openExistingFilter(filter, index),
+            };
+          })}
         />
       ),
       footer: (
@@ -401,19 +633,132 @@ export function ViewSettingsPopover({
       footerSeparator: false,
     },
     {
+      id: "filterField" as const,
+      title: m.view_query_choose_property(),
+      content: (
+        <FieldChoiceList
+          fields={queryFields(schema, "filter")}
+          onSelect={openNewFilter}
+        />
+      ),
+    },
+    {
+      id: "filterEditor" as const,
+      title: filterDraft
+        ? m.view_query_filter_editor_title({ field: filterDraft.filter.field })
+        : m.view_query_filter_title(),
+      content: filterDraft ? (
+        <FilterEditor
+          schema={schema}
+          draft={filterDraft.filter}
+          persons={queryPersons}
+          onRequestPersons={loadQueryPersons}
+          onChange={(filter) => setFilterDraft({ ...filterDraft, filter })}
+        />
+      ) : null,
+      footer: filterDraft ? (
+        <div className="flex flex-col gap-1">
+          <Button
+            type="button"
+            className="w-full justify-start"
+            onClick={applyFilterDraft}
+          >
+            <Check data-icon="inline-start" />
+            {m.view_query_apply_filter()}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            className="w-full justify-start"
+            onClick={clearFilterDraft}
+          >
+            <Trash2 data-icon="inline-start" />
+            {m.view_query_clear_filter()}
+          </Button>
+          <SaveButton
+            query={query}
+            onSaved={(nextSchema) =>
+              onSchemaChange(normalizeSchema(nextSchema))
+            }
+          />
+        </div>
+      ) : null,
+    },
+    {
       id: "sort" as const,
       title: m.view_query_sort_title(),
       content: (
-        <QuerySettingsPane
-          items={query.merged.sort}
-          empty={m.collection_no_sorts()}
-          icon={ArrowUpDown}
+        <QueryList
+          emptyIcon={ArrowUpDown}
+          emptyLabel={m.view_query_sort_empty()}
+          rows={query.merged.sort.map((sort, index) => {
+            const field = queryField(schema, sort.field, "sort");
+            return {
+              key: `${sort.field}-${index}`,
+              icon: ArrowUpDown,
+              label: field?.label ?? sort.field,
+              meta: sort.desc
+                ? m.view_query_sort_desc()
+                : m.view_query_sort_asc(),
+              warning: query.invalidSorts.includes(sort),
+              onClick: () => openExistingSort(sort, index),
+            };
+          })}
         />
       ),
       footer: (
         <QueryAddButton label={m.collection_add_sort()} onClick={addSortRule} />
       ),
       footerSeparator: false,
+    },
+    {
+      id: "sortField" as const,
+      title: m.view_query_choose_property(),
+      content: (
+        <FieldChoiceList
+          fields={queryFields(schema, "sort")}
+          onSelect={openNewSort}
+        />
+      ),
+    },
+    {
+      id: "sortEditor" as const,
+      title: sortDraft
+        ? m.view_query_sort_editor_title({ field: sortDraft.sort.field })
+        : m.view_query_sort_title(),
+      content: sortDraft ? (
+        <SortEditor
+          sort={sortDraft.sort}
+          onChange={(sort) => setSortDraft({ ...sortDraft, sort })}
+        />
+      ) : null,
+      footer: sortDraft ? (
+        <div className="flex flex-col gap-1">
+          <Button
+            type="button"
+            className="w-full justify-start"
+            onClick={applySortDraft}
+          >
+            <Check data-icon="inline-start" />
+            {m.view_query_apply_sort()}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            className="w-full justify-start"
+            onClick={clearSortDraft}
+          >
+            <Trash2 data-icon="inline-start" />
+            {m.view_query_delete_sort()}
+          </Button>
+          <SaveButton
+            query={query}
+            onSaved={(nextSchema) =>
+              onSchemaChange(normalizeSchema(nextSchema))
+            }
+          />
+        </div>
+      ) : null,
     },
     {
       id: "group" as const,

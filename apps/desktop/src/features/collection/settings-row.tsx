@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 
 export function SettingsSection({ label }: { label: string }) {
   return (
-    <div className="px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+    <div className="px-2.5 pb-1 pt-2 text-[10.5px] font-semibold uppercase tracking-[0.04em] text-muted-foreground">
       {label}
     </div>
   );
@@ -34,23 +34,34 @@ export function SettingsRow({
       variant="ghost"
       size="default"
       className={cn(
-        "h-9 w-full justify-start px-2 text-sm font-normal",
+        "min-h-8 w-full justify-start gap-2.5 rounded-md px-2 py-1.5 text-[13px] font-normal",
+        "[&_svg:not([class*='size-'])]:size-3.5",
         destructive &&
           "text-destructive hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive",
       )}
       onClick={onClick}
       disabled={disabled}
     >
-      <Icon data-icon="inline-start" />
-      <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+      <Icon
+        className={cn("text-muted-foreground", destructive && "text-current")}
+        data-icon="inline-start"
+      />
+      <span className="min-w-0 flex-1 truncate text-left font-medium">
+        {label}
+      </span>
       {meta ? (
-        <span className="text-xs text-muted-foreground">{meta}</span>
+        <span className="shrink-0 text-[11.5px] text-muted-foreground">
+          {meta}
+        </span>
       ) : null}
       {right !== undefined ? (
         right
       ) : onClick ? (
         <ChevronRight
-          className={cn(destructive && "text-destructive")}
+          className={cn(
+            "text-muted-foreground",
+            destructive && "text-destructive",
+          )}
           data-icon="inline-end"
         />
       ) : null}
