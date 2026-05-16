@@ -119,7 +119,7 @@ export function LoadingTable({
         <Table className="table-fixed" style={{ width: tableWidth }}>
           <TableHeader>
             <ShadcnTableRow className="h-[34px] bg-muted/40">
-              <TableHead className="h-[34px] w-[18px] border-r p-0" />
+              <TableHead className="h-[34px] w-[18px] p-0" />
               {fields.map((field, index) => {
                 const column = schema.columns.find(
                   (item) => item.name === field,
@@ -147,7 +147,7 @@ export function LoadingTable({
           <TableBody>
             {Array.from({ length: 8 }).map((_, index) => (
               <ShadcnTableRow key={index} className="h-9">
-                <TableCell className="w-[18px] border-r p-1" />
+                <TableCell className="w-[18px] p-1" />
                 {fields.map((field, fieldIndex) => (
                   <TableCell
                     key={field}

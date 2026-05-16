@@ -22,7 +22,7 @@ export function TableHeaderRow({
     <TableHeader className="sticky top-0 z-10 bg-muted/40">
       {table.getHeaderGroups().map((headerGroup) => (
         <ShadcnTableRow key={headerGroup.id} className="h-[34px]">
-          <TableHead className="h-[34px] w-[18px] border-r p-0" />
+          <TableHead className="h-[34px] w-[18px] p-0" />
           {headerGroup.headers.map((header) => (
             <TableHead
               key={header.id}

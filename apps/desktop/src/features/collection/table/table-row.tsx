@@ -68,7 +68,7 @@ export function SortableTableRow({
             }
           }}
         >
-          <TableCell className="w-[18px] border-r p-0 text-muted-foreground">
+          <TableCell className="w-[18px] p-0 text-muted-foreground">
             <div className="flex items-center justify-center">
               {row.child ? null : (
                 <button
