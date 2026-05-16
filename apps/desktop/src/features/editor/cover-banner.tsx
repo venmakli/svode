@@ -60,6 +60,7 @@ interface CoverBannerProps {
   spacePath: string;
   documentPath: string | null;
   onCoverChange: (cover: EntryCover | null) => void;
+  size?: "default" | "compact";
 }
 
 function clampPosition(value: number): number {
@@ -76,6 +77,7 @@ export function CoverBanner({
   spacePath,
   documentPath,
   onCoverChange,
+  size = "default",
 }: CoverBannerProps) {
   const bannerRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<{ y: number; position: number } | null>(null);
@@ -231,7 +233,10 @@ export function CoverBanner({
     <div
       ref={bannerRef}
       className={cn(
-        "group relative mb-6 h-[30vh] min-h-40 max-h-72 overflow-hidden rounded-md",
+        "group relative mb-6 overflow-hidden rounded-md",
+        size === "compact"
+          ? "h-44 min-h-32 max-h-48"
+          : "h-[30vh] min-h-40 max-h-72",
         isRepositioning && "cursor-move",
       )}
       style={cover.type === "color" ? colorStyle(cover.value) : undefined}

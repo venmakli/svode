@@ -33,9 +33,23 @@ const FIELD_UPDATE_DEBOUNCE_MS = 500;
 
 interface PlateDocumentEditorProps {
   bodyOnly?: boolean;
+  documentPath?: string | null;
+  documentSpaceId?: string | null;
+  spacePath?: string | null;
+  projectPath?: string | null;
+  bodyOnlyMeta?: EntryMeta | null;
+  onDocumentPathChange?: (path: string) => void;
 }
 
-export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorProps) {
+export function PlateDocumentEditor({
+  bodyOnly = false,
+  documentPath = null,
+  documentSpaceId = null,
+  spacePath: spacePathProp = null,
+  projectPath: projectPathProp = null,
+  bodyOnlyMeta = null,
+  onDocumentPathChange,
+}: PlateDocumentEditorProps) {
   const { activeDocument, activeDocumentSpaceId, openDocument } =
     useLayoutStore();
   const {
@@ -53,14 +67,25 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
     setBrokenLinks,
   } = useEditorStore();
 
+  const currentDocument = documentPath ?? activeDocument;
+  const currentDocumentSpaceId = documentSpaceId ?? activeDocumentSpaceId;
+
   // Resolve workspace path from the document's workspace id
-  const docWs = activeDocumentSpaceId
+  const docWs = currentDocumentSpaceId
     ? [...rootSpaces, ...childWorkspaces].find(
-        (w) => w.id === activeDocumentSpaceId,
+        (w) => w.id === currentDocumentSpaceId,
       )
     : null;
-  const spacePath = docWs?.path ?? "";
-  const activeWsId = activeDocumentSpaceId;
+  const spacePath = spacePathProp ?? docWs?.path ?? "";
+  const activeWsId = currentDocumentSpaceId;
+  const projectPath = projectPathProp ?? activeRootPath;
+  const setCurrentDocument = useCallback(
+    (path: string) => {
+      onDocumentPathChange?.(path);
+      if (!documentPath) openDocument(path);
+    },
+    [documentPath, onDocumentPathChange, openDocument],
+  );
 
   const isLoadingRef = useRef(false);
   const currentPathRef = useRef<string | null>(null);
@@ -143,7 +168,7 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
           filePath: path,
           field,
           value,
-          projectPath: activeRootPath ?? null,
+          projectPath: projectPath ?? null,
         });
       } finally {
         bufferTimerRef.current = setTimeout(() => {
@@ -152,7 +177,7 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
         }, 500);
       }
     },
-    [spacePath, activeRootPath],
+    [spacePath, projectPath],
   );
 
   // Serialize the editor + current meta refs and call `write_entry`. Tracks
@@ -189,7 +214,7 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
         extra: extraRef.current,
         existingId: metaIdRef.current,
         skipRename,
-        projectPath: activeRootPath ?? null,
+        projectPath: projectPath ?? null,
       });
 
       if (result.write_nonce) {
@@ -198,7 +223,7 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
 
       return result;
     },
-    [editor, spacePath, activeRootPath, updateEntryField],
+    [editor, spacePath, projectPath, updateEntryField],
   );
 
   const handleModifiedSources = useCallback(
@@ -269,27 +294,27 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
     }, AUTOSAVE_DEBOUNCE_MS);
   }, [performWrite, editor, spacePath]);
 
-  // Load document when activeDocument changes
+  // Load document when the target document changes
   useEffect(() => {
-    if (!editor || !activeDocument || !spacePath) return;
+    if (!editor || !currentDocument || !spacePath) return;
 
     // Cache current editor state before switching. Cancel any debounce for
     // the previous doc — any in-memory edits not yet written are discarded
     // at switch time (v1 — acceptable loss ≤1s of edits).
     const prevPath = currentPathRef.current;
-    if (prevPath && prevPath !== activeDocument) {
+    if (prevPath && prevPath !== currentDocument) {
       docCacheRef.current.set(prevPath, editor.children);
     }
     cancelDebounce();
 
-    currentPathRef.current = activeDocument;
+    currentPathRef.current = currentDocument;
     isLoadingRef.current = true;
 
     // Validate links in background
     invoke<{ url: string; exists: boolean }[]>("validate_links", {
       space: spacePath,
-      path: activeDocument,
-      projectPath: activeRootPath ?? null,
+      path: currentDocument,
+      projectPath: projectPath ?? null,
     })
       .then((results) => {
         const broken = new Set(
@@ -301,16 +326,16 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
 
     // Use cached Plate value if available and file wasn't modified externally
     // (visual aiModified flag) or invalidated by a prior backlinks update (staleCache).
-    const cached = docCacheRef.current.get(activeDocument);
+    const cached = docCacheRef.current.get(currentDocument);
     const editorState = useEditorStore.getState();
     const wasExternallyModified =
-      editorState.aiModified[activeDocument] ||
-      editorState.staleCache[activeDocument];
+      editorState.aiModified[currentDocument] ||
+      editorState.staleCache[currentDocument];
 
     if (cached && !wasExternallyModified) {
       invoke<Entry>("read_entry", {
         space: spacePath,
-        path: activeDocument,
+        path: currentDocument,
       })
         .then((entry) => {
           setMeta(entry.meta);
@@ -319,7 +344,7 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
           setDescription(entry.meta.description ?? "");
           setCover(entry.meta.cover ?? null);
           editor.tf.setValue(cached);
-          clearUnsaved(activeDocument);
+          clearUnsaved(currentDocument);
         })
         .catch((err) => {
           console.error("Failed to load document meta:", err);
@@ -329,11 +354,11 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
           isLoadingRef.current = false;
         });
     } else {
-      docCacheRef.current.delete(activeDocument);
-      useEditorStore.getState().clearStale(activeDocument);
+      docCacheRef.current.delete(currentDocument);
+      useEditorStore.getState().clearStale(currentDocument);
       invoke<Entry>("read_entry", {
         space: spacePath,
-        path: activeDocument,
+        path: currentDocument,
       })
         .then((entry) => {
           setMeta(entry.meta);
@@ -343,7 +368,7 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
           setCover(entry.meta.cover ?? null);
           const value = deserializeWithConflicts(editor, entry.body);
           editor.tf.setValue(value);
-          clearUnsaved(activeDocument);
+          clearUnsaved(currentDocument);
         })
         .catch((err) => {
           console.error("Failed to load document:", err);
@@ -355,13 +380,22 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
     }
   }, [
     editor,
-    activeDocument,
+    currentDocument,
     spacePath,
-    activeRootPath,
+    projectPath,
     cancelDebounce,
     clearUnsaved,
     setBrokenLinks,
   ]);
+
+  useEffect(() => {
+    if (!bodyOnly || !bodyOnlyMeta) return;
+    setMeta(bodyOnlyMeta);
+    setTitle(bodyOnlyMeta.title);
+    setIcon(bodyOnlyMeta.icon);
+    setDescription(bodyOnlyMeta.description ?? "");
+    setCover(bodyOnlyMeta.cover ?? null);
+  }, [bodyOnly, bodyOnlyMeta]);
 
   // Cancel debounce on unmount
   useEffect(() => cancelDebounce, [cancelDebounce]);
@@ -386,7 +420,7 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
 
   // Apply pending rename from sidebar (file already renamed on disk)
   useEffect(() => {
-    if (!pendingRename || pendingRename.path !== activeDocument || !editor)
+    if (!pendingRename || pendingRename.path !== currentDocument || !editor)
       return;
     const { title: newTitle, newPath } = pendingRename;
     clearPendingRename();
@@ -399,7 +433,7 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
       docCacheRef.current.set(newPath, editor.children);
       docCacheRef.current.delete(pendingRename.path);
       clearUnsaved(pendingRename.path);
-      openDocument(newPath);
+      setCurrentDocument(newPath);
     } else {
       // Slug unchanged, just update sidebar
       if (currentPathRef.current && activeWsId) {
@@ -413,11 +447,11 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
     }
   }, [
     pendingRename,
-    activeDocument,
+    currentDocument,
     editor,
     clearPendingRename,
     clearUnsaved,
-    openDocument,
+    setCurrentDocument,
     updateNodeMeta,
     activeWsId,
   ]);
@@ -503,7 +537,7 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
   // schedule on the backend), then commit. `flush_target_repo` inside
   // git_commit_file drains the structural batch → Rename commit before user.
   const handleSave = useCallback(async () => {
-    if (!editor || !activeDocument || !spacePath) return;
+    if (!editor || !currentDocument || !spacePath) return;
 
     cancelDebounce();
 
@@ -511,17 +545,17 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
       const result = await performWrite(false);
       if (!result) return;
 
-      clearUnsaved(activeDocument);
+      clearUnsaved(currentDocument);
 
       if (result.new_path) {
-        docCacheRef.current.delete(activeDocument);
+        docCacheRef.current.delete(currentDocument);
         docCacheRef.current.set(result.new_path, editor.children);
-        useLayoutStore.getState().openDocument(result.new_path);
+        setCurrentDocument(result.new_path);
         if (activeWsId) {
           useSpaceStore.getState().refreshTree(activeWsId);
         }
       } else {
-        docCacheRef.current.set(activeDocument, editor.children);
+        docCacheRef.current.set(currentDocument, editor.children);
       }
 
       // Backlinks files: invalidate cache so next open re-reads from disk,
@@ -531,7 +565,7 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
 
       // Auto-commit the saved file. During mid-merge, route through
       // git_resolve_continue to finalize the merge instead.
-      const committedPath = result.new_path ?? activeDocument;
+      const committedPath = result.new_path ?? currentDocument;
       const status = useGitStore.getState().statuses[spacePath];
       if (status?.hasConflicts) {
         try {
@@ -546,7 +580,7 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
         await commitFileAndMaybeSync(
           spacePath,
           committedPath,
-          activeRootPath ?? undefined,
+          projectPath ?? undefined,
         );
       }
     } catch (err) {
@@ -555,14 +589,15 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
     }
   }, [
     editor,
-    activeDocument,
+    currentDocument,
     spacePath,
     activeWsId,
-    activeRootPath,
+    projectPath,
     cancelDebounce,
     performWrite,
     clearUnsaved,
     handleModifiedSources,
+    setCurrentDocument,
   ]);
 
   // ⌘⇧S — flush the active document (if dirty) with materialize, then
@@ -572,44 +607,45 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
     if (!spacePath) return;
     cancelDebounce();
 
-    if (!editor || !activeDocument) {
-      void commitAllSpace(spacePath, activeRootPath ?? undefined);
+    if (!editor || !currentDocument) {
+      void commitAllSpace(spacePath, projectPath ?? undefined);
       return;
     }
-    const isDirty = useEditorStore.getState().unsavedChanges[activeDocument];
+    const isDirty = useEditorStore.getState().unsavedChanges[currentDocument];
     if (!isDirty) {
-      void commitAllSpace(spacePath, activeRootPath ?? undefined);
+      void commitAllSpace(spacePath, projectPath ?? undefined);
       return;
     }
     try {
       const result = await performWrite(false);
       if (!result) return;
-      clearUnsaved(activeDocument);
+      clearUnsaved(currentDocument);
       if (result.new_path) {
-        docCacheRef.current.delete(activeDocument);
+        docCacheRef.current.delete(currentDocument);
         docCacheRef.current.set(result.new_path, editor.children);
-        useLayoutStore.getState().openDocument(result.new_path);
+        setCurrentDocument(result.new_path);
         if (activeWsId) {
           useSpaceStore.getState().refreshTree(activeWsId);
         }
       }
       // See handleSave: same backlinks suppress + cache-invalidate.
       handleModifiedSources(result);
-      await commitAllSpace(spacePath, activeRootPath ?? undefined);
+      await commitAllSpace(spacePath, projectPath ?? undefined);
     } catch (err) {
       console.error("Save-all failed:", err);
       toast.error(m.editor_error_save());
     }
   }, [
     editor,
-    activeDocument,
+    currentDocument,
     spacePath,
     activeWsId,
-    activeRootPath,
+    projectPath,
     cancelDebounce,
     performWrite,
     clearUnsaved,
     handleModifiedSources,
+    setCurrentDocument,
   ]);
 
   // Keyboard shortcuts
@@ -640,7 +676,7 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
   useFileWatcher({
     editor,
     spacePath,
-    activeDocument,
+    activeDocument: currentDocument,
     ownNoncesRef,
     isDebouncePendingRef,
     isLoadingRef,
@@ -679,9 +715,9 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
                   icon={icon}
                   description={description}
                   cover={cover}
-                  projectPath={activeRootPath ?? null}
+                  projectPath={projectPath ?? null}
                   spacePath={spacePath}
-                  documentPath={activeDocument}
+                  documentPath={currentDocument}
                   onTitleChange={handleTitleChange}
                   onIconChange={handleIconChange}
                   onDescriptionChange={handleDescriptionChange}
@@ -691,8 +727,8 @@ export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorPro
                 <FrontmatterPanel
                   meta={meta}
                   spacePath={spacePath}
-                  projectPath={activeRootPath}
-                  filePath={activeDocument}
+                  projectPath={projectPath}
+                  filePath={currentDocument}
                   isOpen={frontmatterOpen}
                   onOpenChange={setFrontmatterOpen}
                   onPropertyChange={handlePropertyChange}

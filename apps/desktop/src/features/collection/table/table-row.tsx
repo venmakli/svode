@@ -53,6 +53,10 @@ export function SortableTableRow({
           }}
           tabIndex={0}
           onFocus={onFocus}
+          onClick={(event) => {
+            if (shouldIgnoreRowOpen(event.target)) return;
+            onOpen();
+          }}
           onDoubleClick={onOpen}
           onKeyDown={(event) => {
             if (event.target !== event.currentTarget) return;
@@ -105,5 +109,24 @@ export function SortableTableRow({
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
+  );
+}
+
+function shouldIgnoreRowOpen(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return true;
+  return Boolean(
+    target.closest(
+      [
+        "button",
+        "a",
+        "input",
+        "textarea",
+        "select",
+        "[role='button']",
+        "[role='checkbox']",
+        "[contenteditable='true']",
+        "[data-radix-collection-item]",
+      ].join(","),
+    ),
   );
 }

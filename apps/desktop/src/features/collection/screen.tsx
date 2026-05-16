@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   closestCenter,
   DndContext,
@@ -15,7 +22,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { invoke } from "@tauri-apps/api/core";
-import { Database, FileText, Plus, X } from "lucide-react";
+import { Database, FileText, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
@@ -34,6 +41,7 @@ import { useSpaceStore } from "@/stores/space";
 import { useViewQuery } from "@/features/collection-query/use-view-query";
 import { DeleteDialogs } from "./delete-dialogs";
 import { DocumentSettings } from "./document-settings-popover";
+import { EntryPeekSheet, type EntryPeekTarget } from "./entry-peek-sheet";
 import { handleError } from "./errors";
 import { CollectionSkeleton } from "./skeleton";
 import {
@@ -69,6 +77,7 @@ interface CollectionScreenProps {
   documentPath: string;
   spaceId: string;
   hasReadme: boolean;
+  headerActions?: ReactNode;
 }
 
 export function CollectionScreen({
@@ -77,6 +86,7 @@ export function CollectionScreen({
   documentPath,
   spaceId,
   hasReadme,
+  headerActions,
 }: CollectionScreenProps) {
   const collectionPath = useMemo(
     () => collectionPathFor(documentPath),
@@ -102,7 +112,7 @@ export function CollectionScreen({
   const [documentLabel, setDocumentLabel] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteEntry, setDeleteEntry] = useState<Entry | null>(null);
-  const [peekNestedEntry, setPeekNestedEntry] = useState<Entry | null>(null);
+  const [peekTarget, setPeekTarget] = useState<EntryPeekTarget | null>(null);
   const [entriesVersion, setEntriesVersion] = useState(0);
   const [tableCreateRequest, setTableCreateRequest] = useState({
     signal: 0,
@@ -488,6 +498,15 @@ export function CollectionScreen({
     setDeleteOpen(false);
   }
 
+  function openPeek(entryToOpen: Entry, nested = false) {
+    setPeekTarget({ entry: entryToOpen, nested });
+  }
+
+  function openFullPage(entryToOpen: Entry) {
+    setPeekTarget(null);
+    openDocument(entryToOpen.path, spaceId);
+  }
+
   async function reorder(nextOrder: string[]) {
     const next = await invoke<CollectionSchema>("reorder_views", {
       space: spacePath,
@@ -667,7 +686,9 @@ export function CollectionScreen({
                 void updateCover(nextCover).catch(handleError)
               }
               onBodyFocus={() => selectTab("document")}
-              titleClassName="max-w-4xl"
+              titleClassName={headerActions ? "max-w-none" : "max-w-4xl"}
+              actions={headerActions}
+              coverSize={headerActions ? "compact" : "default"}
             />
           ) : (
             <div className="max-w-4xl">
@@ -822,7 +843,7 @@ export function CollectionScreen({
 
         {hasReadme ? (
           <TabsContent value="document" className="min-h-0 overflow-hidden">
-            <PlateDocumentEditor bodyOnly />
+            <PlateDocumentEditor bodyOnly bodyOnlyMeta={entry?.meta ?? null} />
           </TabsContent>
         ) : null}
         {views.map((view) => (
@@ -851,10 +872,10 @@ export function CollectionScreen({
                 createFocusSignal={tableCreateRequest.signal}
                 createAsFolder={tableCreateRequest.asFolder}
                 onClearSearch={() => setSearchQuery("")}
-                onOpenEntry={(entryToOpen) =>
-                  openDocument(entryToOpen.path, spaceId)
+                onOpenEntry={(entryToOpen) => openPeek(entryToOpen)}
+                onOpenNestedPeek={(entryToOpen) =>
+                  openPeek(entryToOpen, true)
                 }
-                onOpenNestedPeek={setPeekNestedEntry}
                 onOpenNestedCollection={(entryToOpen) =>
                   openDocument(entryToOpen.path, spaceId)
                 }
@@ -880,9 +901,7 @@ export function CollectionScreen({
                 spacePath={spacePath}
                 searchQuery={searchQuery}
                 refreshToken={entriesVersion}
-                onOpenEntry={(entryToOpen) =>
-                  openDocument(entryToOpen.path, spaceId)
-                }
+                onOpenEntry={(entryToOpen) => openPeek(entryToOpen)}
                 onDuplicateEntry={(entryToDuplicate) =>
                   void duplicateRow(entryToDuplicate).catch(handleError)
                 }
@@ -905,38 +924,34 @@ export function CollectionScreen({
           void deleteRow(entryToDelete).catch(handleError)
         }
       />
-      {peekNestedEntry ? (
-        <div
-          className="fixed inset-0 z-50 flex justify-end bg-black/25"
-          onMouseDown={() => setPeekNestedEntry(null)}
-        >
-          <div
-            className="h-full w-[min(1080px,84vw)] border-l bg-background shadow-2xl"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <div className="flex h-10 items-center justify-end border-b px-3">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                onClick={() => setPeekNestedEntry(null)}
-              >
-                <X />
-                <span className="sr-only">{m.settings_cancel()}</span>
-              </Button>
-            </div>
-            <div className="h-[calc(100%-2.5rem)]">
-              <CollectionScreen
-                spacePath={spacePath}
-                projectPath={projectPath}
-                documentPath={peekNestedEntry.path}
-                spaceId={spaceId}
-                hasReadme
-              />
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <EntryPeekSheet
+        target={peekTarget}
+        spacePath={spacePath}
+        projectPath={projectPath}
+        spaceId={spaceId}
+        onOpenChange={(open) => {
+          if (!open) setPeekTarget(null);
+        }}
+        onOpenFullPage={openFullPage}
+        onDuplicateEntry={(entryToDuplicate) => {
+          setPeekTarget(null);
+          void duplicateRow(entryToDuplicate).catch(handleError);
+        }}
+        onDeleteEntry={(entryToDelete) => {
+          setPeekTarget(null);
+          setDeleteEntry(entryToDelete);
+        }}
+        renderNested={(entryToOpen, actions) => (
+          <CollectionScreen
+            spacePath={spacePath}
+            projectPath={projectPath}
+            documentPath={entryToOpen.path}
+            spaceId={spaceId}
+            hasReadme
+            headerActions={actions}
+          />
+        )}
+      />
     </div>
   );
 }

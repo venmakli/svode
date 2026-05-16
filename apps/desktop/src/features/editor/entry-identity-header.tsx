@@ -1,5 +1,7 @@
+import type { ReactNode } from "react";
 import { CoverBanner } from "./cover-banner";
 import { TitleZone } from "./title-zone";
+import { cn } from "@/lib/utils";
 import type { EntryCover } from "./types";
 
 interface EntryIdentityHeaderProps {
@@ -16,6 +18,8 @@ interface EntryIdentityHeaderProps {
   onCoverChange: (cover: EntryCover | null) => void;
   onBodyFocus: () => void;
   titleClassName?: string;
+  actions?: ReactNode;
+  coverSize?: "default" | "compact";
 }
 
 export function EntryIdentityHeader({
@@ -32,6 +36,8 @@ export function EntryIdentityHeader({
   onCoverChange,
   onBodyFocus,
   titleClassName,
+  actions,
+  coverSize = "default",
 }: EntryIdentityHeaderProps) {
   return (
     <>
@@ -41,17 +47,26 @@ export function EntryIdentityHeader({
         spacePath={spacePath}
         documentPath={documentPath}
         onCoverChange={onCoverChange}
+        size={coverSize}
       />
-      <div className={titleClassName}>
-        <TitleZone
-          title={title}
-          icon={icon}
-          description={description}
-          onTitleChange={onTitleChange}
-          onIconChange={onIconChange}
-          onDescriptionChange={onDescriptionChange}
-          onBodyFocus={onBodyFocus}
-        />
+      <div
+        className={cn(
+          "flex min-w-0 items-start justify-between gap-4",
+          titleClassName,
+        )}
+      >
+        <div className="min-w-0 flex-1">
+          <TitleZone
+            title={title}
+            icon={icon}
+            description={description}
+            onTitleChange={onTitleChange}
+            onIconChange={onIconChange}
+            onDescriptionChange={onDescriptionChange}
+            onBodyFocus={onBodyFocus}
+          />
+        </div>
+        {actions ? <div className="mt-1 shrink-0">{actions}</div> : null}
       </div>
     </>
   );
