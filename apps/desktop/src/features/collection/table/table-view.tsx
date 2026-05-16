@@ -475,8 +475,8 @@ export function TableView({
         }}
       >
         <Table
-          className="table-fixed"
-          style={{ width: table.getTotalSize() + 62 }}
+          className="min-w-full table-fixed"
+          style={{ width: `max(100%, ${table.getTotalSize() + 62}px)` }}
         >
           <TableHeaderRow
             table={table}
