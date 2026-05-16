@@ -91,7 +91,7 @@ export function TableShell({
 }) {
   return (
     <div
-      className="min-h-0 flex-1 overflow-auto rounded-xl bg-card ring-1 ring-border/70"
+      className="max-h-full overflow-auto rounded-xl bg-card ring-1 ring-border/70"
       onKeyDown={onKeyDown}
     >
       {children}
