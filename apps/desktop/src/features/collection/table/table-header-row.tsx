@@ -32,7 +32,7 @@ export function TableHeaderRow({
               {flexRender(header.column.columnDef.header, header.getContext())}
             </TableHead>
           ))}
-          <TableHead className="h-[34px] w-11 p-0">
+          <TableHead className="h-[34px] p-0">
             <PropertyTypePicker
               trigger={
                 <Button

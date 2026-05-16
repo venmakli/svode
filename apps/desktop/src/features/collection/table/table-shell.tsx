@@ -116,7 +116,10 @@ export function LoadingTable({
   return (
     <div className="flex h-full flex-col px-4 pb-4 pt-3">
       <TableShell>
-        <Table className="table-fixed" style={{ width: tableWidth }}>
+        <Table
+          className="min-w-full table-auto"
+          style={{ minWidth: tableWidth, width: "100%" }}
+        >
           <TableHeader>
             <ShadcnTableRow className="h-[34px] bg-muted/40">
               <TableHead className="h-[34px] w-[18px] p-0" />
@@ -141,7 +144,7 @@ export function LoadingTable({
                   </TableHead>
                 );
               })}
-              <TableHead className="w-11 p-0" />
+              <TableHead className="p-0" />
             </ShadcnTableRow>
           </TableHeader>
           <TableBody>
@@ -157,7 +160,7 @@ export function LoadingTable({
                     <Skeleton className="h-4 w-full" />
                   </TableCell>
                 ))}
-                <TableCell className="h-9 w-11 p-0" />
+                <TableCell className="h-9 p-0" />
               </ShadcnTableRow>
             ))}
           </TableBody>

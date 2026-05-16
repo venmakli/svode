@@ -111,7 +111,7 @@ export function TableRowsBody({
                         )}
                       </TableCell>
                     ))}
-                    <TableCell className={cn(rowHeight, "w-11 p-0")} />
+                    <TableCell className={cn(rowHeight, "p-0")} />
                   </>
                 )}
               </SortableTableRow>
