@@ -14,6 +14,7 @@ import { Table } from "@/components/ui/table";
 import type { CollectionView } from "@/features/collection-query/types";
 import type { Entry } from "@/features/editor/types";
 import { normalizeSchema } from "@/features/properties/utils";
+import { useSpaceStore } from "@/stores/space";
 import type {
   CollectionSchema,
   Column,
@@ -83,6 +84,13 @@ export function TableView({
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerAsFolder, setComposerAsFolder] = useState(false);
   const [composerValue, setComposerValue] = useState("");
+  const sidebarSpaceId = useSpaceStore((state) => {
+    const space =
+      state.spaces.find((item) => item.path === spacePath) ??
+      state.rootSpaces.find((item) => item.path === spacePath);
+    return space?.id ?? null;
+  });
+  const refreshTree = useSpaceStore((state) => state.refreshTree);
   const showNested = showNestedForView(view);
   const density =
     view.density === "compact" || view.density === "spacious"
@@ -404,6 +412,9 @@ export function TableView({
       );
       return [...fullOrder, ...children];
     });
+    if (sidebarSpaceId) {
+      await refreshTree(sidebarSpaceId);
+    }
   }
 
   if (loading) return <LoadingTable fields={visibleFields} schema={schema} />;
