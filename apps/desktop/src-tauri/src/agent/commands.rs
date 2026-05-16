@@ -3,12 +3,12 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, State};
 
+use crate::agent::AgentSessions;
 use crate::agent::claude::{self, ClaudeCodeExecutor};
 use crate::agent::executor::AgentExecutor;
 use crate::agent::types::{
-    load_space_agent_config, AgentConfig, AgentEvent, AvailableAgent, ModelOption,
+    AgentConfig, AgentEvent, AvailableAgent, ModelOption, load_space_agent_config,
 };
-use crate::agent::AgentSessions;
 use crate::error::AppError;
 
 /// Default timeout for agent execution: 10 minutes.
@@ -46,21 +46,19 @@ pub async fn agent_send(
     let cli_path_override = sp_config.cli_paths.get(executor.name()).cloned();
 
     // Spawn the CLI process
-    let mut process = executor.spawn(
-        space_dir,
-        &agent_config,
-        cli_path_override.as_deref(),
-    )?;
+    let mut process = executor.spawn(space_dir, &agent_config, cli_path_override.as_deref())?;
 
     // Take stdout for streaming
-    let stdout = process.child.stdout.take().ok_or_else(|| {
-        AppError::AgentSpawnFailed("Failed to capture CLI stdout".to_string())
-    })?;
+    let stdout =
+        process.child.stdout.take().ok_or_else(|| {
+            AppError::AgentSpawnFailed("Failed to capture CLI stdout".to_string())
+        })?;
 
     // Take stdin for sending messages and permission responses
-    let mut stdin = process.stdin.take().ok_or_else(|| {
-        AppError::AgentSpawnFailed("Failed to capture CLI stdin".to_string())
-    })?;
+    let mut stdin = process
+        .stdin
+        .take()
+        .ok_or_else(|| AppError::AgentSpawnFailed("Failed to capture CLI stdin".to_string()))?;
 
     // Send the user message through stdin
     executor.send_message(&mut stdin, &message).await?;
@@ -81,17 +79,11 @@ pub async fn agent_send(
     let sid_for_timeout = session_id.clone();
     tokio::spawn(async move {
         let stream_future = claude::stream_stdout(stdout, &sid, tx.clone());
-        let result = tokio::time::timeout(
-            Duration::from_secs(timeout_secs),
-            stream_future,
-        )
-        .await;
+        let result = tokio::time::timeout(Duration::from_secs(timeout_secs), stream_future).await;
 
         if result.is_err() {
             // Timeout — kill the process and emit error
-            tracing::error!(
-                "Agent timeout after {timeout_secs}s for session {sid_for_timeout}"
-            );
+            tracing::error!("Agent timeout after {timeout_secs}s for session {sid_for_timeout}");
             let error_event = AgentEvent::Error {
                 session_id: sid_for_timeout.clone(),
                 message: format!("Agent timeout after {} minutes", timeout_secs / 60),
@@ -99,8 +91,7 @@ pub async fn agent_send(
             let _ = tx.send(error_event);
 
             // Kill the process
-            if let Some(mut process) = sessions_for_timeout.remove(&sid_for_timeout).await
-            {
+            if let Some(mut process) = sessions_for_timeout.remove(&sid_for_timeout).await {
                 let _ = process.child.kill().await;
             }
 
@@ -164,9 +155,11 @@ pub async fn agent_stop(
 ) -> Result<(), AppError> {
     if let Some(mut process) = sessions.remove(&session_id).await {
         tracing::info!("Stopping agent session {session_id}");
-        process.child.kill().await.map_err(|e| {
-            AppError::General(format!("Failed to kill agent process: {e}"))
-        })?;
+        process
+            .child
+            .kill()
+            .await
+            .map_err(|e| AppError::General(format!("Failed to kill agent process: {e}")))?;
         Ok(())
     } else {
         // Not an error — session may have already finished
@@ -200,13 +193,7 @@ pub async fn agent_respond_permission(
             let message = message.clone();
             Box::pin(async move {
                 executor
-                    .handle_permission(
-                        stdin,
-                        &request_id,
-                        &behavior,
-                        updated_input,
-                        message,
-                    )
+                    .handle_permission(stdin, &request_id, &behavior, updated_input, message)
                     .await
             })
         })
@@ -290,12 +277,14 @@ pub async fn agent_list_available() -> Result<Vec<AvailableAgent>, AppError> {
 
 /// List available models for the active agent CLI in a space.
 #[tauri::command]
-pub async fn agent_list_models(
-    space_path: String,
-) -> Result<Vec<ModelOption>, AppError> {
+pub async fn agent_list_models(space_path: String) -> Result<Vec<ModelOption>, AppError> {
     let space_dir = Path::new(&space_path);
     let sp_config = load_space_agent_config(space_dir);
-    let active_cli = sp_config.clis.first().map(|s| s.as_str()).unwrap_or("claude");
+    let active_cli = sp_config
+        .clis
+        .first()
+        .map(|s| s.as_str())
+        .unwrap_or("claude");
 
     let models = match active_cli {
         "claude" => ClaudeCodeExecutor.available_models(),

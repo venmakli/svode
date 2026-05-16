@@ -29,8 +29,7 @@ pub struct GitCli {
 impl GitCli {
     /// Detect git binary and LFS availability.
     pub fn detect() -> Result<Self, AppError> {
-        let git_path =
-            which::which("git").map_err(|_| AppError::GitNotFound)?;
+        let git_path = which::which("git").map_err(|_| AppError::GitNotFound)?;
 
         tracing::info!("Found git at: {}", git_path.display());
 
@@ -58,11 +57,7 @@ impl GitCli {
     }
 
     /// Execute a git command in the given space directory.
-    pub async fn exec(
-        &self,
-        space_dir: &Path,
-        args: &[&str],
-    ) -> Result<GitOutput, AppError> {
+    pub async fn exec(&self, space_dir: &Path, args: &[&str]) -> Result<GitOutput, AppError> {
         self.exec_with_env(space_dir, args, &[]).await
     }
 
@@ -75,11 +70,7 @@ impl GitCli {
         args: &[&str],
         extra_env: &[(&str, &str)],
     ) -> Result<GitOutput, AppError> {
-        tracing::debug!(
-            "git {} (in {})",
-            args.join(" "),
-            space_dir.display()
-        );
+        tracing::debug!("git {} (in {})", args.join(" "), space_dir.display());
 
         let mut cmd = Command::new(&self.git_path);
         cmd.args(args)
@@ -93,9 +84,7 @@ impl GitCli {
         let output = cmd
             .output()
             .await
-            .map_err(|e| {
-                AppError::GitCommandFailed(format!("Failed to spawn git: {e}"))
-            })?;
+            .map_err(|e| AppError::GitCommandFailed(format!("Failed to spawn git: {e}")))?;
 
         let result = GitOutput {
             stdout: String::from_utf8_lossy(&output.stdout).to_string(),
@@ -117,10 +106,7 @@ impl GitCli {
 
     /// Execute a git command without a working directory (e.g. clone, or
     /// `--global` config writes).
-    pub async fn exec_no_dir(
-        &self,
-        args: &[&str],
-    ) -> Result<GitOutput, AppError> {
+    pub async fn exec_no_dir(&self, args: &[&str]) -> Result<GitOutput, AppError> {
         tracing::debug!("git {}", args.join(" "));
 
         let output = Command::new(&self.git_path)
@@ -129,9 +115,7 @@ impl GitCli {
             .env("LC_ALL", "C.UTF-8")
             .output()
             .await
-            .map_err(|e| {
-                AppError::GitCommandFailed(format!("Failed to spawn git: {e}"))
-            })?;
+            .map_err(|e| AppError::GitCommandFailed(format!("Failed to spawn git: {e}")))?;
 
         let result = GitOutput {
             stdout: String::from_utf8_lossy(&output.stdout).to_string(),
@@ -150,9 +134,9 @@ impl GitCli {
             .output()
             .await;
 
-        let git_version = version_output.ok().map(|o| {
-            String::from_utf8_lossy(&o.stdout).trim().to_string()
-        });
+        let git_version = version_output
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
 
         GitAvailability {
             git: true,

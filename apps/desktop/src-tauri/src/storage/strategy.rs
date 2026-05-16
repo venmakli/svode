@@ -201,10 +201,7 @@ pub async fn apply_strategy(
 
         // `git lfs track` will rewrite .gitattributes itself — after it runs,
         // dedupe and re-apply our managed block as the canonical form.
-        match cli
-            .exec(space_dir, &["lfs", "track", ".assets/**"])
-            .await
-        {
+        match cli.exec(space_dir, &["lfs", "track", ".assets/**"]).await {
             Ok(o) if o.exit_code != 0 => {
                 let msg = format!("git lfs track failed: {}", o.stderr.trim());
                 tracing::warn!("{msg}");

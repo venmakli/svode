@@ -79,11 +79,7 @@ pub async fn get_global_identity(cli: &GitCli) -> Result<Option<GitIdentity>, Ap
     Ok(Some(GitIdentity { name, email }))
 }
 
-pub async fn set_global_identity(
-    cli: &GitCli,
-    name: &str,
-    email: &str,
-) -> Result<(), AppError> {
+pub async fn set_global_identity(cli: &GitCli, name: &str, email: &str) -> Result<(), AppError> {
     let name = validate_name(name)?;
     let email = validate_email(email)?;
     let out = cli
@@ -178,7 +174,9 @@ pub async fn get_effective_identity(
     cli: &GitCli,
     repo_path: &Path,
 ) -> Result<RepoIdentityResult, AppError> {
-    let name_out = cli.exec(repo_path, &["config", "--get", "user.name"]).await?;
+    let name_out = cli
+        .exec(repo_path, &["config", "--get", "user.name"])
+        .await?;
     let email_out = cli
         .exec(repo_path, &["config", "--get", "user.email"])
         .await?;
@@ -236,10 +234,12 @@ pub async fn apply_identity_to_project(
 ) -> Result<(), AppError> {
     set_local_identity(cli, root_path, name, email)
         .await
-        .map_err(|e| AppError::General(format!(
-            "identity write failed for root {}: {e}",
-            root_path.display()
-        )))?;
+        .map_err(|e| {
+            AppError::General(format!(
+                "identity write failed for root {}: {e}",
+                root_path.display()
+            ))
+        })?;
     for sp in target_spaces {
         let p = Path::new(sp);
         set_local_identity(cli, p, name, email)

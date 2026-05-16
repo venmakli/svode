@@ -15,10 +15,7 @@ pub enum SyncResult {
 }
 
 /// Pull then push. Handle conflicts, no-remote, and auth errors.
-pub async fn sync(
-    cli: &GitCli,
-    space_dir: &Path,
-) -> Result<SyncResult, AppError> {
+pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError> {
     // Check if remote is configured
     let remote_out = cli.exec(space_dir, &["remote"]).await?;
     if remote_out.stdout.trim().is_empty() {
@@ -26,9 +23,7 @@ pub async fn sync(
     }
 
     // Pull
-    let pull_out = cli
-        .exec(space_dir, &["pull", "--no-rebase"])
-        .await?;
+    let pull_out = cli.exec(space_dir, &["pull", "--no-rebase"]).await?;
 
     if pull_out.exit_code != 0 {
         let stderr = pull_out.stderr.trim();
@@ -81,15 +76,9 @@ pub async fn sync(
 }
 
 /// Get list of conflicted files.
-pub async fn conflict_files(
-    cli: &GitCli,
-    space_dir: &Path,
-) -> Result<Vec<String>, AppError> {
+pub async fn conflict_files(cli: &GitCli, space_dir: &Path) -> Result<Vec<String>, AppError> {
     let out = cli
-        .exec(
-            space_dir,
-            &["diff", "--name-only", "--diff-filter=U"],
-        )
+        .exec(space_dir, &["diff", "--name-only", "--diff-filter=U"])
         .await?;
 
     Ok(out
@@ -101,10 +90,7 @@ pub async fn conflict_files(
 }
 
 /// Resolve conflicts: stage all and commit, then push.
-pub async fn resolve_and_continue(
-    cli: &GitCli,
-    space_dir: &Path,
-) -> Result<SyncResult, AppError> {
+pub async fn resolve_and_continue(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError> {
     // Stage all resolved files
     let add_out = cli.exec(space_dir, &["add", "."]).await?;
     if add_out.exit_code != 0 {
@@ -115,9 +101,7 @@ pub async fn resolve_and_continue(
     }
 
     // Commit the merge
-    let commit_out = cli
-        .exec(space_dir, &["commit", "--no-edit"])
-        .await?;
+    let commit_out = cli.exec(space_dir, &["commit", "--no-edit"]).await?;
     if commit_out.exit_code != 0 {
         return Err(AppError::GitCommandFailed(format!(
             "git commit failed: {}",
@@ -140,21 +124,13 @@ pub async fn resolve_and_continue(
         )));
     }
 
-    tracing::info!(
-        "Resolved conflicts and pushed in {}",
-        space_dir.display()
-    );
+    tracing::info!("Resolved conflicts and pushed in {}", space_dir.display());
     Ok(SyncResult::Success)
 }
 
 /// Abort current merge.
-pub async fn merge_abort(
-    cli: &GitCli,
-    space_dir: &Path,
-) -> Result<(), AppError> {
-    let out = cli
-        .exec(space_dir, &["merge", "--abort"])
-        .await?;
+pub async fn merge_abort(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
+    let out = cli.exec(space_dir, &["merge", "--abort"]).await?;
     if out.exit_code != 0 {
         return Err(AppError::GitCommandFailed(format!(
             "git merge --abort failed: {}",

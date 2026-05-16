@@ -266,12 +266,7 @@ impl IndexState {
     /// Cache the LFS state for `key` and emit `space:lfs_state_changed` via
     /// the provided `AppHandle`. All setters route through this so the
     /// frontend never misses a transition.
-    pub async fn set_lfs_state_with(
-        &self,
-        app: &AppHandle,
-        key: &IndexKey,
-        state: LfsState,
-    ) {
+    pub async fn set_lfs_state_with(&self, app: &AppHandle, key: &IndexKey, state: LfsState) {
         {
             let mut map = self.lfs_states.lock().await;
             map.insert(key.clone(), state);

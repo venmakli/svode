@@ -2,8 +2,8 @@ use std::path::Path;
 
 use tokio::process::ChildStdin;
 
-use super::types::{AgentConfig, AgentEvent, ModelOption};
 use super::AgentProcess;
+use super::types::{AgentConfig, AgentEvent, ModelOption};
 use crate::error::AppError;
 
 /// Trait abstracting over different agent CLI backends (Claude Code, etc.).

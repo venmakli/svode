@@ -8,9 +8,9 @@ use super::autocommit::{AutocommitService, SystemCommitKind};
 use super::cli::{GitAvailability, GitCli};
 use super::ops::{GitStatus, UnpushedCommit};
 use super::sync::SyncResult;
+use crate::AppError;
 use crate::index::{IndexKey, IndexState};
 use crate::space::types::SpaceGitType;
-use crate::AppError;
 
 /// Emit `space:synced` after a successful `git_sync(space)` finishes (and any
 /// reindex/post-sync work is done). Consumers — file watcher reindex,
@@ -248,11 +248,7 @@ pub async fn git_commit_file(
         // commit is isolated from user content.
         if file_path == ".combai/AGENTS.md" {
             autocommit
-                .commit_system_now(
-                    project,
-                    path.clone(),
-                    SystemCommitKind::AgentInstructions,
-                )
+                .commit_system_now(project, path.clone(), SystemCommitKind::AgentInstructions)
                 .await?;
             return super::ops::status(cli, &path).await;
         }
@@ -491,8 +487,7 @@ pub async fn git_enable_auto_sync(
         Some(proj) if !proj.is_empty() => {
             let project = PathBuf::from(proj);
             let cli = state.cli()?;
-            let git_type =
-                super::ops::detect_space_git_type(cli, &project, &space).await?;
+            let git_type = super::ops::detect_space_git_type(cli, &project, &space).await?;
             match git_type {
                 crate::space::types::SpaceGitType::Inline => project,
                 _ => space.clone(),

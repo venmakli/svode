@@ -79,10 +79,7 @@ fn relative_path(from_dir: &Path, to_path: &Path) -> String {
 ///
 /// For each mapping, creates `space/{target}` as a symlink pointing to
 /// `.combai/{source}` using a relative path. Skips if target already exists.
-pub fn setup_cli_symlinks(
-    space_path: &Path,
-    cli_name: &str,
-) -> Result<Vec<String>, AppError> {
+pub fn setup_cli_symlinks(space_path: &Path, cli_name: &str) -> Result<Vec<String>, AppError> {
     let mappings = get_mappings(cli_name);
     let mut created = Vec::new();
 
@@ -115,10 +112,7 @@ pub fn setup_cli_symlinks(
 ///
 /// Only removes targets that are actual symlinks (not real files/dirs).
 /// Cleans up empty `.claude/` directory if applicable.
-pub fn teardown_cli_symlinks(
-    space_path: &Path,
-    cli_name: &str,
-) -> Result<(), AppError> {
+pub fn teardown_cli_symlinks(space_path: &Path, cli_name: &str) -> Result<(), AppError> {
     let mappings = get_mappings(cli_name);
 
     for m in &mappings {

@@ -91,11 +91,7 @@ pub async fn probe_lfs(
             return LfsState::NotApplicable;
         }
     };
-    let strategy = cfg
-        .assets
-        .as_ref()
-        .map(|a| a.strategy)
-        .unwrap_or_default();
+    let strategy = cfg.assets.as_ref().map(|a| a.strategy).unwrap_or_default();
 
     match strategy {
         AssetsStrategy::Local | AssetsStrategy::InGit => LfsState::NotApplicable,
@@ -240,9 +236,7 @@ pub async fn repair_lfs(
         );
         LfsState::MissingCreds
     };
-    index_state
-        .set_lfs_state_with(&app, &key, new_state)
-        .await;
+    index_state.set_lfs_state_with(&app, &key, new_state).await;
     Ok(new_state)
 }
 
@@ -271,10 +265,7 @@ pub async fn get_lfs_state(
     // is correct and re-probing would be wasted work.
     let cfg = read_space_config(&target_dir)?;
     let strategy = cfg.assets.as_ref().map(|a| a.strategy).unwrap_or_default();
-    if !matches!(
-        strategy,
-        AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3
-    ) {
+    if !matches!(strategy, AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3) {
         return Ok(LfsState::NotApplicable);
     }
 

@@ -3,12 +3,12 @@ use std::path::{Path, PathBuf};
 use tauri::State;
 
 use super::{
-    apply_identity_to_project, get_effective_identity, get_global_identity, get_local_identity,
-    set_global_identity, set_local_identity, FanoutPreviewEntry, GlobalIdentityResult,
-    RepoIdentityResult,
+    FanoutPreviewEntry, GlobalIdentityResult, RepoIdentityResult, apply_identity_to_project,
+    get_effective_identity, get_global_identity, get_local_identity, set_global_identity,
+    set_local_identity,
 };
 use crate::AppError;
-use crate::git::commands::{require_cli, GitState};
+use crate::git::commands::{GitState, require_cli};
 use crate::git::ops;
 use crate::space::config;
 use crate::space::types::SpaceGitType;
@@ -19,7 +19,11 @@ pub async fn get_git_identity(
 ) -> Result<GlobalIdentityResult, AppError> {
     let cli = require_cli(&state)?;
     let global = get_global_identity(&cli).await?;
-    let source = if global.is_some() { "global" } else { "missing" };
+    let source = if global.is_some() {
+        "global"
+    } else {
+        "missing"
+    };
     Ok(GlobalIdentityResult { global, source })
 }
 

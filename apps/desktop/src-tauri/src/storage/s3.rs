@@ -68,10 +68,7 @@ pub fn keychain_account(cfg: &AssetsS3Config) -> String {
 
 /// Save credentials to the OS keychain. Runs on a blocking thread because
 /// `keyring` is sync.
-pub async fn save_credentials(
-    account: String,
-    secrets: AgentSecrets,
-) -> Result<(), AppError> {
+pub async fn save_credentials(account: String, secrets: AgentSecrets) -> Result<(), AppError> {
     tokio::task::spawn_blocking(move || -> Result<(), AppError> {
         let entry = keyring::Entry::new(KEYCHAIN_SERVICE, &account)
             .map_err(|e| AppError::Storage(format!("keychain open: {e}")))?;
@@ -168,7 +165,11 @@ pub fn ensure_agent_gitignore(space_dir: &Path) -> Result<(), AppError> {
 /// dir of the standalone crate. Returns an absolute path so git's
 /// `lfs.customtransfer.lfs-dal.path` config never relies on cwd.
 pub fn resolve_agent_binary(_app_handle: &tauri::AppHandle) -> Result<PathBuf, AppError> {
-    let exe_name = if cfg!(windows) { "lfs-dal.exe" } else { "lfs-dal" };
+    let exe_name = if cfg!(windows) {
+        "lfs-dal.exe"
+    } else {
+        "lfs-dal"
+    };
 
     // 1. Bundled sidecar — Tauri places externalBin next to the host binary
     //    after stripping the target-triple suffix, so a plain `lfs-dal[.exe]`
@@ -219,7 +220,10 @@ pub fn resolve_agent_binary(_app_handle: &tauri::AppHandle) -> Result<PathBuf, A
 /// nice but resolve_agent_binary is rarely called (only on strategy switch),
 /// so we just spawn the process each time.
 fn rustc_host_triple() -> Option<String> {
-    let out = std::process::Command::new("rustc").arg("-vV").output().ok()?;
+    let out = std::process::Command::new("rustc")
+        .arg("-vV")
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }

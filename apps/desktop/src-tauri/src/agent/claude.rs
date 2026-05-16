@@ -4,9 +4,9 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
+use crate::agent::AgentProcess;
 use crate::agent::executor::AgentExecutor;
 use crate::agent::types::{AgentConfig, AgentEvent, ModelOption};
-use crate::agent::AgentProcess;
 use crate::error::AppError;
 
 /// Claude Code CLI executor.
@@ -21,15 +21,13 @@ impl AgentExecutor for ClaudeCodeExecutor {
     ) -> Result<AgentProcess, AppError> {
         let resolved_path = match cli_path {
             Some(p) => p.to_string_lossy().to_string(),
-            None => detect_cli().ok_or_else(|| {
-                AppError::AgentCliNotFound("claude".to_string())
-            })?,
+            None => detect_cli().ok_or_else(|| AppError::AgentCliNotFound("claude".to_string()))?,
         };
 
         let mut cmd = build_command(space_dir, config, &resolved_path);
-        let mut child = cmd.spawn().map_err(|e| {
-            AppError::AgentSpawnFailed(e.to_string())
-        })?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| AppError::AgentSpawnFailed(e.to_string()))?;
 
         let stdin = child.stdin.take();
 
@@ -160,19 +158,13 @@ fn parse_jsonl_line(line: &str, session_id: &str) -> Vec<AgentEvent> {
     };
 
     let sid = session_id.to_string();
-    let top_type = parsed
-        .get("type")
-        .and_then(|t| t.as_str())
-        .unwrap_or("");
+    let top_type = parsed.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
     match top_type {
         "stream_event" => parse_stream_event(&parsed, &sid),
 
         "result" => {
-            let subtype = parsed
-                .get("subtype")
-                .and_then(|s| s.as_str())
-                .unwrap_or("");
+            let subtype = parsed.get("subtype").and_then(|s| s.as_str()).unwrap_or("");
             match subtype {
                 "success" => {
                     let cli_session = parsed
@@ -245,10 +237,7 @@ fn parse_stream_event(parsed: &serde_json::Value, session_id: &str) -> Vec<Agent
         None => return vec![],
     };
 
-    let event_type = event
-        .get("type")
-        .and_then(|t| t.as_str())
-        .unwrap_or("");
+    let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
     match event_type {
         "content_block_delta" => {
@@ -349,8 +338,7 @@ async fn send_user_message(
             "content": message
         }
     });
-    let mut line =
-        serde_json::to_string(&msg).map_err(|e| AppError::General(e.to_string()))?;
+    let mut line = serde_json::to_string(&msg).map_err(|e| AppError::General(e.to_string()))?;
     line.push('\n');
     tracing::debug!("Sending user message via stdin: {line}");
     stdin
@@ -372,9 +360,7 @@ async fn send_permission_response(
     updated_input: Option<&serde_json::Value>,
     message: Option<&str>,
 ) -> Result<(), AppError> {
-    tracing::info!(
-        "Sending permission response: request_id={request_id} behavior={behavior}"
-    );
+    tracing::info!("Sending permission response: request_id={request_id} behavior={behavior}");
     let response = if behavior == "allow" {
         serde_json::json!({
             "type": "control_response",
@@ -406,22 +392,12 @@ async fn send_permission_response(
         serde_json::to_string(&response).map_err(|e| AppError::General(e.to_string()))?;
     line.push('\n');
     tracing::debug!("Sending control_response via stdin: {line}");
-    stdin
-        .write_all(line.as_bytes())
-        .await
-        .map_err(|e| {
-            AppError::General(format!(
-                "Failed to write permission response to stdin: {e}"
-            ))
-        })?;
-    stdin
-        .flush()
-        .await
-        .map_err(|e| {
-            AppError::General(format!(
-                "Failed to flush permission response stdin: {e}"
-            ))
-        })?;
+    stdin.write_all(line.as_bytes()).await.map_err(|e| {
+        AppError::General(format!("Failed to write permission response to stdin: {e}"))
+    })?;
+    stdin.flush().await.map_err(|e| {
+        AppError::General(format!("Failed to flush permission response stdin: {e}"))
+    })?;
     tracing::info!("Permission response sent successfully for request_id={request_id}");
     Ok(())
 }

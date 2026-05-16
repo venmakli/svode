@@ -6,7 +6,10 @@ use super::types::{AgentConfig, SpaceConfig, SpaceDefaults};
 pub fn merge_with_defaults(child: &SpaceConfig, defaults: &SpaceDefaults) -> SpaceConfig {
     let merged_agent = match (&child.agent, &defaults.agent) {
         (Some(child_agent), Some(default_agent)) => Some(AgentConfig {
-            clis: child_agent.clis.clone().or_else(|| default_agent.clis.clone()),
+            clis: child_agent
+                .clis
+                .clone()
+                .or_else(|| default_agent.clis.clone()),
             default_model: child_agent
                 .default_model
                 .clone()

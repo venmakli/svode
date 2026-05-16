@@ -105,11 +105,7 @@ pub async fn upload_asset(
     // entirely (Local strategy). All other strategies need the file tracked
     // so it shows up in `Changes` and ends up in the next commit.
     let cfg = read_space_config(&target_dir)?;
-    let strategy = cfg
-        .assets
-        .as_ref()
-        .map(|a| a.strategy)
-        .unwrap_or_default();
+    let strategy = cfg.assets.as_ref().map(|a| a.strategy).unwrap_or_default();
     if !matches!(strategy, AssetsStrategy::Local) {
         autocommit.schedule_structural(
             project.clone(),
@@ -190,8 +186,7 @@ pub async fn set_assets_strategy(
     // we refuse to write a child-space override that would silently be ignored.
     if space_id.is_some() {
         let cli = require_cli(&git_state)?;
-        let git_type =
-            crate::git::ops::detect_space_git_type(&cli, &project, &target_dir).await?;
+        let git_type = crate::git::ops::detect_space_git_type(&cli, &project, &target_dir).await?;
         if matches!(git_type, SpaceGitType::Inline) {
             return Err(AppError::StrategyInherited);
         }

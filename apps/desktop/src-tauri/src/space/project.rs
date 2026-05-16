@@ -71,7 +71,13 @@ pub fn create_project(
         ));
     }
 
-    create_and_register(path, name, icon, description, RegistrationTarget::Registry(config_dir))
+    create_and_register(
+        path,
+        name,
+        icon,
+        description,
+        RegistrationTarget::Registry(config_dir),
+    )
 }
 
 /// Register an existing folder as a root project (open folder).
@@ -98,15 +104,17 @@ pub fn open_project_folder(
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "Space".to_string());
 
-    create_and_register(path, &fallback_name, "", "", RegistrationTarget::Registry(config_dir))
+    create_and_register(
+        path,
+        &fallback_name,
+        "",
+        "",
+        RegistrationTarget::Registry(config_dir),
+    )
 }
 
 /// Delete a root project: remove from registry, optionally delete files.
-pub fn delete_project(
-    config_dir: &Path,
-    id: &str,
-    delete_files: bool,
-) -> Result<(), AppError> {
+pub fn delete_project(config_dir: &Path, id: &str, delete_files: bool) -> Result<(), AppError> {
     if delete_files {
         if let Some(sp_ref) = registry::find_space(config_dir, id)? {
             let path = Path::new(&sp_ref.path);

@@ -6,7 +6,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::error::AppError;
 use crate::git::autocommit::{AutocommitService, SystemCommitKind};
-use crate::git::commands::{require_cli, GitState};
+use crate::git::commands::{GitState, require_cli};
 use crate::git::ops;
 use crate::index::IndexState;
 use crate::space::{config, project, registry, settings, symlinks, types::*};
@@ -113,11 +113,7 @@ pub fn list_projects(app: AppHandle) -> Result<Vec<SpaceInfo>, AppError> {
                     icon: cfg.icon,
                     description: cfg.description,
                     path: sp_ref.path.clone(),
-                    has_spaces: cfg
-                        .spaces
-                        .as_ref()
-                        .map(|s| !s.is_empty())
-                        .unwrap_or(false),
+                    has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
                     last_opened: sp_ref.last_opened.clone(),
                     status: SpaceStatus::Ready,
                     lfs_state: LfsState::NotApplicable,
@@ -231,11 +227,7 @@ pub async fn open_project_folder(
         icon: cfg.icon,
         description: cfg.description,
         path,
-        has_spaces: cfg
-            .spaces
-            .as_ref()
-            .map(|s| !s.is_empty())
-            .unwrap_or(false),
+        has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
         last_opened: None,
         status: SpaceStatus::Ready,
         lfs_state: LfsState::NotApplicable,
@@ -366,7 +358,9 @@ pub async fn create_space(
                 if let Err(e) =
                     crate::identity::scaffold_space_git_identity(&cli, &space_dir, parent).await
                 {
-                    tracing::warn!("scaffold_space_git_identity failed for new independent space: {e}");
+                    tracing::warn!(
+                        "scaffold_space_git_identity failed for new independent space: {e}"
+                    );
                 }
             }
             ops::add_independent_gitignore(parent, &folder_name)?;
@@ -388,7 +382,9 @@ pub async fn create_space(
                 if let Err(e) =
                     crate::identity::scaffold_space_git_identity(&cli, &space_dir, parent).await
                 {
-                    tracing::warn!("scaffold_space_git_identity failed for new submodule space: {e}");
+                    tracing::warn!(
+                        "scaffold_space_git_identity failed for new submodule space: {e}"
+                    );
                 }
             }
             autocommit.flush_target_repo(parent).await;
@@ -504,7 +500,8 @@ pub async fn register_cloned_space(
     let space_dir = path.join(&folder_name);
     let combai_existed_before = space_dir.join(".combai").join("config.json").exists();
 
-    let info = project::register_cloned_space(path, &folder_name, &fallback_name, &fallback_icon, repo)?;
+    let info =
+        project::register_cloned_space(path, &folder_name, &fallback_name, &fallback_icon, repo)?;
 
     if !combai_existed_before {
         if let Err(e) = autocommit
@@ -563,11 +560,7 @@ pub async fn project_clone(
         icon: cfg.icon,
         description: cfg.description,
         path: target_path,
-        has_spaces: cfg
-            .spaces
-            .as_ref()
-            .map(|s| !s.is_empty())
-            .unwrap_or(false),
+        has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
         last_opened: None,
         status: SpaceStatus::Ready,
         lfs_state: LfsState::NotApplicable,

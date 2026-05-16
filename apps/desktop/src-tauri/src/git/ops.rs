@@ -3,8 +3,8 @@ use std::path::Path;
 use serde::Serialize;
 
 use super::cli::GitCli;
-use crate::space::types::SpaceGitType;
 use crate::AppError;
+use crate::space::types::SpaceGitType;
 
 const GITIGNORE_TEMPLATE: &str = "# CombAI local files
 .combai/local.json
@@ -51,11 +51,7 @@ pub async fn get_remote(cli: &GitCli, space_dir: &Path) -> Result<Option<String>
 }
 
 /// Set or add the `origin` remote URL.
-pub async fn set_remote(
-    cli: &GitCli,
-    space_dir: &Path,
-    url: &str,
-) -> Result<(), AppError> {
+pub async fn set_remote(cli: &GitCli, space_dir: &Path, url: &str) -> Result<(), AppError> {
     // Check if origin exists
     let exists = cli
         .exec(space_dir, &["remote", "get-url", "origin"])
@@ -136,10 +132,7 @@ pub async fn init(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
 }
 
 /// Get space git status by parsing `git status --porcelain=v2 --branch`.
-pub async fn status(
-    cli: &GitCli,
-    space_dir: &Path,
-) -> Result<GitStatus, AppError> {
+pub async fn status(cli: &GitCli, space_dir: &Path) -> Result<GitStatus, AppError> {
     let out = cli
         .exec(space_dir, &["status", "--porcelain=v2", "--branch"])
         .await?;
@@ -248,11 +241,7 @@ pub async fn status(
 }
 
 /// Stage a specific file.
-pub async fn add(
-    cli: &GitCli,
-    space_dir: &Path,
-    path: &str,
-) -> Result<(), AppError> {
+pub async fn add(cli: &GitCli, space_dir: &Path, path: &str) -> Result<(), AppError> {
     let out = cli.exec(space_dir, &["add", path]).await?;
     if out.exit_code != 0 {
         return Err(AppError::GitCommandFailed(format!(
@@ -264,10 +253,7 @@ pub async fn add(
 }
 
 /// Stage all changes.
-pub async fn add_all(
-    cli: &GitCli,
-    space_dir: &Path,
-) -> Result<(), AppError> {
+pub async fn add_all(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
     let out = cli.exec(space_dir, &["add", "."]).await?;
     if out.exit_code != 0 {
         return Err(AppError::GitCommandFailed(format!(
@@ -280,11 +266,7 @@ pub async fn add_all(
 
 /// Commit with a given message. Returns `Ok(false)` if there was nothing
 /// to commit, `Ok(true)` if a commit was created.
-pub async fn commit(
-    cli: &GitCli,
-    space_dir: &Path,
-    message: &str,
-) -> Result<bool, AppError> {
+pub async fn commit(cli: &GitCli, space_dir: &Path, message: &str) -> Result<bool, AppError> {
     let out = cli.exec(space_dir, &["commit", "-m", message]).await?;
     if out.exit_code != 0 {
         let combined = format!("{}{}", out.stdout, out.stderr);
@@ -323,10 +305,7 @@ pub async fn commit_file(
 }
 
 /// Stage all changes and auto-commit with a generated message.
-pub async fn commit_all(
-    cli: &GitCli,
-    space_dir: &Path,
-) -> Result<bool, AppError> {
+pub async fn commit_all(cli: &GitCli, space_dir: &Path) -> Result<bool, AppError> {
     add_all(cli, space_dir).await?;
     let message = generate_commit_message(cli, space_dir).await?;
     let created = commit(cli, space_dir, &message).await?;
@@ -337,13 +316,8 @@ pub async fn commit_all(
 }
 
 /// Generate a commit message based on staged changes.
-pub async fn generate_commit_message(
-    cli: &GitCli,
-    space_dir: &Path,
-) -> Result<String, AppError> {
-    let out = cli
-        .exec(space_dir, &["diff", "--cached", "--stat"])
-        .await?;
+pub async fn generate_commit_message(cli: &GitCli, space_dir: &Path) -> Result<String, AppError> {
+    let out = cli.exec(space_dir, &["diff", "--cached", "--stat"]).await?;
 
     if out.stdout.trim().is_empty() {
         return Ok("Update space".to_string());
@@ -364,11 +338,7 @@ pub async fn generate_commit_message(
             continue;
         }
         let status = parts[0].trim();
-        let file = parts[1]
-            .rsplit('/')
-            .next()
-            .unwrap_or(parts[1])
-            .to_string();
+        let file = parts[1].rsplit('/').next().unwrap_or(parts[1]).to_string();
 
         match status.chars().next() {
             Some('A') => added.push(file),
@@ -427,15 +397,9 @@ pub async fn generate_commit_message(
 }
 
 /// Get list of files changed since last pull.
-pub async fn diff_after_pull(
-    cli: &GitCli,
-    space_dir: &Path,
-) -> Result<Vec<String>, AppError> {
+pub async fn diff_after_pull(cli: &GitCli, space_dir: &Path) -> Result<Vec<String>, AppError> {
     let out = cli
-        .exec(
-            space_dir,
-            &["diff", "--name-only", "HEAD@{1}", "HEAD"],
-        )
+        .exec(space_dir, &["diff", "--name-only", "HEAD@{1}", "HEAD"])
         .await?;
 
     if out.exit_code != 0 {
@@ -604,7 +568,9 @@ pub fn add_independent_gitignore(project_path: &Path, space_folder: &str) -> Res
 
     let entry = format!("{}/", space_folder);
 
-    if let Some((before, block, after)) = extract_block(&content, SPACES_BLOCK_START, SPACES_BLOCK_END) {
+    if let Some((before, block, after)) =
+        extract_block(&content, SPACES_BLOCK_START, SPACES_BLOCK_END)
+    {
         if block.lines().any(|l| l.trim() == entry) {
             return Ok(());
         }
@@ -614,7 +580,10 @@ pub fn add_independent_gitignore(project_path: &Path, space_folder: &str) -> Res
         }
         new_block.push_str(&entry);
         new_block.push('\n');
-        let new_content = format!("{}{}\n{}{}\n{}", before, SPACES_BLOCK_START, new_block, SPACES_BLOCK_END, after);
+        let new_content = format!(
+            "{}{}\n{}{}\n{}",
+            before, SPACES_BLOCK_START, new_block, SPACES_BLOCK_END, after
+        );
         std::fs::write(&gitignore, new_content)?;
     } else {
         let mut new_content = content;
@@ -631,7 +600,10 @@ pub fn add_independent_gitignore(project_path: &Path, space_folder: &str) -> Res
 }
 
 /// Remove an independent space path from the managed block.
-pub fn remove_independent_gitignore(project_path: &Path, space_folder: &str) -> Result<(), AppError> {
+pub fn remove_independent_gitignore(
+    project_path: &Path,
+    space_folder: &str,
+) -> Result<(), AppError> {
     let gitignore = project_path.join(".gitignore");
     if !gitignore.exists() {
         return Ok(());
@@ -639,20 +611,29 @@ pub fn remove_independent_gitignore(project_path: &Path, space_folder: &str) -> 
     let content = std::fs::read_to_string(&gitignore)?;
     let entry = format!("{}/", space_folder);
 
-    if let Some((before, block, after)) = extract_block(&content, SPACES_BLOCK_START, SPACES_BLOCK_END) {
+    if let Some((before, block, after)) =
+        extract_block(&content, SPACES_BLOCK_START, SPACES_BLOCK_END)
+    {
         let new_block: String = block
             .lines()
             .filter(|l| l.trim() != entry)
             .map(|l| format!("{}\n", l))
             .collect();
-        let new_content = format!("{}{}\n{}{}\n{}", before, SPACES_BLOCK_START, new_block, SPACES_BLOCK_END, after);
+        let new_content = format!(
+            "{}{}\n{}{}\n{}",
+            before, SPACES_BLOCK_START, new_block, SPACES_BLOCK_END, after
+        );
         std::fs::write(&gitignore, new_content)?;
     }
     Ok(())
 }
 
 /// Extract content between start/end markers. Returns (before, block_content, after).
-fn extract_block<'a>(content: &'a str, start: &str, end: &str) -> Option<(&'a str, &'a str, &'a str)> {
+fn extract_block<'a>(
+    content: &'a str,
+    start: &str,
+    end: &str,
+) -> Option<(&'a str, &'a str, &'a str)> {
     let start_idx = content.find(start)?;
     let block_start = start_idx + start.len();
     // Skip the newline after the start marker
@@ -670,7 +651,11 @@ fn extract_block<'a>(content: &'a str, start: &str, end: &str) -> Option<(&'a st
     } else {
         after_end
     };
-    Some((&content[..start_idx], &content[block_start..block_end], &content[after_end..]))
+    Some((
+        &content[..start_idx],
+        &content[block_start..block_end],
+        &content[after_end..],
+    ))
 }
 
 // --- Routed commit ---
@@ -694,9 +679,7 @@ pub async fn commit_file_routed(
             let message = generate_commit_message(cli, project_path).await?;
             commit(cli, project_path, &message).await
         }
-        SpaceGitType::Independent => {
-            commit_file(cli, space_path, file_path).await
-        }
+        SpaceGitType::Independent => commit_file(cli, space_path, file_path).await,
         SpaceGitType::Submodule => {
             let created = commit_file(cli, space_path, file_path).await?;
             if created {
@@ -724,9 +707,7 @@ pub async fn commit_all_routed(
             let message = generate_commit_message(cli, project_path).await?;
             commit(cli, project_path, &message).await
         }
-        SpaceGitType::Independent => {
-            commit_all(cli, space_path).await
-        }
+        SpaceGitType::Independent => commit_all(cli, space_path).await,
         SpaceGitType::Submodule => {
             let created = commit_all(cli, space_path).await?;
             if created {

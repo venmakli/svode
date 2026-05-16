@@ -11,7 +11,6 @@ use tokio::sync::Mutex;
 
 use crate::error::AppError;
 
-
 /// Handle for a running agent CLI process.
 pub struct AgentProcess {
     pub child: Child,
@@ -50,7 +49,11 @@ impl AgentSessions {
 
     pub async fn with_stdin<F>(&self, session_id: &str, f: F) -> Result<(), AppError>
     where
-        F: for<'a> FnOnce(&'a mut tokio::process::ChildStdin) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), AppError>> + Send + 'a>>,
+        F: for<'a> FnOnce(
+            &'a mut tokio::process::ChildStdin,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<(), AppError>> + Send + 'a>,
+        >,
     {
         let mut sessions = self.sessions.lock().await;
         if let Some(process) = sessions.get_mut(session_id) {
@@ -60,7 +63,9 @@ impl AgentSessions {
                 Err(AppError::General("No stdin handle for session".to_string()))
             }
         } else {
-            Err(AppError::General(format!("No active session: {session_id}")))
+            Err(AppError::General(format!(
+                "No active session: {session_id}"
+            )))
         }
     }
 }
