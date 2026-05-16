@@ -14,6 +14,7 @@ export interface MultiPaneDefinition<TPane extends string> {
   title: string;
   content: ReactNode;
   footer?: ReactNode;
+  footerSeparator?: boolean;
   notice?: ReactNode;
 }
 
@@ -48,15 +49,18 @@ export function MultiPanePopover<TPane extends string>({
     () => new Map(panes.map((item) => [item.id, item])),
     [panes],
   );
-  const current = paneById.get(activePane) ?? paneById.get(mainPane) ?? panes[0];
+  const current =
+    paneById.get(activePane) ?? paneById.get(mainPane) ?? panes[0];
 
   useEffect(() => {
     if (open) {
       const next = initialPane ?? mainPane;
       setInnerPane(next);
-      onPaneChange?.(next);
+      if (pane === undefined) {
+        onPaneChange?.(next);
+      }
     }
-  }, [initialPane, mainPane, onPaneChange, open]);
+  }, [initialPane, mainPane, onPaneChange, open, pane]);
 
   function setPane(next: TPane) {
     setInnerPane(next);
@@ -76,32 +80,43 @@ export function MultiPanePopover<TPane extends string>({
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent
         align={align}
-        className={cn("flex w-80 flex-col overflow-hidden p-0", className)}
+        className={cn(
+          "flex w-80 max-h-[min(640px,var(--radix-popover-content-available-height))] flex-col gap-0 overflow-hidden p-0",
+          className,
+        )}
       >
-        <div className="flex h-10 items-center gap-1 px-2">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            onClick={handleBack}
-          >
-            <ArrowLeft data-icon="inline-start" />
-            <span className="sr-only">Back</span>
-          </Button>
-          <div className="min-w-0 truncate text-sm font-medium">{current?.title}</div>
-        </div>
-        <Separator />
-        <div className="min-h-52 flex-1 overflow-hidden">{current?.content}</div>
+        {activePane === mainPane ? null : (
+          <>
+            <div className="flex h-10 items-center gap-1 px-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                onClick={handleBack}
+              >
+                <ArrowLeft data-icon="inline-start" />
+                <span className="sr-only">Back</span>
+              </Button>
+              <div className="min-w-0 truncate text-sm font-medium">
+                {current?.title}
+              </div>
+            </div>
+            <Separator />
+          </>
+        )}
+        <div className="min-h-0 flex-1 overflow-y-auto">{current?.content}</div>
         {current?.notice ? (
           <>
             <Separator />
-            <div className="px-3 py-2 text-xs text-muted-foreground">{current.notice}</div>
+            <div className="px-3 py-2 text-xs text-muted-foreground">
+              {current.notice}
+            </div>
           </>
         ) : null}
         {current?.footer ? (
           <>
-            <Separator />
-            <div className="p-2">{current.footer}</div>
+            {current.footerSeparator === false ? null : <Separator />}
+            <div className="p-1">{current.footer}</div>
           </>
         ) : null}
       </PopoverContent>

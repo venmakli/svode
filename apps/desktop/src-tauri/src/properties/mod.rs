@@ -1896,15 +1896,29 @@ pub fn add_view(
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     with_rollback(vec![schema_path], || {
         let mut schema = read_schema_or_default(space, collection_path)?;
-        if schema
-            .views
-            .iter()
-            .any(|existing| existing.name() == view.name())
-        {
-            return Err(schema_error(format!(
-                "view '{}' already exists",
-                view.name()
-            )));
+        let base_name = {
+            let trimmed = view.name().trim();
+            if trimmed.is_empty() {
+                "Table"
+            } else {
+                trimmed
+            }
+        };
+        if schema.views.iter().any(|existing| existing.name() == base_name) {
+            let existing_names: HashSet<String> = schema
+                .views
+                .iter()
+                .map(|existing| existing.name().to_string())
+                .collect();
+            let mut index = 2;
+            let mut next_name = format!("{base_name} {index}");
+            while existing_names.contains(&next_name) {
+                index += 1;
+                next_name = format!("{base_name} {index}");
+            }
+            *view.name_mut() = next_name;
+        } else {
+            *view.name_mut() = base_name.to_string();
         }
         normalize_view_for_schema(&schema, &mut view);
         let index = position

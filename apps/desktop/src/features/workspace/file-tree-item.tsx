@@ -34,7 +34,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { ChevronRight, Ellipsis, FileText, FilePlus, FolderOpen, FolderPlus, GripVertical, FileSymlink, Pencil, Trash2 } from "lucide-react";
+import { ChevronRight, Database, Ellipsis, FileText, FilePlus, FolderOpen, FolderPlus, GripVertical, FileSymlink, Pencil, Trash2 } from "lucide-react";
 import { useLayoutStore } from "@/stores/layout";
 import { useEditorStore } from "@/stores/editor";
 import { useSpaceStore } from "@/stores/space";
@@ -54,6 +54,11 @@ interface BacklinkInfo {
   sourceSpaceId: string | null;
   sourcePath: string;
   linkCount: number;
+}
+
+interface Entry {
+  path: string;
+  meta: { id: string };
 }
 
 /** Bare folder = directory without readme.md (path doesn't end with .md) */
@@ -200,6 +205,16 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
   }
 
   function handleDocumentClick() {
+    if (node.has_schema) {
+      const isRootWorkspace = spaceId === activeRootId;
+      if (isRootWorkspace && activeSpaceId) {
+        useSpaceStore.getState().clearActiveSpace();
+      } else if (!isRootWorkspace && activeSpaceId !== spaceId) {
+        useSpaceStore.getState().openSpace(spaceId);
+      }
+      openDocument(node.path, spaceId);
+      return;
+    }
     if (bareFolder) {
       toggleExpanded(spaceId, node.path);
       return;
@@ -283,6 +298,45 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
     }
   }
 
+  async function handleMakeCollection() {
+    if (!space || node.has_schema) return;
+    try {
+      if (bareFolder) {
+        const entry = await invoke<Entry>("convert_bare_folder_to_collection", {
+          space: space.path,
+          folderPath: node.path,
+          projectPath: activeRootPath,
+        });
+        await refreshTree(spaceId);
+        openDocument(entry.path, spaceId);
+        return;
+      }
+
+      const entry = await invoke<Entry>("read_entry", {
+        space: space.path,
+        path: node.path,
+      });
+      let readmeEntry = entry;
+      if (!node.path.toLowerCase().endsWith("/readme.md")) {
+        readmeEntry = await invoke<Entry>("convert_entry_to_folder", {
+          space: space.path,
+          entryId: entry.meta.id,
+          projectPath: activeRootPath,
+        });
+      }
+      await invoke<string>("convert_entry_to_nested_collection", {
+        space: space.path,
+        entryId: readmeEntry.meta.id,
+        projectPath: activeRootPath,
+      });
+      await refreshTree(spaceId);
+      openDocument(readmeEntry.path, spaceId);
+    } catch (err) {
+      console.error("Failed to make collection:", err);
+      toast.error(m.toast_error());
+    }
+  }
+
   async function handleNewFolder() {
     if (!space) return;
     try {
@@ -351,10 +405,12 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
     }
   }
 
-  const iconElement = bareFolder ? (
-    <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
-  ) : node.icon ? (
+  const iconElement = node.icon ? (
     <span className="h-4 w-4 shrink-0 text-center leading-4">{node.icon}</span>
+  ) : node.has_schema ? (
+    <Database className="h-4 w-4 shrink-0 text-muted-foreground" />
+  ) : bareFolder ? (
+    <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
   ) : (
     <FileText className="h-4 w-4 shrink-0" />
   );
@@ -415,10 +471,16 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" side="bottom">
-        {bareFolder && (
+        {bareFolder && !node.has_schema && (
           <DropdownMenuItem onClick={handleMakeDocument}>
             <FileSymlink className="mr-2 h-4 w-4" />
             {m.space_make_document()}
+          </DropdownMenuItem>
+        )}
+        {!node.has_schema && (
+          <DropdownMenuItem onClick={handleMakeCollection}>
+            <Database className="mr-2 h-4 w-4" />
+            {m.collection_make()}
           </DropdownMenuItem>
         )}
         <DropdownMenuItem onClick={handleNewPage}>

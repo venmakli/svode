@@ -5,8 +5,7 @@ import { MarkdownPlugin } from "@platejs/markdown";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { EditorKit } from "@/components/editor/editor-kit";
-import { TitleZone } from "../title-zone";
-import { CoverBanner } from "../cover-banner";
+import { EntryIdentityHeader } from "../entry-identity-header";
 import { FrontmatterPanel } from "../frontmatter-panel";
 import { useFileWatcher } from "../use-file-watcher";
 import { useLayoutStore } from "@/stores/layout";
@@ -32,7 +31,11 @@ import * as m from "@/paraglide/messages.js";
 const AUTOSAVE_DEBOUNCE_MS = 1000;
 const FIELD_UPDATE_DEBOUNCE_MS = 500;
 
-export function PlateDocumentEditor() {
+interface PlateDocumentEditorProps {
+  bodyOnly?: boolean;
+}
+
+export function PlateDocumentEditor({ bodyOnly = false }: PlateDocumentEditorProps) {
   const { activeDocument, activeDocumentSpaceId, openDocument } =
     useLayoutStore();
   const {
@@ -669,33 +672,33 @@ export function PlateDocumentEditor() {
 
         <div className="flex-1 relative overflow-hidden">
           <EditorContainer className="h-full">
-            <div className="mx-auto px-16 pt-8 sm:px-[max(64px,calc(50%-350px))]">
-              <CoverBanner
-                cover={cover}
-                projectPath={activeRootPath ?? null}
-                spacePath={spacePath}
-                documentPath={activeDocument}
-                onCoverChange={handleCoverChange}
-              />
-              <TitleZone
-                title={title}
-                icon={icon}
-                description={description}
-                onTitleChange={handleTitleChange}
-                onIconChange={handleIconChange}
-                onDescriptionChange={handleDescriptionChange}
-                onBodyFocus={() => editor.tf.focus({ edge: "start" })}
-              />
-              <FrontmatterPanel
-                meta={meta}
-                spacePath={spacePath}
-                projectPath={activeRootPath}
-                filePath={activeDocument}
-                isOpen={frontmatterOpen}
-                onOpenChange={setFrontmatterOpen}
-                onPropertyChange={handlePropertyChange}
-              />
-            </div>
+            {!bodyOnly && (
+              <div className="mx-auto px-16 pt-8 sm:px-[max(64px,calc(50%-350px))]">
+                <EntryIdentityHeader
+                  title={title}
+                  icon={icon}
+                  description={description}
+                  cover={cover}
+                  projectPath={activeRootPath ?? null}
+                  spacePath={spacePath}
+                  documentPath={activeDocument}
+                  onTitleChange={handleTitleChange}
+                  onIconChange={handleIconChange}
+                  onDescriptionChange={handleDescriptionChange}
+                  onCoverChange={handleCoverChange}
+                  onBodyFocus={() => editor.tf.focus({ edge: "start" })}
+                />
+                <FrontmatterPanel
+                  meta={meta}
+                  spacePath={spacePath}
+                  projectPath={activeRootPath}
+                  filePath={activeDocument}
+                  isOpen={frontmatterOpen}
+                  onOpenChange={setFrontmatterOpen}
+                  onPropertyChange={handlePropertyChange}
+                />
+              </div>
+            )}
             <Editor
               variant="default"
               placeholder={m.editor_placeholder_body()}

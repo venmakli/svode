@@ -43,17 +43,28 @@ export function useViewQuery({
     () => viewStateStorageKey(collectionPath, viewName),
     [collectionPath, viewName],
   );
-  const [ephemeral, setEphemeral] = useState<StoredViewQueryState | null>(() =>
-    typeof window === "undefined" ? null : readStoredViewQuery(storageKey),
-  );
+  const [ephemeralSnapshot, setEphemeralSnapshot] = useState<{
+    storageKey: string;
+    value: StoredViewQueryState | null;
+  }>(() => ({
+    storageKey,
+    value:
+      typeof window === "undefined" ? null : readStoredViewQuery(storageKey),
+  }));
+  const storedEphemeral =
+    ephemeralSnapshot.storageKey === storageKey
+      ? ephemeralSnapshot.value
+      : typeof window === "undefined"
+        ? null
+        : readStoredViewQuery(storageKey);
+  const ephemeral = view ? storedEphemeral : null;
 
   const reloadLocalQuery = useCallback(() => {
-    setEphemeral(readStoredViewQuery(storageKey));
+    setEphemeralSnapshot({
+      storageKey,
+      value: readStoredViewQuery(storageKey),
+    });
   }, [storageKey]);
-
-  useEffect(() => {
-    reloadLocalQuery();
-  }, [reloadLocalQuery]);
 
   const resolved = useMemo(
     () => resolveViewQuery(schema, view, ephemeral),
@@ -61,11 +72,10 @@ export function useViewQuery({
   );
 
   useEffect(() => {
-    if (!view && ephemeral) {
+    if (!view && storedEphemeral) {
       writeStoredViewQuery(storageKey, null);
-      setEphemeral(null);
     }
-  }, [ephemeral, storageKey, view]);
+  }, [storageKey, storedEphemeral, view]);
 
   useEffect(() => {
     const unlisteners: Array<() => void> = [];
@@ -97,9 +107,16 @@ export function useViewQuery({
 
   const setLocalQuery = useCallback(
     (patch: ViewQueryPatch) => {
-      const next = nextStoredQueryState(ephemeral, patch, resolved.baseViewHash);
+      const next = nextStoredQueryState(
+        ephemeral,
+        patch,
+        resolved.baseViewHash,
+      );
       writeStoredViewQuery(storageKey, next);
-      setEphemeral(readStoredViewQuery(storageKey));
+      setEphemeralSnapshot({
+        storageKey,
+        value: readStoredViewQuery(storageKey),
+      });
     },
     [ephemeral, resolved.baseViewHash, storageKey],
   );
@@ -108,7 +125,7 @@ export function useViewQuery({
     (keys?: Array<keyof ViewQueryPatch>) => {
       if (!keys || keys.length === 0) {
         writeStoredViewQuery(storageKey, null);
-        setEphemeral(null);
+        setEphemeralSnapshot({ storageKey, value: null });
         return;
       }
       const current = readStoredViewQuery(storageKey);
@@ -118,14 +135,20 @@ export function useViewQuery({
         delete next[key];
       }
       writeStoredViewQuery(storageKey, next);
-      setEphemeral(readStoredViewQuery(storageKey));
+      setEphemeralSnapshot({
+        storageKey,
+        value: readStoredViewQuery(storageKey),
+      });
     },
     [storageKey],
   );
 
   const saveForAll = useCallback(
-    async (options?: { confirmOverwrite?: () => boolean | Promise<boolean> }) => {
-      if (!view || !resolved.hasLocalChanges || resolved.issues.length > 0) return null;
+    async (options?: {
+      confirmOverwrite?: () => boolean | Promise<boolean>;
+    }) => {
+      if (!view || !resolved.hasLocalChanges || resolved.issues.length > 0)
+        return null;
       if (resolved.sharedChanged) {
         const confirmed = await options?.confirmOverwrite?.();
         if (!confirmed) return null;
@@ -138,7 +161,7 @@ export function useViewQuery({
         projectPath: projectPath ?? null,
       });
       writeStoredViewQuery(storageKey, null);
-      setEphemeral(null);
+      setEphemeralSnapshot({ storageKey, value: null });
       return updated;
     },
     [

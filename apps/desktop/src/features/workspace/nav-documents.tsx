@@ -15,7 +15,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { FilePlus, FolderPlus, Plus } from "lucide-react";
+import { Database, FilePlus, FolderPlus, Plus } from "lucide-react";
 import { useSpaceStore } from "@/stores/space";
 import { useLayoutStore } from "@/stores/layout";
 import { SortableFileTree } from "./sortable-file-tree";
@@ -64,6 +64,30 @@ export function NavDocuments() {
     }
   }
 
+  async function handleNewCollection() {
+    if (!activeRootId || !activeRootPath) return;
+    const title = window.prompt(m.collection_title_prompt(), m.collection_untitled())?.trim();
+    if (!title) return;
+    try {
+      const folderPath = await invoke<string>("create_folder", {
+        space: activeRootPath,
+        parentPath: null,
+        name: title,
+        projectPath: activeRootPath,
+      });
+      const entry = await invoke<{ path: string }>("convert_bare_folder_to_collection", {
+        space: activeRootPath,
+        folderPath,
+        projectPath: activeRootPath,
+      });
+      await refreshTree(activeRootId);
+      openDocument(entry.path, activeRootId);
+    } catch (err) {
+      console.error("Failed to create collection:", err);
+      toast.error(m.toast_error());
+    }
+  }
+
   return (
     <SidebarGroup>
       <SidebarGroupLabel>{m.sidebar_documents()}</SidebarGroupLabel>
@@ -81,6 +105,10 @@ export function NavDocuments() {
           <DropdownMenuItem onClick={handleNewFolder}>
             <FolderPlus className="mr-2 h-4 w-4" />
             {m.space_new_folder()}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleNewCollection}>
+            <Database className="mr-2 h-4 w-4" />
+            {m.collection_new()}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

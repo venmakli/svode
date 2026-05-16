@@ -39,6 +39,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   ChevronRight,
   CloudOff,
+  Database,
   Ellipsis,
   FilePlus,
   FolderDown,
@@ -189,6 +190,29 @@ export function NavSpaces() {
     }
   }
 
+  async function handleNewCollection(ws: { id: string; path: string }) {
+    const title = window.prompt(m.collection_title_prompt(), m.collection_untitled())?.trim();
+    if (!title) return;
+    try {
+      const folderPath = await invoke<string>("create_folder", {
+        space: ws.path,
+        parentPath: null,
+        name: title,
+        projectPath: activeRootPath,
+      });
+      const entry = await invoke<{ path: string }>("convert_bare_folder_to_collection", {
+        space: ws.path,
+        folderPath,
+        projectPath: activeRootPath,
+      });
+      await refreshTree(ws.id);
+      openDocument(entry.path, ws.id);
+    } catch (err) {
+      console.error("Failed to create collection:", err);
+      toast.error(m.toast_error());
+    }
+  }
+
   async function handleDeleteSpace(spaceId: string) {
     if (!activeRootPath) return;
     try {
@@ -273,6 +297,7 @@ export function NavSpaces() {
                     handleRenameSpace={handleRenameSpace}
                     handleNewPage={handleNewPage}
                     handleNewFolder={handleNewFolder}
+                    handleNewCollection={handleNewCollection}
                     openSpaceSettings={openSpaceSettings}
                     openSpace={openSpace}
                     setDeleteTarget={setDeleteTarget}
@@ -340,6 +365,7 @@ interface SpaceRowProps {
   handleRenameSpace: () => void;
   handleNewPage: (ws: { id: string; path: string }) => void;
   handleNewFolder: (ws: { id: string; path: string }) => void;
+  handleNewCollection: (ws: { id: string; path: string }) => void;
   openSpaceSettings: (path: string) => void;
   openSpace: (id: string) => void;
   setDeleteTarget: (t: { id: string; name: string }) => void;
@@ -359,6 +385,7 @@ function SpaceRow({
   handleRenameSpace,
   handleNewPage,
   handleNewFolder,
+  handleNewCollection,
   openSpaceSettings,
   openSpace,
   setDeleteTarget,
@@ -494,6 +521,10 @@ function SpaceRow({
             <DropdownMenuItem onClick={() => handleNewFolder(ws)}>
               <FolderPlus className="mr-2 h-4 w-4" />
               {m.space_new_folder()}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleNewCollection(ws)}>
+              <Database className="mr-2 h-4 w-4" />
+              {m.collection_new()}
             </DropdownMenuItem>
             {dirty && (
               <>

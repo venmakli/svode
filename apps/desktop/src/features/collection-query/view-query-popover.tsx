@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  ArrowUpDown,
   Check,
   ChevronRight,
   Columns3Icon,
@@ -76,6 +77,7 @@ interface ViewQueryPopoverProps extends QueryEditorPersonSource {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   initialPane?: QueryPane;
+  onSaved?: (schema: Parameters<typeof normalizeSchema>[0]) => void;
 }
 
 interface FilterDraft {
@@ -97,6 +99,7 @@ export function ViewQueryPopover({
   open,
   onOpenChange,
   initialPane = "main",
+  onSaved,
 }: ViewQueryPopoverProps) {
   const normalizedSchema = useMemo(() => normalizeSchema(schema), [schema]);
   const [pane, setPane] = useState<QueryPane>(initialPane);
@@ -292,7 +295,7 @@ export function ViewQueryPopover({
           {m.view_query_add_filter()}
         </Button>
       ),
-      notice: m.view_query_filter_notice(),
+      footerSeparator: false,
     },
     {
       id: "filterField" as const,
@@ -328,7 +331,7 @@ export function ViewQueryPopover({
             <Trash2 data-icon="inline-start" />
             {m.view_query_clear_filter()}
           </Button>
-          <SaveButton query={query} />
+          <SaveButton query={query} onSaved={onSaved} />
         </div>
       ) : null,
     },
@@ -337,7 +340,7 @@ export function ViewQueryPopover({
       title: m.view_query_sort_title(),
       content: (
         <QueryList
-          emptyIcon={SortAsc}
+          emptyIcon={ArrowUpDown}
           emptyLabel={m.view_query_sort_empty()}
           rows={activeSort.map((sort, index) => {
             const field = queryField(normalizedSchema, sort.field, "sort");
@@ -358,7 +361,7 @@ export function ViewQueryPopover({
           {m.view_query_add_sort()}
         </Button>
       ),
-      notice: m.view_query_sort_notice(),
+      footerSeparator: false,
     },
     {
       id: "sortField" as const,
@@ -796,7 +799,13 @@ function SortEditor({
   );
 }
 
-function SaveButton({ query }: { query: UseViewQueryResult }) {
+function SaveButton({
+  query,
+  onSaved,
+}: {
+  query: UseViewQueryResult;
+  onSaved?: (schema: Parameters<typeof normalizeSchema>[0]) => void;
+}) {
   if (!query.hasLocalChanges) return null;
   return (
     <Button
@@ -804,11 +813,16 @@ function SaveButton({ query }: { query: UseViewQueryResult }) {
       variant="ghost"
       className="w-full justify-start"
       disabled={query.issues.length > 0}
-      onClick={() =>
-        void query.saveForAll({
-          confirmOverwrite: () => window.confirm(m.view_query_confirm_save_changed()),
-        })
-      }
+      onClick={() => {
+        void query
+          .saveForAll({
+            confirmOverwrite: () =>
+              window.confirm(m.view_query_confirm_save_changed()),
+          })
+          .then((schema) => {
+            if (schema) onSaved?.(schema);
+          });
+      }}
     >
       <Save data-icon="inline-start" />
       {m.view_query_save_for_all()}
@@ -835,23 +849,23 @@ function PaneRow({
     <button
       type="button"
       className={cn(
-        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted",
+        "flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
         active && "bg-muted",
       )}
       onClick={onClick}
     >
-      <Icon className="size-4 text-muted-foreground" />
+      <Icon />
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      {warning ? <AlertTriangle className="size-4 text-warning" /> : null}
+      {warning ? <AlertTriangle className="text-warning" /> : null}
       {meta ? <span className="max-w-28 truncate text-xs text-muted-foreground">{meta}</span> : null}
-      <ChevronRight className="size-4 text-muted-foreground" />
+      <ChevronRight className="text-muted-foreground" />
     </button>
   );
 }
 
 function EmptyPane({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
   return (
-    <div className="flex h-52 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+    <div className="flex h-32 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
       <Icon className="size-5" />
       <span>{label}</span>
     </div>

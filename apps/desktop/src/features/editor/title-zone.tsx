@@ -5,7 +5,7 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import { SmilePlus } from "lucide-react";
+import { SmilePlus, type LucideIcon } from "lucide-react";
 import { EmojiPicker } from "@/components/ui/emoji-picker";
 import { cn } from "@/lib/utils";
 import * as m from "@/paraglide/messages.js";
@@ -18,6 +18,10 @@ interface TitleZoneProps {
   onIconChange: (icon: string) => void;
   onDescriptionChange: (description: string) => void;
   onBodyFocus: () => void;
+  readOnly?: boolean;
+  hideDescription?: boolean;
+  fallbackIcon?: LucideIcon;
+  onActivateIdentity?: () => void;
 }
 
 export function TitleZone({
@@ -28,10 +32,15 @@ export function TitleZone({
   onIconChange,
   onDescriptionChange,
   onBodyFocus,
+  readOnly = false,
+  hideDescription = false,
+  fallbackIcon: FallbackIcon,
+  onActivateIdentity,
 }: TitleZoneProps) {
   const descriptionRef = useRef<HTMLTextAreaElement>(null);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const hasDescription = description.trim().length > 0;
+  const canShowDescription = !hideDescription;
 
   const resizeDescription = useCallback(() => {
     const node = descriptionRef.current;
@@ -45,6 +54,10 @@ export function TitleZone({
   }, [description, resizeDescription]);
 
   const focusDescription = useCallback(() => {
+    if (readOnly) {
+      onActivateIdentity?.();
+      return;
+    }
     setIsEditingDescription(true);
     requestAnimationFrame(() => {
       const node = descriptionRef.current;
@@ -53,7 +66,7 @@ export function TitleZone({
       const end = node.value.length;
       node.setSelectionRange(end, end);
     });
-  }, []);
+  }, [onActivateIdentity, readOnly]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLInputElement>) => {
@@ -84,26 +97,39 @@ export function TitleZone({
     <div className="mb-1 flex items-center gap-3">
       <div className="flex shrink-0 items-center">
         {icon ? (
-          <EmojiPicker value={icon} onChange={onIconChange} size="lg" />
+          <EmojiPicker value={icon} onChange={onIconChange} size="md" />
+        ) : FallbackIcon ? (
+          <button
+            type="button"
+            className="flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted"
+            onClick={onActivateIdentity}
+          >
+            <FallbackIcon />
+          </button>
         ) : (
           <EmojiPicker
             value=""
             onChange={onIconChange}
-            size="lg"
-            placeholder={<SmilePlus className="h-7 w-7 text-muted-foreground/40" />}
+            size="md"
+            placeholder={
+              <SmilePlus className="size-6 text-muted-foreground/40" />
+            }
           />
         )}
       </div>
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
+      <div className="flex min-w-0 flex-1 flex-col">
         <input
           type="text"
           value={displayValue}
+          readOnly={readOnly}
+          onFocus={readOnly ? onActivateIdentity : undefined}
+          onClick={readOnly ? onActivateIdentity : undefined}
           onChange={(e) => onTitleChange(e.target.value || defaultTitle)}
           onKeyDown={handleKeyDown}
           placeholder={defaultTitle}
-          className="min-w-0 bg-transparent text-3xl font-bold outline-none placeholder:text-muted-foreground/40"
+          className="min-w-0 bg-transparent text-[22px] font-bold leading-8 outline-none placeholder:text-muted-foreground/40"
         />
-        {hasDescription || isEditingDescription ? (
+        {canShowDescription && (hasDescription || isEditingDescription) ? (
           <textarea
             ref={descriptionRef}
             value={description}
@@ -118,19 +144,19 @@ export function TitleZone({
             }}
             placeholder={m.editor_description_placeholder()}
             className={cn(
-              "min-h-6 resize-none overflow-hidden bg-transparent text-base leading-6 text-muted-foreground outline-none",
+              "min-h-5 resize-none overflow-hidden bg-transparent text-[13px] leading-5 text-muted-foreground outline-none",
               "placeholder:text-muted-foreground/40",
             )}
           />
-        ) : (
+        ) : canShowDescription ? (
           <button
             type="button"
             onClick={focusDescription}
-            className="flex h-6 w-fit items-center rounded-sm px-1 text-base leading-6 text-muted-foreground/60 outline-none transition-colors hover:bg-muted hover:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex h-5 w-fit items-center rounded-sm px-1 text-[13px] leading-5 text-muted-foreground/60 outline-none transition-colors hover:bg-muted hover:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
             {m.editor_add_description()}
           </button>
-        )}
+        ) : null}
       </div>
     </div>
   );

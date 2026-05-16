@@ -15,6 +15,7 @@ pub struct TreeNode {
     pub icon: Option<String>,
     pub description: Option<String>,
     pub has_changes: bool,
+    pub has_schema: bool,
     pub children: Vec<TreeNode>,
 }
 
@@ -178,6 +179,7 @@ fn read_dir_recursive(
                 continue;
             }
 
+            let has_schema = abs_path.join("schema.yaml").is_file();
             let readme = find_readme(&abs_path);
 
             let (title, icon, description) = if let Some(ref rp) = readme {
@@ -214,6 +216,7 @@ fn read_dir_recursive(
                 icon,
                 description,
                 has_changes: false,
+                has_schema,
                 children,
             });
         } else if name.ends_with(".md") {
@@ -225,6 +228,7 @@ fn read_dir_recursive(
                 icon,
                 description,
                 has_changes: false,
+                has_schema: false,
                 children: vec![],
             });
         }

@@ -32,6 +32,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { TreeNode } from "@/types/space";
+import { CollectionScreen } from "@/features/collection/screen";
 
 
 /** Look up the title for a path segment from the tree. */
@@ -78,16 +79,27 @@ function buildSegments(
   return segments;
 }
 
+function findNodeInTree(nodes: TreeNode[], targetPath: string): TreeNode | null {
+  for (const node of nodes) {
+    const folderPath = node.path.replace(/\/readme\.md$/i, "");
+    if (node.path === targetPath || folderPath === targetPath) return node;
+    const found = findNodeInTree(node.children, targetPath);
+    if (found) return found;
+  }
+  return null;
+}
+
 function MainBreadcrumbs() {
   const { activeDocument, activeDocumentSpaceId } = useLayoutStore();
-  const { spaces, activeSpaceId, fileTrees, openSpace } =
+  const { rootSpaces, spaces, fileTrees, openSpace } =
     useSpaceStore();
   const { openDocument } = useLayoutStore();
 
   if (!activeDocument) return null;
 
-  const activeWorkspace = activeSpaceId
-    ? spaces.find((w) => w.id === activeSpaceId)
+  const allSpaces = [...rootSpaces, ...spaces];
+  const activeWorkspace = activeDocumentSpaceId
+    ? allSpaces.find((w) => w.id === activeDocumentSpaceId)
     : null;
   const workspaceName = activeWorkspace
     ? `${activeWorkspace.icon} ${activeWorkspace.name}`
@@ -110,11 +122,11 @@ function MainBreadcrumbs() {
           {workspaceName && (
             <>
               <BreadcrumbItem className="text-sm">
-                <WorkspaceBreadcrumb
-                  label={workspaceName}
-                  workspaces={spaces}
-                  onSwitch={openSpace}
-                />
+                  <WorkspaceBreadcrumb
+                    label={workspaceName}
+                    workspaces={allSpaces}
+                    onSwitch={openSpace}
+                  />
               </BreadcrumbItem>
               {segments.length > 0 && <BreadcrumbSeparator />}
             </>
@@ -132,7 +144,7 @@ function MainBreadcrumbs() {
               <BreadcrumbItem className="text-sm">
                 <button
                   className="hover:text-foreground transition-colors cursor-pointer"
-                  onClick={() => openDocument(seg.path)}
+                  onClick={() => openDocument(seg.path, treeId ?? undefined)}
                 >
                   {seg.label}
                 </button>
@@ -147,22 +159,6 @@ function MainBreadcrumbs() {
 }
 
 function WorkspaceBreadcrumb({
-  label,
-  workspaces,
-  onSwitch,
-}: {
-  label: string;
-  workspaces: { id: string; name: string; icon: string }[];
-  onSwitch: (id: string) => void;
-}) {
-  try {
-    return <WorkspaceBreadcrumbInner label={label} workspaces={workspaces} onSwitch={onSwitch} />;
-  } catch {
-    return <span>{label}</span>;
-  }
-}
-
-function WorkspaceBreadcrumbInner({
   label,
   workspaces,
   onSwitch,
@@ -196,7 +192,14 @@ function WorkspaceBreadcrumbInner({
 }
 
 function MainContent() {
-  const { activeDocument, chatPanelOpen } = useLayoutStore();
+  const { activeDocument, activeDocumentSpaceId, chatPanelOpen } = useLayoutStore();
+  const { fileTrees, rootSpaces, spaces, activeRootPath } = useSpaceStore();
+  const tree = activeDocumentSpaceId ? fileTrees[activeDocumentSpaceId] ?? [] : [];
+  const activeNode = activeDocument ? findNodeInTree(tree, activeDocument) : null;
+  const activeSpace = activeDocumentSpaceId
+    ? [...rootSpaces, ...spaces].find((space) => space.id === activeDocumentSpaceId)
+    : null;
+  const isCollection = Boolean(activeNode?.has_schema && activeSpace && activeDocumentSpaceId);
 
   if (!activeDocument) {
     return (
@@ -214,7 +217,17 @@ function MainContent() {
       <div className="flex h-full flex-col overflow-hidden">
         <MainBreadcrumbs />
         <div className="flex-1 min-w-0 min-h-0">
-          <PlateDocumentEditor />
+          {isCollection && activeNode && activeSpace && activeDocumentSpaceId && activeDocument ? (
+            <CollectionScreen
+              spacePath={activeSpace.path}
+              projectPath={activeRootPath}
+              documentPath={activeDocument}
+              spaceId={activeDocumentSpaceId}
+              hasReadme={activeNode.path.toLowerCase().endsWith(".md")}
+            />
+          ) : (
+            <PlateDocumentEditor />
+          )}
         </div>
       </div>
     );
@@ -225,7 +238,17 @@ function MainContent() {
       <MainBreadcrumbs />
       <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0">
         <ResizablePanel defaultSize="65%">
-          <PlateDocumentEditor />
+          {isCollection && activeNode && activeSpace && activeDocumentSpaceId && activeDocument ? (
+            <CollectionScreen
+              spacePath={activeSpace.path}
+              projectPath={activeRootPath}
+              documentPath={activeDocument}
+              spaceId={activeDocumentSpaceId}
+              hasReadme={activeNode.path.toLowerCase().endsWith(".md")}
+            />
+          ) : (
+            <PlateDocumentEditor />
+          )}
         </ResizablePanel>
         <ResizableHandle withHandle />
         <ResizablePanel defaultSize="35%">
