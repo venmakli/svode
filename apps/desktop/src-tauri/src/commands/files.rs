@@ -127,10 +127,28 @@ pub fn create_entry(
     space: String,
     parent_path: Option<String>,
     title: String,
+    contextual_defaults: Option<HashMap<String, serde_json::Value>>,
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
-    let created = entry::create(&space, parent_path.as_deref(), &title)?;
+    let contextual_defaults = contextual_defaults
+        .map(|defaults| {
+            defaults
+                .into_iter()
+                .map(|(field, value)| Ok((field, json_to_yaml_value(value)?)))
+                .collect::<Result<HashMap<_, _>, AppError>>()
+        })
+        .transpose()?;
+    let created = if let Some(contextual_defaults) = contextual_defaults {
+        entry::create_with_contextual_defaults(
+            &space,
+            parent_path.as_deref(),
+            &title,
+            Some(contextual_defaults),
+        )?
+    } else {
+        entry::create(&space, parent_path.as_deref(), &title)?
+    };
     maybe_autocommit_structural(
         &autocommit,
         project_path.as_deref(),

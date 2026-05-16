@@ -94,8 +94,8 @@ export function ViewActionBar({
       settingsPane === "sortField" ||
       settingsPane === "sortEditor");
   const groupBy =
-    activeView && "group_by" in activeView
-      ? ((activeView.group_by ?? activeView.groupBy) as string | undefined)
+    activeView?.type === "board"
+      ? (query.merged.groupBy ?? undefined)
       : undefined;
 
   return (

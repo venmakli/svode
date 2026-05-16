@@ -50,6 +50,7 @@ import {
   SortableViewTab,
 } from "./view-tabs";
 import { ViewPlaceholder } from "./view-placeholder";
+import { BoardView } from "./board-view";
 import { TableView } from "./table-view";
 import { ViewActionBar } from "./view-action-bar";
 import {
@@ -115,6 +116,10 @@ export function CollectionScreen({
   const [peekTarget, setPeekTarget] = useState<EntryPeekTarget | null>(null);
   const [entriesVersion, setEntriesVersion] = useState(0);
   const [tableCreateRequest, setTableCreateRequest] = useState({
+    signal: 0,
+    asFolder: false,
+  });
+  const [boardCreateRequest, setBoardCreateRequest] = useState({
     signal: 0,
     asFolder: false,
   });
@@ -427,11 +432,13 @@ export function CollectionScreen({
     asFolder = false,
     title: string = String(m.editor_untitled()),
     openAfterCreate = true,
+    contextualDefaults?: Record<string, unknown>,
   ) {
     const created = await invoke<Entry>("create_entry", {
       space: spacePath,
       parentPath: collectionPath,
       title,
+      contextualDefaults: contextualDefaults ?? null,
       projectPath: projectPath ?? null,
     });
     let nextEntry = created;
@@ -452,6 +459,13 @@ export function CollectionScreen({
 
   function focusTableCreate(asFolder: boolean) {
     setTableCreateRequest((request) => ({
+      signal: request.signal + 1,
+      asFolder,
+    }));
+  }
+
+  function focusBoardCreate(asFolder: boolean) {
+    setBoardCreateRequest((request) => ({
       signal: request.signal + 1,
       asFolder,
     }));
@@ -610,6 +624,10 @@ export function CollectionScreen({
           focusTableCreate(false);
           return;
         }
+        if (activeView && viewType(activeView) === "board") {
+          focusBoardCreate(false);
+          return;
+        }
         void createEntry(false).catch(handleError);
         return;
       }
@@ -617,6 +635,10 @@ export function CollectionScreen({
         event.preventDefault();
         if (activeView && viewType(activeView) === "table") {
           focusTableCreate(true);
+          return;
+        }
+        if (activeView && viewType(activeView) === "board") {
+          focusBoardCreate(true);
           return;
         }
         void createEntry(true).catch(handleError);
@@ -835,6 +857,10 @@ export function CollectionScreen({
                   focusTableCreate(asFolder);
                   return;
                 }
+                if (activeView && viewType(activeView) === "board") {
+                  focusBoardCreate(asFolder);
+                  return;
+                }
                 void createEntry(asFolder).catch(handleError);
               }}
             />
@@ -851,7 +877,7 @@ export function CollectionScreen({
             key={view.name}
             value={view.name}
             className={
-              viewType(view) === "table"
+              viewType(view) === "table" || viewType(view) === "board"
                 ? "min-h-0 overflow-hidden"
                 : "min-h-0 overflow-auto"
             }
@@ -873,9 +899,7 @@ export function CollectionScreen({
                 createAsFolder={tableCreateRequest.asFolder}
                 onClearSearch={() => setSearchQuery("")}
                 onOpenEntry={(entryToOpen) => openPeek(entryToOpen)}
-                onOpenNestedPeek={(entryToOpen) =>
-                  openPeek(entryToOpen, true)
-                }
+                onOpenNestedPeek={(entryToOpen) => openPeek(entryToOpen, true)}
                 onOpenNestedCollection={(entryToOpen) =>
                   openDocument(entryToOpen.path, spaceId)
                 }
@@ -889,6 +913,39 @@ export function CollectionScreen({
                 onUpdateView={updateView}
                 onCreateEntry={(title, asFolder) =>
                   createEntry(asFolder, title, false)
+                }
+              />
+            ) : viewType(view) === "board" ? (
+              <BoardView
+                name={view.name}
+                view={view}
+                query={query}
+                schema={schema}
+                collectionPath={collectionPath}
+                projectPath={projectPath}
+                spacePath={spacePath}
+                searchQuery={searchQuery}
+                filters={query.merged.filter}
+                sort={query.merged.sort}
+                refreshToken={entriesVersion}
+                createFocusSignal={boardCreateRequest.signal}
+                createAsFolder={boardCreateRequest.asFolder}
+                onClearSearch={() => setSearchQuery("")}
+                onOpenEntry={(entryToOpen) => openPeek(entryToOpen)}
+                onOpenNestedPeek={(entryToOpen) => openPeek(entryToOpen, true)}
+                onOpenNestedCollection={(entryToOpen) =>
+                  openDocument(entryToOpen.path, spaceId)
+                }
+                onDuplicateEntry={(entryToDuplicate) =>
+                  void duplicateRow(entryToDuplicate).catch(handleError)
+                }
+                onDeleteEntry={setDeleteEntry}
+                onSchemaChange={(nextSchema) =>
+                  setSchema(normalizeSchema(nextSchema))
+                }
+                onUpdateView={updateView}
+                onCreateEntry={(title, asFolder, contextualDefaults) =>
+                  createEntry(asFolder, title, false, contextualDefaults)
                 }
               />
             ) : (

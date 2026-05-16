@@ -764,7 +764,17 @@ export function ViewSettingsPopover({
       id: "group" as const,
       title: m.view_query_group_title(),
       content: (
-        <GroupPane view={view} schema={schema} onPatch={updateTypeSetting} />
+        <GroupPane
+          schema={schema}
+          activeGroupBy={query.merged.groupBy}
+          onSelect={(field) => query.setLocalQuery({ groupBy: field })}
+        />
+      ),
+      footer: (
+        <SaveButton
+          query={query}
+          onSaved={(nextSchema) => onSchemaChange(normalizeSchema(nextSchema))}
+        />
       ),
     },
   ];

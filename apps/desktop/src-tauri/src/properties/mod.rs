@@ -1468,6 +1468,32 @@ pub fn apply_schema_defaults_for_path(
     Ok(changed)
 }
 
+pub fn apply_contextual_defaults_for_path(
+    space: &str,
+    file_path: &str,
+    meta: &mut EntryMeta,
+    contextual_defaults: &HashMap<String, Value>,
+) -> Result<bool, AppError> {
+    if contextual_defaults.is_empty() {
+        return Ok(false);
+    }
+
+    let Some((schema, _)) = resolve_collection_schema_result(space, file_path)? else {
+        return Ok(false);
+    };
+
+    let mut changed = false;
+    for (field, value) in contextual_defaults {
+        let Some(column) = schema.columns.iter().find(|column| column.name == *field) else {
+            continue;
+        };
+        validate_property_value(column, value)?;
+        meta.extra.insert(field.clone(), value.clone());
+        changed = true;
+    }
+    Ok(changed)
+}
+
 pub fn apply_schema_defaults_to_entry_tree(space: &Path, rel_path: &str) -> Result<(), AppError> {
     let abs = space.join(rel_path);
     if abs.is_dir() {

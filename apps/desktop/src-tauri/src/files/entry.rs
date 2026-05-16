@@ -388,6 +388,16 @@ fn refresh_markdown_identity(path: &Path, title_suffix: Option<&str>) -> Result<
 
 /// Create a new entry on disk. Returns the created Entry.
 pub fn create(space: &str, parent_path: Option<&str>, title: &str) -> Result<Entry, AppError> {
+    create_with_contextual_defaults(space, parent_path, title, None)
+}
+
+/// Create a new entry on disk with optional schema-validated contextual defaults.
+pub fn create_with_contextual_defaults(
+    space: &str,
+    parent_path: Option<&str>,
+    title: &str,
+    contextual_defaults: Option<HashMap<String, serde_yml::Value>>,
+) -> Result<Entry, AppError> {
     let id = ulid::Ulid::new().to_string().to_lowercase();
     let slug = slugify(title);
 
@@ -436,6 +446,14 @@ pub fn create(space: &str, parent_path: Option<&str>, title: &str) -> Result<Ent
     };
     let mut meta = meta;
     crate::properties::apply_schema_defaults_for_path(space, &rel_path, &mut meta)?;
+    if let Some(contextual_defaults) = contextual_defaults.as_ref() {
+        crate::properties::apply_contextual_defaults_for_path(
+            space,
+            &rel_path,
+            &mut meta,
+            contextual_defaults,
+        )?;
+    }
 
     let body = "";
     let content = frontmatter::serialize(&meta, body);

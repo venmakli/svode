@@ -275,18 +275,17 @@ export function TypeSettingsRows({
 }
 
 export function GroupPane({
-  view,
   schema,
-  onPatch,
+  activeGroupBy,
+  onSelect,
 }: {
-  view: CollectionView | null;
   schema: CollectionSchema;
-  onPatch: (patch: Record<string, unknown>) => void;
+  activeGroupBy: string | null;
+  onSelect: (field: string) => void;
 }) {
   const groupable = schema.columns.filter((column) =>
     ["status", "select", "person"].includes(column.type),
   );
-  const groupBy = (view?.group_by ?? view?.groupBy ?? null) as string | null;
   return (
     <div className="flex flex-col p-1">
       {groupable.length === 0 ? (
@@ -299,9 +298,9 @@ export function GroupPane({
             key={column.name}
             icon={Columns3}
             label={column.name}
-            meta={groupBy === column.name ? undefined : column.type}
-            right={groupBy === column.name ? <Check /> : null}
-            onClick={() => onPatch({ group_by: column.name })}
+            meta={activeGroupBy === column.name ? undefined : column.type}
+            right={activeGroupBy === column.name ? <Check /> : null}
+            onClick={() => onSelect(column.name)}
           />
         ))
       )}
