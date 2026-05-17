@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   closestCenter,
@@ -57,12 +57,13 @@ import {
 } from "@/features/collection/query";
 import type {
   CollectionSchema,
-  Person,
   PropertyType,
 } from "@/features/properties/model";
 import { normalizeSchema } from "@/features/properties/lib";
-import { handleError } from "./errors";
-import { type SettingsPane, viewType } from "./utils";
+import { useCollectionPersons } from "../hooks";
+import { handleError } from "../lib/errors";
+import { viewType } from "../lib/utils";
+import type { SettingsPane } from "../model";
 import { QueryAddButton } from "./query-settings-pane";
 import { SettingsRow, SettingsSection } from "./settings-row";
 import {
@@ -153,19 +154,8 @@ export function ViewSettingsPopover({
     sort: QuerySort;
   } | null>(null);
   const [selectedProperty, setSelectedProperty] = useState("title");
-  const [queryPersons, setQueryPersons] = useState<Person[]>([]);
-
-  const loadQueryPersons = useCallback(
-    async (allTime = false) => {
-      const list = await invoke<Person[]>("list_persons", {
-        spacePath,
-        allTime,
-      });
-      setQueryPersons(list);
-      return list;
-    },
-    [spacePath],
-  );
+  const { persons: queryPersons, loadPersons: loadQueryPersons } =
+    useCollectionPersons(spacePath);
 
   useEffect(() => {
     if (pane !== "filterEditor") setFilterDraft(null);

@@ -9,7 +9,8 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { CollectionView } from "@/features/collection/query";
-import { viewIcons, viewType } from "./utils";
+import { viewType } from "../lib/utils";
+import { viewIcons } from "./view-icons";
 
 export function SortableViewTab({ view }: { view: CollectionView }) {
   const { listeners, setNodeRef, transform, transition, isDragging } =

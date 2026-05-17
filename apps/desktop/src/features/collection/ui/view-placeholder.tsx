@@ -18,7 +18,7 @@ import type { CollectionView, ViewType } from "@/features/collection/query";
 import type { CollectionSchema } from "@/features/properties/model";
 import type { Entry } from "@/features/editor/types";
 import { IncompleteState } from "./incomplete-state";
-import { titleFilter } from "./utils";
+import { titleFilter } from "../lib/utils";
 import * as m from "@/paraglide/messages.js";
 
 export function ViewPlaceholder({

@@ -18,11 +18,11 @@ import { useSpaceStore } from "@/stores/space";
 import type {
   CollectionSchema,
   Column,
-  Person,
   PropertyType,
 } from "@/features/properties/model";
-import { titleFilter } from "../utils";
-import { isEditableTarget } from "../utils";
+import { useCollectionPersons } from "../../hooks";
+import { titleFilter } from "../../lib/utils";
+import { isEditableTarget } from "../../lib/utils";
 import { usePersistentSet, usePersistentSizing } from "./persistence";
 import { propertyTypeLabel } from "./property-type-picker";
 import { EmptyTableBody } from "./table-empty-state";
@@ -69,7 +69,6 @@ export function TableView({
   onCreateEntry,
 }: TableViewProps) {
   const [entries, setEntries] = useState<Entry[]>([]);
-  const [persons, setPersons] = useState<Person[]>([]);
   const [nestedCollectionPaths, setNestedCollectionPaths] = useState<
     Set<string>
   >(new Set());
@@ -105,6 +104,7 @@ export function TableView({
   );
   const footerInputRef = useRef<HTMLInputElement | null>(null);
   const footerRef = useRef<HTMLDivElement | null>(null);
+  const { persons, loadPersons } = useCollectionPersons(spacePath);
 
   const visibleFields = useMemo(
     () => normalizeVisibleFields(view, schema),
@@ -237,18 +237,6 @@ export function TableView({
   useEffect(() => {
     void loadEntries();
   }, [loadEntries, refreshToken]);
-
-  const loadPersons = useCallback(
-    async (allTime = false) => {
-      const list = await invoke<Person[]>("list_persons", {
-        spacePath,
-        allTime,
-      });
-      setPersons(list);
-      return list;
-    },
-    [spacePath],
-  );
 
   useEffect(() => {
     if (!hasPersonColumn) return;

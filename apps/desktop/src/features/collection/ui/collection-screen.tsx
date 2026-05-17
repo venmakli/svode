@@ -42,7 +42,7 @@ import { useViewQuery } from "@/features/collection/query";
 import { DeleteDialogs } from "./delete-dialogs";
 import { DocumentSettings } from "./document-settings-popover";
 import { EntryPeekSheet, type EntryPeekTarget } from "./entry-peek-sheet";
-import { handleError } from "./errors";
+import { handleError } from "../lib/errors";
 import { CollectionSkeleton } from "./skeleton";
 import {
   collectionTabTriggerClassName,
@@ -50,12 +50,10 @@ import {
   SortableViewTab,
 } from "./view-tabs";
 import { ViewPlaceholder } from "./view-placeholder";
-import { BoardView } from "./board-view";
-import { TableView } from "./table-view";
+import { BoardView } from "./board/board-view";
+import { TableView } from "./table/table-view";
 import { ViewActionBar } from "./view-action-bar";
 import {
-  type ActiveTab,
-  type SettingsPane,
   collectionPathFor,
   humanize,
   isEditableTarget,
@@ -63,7 +61,8 @@ import {
   readmePathFor,
   viewName,
   viewType,
-} from "./utils";
+} from "../lib/utils";
+import type { ActiveTab, SettingsPane } from "../model";
 import type {
   CollectionView,
   ViewType,

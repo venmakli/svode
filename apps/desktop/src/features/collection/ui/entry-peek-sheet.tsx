@@ -23,7 +23,7 @@ import type { Entry, EntryCover } from "@/features/editor/types";
 import { PropertyPanel } from "@/features/properties/ui";
 import type { EntrySchemaResult } from "@/features/properties/model";
 import { normalizeSchema } from "@/features/properties/lib";
-import { handleError } from "./errors";
+import { handleError } from "../lib/errors";
 import * as m from "@/paraglide/messages.js";
 
 export interface EntryPeekTarget {

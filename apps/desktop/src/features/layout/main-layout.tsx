@@ -32,7 +32,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { TreeNode } from "@/types/space";
-import { CollectionScreen } from "@/features/collection/screen";
+import { CollectionScreen } from "@/features/collection";
 
 
 /** Look up the title for a path segment from the tree. */

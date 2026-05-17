@@ -26,12 +26,12 @@ import {
 import type { Entry } from "@/features/editor/types";
 import type {
   CollectionSchema,
-  Person,
   PropertyType,
 } from "@/features/properties/model";
 import { normalizeSchema } from "@/features/properties/lib";
 import { useSpaceStore } from "@/stores/space";
-import { titleFilter } from "../utils";
+import { useCollectionPersons } from "../../hooks";
+import { titleFilter } from "../../lib/utils";
 import {
   entryParentDir,
   saveTableOrder,
@@ -79,7 +79,6 @@ export function BoardView({
 }: BoardViewProps) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [manualOrderEntries, setManualOrderEntries] = useState<Entry[]>([]);
-  const [persons, setPersons] = useState<Person[]>([]);
   const [nestedCollectionPaths, setNestedCollectionPaths] = useState<
     Set<string>
   >(new Set());
@@ -89,6 +88,7 @@ export function BoardView({
   const [draftGroupKey, setDraftGroupKey] = useState<string | null>(null);
   const [draftAsFolder, setDraftAsFolder] = useState(false);
   const lastActiveGroup = useRef<string | null>(null);
+  const { persons, loadPersons } = useCollectionPersons(spacePath);
   const sidebarSpaceId = useSpaceStore((state) => {
     const space =
       state.spaces.find((item) => item.path === spacePath) ??
@@ -183,18 +183,6 @@ export function BoardView({
       setLoading(false);
     }
   }, [collectionPath, filters, hasSort, projectPath, sort, spacePath]);
-
-  const loadPersons = useCallback(
-    async (allTime = false) => {
-      const list = await invoke<Person[]>("list_persons", {
-        spacePath,
-        allTime,
-      });
-      setPersons(list);
-      return list;
-    },
-    [spacePath],
-  );
 
   useEffect(() => {
     void loadEntries();

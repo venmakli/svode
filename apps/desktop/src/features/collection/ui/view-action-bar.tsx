@@ -27,7 +27,7 @@ import type {
 import type { CollectionView } from "@/features/collection/query";
 import type { CollectionSchema } from "@/features/properties/model";
 import { SearchControl } from "./search-control";
-import type { SettingsPane } from "./utils";
+import type { SettingsPane } from "../model";
 import { ViewSettingsPopover } from "./view-settings-popover";
 import * as m from "@/paraglide/messages.js";
 
