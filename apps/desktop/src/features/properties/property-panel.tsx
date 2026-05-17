@@ -24,7 +24,12 @@ import type {
   Person,
   PropertyOption,
 } from "./types";
-import { PropertyControl, validatePropertyValue } from "./property-control";
+import {
+  PropertyControl,
+  shouldClosePropertyEditorOnChange,
+  validatePropertyValue,
+} from "./property-control";
+import { PropertyValue } from "./property-value";
 import {
   AddColumnDialog,
   AddOptionDialog,
@@ -76,12 +81,14 @@ export function PropertyPanel({
   );
   const [dialog, setDialog] = useState<DialogState>(null);
   const [persons, setPersons] = useState<Person[]>([]);
+  const [editingField, setEditingField] = useState<string | null>(null);
 
   useEffect(() => {
     setSchema(normalizeSchema(schemaResult.schema));
     setCollectionRootPath(
       schemaResult.collectionRootPath ?? schemaResult.collection_root_path ?? "",
     );
+    setEditingField(null);
   }, [schemaResult]);
 
   const hasPerson = useMemo(
@@ -152,17 +159,21 @@ export function PropertyPanel({
         {schema.columns.map((column) => {
           const state = validatePropertyValue(column, values[column.name]);
           return (
-            <div key={column.name} className="contents">
+            <div key={column.name} className="contents group/property-row">
               <PropertyLabel column={column} invalid={state.invalid} message={state.message} />
               <div className="min-w-0">
-                <PropertyControl
+                <PropertyPanelValue
                   column={column}
                   value={values[column.name]}
                   invalid={state.invalid}
                   disabled={state.message === m.property_state_type_conflict()}
+                  editing={editingField === column.name}
                   persons={persons}
                   onRequestPersons={loadPersons}
-                  onChange={(value) => onValueChange(column.name, value)}
+                  onEditChange={(editing) =>
+                    setEditingField(editing ? column.name : null)
+                  }
+                  onValueChange={(value) => onValueChange(column.name, value)}
                 />
                 {state.invalid ? (
                   <div className="mt-1 flex flex-wrap gap-1">
@@ -344,6 +355,74 @@ export function PropertyPanel({
   );
 }
 
+function PropertyPanelValue({
+  column,
+  value,
+  invalid,
+  disabled,
+  editing,
+  persons,
+  onRequestPersons,
+  onEditChange,
+  onValueChange,
+}: {
+  column: Column;
+  value: unknown;
+  invalid: boolean;
+  disabled: boolean;
+  editing: boolean;
+  persons: Person[];
+  onRequestPersons: (allTime: boolean) => Promise<Person[]>;
+  onEditChange: (editing: boolean) => void;
+  onValueChange: (value: unknown) => Promise<void>;
+}) {
+  if (editing) {
+    return (
+      <div
+        className="min-w-0"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.stopPropagation();
+            onEditChange(false);
+          }
+        }}
+      >
+        <PropertyControl
+          column={column}
+          value={value}
+          invalid={invalid}
+          disabled={disabled}
+          autoOpen
+          persons={persons}
+          onRequestPersons={onRequestPersons}
+          onChange={(nextValue) => {
+            const close = shouldClosePropertyEditorOnChange(column.type);
+            const saved = onValueChange(nextValue);
+            if (close) void saved.finally(() => onEditChange(false));
+            return saved;
+          }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      className={cn(
+        "flex min-h-8 w-full min-w-0 items-center rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
+        invalid && "ring-1 ring-warning",
+      )}
+      onClick={() => onEditChange(true)}
+    >
+      <span className="min-w-0 flex-1">
+        <PropertyValue column={column} value={value} />
+      </span>
+    </button>
+  );
+}
+
 function PropertyLabel({
   column,
   invalid,
@@ -382,7 +461,12 @@ function ColumnActions({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button type="button" variant="ghost" size="icon-xs">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className="opacity-0 transition-opacity group-hover/property-row:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+        >
           <MoreHorizontal />
           <span className="sr-only">{m.common_settings()}</span>
         </Button>

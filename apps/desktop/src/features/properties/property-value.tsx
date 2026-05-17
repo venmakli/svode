@@ -19,11 +19,10 @@ import {
 } from "@/features/properties/utils";
 import * as m from "@/paraglide/messages.js";
 
-export function CellActions({
+export function PropertyValueActions({
   column,
   value,
 }: {
-  entryPath: string;
   column: Column;
   value: unknown;
 }) {

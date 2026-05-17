@@ -1,5 +1,7 @@
 use crate::error::AppError;
-use crate::files::EntryMeta;
+use crate::files::{EntryMeta, entry::Cover};
+use serde::Serialize;
+use std::collections::HashMap;
 
 const FRONTMATTER_DELIMITER: &str = "---";
 
@@ -55,9 +57,40 @@ fn parse_inner(trimmed: &str) -> Result<(EntryMeta, String), AppError> {
 
 /// Serialize frontmatter + body into a full markdown string.
 pub fn serialize(meta: &EntryMeta, body: &str) -> String {
-    let yaml = serde_yml::to_string(meta).unwrap_or_default();
+    let yaml = serde_yml::to_string(&FrontmatterMeta::from(meta)).unwrap_or_default();
     // serde_yml adds a trailing newline, so we don't need an extra one
     format!("---\n{yaml}---\n{body}")
+}
+
+#[derive(Serialize)]
+struct FrontmatterMeta<'a> {
+    id: &'a str,
+    title: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    icon: Option<&'a String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cover: Option<&'a Cover>,
+    created: &'a str,
+    updated: &'a str,
+    #[serde(flatten)]
+    extra: &'a HashMap<String, serde_yml::Value>,
+}
+
+impl<'a> From<&'a EntryMeta> for FrontmatterMeta<'a> {
+    fn from(meta: &'a EntryMeta) -> Self {
+        Self {
+            id: &meta.id,
+            title: &meta.title,
+            icon: meta.icon.as_ref(),
+            description: meta.description.as_ref(),
+            cover: meta.cover.as_ref(),
+            created: &meta.created,
+            updated: &meta.updated,
+            extra: &meta.extra,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -112,5 +145,48 @@ Body
             })
         );
         assert_eq!(parsed_body, "Body\n");
+    }
+
+    #[test]
+    fn extra_fields_stay_flat_in_frontmatter() {
+        let mut meta = EntryMeta {
+            id: "01ABC".into(),
+            title: "With Extra".into(),
+            icon: None,
+            description: None,
+            cover: None,
+            created: "2026-03-17T00:00:00Z".into(),
+            updated: "2026-03-17T00:00:00Z".into(),
+            extra: std::collections::HashMap::new(),
+        };
+        meta.extra
+            .insert("Статус".into(), serde_yml::Value::String("В работе".into()));
+
+        let raw = serialize(&meta, "Body\n");
+        let (parsed_meta, _) = parse(&raw).unwrap();
+
+        assert!(!raw.contains("\nextra:"));
+        assert_eq!(parsed_meta.extra.get("Статус"), meta.extra.get("Статус"));
+    }
+
+    #[test]
+    fn entry_meta_json_serialization_nests_extra_fields() {
+        let mut meta = EntryMeta {
+            id: "01ABC".into(),
+            title: "With Extra".into(),
+            icon: None,
+            description: None,
+            cover: None,
+            created: "2026-03-17T00:00:00Z".into(),
+            updated: "2026-03-17T00:00:00Z".into(),
+            extra: std::collections::HashMap::new(),
+        };
+        meta.extra
+            .insert("Статус".into(), serde_yml::Value::String("В работе".into()));
+
+        let json = serde_json::to_value(&meta).unwrap();
+
+        assert_eq!(json["extra"]["Статус"], "В работе");
+        assert!(json.get("Статус").is_none());
     }
 }

@@ -53,13 +53,10 @@ export function BoardCardContent({
   card,
   cardFields,
   customColumns,
-  persons,
   nestedCollectionPaths,
   disabledReorder,
   active,
   overlay,
-  onRequestPersons,
-  onCommitField,
   onOpen,
   onOpenNestedPeek,
   onOpenNestedCollection,
@@ -123,9 +120,6 @@ export function BoardCardContent({
             <BoardPropertyFlow
               entry={entry}
               columns={customColumns}
-              persons={persons}
-              onRequestPersons={onRequestPersons}
-              onCommitField={onCommitField}
             />
           </CardContent>
         </Card>

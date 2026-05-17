@@ -15,7 +15,7 @@ import type { Entry } from "@/features/editor/types";
 import type { CollectionSchema } from "@/features/properties/types";
 import { SortableTableRow } from "./table-row";
 import type { CollectionTableRow } from "./types";
-import { PropertyValue } from "./cell-value";
+import { PropertyValue } from "@/features/properties/property-value";
 import { nestedPreviewFields } from "./utils";
 
 export function TableRowsBody({

@@ -6,16 +6,20 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
   PropertyControl,
+  shouldClosePropertyEditorOnChange,
   validatePropertyValue,
 } from "@/features/properties/property-control";
 import type { Column, Person } from "@/features/properties/types";
 import { valueToString } from "@/features/properties/utils";
-import { CellActions, NumberPreview, PropertyValue } from "./cell-value";
+import {
+  NumberPreview,
+  PropertyValue,
+  PropertyValueActions,
+} from "@/features/properties/property-value";
 import type { CollectionTableRow } from "./types";
 import * as m from "@/paraglide/messages.js";
 
 export function PropertyCell({
-  entryPath,
   column,
   persons,
   onRequestPersons,
@@ -25,7 +29,6 @@ export function PropertyCell({
   onCancel,
   onCommit,
 }: {
-  entryPath: string;
   column: Column;
   persons: Person[];
   onRequestPersons: (allTime: boolean) => Promise<Person[]>;
@@ -92,7 +95,7 @@ export function PropertyCell({
             persons={persons}
             onChange={(next) =>
               onCommit(next, {
-                close: column.type !== "date",
+                close: shouldClosePropertyEditorOnChange(column.type),
               })
             }
             onRequestPersons={onRequestPersons}
@@ -121,7 +124,7 @@ export function PropertyCell({
       <span className="min-w-0 flex-1 truncate">
         <PropertyValue column={column} value={value} />
       </span>
-      <CellActions entryPath={entryPath} column={column} value={value} />
+      <PropertyValueActions column={column} value={value} />
     </div>
   );
 }

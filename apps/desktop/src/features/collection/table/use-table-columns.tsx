@@ -192,7 +192,6 @@ export function useTableColumns({
           cell: ({ row }) =>
             property ? (
               <PropertyCell
-                entryPath={row.original.entry.path}
                 column={property}
                 persons={persons}
                 onRequestPersons={onRequestPersons}

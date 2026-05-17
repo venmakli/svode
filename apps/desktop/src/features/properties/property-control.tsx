@@ -149,6 +149,7 @@ export function PropertyControl({
           value={value}
           invalid={invalid}
           disabled={disabled}
+          autoOpen={autoOpen}
           onChange={onChange}
         />
       );
@@ -192,6 +193,7 @@ export function PropertyControl({
           value={value}
           invalid={invalid}
           disabled={disabled}
+          autoOpen={autoOpen}
           onChange={onChange}
         />
       );
@@ -201,6 +203,7 @@ export function PropertyControl({
           value={value}
           invalid={invalid}
           disabled={disabled}
+          autoOpen={autoOpen}
           onChange={onChange}
         />
       );
@@ -215,6 +218,10 @@ export function PropertyControl({
         />
       );
   }
+}
+
+export function shouldClosePropertyEditorOnChange(type: Column["type"]) {
+  return type !== "date" && type !== "multi_select" && type !== "url";
 }
 
 function TextControl({
@@ -1026,6 +1033,7 @@ function UrlControl({
           <Input
             value={draft}
             placeholder={m.doc_link_url_placeholder()}
+            autoFocus={autoOpen}
             onChange={(event) => setDraft(event.target.value)}
             onBlur={commit}
           />
@@ -1046,14 +1054,20 @@ function EmailControl({
   value,
   invalid,
   disabled,
+  autoOpen,
   onChange,
-}: Pick<PropertyControlProps, "value" | "invalid" | "disabled" | "onChange">) {
+}: Pick<
+  PropertyControlProps,
+  "value" | "invalid" | "disabled" | "autoOpen" | "onChange"
+>) {
   const [draft, setDraft] = useState(valueToString(value));
   useEffect(() => setDraft(valueToString(value)), [value]);
   const warning = invalid || !isValidEmail(draft);
   return (
     <div className="group/control relative">
       <Input
+        autoFocus={autoOpen}
+        type="email"
         value={draft}
         disabled={disabled}
         aria-invalid={warning || undefined}
@@ -1085,14 +1099,20 @@ function PhoneControl({
   value,
   invalid,
   disabled,
+  autoOpen,
   onChange,
-}: Pick<PropertyControlProps, "value" | "invalid" | "disabled" | "onChange">) {
+}: Pick<
+  PropertyControlProps,
+  "value" | "invalid" | "disabled" | "autoOpen" | "onChange"
+>) {
   const [draft, setDraft] = useState(valueToString(value));
   useEffect(() => setDraft(valueToString(value)), [value]);
   const warning = invalid || !isValidPhone(draft);
   return (
     <div className="group/control relative">
       <Input
+        autoFocus={autoOpen}
+        type="tel"
         value={draft}
         disabled={disabled}
         aria-invalid={warning || undefined}

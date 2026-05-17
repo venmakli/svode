@@ -1,4 +1,7 @@
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Serialize,
+    ser::{SerializeStruct, Serializer},
+};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -69,7 +72,7 @@ pub struct WriteResult {
     pub write_nonce: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct EntryMeta {
     pub id: String,
     pub title: String,
@@ -84,6 +87,24 @@ pub struct EntryMeta {
     /// User-defined custom fields from frontmatter YAML.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yml::Value>,
+}
+
+impl Serialize for EntryMeta {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("EntryMeta", 8)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("title", &self.title)?;
+        state.serialize_field("icon", &self.icon)?;
+        state.serialize_field("description", &self.description)?;
+        state.serialize_field("cover", &self.cover)?;
+        state.serialize_field("created", &self.created)?;
+        state.serialize_field("updated", &self.updated)?;
+        state.serialize_field("extra", &self.extra)?;
+        state.end()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
