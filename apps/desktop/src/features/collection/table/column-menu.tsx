@@ -11,13 +11,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { MultiPanePopover } from "@/features/collection-query/multi-pane-popover";
+import { MultiPanePopover } from "@/features/collection/query";
 import type {
   CollectionView,
   UseViewQueryResult,
-} from "@/features/collection-query/types";
-import type { CollectionSchema, Column } from "@/features/properties/types";
-import type { Person } from "@/features/properties/types";
+} from "@/features/collection/query";
+import type { CollectionSchema, Column } from "@/features/properties/model";
+import type { Person } from "@/features/properties/model";
 import { FieldFilterPane, FieldSortPane } from "./column-query-pane";
 import {
   ColumnDangerActions,

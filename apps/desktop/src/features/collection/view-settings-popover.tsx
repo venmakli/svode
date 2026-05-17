@@ -34,12 +34,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import { MultiPanePopover } from "@/features/collection-query/multi-pane-popover";
+import { MultiPanePopover } from "@/features/collection/query";
 import {
   defaultFilterOp,
   queryField,
   queryFields,
-} from "@/features/collection-query/query-utils";
+} from "@/features/collection/query";
 import type {
   CollectionView,
   QueryField,
@@ -47,20 +47,20 @@ import type {
   QuerySort,
   UseViewQueryResult,
   ViewType,
-} from "@/features/collection-query/types";
+} from "@/features/collection/query";
 import {
   FieldChoiceList,
   FilterEditor,
   QueryList,
   SaveButton,
   SortEditor,
-} from "@/features/collection-query/view-query-popover";
+} from "@/features/collection/query";
 import type {
   CollectionSchema,
   Person,
   PropertyType,
-} from "@/features/properties/types";
-import { normalizeSchema } from "@/features/properties/utils";
+} from "@/features/properties/model";
+import { normalizeSchema } from "@/features/properties/lib";
 import { handleError } from "./errors";
 import { type SettingsPane, viewType } from "./utils";
 import { QueryAddButton } from "./query-settings-pane";

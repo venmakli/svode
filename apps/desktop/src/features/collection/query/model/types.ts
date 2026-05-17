@@ -1,4 +1,4 @@
-import type { CollectionSchema, Column, Person, PropertyType } from "@/features/properties/types";
+import type { CollectionSchema, Column, Person, PropertyType } from "@/features/properties/model";
 
 export type FilterOp =
   | "eq"

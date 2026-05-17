@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import type { Entry } from "@/features/editor/types";
-import type { CollectionSchema } from "@/features/properties/types";
+import type { CollectionSchema } from "@/features/properties/model";
 import { PROPERTY_TYPE_ICONS, TITLE_ICON } from "./icons";
 import { defaultColumnWidth } from "./utils";
 import * as m from "@/paraglide/messages.js";

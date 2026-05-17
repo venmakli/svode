@@ -4,13 +4,13 @@ import type { Entry } from "@/features/editor/types";
 import type {
   CollectionView,
   UseViewQueryResult,
-} from "@/features/collection-query/types";
+} from "@/features/collection/query";
 import type {
   CollectionSchema,
   Column,
   Person,
-} from "@/features/properties/types";
-import { normalizeSchema } from "@/features/properties/utils";
+} from "@/features/properties/model";
+import { normalizeSchema } from "@/features/properties/lib";
 import { ColumnMenuPopover } from "./column-menu";
 import { PropertyCell, TitleCell } from "./cells";
 import { PROPERTY_TYPE_ICONS, TITLE_ICON } from "./icons";

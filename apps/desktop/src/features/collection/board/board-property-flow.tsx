@@ -1,9 +1,9 @@
 import { cn } from "@/lib/utils";
-import { validatePropertyValue } from "@/features/properties/property-control";
+import { validatePropertyValue } from "@/features/properties/model";
 import type { Entry } from "@/features/editor/types";
-import type { Column } from "@/features/properties/types";
-import { isEmptyValue } from "@/features/properties/utils";
-import { PropertyValue } from "@/features/properties/property-value";
+import type { Column } from "@/features/properties/model";
+import { isEmptyValue } from "@/features/properties/lib";
+import { PropertyValue } from "@/features/properties/ui";
 
 export function BoardPropertyFlow({
   entry,

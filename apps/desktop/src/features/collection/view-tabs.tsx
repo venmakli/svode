@@ -8,7 +8,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { CollectionView } from "@/features/collection-query/types";
+import type { CollectionView } from "@/features/collection/query";
 import { viewIcons, viewType } from "./utils";
 
 export function SortableViewTab({ view }: { view: CollectionView }) {

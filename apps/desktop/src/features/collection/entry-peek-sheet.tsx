@@ -20,9 +20,9 @@ import { cn } from "@/lib/utils";
 import { EntryIdentityHeader } from "@/features/editor/entry-identity-header";
 import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";
 import type { Entry, EntryCover } from "@/features/editor/types";
-import { PropertyPanel } from "@/features/properties/property-panel";
-import type { EntrySchemaResult } from "@/features/properties/types";
-import { normalizeSchema } from "@/features/properties/utils";
+import { PropertyPanel } from "@/features/properties/ui";
+import type { EntrySchemaResult } from "@/features/properties/model";
+import { normalizeSchema } from "@/features/properties/lib";
 import { handleError } from "./errors";
 import * as m from "@/paraglide/messages.js";
 

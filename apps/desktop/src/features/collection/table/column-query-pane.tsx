@@ -4,19 +4,19 @@ import { Button } from "@/components/ui/button";
 import {
   defaultFilterOp,
   queryField,
-} from "@/features/collection-query/query-utils";
+} from "@/features/collection/query";
 import type {
   QueryEditorPersonSource,
   QueryFilter,
   QuerySort,
   UseViewQueryResult,
-} from "@/features/collection-query/types";
+} from "@/features/collection/query";
 import {
   FilterEditor,
   SaveButton,
   SortEditor,
-} from "@/features/collection-query/view-query-popover";
-import type { CollectionSchema } from "@/features/properties/types";
+} from "@/features/collection/query";
+import type { CollectionSchema } from "@/features/properties/model";
 import { SettingsRow } from "../settings-row";
 import * as m from "@/paraglide/messages.js";
 

@@ -6,8 +6,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import type { PropertyType } from "@/features/properties/types";
-import { PROPERTY_TYPES } from "@/features/properties/utils";
+import type { PropertyType } from "@/features/properties/model";
+import { PROPERTY_TYPES } from "@/features/properties/lib";
 import { PROPERTY_TYPE_ICONS } from "./icons";
 import * as m from "@/paraglide/messages.js";
 

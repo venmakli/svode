@@ -36,8 +36,8 @@ import type {
   Column,
   PropertyOption,
   StatusGroup,
-} from "@/features/properties/types";
-import { STATUS_GROUPS } from "@/features/properties/utils";
+} from "@/features/properties/model";
+import { STATUS_GROUPS } from "@/features/properties/lib";
 import { SettingsRow, SettingsSection } from "../settings-row";
 import { ColorPicker } from "./color-picker";
 import * as m from "@/paraglide/messages.js";

@@ -49,7 +49,7 @@ import {
   PhoneCall,
   Text,
 } from "lucide-react";
-import type { Column, DateRangeValue, Person, PropertyOption } from "./types";
+import type { Column, DateRangeValue, Person, PropertyOption } from "../model/types";
 import { PropertyBadge } from "./property-badge";
 import {
   STATUS_GROUPS,
@@ -73,7 +73,8 @@ import {
   personLastCommitAt,
   todayIsoDate,
   valueToString,
-} from "./utils";
+} from "../lib/utils";
+import { fallbackUrlTitle, normalizeUrlValue } from "../lib/url";
 import * as m from "@/paraglide/messages.js";
 
 interface PropertyControlProps {
@@ -218,10 +219,6 @@ export function PropertyControl({
         />
       );
   }
-}
-
-export function shouldClosePropertyEditorOnChange(type: Column["type"]) {
-  return type !== "date" && type !== "multi_select" && type !== "url";
 }
 
 function TextControl({
@@ -1287,28 +1284,6 @@ function combineDateTime(date: string, time: string, hasTime: boolean): string {
   return hasTime ? `${date}T${time || "09:00"}` : date;
 }
 
-function normalizeUrlValue(value: unknown) {
-  if (typeof value === "string") {
-    return { href: value, title: fallbackUrlTitle(value) };
-  }
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    const href = typeof record.href === "string" ? record.href : "";
-    const title = typeof record.title === "string" ? record.title : "";
-    return { href, title };
-  }
-  return { href: "", title: "" };
-}
-
-function fallbackUrlTitle(href: string) {
-  try {
-    const url = new URL(href);
-    return `${url.hostname}${url.pathname === "/" ? "" : url.pathname}`;
-  } catch {
-    return href.replace(/^https?:\/\//, "");
-  }
-}
-
 function copyValue(value: string) {
   if (!value) return;
   void navigator.clipboard?.writeText(value);
@@ -1317,57 +1292,4 @@ function copyValue(value: string) {
 function openExternal(value: string) {
   if (!value) return;
   window.open(value, "_blank", "noopener,noreferrer");
-}
-
-export function validatePropertyValue(
-  column: Column,
-  value: unknown,
-): {
-  invalid: boolean;
-  message?: string;
-} {
-  if (isEmptyValue(value)) return { invalid: false };
-  switch (column.type) {
-    case "number":
-      return typeof value === "number"
-        ? { invalid: false }
-        : { invalid: true, message: m.property_state_type_conflict() };
-    case "select":
-    case "status":
-      return typeof value === "string" && hasOption(column, value)
-        ? { invalid: false }
-        : { invalid: true, message: m.property_state_invalid_option() };
-    case "multi_select":
-      return Array.isArray(value) &&
-        value.every(
-          (item) => typeof item === "string" && hasOption(column, item),
-        )
-        ? { invalid: false }
-        : { invalid: true, message: m.property_state_invalid_option() };
-    case "checkbox":
-      return typeof value === "boolean"
-        ? { invalid: false }
-        : { invalid: true, message: m.property_state_type_conflict() };
-    case "date":
-      return typeof value === "string" || isDateRangeValue(value)
-        ? { invalid: false }
-        : { invalid: true, message: m.property_state_type_conflict() };
-    case "email":
-      return typeof value === "string" && isValidEmail(value)
-        ? { invalid: false }
-        : { invalid: true, message: m.property_state_invalid_email_phone() };
-    case "phone":
-      return typeof value === "string" && isValidPhone(value)
-        ? { invalid: false }
-        : { invalid: true, message: m.property_state_invalid_email_phone() };
-    case "url":
-      return (typeof value === "string" && isValidUrl(value)) ||
-        (value !== null &&
-          typeof value === "object" &&
-          isValidUrl(normalizeUrlValue(value).href))
-        ? { invalid: false }
-        : { invalid: true, message: m.property_state_type_conflict() };
-    default:
-      return { invalid: false };
-  }
 }

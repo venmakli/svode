@@ -23,9 +23,9 @@ import { cn } from "@/lib/utils";
 import type {
   UseViewQueryResult,
   ViewType,
-} from "@/features/collection-query/types";
-import type { CollectionView } from "@/features/collection-query/types";
-import type { CollectionSchema } from "@/features/properties/types";
+} from "@/features/collection/query";
+import type { CollectionView } from "@/features/collection/query";
+import type { CollectionSchema } from "@/features/properties/model";
 import { SearchControl } from "./search-control";
 import type { SettingsPane } from "./utils";
 import { ViewSettingsPopover } from "./view-settings-popover";

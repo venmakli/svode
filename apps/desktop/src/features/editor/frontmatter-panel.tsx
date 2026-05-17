@@ -6,8 +6,8 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { invoke } from "@tauri-apps/api/core";
 import type { EntryMeta } from "./types";
-import { PropertyPanel } from "@/features/properties/property-panel";
-import type { EntrySchemaResult } from "@/features/properties/types";
+import { PropertyPanel } from "@/features/properties/ui";
+import type { EntrySchemaResult } from "@/features/properties/model";
 import * as m from "@/paraglide/messages.js";
 import { useEffect, useState } from "react";
 

@@ -23,12 +23,12 @@ import type {
   EntrySchemaResult,
   Person,
   PropertyOption,
-} from "./types";
+} from "../model/types";
 import {
-  PropertyControl,
   shouldClosePropertyEditorOnChange,
   validatePropertyValue,
-} from "./property-control";
+} from "../model/validation";
+import { PropertyControl } from "./property-control";
 import { PropertyValue } from "./property-value";
 import {
   AddColumnDialog,
@@ -39,7 +39,7 @@ import {
   RenameColumnDialog,
   RenameOptionDialog,
 } from "./schema-dialogs";
-import { normalizeSchema, valueToString } from "./utils";
+import { normalizeSchema, valueToString } from "../lib/utils";
 import * as m from "@/paraglide/messages.js";
 
 interface PropertyPanelProps {

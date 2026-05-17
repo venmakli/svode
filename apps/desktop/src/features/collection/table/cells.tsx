@@ -5,17 +5,19 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
-  PropertyControl,
   shouldClosePropertyEditorOnChange,
   validatePropertyValue,
-} from "@/features/properties/property-control";
-import type { Column, Person } from "@/features/properties/types";
-import { valueToString } from "@/features/properties/utils";
+} from "@/features/properties/model";
+import {
+  PropertyControl,
+} from "@/features/properties/ui";
+import type { Column, Person } from "@/features/properties/model";
+import { valueToString } from "@/features/properties/lib";
 import {
   NumberPreview,
   PropertyValue,
   PropertyValueActions,
-} from "@/features/properties/property-value";
+} from "@/features/properties/ui";
 import type { CollectionTableRow } from "./types";
 import * as m from "@/paraglide/messages.js";
 

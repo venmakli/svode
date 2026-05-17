@@ -1,12 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CollectionView } from "@/features/collection-query/types";
+import type { CollectionView } from "@/features/collection/query";
 import type { Entry } from "@/features/editor/types";
 import type {
   CollectionSchema,
   Column,
   PropertyType,
-} from "@/features/properties/types";
-import { PROPERTY_TYPES } from "@/features/properties/utils";
+} from "@/features/properties/model";
+import { PROPERTY_TYPES } from "@/features/properties/lib";
 import type { CollectionTableRow } from "./types";
 
 export function showNestedForView(view: CollectionView) {

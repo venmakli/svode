@@ -8,15 +8,15 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { PropertyBadge } from "@/features/properties/property-badge";
-import type { Column } from "@/features/properties/types";
+import { PropertyBadge } from "./property-badge";
+import type { Column } from "../model/types";
 import {
   colorStyle,
   formatDateValue,
   isEmptyValue,
   optionByName,
   valueToString,
-} from "@/features/properties/utils";
+} from "../lib/utils";
 import * as m from "@/paraglide/messages.js";
 
 export function PropertyValueActions({

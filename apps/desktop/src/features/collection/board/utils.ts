@@ -3,9 +3,9 @@ import type {
   CollectionSchema,
   Column,
   Person,
-} from "@/features/properties/types";
-import { isEmptyValue, personDisplayName } from "@/features/properties/utils";
-import type { CollectionView } from "@/features/collection-query/types";
+} from "@/features/properties/model";
+import { isEmptyValue, personDisplayName } from "@/features/properties/lib";
+import type { CollectionView } from "@/features/collection/query";
 import { entryCollectionPath } from "../table/utils";
 import type { BoardColumnGroup } from "./types";
 import * as m from "@/paraglide/messages.js";

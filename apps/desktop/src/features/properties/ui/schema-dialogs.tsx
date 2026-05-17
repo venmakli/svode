@@ -30,8 +30,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import type { Column, PropertyOption, PropertyType } from "./types";
-import { COLOR_NAMES, PROPERTY_TYPES, STATUS_GROUPS } from "./utils";
+import type { Column, PropertyOption, PropertyType } from "../model/types";
+import { COLOR_NAMES, PROPERTY_TYPES, STATUS_GROUPS } from "../lib/utils";
 import * as m from "@/paraglide/messages.js";
 
 interface BaseDialogProps {

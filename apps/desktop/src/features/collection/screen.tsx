@@ -33,12 +33,12 @@ import {
 import { EntryIdentityHeader } from "@/features/editor/entry-identity-header";
 import { TitleZone } from "@/features/editor/title-zone";
 import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";
-import { PropertyPanel } from "@/features/properties/property-panel";
-import { normalizeSchema } from "@/features/properties/utils";
-import type { EntrySchemaResult } from "@/features/properties/types";
+import { PropertyPanel } from "@/features/properties/ui";
+import { normalizeSchema } from "@/features/properties/lib";
+import type { EntrySchemaResult } from "@/features/properties/model";
 import { useLayoutStore } from "@/stores/layout";
 import { useSpaceStore } from "@/stores/space";
-import { useViewQuery } from "@/features/collection-query/use-view-query";
+import { useViewQuery } from "@/features/collection/query";
 import { DeleteDialogs } from "./delete-dialogs";
 import { DocumentSettings } from "./document-settings-popover";
 import { EntryPeekSheet, type EntryPeekTarget } from "./entry-peek-sheet";
@@ -67,8 +67,8 @@ import {
 import type {
   CollectionView,
   ViewType,
-} from "@/features/collection-query/types";
-import type { CollectionSchema } from "@/features/properties/types";
+} from "@/features/collection/query";
+import type { CollectionSchema } from "@/features/properties/model";
 import type { Entry, EntryCover } from "@/features/editor/types";
 import * as m from "@/paraglide/messages.js";
 

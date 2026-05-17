@@ -14,13 +14,13 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { FILTER_OP_LABELS } from "@/features/collection-query/query-utils";
-import type { QueryFilter, QuerySort } from "@/features/collection-query/types";
+import { FILTER_OP_LABELS } from "@/features/collection/query";
+import type { QueryFilter, QuerySort } from "@/features/collection/query";
 import type {
   CollectionSchema,
   Column,
   PropertyType,
-} from "@/features/properties/types";
+} from "@/features/properties/model";
 import { SettingsRow, SettingsSection } from "../settings-row";
 import { PROPERTY_TYPE_ICONS } from "./icons";
 import { propertyTypeLabel } from "./property-type-picker";

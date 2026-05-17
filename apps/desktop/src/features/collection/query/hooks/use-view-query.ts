@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { CollectionSchema } from "@/features/properties/types";
+import type { CollectionSchema } from "@/features/properties/model";
 import {
   nextStoredQueryState,
   readStoredViewQuery,
@@ -9,13 +9,13 @@ import {
   viewStateStorageKey,
   viewUpdatePatch,
   writeStoredViewQuery,
-} from "./query-utils";
+} from "../model/query-utils";
 import type {
   StoredViewQueryState,
   UseViewQueryOptions,
   UseViewQueryResult,
   ViewQueryPatch,
-} from "./types";
+} from "../model/types";
 
 interface SpaceSyncedEvent {
   projectPath?: string;

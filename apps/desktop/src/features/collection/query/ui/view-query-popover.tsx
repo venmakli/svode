@@ -35,13 +35,13 @@ import type {
   Person,
   PropertyOption,
   PropertyType,
-} from "@/features/properties/types";
-import { PropertyBadge } from "@/features/properties/property-badge";
+} from "@/features/properties/model";
+import { PropertyBadge } from "@/features/properties/ui";
 import {
   initialsForPerson,
   normalizeSchema,
   personDisplayName,
-} from "@/features/properties/utils";
+} from "@/features/properties/lib";
 import * as m from "@/paraglide/messages.js";
 import { MultiPanePopover } from "./multi-pane-popover";
 import {
@@ -52,7 +52,7 @@ import {
   needsFilterValue,
   queryField,
   queryFields,
-} from "./query-utils";
+} from "../model/query-utils";
 import type {
   FilterOp,
   QueryEditorPersonSource,
@@ -60,7 +60,7 @@ import type {
   QueryFilter,
   QuerySort,
   UseViewQueryResult,
-} from "./types";
+} from "../model/types";
 
 type QueryPane =
   | "main"

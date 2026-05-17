@@ -12,10 +12,10 @@ import { flexRender, type Table as ReactTable } from "@tanstack/react-table";
 import { TableBody, TableCell } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import type { Entry } from "@/features/editor/types";
-import type { CollectionSchema } from "@/features/properties/types";
+import type { CollectionSchema } from "@/features/properties/model";
 import { SortableTableRow } from "./table-row";
 import type { CollectionTableRow } from "./types";
-import { PropertyValue } from "@/features/properties/property-value";
+import { PropertyValue } from "@/features/properties/ui";
 import { nestedPreviewFields } from "./utils";
 
 export function TableRowsBody({

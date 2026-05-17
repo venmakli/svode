@@ -3,14 +3,14 @@ import type {
   QueryFilter,
   QuerySort,
   UseViewQueryResult,
-} from "@/features/collection-query/types";
+} from "@/features/collection/query";
 import type { Entry } from "@/features/editor/types";
 import type {
   CollectionSchema,
   Column,
   Person,
   PropertyOption,
-} from "@/features/properties/types";
+} from "@/features/properties/model";
 
 export interface CollectionInfo {
   path: string;
@@ -71,13 +71,10 @@ export interface BoardCardProps {
   groupColumn: Column;
   cardFields: string[];
   customColumns: Column[];
-  persons: Person[];
   nestedCollectionPaths: Set<string>;
   disabledReorder: boolean;
   active: boolean;
   overlay?: boolean;
-  onRequestPersons: (allTime: boolean) => Promise<Person[]>;
-  onCommitField: (entry: Entry, column: Column, value: unknown) => void;
   onOpen: (entry: Entry) => void;
   onOpenNestedPeek: (entry: Entry) => void;
   onOpenNestedCollection: (entry: Entry) => void;

@@ -7,7 +7,7 @@ import type {
   PropertyOption,
   PropertyType,
   StatusGroup,
-} from "./types";
+} from "../model/types";
 import type { CSSProperties } from "react";
 
 export const PROPERTY_TYPES: { value: PropertyType; label: string }[] = [

@@ -4,8 +4,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import type { ColorName } from "@/features/properties/types";
-import { COLOR_NAMES, colorStyle } from "@/features/properties/utils";
+import type { ColorName } from "@/features/properties/model";
+import { COLOR_NAMES, colorStyle } from "@/features/properties/lib";
 
 export function ColorPicker({
   value,

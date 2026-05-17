@@ -17,8 +17,8 @@ import { cn } from "@/lib/utils";
 import type {
   CollectionView,
   ViewType,
-} from "@/features/collection-query/types";
-import type { CollectionSchema } from "@/features/properties/types";
+} from "@/features/collection/query";
+import type { CollectionSchema } from "@/features/properties/model";
 import { SettingsRow } from "./settings-row";
 import { viewIcons } from "./utils";
 import * as m from "@/paraglide/messages.js";

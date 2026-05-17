@@ -11,16 +11,16 @@ import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { Table } from "@/components/ui/table";
-import type { CollectionView } from "@/features/collection-query/types";
+import type { CollectionView } from "@/features/collection/query";
 import type { Entry } from "@/features/editor/types";
-import { normalizeSchema } from "@/features/properties/utils";
+import { normalizeSchema } from "@/features/properties/lib";
 import { useSpaceStore } from "@/stores/space";
 import type {
   CollectionSchema,
   Column,
   Person,
   PropertyType,
-} from "@/features/properties/types";
+} from "@/features/properties/model";
 import { titleFilter } from "../utils";
 import { isEditableTarget } from "../utils";
 import { usePersistentSet, usePersistentSizing } from "./persistence";

@@ -4,7 +4,7 @@ import type { Entry } from "@/features/editor/types";
 import type {
   CollectionView,
   ViewType,
-} from "@/features/collection-query/types";
+} from "@/features/collection/query";
 
 export type ActiveTab = "document" | string;
 export type SettingsPane =

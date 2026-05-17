@@ -26,11 +26,10 @@ import {
 import type { Entry } from "@/features/editor/types";
 import type {
   CollectionSchema,
-  Column,
   Person,
   PropertyType,
-} from "@/features/properties/types";
-import { normalizeSchema } from "@/features/properties/utils";
+} from "@/features/properties/model";
+import { normalizeSchema } from "@/features/properties/lib";
 import { useSpaceStore } from "@/stores/space";
 import { titleFilter } from "../utils";
 import {
@@ -202,16 +201,11 @@ export function BoardView({
   }, [loadEntries, refreshToken]);
 
   useEffect(() => {
-    if (
-      groupColumn?.type !== "person" &&
-      !customColumns.some((column) => column.type === "person")
-    ) {
-      return;
-    }
+    if (groupColumn?.type !== "person") return;
     void loadPersons().catch((error) => {
       console.warn("Failed to load board persons:", error);
     });
-  }, [customColumns, groupColumn?.type, loadPersons]);
+  }, [groupColumn?.type, loadPersons]);
 
   useEffect(() => {
     if (createFocusSignal <= 0) return;
@@ -224,66 +218,6 @@ export function BoardView({
     setDraftGroupKey(key);
     setDraftAsFolder(createAsFolder);
   }, [createAsFolder, createFocusSignal, renderedColumns]);
-
-  const commitField = useCallback(
-    async (entry: Entry, column: Column, value: unknown) => {
-      setEntries((current) =>
-        current.map((item) =>
-          item.path === entry.path
-            ? (() => {
-                const extra = { ...item.meta.extra };
-                if (value === null) delete extra[column.name];
-                else extra[column.name] = value;
-                return {
-                  ...item,
-                  meta: {
-                    ...item.meta,
-                    extra,
-                  },
-                };
-              })()
-            : item,
-        ),
-      );
-      setManualOrderEntries((current) =>
-        current.map((item) =>
-          item.path === entry.path
-            ? (() => {
-                const extra = { ...item.meta.extra };
-                if (value === null) delete extra[column.name];
-                else extra[column.name] = value;
-                return {
-                  ...item,
-                  meta: {
-                    ...item.meta,
-                    extra,
-                  },
-                };
-              })()
-            : item,
-        ),
-      );
-      try {
-        const updated = await invoke<Entry>("update_entry_field", {
-          space: spacePath,
-          filePath: entry.path,
-          field: column.name,
-          value,
-          projectPath: projectPath ?? null,
-        });
-        setEntries((current) =>
-          current.map((item) => (item.path === entry.path ? updated : item)),
-        );
-        setManualOrderEntries((current) =>
-          current.map((item) => (item.path === entry.path ? updated : item)),
-        );
-      } catch (error) {
-        console.warn("Failed to update board field:", error);
-        void loadEntries();
-      }
-    },
-    [loadEntries, projectPath, spacePath],
-  );
 
   function handleDragStart(event: DragStartEvent) {
     setActivePath(String(event.active.id));
@@ -627,13 +561,9 @@ export function BoardView({
                   groupColumn,
                   cardFields,
                   customColumns,
-                  persons,
                   nestedCollectionPaths,
                   disabledReorder: hasSort,
                   overlay: false,
-                  onRequestPersons: loadPersons,
-                  onCommitField: (entry, property, value) =>
-                    void commitField(entry, property, value),
                   onOpen: onOpenEntry,
                   onOpenNestedPeek,
                   onOpenNestedCollection,
@@ -652,15 +582,10 @@ export function BoardView({
             groupColumn={groupColumn}
             cardFields={cardFields}
             customColumns={customColumns}
-            persons={persons}
             nestedCollectionPaths={nestedCollectionPaths}
             disabledReorder={hasSort}
             active
             overlay
-            onRequestPersons={loadPersons}
-            onCommitField={(entry, property, value) =>
-              void commitField(entry, property, value)
-            }
             onOpen={onOpenEntry}
             onOpenNestedPeek={onOpenNestedPeek}
             onOpenNestedCollection={onOpenNestedCollection}
