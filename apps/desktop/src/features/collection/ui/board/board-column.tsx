@@ -100,7 +100,7 @@ export function BoardColumn({
         </button>
       ) : (
         <ScrollArea className="min-h-0 flex-1 pr-1">
-          <div className="flex min-h-24 flex-col gap-1.5 pb-1">
+          <div className="flex min-h-24 flex-col gap-1.5 px-0.5 pb-1 pt-0.5">
             <SortableContext
               items={cards.map((card) => card.entry.path)}
               strategy={verticalListSortingStrategy}
