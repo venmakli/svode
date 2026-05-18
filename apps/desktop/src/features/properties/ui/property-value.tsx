@@ -1,7 +1,9 @@
 import type { CSSProperties, ReactNode } from "react";
 import { Check, Copy, ExternalLink, Mail, PhoneCall } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { cn } from "@/lib/utils";
 import {
   Tooltip,
   TooltipContent,
@@ -9,12 +11,16 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { PropertyBadge } from "./property-badge";
-import type { Column } from "../model/types";
+import type { Column, Person } from "../model/types";
 import {
   colorStyle,
   formatDateValue,
+  gravatarUrl,
+  hashIndex,
+  initialsForPerson,
   isEmptyValue,
   optionByName,
+  personDisplayName,
   valueToString,
 } from "../lib/utils";
 import * as m from "@/paraglide/messages.js";
@@ -68,12 +74,17 @@ export function PropertyValueActions({
 export function PropertyValue({
   column,
   value,
+  persons = [],
 }: {
   column: Column;
   value: unknown;
+  persons?: Person[];
 }) {
   if (isEmptyValue(value)) {
     return <span className="text-muted-foreground">-</span>;
+  }
+  if (column.type === "person") {
+    return <PersonValue value={value} persons={persons} />;
   }
   if (column.type === "select" || column.type === "status") {
     const option =
@@ -133,6 +144,55 @@ export function PropertyValue({
   }
   if (column.type === "url") return urlLabel(value);
   return valueToString(value);
+}
+
+export function PersonValue({
+  value,
+  persons = [],
+}: {
+  value: unknown;
+  persons?: Person[];
+}) {
+  const email = typeof value === "string" ? value : "";
+  if (!email) return <span className="text-muted-foreground">-</span>;
+  const person = persons.find(
+    (item) => item.email.toLowerCase() === email.toLowerCase(),
+  ) ?? { email, name: email, commitCount: 0, isMe: false };
+
+  return (
+    <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
+      <PersonAvatar person={person} />
+      <span className="min-w-0 truncate">{personDisplayName(person)}</span>
+    </span>
+  );
+}
+
+function PersonAvatar({ person }: { person: Person }) {
+  const color = ["blue", "green", "purple", "orange", "pink"][
+    hashIndex(person.email, 5)
+  ];
+  return (
+    <Avatar size="sm" className="shrink-0">
+      <AvatarImage src={gravatarUrl(person.email)} alt="" />
+      <AvatarFallback
+        className={cn(
+          "text-[10px] font-medium",
+          color === "blue" &&
+            "bg-[var(--property-blue-soft)] text-[var(--property-blue)]",
+          color === "green" &&
+            "bg-[var(--property-green-soft)] text-[var(--property-green)]",
+          color === "purple" &&
+            "bg-[var(--property-purple-soft)] text-[var(--property-purple)]",
+          color === "orange" &&
+            "bg-[var(--property-orange-soft)] text-[var(--property-orange)]",
+          color === "pink" &&
+            "bg-[var(--property-pink-soft)] text-[var(--property-pink)]",
+        )}
+      >
+        {initialsForPerson(person)}
+      </AvatarFallback>
+    </Avatar>
+  );
 }
 
 export function NumberPreview({

@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/empty";
 import type { Entry } from "@/features/editor/types";
 import type {
+  Column,
   CollectionSchema,
   PropertyType,
 } from "@/features/properties/model";
@@ -113,6 +114,10 @@ export function BoardView({
     () => boardCustomFields(cardFields, schema, groupBy ?? ""),
     [cardFields, groupBy, schema],
   );
+  const hasPersonCardField = useMemo(
+    () => customColumns.some((column) => column.type === "person"),
+    [customColumns],
+  );
   const topLevelEntries = useMemo(
     () =>
       entries.filter((entry) => entryParentDir(entry.path) === collectionPath),
@@ -189,11 +194,11 @@ export function BoardView({
   }, [loadEntries, refreshToken]);
 
   useEffect(() => {
-    if (groupColumn?.type !== "person") return;
+    if (groupColumn?.type !== "person" && !hasPersonCardField) return;
     void loadPersons().catch((error) => {
       console.warn("Failed to load board persons:", error);
     });
-  }, [groupColumn?.type, loadPersons]);
+  }, [groupColumn?.type, hasPersonCardField, loadPersons]);
 
   useEffect(() => {
     if (createFocusSignal <= 0) return;
@@ -370,6 +375,46 @@ export function BoardView({
     setManualOrderEntries((current) => [...current, created]);
     await loadEntries();
   }
+
+  const commitField = useCallback(
+    async (entry: Entry, column: Column, value: unknown) => {
+      const applyValue = (item: Entry) => {
+        const extra = { ...item.meta.extra };
+        if (isClearedPropertyValue(value)) delete extra[column.name];
+        else extra[column.name] = value;
+        return { ...item, meta: { ...item.meta, extra } };
+      };
+      setEntries((current) =>
+        current.map((item) =>
+          item.path === entry.path ? applyValue(item) : item,
+        ),
+      );
+      setManualOrderEntries((current) =>
+        current.map((item) =>
+          item.path === entry.path ? applyValue(item) : item,
+        ),
+      );
+      try {
+        const updated = await invoke<Entry>("update_entry_field", {
+          space: spacePath,
+          filePath: entry.path,
+          field: column.name,
+          value,
+          projectPath: projectPath ?? null,
+        });
+        setEntries((current) =>
+          current.map((item) => (item.path === entry.path ? updated : item)),
+        );
+        setManualOrderEntries((current) =>
+          current.map((item) => (item.path === entry.path ? updated : item)),
+        );
+      } catch (error) {
+        console.warn("Failed to update board field:", error);
+        void loadEntries();
+      }
+    },
+    [loadEntries, projectPath, spacePath],
+  );
 
   async function addGroupColumn(type: PropertyType = "status") {
     const column = { name: uniqueColumnName(schema, "Status"), type };
@@ -552,6 +597,10 @@ export function BoardView({
                   nestedCollectionPaths,
                   disabledReorder: hasSort,
                   overlay: false,
+                  persons,
+                  onRequestPersons: loadPersons,
+                  onUpdateField: (entry, column, value) =>
+                    void commitField(entry, column, value),
                   onOpen: onOpenEntry,
                   onOpenNestedPeek,
                   onOpenNestedCollection,
@@ -574,6 +623,8 @@ export function BoardView({
             disabledReorder={hasSort}
             active
             overlay
+            persons={persons}
+            onRequestPersons={loadPersons}
             onOpen={onOpenEntry}
             onOpenNestedPeek={onOpenNestedPeek}
             onOpenNestedCollection={onOpenNestedCollection}
@@ -601,4 +652,13 @@ function dropPlacement(event: DragEndEvent): "before" | "after" {
   const activeCenter = activeRect.top + activeRect.height / 2;
   const overCenter = overRect.top + overRect.height / 2;
   return activeCenter > overCenter ? "after" : "before";
+}
+
+function isClearedPropertyValue(value: unknown) {
+  return (
+    value === null ||
+    value === undefined ||
+    value === "" ||
+    (Array.isArray(value) && value.length === 0)
+  );
 }

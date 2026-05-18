@@ -124,7 +124,7 @@ export function PropertyCell({
       }}
     >
       <span className="min-w-0 flex-1 truncate">
-        <PropertyValue column={column} value={value} />
+        <PropertyValue column={column} value={value} persons={persons} />
       </span>
       <PropertyValueActions column={column} value={value} />
     </div>

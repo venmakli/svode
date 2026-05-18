@@ -894,6 +894,7 @@ function PersonControl({
         <Button
           type="button"
           variant="ghost"
+          size="sm"
           disabled={disabled}
           className={cn(
             "min-w-0 justify-start px-1.5",

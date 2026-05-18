@@ -57,6 +57,9 @@ export function BoardCardContent({
   disabledReorder,
   active,
   overlay,
+  persons,
+  onRequestPersons,
+  onUpdateField,
   onOpen,
   onOpenNestedPeek,
   onOpenNestedCollection,
@@ -120,6 +123,9 @@ export function BoardCardContent({
             <BoardPropertyFlow
               entry={entry}
               columns={customColumns}
+              persons={persons}
+              onRequestPersons={onRequestPersons}
+              onUpdateField={overlay ? undefined : onUpdateField}
             />
           </CardContent>
         </Card>

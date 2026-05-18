@@ -75,6 +75,9 @@ export interface BoardCardProps {
   disabledReorder: boolean;
   active: boolean;
   overlay?: boolean;
+  persons: Person[];
+  onRequestPersons: (allTime: boolean) => Promise<Person[]>;
+  onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
   onOpen: (entry: Entry) => void;
   onOpenNestedPeek: (entry: Entry) => void;
   onOpenNestedCollection: (entry: Entry) => void;

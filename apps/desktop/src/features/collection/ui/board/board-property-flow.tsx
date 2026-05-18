@@ -1,16 +1,22 @@
 import { cn } from "@/lib/utils";
 import { validatePropertyValue } from "@/features/properties/model";
 import type { Entry } from "@/features/editor/types";
-import type { Column } from "@/features/properties/model";
+import type { Column, Person } from "@/features/properties/model";
 import { isEmptyValue } from "@/features/properties/lib";
-import { PropertyValue } from "@/features/properties/ui";
+import { PropertyControl, PropertyValue } from "@/features/properties/ui";
 
 export function BoardPropertyFlow({
   entry,
   columns,
+  persons,
+  onRequestPersons,
+  onUpdateField,
 }: {
   entry: Entry;
   columns: Column[];
+  persons: Person[];
+  onRequestPersons: (allTime: boolean) => Promise<Person[]>;
+  onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
 }) {
   const rendered = columns
     .map((column) => (
@@ -18,6 +24,9 @@ export function BoardPropertyFlow({
         key={column.name}
         entry={entry}
         column={column}
+        persons={persons}
+        onRequestPersons={onRequestPersons}
+        onUpdateField={onUpdateField}
       />
     ))
     .filter(Boolean);
@@ -29,14 +38,21 @@ export function BoardPropertyFlow({
 function BoardPropertyChip({
   entry,
   column,
+  persons,
+  onRequestPersons,
+  onUpdateField,
 }: {
   entry: Entry;
   column: Column;
+  persons: Person[];
+  onRequestPersons: (allTime: boolean) => Promise<Person[]>;
+  onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
 }) {
   const value = entry.meta.extra?.[column.name] ?? null;
   if (isEmptyValue(value) && column.type !== "checkbox") return null;
 
   const validation = validatePropertyValue(column, value);
+  const interactive = column.type === "person" && Boolean(onUpdateField);
   const fullWidth =
     (column.type === "number" && column.display === "bar") ||
     column.type === "text" ||
@@ -50,7 +66,13 @@ function BoardPropertyChip({
         "min-w-0 rounded-md px-0.5 text-left text-xs",
         fullWidth && "w-full",
         validation.invalid && "ring-1 ring-warning",
+        interactive &&
+          "max-w-full px-0 [&_[data-slot=avatar]]:size-5 [&_[data-slot=button]]:h-6 [&_[data-slot=button]]:max-w-full [&_[data-slot=button]]:rounded-md [&_[data-slot=button]]:px-1.5 [&_[data-slot=button]]:text-xs [&_[data-slot=button]]:font-normal",
       )}
+      data-board-interactive={interactive || undefined}
+      onPointerDown={interactive ? stopInteractivePropagation : undefined}
+      onClick={interactive ? stopInteractivePropagation : undefined}
+      onKeyDown={interactive ? stopInteractivePropagation : undefined}
     >
       <span
         className={cn(
@@ -59,8 +81,23 @@ function BoardPropertyChip({
           column.type === "multi_select" && "flex-wrap",
         )}
       >
-        <PropertyValue column={column} value={value} />
+        {interactive ? (
+          <PropertyControl
+            column={column}
+            value={value}
+            invalid={validation.invalid}
+            persons={persons}
+            onRequestPersons={onRequestPersons}
+            onChange={(next) => onUpdateField?.(entry, column, next)}
+          />
+        ) : (
+          <PropertyValue column={column} value={value} persons={persons} />
+        )}
       </span>
     </div>
   );
+}
+
+function stopInteractivePropagation(event: { stopPropagation: () => void }) {
+  event.stopPropagation();
 }

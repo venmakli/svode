@@ -417,7 +417,7 @@ function PropertyPanelValue({
       onClick={() => onEditChange(true)}
     >
       <span className="min-w-0 flex-1">
-        <PropertyValue column={column} value={value} />
+        <PropertyValue column={column} value={value} persons={persons} />
       </span>
     </button>
   );
