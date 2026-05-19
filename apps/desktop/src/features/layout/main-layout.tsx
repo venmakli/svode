@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { SidebarProvider, SidebarInset, useSidebar } from "@/components/ui/sidebar";
+import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import {
   ResizablePanelGroup,
@@ -21,66 +21,8 @@ import { EmptyProjectState } from "@/features/workspace/empty-project-state";
 import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";
 import { ChatPanel } from "@/features/chat/chat-panel";
 import { CommandPalette } from "@/features/search/command-palette";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbList,
-  BreadcrumbSeparator,
-  BreadcrumbEllipsis,
-} from "@/components/ui/breadcrumb";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import type { TreeNode } from "@/types/space";
 import { CollectionScreen } from "@/features/collection";
-
-
-/** Look up the title for a path segment from the tree. */
-function findTitleInTree(
-  nodes: TreeNode[],
-  targetPath: string,
-): string | null {
-  for (const node of nodes) {
-    if (node.path === targetPath) return node.title;
-    const folderPath = node.path.replace(/\/readme\.md$/i, "");
-    if (folderPath === targetPath) return node.title;
-    if (node.children.length > 0) {
-      const found = findTitleInTree(node.children, targetPath);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-
-/** Build breadcrumb segments from a document path. */
-function buildSegments(
-  docPath: string,
-  tree: TreeNode[],
-): { label: string; path: string }[] {
-  const parts = docPath.split("/");
-  const segments: { label: string; path: string }[] = [];
-
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i];
-    const cumPath = parts.slice(0, i + 1).join("/");
-
-    if (i === parts.length - 1 && part.toLowerCase() === "readme.md") continue;
-
-    if (i < parts.length - 1) {
-      const title = findTitleInTree(tree, cumPath) ?? part;
-      segments.push({ label: title, path: cumPath + "/readme.md" });
-    } else {
-      const title =
-        findTitleInTree(tree, cumPath) ?? part.replace(/\.md$/, "");
-      segments.push({ label: title, path: cumPath });
-    }
-  }
-
-  return segments;
-}
 
 function findNodeInTree(nodes: TreeNode[], targetPath: string): TreeNode | null {
   for (const node of nodes) {
@@ -90,108 +32,6 @@ function findNodeInTree(nodes: TreeNode[], targetPath: string): TreeNode | null 
     if (found) return found;
   }
   return null;
-}
-
-function MainBreadcrumbs() {
-  const { activeDocument, activeDocumentSpaceId } = useLayoutStore();
-  const { rootSpaces, spaces, fileTrees, openSpace } =
-    useSpaceStore();
-  const { openDocument } = useLayoutStore();
-
-  if (!activeDocument) return null;
-
-  const allSpaces = [...rootSpaces, ...spaces];
-  const activeWorkspace = activeDocumentSpaceId
-    ? allSpaces.find((w) => w.id === activeDocumentSpaceId)
-    : null;
-  const workspaceName = activeWorkspace
-    ? `${activeWorkspace.icon} ${activeWorkspace.name}`
-    : "";
-
-  const treeId = activeDocumentSpaceId;
-  const tree = treeId ? fileTrees[treeId] ?? [] : [];
-  const segments = buildSegments(activeDocument, tree);
-
-  const MAX_VISIBLE = 3;
-  const needsEllipsis = segments.length > MAX_VISIBLE;
-  const visibleSegments = needsEllipsis
-    ? [segments[0], ...segments.slice(-2)]
-    : segments;
-
-  return (
-    <div className="border-b px-4 py-1.5">
-      <Breadcrumb>
-        <BreadcrumbList>
-          {workspaceName && (
-            <>
-              <BreadcrumbItem className="text-sm">
-                  <WorkspaceBreadcrumb
-                    label={workspaceName}
-                    workspaces={allSpaces}
-                    onSwitch={openSpace}
-                  />
-              </BreadcrumbItem>
-              {segments.length > 0 && <BreadcrumbSeparator />}
-            </>
-          )}
-          {visibleSegments.map((seg, i) => (
-            <span key={seg.path} className="contents">
-              {i === 1 && needsEllipsis && (
-                <>
-                  <BreadcrumbItem>
-                    <BreadcrumbEllipsis />
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                </>
-              )}
-              <BreadcrumbItem className="text-sm">
-                <button
-                  className="hover:text-foreground transition-colors cursor-pointer"
-                  onClick={() => openDocument(seg.path, treeId ?? undefined)}
-                >
-                  {seg.label}
-                </button>
-              </BreadcrumbItem>
-              {i < visibleSegments.length - 1 && <BreadcrumbSeparator />}
-            </span>
-          ))}
-        </BreadcrumbList>
-      </Breadcrumb>
-    </div>
-  );
-}
-
-function WorkspaceBreadcrumb({
-  label,
-  workspaces,
-  onSwitch,
-}: {
-  label: string;
-  workspaces: { id: string; name: string; icon: string }[];
-  onSwitch: (id: string) => void;
-}) {
-  const { state } = useSidebar();
-  const isSidebarCollapsed = state === "collapsed";
-
-  if (!isSidebarCollapsed || workspaces.length <= 1) {
-    return <span>{label}</span>;
-  }
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger className="hover:text-foreground transition-colors cursor-pointer">
-        {label}
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start">
-        {workspaces.map((ws) => (
-          <DropdownMenuItem key={ws.id} onClick={() => onSwitch(ws.id)}>
-            <span className="mr-2">{ws.icon}</span>
-            {ws.name}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
 }
 
 function MainContent() {
@@ -220,7 +60,6 @@ function MainContent() {
   if (!activeDocument) {
     return (
       <div className="flex h-full flex-col overflow-hidden">
-        <MainBreadcrumbs />
         <div className="flex-1 min-h-0 overflow-hidden">
           <ChatPanel />
         </div>
@@ -231,7 +70,6 @@ function MainContent() {
   if (!chatPanelOpen) {
     return (
       <div className="flex h-full flex-col overflow-hidden">
-        <MainBreadcrumbs />
         <div className="flex-1 min-w-0 min-h-0">
           {isCollection && activeNode && activeSpace && activeDocumentSpaceId && activeDocument ? (
             <CollectionScreen
@@ -251,7 +89,6 @@ function MainContent() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <MainBreadcrumbs />
       <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0">
         <ResizablePanel defaultSize="65%">
           {isCollection && activeNode && activeSpace && activeDocumentSpaceId && activeDocument ? (
