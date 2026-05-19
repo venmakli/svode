@@ -29,6 +29,8 @@ import { CollectionTabStrip } from "./view-tabs";
 import { ViewPlaceholder } from "./view-placeholder";
 import { BoardView } from "./board/board-view";
 import { CalendarView } from "./calendar/calendar-view";
+import { GalleryView } from "./gallery/gallery-view";
+import { ListView } from "./list/list-view";
 import { TableView } from "./table/table-view";
 import { ViewActionBar } from "./view-action-bar";
 import {
@@ -107,6 +109,14 @@ export function CollectionScreen({
     asFolder: false,
   });
   const [calendarCreateRequest, setCalendarCreateRequest] = useState({
+    signal: 0,
+    asFolder: false,
+  });
+  const [listCreateRequest, setListCreateRequest] = useState({
+    signal: 0,
+    asFolder: false,
+  });
+  const [galleryCreateRequest, setGalleryCreateRequest] = useState({
     signal: 0,
     asFolder: false,
   });
@@ -376,6 +386,15 @@ export function CollectionScreen({
         ? { type: nextType, date_field: dateField }
         : { type: nextType, date_field: null };
     }
+    if (nextType === "gallery") {
+      return {
+        type: nextType,
+        card_cover: ["cover", "icon", "title"],
+        cover_fit: "cover",
+        cover_aspect: "16/9",
+        size: "medium",
+      };
+    }
     return { type: nextType };
   }
 
@@ -479,6 +498,20 @@ export function CollectionScreen({
 
   function focusCalendarCreate(asFolder: boolean) {
     setCalendarCreateRequest((request) => ({
+      signal: request.signal + 1,
+      asFolder,
+    }));
+  }
+
+  function focusListCreate(asFolder: boolean) {
+    setListCreateRequest((request) => ({
+      signal: request.signal + 1,
+      asFolder,
+    }));
+  }
+
+  function focusGalleryCreate(asFolder: boolean) {
+    setGalleryCreateRequest((request) => ({
       signal: request.signal + 1,
       asFolder,
     }));
@@ -630,6 +663,14 @@ export function CollectionScreen({
           focusCalendarCreate(false);
           return;
         }
+        if (activeView && viewType(activeView) === "list") {
+          focusListCreate(false);
+          return;
+        }
+        if (activeView && viewType(activeView) === "gallery") {
+          focusGalleryCreate(false);
+          return;
+        }
         void createEntry(false).catch(handleError);
         return;
       }
@@ -645,6 +686,14 @@ export function CollectionScreen({
         }
         if (activeView && viewType(activeView) === "calendar") {
           focusCalendarCreate(true);
+          return;
+        }
+        if (activeView && viewType(activeView) === "list") {
+          focusListCreate(true);
+          return;
+        }
+        if (activeView && viewType(activeView) === "gallery") {
+          focusGalleryCreate(true);
           return;
         }
         void createEntry(true).catch(handleError);
@@ -839,6 +888,14 @@ export function CollectionScreen({
                   focusCalendarCreate(asFolder);
                   return;
                 }
+                if (activeView && viewType(activeView) === "list") {
+                  focusListCreate(asFolder);
+                  return;
+                }
+                if (activeView && viewType(activeView) === "gallery") {
+                  focusGalleryCreate(asFolder);
+                  return;
+                }
                 void createEntry(asFolder).catch(handleError);
               }}
             />
@@ -857,7 +914,9 @@ export function CollectionScreen({
             className={
               viewType(view) === "table" ||
               viewType(view) === "board" ||
-              viewType(view) === "calendar"
+              viewType(view) === "calendar" ||
+              viewType(view) === "list" ||
+              viewType(view) === "gallery"
                 ? "min-h-0 overflow-hidden"
                 : "min-h-0 overflow-auto"
             }
@@ -957,6 +1016,70 @@ export function CollectionScreen({
                 onUpdateView={updateView}
                 onCreateEntry={(title, asFolder, contextualDefaults) =>
                   createEntry(asFolder, title, false, contextualDefaults)
+                }
+              />
+            ) : viewType(view) === "list" ? (
+              <ListView
+                name={view.name}
+                view={view}
+                query={query}
+                schema={schema}
+                collectionPath={collectionPath}
+                projectPath={projectPath}
+                spacePath={spacePath}
+                searchQuery={searchQuery}
+                filters={query.merged.filter}
+                sort={query.merged.sort}
+                refreshToken={entriesVersion}
+                createFocusSignal={listCreateRequest.signal}
+                createAsFolder={listCreateRequest.asFolder}
+                onClearSearch={() => setSearchQuery("")}
+                onOpenEntry={(entryToOpen) => openPeek(entryToOpen)}
+                onOpenNestedPeek={(entryToOpen) => openPeek(entryToOpen, true)}
+                onOpenNestedCollection={(entryToOpen) =>
+                  openDocument(entryToOpen.path, spaceId)
+                }
+                onOpenFullPage={(entryToOpen) =>
+                  openDocument(entryToOpen.path, spaceId)
+                }
+                onDuplicateEntry={(entryToDuplicate) =>
+                  void duplicateRow(entryToDuplicate).catch(handleError)
+                }
+                onDeleteEntry={setDeleteEntry}
+                onCreateEntry={(title, asFolder) =>
+                  createEntry(asFolder, title, false)
+                }
+              />
+            ) : viewType(view) === "gallery" ? (
+              <GalleryView
+                name={view.name}
+                view={view}
+                query={query}
+                schema={schema}
+                collectionPath={collectionPath}
+                projectPath={projectPath}
+                spacePath={spacePath}
+                searchQuery={searchQuery}
+                filters={query.merged.filter}
+                sort={query.merged.sort}
+                refreshToken={entriesVersion}
+                createFocusSignal={galleryCreateRequest.signal}
+                createAsFolder={galleryCreateRequest.asFolder}
+                onClearSearch={() => setSearchQuery("")}
+                onOpenEntry={(entryToOpen) => openPeek(entryToOpen)}
+                onOpenNestedPeek={(entryToOpen) => openPeek(entryToOpen, true)}
+                onOpenNestedCollection={(entryToOpen) =>
+                  openDocument(entryToOpen.path, spaceId)
+                }
+                onOpenFullPage={(entryToOpen) =>
+                  openDocument(entryToOpen.path, spaceId)
+                }
+                onDuplicateEntry={(entryToDuplicate) =>
+                  void duplicateRow(entryToDuplicate).catch(handleError)
+                }
+                onDeleteEntry={setDeleteEntry}
+                onCreateEntry={(title, asFolder) =>
+                  createEntry(asFolder, title, false)
                 }
               />
             ) : (

@@ -14,10 +14,7 @@ import {
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/utils";
-import type {
-  CollectionView,
-  ViewType,
-} from "@/features/collection/query";
+import type { CollectionView, ViewType } from "@/features/collection/query";
 import type { CollectionSchema } from "@/features/properties/model";
 import { SettingsRow } from "./settings-row";
 import { viewIcons } from "./view-icons";
@@ -229,22 +226,43 @@ export function TypeSettingsRows({
         ? "large"
         : "small";
   const coverSources = Array.isArray(view?.card_cover)
-    ? view.card_cover.join(", ")
-    : "cover, icon, title";
-  const aspect = String(view?.cover_aspect ?? "4:3");
+    ? (view.card_cover as unknown[]).map(String)
+    : ["cover", "icon", "title"];
+  const imageSourceFields = schema.columns
+    .filter((column) => column.type === "url" || column.type === "text")
+    .map((column) => column.name);
+  const coverSourceOptions = [
+    ["cover", "icon", "title"],
+    ["cover"],
+    ["icon"],
+    ["title"],
+    ...imageSourceFields.map((field) => [field]),
+    [],
+  ];
+  const coverOptionIndex = coverSourceOptions.findIndex((option) =>
+    sameStringList(option, coverSources),
+  );
+  const nextCoverSources =
+    coverSourceOptions[
+      (Math.max(0, coverOptionIndex) + 1) % coverSourceOptions.length
+    ];
+  const aspect = String(view?.cover_aspect ?? "16/9").replace(":", "/");
+  const aspectOptions = ["16/9", "4/3", "1/1", "3/4"];
+  const nextAspect =
+    aspectOptions[
+      (Math.max(0, aspectOptions.indexOf(aspect)) + 1) % aspectOptions.length
+    ];
   return (
     <>
       <SettingsRow
         icon={LayoutGrid}
         label={m.collection_card_cover()}
-        meta={coverSources}
-        onClick={() =>
-          onPatch({
-            card_cover: Array.isArray(view?.card_cover)
-              ? view.card_cover
-              : ["cover", "icon", "title"],
-          })
+        meta={
+          coverSources.length > 0
+            ? coverSources.join(", ")
+            : m.collection_none()
         }
+        onClick={() => onPatch({ card_cover: nextCoverSources })}
       />
       <SettingsRow
         icon={LayoutGrid}
@@ -260,9 +278,7 @@ export function TypeSettingsRows({
         icon={LayoutGrid}
         label={m.collection_aspect_ratio()}
         meta={aspect}
-        onClick={() =>
-          onPatch({ cover_aspect: aspect === "4:3" ? "16:9" : "4:3" })
-        }
+        onClick={() => onPatch({ cover_aspect: nextAspect })}
       />
       <SettingsRow
         icon={LayoutGrid}
@@ -271,6 +287,13 @@ export function TypeSettingsRows({
         onClick={() => onPatch({ size: nextGallerySize })}
       />
     </>
+  );
+}
+
+function sameStringList(left: string[], right: string[]) {
+  return (
+    left.length === right.length &&
+    left.every((item, index) => item === right[index])
   );
 }
 
