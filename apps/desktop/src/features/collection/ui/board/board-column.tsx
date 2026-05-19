@@ -6,7 +6,6 @@ import {
 } from "@dnd-kit/sortable";
 import { ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { PropertyBadge } from "@/features/properties/ui";
 import { cn } from "@/lib/utils";
@@ -53,7 +52,7 @@ export function BoardColumn({
     <section
       ref={setNodeRef}
       className={cn(
-        "flex max-h-full w-[280px] shrink-0 flex-col overflow-hidden rounded-xl bg-foreground/[0.025] p-2 transition-colors",
+        "flex w-[280px] shrink-0 flex-col rounded-xl bg-foreground/[0.025] p-2 transition-colors",
         highlighted && "bg-accent/70 ring-1 ring-primary/20",
       )}
       onPointerEnter={onPointerEnter}
@@ -100,7 +99,7 @@ export function BoardColumn({
           {m.board_collapsed_count({ count })}
         </button>
       ) : (
-        <ScrollArea className="min-h-0 flex-1 pr-1">
+        <div className="pr-1">
           <div className="flex min-h-24 flex-col gap-1.5 px-0.5 pb-1 pt-0.5">
             <SortableContext
               items={cards.map((card) => card.entry.path)}
@@ -138,7 +137,7 @@ export function BoardColumn({
               </Button>
             )}
           </div>
-        </ScrollArea>
+        </div>
       )}
     </section>
   );

@@ -346,7 +346,7 @@ export function ListView({
       collisionDetection={closestCenter}
       onDragEnd={(event) => void handleDragEnd(event)}
     >
-      <div className="h-full overflow-auto px-4 py-3">
+      <div className="px-4 py-3">
         <div className="overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10">
           <SortableContext
             items={rows.map((row) => row.entry.path)}
@@ -442,7 +442,7 @@ function EmptyState({
   onAction: () => void;
 }) {
   return (
-    <div className="flex h-full p-8">
+    <div className="flex p-8">
       <Empty>
         <EmptyHeader>
           <EmptyMedia variant="icon">
@@ -462,7 +462,7 @@ function EmptyState({
 
 function ListSkeleton({ density }: { density: "compact" | "comfortable" }) {
   return (
-    <div className="h-full overflow-auto px-4 py-3">
+    <div className="px-4 py-3">
       <div className="overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10">
         {Array.from({ length: 8 }).map((_, index) => (
           <div

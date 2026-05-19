@@ -19,7 +19,7 @@ export function NoDateFieldState({
 }) {
   if (loading) return <CalendarLoadingState />;
   return (
-    <div className="flex h-full min-h-0 flex-col px-4 pb-4 pt-3">
+    <div className="flex flex-col px-4 pb-4 pt-3">
       <Empty className="min-h-56 flex-none rounded-lg border">
         <EmptyHeader>
           <EmptyMedia variant="icon">
@@ -40,7 +40,7 @@ export function NoDateFieldState({
 
 export function CalendarLoadingState() {
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2 px-4 pb-4 pt-3">
+    <div className="flex flex-col gap-2 px-4 pb-4 pt-3">
       <div className="flex items-center justify-between rounded-lg border p-3">
         <div className="flex items-center gap-2">
           <Skeleton className="h-8 w-8" />
@@ -50,7 +50,7 @@ export function CalendarLoadingState() {
         </div>
         <Skeleton className="h-8 w-72" />
       </div>
-      <Skeleton className="min-h-0 flex-1 rounded-lg" />
+      <Skeleton className="min-h-[520px] rounded-lg" />
     </div>
   );
 }

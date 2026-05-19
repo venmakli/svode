@@ -738,7 +738,7 @@ export function CollectionScreen({
     schema.document?.label || m.collection_document_tab();
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+    <div className="flex min-h-full flex-col">
       <div className="flex shrink-0 flex-col gap-4 px-6 pb-3 pt-5">
         <div>
           {hasReadme ? (
@@ -819,7 +819,7 @@ export function CollectionScreen({
       <Tabs
         value={activeTab}
         onValueChange={selectTab}
-        className="min-h-0 flex-1 gap-0"
+        className="gap-0"
       >
         <div className="flex shrink-0 items-center gap-3 px-4 py-2">
           <CollectionTabStrip
@@ -903,23 +903,19 @@ export function CollectionScreen({
         </div>
 
         {hasReadme ? (
-          <TabsContent value="document" className="min-h-0 overflow-hidden">
-            <PlateDocumentEditor bodyOnly bodyOnlyMeta={entry?.meta ?? null} />
+          <TabsContent value="document" className="flex-none">
+            <PlateDocumentEditor
+              bodyOnly
+              pageScroll
+              bodyOnlyMeta={entry?.meta ?? null}
+            />
           </TabsContent>
         ) : null}
         {views.map((view) => (
           <TabsContent
             key={view.name}
             value={view.name}
-            className={
-              viewType(view) === "table" ||
-              viewType(view) === "board" ||
-              viewType(view) === "calendar" ||
-              viewType(view) === "list" ||
-              viewType(view) === "gallery"
-                ? "min-h-0 overflow-hidden"
-                : "min-h-0 overflow-auto"
-            }
+            className="flex-none"
           >
             {viewType(view) === "table" ? (
               <TableView

@@ -238,7 +238,7 @@
   color: var(--foreground);
   font-family: inherit;
   font-size: 0.875rem;
-  height: 100%;
+  height: auto;
 }
 
 .combai-calendar .fc-scrollgrid {

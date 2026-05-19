@@ -44,6 +44,18 @@ function MainContent() {
     ? [...rootSpaces, ...spaces].find((space) => space.id === activeDocumentSpaceId)
     : null;
   const isCollection = Boolean(activeNode?.has_schema && activeSpace && activeDocumentSpaceId);
+  const activeContent =
+    isCollection && activeNode && activeSpace && activeDocumentSpaceId && activeDocument ? (
+      <CollectionScreen
+        spacePath={activeSpace.path}
+        projectPath={activeRootPath}
+        documentPath={activeDocument}
+        spaceId={activeDocumentSpaceId}
+        hasReadme={activeNode.path.toLowerCase().endsWith(".md")}
+      />
+    ) : (
+      <PlateDocumentEditor />
+    );
 
   useEffect(() => {
     if (!watchSpacePath) return;
@@ -70,18 +82,14 @@ function MainContent() {
   if (!chatPanelOpen) {
     return (
       <div className="flex h-full flex-col overflow-hidden">
-        <div className="flex-1 min-w-0 min-h-0">
-          {isCollection && activeNode && activeSpace && activeDocumentSpaceId && activeDocument ? (
-            <CollectionScreen
-              spacePath={activeSpace.path}
-              projectPath={activeRootPath}
-              documentPath={activeDocument}
-              spaceId={activeDocumentSpaceId}
-              hasReadme={activeNode.path.toLowerCase().endsWith(".md")}
-            />
-          ) : (
-            <PlateDocumentEditor />
-          )}
+        <div
+          className={
+            isCollection
+              ? "scrollbar-hide min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden"
+              : "min-h-0 min-w-0 flex-1 overflow-hidden"
+          }
+        >
+          {activeContent}
         </div>
       </div>
     );
@@ -91,17 +99,15 @@ function MainContent() {
     <div className="flex h-full flex-col overflow-hidden">
       <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0">
         <ResizablePanel defaultSize="65%">
-          {isCollection && activeNode && activeSpace && activeDocumentSpaceId && activeDocument ? (
-            <CollectionScreen
-              spacePath={activeSpace.path}
-              projectPath={activeRootPath}
-              documentPath={activeDocument}
-              spaceId={activeDocumentSpaceId}
-              hasReadme={activeNode.path.toLowerCase().endsWith(".md")}
-            />
-          ) : (
-            <PlateDocumentEditor />
-          )}
+          <div
+            className={
+              isCollection
+                ? "scrollbar-hide h-full overflow-y-auto overflow-x-hidden"
+                : "h-full overflow-hidden"
+            }
+          >
+            {activeContent}
+          </div>
         </ResizablePanel>
         <ResizableHandle withHandle />
         <ResizablePanel defaultSize="35%">

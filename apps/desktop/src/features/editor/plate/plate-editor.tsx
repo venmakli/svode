@@ -11,6 +11,7 @@ import { useFileWatcher } from "../use-file-watcher";
 import { useLayoutStore } from "@/stores/layout";
 import { useSpaceStore } from "@/stores/space";
 import { useEditorStore } from "@/stores/editor";
+import { cn } from "@/lib/utils";
 import {
   commitAllSpace,
   commitFileAndMaybeSync,
@@ -33,6 +34,7 @@ const FIELD_UPDATE_DEBOUNCE_MS = 500;
 
 interface PlateDocumentEditorProps {
   bodyOnly?: boolean;
+  pageScroll?: boolean;
   documentPath?: string | null;
   documentSpaceId?: string | null;
   spacePath?: string | null;
@@ -43,6 +45,7 @@ interface PlateDocumentEditorProps {
 
 export function PlateDocumentEditor({
   bodyOnly = false,
+  pageScroll = false,
   documentPath = null,
   documentSpaceId = null,
   spacePath: spacePathProp = null,
@@ -68,6 +71,7 @@ export function PlateDocumentEditor({
   } = useEditorStore();
 
   const currentDocument = documentPath ?? activeDocument;
+  const usePageScroll = bodyOnly && pageScroll;
   const currentDocumentSpaceId = documentSpaceId ?? activeDocumentSpaceId;
 
   // Resolve workspace path from the document's workspace id
@@ -701,13 +705,29 @@ export function PlateDocumentEditor({
 
   return (
     <Plate editor={editor} onChange={handleChange}>
-      <div className="flex flex-col h-full w-full">
+      <div
+        className={cn(
+          "flex w-full flex-col",
+          usePageScroll ? "min-h-0" : "h-full",
+        )}
+      >
         <FixedToolbar>
           <FixedToolbarButtons />
         </FixedToolbar>
 
-        <div className="flex-1 relative overflow-hidden">
-          <EditorContainer className="h-full">
+        <div
+          className={cn(
+            "relative",
+            usePageScroll ? "overflow-visible" : "flex-1 overflow-hidden",
+          )}
+        >
+          <EditorContainer
+            className={cn(
+              usePageScroll
+                ? "h-auto overflow-visible overflow-y-visible"
+                : "h-full",
+            )}
+          >
             {!bodyOnly && (
               <div className="mx-auto px-16 pt-8 sm:px-[max(64px,calc(50%-350px))]">
                 <EntryIdentityHeader
@@ -737,6 +757,7 @@ export function PlateDocumentEditor({
             )}
             <Editor
               variant="default"
+              className={cn(usePageScroll && "h-auto min-h-[320px] pb-32")}
               placeholder={m.editor_placeholder_body()}
             />
           </EditorContainer>

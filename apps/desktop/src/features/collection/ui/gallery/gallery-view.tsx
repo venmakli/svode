@@ -347,7 +347,7 @@ export function GalleryView({
       collisionDetection={closestCenter}
       onDragEnd={(event) => void handleDragEnd(event)}
     >
-      <div className="h-full overflow-auto px-4 py-3">
+      <div className="px-4 py-3">
         <div
           ref={gridRef}
           className="grid items-stretch gap-3.5"
@@ -489,7 +489,7 @@ function EmptyState({
   onAction: () => void;
 }) {
   return (
-    <div className="flex h-full p-8">
+    <div className="flex p-8">
       <Empty>
         <EmptyHeader>
           <EmptyMedia variant="icon">
@@ -509,7 +509,7 @@ function EmptyState({
 
 function GallerySkeleton({ cardWidth }: { cardWidth: number }) {
   return (
-    <div className="h-full overflow-auto px-4 py-3">
+    <div className="px-4 py-3">
       <div
         className="grid gap-3.5"
         style={{

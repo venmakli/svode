@@ -91,7 +91,7 @@ export function TableShell({
 }) {
   return (
     <div
-      className="max-h-full overflow-auto rounded-xl bg-card ring-1 ring-border/70"
+      className="overflow-x-auto overflow-y-visible rounded-xl bg-card ring-1 ring-border/70"
       onKeyDown={onKeyDown}
     >
       {children}
@@ -114,7 +114,7 @@ export function LoadingTable({
   const tableWidth = columnWidths.reduce((sum, width) => sum + width, 62);
 
   return (
-    <div className="flex h-full flex-col px-4 pb-4 pt-3">
+    <div className="flex flex-col px-4 pb-4 pt-3">
       <TableShell>
         <Table
           className="min-w-full table-auto"
@@ -172,7 +172,7 @@ export function LoadingTable({
 
 export function ErrorState({ title }: { title: string }) {
   return (
-    <div className="flex h-full flex-col px-4 pb-4 pt-3">
+    <div className="flex flex-col px-4 pb-4 pt-3">
       <Empty className="min-h-48 flex-none border">
         <EmptyHeader>
           <EmptyMedia variant="icon">

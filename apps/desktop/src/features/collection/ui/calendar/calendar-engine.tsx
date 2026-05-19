@@ -68,7 +68,7 @@ export function CalendarEngine({
       plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
       initialView={fullCalendarViewForScope(scope)}
       headerToolbar={false}
-      height="100%"
+      height="auto"
       events={events}
       locale={locale === "ru" ? ruLocale : "en"}
       firstDay={1}

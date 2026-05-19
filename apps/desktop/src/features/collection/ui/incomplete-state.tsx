@@ -16,7 +16,7 @@ export function IncompleteState({
   action: string;
 }) {
   return (
-    <div className="flex h-full p-8">
+    <div className="flex p-8">
       <Empty>
         <EmptyHeader>
           <EmptyMedia variant="icon">

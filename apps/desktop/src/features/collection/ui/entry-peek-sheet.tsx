@@ -135,7 +135,7 @@ export function EntryPeekSheet({
         </SheetTitle>
 
         {target?.nested && currentEntry ? (
-          <div className="min-h-0 flex-1">
+          <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
             {renderNested(currentEntry, actions)}
           </div>
         ) : currentEntry ? (

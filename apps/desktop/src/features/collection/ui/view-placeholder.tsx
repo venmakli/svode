@@ -89,7 +89,7 @@ export function ViewPlaceholder({
   }
 
   return (
-    <div className="flex h-full flex-col px-6 py-4">
+    <div className="flex flex-col px-6 py-4">
       {filtered.length === 0 ? (
         <Empty className="min-h-48 flex-none border">
           <EmptyHeader>

@@ -441,7 +441,7 @@ export function TableView({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col px-4 pb-4 pt-3">
+    <div className="flex flex-col px-4 pb-4 pt-3">
       <TableShell
         onKeyDown={(event) => {
           if (isEditableTarget(event.target)) return;

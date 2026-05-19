@@ -331,8 +331,8 @@ export function CalendarView({
   }
 
   return (
-    <div ref={shellRef} className="flex h-full min-h-0 flex-col px-4 pb-4 pt-3">
-      <div className="combai-calendar flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg bg-background ring-1 ring-foreground/10">
+    <div ref={shellRef} className="flex flex-col px-4 pb-4 pt-3">
+      <div className="combai-calendar flex flex-col rounded-lg bg-background ring-1 ring-foreground/10">
         <CalendarMiniToolbar
           scope={scope}
           periodLabel={periodLabel}
@@ -348,7 +348,7 @@ export function CalendarView({
             setPickerOpen(false);
           }}
         />
-        <div className="relative min-h-0 flex-1 overflow-hidden">
+        <div className="relative overflow-visible">
           <CalendarEngine
             calendarRef={calendarRef}
             scope={scope}

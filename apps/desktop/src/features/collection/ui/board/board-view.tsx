@@ -429,14 +429,14 @@ export function BoardView({
   }
 
   if (loading) {
-    return <div className="h-full px-4 py-3 text-sm text-muted-foreground" />;
+    return <div className="px-4 py-3 text-sm text-muted-foreground" />;
   }
 
   const queryFiltered = searchQuery.trim().length > 0 || filters.length > 0;
 
   if (!groupColumn || !isGroupableColumn(groupColumn)) {
     return (
-      <div className="flex h-full p-8">
+      <div className="flex p-8">
         <Empty>
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -480,7 +480,7 @@ export function BoardView({
 
   if (topLevelEntries.length === 0 && !queryFiltered && !draftGroupKey) {
     return (
-      <div className="flex h-full p-8">
+      <div className="flex p-8">
         <Empty>
           <EmptyHeader>
             <EmptyTitle>{m.table_empty()}</EmptyTitle>
@@ -506,7 +506,7 @@ export function BoardView({
 
   if (topLevelEntries.length === 0 || filteredEntries.length === 0) {
     return (
-      <div className="flex h-full p-8">
+      <div className="flex p-8">
         <Empty>
           <EmptyHeader>
             <EmptyTitle>{m.table_no_results()}</EmptyTitle>
@@ -548,8 +548,8 @@ export function BoardView({
         setOverGroupKey(null);
       }}
     >
-      <div className="h-full overflow-auto px-4 py-3">
-        <div className="flex h-full min-w-max items-start gap-3">
+      <div className="overflow-x-auto px-4 py-3">
+        <div className="flex min-w-max items-start gap-3">
           {renderedColumns.map((column) => {
             const groupEntries = entriesForGroup(
               filteredEntries,
