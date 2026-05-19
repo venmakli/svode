@@ -28,33 +28,29 @@ export function HomePage() {
     isLoadingRoots,
     loadRootSpaces,
     openRoot,
+    openLastActiveRoot,
     createRoot,
     openRootFolder,
     deleteRoot,
-    getLastActiveRootId,
     explicitHome,
   } = useSpaceStore();
 
   useEffect(() => {
-    loadRootSpaces();
-  }, [loadRootSpaces]);
-
-  // Auto-open last active project (skip if user explicitly navigated home)
-  useEffect(() => {
     if (autoOpenAttempted.current) return;
-    if (isLoadingRoots) return;
-    if (explicitHome) return;
-
     autoOpenAttempted.current = true;
 
     (async () => {
-      const lastActiveId = await getLastActiveRootId();
-      if (lastActiveId && rootSpaces.some((w) => w.id === lastActiveId)) {
-        await openRoot(lastActiveId);
+      if (explicitHome) {
+        await loadRootSpaces();
+        return;
+      }
+
+      const opened = await openLastActiveRoot();
+      if (opened) {
         navigate({ to: "/space" });
       }
     })();
-  }, [isLoadingRoots, rootSpaces, getLastActiveRootId, openRoot, navigate, explicitHome]);
+  }, [loadRootSpaces, openLastActiveRoot, navigate, explicitHome]);
 
   // Keyboard shortcut: Cmd+N to create project
   useEffect(() => {
@@ -70,8 +66,9 @@ export function HomePage() {
 
   const handleOpenProject = useCallback(
     async (id: string) => {
-      await openRoot(id);
-      navigate({ to: "/space" });
+      if (await openRoot(id)) {
+        navigate({ to: "/space" });
+      }
     },
     [openRoot, navigate],
   );
@@ -81,8 +78,9 @@ export function HomePage() {
       try {
         const ws = await createRoot(name, icon, description, path);
         setCreateDialogOpen(false);
-        await openRoot(ws.id);
-        navigate({ to: "/space" });
+        if (await openRoot(ws.id)) {
+          navigate({ to: "/space" });
+        }
       } catch (err) {
         const errStr = String(err);
         if (errStr.includes("Project already exists")) {
@@ -91,8 +89,9 @@ export function HomePage() {
           // Switch to open folder flow
           try {
             const ws = await openRootFolder(path);
-            await openRoot(ws.id);
-            navigate({ to: "/space" });
+            if (await openRoot(ws.id)) {
+              navigate({ to: "/space" });
+            }
           } catch (openErr) {
             console.error("Failed to open existing project:", openErr);
             toast.error(m.toast_error());
@@ -111,8 +110,9 @@ export function HomePage() {
     if (!selected) return;
     try {
       const ws = await openRootFolder(selected);
-      await openRoot(ws.id);
-      navigate({ to: "/space" });
+      if (await openRoot(ws.id)) {
+        navigate({ to: "/space" });
+      }
     } catch (err) {
       console.error("Failed to open project folder:", err);
       toast.error(m.home_open_project_error());
@@ -147,9 +147,11 @@ export function HomePage() {
         // Add to local store and open
         useSpaceStore.setState((s) => ({
           rootSpaces: [...s.rootSpaces, ws],
+          rootsLoaded: true,
         }));
-        await openRoot(ws.id);
-        navigate({ to: "/space" });
+        if (await openRoot(ws.id)) {
+          navigate({ to: "/space" });
+        }
       } catch (err) {
         console.error("project_clone failed:", err);
         const message = typeof err === "string" ? err : (err as Error)?.message ?? "error";

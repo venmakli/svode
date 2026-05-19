@@ -276,13 +276,13 @@ pub async fn open_project(
         .path()
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
-    registry::update_last_active(&config_dir, &id)?;
-    registry::update_last_opened(&config_dir, &id)?;
 
     let sp_ref = registry::find_space(&config_dir, &id)?
         .ok_or_else(|| AppError::SpaceNotFound(id.clone()))?;
 
     let cfg = config::read_space_config(Path::new(&sp_ref.path))?;
+    registry::update_last_active(&config_dir, &id)?;
+    registry::update_last_opened(&config_dir, &id)?;
 
     // Open root + every ready child-space pool, spawn full_reindex per pool
     // (under reindex lock + bounded concurrency). Failure is logged but does

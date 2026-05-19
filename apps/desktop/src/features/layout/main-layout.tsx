@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarInset, useSidebar } from "@/components/ui/sidebar";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
@@ -262,15 +264,45 @@ function MainContent() {
 }
 
 export function MainLayout() {
+  const navigate = useNavigate();
   useKeyboardShortcuts();
   useAppGitFocus();
-  const { spaces, activeRootId, activeRootPath, fileTrees } = useSpaceStore();
+  const {
+    spaces,
+    activeRootId,
+    activeRootPath,
+    fileTrees,
+    openLastActiveRoot,
+    explicitHome,
+  } = useSpaceStore();
   const { available, recheck } = useGitAvailability();
+  const bootstrapAttempted = useRef(false);
+
+  useEffect(() => {
+    if (activeRootId || bootstrapAttempted.current) return;
+    bootstrapAttempted.current = true;
+
+    (async () => {
+      if (explicitHome) {
+        navigate({ to: "/" });
+        return;
+      }
+
+      const opened = await openLastActiveRoot();
+      if (!opened) {
+        navigate({ to: "/" });
+      }
+    })();
+  }, [activeRootId, explicitHome, navigate, openLastActiveRoot]);
 
   const hasChildren = spaces.length > 0;
   const rootTree = activeRootId ? fileTrees[activeRootId] ?? [] : [];
   const hasDocuments = rootTree.length > 0;
   const isEmpty = !hasChildren && !hasDocuments;
+
+  if (!activeRootId) {
+    return <div className="h-dvh bg-background" />;
+  }
 
   return (
     <TooltipProvider delayDuration={300}>

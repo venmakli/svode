@@ -19,6 +19,7 @@ interface Entry {
 interface SpaceState {
   // Root spaces (projects on the home page)
   rootSpaces: SpaceInfo[];
+  rootsLoaded: boolean;
   activeRootId: string | null;
   activeRootName: string | null;
   activeRootIcon: string | null;
@@ -36,8 +37,9 @@ interface SpaceState {
   expandedPaths: Record<string, string[]>;
 
   // Root (project) methods
-  loadRootSpaces: () => Promise<void>;
-  openRoot: (id: string) => Promise<void>;
+  loadRootSpaces: () => Promise<SpaceInfo[]>;
+  openRoot: (id: string) => Promise<boolean>;
+  openLastActiveRoot: () => Promise<boolean>;
   createRoot: (
     name: string,
     icon: string,
@@ -110,6 +112,7 @@ export function selectActiveSpacePath(state: SpaceState): string {
 
 export const useSpaceStore = create<SpaceState>((set, get) => ({
   rootSpaces: [],
+  rootsLoaded: false,
   activeRootId: null,
   activeRootName: null,
   activeRootIcon: null,
@@ -126,10 +129,12 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     set({ isLoadingRoots: true });
     try {
       const projects = await invoke<SpaceInfo[]>("list_projects");
-      set({ rootSpaces: projects });
+      set({ rootSpaces: projects, rootsLoaded: true });
+      return projects;
     } catch (err) {
       console.error("Failed to load projects:", err);
-      set({ rootSpaces: [] });
+      set({ rootSpaces: [], rootsLoaded: true });
+      return [];
     } finally {
       set({ isLoadingRoots: false });
     }
@@ -137,34 +142,52 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
 
   openRoot: async (id: string) => {
     try {
-      const config = await invoke<SpaceConfig>("open_project", { id });
+      if (!get().rootsLoaded) {
+        await get().loadRootSpaces();
+      }
+
       const ws = get().rootSpaces.find((w) => w.id === id);
+      if (!ws) {
+        throw new Error("Project not found");
+      }
+
+      const config = await invoke<SpaceConfig>("open_project", { id });
       set({
         activeRootId: id,
         activeRootName: config.name,
         activeRootIcon: config.icon,
-        activeRootPath: ws?.path ?? null,
+        activeRootPath: ws.path,
         activeSpaceId: null,
         spaces: [],
         fileTrees: {},
         explicitHome: false,
       });
       // Load root file tree (project documents) and spaces
-      if (ws?.path) {
-        // Grant the webview access to this project's `.assets/` via the
-        // Tauri asset protocol. Scope is per-app-session and the call is
-        // idempotent — safe to repeat on every project open.
-        invoke("ensure_assets_scope", { spacePath: ws.path }).catch(
-          (err) => console.warn("ensure_assets_scope failed:", err),
-        );
-        await get().refreshTree(id);
-        await get().loadExpandedPaths(id);
-        await get().loadSpaces(ws.path);
-      }
+      // Grant the webview access to this project's `.assets/` via the
+      // Tauri asset protocol. Scope is per-app-session and the call is
+      // idempotent — safe to repeat on every project open.
+      invoke("ensure_assets_scope", { spacePath: ws.path }).catch(
+        (err) => console.warn("ensure_assets_scope failed:", err),
+      );
+      await get().refreshTree(id);
+      await get().loadExpandedPaths(id);
+      await get().loadSpaces(ws.path);
+      return true;
     } catch (err) {
       console.error("Failed to open project:", err);
       toast.error(m.toast_error());
+      return false;
     }
+  },
+
+  openLastActiveRoot: async () => {
+    const projects = get().rootsLoaded
+      ? get().rootSpaces
+      : await get().loadRootSpaces();
+    const lastActiveId = await get().getLastActiveRootId();
+    if (!lastActiveId) return false;
+    if (!projects.some((w) => w.id === lastActiveId)) return false;
+    return get().openRoot(lastActiveId);
   },
 
   createRoot: async (name, icon, description, path) => {
@@ -174,7 +197,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       description,
       path,
     });
-    set((s) => ({ rootSpaces: [...s.rootSpaces, ws] }));
+    set((s) => ({ rootSpaces: [...s.rootSpaces, ws], rootsLoaded: true }));
     toast.success(m.toast_project_created());
     return ws;
   },
@@ -183,7 +206,9 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     const ws = await invoke<SpaceInfo>("open_project_folder", { path });
     set((s) => {
       const exists = s.rootSpaces.some((w) => w.id === ws.id);
-      return exists ? {} : { rootSpaces: [...s.rootSpaces, ws] };
+      return exists
+        ? { rootsLoaded: true }
+        : { rootSpaces: [...s.rootSpaces, ws], rootsLoaded: true };
     });
     return ws;
   },
