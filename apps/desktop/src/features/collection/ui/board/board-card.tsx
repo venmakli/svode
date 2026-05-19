@@ -54,7 +54,6 @@ export function BoardCardContent({
   cardFields,
   customColumns,
   nestedCollectionPaths,
-  disabledReorder,
   active,
   overlay,
   persons,
@@ -81,11 +80,10 @@ export function BoardCardContent({
         <Card
           size="sm"
           className={cn(
-            "group/board-card cursor-grab gap-2 rounded-lg py-2 shadow-none ring-1 ring-foreground/10 transition-[box-shadow,transform]",
+            "group/board-card cursor-pointer gap-2 rounded-lg py-2 shadow-none ring-1 ring-foreground/10 transition-[box-shadow,transform]",
             "hover:-translate-y-px hover:ring-foreground/15 hover:shadow-sm active:cursor-grabbing",
-            disabledReorder && "cursor-grab",
-            active && "shadow-md ring-primary/30",
-            overlay && "w-[264px] opacity-95",
+            active && "cursor-grabbing shadow-md ring-primary/30",
+            overlay && "w-[264px] cursor-grabbing opacity-95",
           )}
           onClick={(event) => {
             if (shouldIgnoreCardOpen(event)) return;
@@ -192,19 +190,22 @@ function EntryKindMarker({
 function shouldIgnoreCardOpen(event: MouseEvent<HTMLElement>) {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return true;
+  const interactive = target.closest(
+    [
+      "button",
+      "a",
+      "input",
+      "textarea",
+      "select",
+      "[role='button']",
+      "[role='checkbox']",
+      "[data-board-interactive]",
+      "[data-radix-collection-item]",
+    ].join(","),
+  );
   return Boolean(
-    target.closest(
-      [
-        "button",
-        "a",
-        "input",
-        "textarea",
-        "select",
-        "[role='button']",
-        "[role='checkbox']",
-        "[data-board-interactive]",
-        "[data-radix-collection-item]",
-      ].join(","),
-    ),
+    interactive &&
+      interactive !== event.currentTarget &&
+      event.currentTarget.contains(interactive),
   );
 }
