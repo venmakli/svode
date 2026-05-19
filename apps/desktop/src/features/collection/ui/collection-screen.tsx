@@ -8,6 +8,7 @@ import {
 } from "react";
 import { arrayMove } from "@dnd-kit/sortable";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { Database } from "lucide-react";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { EntryIdentityHeader } from "@/features/editor/entry-identity-header";
@@ -52,6 +53,14 @@ interface CollectionScreenProps {
   spaceId: string;
   hasReadme: boolean;
   headerActions?: ReactNode;
+}
+
+interface FileEvent {
+  path: string;
+}
+
+function isMarkdownEntryPath(path: string) {
+  return path.replace(/\\/g, "/").toLowerCase().endsWith(".md");
 }
 
 export function CollectionScreen({
@@ -167,6 +176,27 @@ export function CollectionScreen({
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => {
+    let disposed = false;
+    const unlisteners: Array<() => void> = [];
+    const reloadEntries = (event: { payload: FileEvent }) => {
+      if (!isMarkdownEntryPath(event.payload.path)) return;
+      setEntriesVersion((version) => version + 1);
+    };
+
+    for (const eventName of ["file:created", "file:changed", "file:deleted"]) {
+      listen<FileEvent>(eventName, reloadEntries).then((unlisten) => {
+        if (disposed) unlisten();
+        else unlisteners.push(unlisten);
+      });
+    }
+
+    return () => {
+      disposed = true;
+      for (const unlisten of unlisteners) unlisten();
+    };
+  }, []);
 
   const selectTab = useCallback((next: ActiveTab) => {
     setActiveTab(next);

@@ -8,11 +8,13 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::error::AppError;
 use crate::files::WriteNonceRegistry;
+use crate::index::{IndexKey, IndexState};
 
 struct WatcherHandle {
     _watcher: RecommendedWatcher,
     /// Send a signal to stop the debounce thread.
     stop_tx: mpsc::Sender<()>,
+    ref_count: usize,
 }
 
 /// Manages file watchers per space.
@@ -34,8 +36,16 @@ impl FileWatcher {
             return Err(AppError::FileNotFound(space.clone()));
         }
 
-        // Stop existing watcher for this space if any
-        self.unwatch(&space)?;
+        {
+            let mut handles = self
+                .handles
+                .lock()
+                .map_err(|e| AppError::General(e.to_string()))?;
+            if let Some(handle) = handles.get_mut(&space) {
+                handle.ref_count += 1;
+                return Ok(());
+            }
+        }
 
         let (event_tx, event_rx) = mpsc::channel::<Event>();
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
@@ -62,11 +72,18 @@ impl FileWatcher {
             .lock()
             .map_err(|e| AppError::General(e.to_string()))?;
 
+        if let Some(handle) = handles.get_mut(&space) {
+            handle.ref_count += 1;
+            let _ = stop_tx.send(());
+            return Ok(());
+        }
+
         handles.insert(
             space,
             WatcherHandle {
                 _watcher: watcher,
                 stop_tx,
+                ref_count: 1,
             },
         );
 
@@ -79,6 +96,13 @@ impl FileWatcher {
             .handles
             .lock()
             .map_err(|e| AppError::General(e.to_string()))?;
+
+        if let Some(handle) = handles.get_mut(space) {
+            if handle.ref_count > 1 {
+                handle.ref_count -= 1;
+                return Ok(());
+            }
+        }
 
         if let Some(handle) = handles.remove(space) {
             let _ = handle.stop_tx.send(());
@@ -188,6 +212,8 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
             _ => continue,
         };
 
+        sync_index_for_watched_path(space_root, &path, app);
+
         // Only `file:changed` carries a write-nonce — our own writes surface
         // as Modify events, so Create/Remove never need echo-guarding here.
         let payload = if matches!(kind, EventKind::Modify(_)) {
@@ -201,6 +227,28 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
 
         let _ = app.emit(event_name, payload);
     }
+}
+
+fn sync_index_for_watched_path(space_root: &Path, path: &Path, app: &AppHandle) {
+    tauri::async_runtime::block_on(async {
+        let state = app.state::<IndexState>();
+        let key = state
+            .key_for_space_dir(space_root)
+            .await
+            .unwrap_or_else(|| IndexKey::Root(space_root.to_path_buf()));
+
+        if is_schema_path(path) {
+            if let Err(e) = state.run_full_reindex(&key).await {
+                tracing::warn!("watcher full reindex failed for {:?}: {e}", key);
+            }
+            return;
+        }
+
+        let project = key.project().to_path_buf();
+        if let Err(e) = crate::index::update::update_entry(&state, &project, path).await {
+            tracing::warn!("watcher index update failed for {}: {e}", path.display());
+        }
+    });
 }
 
 /// Check if a path should be ignored by the watcher.
@@ -246,6 +294,12 @@ fn is_document_or_schema(path: &Path) -> bool {
     {
         return true;
     }
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == "schema.yaml")
+}
+
+fn is_schema_path(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name == "schema.yaml")

@@ -123,12 +123,13 @@ pub fn list_entries(space: String) -> Result<Vec<TreeNode>, AppError> {
 }
 
 #[tauri::command]
-pub fn create_entry(
+pub async fn create_entry(
     space: String,
     parent_path: Option<String>,
     title: String,
     contextual_defaults: Option<HashMap<String, serde_json::Value>>,
     project_path: Option<String>,
+    index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
     let contextual_defaults = contextual_defaults
@@ -149,6 +150,15 @@ pub fn create_entry(
     } else {
         entry::create(&space, parent_path.as_deref(), &title)?
     };
+    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+        let project = Path::new(proj);
+        let abs_target = Path::new(&space).join(&created.path);
+        if let Err(e) = index::update::update_entry(&index_state, project, &abs_target).await {
+            tracing::warn!("index update_entry failed for {}: {e}", created.path);
+        }
+    } else {
+        reindex_space_dir(&index_state, &space).await;
+    }
     maybe_autocommit_structural(
         &autocommit,
         project_path.as_deref(),

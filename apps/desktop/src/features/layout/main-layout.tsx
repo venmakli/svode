@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useNavigate } from "@tanstack/react-router";
+import { invoke } from "@tauri-apps/api/core";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarInset, useSidebar } from "@/components/ui/sidebar";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
@@ -15,7 +16,7 @@ import { useGitAvailability } from "@/hooks/use-git-availability";
 import { useAppGitFocus } from "@/features/workspace/use-app-git-focus";
 import { SpaceGitWatcher } from "@/features/workspace/space-git-watcher";
 import { useLayoutStore } from "@/stores/layout";
-import { useSpaceStore } from "@/stores/space";
+import { selectActiveSpacePath, useSpaceStore } from "@/stores/space";
 import { EmptyProjectState } from "@/features/workspace/empty-project-state";
 import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";
 import { ChatPanel } from "@/features/chat/chat-panel";
@@ -196,12 +197,25 @@ function WorkspaceBreadcrumb({
 function MainContent() {
   const { activeDocument, activeDocumentSpaceId, chatPanelOpen } = useLayoutStore();
   const { fileTrees, rootSpaces, spaces, activeRootPath } = useSpaceStore();
+  const watchSpacePath = useSpaceStore(selectActiveSpacePath);
   const tree = activeDocumentSpaceId ? fileTrees[activeDocumentSpaceId] ?? [] : [];
   const activeNode = activeDocument ? findNodeInTree(tree, activeDocument) : null;
   const activeSpace = activeDocumentSpaceId
     ? [...rootSpaces, ...spaces].find((space) => space.id === activeDocumentSpaceId)
     : null;
   const isCollection = Boolean(activeNode?.has_schema && activeSpace && activeDocumentSpaceId);
+
+  useEffect(() => {
+    if (!watchSpacePath) return;
+    invoke("watch_space", { space: watchSpacePath }).catch((error) =>
+      console.error("Failed to watch space:", error),
+    );
+    return () => {
+      invoke("unwatch_space", { space: watchSpacePath }).catch((error) =>
+        console.error("Failed to unwatch space:", error),
+      );
+    };
+  }, [watchSpacePath]);
 
   if (!activeDocument) {
     return (
