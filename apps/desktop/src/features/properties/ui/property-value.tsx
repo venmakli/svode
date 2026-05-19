@@ -229,10 +229,10 @@ export function NumberPreview({
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <span className="flex items-center gap-2">
+          <span className="flex w-full min-w-0 items-center gap-2">
             <Progress
               value={clamped}
-              className="h-2 w-20 [&_[data-slot=progress-indicator]]:bg-[var(--property-color)]"
+              className="h-2 min-w-0 flex-1 [&_[data-slot=progress-indicator]]:bg-[var(--property-color)]"
               style={colorStyle(column.color ?? "blue")}
             />
             <span className="tabular-nums text-muted-foreground">{value}</span>
