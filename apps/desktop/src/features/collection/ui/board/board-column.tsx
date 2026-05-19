@@ -53,7 +53,7 @@ export function BoardColumn({
     <section
       ref={setNodeRef}
       className={cn(
-        "flex h-full max-h-full w-[280px] shrink-0 flex-col rounded-xl bg-muted/45 p-2 transition-colors",
+        "flex max-h-full w-[280px] shrink-0 flex-col overflow-hidden rounded-xl bg-foreground/[0.025] p-2 transition-colors",
         highlighted && "bg-accent/70 ring-1 ring-primary/20",
       )}
       onPointerEnter={onPointerEnter}
@@ -70,22 +70,23 @@ export function BoardColumn({
           {group.option ? (
             <PropertyBadge
               option={group.option}
-              className="max-w-44 rounded-full px-2"
+              className="max-w-44 rounded-full px-2 py-0.5"
             />
           ) : (
             <span className="truncate text-sm font-medium">{group.label}</span>
           )}
           <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-            ({count})
+            {count}
           </span>
         </button>
         <Button
           type="button"
           variant="ghost"
           size="icon-xs"
+          className="size-[22px] rounded-md text-muted-foreground"
           onClick={(event) => onOpenDraft(event.shiftKey)}
         >
-          <Plus />
+          <Plus data-icon="inline-start" />
           <span className="sr-only">{m.board_new_card()}</span>
         </Button>
       </div>
@@ -125,14 +126,16 @@ export function BoardColumn({
                 onCreate={onCreateDraft}
               />
             ) : (
-              <button
+              <Button
                 type="button"
-                className="mt-0.5 flex min-h-8 w-full items-center justify-center gap-1 rounded-lg border border-dashed border-border px-2 text-xs text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
+                variant="ghost"
+                size="sm"
+                className="mt-0.5 min-h-8 w-full justify-center rounded-lg border border-dashed border-foreground/15 bg-transparent px-2 text-xs font-normal text-muted-foreground shadow-none hover:border-foreground/20 hover:bg-foreground/[0.04] hover:text-foreground"
                 onClick={(event) => onOpenDraft(event.shiftKey)}
               >
-                <Plus />
+                <Plus data-icon="inline-start" />
                 {m.board_new_card()}
-              </button>
+              </Button>
             )}
           </div>
         </ScrollArea>
@@ -159,7 +162,7 @@ function BoardDraftCard({
   }, []);
 
   return (
-    <div className="rounded-lg bg-card p-2 ring-1 ring-foreground/10">
+    <div className="rounded-lg bg-card px-2 py-1.5 ring-1 ring-foreground/10">
       <Input
         ref={inputRef}
         value={title}
@@ -168,7 +171,7 @@ function BoardDraftCard({
             ? m.board_new_folder_placeholder({ group: groupLabel })
             : m.board_new_card_placeholder({ group: groupLabel })
         }
-        className="h-8 border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+        className="h-7 border-0 bg-transparent px-1 text-xs shadow-none focus-visible:ring-0"
         onChange={(event) => setTitle(event.target.value)}
         onBlur={() => {
           if (!title.trim()) onCancel();
