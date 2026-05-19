@@ -54,10 +54,14 @@ export function isEditableTarget(target: EventTarget | null) {
   );
 }
 
-export function nextTableViewName(views: CollectionView[]) {
+export function nextViewName(views: CollectionView[], baseName: string) {
   const names = new Set(views.map((view) => view.name));
-  if (!names.has("Table")) return "Table";
+  if (!names.has(baseName)) return baseName;
   let index = 2;
-  while (names.has(`Table ${index}`)) index += 1;
-  return `Table ${index}`;
+  while (names.has(`${baseName} ${index}`)) index += 1;
+  return `${baseName} ${index}`;
+}
+
+export function nextTableViewName(views: CollectionView[]) {
+  return nextViewName(views, "Table");
 }

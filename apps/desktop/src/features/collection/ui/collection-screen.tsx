@@ -36,6 +36,7 @@ import {
   humanize,
   isEditableTarget,
   nextTableViewName,
+  nextViewName,
   readmePathFor,
   viewName,
   viewType,
@@ -325,12 +326,19 @@ export function CollectionScreen({
     setEntry(updated);
   }
 
-  async function addView() {
+  async function addView(type: ViewType = "table") {
     if (!schema) return;
+    const defaultFields = [
+      "title",
+      ...schema.columns.map((column) => column.name),
+    ];
     const view = {
-      type: "table",
-      name: nextTableViewName(views),
-      visible_fields: ["title", ...schema.columns.map((column) => column.name)],
+      name:
+        type === "table"
+          ? nextTableViewName(views)
+          : nextViewName(views, viewTypeDefaultName(type)),
+      visible_fields: defaultFields,
+      ...autoConfigForType(type),
     };
     const next = await invoke<CollectionSchema>("add_view", {
       space: spacePath,
@@ -369,6 +377,17 @@ export function CollectionScreen({
         : { type: nextType, date_field: null };
     }
     return { type: nextType };
+  }
+
+  function viewTypeDefaultName(type: ViewType) {
+    const names: Record<ViewType, string> = {
+      table: "Table",
+      board: "Board",
+      calendar: "Calendar",
+      list: "List",
+      gallery: "Gallery",
+    };
+    return names[type];
   }
 
   async function updateView(
@@ -756,12 +775,21 @@ export function CollectionScreen({
         <div className="flex shrink-0 items-center gap-3 px-4 py-2">
           <CollectionTabStrip
             activeTab={activeTab}
+            addViewOptions={[
+              { type: "table", label: m.collection_view_type_table() },
+              { type: "board", label: m.collection_view_type_board() },
+              { type: "calendar", label: m.collection_view_type_calendar() },
+              { type: "list", label: m.collection_view_type_list() },
+              { type: "gallery", label: m.collection_view_type_gallery() },
+            ]}
             addViewLabel={m.collection_add_view()}
             documentLabel={documentLabelValue}
             hasReadme={hasReadme}
+            manageViewsLabel={m.collection_manage_views()}
             moreViewsLabel={m.collection_more_views()}
             views={views}
-            onAddView={() => void addView().catch(handleError)}
+            onAddView={(type) => void addView(type).catch(handleError)}
+            onReorderViews={reorder}
             onTabChange={selectTab}
           />
           {activeTab === "document" ? (

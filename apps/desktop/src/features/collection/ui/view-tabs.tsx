@@ -10,19 +10,22 @@ import {
 import {
   ChevronDown,
   FileText,
+  GripVertical,
   MoreHorizontal,
   Plus,
   type LucideProps,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { CollectionView } from "@/features/collection/query";
+import {
+  MultiPanePopover,
+  type CollectionView,
+  type ViewType,
+} from "@/features/collection/query";
+import { SettingsRow, SettingsSection } from "./settings-row";
+import { ManageViewsPane } from "./manage-views-pane";
 import { viewType } from "../lib/utils";
 import { viewIcons } from "./view-icons";
 import type { ActiveTab } from "../model";
@@ -37,13 +40,21 @@ interface CollectionTabItem {
 
 interface CollectionTabStripProps {
   activeTab: ActiveTab;
+  addViewOptions: AddViewOption[];
   addViewLabel: string;
   documentLabel: string;
   hasReadme: boolean;
+  manageViewsLabel: string;
   moreViewsLabel: string;
   views: CollectionView[];
-  onAddView: () => void;
+  onAddView: (type: ViewType) => void;
+  onReorderViews: (nextOrder: string[]) => Promise<void>;
   onTabChange: (tab: ActiveTab) => void;
+}
+
+interface AddViewOption {
+  label: string;
+  type: ViewType;
 }
 
 const OUTER_GAP = 8;
@@ -65,6 +76,8 @@ const defaultLayout: TabStripLayout = {
   hasOverflow: false,
 };
 
+type AddViewsPane = "add" | "manage";
+
 function setNextLayout(
   setLayout: (updater: (current: TabStripLayout) => TabStripLayout) => void,
   nextLayout: TabStripLayout,
@@ -74,12 +87,15 @@ function setNextLayout(
 
 export function CollectionTabStrip({
   activeTab,
+  addViewOptions,
   addViewLabel,
   documentLabel,
   hasReadme,
+  manageViewsLabel,
   moreViewsLabel,
   views,
   onAddView,
+  onReorderViews,
   onTabChange,
 }: CollectionTabStripProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -88,6 +104,8 @@ export function CollectionTabStrip({
   const moreMeasureRef = useRef<HTMLDivElement | null>(null);
   const [layout, setLayout] = useState<TabStripLayout>(defaultLayout);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [addMenuPane, setAddMenuPane] = useState<AddViewsPane>("add");
   const [panelLeft, setPanelLeft] = useState(0);
 
   const tabs = useMemo<CollectionTabItem[]>(() => {
@@ -268,21 +286,73 @@ export function CollectionTabStrip({
           />
         </div>
       ) : null}
-      <Tooltip>
-        <TooltipTrigger asChild>
+      <MultiPanePopover<AddViewsPane>
+        open={addMenuOpen}
+        onOpenChange={(open) => {
+          setAddMenuOpen(open);
+          if (open) setAddMenuPane("add");
+        }}
+        pane={addMenuPane}
+        onPaneChange={setAddMenuPane}
+        mainPane="add"
+        align="start"
+        className="w-72"
+        trigger={
           <Button
             type="button"
             variant="ghost"
             size="icon-sm"
             className="shrink-0 rounded-md text-muted-foreground hover:text-foreground"
-            onClick={onAddView}
           >
             <Plus />
             <span className="sr-only">{addViewLabel}</span>
           </Button>
-        </TooltipTrigger>
-        <TooltipContent>{addViewLabel}</TooltipContent>
-      </Tooltip>
+        }
+        panes={[
+          {
+            id: "add",
+            title: addViewLabel,
+            content: (
+              <div className="flex flex-col p-1">
+                <SettingsSection label={addViewLabel} />
+                {addViewOptions.map((option) => {
+                  const Icon = viewIcons[option.type];
+                  return (
+                    <SettingsRow
+                      key={option.type}
+                      icon={Icon}
+                      label={option.label}
+                      right={null}
+                      onClick={() => {
+                        onAddView(option.type);
+                        setAddMenuOpen(false);
+                      }}
+                    />
+                  );
+                })}
+                <Separator className="my-1" />
+                <SettingsRow
+                  icon={GripVertical}
+                  label={manageViewsLabel}
+                  onClick={() => setAddMenuPane("manage")}
+                />
+              </div>
+            ),
+          },
+          {
+            id: "manage",
+            title: manageViewsLabel,
+            content: (
+              <ManageViewsPane
+                activeViewName={activeTab === "document" ? null : activeTab}
+                views={views}
+                onReorderViews={onReorderViews}
+                onSelectView={onTabChange}
+              />
+            ),
+          },
+        ]}
+      />
       <div
         aria-hidden
         className="pointer-events-none fixed -left-[10000px] top-0 flex opacity-0"
