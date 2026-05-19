@@ -6,30 +6,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import {
-  closestCenter,
-  DndContext,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  horizontalListSortingStrategy,
-  arrayMove,
-} from "@dnd-kit/sortable";
+import { arrayMove } from "@dnd-kit/sortable";
 import { invoke } from "@tauri-apps/api/core";
-import { Database, FileText, Plus } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Database } from "lucide-react";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { EntryIdentityHeader } from "@/features/editor/entry-identity-header";
 import { TitleZone } from "@/features/editor/title-zone";
 import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";
@@ -44,13 +24,10 @@ import { DocumentSettings } from "./document-settings-popover";
 import { EntryPeekSheet, type EntryPeekTarget } from "./entry-peek-sheet";
 import { handleError } from "../lib/errors";
 import { CollectionSkeleton } from "./skeleton";
-import {
-  collectionTabTriggerClassName,
-  handleHorizontalWheel,
-  SortableViewTab,
-} from "./view-tabs";
+import { CollectionTabStrip } from "./view-tabs";
 import { ViewPlaceholder } from "./view-placeholder";
 import { BoardView } from "./board/board-view";
+import { CalendarView } from "./calendar/calendar-view";
 import { TableView } from "./table/table-view";
 import { ViewActionBar } from "./view-action-bar";
 import {
@@ -63,10 +40,7 @@ import {
   viewType,
 } from "../lib/utils";
 import type { ActiveTab, SettingsPane } from "../model";
-import type {
-  CollectionView,
-  ViewType,
-} from "@/features/collection/query";
+import type { CollectionView, ViewType } from "@/features/collection/query";
 import type { CollectionSchema } from "@/features/properties/model";
 import type { Entry, EntryCover } from "@/features/editor/types";
 import * as m from "@/paraglide/messages.js";
@@ -122,8 +96,11 @@ export function CollectionScreen({
     signal: 0,
     asFolder: false,
   });
+  const [calendarCreateRequest, setCalendarCreateRequest] = useState({
+    signal: 0,
+    asFolder: false,
+  });
   const initializedCollectionRef = useRef<string | null>(null);
-  const tabScrollerRef = useRef<HTMLDivElement | null>(null);
 
   const views = useMemo(
     () =>
@@ -141,13 +118,6 @@ export function CollectionScreen({
     schema: schema ?? { columns: [], views: [] },
     view: activeView,
   });
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
-  );
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -238,18 +208,6 @@ export function CollectionScreen({
     setSettingsOpen(false);
     setDocumentLabelOpen(false);
   }, [activeTab]);
-
-  useEffect(() => {
-    const scroller = tabScrollerRef.current;
-    if (!scroller) return;
-    const selector =
-      activeTab === "document"
-        ? '[data-collection-tab="document"]'
-        : `[data-collection-tab="${CSS.escape(activeTab)}"]`;
-    scroller
-      .querySelector<HTMLElement>(selector)
-      ?.scrollIntoView({ block: "nearest", inline: "center" });
-  }, [activeTab, views]);
 
   useEffect(() => {
     if (activeView) setRenameValue(activeView.name);
@@ -470,6 +428,13 @@ export function CollectionScreen({
     }));
   }
 
+  function focusCalendarCreate(asFolder: boolean) {
+    setCalendarCreateRequest((request) => ({
+      signal: request.signal + 1,
+      asFolder,
+    }));
+  }
+
   async function duplicateRow(entryToDuplicate: Entry) {
     const duplicated = await invoke<Entry>("duplicate_entry", {
       space: spacePath,
@@ -539,21 +504,6 @@ export function CollectionScreen({
       projectPath: projectPath ?? null,
     });
     setSchema(normalizeSchema(next));
-  }
-
-  function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const oldIndex = views.findIndex((view) => view.name === active.id);
-    const newIndex = views.findIndex((view) => view.name === over.id);
-    if (oldIndex < 0 || newIndex < 0) return;
-    void reorder(
-      arrayMove(
-        views.map((view) => view.name),
-        oldIndex,
-        newIndex,
-      ),
-    ).catch(handleError);
   }
 
   function moveActive(offset: number) {
@@ -627,6 +577,10 @@ export function CollectionScreen({
           focusBoardCreate(false);
           return;
         }
+        if (activeView && viewType(activeView) === "calendar") {
+          focusCalendarCreate(false);
+          return;
+        }
         void createEntry(false).catch(handleError);
         return;
       }
@@ -638,6 +592,10 @@ export function CollectionScreen({
         }
         if (activeView && viewType(activeView) === "board") {
           focusBoardCreate(true);
+          return;
+        }
+        if (activeView && viewType(activeView) === "calendar") {
+          focusCalendarCreate(true);
           return;
         }
         void createEntry(true).catch(handleError);
@@ -765,58 +723,17 @@ export function CollectionScreen({
         onValueChange={selectTab}
         className="min-h-0 flex-1 gap-0"
       >
-        <div className="flex shrink-0 items-center gap-2 px-4 py-2">
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <div
-              ref={tabScrollerRef}
-              className="scrollbar-hide min-w-0 flex-1 overflow-x-auto overflow-y-hidden [mask-image:linear-gradient(to_right,transparent,black_16px,black_calc(100%-16px),transparent)]"
-              onWheel={handleHorizontalWheel}
-            >
-              <div className="inline-flex w-max max-w-none items-center gap-2">
-                <DndContext
-                  sensors={sensors}
-                  collisionDetection={closestCenter}
-                  onDragEnd={handleDragEnd}
-                >
-                  <TabsList className="w-max max-w-none flex-nowrap">
-                    {hasReadme ? (
-                      <TabsTrigger
-                        value="document"
-                        data-collection-tab="document"
-                        className={`${collectionTabTriggerClassName} sticky left-0 z-10 bg-background shadow-sm`}
-                      >
-                        <FileText />
-                        <span className="truncate">{documentLabelValue}</span>
-                      </TabsTrigger>
-                    ) : null}
-                    <SortableContext
-                      items={views.map((view) => view.name)}
-                      strategy={horizontalListSortingStrategy}
-                    >
-                      {views.map((view) => (
-                        <SortableViewTab key={view.name} view={view} />
-                      ))}
-                    </SortableContext>
-                  </TabsList>
-                </DndContext>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className="sticky right-0 z-10 flex-none bg-background shadow-sm"
-                      onClick={() => void addView().catch(handleError)}
-                    >
-                      <Plus />
-                      <span className="sr-only">{m.collection_add_view()}</span>
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>{m.collection_add_view()}</TooltipContent>
-                </Tooltip>
-              </div>
-            </div>
-          </div>
+        <div className="flex shrink-0 items-center gap-3 px-4 py-2">
+          <CollectionTabStrip
+            activeTab={activeTab}
+            addViewLabel={m.collection_add_view()}
+            documentLabel={documentLabelValue}
+            hasReadme={hasReadme}
+            moreViewsLabel={m.collection_more_views()}
+            views={views}
+            onAddView={() => void addView().catch(handleError)}
+            onTabChange={selectTab}
+          />
           {activeTab === "document" ? (
             <DocumentSettings
               open={documentLabelOpen}
@@ -860,6 +777,10 @@ export function CollectionScreen({
                   focusBoardCreate(asFolder);
                   return;
                 }
+                if (activeView && viewType(activeView) === "calendar") {
+                  focusCalendarCreate(asFolder);
+                  return;
+                }
                 void createEntry(asFolder).catch(handleError);
               }}
             />
@@ -876,7 +797,9 @@ export function CollectionScreen({
             key={view.name}
             value={view.name}
             className={
-              viewType(view) === "table" || viewType(view) === "board"
+              viewType(view) === "table" ||
+              viewType(view) === "board" ||
+              viewType(view) === "calendar"
                 ? "min-h-0 overflow-hidden"
                 : "min-h-0 overflow-auto"
             }
@@ -930,6 +853,37 @@ export function CollectionScreen({
                 createFocusSignal={boardCreateRequest.signal}
                 createAsFolder={boardCreateRequest.asFolder}
                 onClearSearch={() => setSearchQuery("")}
+                onOpenEntry={(entryToOpen) => openPeek(entryToOpen)}
+                onOpenNestedPeek={(entryToOpen) => openPeek(entryToOpen, true)}
+                onOpenNestedCollection={(entryToOpen) =>
+                  openDocument(entryToOpen.path, spaceId)
+                }
+                onDuplicateEntry={(entryToDuplicate) =>
+                  void duplicateRow(entryToDuplicate).catch(handleError)
+                }
+                onDeleteEntry={setDeleteEntry}
+                onSchemaChange={(nextSchema) =>
+                  setSchema(normalizeSchema(nextSchema))
+                }
+                onUpdateView={updateView}
+                onCreateEntry={(title, asFolder, contextualDefaults) =>
+                  createEntry(asFolder, title, false, contextualDefaults)
+                }
+              />
+            ) : viewType(view) === "calendar" ? (
+              <CalendarView
+                name={view.name}
+                view={view}
+                schema={schema}
+                collectionPath={collectionPath}
+                projectPath={projectPath}
+                spacePath={spacePath}
+                searchQuery={searchQuery}
+                filters={query.merged.filter}
+                sort={query.merged.sort}
+                refreshToken={entriesVersion}
+                createFocusSignal={calendarCreateRequest.signal}
+                createAsFolder={calendarCreateRequest.asFolder}
                 onOpenEntry={(entryToOpen) => openPeek(entryToOpen)}
                 onOpenNestedPeek={(entryToOpen) => openPeek(entryToOpen, true)}
                 onOpenNestedCollection={(entryToOpen) =>
