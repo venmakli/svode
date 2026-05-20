@@ -28,6 +28,7 @@ import type { Entry, EntryMeta, WriteResult } from "../types";
 import * as m from "@/paraglide/messages.js";
 
 const AUTOSAVE_DEBOUNCE_MS = 1000;
+const ENABLE_FIXED_FORMATTING_TOOLBAR = false;
 
 interface PlateDocumentEditorProps {
   bodyOnly: true;
@@ -567,9 +568,11 @@ export function PlateDocumentEditor({
           usePageScroll ? "min-h-0" : "h-full",
         )}
       >
-        <FixedToolbar>
-          <FixedToolbarButtons />
-        </FixedToolbar>
+        {ENABLE_FIXED_FORMATTING_TOOLBAR ? (
+          <FixedToolbar>
+            <FixedToolbarButtons />
+          </FixedToolbar>
+        ) : null}
 
         <div
           className={cn(
