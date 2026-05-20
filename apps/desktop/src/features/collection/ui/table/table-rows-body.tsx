@@ -23,8 +23,6 @@ export function TableRowsBody({
   sensors,
   sortedEntries,
   hasSort,
-  focusedPath,
-  onFocusPath,
   onOpenEntry,
   onOpenNestedPeek,
   onOpenFullPage,
@@ -38,8 +36,6 @@ export function TableRowsBody({
   sensors: ReturnType<typeof useSensors> | undefined;
   sortedEntries: Entry[];
   hasSort: boolean;
-  focusedPath: string | null;
-  onFocusPath: (path: string) => void;
   onOpenEntry: (entry: Entry) => void;
   onOpenNestedPeek: (entry: Entry) => void;
   onOpenFullPage: (entry: Entry) => void;
@@ -78,9 +74,7 @@ export function TableRowsBody({
                 key={original.entry.path}
                 row={original}
                 disabled={hasSort || original.child}
-                focused={focusedPath === original.entry.path}
                 rowHeightClassName={rowHeight}
-                onFocus={() => onFocusPath(original.entry.path)}
                 onOpen={() =>
                   original.nestedCollection
                     ? onOpenNestedPeek(original.entry)

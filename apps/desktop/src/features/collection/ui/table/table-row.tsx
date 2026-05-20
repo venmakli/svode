@@ -16,10 +16,8 @@ import * as m from "@/paraglide/messages.js";
 export function SortableTableRow({
   row,
   disabled,
-  focused,
   rowHeightClassName,
   children,
-  onFocus,
   onOpen,
   onOpenFullPage,
   onDuplicate,
@@ -27,10 +25,8 @@ export function SortableTableRow({
 }: {
   row: CollectionTableRow;
   disabled: boolean;
-  focused: boolean;
   rowHeightClassName: string;
   children: ReactNode;
-  onFocus: () => void;
   onOpen: () => void;
   onOpenFullPage: () => void;
   onDuplicate: () => void;
@@ -46,35 +42,15 @@ export function SortableTableRow({
           className={cn(
             "group/row h-9 bg-background text-[13px] hover:bg-muted/40",
             rowHeightClassName,
-            focused && "bg-accent/60",
             sortable.isDragging && "opacity-60",
           )}
           style={{
             transform: CSS.Transform.toString(sortable.transform),
             transition: sortable.transition,
           }}
-          tabIndex={0}
-          onFocus={onFocus}
-          onClick={(event) => {
-            if (shouldIgnoreRowOpen(event.target)) return;
-            onOpen();
-          }}
           onDoubleClick={(event) => {
             if (shouldIgnoreRowOpen(event.target)) return;
             onOpenFullPage();
-          }}
-          onKeyDown={(event) => {
-            if (event.target !== event.currentTarget) return;
-            if (event.key === "Enter") {
-              event.preventDefault();
-              event.stopPropagation();
-              onOpen();
-            }
-            if (event.key === "Delete" || event.key === "Backspace") {
-              event.preventDefault();
-              event.stopPropagation();
-              onDelete();
-            }
           }}
         >
           <TableCell className="w-[18px] p-0 text-muted-foreground">

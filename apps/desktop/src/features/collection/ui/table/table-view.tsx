@@ -80,7 +80,6 @@ export function TableView({
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<TableEditingCell | null>(null);
   const [openColumn, setOpenColumn] = useState<string | null>(null);
-  const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerAsFolder, setComposerAsFolder] = useState(false);
   const [composerValue, setComposerValue] = useState("");
@@ -369,11 +368,10 @@ export function TableView({
       setComposerAsFolder(false);
       return;
     }
-    const created = await onCreateEntry(title, asFolder || composerAsFolder);
+    await onCreateEntry(title, asFolder || composerAsFolder);
     setComposerValue("");
     setComposerOpen(false);
     setComposerAsFolder(false);
-    setFocusedPath(created.path);
     await loadEntries();
   }
 
@@ -415,36 +413,6 @@ export function TableView({
   if (error) return <ErrorState title={m.table_error_title()} />;
 
   const noRows = filteredTopLevel.length === 0;
-  const focusedEntry =
-    rows.find((row) => row.entry.path === focusedPath)?.entry ?? null;
-
-  function focusRow(path: string | null) {
-    if (!path) return;
-    window.requestAnimationFrame(() => {
-      document
-        .querySelector<HTMLElement>(
-          `[data-table-row-path="${CSS.escape(path)}"]`,
-        )
-        ?.focus();
-    });
-  }
-
-  function moveFocused(direction: 1 | -1) {
-    if (filteredTopLevel.length === 0) return;
-    const current = focusedPath
-      ? filteredTopLevel.findIndex((entry) => entry.path === focusedPath)
-      : -1;
-    const nextIndex =
-      current < 0
-        ? 0
-        : Math.max(
-            0,
-            Math.min(filteredTopLevel.length - 1, current + direction),
-          );
-    const nextPath = filteredTopLevel[nextIndex]?.path ?? null;
-    setFocusedPath(nextPath);
-    focusRow(nextPath);
-  }
 
   return (
     <div className="flex flex-col px-4 pb-4 pt-3">
@@ -455,27 +423,6 @@ export function TableView({
             event.preventDefault();
             openComposer(event.shiftKey);
             return;
-          }
-          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-            event.preventDefault();
-            moveFocused(event.key === "ArrowDown" ? 1 : -1);
-            return;
-          }
-          if (event.key === "Enter" && focusedEntry) {
-            event.preventDefault();
-            if (nestedCollectionPaths.has(entryCollectionPath(focusedEntry))) {
-              (onOpenNestedPeek ?? onOpenEntry)(focusedEntry);
-            } else {
-              onOpenEntry(focusedEntry);
-            }
-            return;
-          }
-          if (
-            (event.key === "Delete" || event.key === "Backspace") &&
-            focusedEntry
-          ) {
-            event.preventDefault();
-            onDeleteEntry(focusedEntry);
           }
         }}
       >
@@ -503,8 +450,6 @@ export function TableView({
               sensors={sensors}
               sortedEntries={filteredTopLevel}
               hasSort={hasSort}
-              focusedPath={focusedPath}
-              onFocusPath={setFocusedPath}
               onOpenEntry={onOpenEntry}
               onOpenNestedPeek={onOpenNestedPeek ?? onOpenEntry}
               onOpenFullPage={onOpenFullPage}
