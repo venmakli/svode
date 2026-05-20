@@ -95,7 +95,6 @@ export function useTableColumns({
                 label={label}
                 icon={TITLE_ICON}
                 open={openColumn === "title"}
-                width={column.getSize()}
                 onOpenChange={(open) => setOpenColumn(open ? "title" : null)}
                 onResizeMouseDown={header.getResizeHandler()}
               >
@@ -157,7 +156,6 @@ export function useTableColumns({
               label={field}
               icon={Icon}
               open={openColumn === field}
-              width={column.getSize()}
               onOpenChange={(open) => setOpenColumn(open ? field : null)}
               onResizeMouseDown={header.getResizeHandler()}
             >

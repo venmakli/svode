@@ -34,7 +34,6 @@ export function ColumnHeader({
   label,
   icon: Icon,
   open,
-  width,
   children,
   onOpenChange,
   onResizeMouseDown,
@@ -43,7 +42,6 @@ export function ColumnHeader({
   label: string;
   icon: ElementType;
   open: boolean;
-  width: number;
   children: ReactNode;
   onOpenChange: (open: boolean) => void;
   onResizeMouseDown: (event: ReactMouseEvent) => void;
@@ -55,7 +53,6 @@ export function ColumnHeader({
         "group/header relative flex h-full w-full items-center gap-2 px-2 text-left text-[12px] font-semibold text-muted-foreground hover:bg-accent/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         open && "bg-accent",
       )}
-      style={{ width }}
       onContextMenu={(event) => {
         event.preventDefault();
         onOpenChange(true);
@@ -69,17 +66,22 @@ export function ColumnHeader({
           open && "opacity-100",
         )}
       />
+    </button>
+  );
+  return (
+    <div className="relative h-full w-full">
+      {cloneColumnMenu(children, trigger)}
       <span
-        className="absolute right-0 top-0 h-full w-1 cursor-col-resize"
+        className="absolute -right-1 top-0 z-20 h-full w-2 cursor-col-resize"
         onMouseDown={(event) => {
+          event.preventDefault();
           event.stopPropagation();
           onResizeMouseDown(event);
         }}
         onClick={(event) => event.stopPropagation()}
       />
-    </button>
+    </div>
   );
-  return <>{cloneColumnMenu(children, trigger)}</>;
 }
 
 export function TableShell({
