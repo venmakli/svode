@@ -2,18 +2,28 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowUpDown,
+  Calendar,
   Check,
   ChevronRight,
+  Circle,
   Columns3Icon,
+  Flag,
   Filter,
   GripVertical,
   Group,
+  Hash,
+  Link,
+  Mail,
   Plus,
+  Phone,
   Save,
   Search,
   SortAsc,
   SortDesc,
+  Tag,
   Trash2,
+  Type,
+  User,
   type LucideIcon,
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -28,7 +38,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import type {
@@ -582,19 +591,19 @@ export function FieldChoiceList({
   onSelect: (field: QueryField) => void;
 }) {
   return (
-    <ScrollArea className="h-64">
+    <div className="max-h-64 overflow-y-auto">
       <div className="flex flex-col p-1">
         {fields.map((field) => (
           <PaneRow
             key={field.name}
-            icon={Filter}
+            icon={propertyTypeIcon(field.type)}
             label={field.label}
             meta={fieldTypeLabel(field.type)}
             onClick={() => onSelect(field)}
           />
         ))}
       </div>
-    </ScrollArea>
+    </div>
   );
 }
 
@@ -927,7 +936,7 @@ export function PaneRow({
     <button
       type="button"
       className={cn(
-        "flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+        "flex min-h-8 w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] hover:bg-muted [&_svg]:pointer-events-none [&_svg]:size-3.5 [&_svg]:shrink-0",
         active && "bg-muted",
       )}
       onClick={onClick}
@@ -936,7 +945,7 @@ export function PaneRow({
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {warning ? <AlertTriangle className="text-warning" /> : null}
       {meta ? (
-        <span className="max-w-28 truncate text-xs text-muted-foreground">
+        <span className="max-w-28 shrink-0 truncate text-[11.5px] text-muted-foreground">
           {meta}
         </span>
       ) : null}
@@ -967,7 +976,37 @@ function counterLabel(count: number) {
 }
 
 function fieldTypeLabel(type: PropertyType) {
-  return type.replace("_", " ");
+  const labels: Record<PropertyType, string> = {
+    text: String(m.table_property_type_text()),
+    number: String(m.table_property_type_number()),
+    select: String(m.table_property_type_select()),
+    multi_select: String(m.table_property_type_multi_select()),
+    status: String(m.table_property_type_status()),
+    date: String(m.table_property_type_date()),
+    person: String(m.table_property_type_person()),
+    checkbox: String(m.table_property_type_checkbox()),
+    url: String(m.table_property_type_url()),
+    email: String(m.table_property_type_email()),
+    phone: String(m.table_property_type_phone()),
+  };
+  return labels[type];
+}
+
+function propertyTypeIcon(type: PropertyType) {
+  const icons: Record<PropertyType, LucideIcon> = {
+    text: Type,
+    number: Hash,
+    select: Circle,
+    multi_select: Tag,
+    status: Flag,
+    date: Calendar,
+    person: User,
+    checkbox: Check,
+    url: Link,
+    email: Mail,
+    phone: Phone,
+  };
+  return icons[type];
 }
 
 function filterValues(filter: QueryFilter) {
