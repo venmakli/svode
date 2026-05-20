@@ -60,6 +60,7 @@ export interface CalendarViewProps {
   onOpenEntry: (entry: Entry) => void;
   onOpenNestedPeek: (entry: Entry) => void;
   onOpenNestedCollection: (entry: Entry) => void;
+  onOpenFullPage: (entry: Entry) => void;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
   onSchemaChange: (schema: CollectionSchema) => void;

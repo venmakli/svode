@@ -73,6 +73,7 @@ export function BoardView({
   onOpenEntry,
   onOpenNestedPeek,
   onOpenNestedCollection,
+  onOpenFullPage,
   onDuplicateEntry,
   onDeleteEntry,
   onSchemaChange,
@@ -604,6 +605,7 @@ export function BoardView({
                   onOpen: onOpenEntry,
                   onOpenNestedPeek,
                   onOpenNestedCollection,
+                  onOpenFullPage,
                   onDuplicate: onDuplicateEntry,
                   onDelete: onDeleteEntry,
                 }}
@@ -628,6 +630,7 @@ export function BoardView({
             onOpen={onOpenEntry}
             onOpenNestedPeek={onOpenNestedPeek}
             onOpenNestedCollection={onOpenNestedCollection}
+            onOpenFullPage={onOpenFullPage}
             onDuplicate={onDuplicateEntry}
             onDelete={onDeleteEntry}
           />

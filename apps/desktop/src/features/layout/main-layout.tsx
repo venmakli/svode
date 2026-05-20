@@ -22,9 +22,12 @@ import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";
 import { ChatPanel } from "@/features/chat/chat-panel";
 import { CommandPalette } from "@/features/search/command-palette";
 import type { TreeNode } from "@/types/space";
-import { CollectionScreen } from "@/features/collection";
+import { CollectionScreen, EntryDocumentScreen } from "@/features/collection";
 
-function findNodeInTree(nodes: TreeNode[], targetPath: string): TreeNode | null {
+function findNodeInTree(
+  nodes: TreeNode[],
+  targetPath: string,
+): TreeNode | null {
   for (const node of nodes) {
     const folderPath = node.path.replace(/\/readme\.md$/i, "");
     if (node.path === targetPath || folderPath === targetPath) return node;
@@ -35,23 +38,46 @@ function findNodeInTree(nodes: TreeNode[], targetPath: string): TreeNode | null 
 }
 
 function MainContent() {
-  const { activeDocument, activeDocumentSpaceId, chatPanelOpen } = useLayoutStore();
+  const { activeDocument, activeDocumentSpaceId, chatPanelOpen } =
+    useLayoutStore();
   const { fileTrees, rootSpaces, spaces, activeRootPath } = useSpaceStore();
   const watchSpacePath = useSpaceStore(selectActiveSpacePath);
-  const tree = activeDocumentSpaceId ? fileTrees[activeDocumentSpaceId] ?? [] : [];
-  const activeNode = activeDocument ? findNodeInTree(tree, activeDocument) : null;
-  const activeSpace = activeDocumentSpaceId
-    ? [...rootSpaces, ...spaces].find((space) => space.id === activeDocumentSpaceId)
+  const tree = activeDocumentSpaceId
+    ? (fileTrees[activeDocumentSpaceId] ?? [])
+    : [];
+  const activeNode = activeDocument
+    ? findNodeInTree(tree, activeDocument)
     : null;
-  const isCollection = Boolean(activeNode?.has_schema && activeSpace && activeDocumentSpaceId);
+  const activeSpace = activeDocumentSpaceId
+    ? [...rootSpaces, ...spaces].find(
+        (space) => space.id === activeDocumentSpaceId,
+      )
+    : null;
+  const isCollection = Boolean(
+    activeNode?.has_schema && activeSpace && activeDocumentSpaceId,
+  );
+  const usesEntryDocumentScreen = Boolean(
+    !isCollection && activeSpace && activeDocumentSpaceId && activeDocument,
+  );
   const activeContent =
-    isCollection && activeNode && activeSpace && activeDocumentSpaceId && activeDocument ? (
+    isCollection &&
+    activeNode &&
+    activeSpace &&
+    activeDocumentSpaceId &&
+    activeDocument ? (
       <CollectionScreen
         spacePath={activeSpace.path}
         projectPath={activeRootPath}
         documentPath={activeDocument}
         spaceId={activeDocumentSpaceId}
         hasReadme={activeNode.path.toLowerCase().endsWith(".md")}
+      />
+    ) : activeSpace && activeDocumentSpaceId && activeDocument ? (
+      <EntryDocumentScreen
+        spacePath={activeSpace.path}
+        projectPath={activeRootPath}
+        documentPath={activeDocument}
+        spaceId={activeDocumentSpaceId}
       />
     ) : (
       <PlateDocumentEditor />
@@ -84,7 +110,7 @@ function MainContent() {
       <div className="flex h-full flex-col overflow-hidden">
         <div
           className={
-            isCollection
+            isCollection || usesEntryDocumentScreen
               ? "scrollbar-hide min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden"
               : "min-h-0 min-w-0 flex-1 overflow-hidden"
           }
@@ -101,7 +127,7 @@ function MainContent() {
         <ResizablePanel defaultSize="65%">
           <div
             className={
-              isCollection
+              isCollection || usesEntryDocumentScreen
                 ? "scrollbar-hide h-full overflow-y-auto overflow-x-hidden"
                 : "h-full overflow-hidden"
             }
@@ -153,7 +179,7 @@ export function MainLayout() {
   }, [activeRootId, explicitHome, navigate, openLastActiveRoot]);
 
   const hasChildren = spaces.length > 0;
-  const rootTree = activeRootId ? fileTrees[activeRootId] ?? [] : [];
+  const rootTree = activeRootId ? (fileTrees[activeRootId] ?? []) : [];
   const hasDocuments = rootTree.length > 0;
   const isEmpty = !hasChildren && !hasDocuments;
 
@@ -167,11 +193,7 @@ export function MainLayout() {
         <WindowHeader />
         <AppSidebar />
         <SidebarInset className="pt-[44px] min-h-0 overflow-hidden">
-          {activeRootId && isEmpty ? (
-            <EmptyProjectState />
-          ) : (
-            <MainContent />
-          )}
+          {activeRootId && isEmpty ? <EmptyProjectState /> : <MainContent />}
         </SidebarInset>
         {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
         <GitMissingDialog open={available === false} onRecheck={recheck} />

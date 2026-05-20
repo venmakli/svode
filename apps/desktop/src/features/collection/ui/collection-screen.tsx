@@ -21,6 +21,8 @@ import { useLayoutStore } from "@/stores/layout";
 import { useSpaceStore } from "@/stores/space";
 import { useViewQuery } from "@/features/collection/query";
 import { DeleteDialogs } from "./delete-dialogs";
+import { EntryDetailActions } from "./entry-detail-actions";
+import { EntrySystemFields } from "./entry-system-fields";
 import { DocumentSettings } from "./document-settings-popover";
 import { EntryPeekSheet, type EntryPeekTarget } from "./entry-peek-sheet";
 import { handleError } from "../lib/errors";
@@ -539,6 +541,16 @@ export function CollectionScreen({
     await refreshTree(spaceId);
   }
 
+  async function duplicateDetailEntry(entryToDuplicate: Entry) {
+    const duplicated = await invoke<Entry>("duplicate_entry", {
+      space: spacePath,
+      filePath: entryToDuplicate.path,
+      projectPath: projectPath ?? null,
+    });
+    await refreshTree(spaceId);
+    openDocument(duplicated.path, spaceId);
+  }
+
   async function deleteActiveView() {
     if (!activeView) return;
     const next = await invoke<CollectionSchema>("delete_view", {
@@ -736,6 +748,25 @@ export function CollectionScreen({
   const cover = entry?.meta.cover ?? null;
   const documentLabelValue =
     schema.document?.label || m.collection_document_tab();
+  const effectiveHeaderActions =
+    headerActions ??
+    (entry ? (
+      <EntryDetailActions
+        entry={entry}
+        spacePath={spacePath}
+        projectPath={projectPath}
+        spaceId={spaceId}
+        onConverted={(nextEntry, nested) => {
+          setEntry(nextEntry);
+          openDocument(nextEntry.path, spaceId);
+          if (nested) void refreshTree(spaceId);
+        }}
+        onDuplicateEntry={(entryToDuplicate) =>
+          void duplicateDetailEntry(entryToDuplicate).catch(handleError)
+        }
+        onDeleteEntry={setDeleteEntry}
+      />
+    ) : null);
 
   return (
     <div className="flex min-h-full flex-col">
@@ -763,9 +794,11 @@ export function CollectionScreen({
                 void updateCover(nextCover).catch(handleError)
               }
               onBodyFocus={() => selectTab("document")}
-              titleClassName={headerActions ? "max-w-none" : "max-w-4xl"}
-              actions={headerActions}
-              coverSize={headerActions ? "compact" : "default"}
+              titleClassName={
+                effectiveHeaderActions ? "max-w-none" : "max-w-4xl"
+              }
+              actions={effectiveHeaderActions}
+              coverSize={effectiveHeaderActions ? "compact" : "default"}
             />
           ) : (
             <div className="max-w-4xl">
@@ -814,13 +847,17 @@ export function CollectionScreen({
             />
           </div>
         ) : null}
+        {entry ? (
+          <div className="max-w-5xl">
+            <EntrySystemFields
+              meta={entry.meta}
+              mode={headerActions ? "peek" : "full"}
+            />
+          </div>
+        ) : null}
       </div>
 
-      <Tabs
-        value={activeTab}
-        onValueChange={selectTab}
-        className="gap-0"
-      >
+      <Tabs value={activeTab} onValueChange={selectTab} className="gap-0">
         <div className="flex shrink-0 items-center gap-3 px-4 py-2">
           <CollectionTabStrip
             activeTab={activeTab}
@@ -907,16 +944,22 @@ export function CollectionScreen({
             <PlateDocumentEditor
               bodyOnly
               pageScroll
+              documentPath={readmePath}
+              documentSpaceId={spaceId}
+              spacePath={spacePath}
+              projectPath={projectPath}
               bodyOnlyMeta={entry?.meta ?? null}
+              onDocumentPathChange={(path) => {
+                setEntry((current) =>
+                  current ? { ...current, path } : current,
+                );
+                openDocument(path, spaceId);
+              }}
             />
           </TabsContent>
         ) : null}
         {views.map((view) => (
-          <TabsContent
-            key={view.name}
-            value={view.name}
-            className="flex-none"
-          >
+          <TabsContent key={view.name} value={view.name} className="flex-none">
             {viewType(view) === "table" ? (
               <TableView
                 name={view.name}
@@ -938,6 +981,7 @@ export function CollectionScreen({
                 onOpenNestedCollection={(entryToOpen) =>
                   openDocument(entryToOpen.path, spaceId)
                 }
+                onOpenFullPage={openFullPage}
                 onDuplicateEntry={(entryToDuplicate) =>
                   void duplicateRow(entryToDuplicate).catch(handleError)
                 }
@@ -971,6 +1015,7 @@ export function CollectionScreen({
                 onOpenNestedCollection={(entryToOpen) =>
                   openDocument(entryToOpen.path, spaceId)
                 }
+                onOpenFullPage={openFullPage}
                 onDuplicateEntry={(entryToDuplicate) =>
                   void duplicateRow(entryToDuplicate).catch(handleError)
                 }
@@ -1002,6 +1047,7 @@ export function CollectionScreen({
                 onOpenNestedCollection={(entryToOpen) =>
                   openDocument(entryToOpen.path, spaceId)
                 }
+                onOpenFullPage={openFullPage}
                 onDuplicateEntry={(entryToDuplicate) =>
                   void duplicateRow(entryToDuplicate).catch(handleError)
                 }
@@ -1120,6 +1166,10 @@ export function CollectionScreen({
           if (!open) setPeekTarget(null);
         }}
         onOpenFullPage={openFullPage}
+        onConvertedEntry={(nextEntry, nested) => {
+          setPeekTarget({ entry: nextEntry, nested });
+          setEntriesVersion((version) => version + 1);
+        }}
         onDuplicateEntry={(entryToDuplicate) => {
           setPeekTarget(null);
           void duplicateRow(entryToDuplicate).catch(handleError);

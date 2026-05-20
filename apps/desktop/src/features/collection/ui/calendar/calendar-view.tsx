@@ -77,6 +77,7 @@ export function CalendarView({
   onOpenEntry,
   onOpenNestedPeek,
   onOpenNestedCollection,
+  onOpenFullPage,
   onDuplicateEntry,
   onDeleteEntry,
   onSchemaChange,
@@ -271,6 +272,10 @@ export function CalendarView({
       | CalendarEventInput["extendedProps"]["model"]
       | undefined;
     if (!model) return;
+    if (info.jsEvent.detail >= 2) {
+      onOpenFullPage(model.entry);
+      return;
+    }
     if (model.nestedCollection) onOpenNestedPeek(model.entry);
     else onOpenEntry(model.entry);
   }

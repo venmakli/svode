@@ -1,14 +1,14 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { Copy, Maximize2, MoreVertical, Trash2, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { Maximize2, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   Sheet,
   SheetClose,
@@ -23,6 +23,10 @@ import type { Entry, EntryCover } from "@/features/editor/types";
 import { PropertyPanel } from "@/features/properties/ui";
 import type { EntrySchemaResult } from "@/features/properties/model";
 import { normalizeSchema } from "@/features/properties/lib";
+import { EntryDetailActions } from "./entry-detail-actions";
+import { useDebouncedEntryFieldUpdate } from "./entry-detail-fields";
+import { EntrySubpages } from "./entry-subpages";
+import { EntrySystemFields } from "./entry-system-fields";
 import { handleError } from "../lib/errors";
 import * as m from "@/paraglide/messages.js";
 
@@ -40,6 +44,7 @@ interface EntryPeekSheetProps {
   onOpenFullPage: (entry: Entry) => void;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
+  onConvertedEntry: (entry: Entry, nested: boolean) => void;
   renderNested: (entry: Entry, actions: ReactNode) => ReactNode;
 }
 
@@ -52,6 +57,7 @@ export function EntryPeekSheet({
   onOpenFullPage,
   onDuplicateEntry,
   onDeleteEntry,
+  onConvertedEntry,
   renderNested,
 }: EntryPeekSheetProps) {
   const open = Boolean(target);
@@ -118,6 +124,10 @@ export function EntryPeekSheet({
       onOpenFullPage={onOpenFullPage}
       onDuplicateEntry={onDuplicateEntry}
       onDeleteEntry={onDeleteEntry}
+      onConvertedEntry={onConvertedEntry}
+      spacePath={spacePath}
+      projectPath={projectPath}
+      spaceId={spaceId}
     />
   ) : null;
 
@@ -171,22 +181,17 @@ function StandardEntryPeek({
   projectPath?: string | null;
   spaceId: string;
   actions: ReactNode;
-  onEntryChange: (entry: Entry) => void;
+  onEntryChange: Dispatch<SetStateAction<Entry | null>>;
   onSchemaChange: (result: EntrySchemaResult | null) => void;
 }) {
-  async function updateField(field: string, value: unknown) {
-    const updated = await invoke<Entry>("update_entry_field", {
-      space: spacePath,
-      filePath: entry.path,
-      field,
-      value,
-      projectPath: projectPath ?? null,
-    });
-    onEntryChange(updated);
-  }
+  const updateField = useDebouncedEntryFieldUpdate({
+    spacePath,
+    projectPath,
+    setEntry: onEntryChange,
+  });
 
   async function updateCover(cover: EntryCover | null) {
-    await updateField("cover", cover);
+    await updateField(entry, "cover", cover);
   }
 
   return (
@@ -201,13 +206,13 @@ function StandardEntryPeek({
           spacePath={spacePath}
           documentPath={entry.path}
           onTitleChange={(value) =>
-            void updateField("title", value).catch(handleError)
+            void updateField(entry, "title", value).catch(handleError)
           }
           onIconChange={(value) =>
-            void updateField("icon", value).catch(handleError)
+            void updateField(entry, "icon", value).catch(handleError)
           }
           onDescriptionChange={(value) =>
-            void updateField("description", value).catch(handleError)
+            void updateField(entry, "description", value).catch(handleError)
           }
           onCoverChange={(cover) => void updateCover(cover).catch(handleError)}
           onBodyFocus={() => undefined}
@@ -224,27 +229,39 @@ function StandardEntryPeek({
               metaId={entry.meta.id}
               schemaResult={schemaResult}
               values={entry.meta.extra ?? {}}
-              mode="full"
+              mode="peek"
               onSchemaChange={onSchemaChange}
               onValueChange={async (field, value) => {
-                await updateField(field, value);
+                await updateField(entry, field, value);
               }}
             />
           </div>
         ) : null}
+        <div className="mt-4">
+          <EntrySystemFields meta={entry.meta} mode="peek" />
+        </div>
       </div>
       <Separator />
-      <div className="min-h-0 flex-1">
+      <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
         <PlateDocumentEditor
           bodyOnly
+          pageScroll
           documentPath={entry.path}
           documentSpaceId={spaceId}
           spacePath={spacePath}
           projectPath={projectPath}
           bodyOnlyMeta={entry.meta}
           onDocumentPathChange={(path) => {
-            onEntryChange({ ...entry, path });
+            onEntryChange((current) =>
+              current ? { ...current, path } : current,
+            );
           }}
+        />
+        <EntrySubpages
+          spacePath={spacePath}
+          projectPath={projectPath}
+          spaceId={spaceId}
+          documentPath={entry.path}
         />
       </div>
     </div>
@@ -256,11 +273,19 @@ function EntryPeekActions({
   onOpenFullPage,
   onDuplicateEntry,
   onDeleteEntry,
+  onConvertedEntry,
+  spacePath,
+  projectPath,
+  spaceId,
 }: {
   entry: Entry;
   onOpenFullPage: (entry: Entry) => void;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
+  onConvertedEntry: (entry: Entry, nested: boolean) => void;
+  spacePath: string;
+  projectPath?: string | null;
+  spaceId: string;
 }) {
   return (
     <div className="flex items-center gap-1">
@@ -285,33 +310,15 @@ function EntryPeekActions({
           <span className="sr-only">{m.settings_cancel()}</span>
         </Button>
       </SheetClose>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <MoreVertical />
-            <span className="sr-only">{m.common_settings()}</span>
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-56">
-          <DropdownMenuItem onClick={() => onDuplicateEntry(entry)}>
-            <Copy data-icon="inline-start" />
-            {m.collection_duplicate_entry()}
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            variant="destructive"
-            onClick={() => onDeleteEntry(entry)}
-          >
-            <Trash2 data-icon="inline-start" />
-            {m.space_delete()}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <EntryDetailActions
+        entry={entry}
+        spacePath={spacePath}
+        projectPath={projectPath}
+        spaceId={spaceId}
+        onConverted={onConvertedEntry}
+        onDuplicateEntry={onDuplicateEntry}
+        onDeleteEntry={onDeleteEntry}
+      />
     </div>
   );
 }

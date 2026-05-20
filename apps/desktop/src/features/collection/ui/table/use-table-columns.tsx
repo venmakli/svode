@@ -48,6 +48,7 @@ export function useTableColumns({
   onOpenEntry,
   onOpenNestedPeek,
   onOpenNestedCollection,
+  onOpenFullPage,
   onRequestPersons,
   onCommitField,
 }: {
@@ -74,6 +75,7 @@ export function useTableColumns({
   onOpenEntry: (entry: Entry) => void;
   onOpenNestedPeek: (entry: Entry) => void;
   onOpenNestedCollection: (entry: Entry) => void;
+  onOpenFullPage: (entry: Entry) => void;
   onRequestPersons: (allTime: boolean) => Promise<Person[]>;
   onCommitField: (entry: Entry, column: Column, value: unknown) => void;
 }) {
@@ -136,6 +138,7 @@ export function useTableColumns({
                     ? onOpenNestedPeek(row.original.entry)
                     : onOpenEntry(row.original.entry)
                 }
+                onOpenFullPage={() => onOpenFullPage(row.original.entry)}
                 onOpenNested={() => onOpenNestedCollection(row.original.entry)}
               />
             ),
@@ -226,6 +229,7 @@ export function useTableColumns({
       nestedCollectionPaths,
       onCommitField,
       onOpenEntry,
+      onOpenFullPage,
       onOpenNestedPeek,
       onOpenNestedCollection,
       onRequestPersons,

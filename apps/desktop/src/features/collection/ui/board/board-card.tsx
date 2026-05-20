@@ -62,6 +62,7 @@ export function BoardCardContent({
   onOpen,
   onOpenNestedPeek,
   onOpenNestedCollection,
+  onOpenFullPage,
   onDuplicate,
   onDelete,
 }: BoardCardProps) {
@@ -90,9 +91,9 @@ export function BoardCardContent({
             if (nestedCollection) onOpenNestedPeek(entry);
             else onOpen(entry);
           }}
-          onDoubleClick={() => {
-            if (nestedCollection) onOpenNestedPeek(entry);
-            else onOpen(entry);
+          onDoubleClick={(event) => {
+            if (shouldIgnoreCardOpen(event)) return;
+            onOpenFullPage(entry);
           }}
         >
           <CardContent className="flex flex-col gap-2 px-2.5">
@@ -205,7 +206,7 @@ function shouldIgnoreCardOpen(event: MouseEvent<HTMLElement>) {
   );
   return Boolean(
     interactive &&
-      interactive !== event.currentTarget &&
-      event.currentTarget.contains(interactive),
+    interactive !== event.currentTarget &&
+    event.currentTarget.contains(interactive),
   );
 }

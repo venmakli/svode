@@ -123,6 +123,14 @@ pub fn list_entries(space: String) -> Result<Vec<TreeNode>, AppError> {
 }
 
 #[tauri::command]
+pub fn get_entry_detail_state(
+    space: String,
+    path: String,
+) -> Result<entry::EntryDetailState, AppError> {
+    entry::entry_detail_state(Path::new(&space), &path)
+}
+
+#[tauri::command]
 pub async fn create_entry(
     space: String,
     parent_path: Option<String>,

@@ -21,6 +21,7 @@ export function SortableTableRow({
   children,
   onFocus,
   onOpen,
+  onOpenFullPage,
   onDuplicate,
   onDelete,
 }: {
@@ -31,6 +32,7 @@ export function SortableTableRow({
   children: ReactNode;
   onFocus: () => void;
   onOpen: () => void;
+  onOpenFullPage: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
@@ -57,7 +59,10 @@ export function SortableTableRow({
             if (shouldIgnoreRowOpen(event.target)) return;
             onOpen();
           }}
-          onDoubleClick={onOpen}
+          onDoubleClick={(event) => {
+            if (shouldIgnoreRowOpen(event.target)) return;
+            onOpenFullPage();
+          }}
           onKeyDown={(event) => {
             if (event.target !== event.currentTarget) return;
             if (event.key === "Enter") {

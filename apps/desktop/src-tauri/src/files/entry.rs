@@ -115,6 +115,22 @@ pub struct Entry {
     pub path: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EntryDetailForm {
+    Leaf,
+    Folder,
+    NestedCollection,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryDetailState {
+    pub form: EntryDetailForm,
+    pub subpage_count: usize,
+    pub other_file_count: usize,
+}
+
 /// Resolve an absolute path from space root + relative path.
 fn resolve(space: &str, rel: &str) -> PathBuf {
     Path::new(space).join(rel)
@@ -1308,6 +1324,101 @@ pub fn convert_entry_to_folder(
         let _ = index.update_file(space, &new_rel);
     }
     read(&space.to_string_lossy(), &new_rel)
+}
+
+pub fn entry_detail_state(space: &Path, path: &str) -> Result<EntryDetailState, AppError> {
+    let rel = path.trim_matches('/').replace('\\', "/");
+    let abs = space.join(&rel);
+    if abs.is_dir() {
+        if !dir_has_readme(&abs) {
+            return Err(AppError::FileNotFound(rel));
+        }
+        let (subpage_count, other_file_count) = folder_child_counts(&abs)?;
+        return Ok(EntryDetailState {
+            form: if abs.join("schema.yaml").exists() {
+                EntryDetailForm::NestedCollection
+            } else {
+                EntryDetailForm::Folder
+            },
+            subpage_count,
+            other_file_count,
+        });
+    }
+
+    if !abs.exists() {
+        return Err(AppError::FileNotFound(rel));
+    }
+
+    let is_readme = abs
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"));
+    if !is_readme {
+        return Ok(EntryDetailState {
+            form: EntryDetailForm::Leaf,
+            subpage_count: 0,
+            other_file_count: 0,
+        });
+    }
+
+    let folder = abs
+        .parent()
+        .ok_or_else(|| AppError::General("README.md has no parent folder".to_string()))?;
+    let (subpage_count, other_file_count) = folder_child_counts(folder)?;
+    Ok(EntryDetailState {
+        form: if folder.join("schema.yaml").exists() {
+            EntryDetailForm::NestedCollection
+        } else {
+            EntryDetailForm::Folder
+        },
+        subpage_count,
+        other_file_count,
+    })
+}
+
+fn folder_child_counts(folder: &Path) -> Result<(usize, usize), AppError> {
+    let mut subpage_count = 0;
+    let mut other_file_count = 0;
+
+    for item in fs::read_dir(folder)? {
+        let item = item?;
+        let name = item.file_name().to_string_lossy().to_string();
+        if name.starts_with('.')
+            || name.eq_ignore_ascii_case("README.md")
+            || name.eq_ignore_ascii_case("schema.yaml")
+        {
+            continue;
+        }
+
+        let path = item.path();
+        if path.is_dir() {
+            if dir_has_readme(&path) {
+                subpage_count += 1;
+            } else {
+                other_file_count += 1;
+            }
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
+            subpage_count += 1;
+        } else {
+            other_file_count += 1;
+        }
+    }
+
+    Ok((subpage_count, other_file_count))
+}
+
+fn dir_has_readme(dir: &Path) -> bool {
+    fs::read_dir(dir)
+        .ok()
+        .into_iter()
+        .flat_map(|items| items.filter_map(Result::ok))
+        .any(|item| {
+            item.path().is_file()
+                && item
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
+        })
 }
 
 pub fn convert_entry_to_leaf(

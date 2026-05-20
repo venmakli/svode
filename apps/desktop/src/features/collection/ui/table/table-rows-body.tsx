@@ -27,6 +27,7 @@ export function TableRowsBody({
   onFocusPath,
   onOpenEntry,
   onOpenNestedPeek,
+  onOpenFullPage,
   onDuplicateEntry,
   onDeleteEntry,
   onDragEnd,
@@ -41,6 +42,7 @@ export function TableRowsBody({
   onFocusPath: (path: string) => void;
   onOpenEntry: (entry: Entry) => void;
   onOpenNestedPeek: (entry: Entry) => void;
+  onOpenFullPage: (entry: Entry) => void;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
   onDragEnd: (event: DragEndEvent) => void;
@@ -84,6 +86,7 @@ export function TableRowsBody({
                     ? onOpenNestedPeek(original.entry)
                     : onOpenEntry(original.entry)
                 }
+                onOpenFullPage={() => onOpenFullPage(original.entry)}
                 onDuplicate={() => onDuplicateEntry(original.entry)}
                 onDelete={() => onDeleteEntry(original.entry)}
               >

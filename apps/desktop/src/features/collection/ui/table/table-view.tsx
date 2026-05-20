@@ -62,6 +62,7 @@ export function TableView({
   onOpenEntry,
   onOpenNestedPeek,
   onOpenNestedCollection,
+  onOpenFullPage,
   onDuplicateEntry,
   onDeleteEntry,
   onSchemaChange,
@@ -198,8 +199,9 @@ export function TableView({
       const nestedEntryBatches = await Promise.all(
         nestedParentPaths.map(async (nestedPath) => {
           const nestedSchema = nextNestedSchemas.get(nestedPath);
-          const nestedTableView = ((nestedSchema?.views ?? []) as CollectionView[])
-            .find((item) => item?.type === "table");
+          const nestedTableView = (
+            (nestedSchema?.views ?? []) as CollectionView[]
+          ).find((item) => item?.type === "table");
           try {
             return await invoke<Entry[]>("query_entries", {
               space: spacePath,
@@ -214,7 +216,10 @@ export function TableView({
               projectPath: projectPath ?? null,
             });
           } catch (nestedLoadError) {
-            console.warn("Failed to load nested table entries:", nestedLoadError);
+            console.warn(
+              "Failed to load nested table entries:",
+              nestedLoadError,
+            );
             return [];
           }
         }),
@@ -322,6 +327,7 @@ export function TableView({
     onOpenEntry,
     onOpenNestedPeek: onOpenNestedPeek ?? onOpenEntry,
     onOpenNestedCollection,
+    onOpenFullPage,
     onRequestPersons: loadPersons,
     onCommitField: (entry, column, value) =>
       void commitField(entry, column, value),
@@ -501,6 +507,7 @@ export function TableView({
               onFocusPath={setFocusedPath}
               onOpenEntry={onOpenEntry}
               onOpenNestedPeek={onOpenNestedPeek ?? onOpenEntry}
+              onOpenFullPage={onOpenFullPage}
               onDuplicateEntry={onDuplicateEntry}
               onDeleteEntry={onDeleteEntry}
               onDragEnd={(event) => void handleDragEnd(event)}
