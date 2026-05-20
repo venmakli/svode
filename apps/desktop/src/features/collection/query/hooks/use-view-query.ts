@@ -178,13 +178,24 @@ export function useViewQuery({
     ],
   );
 
-  return {
-    ...resolved,
-    ephemeral,
-    storageKey,
-    setLocalQuery,
-    clearLocalQuery,
-    saveForAll,
-    reloadLocalQuery,
-  };
+  return useMemo(
+    () => ({
+      ...resolved,
+      ephemeral,
+      storageKey,
+      setLocalQuery,
+      clearLocalQuery,
+      saveForAll,
+      reloadLocalQuery,
+    }),
+    [
+      clearLocalQuery,
+      ephemeral,
+      reloadLocalQuery,
+      resolved,
+      saveForAll,
+      setLocalQuery,
+      storageKey,
+    ],
+  );
 }

@@ -5,7 +5,11 @@ import {
   queryCalendarEntries,
   updateCollectionEntryField,
 } from "@/features/collection/api";
-import type { QueryFilter, QuerySort } from "@/features/collection/query";
+import {
+  useStableViewQueryArgs,
+  type QueryFilter,
+  type QuerySort,
+} from "@/features/collection/query";
 import type { Entry } from "@/features/editor/types";
 import { updateEntryDateValue } from "./utils";
 import * as m from "@/paraglide/messages.js";
@@ -30,6 +34,7 @@ export function useCalendarEntries({
     Set<string>
   >(new Set());
   const [loading, setLoading] = useState(true);
+  const queryArgs = useStableViewQueryArgs(filters, sort);
 
   const loadEntries = useCallback(async () => {
     setLoading(true);
@@ -38,8 +43,8 @@ export function useCalendarEntries({
         queryCalendarEntries({
           spacePath,
           collectionPath,
-          filters,
-          sort,
+          filters: queryArgs.filters,
+          sort: queryArgs.sort,
           projectPath,
         }),
         listCollectionInfos(spacePath).catch(() => []),
@@ -52,7 +57,7 @@ export function useCalendarEntries({
     } finally {
       setLoading(false);
     }
-  }, [collectionPath, filters, projectPath, sort, spacePath]);
+  }, [collectionPath, projectPath, queryArgs, spacePath]);
 
   useEffect(() => {
     void loadEntries();

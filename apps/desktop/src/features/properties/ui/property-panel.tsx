@@ -401,6 +401,9 @@ function PropertyPanelValue({
             if (close) void saved.finally(() => onEditChange(false));
             return saved;
           }}
+          onOpenChange={(open) => {
+            if (!open) window.setTimeout(() => onEditChange(false), 0);
+          }}
         />
       </div>
     );

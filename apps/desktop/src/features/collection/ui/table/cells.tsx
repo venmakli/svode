@@ -98,6 +98,9 @@ export function PropertyCell({
                 close: shouldClosePropertyEditorOnChange(column.type),
               })
             }
+            onOpenChange={(open) => {
+              if (!open) window.setTimeout(onCancel, 0);
+            }}
             onRequestPersons={onRequestPersons}
           />
         )}
@@ -143,9 +146,9 @@ function DebouncedTextEditor({
   onCancel: (value: unknown) => void;
 }) {
   const [draft, setDraft] = useState(valueToString(value));
-  const initial = useRef(valueToString(value));
+  const [initial] = useState(() => valueToString(value));
   const cancelled = useRef(false);
-  const changed = draft !== initial.current;
+  const changed = draft !== initial;
 
   useDebouncedCommit(changed ? draft || null : undefined, onDraftCommit);
 
@@ -165,7 +168,7 @@ function DebouncedTextEditor({
           event.preventDefault();
           event.stopPropagation();
           cancelled.current = true;
-          onCancel(initial.current || null);
+          onCancel(initial || null);
         }
       }}
     />
@@ -188,12 +191,12 @@ function DebouncedNumberEditor({
   onCancel: (value: unknown) => void;
 }) {
   const [draft, setDraft] = useState(valueToString(value));
-  const initial = useRef(valueToString(value));
+  const [initial] = useState(() => valueToString(value));
   const cancelled = useRef(false);
   const numeric = Number(draft);
   const parsed =
     draft.trim() === "" ? null : Number.isFinite(numeric) ? numeric : undefined;
-  const changed = draft !== initial.current;
+  const changed = draft !== initial;
   const display = column.display ?? "number";
 
   useDebouncedCommit(changed ? parsed : undefined, onDraftCommit);
@@ -216,7 +219,7 @@ function DebouncedNumberEditor({
             event.preventDefault();
             event.stopPropagation();
             cancelled.current = true;
-            onCancel(parseNumberDraft(initial.current));
+            onCancel(parseNumberDraft(initial));
           }
         }}
       />

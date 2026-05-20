@@ -11,7 +11,10 @@ import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { Table } from "@/components/ui/table";
-import type { CollectionView } from "@/features/collection/query";
+import {
+  useStableViewQueryArgs,
+  type CollectionView,
+} from "@/features/collection/query";
 import type { Entry } from "@/features/editor/types";
 import { normalizeSchema } from "@/features/properties/lib";
 import { useSpaceStore } from "@/stores/space";
@@ -105,6 +108,7 @@ export function TableView({
   const footerInputRef = useRef<HTMLInputElement | null>(null);
   const footerRef = useRef<HTMLDivElement | null>(null);
   const { persons, loadPersons } = useCollectionPersons(spacePath);
+  const queryArgs = useStableViewQueryArgs(filters, sort);
 
   const visibleFields = useMemo(
     () => normalizeVisibleFields(view, schema),
@@ -152,8 +156,8 @@ export function TableView({
         invoke<Entry[]>("query_entries", {
           space: spacePath,
           collectionPath,
-          filters,
-          sort,
+          filters: queryArgs.filters,
+          sort: queryArgs.sort,
           includeNested: showNested,
           limit: null,
           offset: null,
@@ -236,7 +240,7 @@ export function TableView({
     } finally {
       setLoading(false);
     }
-  }, [collectionPath, filters, projectPath, showNested, sort, spacePath]);
+  }, [collectionPath, projectPath, queryArgs, showNested, spacePath]);
 
   useEffect(() => {
     void loadEntries();

@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -49,7 +50,12 @@ import {
   PhoneCall,
   Text,
 } from "lucide-react";
-import type { Column, DateRangeValue, Person, PropertyOption } from "../model/types";
+import type {
+  Column,
+  DateRangeValue,
+  Person,
+  PropertyOption,
+} from "../model/types";
 import { PropertyBadge } from "./property-badge";
 import {
   STATUS_GROUPS,
@@ -86,6 +92,7 @@ interface PropertyControlProps {
   persons?: Person[];
   onRequestPersons?: (allTime: boolean) => Promise<Person[]>;
   onChange: (value: unknown) => void | Promise<void>;
+  onOpenChange?: (open: boolean) => void;
 }
 
 export function PropertyControl({
@@ -97,6 +104,7 @@ export function PropertyControl({
   persons = [],
   onRequestPersons,
   onChange,
+  onOpenChange,
 }: PropertyControlProps) {
   switch (column.type) {
     case "number":
@@ -108,6 +116,7 @@ export function PropertyControl({
           disabled={disabled}
           autoOpen={autoOpen}
           onChange={onChange}
+          onOpenChange={onOpenChange}
         />
       );
     case "select":
@@ -119,6 +128,7 @@ export function PropertyControl({
           disabled={disabled}
           autoOpen={autoOpen}
           onChange={onChange}
+          onOpenChange={onOpenChange}
         />
       );
     case "multi_select":
@@ -130,6 +140,7 @@ export function PropertyControl({
           disabled={disabled}
           autoOpen={autoOpen}
           onChange={onChange}
+          onOpenChange={onOpenChange}
         />
       );
     case "status":
@@ -141,6 +152,7 @@ export function PropertyControl({
           disabled={disabled}
           autoOpen={autoOpen}
           onChange={onChange}
+          onOpenChange={onOpenChange}
         />
       );
     case "date":
@@ -152,6 +164,7 @@ export function PropertyControl({
           disabled={disabled}
           autoOpen={autoOpen}
           onChange={onChange}
+          onOpenChange={onOpenChange}
         />
       );
     case "person":
@@ -165,6 +178,7 @@ export function PropertyControl({
           persons={persons}
           onRequestPersons={onRequestPersons}
           onChange={onChange}
+          onOpenChange={onOpenChange}
         />
       );
     case "checkbox":
@@ -186,6 +200,7 @@ export function PropertyControl({
           disabled={disabled}
           autoOpen={autoOpen}
           onChange={onChange}
+          onOpenChange={onOpenChange}
         />
       );
     case "email":
@@ -401,8 +416,9 @@ function SelectControl({
   disabled,
   autoOpen,
   onChange,
+  onOpenChange,
 }: PropertyControlProps) {
-  const [open, setOpen] = useState(Boolean(autoOpen));
+  const [open, setOpen] = useAutoOpen(autoOpen, onOpenChange);
   const selected = optionByName(column, value);
   const invalidOption = typeof value === "string" && value && !selected;
   const triggerOption =
@@ -410,10 +426,6 @@ function SelectControl({
     (typeof value === "string" && value
       ? { name: value, color: "neutral" as const }
       : null);
-
-  useEffect(() => {
-    if (autoOpen) setOpen(true);
-  }, [autoOpen]);
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -469,8 +481,9 @@ function StatusControl({
   disabled,
   autoOpen,
   onChange,
+  onOpenChange,
 }: PropertyControlProps) {
-  const [open, setOpen] = useState(Boolean(autoOpen));
+  const [open, setOpen] = useAutoOpen(autoOpen, onOpenChange);
   const selected = optionByName(column, value);
   const invalidOption = typeof value === "string" && value && !selected;
   const triggerOption =
@@ -478,10 +491,6 @@ function StatusControl({
     (typeof value === "string" && value
       ? { name: value, color: "neutral" as const }
       : null);
-
-  useEffect(() => {
-    if (autoOpen) setOpen(true);
-  }, [autoOpen]);
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -545,8 +554,9 @@ function MultiSelectControl({
   disabled,
   autoOpen,
   onChange,
+  onOpenChange,
 }: PropertyControlProps) {
-  const [open, setOpen] = useState(Boolean(autoOpen));
+  const [open, setOpen] = useAutoOpen(autoOpen, onOpenChange);
   const values = Array.isArray(value)
     ? value.filter((item) => typeof item === "string")
     : [];
@@ -563,10 +573,6 @@ function MultiSelectControl({
   const remove = (name: string) => {
     void onChange(values.filter((item) => item !== name));
   };
-
-  useEffect(() => {
-    if (autoOpen) setOpen(true);
-  }, [autoOpen]);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -637,8 +643,9 @@ function DateControl({
   disabled,
   autoOpen,
   onChange,
+  onOpenChange,
 }: PropertyControlProps) {
-  const [open, setOpen] = useState(Boolean(autoOpen));
+  const [open, setOpen] = useAutoOpen(autoOpen, onOpenChange);
   const normalized = normalizeDateInput(value);
   const [startDate, setStartDate] = useState(datePart(normalized.start));
   const [startTime, setStartTime] = useState(timePart(normalized.start));
@@ -664,10 +671,6 @@ function DateControl({
       next.isRange || (isEmptyValue(value) && Boolean(column.rangeByDefault)),
     );
   }, [column.rangeByDefault, column.timeByDefault, value]);
-
-  useEffect(() => {
-    if (autoOpen) setOpen(true);
-  }, [autoOpen]);
 
   const apply = (
     next?: Partial<{
@@ -844,6 +847,7 @@ function PersonControl({
   persons = [],
   onRequestPersons,
   onChange,
+  onOpenChange,
 }: Pick<
   PropertyControlProps,
   | "value"
@@ -853,8 +857,9 @@ function PersonControl({
   | "onRequestPersons"
   | "onChange"
   | "autoOpen"
+  | "onOpenChange"
 > & { column: Column }) {
-  const [open, setOpen] = useState(Boolean(autoOpen));
+  const [open, setOpen] = useAutoOpen(autoOpen, onOpenChange);
   const email = typeof value === "string" ? value : "";
   const selected =
     persons.find(
@@ -868,10 +873,6 @@ function PersonControl({
     setAllTime(sourceAllTime);
     if (sourceAllTime) void onRequestPersons?.(true);
   }, [column.display, onRequestPersons]);
-
-  useEffect(() => {
-    if (autoOpen) setOpen(true);
-  }, [autoOpen]);
 
   const sortedPersons = useMemo(() => {
     const me = persons.filter(personIsMe);
@@ -971,11 +972,12 @@ function UrlControl({
   disabled,
   autoOpen,
   onChange,
+  onOpenChange,
 }: Pick<
   PropertyControlProps,
-  "value" | "invalid" | "disabled" | "autoOpen" | "onChange"
+  "value" | "invalid" | "disabled" | "autoOpen" | "onChange" | "onOpenChange"
 >) {
-  const [open, setOpen] = useState(Boolean(autoOpen));
+  const [open, setOpen] = useAutoOpen(autoOpen, onOpenChange);
   const normalized = normalizeUrlValue(value);
   const [draft, setDraft] = useState(normalized.href);
   const [text, setText] = useState(normalized.title);
@@ -984,9 +986,6 @@ function UrlControl({
     setDraft(next.href);
     setText(next.title);
   }, [value]);
-  useEffect(() => {
-    if (autoOpen) setOpen(true);
-  }, [autoOpen]);
   const warning = invalid || (draft ? !isValidUrl(draft) : false);
   const commit = () => {
     const href = draft.trim();
@@ -1218,6 +1217,23 @@ function OptionDot({ option }: { option: PropertyOption }) {
       style={colorStyle(optionColor(option))}
     />
   );
+}
+
+function useAutoOpen(
+  autoOpen: boolean | undefined,
+  onOpenChange: ((open: boolean) => void) | undefined,
+) {
+  const [open, setOpen] = useState(Boolean(autoOpen));
+
+  const handleOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      setOpen(nextOpen);
+      onOpenChange?.(nextOpen);
+    },
+    [onOpenChange],
+  );
+
+  return [open, handleOpenChange] as const;
 }
 
 function IconAction({

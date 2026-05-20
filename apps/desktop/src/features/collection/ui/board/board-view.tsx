@@ -24,6 +24,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import type { Entry } from "@/features/editor/types";
+import { useStableViewQueryArgs } from "@/features/collection/query";
 import type {
   Column,
   CollectionSchema,
@@ -91,6 +92,7 @@ export function BoardView({
   const [draftAsFolder, setDraftAsFolder] = useState(false);
   const lastActiveGroup = useRef<string | null>(null);
   const { persons, loadPersons } = useCollectionPersons(spacePath);
+  const queryArgs = useStableViewQueryArgs(filters, sort);
   const sidebarSpaceId = useSpaceStore((state) => {
     const space =
       state.spaces.find((item) => item.path === spacePath) ??
@@ -150,20 +152,21 @@ export function BoardView({
   );
 
   const loadEntries = useCallback(async () => {
+    const hasActiveSort = queryArgs.sort.length > 0;
     setLoading(true);
     try {
       const [baseEntries, orderEntries, collections] = await Promise.all([
         invoke<Entry[]>("query_entries", {
           space: spacePath,
           collectionPath,
-          filters,
-          sort,
+          filters: queryArgs.filters,
+          sort: queryArgs.sort,
           includeNested: false,
           limit: null,
           offset: null,
           projectPath: projectPath ?? null,
         }),
-        hasSort
+        hasActiveSort
           ? Promise.resolve<Entry[]>([])
           : invoke<Entry[]>("query_entries", {
               space: spacePath,
@@ -180,7 +183,7 @@ export function BoardView({
         }).catch(() => []),
       ]);
       setEntries(baseEntries);
-      setManualOrderEntries(hasSort ? baseEntries : orderEntries);
+      setManualOrderEntries(hasActiveSort ? baseEntries : orderEntries);
       setNestedCollectionPaths(new Set(collections.map((item) => item.path)));
     } catch (error) {
       console.warn("Failed to load board entries:", error);
@@ -188,7 +191,7 @@ export function BoardView({
     } finally {
       setLoading(false);
     }
-  }, [collectionPath, filters, hasSort, projectPath, sort, spacePath]);
+  }, [collectionPath, projectPath, queryArgs, spacePath]);
 
   useEffect(() => {
     void loadEntries();

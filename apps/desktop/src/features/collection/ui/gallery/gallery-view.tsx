@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useStableViewQueryArgs } from "@/features/collection/query";
 import type { Entry } from "@/features/editor/types";
 import type { Column } from "@/features/properties/model";
 import { useSpaceStore } from "@/stores/space";
@@ -95,6 +96,7 @@ export function GalleryView({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const cardRefs = useRef(new Map<string, HTMLElement>());
   const { persons, loadPersons } = useCollectionPersons(spacePath);
+  const queryArgs = useStableViewQueryArgs(filters, sort);
   const refreshTree = useSpaceStore((state) => state.refreshTree);
   const sidebarSpaceId = useSpaceStore((state) => {
     const space =
@@ -144,8 +146,8 @@ export function GalleryView({
         queryCollectionEntries({
           spacePath,
           collectionPath,
-          filters,
-          sort,
+          filters: queryArgs.filters,
+          sort: queryArgs.sort,
           includeNested: false,
           projectPath,
         }),
@@ -159,7 +161,7 @@ export function GalleryView({
     } finally {
       setLoading(false);
     }
-  }, [collectionPath, filters, projectPath, sort, spacePath]);
+  }, [collectionPath, projectPath, queryArgs, spacePath]);
 
   useEffect(() => {
     void loadEntries();
