@@ -798,6 +798,7 @@ export function CollectionScreen({
                 effectiveHeaderActions ? "max-w-none" : "max-w-4xl"
               }
               actions={effectiveHeaderActions}
+              metadata={entry ? <EntrySystemFields meta={entry.meta} /> : null}
               coverSize={effectiveHeaderActions ? "compact" : "default"}
             />
           ) : (
@@ -844,14 +845,6 @@ export function CollectionScreen({
                 });
                 setEntry(updated);
               }}
-            />
-          </div>
-        ) : null}
-        {entry ? (
-          <div className="max-w-5xl">
-            <EntrySystemFields
-              meta={entry.meta}
-              mode={headerActions ? "peek" : "full"}
             />
           </div>
         ) : null}

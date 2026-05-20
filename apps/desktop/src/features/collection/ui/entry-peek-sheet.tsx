@@ -217,6 +217,7 @@ function StandardEntryPeek({
           onCoverChange={(cover) => void updateCover(cover).catch(handleError)}
           onBodyFocus={() => undefined}
           actions={actions}
+          metadata={<EntrySystemFields meta={entry.meta} />}
           coverSize="compact"
         />
 
@@ -237,9 +238,6 @@ function StandardEntryPeek({
             />
           </div>
         ) : null}
-        <div className="mt-4">
-          <EntrySystemFields meta={entry.meta} mode="peek" />
-        </div>
       </div>
       <Separator />
       <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto overflow-x-hidden">

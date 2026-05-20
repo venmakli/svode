@@ -139,6 +139,7 @@ export function EntryDocumentScreen({
           }
           onCoverChange={(cover) => void updateCover(cover).catch(handleError)}
           onBodyFocus={() => undefined}
+          metadata={<EntrySystemFields meta={entry.meta} />}
           actions={
             <EntryDetailActions
               entry={entry}
@@ -174,9 +175,6 @@ export function EntryDocumentScreen({
             />
           </div>
         ) : null}
-        <div className="max-w-5xl">
-          <EntrySystemFields meta={entry.meta} mode="full" />
-        </div>
       </div>
       <Separator />
       <Tabs value="document" className="gap-0">

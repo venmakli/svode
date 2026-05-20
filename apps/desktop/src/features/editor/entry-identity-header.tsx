@@ -19,6 +19,7 @@ interface EntryIdentityHeaderProps {
   onBodyFocus: () => void;
   titleClassName?: string;
   actions?: ReactNode;
+  metadata?: ReactNode;
   coverSize?: "default" | "compact";
 }
 
@@ -37,6 +38,7 @@ export function EntryIdentityHeader({
   onBodyFocus,
   titleClassName,
   actions,
+  metadata,
   coverSize = "default",
 }: EntryIdentityHeaderProps) {
   return (
@@ -66,7 +68,12 @@ export function EntryIdentityHeader({
             onBodyFocus={onBodyFocus}
           />
         </div>
-        {actions ? <div className="mt-1 shrink-0">{actions}</div> : null}
+        {actions || metadata ? (
+          <div className="mt-1 flex max-w-[22rem] shrink-0 flex-col items-end gap-1 text-right">
+            {actions}
+            {metadata}
+          </div>
+        ) : null}
       </div>
     </>
   );

@@ -1,33 +1,50 @@
-import { cn } from "@/lib/utils";
 import type { EntryMeta } from "@/features/editor/types";
 import * as m from "@/paraglide/messages.js";
 
-export function EntrySystemFields({
-  meta,
-  mode = "peek",
-}: {
-  meta: EntryMeta;
-  mode?: "peek" | "full";
-}) {
+export function EntrySystemFields({ meta }: { meta: EntryMeta }) {
   return (
-    <div
-      className={cn(
-        "grid gap-x-6 gap-y-2 border-t pt-3 text-sm text-muted-foreground",
-        mode === "full"
-          ? "grid-cols-[minmax(7rem,12rem)_minmax(0,1fr)] md:grid-cols-[minmax(7rem,12rem)_minmax(0,1fr)_minmax(7rem,12rem)_minmax(0,1fr)]"
-          : "grid-cols-[minmax(7rem,12rem)_minmax(0,1fr)]",
-      )}
-    >
-      <span>{m.entry_created()}</span>
-      <span className="truncate">{formatDate(meta.created)}</span>
-      <span>{m.entry_updated()}</span>
-      <span className="truncate">{formatDate(meta.updated)}</span>
+    <div className="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-1 text-xs leading-5 text-muted-foreground">
+      <span className="whitespace-nowrap">
+        {m.entry_updated()}{" "}
+        <time dateTime={meta.updated} title={formatFullDate(meta.updated)}>
+          {formatShortDate(meta.updated)}
+        </time>
+      </span>
+      <span aria-hidden="true">·</span>
+      <span className="whitespace-nowrap">
+        {m.entry_created()}{" "}
+        <time dateTime={meta.created} title={formatFullDate(meta.created)}>
+          {formatShortDate(meta.created)}
+        </time>
+      </span>
     </div>
   );
 }
 
-function formatDate(value: string) {
+function formatShortDate(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
+  const options: Intl.DateTimeFormatOptions = {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  };
+  if (date.getFullYear() !== new Date().getFullYear()) {
+    options.year = "numeric";
+  }
+  return new Intl.DateTimeFormat(undefined, options).format(date);
+}
+
+function formatFullDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(date);
 }
