@@ -549,7 +549,7 @@ export function BoardView({
         setOverGroupKey(null);
       }}
     >
-      <div className="overflow-x-auto px-4 py-3">
+      <div className="scrollbar-hide overflow-x-auto px-4 py-3">
         <div className="flex min-w-max items-start gap-3">
           {renderedColumns.map((column) => {
             const groupEntries = entriesForGroup(
