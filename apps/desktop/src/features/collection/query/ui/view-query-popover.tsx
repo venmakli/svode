@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowUpDown,
@@ -114,10 +114,13 @@ export function ViewQueryPopover({
     query.merged.groupBy,
   );
   const effectiveOpen = open ?? innerOpen;
-  const setEffectiveOpen = (nextOpen: boolean) => {
-    setInnerOpen(nextOpen);
-    onOpenChange?.(nextOpen);
-  };
+  const setEffectiveOpen = useCallback(
+    (nextOpen: boolean) => {
+      setInnerOpen(nextOpen);
+      onOpenChange?.(nextOpen);
+    },
+    [onOpenChange],
+  );
 
   const activeFilters = query.ephemeral?.filter ?? query.persistent.filter;
   const activeSort = query.ephemeral?.sort ?? query.persistent.sort;
@@ -242,7 +245,7 @@ export function ViewQueryPopover({
 
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [effectiveOpen, pane, query.persistent.type]);
+  }, [effectiveOpen, pane, query.persistent.type, setEffectiveOpen]);
 
   const panes = [
     {
@@ -554,7 +557,7 @@ export function QueryList({
   if (rows.length === 0)
     return <EmptyPane icon={emptyIcon} label={emptyLabel} />;
   return (
-    <ScrollArea className="h-64">
+    <div className="max-h-64 overflow-y-auto">
       <div className="flex flex-col p-1">
         {rows.map((row) => (
           <PaneRow
@@ -567,7 +570,7 @@ export function QueryList({
           />
         ))}
       </div>
-    </ScrollArea>
+    </div>
   );
 }
 

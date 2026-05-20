@@ -787,10 +787,10 @@ export function ViewSettingsPopover({
           variant="ghost"
           size="icon-sm"
           className={cn(
-            "aria-expanded:bg-transparent aria-expanded:text-foreground",
+            "rounded-[7px] text-muted-foreground hover:bg-accent hover:text-foreground aria-expanded:bg-transparent aria-expanded:text-muted-foreground",
             open &&
               pane === "main" &&
-              "bg-accent text-accent-foreground aria-expanded:bg-accent aria-expanded:text-accent-foreground",
+              "bg-accent text-accent-foreground hover:bg-accent hover:text-accent-foreground aria-expanded:bg-accent aria-expanded:text-accent-foreground",
           )}
         >
           <Settings />

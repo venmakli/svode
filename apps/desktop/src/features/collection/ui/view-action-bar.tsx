@@ -1,4 +1,4 @@
-import { ArrowUpDown, ChevronDown, Columns3, Filter, Plus } from "lucide-react";
+import { ArrowUpDown, ChevronDown, Filter, Group, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,16 +20,23 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type {
-  UseViewQueryResult,
-  ViewType,
-} from "@/features/collection/query";
+import type { UseViewQueryResult, ViewType } from "@/features/collection/query";
 import type { CollectionView } from "@/features/collection/query";
 import type { CollectionSchema } from "@/features/properties/model";
 import { SearchControl } from "./search-control";
 import type { SettingsPane } from "../model";
 import { ViewSettingsPopover } from "./view-settings-popover";
 import * as m from "@/paraglide/messages.js";
+
+const toolbarIconButtonClass =
+  "rounded-[7px] text-muted-foreground hover:bg-accent hover:text-foreground aria-expanded:bg-transparent aria-expanded:text-muted-foreground";
+const toolbarActiveButtonClass =
+  "bg-accent text-accent-foreground hover:bg-accent hover:text-accent-foreground aria-expanded:bg-accent aria-expanded:text-accent-foreground";
+const toolbarBadgeButtonClass = "h-7 gap-1 rounded-[7px] px-2";
+const toolbarCountBadgeClass =
+  "h-3.5 min-w-3.5 rounded-full px-1 text-[10px] leading-none";
+const toolbarPillButtonClass =
+  "h-7 max-w-40 rounded-[7px] bg-foreground/[0.03] px-[9px] text-muted-foreground shadow-none hover:bg-accent hover:text-foreground";
 
 export function ViewActionBar({
   searchOpen,
@@ -93,6 +100,9 @@ export function ViewActionBar({
     (settingsPane === "sort" ||
       settingsPane === "sortField" ||
       settingsPane === "sortEditor");
+  const groupActive = settingsOpen && settingsPane === "group";
+  const filterCount = query.merged.filter.length;
+  const sortCount = query.merged.sort.length;
   const groupBy =
     activeView?.type === "board"
       ? (query.merged.groupBy ?? undefined)
@@ -109,18 +119,20 @@ export function ViewActionBar({
       {activeView?.type === "board" && groupBy ? (
         <Button
           type="button"
-          variant="outline"
+          variant="ghost"
           size="sm"
-          className="max-w-40 truncate"
+          className={cn(
+            toolbarPillButtonClass,
+            groupActive && toolbarActiveButtonClass,
+          )}
+          aria-label={`${m.view_query_group_title()}: ${groupBy}`}
           onClick={() => {
             onSettingsPaneChange("group");
             onSettingsOpenChange(true);
           }}
         >
-          <Columns3 data-icon="inline-start" />
-          <span className="truncate">
-            {m.view_query_group_title()}: {groupBy}
-          </span>
+          <Group className="size-[13px]" data-icon="inline-start" />
+          <span className="truncate">{groupBy}</span>
         </Button>
       ) : null}
       <Tooltip>
@@ -128,10 +140,11 @@ export function ViewActionBar({
           <Button
             type="button"
             variant="ghost"
-            size="icon-sm"
+            size={filterCount > 0 ? "sm" : "icon-sm"}
             className={cn(
-              (query.merged.filter.length > 0 || filterActive) && "relative",
-              filterActive && "bg-accent text-accent-foreground",
+              toolbarIconButtonClass,
+              filterCount > 0 && toolbarBadgeButtonClass,
+              (filterCount > 0 || filterActive) && toolbarActiveButtonClass,
             )}
             onClick={() => {
               onSettingsPaneChange("filter");
@@ -140,10 +153,8 @@ export function ViewActionBar({
           >
             <Filter />
             <span className="sr-only">{m.view_query_filter_title()}</span>
-            {query.merged.filter.length > 0 ? (
-              <Badge className="absolute -right-1 -top-1 h-4 min-w-4 justify-center rounded-full px-1 text-[10px]">
-                {query.merged.filter.length}
-              </Badge>
+            {filterCount > 0 ? (
+              <Badge className={toolbarCountBadgeClass}>{filterCount}</Badge>
             ) : null}
           </Button>
         </TooltipTrigger>
@@ -154,10 +165,11 @@ export function ViewActionBar({
           <Button
             type="button"
             variant="ghost"
-            size="icon-sm"
+            size={sortCount > 0 ? "sm" : "icon-sm"}
             className={cn(
-              (query.merged.sort.length > 0 || sortActive) && "relative",
-              sortActive && "bg-accent text-accent-foreground",
+              toolbarIconButtonClass,
+              sortCount > 0 && toolbarBadgeButtonClass,
+              (sortCount > 0 || sortActive) && toolbarActiveButtonClass,
             )}
             onClick={() => {
               onSettingsPaneChange("sort");
@@ -166,10 +178,8 @@ export function ViewActionBar({
           >
             <ArrowUpDown />
             <span className="sr-only">{m.view_query_sort_title()}</span>
-            {query.merged.sort.length > 0 ? (
-              <Badge className="absolute -right-1 -top-1 h-4 min-w-4 justify-center rounded-full px-1 text-[10px]">
-                {query.merged.sort.length}
-              </Badge>
+            {sortCount > 0 ? (
+              <Badge className={toolbarCountBadgeClass}>{sortCount}</Badge>
             ) : null}
           </Button>
         </TooltipTrigger>
