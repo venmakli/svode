@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   closestCenter,
@@ -157,10 +157,11 @@ export function ViewSettingsPopover({
   const { persons: queryPersons, loadPersons: loadQueryPersons } =
     useCollectionPersons(spacePath);
 
-  useEffect(() => {
-    if (pane !== "filterEditor") setFilterDraft(null);
-    if (pane !== "sortEditor") setSortDraft(null);
-  }, [pane]);
+  function setPane(nextPane: SettingsPane) {
+    if (nextPane !== "filterEditor") setFilterDraft(null);
+    if (nextPane !== "sortEditor") setSortDraft(null);
+    onPaneChange(nextPane);
+  }
 
   function toggleField(field: string, locked?: boolean) {
     if (!view || locked) return;
@@ -200,12 +201,12 @@ export function ViewSettingsPopover({
   }
 
   function openPane(nextPane: SettingsPane) {
-    onPaneChange(nextPane);
+    setPane(nextPane);
     onOpenChange(true);
   }
 
   function addFilterRule() {
-    onPaneChange("filterField");
+    setPane("filterField");
   }
 
   function openNewFilter(field?: QueryField) {
@@ -215,12 +216,12 @@ export function ViewSettingsPopover({
       index: null,
       filter: { field: selected.name, op: defaultFilterOp(selected.type) },
     });
-    onPaneChange("filterEditor");
+    setPane("filterEditor");
   }
 
   function openExistingFilter(filter: QueryFilter, index: number) {
     setFilterDraft({ index, filter: { ...filter } });
-    onPaneChange("filterEditor");
+    setPane("filterEditor");
   }
 
   function applyFilterDraft() {
@@ -229,7 +230,7 @@ export function ViewSettingsPopover({
     if (filterDraft.index === null) next.push(filterDraft.filter);
     else next[filterDraft.index] = filterDraft.filter;
     query.setLocalQuery({ filter: next });
-    onPaneChange("filter");
+    setPane("filter");
   }
 
   function clearFilterDraft() {
@@ -241,23 +242,23 @@ export function ViewSettingsPopover({
         ),
       });
     }
-    onPaneChange("filter");
+    setPane("filter");
   }
 
   function addSortRule() {
-    onPaneChange("sortField");
+    setPane("sortField");
   }
 
   function openNewSort(field?: QueryField) {
     const selected = field ?? queryFields(schema, "sort")[0];
     if (!selected) return;
     setSortDraft({ index: null, sort: { field: selected.name, desc: false } });
-    onPaneChange("sortEditor");
+    setPane("sortEditor");
   }
 
   function openExistingSort(sort: QuerySort, index: number) {
     setSortDraft({ index, sort: { ...sort } });
-    onPaneChange("sortEditor");
+    setPane("sortEditor");
   }
 
   function applySortDraft() {
@@ -266,7 +267,7 @@ export function ViewSettingsPopover({
     if (sortDraft.index === null) next.push(sortDraft.sort);
     else next[sortDraft.index] = sortDraft.sort;
     query.setLocalQuery({ sort: next });
-    onPaneChange("sort");
+    setPane("sort");
   }
 
   function clearSortDraft() {
@@ -276,7 +277,7 @@ export function ViewSettingsPopover({
         sort: query.merged.sort.filter((_, index) => index !== sortDraft.index),
       });
     }
-    onPaneChange("sort");
+    setPane("sort");
   }
 
   function nextColumnName() {
@@ -291,7 +292,7 @@ export function ViewSettingsPopover({
   }
 
   function addColumn() {
-    onPaneChange("propertyAddType");
+    setPane("propertyAddType");
   }
 
   async function addColumnWithType(type: PropertyType) {
@@ -310,12 +311,12 @@ export function ViewSettingsPopover({
       await onUpdateView(view.name, { [visibleFieldKey]: nextFields });
     }
     setSelectedProperty(column.name);
-    onPaneChange("propertyEdit");
+    setPane("propertyEdit");
   }
 
   function openProperty(field: string) {
     setSelectedProperty(field);
-    onPaneChange("propertyEdit");
+    setPane("propertyEdit");
   }
 
   function openFieldFilter(field: string) {
@@ -332,7 +333,7 @@ export function ViewSettingsPopover({
         ? { ...existing }
         : { field, op: defaultFilterOp(fieldInfo?.type ?? "text") },
     });
-    onPaneChange("filterEditor");
+    setPane("filterEditor");
   }
 
   function openFieldSort(field: string) {
@@ -345,7 +346,7 @@ export function ViewSettingsPopover({
       index: existingIndex >= 0 ? existingIndex : null,
       sort: existing ? { ...existing } : { field, desc: false },
     });
-    onPaneChange("sortEditor");
+    setPane("sortEditor");
   }
 
   const panes = [
@@ -773,11 +774,11 @@ export function ViewSettingsPopover({
     <MultiPanePopover
       open={open}
       onOpenChange={(nextOpen) => {
-        if (nextOpen) onPaneChange("main");
+        if (nextOpen) setPane("main");
         onOpenChange(nextOpen);
       }}
       pane={pane}
-      onPaneChange={onPaneChange}
+      onPaneChange={setPane}
       mainPane="main"
       className="w-80 max-w-[calc(100vw-2rem)]"
       trigger={
@@ -786,7 +787,10 @@ export function ViewSettingsPopover({
           variant="ghost"
           size="icon-sm"
           className={cn(
-            open && pane === "main" && "bg-accent text-accent-foreground",
+            "aria-expanded:bg-transparent aria-expanded:text-foreground",
+            open &&
+              pane === "main" &&
+              "bg-accent text-accent-foreground aria-expanded:bg-accent aria-expanded:text-accent-foreground",
           )}
         >
           <Settings />

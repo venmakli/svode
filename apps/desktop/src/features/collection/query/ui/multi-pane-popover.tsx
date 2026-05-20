@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -52,15 +52,16 @@ export function MultiPanePopover<TPane extends string>({
   const current =
     paneById.get(activePane) ?? paneById.get(mainPane) ?? panes[0];
 
-  useEffect(() => {
-    if (open) {
+  function handleOpenChange(nextOpen: boolean) {
+    if (nextOpen) {
       const next = initialPane ?? mainPane;
       setInnerPane(next);
       if (pane === undefined) {
         onPaneChange?.(next);
       }
     }
-  }, [initialPane, mainPane, onPaneChange, open, pane]);
+    onOpenChange?.(nextOpen);
+  }
 
   function setPane(next: TPane) {
     setInnerPane(next);
@@ -76,7 +77,7 @@ export function MultiPanePopover<TPane extends string>({
   }
 
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent
         align={align}
@@ -104,7 +105,7 @@ export function MultiPanePopover<TPane extends string>({
             <Separator />
           </>
         )}
-        <div className="min-h-0 flex-1 overflow-y-auto">{current?.content}</div>
+        <div className="min-h-0 overflow-y-auto">{current?.content}</div>
         {current?.notice ? (
           <>
             <Separator />
