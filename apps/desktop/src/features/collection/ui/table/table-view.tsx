@@ -450,6 +450,7 @@ export function TableView({
               sensors={sensors}
               sortedEntries={filteredTopLevel}
               hasSort={hasSort}
+              persons={persons}
               onOpenEntry={onOpenEntry}
               onOpenNestedPeek={onOpenNestedPeek ?? onOpenEntry}
               onOpenFullPage={onOpenFullPage}
