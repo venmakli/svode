@@ -94,7 +94,8 @@ export function SpaceSettingsDialog({
   onOpenChange,
 }: SpaceSettingsDialogProps) {
   const { openDocument, closeSettings } = useLayoutStore();
-  const { activeRootPath, activeRootName, spaces } = useSpaceStore();
+  const { activeRootId, activeRootPath, activeRootName, spaces } =
+    useSpaceStore();
 
   const spacePath = inputPath ?? "";
   const isRoot = spacePath === activeRootPath;
@@ -901,7 +902,7 @@ export function SpaceSettingsDialog({
 
   function handleOpenAgentsMd() {
     closeSettings();
-    openDocument(".combai/AGENTS.md");
+    openDocument(".combai/AGENTS.md", activeRootId ?? undefined);
   }
 
   function getCliStatus(agent: AvailableAgent): "authorized" | "unauthorized" | "not_found" {

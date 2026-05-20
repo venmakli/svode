@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { EntryIdentityHeader } from "@/features/editor/entry-identity-header";
 import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";
@@ -19,7 +18,6 @@ import { useDebouncedEntryFieldUpdate } from "./entry-detail-fields";
 import { EntrySubpages } from "./entry-subpages";
 import { EntrySystemFields } from "./entry-system-fields";
 import { handleError } from "../lib/errors";
-import * as m from "@/paraglide/messages.js";
 
 interface EntryDocumentScreenProps {
   spacePath: string;
@@ -112,7 +110,7 @@ export function EntryDocumentScreen({
   }
 
   if (!entry) {
-    return <PlateDocumentEditor />;
+    return <div className="min-h-full" />;
   }
 
   const showSubpages = detailState?.form === "folder";
@@ -140,6 +138,7 @@ export function EntryDocumentScreen({
           onCoverChange={(cover) => void updateCover(cover).catch(handleError)}
           onBodyFocus={() => undefined}
           metadata={<EntrySystemFields meta={entry.meta} />}
+          coverSize="compact"
           actions={
             <EntryDetailActions
               entry={entry}
@@ -177,38 +176,27 @@ export function EntryDocumentScreen({
         ) : null}
       </div>
       <Separator />
-      <Tabs value="document" className="gap-0">
-        <div className="flex shrink-0 items-center gap-3 px-4 py-2">
-          <TabsList variant="line">
-            <TabsTrigger value="document">
-              {m.collection_document_tab()}
-            </TabsTrigger>
-          </TabsList>
-        </div>
-        <TabsContent value="document" className="flex-none">
-          <PlateDocumentEditor
-            bodyOnly
-            pageScroll
-            documentPath={entry.path}
-            documentSpaceId={spaceId}
-            spacePath={spacePath}
-            projectPath={projectPath}
-            bodyOnlyMeta={entry.meta}
-            onDocumentPathChange={(path) => {
-              setEntry((current) => (current ? { ...current, path } : current));
-              openDocument(path, spaceId);
-            }}
-          />
-          {showSubpages ? (
-            <EntrySubpages
-              spacePath={spacePath}
-              projectPath={projectPath}
-              spaceId={spaceId}
-              documentPath={entry.path}
-            />
-          ) : null}
-        </TabsContent>
-      </Tabs>
+      <PlateDocumentEditor
+        bodyOnly
+        pageScroll
+        documentPath={entry.path}
+        documentSpaceId={spaceId}
+        spacePath={spacePath}
+        projectPath={projectPath}
+        bodyOnlyMeta={entry.meta}
+        onDocumentPathChange={(path) => {
+          setEntry((current) => (current ? { ...current, path } : current));
+          openDocument(path, spaceId);
+        }}
+      />
+      {showSubpages ? (
+        <EntrySubpages
+          spacePath={spacePath}
+          projectPath={projectPath}
+          spaceId={spaceId}
+          documentPath={entry.path}
+        />
+      ) : null}
       <DeleteDialogs
         viewOpen={false}
         entry={deleteEntry}

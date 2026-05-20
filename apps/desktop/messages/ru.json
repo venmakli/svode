@@ -62,7 +62,7 @@
   "property_state_type_conflict": "Конфликт типа",
   "property_state_invalid_option": "Значения нет в опциях",
   "property_state_invalid_email_phone": "Неверный формат",
-  "property_collection_path": "Коллекция: {path}",
+  "property_collection_path": "Свойства из {path}",
   "property_dialog_add_column_title": "Добавить свойство",
   "property_dialog_add_column_desc": "Выберите тип, задайте имя и опции, если они нужны.",
   "property_dialog_type": "Тип",

@@ -18,7 +18,6 @@ import { SpaceGitWatcher } from "@/features/workspace/space-git-watcher";
 import { useLayoutStore } from "@/stores/layout";
 import { selectActiveSpacePath, useSpaceStore } from "@/stores/space";
 import { EmptyProjectState } from "@/features/workspace/empty-project-state";
-import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";
 import { ChatPanel } from "@/features/chat/chat-panel";
 import { CommandPalette } from "@/features/search/command-palette";
 import type { TreeNode } from "@/types/space";
@@ -40,47 +39,49 @@ function findNodeInTree(
 function MainContent() {
   const { activeDocument, activeDocumentSpaceId, chatPanelOpen } =
     useLayoutStore();
-  const { fileTrees, rootSpaces, spaces, activeRootPath } = useSpaceStore();
+  const { fileTrees, rootSpaces, spaces, activeRootId, activeRootPath } =
+    useSpaceStore();
   const watchSpacePath = useSpaceStore(selectActiveSpacePath);
-  const tree = activeDocumentSpaceId
-    ? (fileTrees[activeDocumentSpaceId] ?? [])
+  const documentSpaceId = activeDocumentSpaceId ?? activeRootId;
+  const tree = documentSpaceId
+    ? (fileTrees[documentSpaceId] ?? [])
     : [];
   const activeNode = activeDocument
     ? findNodeInTree(tree, activeDocument)
     : null;
-  const activeSpace = activeDocumentSpaceId
+  const activeSpace = documentSpaceId
     ? [...rootSpaces, ...spaces].find(
-        (space) => space.id === activeDocumentSpaceId,
+        (space) => space.id === documentSpaceId,
       )
     : null;
   const isCollection = Boolean(
-    activeNode?.has_schema && activeSpace && activeDocumentSpaceId,
+    activeNode?.has_schema && activeSpace && documentSpaceId,
   );
   const usesEntryDocumentScreen = Boolean(
-    !isCollection && activeSpace && activeDocumentSpaceId && activeDocument,
+    !isCollection && activeSpace && documentSpaceId && activeDocument,
   );
   const activeContent =
     isCollection &&
     activeNode &&
     activeSpace &&
-    activeDocumentSpaceId &&
+    documentSpaceId &&
     activeDocument ? (
       <CollectionScreen
         spacePath={activeSpace.path}
         projectPath={activeRootPath}
         documentPath={activeDocument}
-        spaceId={activeDocumentSpaceId}
+        spaceId={documentSpaceId}
         hasReadme={activeNode.path.toLowerCase().endsWith(".md")}
       />
-    ) : activeSpace && activeDocumentSpaceId && activeDocument ? (
+    ) : activeSpace && documentSpaceId && activeDocument ? (
       <EntryDocumentScreen
         spacePath={activeSpace.path}
         projectPath={activeRootPath}
         documentPath={activeDocument}
-        spaceId={activeDocumentSpaceId}
+        spaceId={documentSpaceId}
       />
     ) : (
-      <PlateDocumentEditor />
+      <div className="h-full" />
     );
 
   useEffect(() => {
