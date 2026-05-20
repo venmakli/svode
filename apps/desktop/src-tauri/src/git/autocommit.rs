@@ -27,6 +27,10 @@ pub enum StructuralOp {
     ConvertToLeaf(String),
     MakeCollection(String),
     Duplicate { old: String, new: String },
+    CreateTemplate(String),
+    DeleteTemplate(String),
+    DuplicateTemplate { old: String, new: String },
+    InstantiateTemplate { title: String, parent: String },
 }
 
 /// Categories of system-level auto-commits — messages and file scopes.
@@ -731,6 +735,10 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
     let mut converts_to_leaf: Vec<&String> = Vec::new();
     let mut make_collections: Vec<&String> = Vec::new();
     let mut duplicates: Vec<(&String, &String)> = Vec::new();
+    let mut create_templates: Vec<&String> = Vec::new();
+    let mut delete_templates: Vec<&String> = Vec::new();
+    let mut duplicate_templates: Vec<(&String, &String)> = Vec::new();
+    let mut instantiate_templates: Vec<(&String, &String)> = Vec::new();
 
     for op in &non_reorder {
         match op {
@@ -743,6 +751,12 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
             StructuralOp::ConvertToLeaf(n) => converts_to_leaf.push(n),
             StructuralOp::MakeCollection(n) => make_collections.push(n),
             StructuralOp::Duplicate { old, new } => duplicates.push((old, new)),
+            StructuralOp::CreateTemplate(n) => create_templates.push(n),
+            StructuralOp::DeleteTemplate(n) => delete_templates.push(n),
+            StructuralOp::DuplicateTemplate { old, new } => duplicate_templates.push((old, new)),
+            StructuralOp::InstantiateTemplate { title, parent } => {
+                instantiate_templates.push((title, parent))
+            }
         }
     }
 
@@ -781,6 +795,18 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
         kinds += 1;
     }
     if !duplicates.is_empty() {
+        kinds += 1;
+    }
+    if !create_templates.is_empty() {
+        kinds += 1;
+    }
+    if !delete_templates.is_empty() {
+        kinds += 1;
+    }
+    if !duplicate_templates.is_empty() {
+        kinds += 1;
+    }
+    if !instantiate_templates.is_empty() {
         kinds += 1;
     }
     if has_reorder {
@@ -844,6 +870,37 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
             n => format!("Duplicate {} entries", n),
         }
     };
+    let render_create_templates = |items: &[&String]| -> String {
+        match items.len() {
+            0 => String::new(),
+            1 => format!("Create template \"{}\"", items[0]),
+            n => format!("Create {} templates", n),
+        }
+    };
+    let render_delete_templates = |items: &[&String]| -> String {
+        match items.len() {
+            0 => String::new(),
+            1 => format!("Delete template \"{}\"", items[0]),
+            n => format!("Delete {} templates", n),
+        }
+    };
+    let render_duplicate_templates = |items: &[(&String, &String)]| -> String {
+        match items.len() {
+            0 => String::new(),
+            1 => format!(
+                "Duplicate template \"{}\" \u{2192} \"{}\"",
+                items[0].0, items[0].1
+            ),
+            n => format!("Duplicate {} templates", n),
+        }
+    };
+    let render_instantiate_templates = |items: &[(&String, &String)]| -> String {
+        match items.len() {
+            0 => String::new(),
+            1 => format!("Instantiate template \"{}\" in {}", items[0].0, items[0].1),
+            n => format!("Instantiate {} templates", n),
+        }
+    };
 
     // Single kind path — cleanest.
     if kinds == 1 {
@@ -871,6 +928,18 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
         if !duplicates.is_empty() {
             return render_duplicates(&duplicates);
         }
+        if !create_templates.is_empty() {
+            return render_create_templates(&create_templates);
+        }
+        if !delete_templates.is_empty() {
+            return render_delete_templates(&delete_templates);
+        }
+        if !duplicate_templates.is_empty() {
+            return render_duplicate_templates(&duplicate_templates);
+        }
+        if !instantiate_templates.is_empty() {
+            return render_instantiate_templates(&instantiate_templates);
+        }
         if has_reorder {
             return "Reorder files".to_string();
         }
@@ -884,7 +953,11 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
         + collapsed_converts_to_folder.len()
         + converts_to_leaf.len()
         + make_collections.len()
-        + duplicates.len();
+        + duplicates.len()
+        + create_templates.len()
+        + delete_templates.len()
+        + duplicate_templates.len()
+        + instantiate_templates.len();
     let total_with_reorder = total + if has_reorder { 1 } else { 0 };
 
     if total_with_reorder <= 5 {
@@ -907,6 +980,15 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
                 StructuralOp::MakeCollection(n) => segs.push(format!("Make collection {}", n)),
                 StructuralOp::Duplicate { old, new } => {
                     segs.push(format!("Duplicate {} \u{2192} {}", old, new))
+                }
+                StructuralOp::CreateTemplate(n) => segs.push(format!("Create template \"{}\"", n)),
+                StructuralOp::DeleteTemplate(n) => segs.push(format!("Delete template \"{}\"", n)),
+                StructuralOp::DuplicateTemplate { old, new } => segs.push(format!(
+                    "Duplicate template \"{}\" \u{2192} \"{}\"",
+                    old, new
+                )),
+                StructuralOp::InstantiateTemplate { title, parent } => {
+                    segs.push(format!("Instantiate template \"{}\" in {}", title, parent))
                 }
                 StructuralOp::Reorder => {
                     // Collapse — only keep first reorder occurrence.
@@ -950,6 +1032,22 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
         parts.push(s);
     }
     let s = render_duplicates(&duplicates);
+    if !s.is_empty() {
+        parts.push(s);
+    }
+    let s = render_create_templates(&create_templates);
+    if !s.is_empty() {
+        parts.push(s);
+    }
+    let s = render_delete_templates(&delete_templates);
+    if !s.is_empty() {
+        parts.push(s);
+    }
+    let s = render_duplicate_templates(&duplicate_templates);
+    if !s.is_empty() {
+        parts.push(s);
+    }
+    let s = render_instantiate_templates(&instantiate_templates);
     if !s.is_empty() {
         parts.push(s);
     }
@@ -1092,6 +1190,33 @@ mod tests {
         assert_eq!(
             aggregate_message(&ops),
             "Duplicate tasks \u{2192} tasks-copy"
+        );
+    }
+
+    #[test]
+    fn template_messages() {
+        let ops = vec![StructuralOp::CreateTemplate(s("Meeting"))];
+        assert_eq!(aggregate_message(&ops), "Create template \"Meeting\"");
+
+        let ops = vec![StructuralOp::DeleteTemplate(s("Meeting"))];
+        assert_eq!(aggregate_message(&ops), "Delete template \"Meeting\"");
+
+        let ops = vec![StructuralOp::DuplicateTemplate {
+            old: s("Meeting"),
+            new: s("Meeting (copy)"),
+        }];
+        assert_eq!(
+            aggregate_message(&ops),
+            "Duplicate template \"Meeting\" \u{2192} \"Meeting (copy)\""
+        );
+
+        let ops = vec![StructuralOp::InstantiateTemplate {
+            title: s("Meeting"),
+            parent: s("projects"),
+        }];
+        assert_eq!(
+            aggregate_message(&ops),
+            "Instantiate template \"Meeting\" in projects"
         );
     }
 

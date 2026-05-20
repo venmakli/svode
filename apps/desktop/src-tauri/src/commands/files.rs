@@ -8,8 +8,9 @@ use tauri::{AppHandle, State};
 use crate::error::AppError;
 use crate::files::{
     BacklinkIndex, BacklinkInfo, Entry, FileWatcher, LinkValidation, ModifiedLinkSource, TreeNode,
-    WriteNonceRegistry, WriteResult, entry, tree,
+    WriteNonceRegistry, WriteResult, entry, templates, tree,
 };
+use crate::files::{TemplateInfo, TemplateKind};
 use crate::git::autocommit::{AutocommitService, StructuralOp};
 use crate::git::commands::{GitState, require_cli};
 use crate::index::{self, IndexKey, IndexState, ResolvedDocLink};
@@ -573,6 +574,162 @@ pub fn get_collection_schema(
     collection_path: String,
 ) -> Result<CollectionSchema, AppError> {
     properties::read_collection_schema(&space, &collection_path)
+}
+
+#[tauri::command]
+pub fn list_templates(
+    space: String,
+    collection_path: String,
+) -> Result<Vec<TemplateInfo>, AppError> {
+    templates::list(&space, &collection_path)
+}
+
+#[tauri::command]
+pub async fn create_template(
+    space: String,
+    collection_path: String,
+    title: String,
+    kind: TemplateKind,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<String, AppError> {
+    let path = templates::create(&space, &collection_path, &title, kind)?;
+    maybe_autocommit_structural(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        StructuralOp::CreateTemplate(title),
+    );
+    Ok(path)
+}
+
+#[tauri::command]
+pub async fn delete_template(
+    space: String,
+    collection_path: String,
+    template_slug: String,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<(), AppError> {
+    let deleted = templates::delete(&space, &collection_path, &template_slug)?;
+    maybe_autocommit_structural(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        StructuralOp::DeleteTemplate(deleted.title),
+    );
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn duplicate_template(
+    space: String,
+    collection_path: String,
+    template_slug: String,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<String, AppError> {
+    let duplicated = templates::duplicate(&space, &collection_path, &template_slug)?;
+    maybe_autocommit_structural(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        StructuralOp::DuplicateTemplate {
+            old: duplicated.old_title,
+            new: duplicated.new_title,
+        },
+    );
+    Ok(duplicated.head_path)
+}
+
+#[tauri::command]
+pub async fn instantiate_template(
+    space: String,
+    collection_path: String,
+    template_slug: String,
+    parent_dir: String,
+    initial_title: Option<String>,
+    force_folder: bool,
+    contextual_defaults: Option<HashMap<String, serde_json::Value>>,
+    project_path: Option<String>,
+    index_state: State<'_, IndexState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<Entry, AppError> {
+    let contextual_defaults = contextual_defaults
+        .map(|defaults| {
+            defaults
+                .into_iter()
+                .map(|(field, value)| Ok((field, json_to_yaml_value(value)?)))
+                .collect::<Result<HashMap<_, _>, AppError>>()
+        })
+        .transpose()?;
+    let instantiated = templates::instantiate(
+        &space,
+        &collection_path,
+        &template_slug,
+        &parent_dir,
+        initial_title,
+        force_folder,
+        contextual_defaults,
+    )?;
+    reindex_space_dir(&index_state, &space).await;
+    maybe_autocommit_structural(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        StructuralOp::InstantiateTemplate {
+            title: instantiated.template_title,
+            parent: parent_dir,
+        },
+    );
+    Ok(instantiated.entry)
+}
+
+#[tauri::command]
+pub async fn set_default_template(
+    space: String,
+    collection_path: String,
+    template_slug: Option<String>,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    if let Some(template_slug) = template_slug.as_deref() {
+        templates::ensure_template_exists(&space, &collection_path, template_slug)?;
+    }
+    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
+    let schema =
+        properties::set_default_template(&space, &collection_path, template_slug.as_deref())?;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        "Update collection templates".to_string(),
+    )
+    .await;
+    Ok(schema)
+}
+
+#[tauri::command]
+pub async fn reorder_templates(
+    space: String,
+    collection_path: String,
+    new_order: Vec<String>,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    templates::validate_template_order(&space, &collection_path, &new_order)?;
+    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
+    let schema = properties::reorder_templates(&space, &collection_path, new_order)?;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        "Update collection templates".to_string(),
+    )
+    .await;
+    Ok(schema)
 }
 
 #[tauri::command]

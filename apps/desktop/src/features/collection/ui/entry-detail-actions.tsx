@@ -6,6 +6,8 @@ import {
   FileText,
   FolderOpen,
   MoreVertical,
+  Star,
+  StarOff,
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -35,6 +37,13 @@ interface EntryDetailActionsProps {
   onConverted?: (entry: Entry, nested: boolean) => void;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
+  template?: {
+    slug: string;
+    collectionPath: string;
+    isDefault: boolean;
+  };
+  onSetTemplateDefault?: (slug: string | null) => Promise<void>;
+  onDuplicateTemplate?: (entry: Entry) => Promise<void>;
 }
 
 export function EntryDetailActions({
@@ -45,6 +54,9 @@ export function EntryDetailActions({
   onConverted,
   onDuplicateEntry,
   onDeleteEntry,
+  template,
+  onSetTemplateDefault,
+  onDuplicateTemplate,
 }: EntryDetailActionsProps) {
   const refreshTree = useSpaceStore((state) => state.refreshTree);
   const [state, setState] = useState<EntryDetailState | null>(null);
@@ -172,9 +184,38 @@ export function EntryDetailActions({
             </DropdownMenuItem>
           </>
         ) : null}
-        <DropdownMenuItem onClick={() => onDuplicateEntry(entry)}>
+        {template && onSetTemplateDefault ? (
+          template.isDefault ? (
+            <DropdownMenuItem
+              onClick={() => void onSetTemplateDefault(null).catch(handleError)}
+            >
+              <StarOff data-icon="inline-start" />
+              {m.collection_template_unset_default()}
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem
+              onClick={() =>
+                void onSetTemplateDefault(template.slug).catch(handleError)
+              }
+            >
+              <Star data-icon="inline-start" />
+              {m.collection_template_set_default()}
+            </DropdownMenuItem>
+          )
+        ) : null}
+        <DropdownMenuItem
+          onClick={() => {
+            if (template && onDuplicateTemplate) {
+              void onDuplicateTemplate(entry).catch(handleError);
+              return;
+            }
+            onDuplicateEntry(entry);
+          }}
+        >
           <Copy data-icon="inline-start" />
-          {m.collection_duplicate_entry()}
+          {template
+            ? m.collection_template_duplicate()
+            : m.collection_duplicate_entry()}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem

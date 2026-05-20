@@ -8,6 +8,7 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Maximize2, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -33,6 +34,11 @@ import * as m from "@/paraglide/messages.js";
 export interface EntryPeekTarget {
   entry: Entry;
   nested: boolean;
+  template?: {
+    slug: string;
+    collectionPath: string;
+    isDefault: boolean;
+  };
 }
 
 interface EntryPeekSheetProps {
@@ -45,6 +51,8 @@ interface EntryPeekSheetProps {
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
   onConvertedEntry: (entry: Entry, nested: boolean) => void;
+  onSetTemplateDefault?: (slug: string | null) => Promise<void>;
+  onDuplicateTemplate?: (entry: Entry) => Promise<void>;
   renderNested: (entry: Entry, actions: ReactNode) => ReactNode;
 }
 
@@ -58,6 +66,8 @@ export function EntryPeekSheet({
   onDuplicateEntry,
   onDeleteEntry,
   onConvertedEntry,
+  onSetTemplateDefault,
+  onDuplicateTemplate,
   renderNested,
 }: EntryPeekSheetProps) {
   const open = Boolean(target);
@@ -118,18 +128,30 @@ export function EntryPeekSheet({
   );
 
   const currentEntry = entry ?? target?.entry ?? null;
-  const actions = currentEntry ? (
+  const actionMenu = currentEntry ? (
     <EntryPeekActions
       entry={currentEntry}
       onOpenFullPage={onOpenFullPage}
       onDuplicateEntry={onDuplicateEntry}
       onDeleteEntry={onDeleteEntry}
       onConvertedEntry={onConvertedEntry}
+      template={target?.template}
+      onSetTemplateDefault={onSetTemplateDefault}
+      onDuplicateTemplate={onDuplicateTemplate}
       spacePath={spacePath}
       projectPath={projectPath}
       spaceId={spaceId}
     />
   ) : null;
+  const actions =
+    target?.nested && target.template && actionMenu ? (
+      <div className="flex items-center gap-2">
+        <Badge variant="secondary">{m.collection_template_badge()}</Badge>
+        {actionMenu}
+      </div>
+    ) : (
+      actionMenu
+    );
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -157,6 +179,7 @@ export function EntryPeekSheet({
               projectPath={projectPath}
               spaceId={spaceId}
               actions={actions}
+              template={target?.template}
               onEntryChange={setEntry}
               onSchemaChange={setSchemaResult}
             />
@@ -182,6 +205,7 @@ function StandardEntryPeek({
   projectPath,
   spaceId,
   actions,
+  template,
   onEntryChange,
   onSchemaChange,
 }: {
@@ -191,6 +215,7 @@ function StandardEntryPeek({
   projectPath?: string | null;
   spaceId: string;
   actions: ReactNode;
+  template?: EntryPeekTarget["template"];
   onEntryChange: Dispatch<SetStateAction<Entry | null>>;
   onSchemaChange: (result: EntrySchemaResult | null) => void;
 }) {
@@ -227,7 +252,16 @@ function StandardEntryPeek({
           onCoverChange={(cover) => void updateCover(cover).catch(handleError)}
           onBodyFocus={() => undefined}
           actions={actions}
-          metadata={<EntrySystemFields meta={entry.meta} />}
+          metadata={
+            <div className="flex flex-col items-end gap-1">
+              {template ? (
+                <Badge variant="secondary">
+                  {m.collection_template_badge()}
+                </Badge>
+              ) : null}
+              <EntrySystemFields meta={entry.meta} />
+            </div>
+          }
           coverSize="compact"
         />
 
@@ -280,6 +314,9 @@ function EntryPeekActions({
   onDuplicateEntry,
   onDeleteEntry,
   onConvertedEntry,
+  template,
+  onSetTemplateDefault,
+  onDuplicateTemplate,
   spacePath,
   projectPath,
   spaceId,
@@ -289,6 +326,9 @@ function EntryPeekActions({
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
   onConvertedEntry: (entry: Entry, nested: boolean) => void;
+  template?: EntryPeekTarget["template"];
+  onSetTemplateDefault?: (slug: string | null) => Promise<void>;
+  onDuplicateTemplate?: (entry: Entry) => Promise<void>;
   spacePath: string;
   projectPath?: string | null;
   spaceId: string;
@@ -324,6 +364,9 @@ function EntryPeekActions({
         onConverted={onConvertedEntry}
         onDuplicateEntry={onDuplicateEntry}
         onDeleteEntry={onDeleteEntry}
+        template={template}
+        onSetTemplateDefault={onSetTemplateDefault}
+        onDuplicateTemplate={onDuplicateTemplate}
       />
     </div>
   );

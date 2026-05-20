@@ -776,6 +776,14 @@ pub fn write(
                                 .unwrap_or_default()
                                 .to_string_lossy();
                             let renamed_path = format!("{}/{}", new_dir_rel, readme_filename);
+                            if let Err(error) = crate::properties::rename_template_slug_references(
+                                space,
+                                path,
+                                &renamed_path,
+                            ) {
+                                let _ = fs::rename(&new_dir_abs, &old_dir_abs);
+                                return Err(error);
+                            }
                             new_path = Some(renamed_path);
                         }
                         // If collision, content is already saved, just skip rename
@@ -794,6 +802,12 @@ pub fn write(
 
                 if !new_abs.exists() {
                     fs::rename(&abs_path, &new_abs)?;
+                    if let Err(error) =
+                        crate::properties::rename_template_slug_references(space, path, &new_rel)
+                    {
+                        let _ = fs::rename(&new_abs, &abs_path);
+                        return Err(error);
+                    }
                     new_path = Some(new_rel);
                 }
                 // If collision, content is already saved, just skip rename

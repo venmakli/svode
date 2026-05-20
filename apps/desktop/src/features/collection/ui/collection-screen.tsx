@@ -10,6 +10,7 @@ import { arrayMove } from "@dnd-kit/sortable";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Database } from "lucide-react";
+import { toast } from "sonner";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { EntryIdentityHeader } from "@/features/editor/entry-identity-header";
 import { TitleZone } from "@/features/editor/title-zone";
@@ -36,6 +37,16 @@ import { ListView } from "./list/list-view";
 import { TableView } from "./table/table-view";
 import { ViewActionBar } from "./view-action-bar";
 import {
+  createTemplate as createTemplateApi,
+  deleteTemplate,
+  duplicateTemplate as duplicateTemplateApi,
+  instantiateTemplate,
+  listTemplates,
+  readTemplateEntry,
+  reorderTemplates,
+  setDefaultTemplate,
+} from "../api";
+import {
   collectionPathFor,
   humanize,
   isEditableTarget,
@@ -46,6 +57,11 @@ import {
   viewType,
 } from "../lib/utils";
 import type { ActiveTab, SettingsPane } from "../model";
+import {
+  templateHeadPath,
+  type TemplateInfo,
+  type TemplateKind,
+} from "../model";
 import type { CollectionView, ViewType } from "@/features/collection/query";
 import type { CollectionSchema } from "@/features/properties/model";
 import type { Entry, EntryCover } from "@/features/editor/types";
@@ -66,6 +82,21 @@ interface FileEvent {
 
 function isMarkdownEntryPath(path: string) {
   return path.replace(/\\/g, "/").toLowerCase().endsWith(".md");
+}
+
+function entryTemplateSlug(collectionPath: string, entryPath: string) {
+  const prefix = collectionPath
+    ? `${collectionPath}/.templates/`
+    : ".templates/";
+  const rest = entryPath.startsWith(prefix)
+    ? entryPath.slice(prefix.length)
+    : entryPath;
+  return rest.replace(/\/README\.md$/i, "").replace(/\.md$/i, "");
+}
+
+function isMissingTemplateError(error: unknown) {
+  const message = String(error).toLowerCase();
+  return message.includes("not found") || message.includes("filenotfound");
 }
 
 export function CollectionScreen({
@@ -461,6 +492,32 @@ export function CollectionScreen({
     openAfterCreate = true,
     contextualDefaults?: Record<string, unknown>,
   ) {
+    const defaultTemplateSlug = schema?.templates?.default ?? null;
+    if (defaultTemplateSlug) {
+      try {
+        const created = await instantiateTemplate({
+          spacePath,
+          collectionPath,
+          templateSlug: defaultTemplateSlug,
+          parentDir: collectionPath,
+          initialTitle: title,
+          forceFolder: asFolder,
+          contextualDefaults: contextualDefaults ?? null,
+          projectPath,
+        });
+        setEntriesVersion((version) => version + 1);
+        await refreshTree(spaceId);
+        if (openAfterCreate) {
+          openDocument(created.path, spaceId);
+        }
+        return created;
+      } catch (error) {
+        if (!isMissingTemplateError(error)) throw error;
+        toast.warning(m.collection_default_template_missing());
+        console.warn("Failed to instantiate default template:", error);
+      }
+    }
+
     const created = await invoke<Entry>("create_entry", {
       space: spacePath,
       parentPath: collectionPath,
@@ -482,6 +539,115 @@ export function CollectionScreen({
       openDocument(nextEntry.path, spaceId);
     }
     return nextEntry;
+  }
+
+  async function loadTemplatesForMenu() {
+    return listTemplates({ spacePath, collectionPath });
+  }
+
+  async function createTemplateForMenu(kind: TemplateKind) {
+    const path = await createTemplateApi({
+      spacePath,
+      collectionPath,
+      title: m.collection_new_template(),
+      kind,
+      projectPath,
+    });
+    const entry = await readTemplateEntry({ spacePath, path });
+    setPeekTarget({
+      entry,
+      nested: kind === "nestedCollection",
+      template: {
+        slug: entryTemplateSlug(collectionPath, entry.path),
+        collectionPath,
+        isDefault: false,
+      },
+    });
+  }
+
+  async function instantiateTemplateForMenu(
+    template: TemplateInfo,
+    forceFolder: boolean,
+  ) {
+    const created = await instantiateTemplate({
+      spacePath,
+      collectionPath,
+      templateSlug: template.slug,
+      parentDir: collectionPath,
+      initialTitle: null,
+      forceFolder,
+      contextualDefaults: null,
+      projectPath,
+    });
+    setEntriesVersion((version) => version + 1);
+    await refreshTree(spaceId);
+    openDocument(created.path, spaceId);
+  }
+
+  async function editTemplate(template: TemplateInfo) {
+    const path = templateHeadPath(collectionPath, template);
+    const entry = await readTemplateEntry({ spacePath, path });
+    setPeekTarget({
+      entry,
+      nested: template.kind === "nestedCollection",
+      template: {
+        slug: template.slug,
+        collectionPath,
+        isDefault: Boolean(template.isDefault ?? template.is_default),
+      },
+    });
+  }
+
+  async function setDefaultTemplateForMenu(slug: string | null) {
+    const next = await setDefaultTemplate({
+      spacePath,
+      collectionPath,
+      templateSlug: slug,
+      projectPath,
+    });
+    setSchema(normalizeSchema(next));
+    setPeekTarget((current) =>
+      current?.template
+        ? {
+            ...current,
+            template: {
+              ...current.template,
+              isDefault: slug === current.template.slug,
+            },
+          }
+        : current,
+    );
+  }
+
+  async function duplicateTemplateForMenu(template: TemplateInfo) {
+    await duplicateTemplateApi({
+      spacePath,
+      collectionPath,
+      templateSlug: template.slug,
+      projectPath,
+    });
+  }
+
+  async function deleteTemplateForMenu(template: TemplateInfo) {
+    await deleteTemplate({
+      spacePath,
+      collectionPath,
+      templateSlug: template.slug,
+      projectPath,
+    });
+    if (schema?.templates?.default === template.slug) {
+      toast.warning(m.collection_default_template_missing());
+    }
+  }
+
+  async function reorderTemplatesForMenu(slugs: string[]) {
+    const next = await reorderTemplates({
+      spacePath,
+      collectionPath,
+      newOrder: slugs,
+      projectPath,
+    });
+    setSchema(normalizeSchema(next));
   }
 
   function focusTableCreate(asFolder: boolean) {
@@ -905,6 +1071,14 @@ export function CollectionScreen({
                 setSchema(normalizeSchema(nextSchema))
               }
               autoConfigForType={autoConfigForType}
+              onLoadTemplates={loadTemplatesForMenu}
+              onCreateTemplate={createTemplateForMenu}
+              onInstantiateTemplate={instantiateTemplateForMenu}
+              onEditTemplate={editTemplate}
+              onSetDefaultTemplate={setDefaultTemplateForMenu}
+              onDuplicateTemplate={duplicateTemplateForMenu}
+              onDeleteTemplate={deleteTemplateForMenu}
+              onReorderTemplates={reorderTemplatesForMenu}
               onCreateEntry={(asFolder) => {
                 if (activeView && viewType(activeView) === "table") {
                   focusTableCreate(asFolder);
@@ -1170,6 +1344,20 @@ export function CollectionScreen({
         onDeleteEntry={(entryToDelete) => {
           setPeekTarget(null);
           setDeleteEntry(entryToDelete);
+        }}
+        onSetTemplateDefault={setDefaultTemplateForMenu}
+        onDuplicateTemplate={async (entryToDuplicate) => {
+          const slug = entryTemplateSlug(collectionPath, entryToDuplicate.path);
+          await duplicateTemplateForMenu({
+            slug,
+            title: entryToDuplicate.meta.title,
+            icon: entryToDuplicate.meta.icon,
+            kind: entryToDuplicate.path.toLowerCase().includes("/schema.yaml")
+              ? "nestedCollection"
+              : entryToDuplicate.path.toLowerCase().endsWith("/readme.md")
+                ? "folder"
+                : "leaf",
+          });
         }}
         renderNested={(entryToOpen, actions) => (
           <CollectionScreen

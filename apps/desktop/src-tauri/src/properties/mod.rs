@@ -672,6 +672,21 @@ pub fn normalize_schema(schema: &mut CollectionSchema) {
             schema.document = None;
         }
     }
+    if let Some(templates) = schema.templates.as_mut() {
+        templates.default = templates.default.take().and_then(|default| {
+            let trimmed = default.trim().to_string();
+            (!trimmed.is_empty()).then_some(trimmed)
+        });
+        if let Some(order) = templates.order.as_mut() {
+            order.retain(|slug| !slug.trim().is_empty());
+            if order.is_empty() {
+                templates.order = None;
+            }
+        }
+        if templates.default.is_none() && templates.order.is_none() {
+            schema.templates = None;
+        }
+    }
 
     let autopick_board = autopick_board_group_by(schema);
     let autopick_date = autopick_calendar_date_field(schema);
@@ -1494,6 +1509,36 @@ pub fn apply_contextual_defaults_for_path(
     Ok(changed)
 }
 
+pub fn apply_contextual_defaults_for_path_strict(
+    space: &str,
+    file_path: &str,
+    meta: &mut EntryMeta,
+    contextual_defaults: &HashMap<String, Value>,
+) -> Result<bool, AppError> {
+    if contextual_defaults.is_empty() {
+        return Ok(false);
+    }
+
+    let Some((schema, _)) = resolve_collection_schema_result(space, file_path)? else {
+        return Err(schema_error(
+            "contextual defaults require a collection schema",
+        ));
+    };
+
+    let mut changed = false;
+    for (field, value) in contextual_defaults {
+        let column = schema
+            .columns
+            .iter()
+            .find(|column| column.name == *field)
+            .ok_or_else(|| schema_error(format!("unknown contextual default field '{field}'")))?;
+        validate_property_value(column, value)?;
+        meta.extra.insert(field.clone(), value.clone());
+        changed = true;
+    }
+    Ok(changed)
+}
+
 pub fn apply_schema_defaults_to_entry_tree(space: &Path, rel_path: &str) -> Result<(), AppError> {
     let abs = space.join(rel_path);
     if abs.is_dir() {
@@ -1908,6 +1953,107 @@ pub fn update_document_label(
         write_schema(space, collection_path, &schema)?;
         Ok(schema)
     })
+}
+
+pub fn set_default_template(
+    space: &str,
+    collection_path: &str,
+    template_slug: Option<&str>,
+) -> Result<CollectionSchema, AppError> {
+    let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
+    with_rollback(vec![schema_path], || {
+        let mut schema = read_schema_or_default(space, collection_path)?;
+        schema
+            .templates
+            .get_or_insert_with(TemplatesConfig::default)
+            .default = template_slug.map(ToOwned::to_owned);
+        write_schema(space, collection_path, &schema)?;
+        Ok(schema)
+    })
+}
+
+pub fn reorder_templates(
+    space: &str,
+    collection_path: &str,
+    new_order: Vec<String>,
+) -> Result<CollectionSchema, AppError> {
+    let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
+    with_rollback(vec![schema_path], || {
+        let mut schema = read_schema_or_default(space, collection_path)?;
+        schema
+            .templates
+            .get_or_insert_with(TemplatesConfig::default)
+            .order = Some(new_order);
+        write_schema(space, collection_path, &schema)?;
+        Ok(schema)
+    })
+}
+
+pub fn rename_template_slug_references(
+    space: &str,
+    old_path: &str,
+    new_path: &str,
+) -> Result<(), AppError> {
+    let Some((old_collection, old_slug)) = template_root_context(old_path) else {
+        return Ok(());
+    };
+    let Some((new_collection, new_slug)) = template_root_context(new_path) else {
+        return Ok(());
+    };
+    if old_collection != new_collection || old_slug == new_slug {
+        return Ok(());
+    }
+
+    let schema_path = collection_dir(space, &old_collection).join(SCHEMA_FILE);
+    if !schema_path.is_file() {
+        return Ok(());
+    }
+
+    with_rollback(vec![schema_path], || {
+        let mut schema = read_schema_or_default(space, &old_collection)?;
+        let Some(templates) = schema.templates.as_mut() else {
+            return Ok(());
+        };
+
+        let mut changed = false;
+        if templates.default.as_deref() == Some(old_slug.as_str()) {
+            templates.default = Some(new_slug.clone());
+            changed = true;
+        }
+        if let Some(order) = templates.order.as_mut() {
+            for item in order {
+                if item == &old_slug {
+                    *item = new_slug.clone();
+                    changed = true;
+                }
+            }
+        }
+
+        if changed {
+            write_schema(space, &old_collection, &schema)?;
+        }
+        Ok(())
+    })
+}
+
+fn template_root_context(path: &str) -> Option<(String, String)> {
+    let rel = normalize_rel_path(path);
+    let parts: Vec<&str> = rel.split('/').filter(|part| !part.is_empty()).collect();
+    let marker = parts.iter().position(|part| *part == ".templates")?;
+    let after = &parts[marker + 1..];
+
+    let slug = match after {
+        [file] if file.ends_with(".md") => file.strip_suffix(".md")?.to_string(),
+        [slug, readme] if readme.eq_ignore_ascii_case("README.md") => slug.to_string(),
+        _ => return None,
+    };
+
+    let collection = if marker == 0 {
+        ".".to_string()
+    } else {
+        parts[..marker].join("/")
+    };
+    Some((collection, slug))
 }
 
 pub fn default_collection_schema() -> CollectionSchema {

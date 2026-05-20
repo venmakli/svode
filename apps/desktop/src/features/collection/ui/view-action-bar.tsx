@@ -1,19 +1,6 @@
-import { ArrowUpDown, ChevronDown, Filter, Group, Plus } from "lucide-react";
+import { ArrowUpDown, Filter, Group } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  ButtonGroup,
-  ButtonGroupSeparator,
-} from "@/components/ui/button-group";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   Tooltip,
   TooltipContent,
@@ -25,6 +12,8 @@ import type { CollectionView } from "@/features/collection/query";
 import type { CollectionSchema } from "@/features/properties/model";
 import { SearchControl } from "./search-control";
 import type { SettingsPane } from "../model";
+import type { TemplateInfo, TemplateKind } from "../model";
+import { TemplatesSplitButton } from "./templates-menu";
 import { ViewSettingsPopover } from "./view-settings-popover";
 import * as m from "@/paraglide/messages.js";
 
@@ -62,6 +51,14 @@ export function ViewActionBar({
   onSchemaChange,
   autoConfigForType,
   onCreateEntry,
+  onLoadTemplates,
+  onCreateTemplate,
+  onInstantiateTemplate,
+  onEditTemplate,
+  onSetDefaultTemplate,
+  onDuplicateTemplate,
+  onDeleteTemplate,
+  onReorderTemplates,
 }: {
   searchOpen: boolean;
   searchQuery: string;
@@ -89,6 +86,17 @@ export function ViewActionBar({
   onSchemaChange: (schema: CollectionSchema) => void;
   autoConfigForType: (type: ViewType) => Record<string, unknown>;
   onCreateEntry: (asFolder: boolean) => void;
+  onLoadTemplates: () => Promise<TemplateInfo[]>;
+  onCreateTemplate: (kind: TemplateKind) => Promise<void>;
+  onInstantiateTemplate: (
+    template: TemplateInfo,
+    forceFolder: boolean,
+  ) => Promise<void>;
+  onEditTemplate: (template: TemplateInfo) => Promise<void>;
+  onSetDefaultTemplate: (slug: string | null) => Promise<void>;
+  onDuplicateTemplate: (template: TemplateInfo) => Promise<void>;
+  onDeleteTemplate: (template: TemplateInfo) => Promise<void>;
+  onReorderTemplates: (slugs: string[]) => Promise<void>;
 }) {
   const filterActive =
     settingsOpen &&
@@ -205,41 +213,18 @@ export function ViewActionBar({
         onSchemaChange={onSchemaChange}
         autoConfigForType={autoConfigForType}
       />
-      <ButtonGroup>
-        <Button
-          type="button"
-          size="sm"
-          onClick={(event) => onCreateEntry(event.shiftKey)}
-        >
-          <Plus data-icon="inline-start" />
-          {m.collection_new_entry()}
-        </Button>
-        <ButtonGroupSeparator />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              size="icon-sm"
-              aria-label={m.collection_templates()}
-            >
-              <ChevronDown />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuGroup>
-              <DropdownMenuLabel>{m.collection_templates()}</DropdownMenuLabel>
-              <DropdownMenuItem disabled>
-                {m.collection_view_composer_pending()}
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem disabled>
-              <Plus />
-              {m.collection_new_template()}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </ButtonGroup>
+      <TemplatesSplitButton
+        schema={schema}
+        onPrimaryCreate={onCreateEntry}
+        onLoadTemplates={onLoadTemplates}
+        onCreateTemplate={onCreateTemplate}
+        onInstantiateTemplate={onInstantiateTemplate}
+        onEditTemplate={onEditTemplate}
+        onSetDefaultTemplate={onSetDefaultTemplate}
+        onDuplicateTemplate={onDuplicateTemplate}
+        onDeleteTemplate={onDeleteTemplate}
+        onReorderTemplates={onReorderTemplates}
+      />
     </div>
   );
 }
