@@ -145,23 +145,33 @@ export function EntryPeekSheet({
         </SheetTitle>
 
         {target?.nested && currentEntry ? (
-          <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+          <PeekScrollSurface>
             {renderNested(currentEntry, actions)}
-          </div>
+          </PeekScrollSurface>
         ) : currentEntry ? (
-          <StandardEntryPeek
-            entry={currentEntry}
-            schemaResult={schemaResult}
-            spacePath={spacePath}
-            projectPath={projectPath}
-            spaceId={spaceId}
-            actions={actions}
-            onEntryChange={setEntry}
-            onSchemaChange={setSchemaResult}
-          />
+          <PeekScrollSurface>
+            <StandardEntryPeek
+              entry={currentEntry}
+              schemaResult={schemaResult}
+              spacePath={spacePath}
+              projectPath={projectPath}
+              spaceId={spaceId}
+              actions={actions}
+              onEntryChange={setEntry}
+              onSchemaChange={setSchemaResult}
+            />
+          </PeekScrollSurface>
         ) : null}
       </SheetContent>
     </Sheet>
+  );
+}
+
+function PeekScrollSurface({ children }: { children: ReactNode }) {
+  return (
+    <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+      {children}
+    </div>
   );
 }
 
@@ -195,7 +205,7 @@ function StandardEntryPeek({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-full flex-col">
       <div className="shrink-0 px-6 py-5">
         <EntryIdentityHeader
           title={entry.meta.title}
@@ -240,28 +250,26 @@ function StandardEntryPeek({
         ) : null}
       </div>
       <Separator />
-      <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-        <PlateDocumentEditor
-          bodyOnly
-          pageScroll
-          documentPath={entry.path}
-          documentSpaceId={spaceId}
-          spacePath={spacePath}
-          projectPath={projectPath}
-          bodyOnlyMeta={entry.meta}
-          onDocumentPathChange={(path) => {
-            onEntryChange((current) =>
-              current ? { ...current, path } : current,
-            );
-          }}
-        />
-        <EntrySubpages
-          spacePath={spacePath}
-          projectPath={projectPath}
-          spaceId={spaceId}
-          documentPath={entry.path}
-        />
-      </div>
+      <PlateDocumentEditor
+        bodyOnly
+        pageScroll
+        documentPath={entry.path}
+        documentSpaceId={spaceId}
+        spacePath={spacePath}
+        projectPath={projectPath}
+        bodyOnlyMeta={entry.meta}
+        onDocumentPathChange={(path) => {
+          onEntryChange((current) =>
+            current ? { ...current, path } : current,
+          );
+        }}
+      />
+      <EntrySubpages
+        spacePath={spacePath}
+        projectPath={projectPath}
+        spaceId={spaceId}
+        documentPath={entry.path}
+      />
     </div>
   );
 }
