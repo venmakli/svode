@@ -1058,6 +1058,19 @@ pub fn update_field(
     field: &str,
     value: serde_json::Value,
 ) -> Result<Entry, AppError> {
+    if !matches!(
+        field,
+        "id" | "created" | "updated" | "title" | "icon" | "description" | "cover"
+    ) {
+        let yaml_value = serde_yml::to_value(value.clone())
+            .map_err(|e| invalid_entry_field(format!("{field}: {e}")))?;
+        if let Some(entry) =
+            crate::properties::update_relation_entry_field(space, path, field, yaml_value)?
+        {
+            return Ok(entry);
+        }
+    }
+
     let abs_path = resolve(space, path);
 
     if !abs_path.exists() {
@@ -1133,6 +1146,7 @@ pub fn move_entry(
 
     fs::rename(&abs_from, &abs_to)?;
     crate::properties::apply_schema_defaults_to_entry_tree(space, &new_rel)?;
+    crate::properties::rewrite_relation_paths_for_move(&space.to_string_lossy(), from, &new_rel)?;
 
     // Update backlinks. For folder moves, every .md descendant sits under a
     // new path now — rewrite their inbound links too, not just the folder itself
@@ -1199,6 +1213,7 @@ pub fn nest_entry(
         .unwrap_or(&new_abs)
         .to_string_lossy()
         .to_string();
+    crate::properties::rewrite_relation_paths_for_move(&space.to_string_lossy(), path, &new_rel)?;
 
     // Update backlinks
     if let Some(index) = backlink_index {
@@ -1276,6 +1291,7 @@ pub fn unnest_entry(
         .unwrap_or(&new_abs)
         .to_string_lossy()
         .to_string();
+    crate::properties::rewrite_relation_paths_for_move(&space.to_string_lossy(), path, &new_rel)?;
 
     // Update backlinks
     if let Some(index) = backlink_index {
@@ -1323,6 +1339,7 @@ pub fn convert_entry_to_folder(
     let new_abs = folder_abs.join("README.md");
     fs::rename(&abs_path, &new_abs)?;
     let new_rel = rel_from_abs(space, &new_abs);
+    crate::properties::rewrite_relation_paths_for_move(&space.to_string_lossy(), &path, &new_rel)?;
 
     let parent_rel = Path::new(&path).parent().unwrap_or(Path::new(""));
     let dir_key = dir_key_for(parent_rel);
@@ -1499,6 +1516,7 @@ pub fn convert_entry_to_leaf(
     fs::rename(&readme_abs, &leaf_abs)?;
     let _ = fs::remove_dir_all(folder_abs);
     let new_rel = rel_from_abs(space, &leaf_abs);
+    crate::properties::rewrite_relation_paths_for_move(&space.to_string_lossy(), &path, &new_rel)?;
 
     let parent_rel = Path::new(&path)
         .parent()
@@ -1669,6 +1687,12 @@ pub fn duplicate_entry(space: &Path, file_path: &str) -> Result<Entry, AppError>
         refresh_markdown_identity(&dest_abs, Some(" (copy)"))?;
     }
 
+    crate::properties::rewrite_internal_relation_refs_for_copy(
+        &space.to_string_lossy(),
+        &rel_from_abs(space, &root_source_abs),
+        &rel_from_abs(space, &dest_abs),
+    )?;
+
     let dir_key = rel_from_abs(space, &parent_abs);
     let dir_key = if dir_key.is_empty() {
         ".".to_string()
@@ -1720,6 +1744,9 @@ pub fn delete(
         return Err(AppError::FileNotFound(path.to_string()));
     }
 
+    let deleted_paths = collect_deleted_entry_paths(Path::new(space), &abs_path)?;
+    crate::properties::cascade_clean_deleted_entries(space, &deleted_paths)?;
+
     if abs_path.is_dir() {
         fs::remove_dir_all(&abs_path)?;
     } else {
@@ -1731,6 +1758,19 @@ pub fn delete(
     }
 
     Ok(())
+}
+
+fn collect_deleted_entry_paths(space: &Path, abs_path: &Path) -> Result<Vec<String>, AppError> {
+    if abs_path.is_dir() {
+        let mut files = Vec::new();
+        collect_entry_md_files(abs_path, &mut files)?;
+        Ok(files
+            .into_iter()
+            .map(|file| rel_from_abs(space, &file))
+            .collect())
+    } else {
+        Ok(vec![rel_from_abs(space, abs_path)])
+    }
 }
 
 /// Rename/move an entry on disk.
@@ -1752,6 +1792,7 @@ pub fn rename(space: &str, from: &str, to: &str) -> Result<(), AppError> {
     }
 
     fs::rename(&abs_from, &abs_to)?;
+    crate::properties::rewrite_relation_paths_for_move(space, from, to)?;
 
     // Update order.json: rename entry in parent's order list
     let old_name = Path::new(from)

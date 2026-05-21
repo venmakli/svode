@@ -33,11 +33,18 @@ pub enum PropertyType {
     MultiSelect,
     Status,
     Date,
+    Relation,
     Person,
     Checkbox,
     Url,
     Email,
     Phone,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationLimit {
+    One,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,6 +128,12 @@ pub struct Column {
     pub time_by_default: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub range_by_default: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<RelationLimit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub two_way: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -522,6 +535,124 @@ fn collection_rel(collection_path: &str) -> PathBuf {
     }
 }
 
+fn collection_root_for_schema(collection_path: &str) -> String {
+    let rel = normalize_rel_path(collection_path);
+    if rel.is_empty() { ".".to_string() } else { rel }
+}
+
+fn collection_root_for_fs(collection_path: &str) -> String {
+    let rel = normalize_rel_path(collection_path);
+    if rel == "." { String::new() } else { rel }
+}
+
+fn normalize_collection_path(path: &str) -> Result<String, AppError> {
+    validate_relation_path_shape(path)?;
+    Ok(collection_root_for_schema(path))
+}
+
+fn join_collection_value(collection_path: &str, value: &str) -> String {
+    let collection = collection_root_for_fs(collection_path);
+    if collection.is_empty() {
+        value.to_string()
+    } else {
+        format!("{collection}/{value}")
+    }
+}
+
+fn value_relative_to_collection(
+    collection_path: &str,
+    file_path: &str,
+) -> Result<String, AppError> {
+    let collection = collection_root_for_fs(collection_path);
+    let file = normalize_rel_path(file_path);
+    let value = if collection.is_empty() {
+        file
+    } else {
+        file.strip_prefix(&format!("{collection}/"))
+            .ok_or_else(|| {
+                schema_error(format!(
+                    "entry '{file}' is outside collection '{collection_path}'"
+                ))
+            })?
+            .to_string()
+    };
+    normalize_relation_value_shape(&value)
+}
+
+fn canonicalize_relation_target_value(
+    space: &str,
+    relation: &str,
+    raw_value: &str,
+) -> Result<String, AppError> {
+    let value = normalize_relation_value_shape(raw_value)?;
+    let full = join_collection_value(relation, &value);
+    let abs = Path::new(space).join(&full);
+    let (target_abs, target_rel) = if abs.is_dir() {
+        let readme = abs.join("README.md");
+        if !readme.is_file() {
+            return Err(schema_error(format!(
+                "relation target '{}' has no README.md",
+                full
+            )));
+        }
+        (readme, format!("{full}/README.md"))
+    } else {
+        (abs, full)
+    };
+    if !target_abs.is_file() {
+        return Err(AppError::FileNotFound(target_rel));
+    }
+    let expected = collection_rel(relation);
+    let actual = find_collection_root(Path::new(space), &target_rel).ok_or_else(|| {
+        schema_error(format!(
+            "relation target '{}' is not in a collection",
+            target_rel
+        ))
+    })?;
+    if actual != expected {
+        return Err(schema_error(format!(
+            "relation target '{}' is outside linked collection '{}'",
+            target_rel,
+            collection_root_for_schema(relation)
+        )));
+    }
+    value_relative_to_collection(relation, &target_rel)
+}
+
+fn ensure_compatible_reverse(
+    reverse: &Column,
+    current_collection: &str,
+    current_column: &str,
+) -> Result<(), AppError> {
+    if reverse.type_ != PropertyType::Relation {
+        return Err(schema_error(format!(
+            "reverse column '{}' is not a relation",
+            reverse.name
+        )));
+    }
+    let relation = reverse.relation.as_deref().ok_or_else(|| {
+        schema_error(format!("reverse column '{}' has no relation", reverse.name))
+    })?;
+    if normalize_collection_path(relation)? != collection_root_for_schema(current_collection) {
+        return Err(schema_error(format!(
+            "reverse column '{}' points to '{}', expected '{}'",
+            reverse.name, relation, current_collection
+        )));
+    }
+    if !current_column.is_empty()
+        && reverse
+            .two_way
+            .as_deref()
+            .is_some_and(|paired| paired != current_column)
+    {
+        return Err(schema_error(format!(
+            "reverse column '{}' is paired with another column",
+            reverse.name
+        )));
+    }
+    Ok(())
+}
+
 fn read_schema_at(path: &Path) -> Result<CollectionSchema, AppError> {
     let raw = fs::read_to_string(path)?;
     let mut schema: CollectionSchema =
@@ -558,11 +689,51 @@ fn write_schema(
     let mut schema = schema.clone();
     normalize_schema(&mut schema);
     validate_schema(&schema)?;
+    validate_schema_relations_in_space(space, collection_path, &schema)?;
     let dir = collection_dir(space, collection_path);
     fs::create_dir_all(&dir)?;
     let yaml = serde_yml::to_string(&schema)
         .map_err(|e| schema_error(format!("could not serialize schema: {e}")))?;
     fs::write(dir.join(SCHEMA_FILE), yaml)?;
+    Ok(())
+}
+
+fn validate_schema_relations_in_space(
+    space: &str,
+    collection_path: &str,
+    schema: &CollectionSchema,
+) -> Result<(), AppError> {
+    let current = collection_root_for_schema(collection_path);
+    for column in &schema.columns {
+        if column.type_ != PropertyType::Relation {
+            continue;
+        }
+        let relation = column.relation.as_deref().ok_or_else(|| {
+            schema_error(format!(
+                "relation column '{}' requires relation",
+                column.name
+            ))
+        })?;
+        let relation = normalize_collection_path(relation)?;
+        let target = collection_dir(space, &relation);
+        if !target.is_dir() || !target.join(SCHEMA_FILE).is_file() {
+            return Err(schema_error(format!(
+                "relation column '{}' points to missing collection '{}'",
+                column.name, relation
+            )));
+        }
+        if let Some(reverse_name) = column.two_way.as_deref() {
+            validate_relation_column_name(reverse_name)?;
+            let reverse_schema = read_schema_or_default(space, &relation)?;
+            if let Some(reverse) = reverse_schema
+                .columns
+                .iter()
+                .find(|candidate| candidate.name == reverse_name)
+            {
+                ensure_compatible_reverse(reverse, &current, &column.name)?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -576,6 +747,635 @@ pub fn schema_mutation_paths(
         paths.extend(collection_markdown_files(space, collection_path)?);
     }
     Ok(paths)
+}
+
+pub fn schema_column_mutation_paths(
+    space: &str,
+    collection_path: &str,
+    column: &Column,
+    include_markdown: bool,
+) -> Result<Vec<PathBuf>, AppError> {
+    let mut paths = schema_mutation_paths(space, collection_path, include_markdown)?;
+    extend_relation_side_effect_paths(space, collection_path, column, &mut paths)?;
+    Ok(paths)
+}
+
+fn extend_relation_side_effect_paths(
+    space: &str,
+    collection_path: &str,
+    column: &Column,
+    paths: &mut Vec<PathBuf>,
+) -> Result<(), AppError> {
+    if column.type_ != PropertyType::Relation || column.two_way.is_none() {
+        return Ok(());
+    }
+    let Some(relation) = column.relation.as_deref() else {
+        return Ok(());
+    };
+    let relation = normalize_collection_path(relation)?;
+    paths.push(collection_dir(space, &relation).join(SCHEMA_FILE));
+    paths.extend(collection_markdown_files(space, collection_path)?);
+    paths.extend(collection_markdown_files(space, &relation)?);
+    Ok(())
+}
+
+fn normalize_column_relation_paths(column: &mut Column) -> Result<(), AppError> {
+    if column.type_ != PropertyType::Relation {
+        column.relation = None;
+        column.limit = None;
+        column.two_way = None;
+        return Ok(());
+    }
+    if let Some(relation) = column.relation.take() {
+        column.relation = Some(normalize_collection_path(&relation)?);
+    }
+    column.two_way = column.two_way.take().and_then(|value| {
+        let trimmed = value.trim().to_string();
+        (!trimmed.is_empty()).then_some(trimmed)
+    });
+    Ok(())
+}
+
+fn ensure_two_way_schema_and_values(
+    space: &str,
+    collection_path: &str,
+    column: &Column,
+) -> Result<(), AppError> {
+    if column.type_ != PropertyType::Relation {
+        return Ok(());
+    }
+    let Some(reverse_name) = column.two_way.as_deref() else {
+        return Ok(());
+    };
+    let relation = column.relation.as_deref().ok_or_else(|| {
+        schema_error(format!(
+            "relation column '{}' requires relation",
+            column.name
+        ))
+    })?;
+    let source_collection = collection_root_for_schema(collection_path);
+    let mut reverse_schema = read_schema_or_default(space, relation)?;
+    if let Some(existing) = reverse_schema
+        .columns
+        .iter_mut()
+        .find(|existing| existing.name == reverse_name)
+    {
+        ensure_compatible_reverse(existing, &source_collection, &column.name)?;
+        existing.two_way = Some(column.name.clone());
+    } else {
+        reverse_schema.columns.push(Column {
+            name: reverse_name.to_string(),
+            type_: PropertyType::Relation,
+            default: None,
+            options: None,
+            display: None,
+            min: None,
+            max: None,
+            color: None,
+            time_by_default: None,
+            range_by_default: None,
+            relation: Some(source_collection.clone()),
+            limit: None,
+            two_way: Some(column.name.clone()),
+        });
+    }
+    write_schema(space, relation, &reverse_schema)?;
+    materialize_two_way_reverse_values(space, collection_path, column)
+}
+
+fn materialize_two_way_reverse_values(
+    space: &str,
+    collection_path: &str,
+    column: &Column,
+) -> Result<(), AppError> {
+    let Some(reverse_name) = column.two_way.as_deref() else {
+        return Ok(());
+    };
+    let relation = column.relation.as_deref().ok_or_else(|| {
+        schema_error(format!(
+            "relation column '{}' requires relation",
+            column.name
+        ))
+    })?;
+    let source_collection = collection_root_for_schema(collection_path);
+    for file in collection_markdown_files(space, collection_path)? {
+        let rel = file
+            .strip_prefix(space)
+            .unwrap_or(&file)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let source_value = value_relative_to_collection(&source_collection, &rel)?;
+        let values = read_relation_field_values_from_file(&file, column)?;
+        sync_reverse_relation_values(
+            space,
+            relation,
+            reverse_name,
+            &source_collection,
+            &source_value,
+            &[],
+            &values,
+        )?;
+    }
+    Ok(())
+}
+
+fn update_reverse_pair_name(
+    space: &str,
+    collection_path: &str,
+    old_column: &Column,
+    new_name: &str,
+) -> Result<(), AppError> {
+    let Some(reverse_name) = old_column.two_way.as_deref() else {
+        return Ok(());
+    };
+    let Some(relation) = old_column.relation.as_deref() else {
+        return Ok(());
+    };
+    let mut reverse_schema = read_schema_or_default(space, relation)?;
+    if let Some(reverse) = reverse_schema
+        .columns
+        .iter_mut()
+        .find(|column| column.name == reverse_name && column.type_ == PropertyType::Relation)
+    {
+        ensure_compatible_reverse(
+            reverse,
+            &collection_root_for_schema(collection_path),
+            &old_column.name,
+        )?;
+        reverse.two_way = Some(new_name.to_string());
+        write_schema(space, relation, &reverse_schema)?;
+    }
+    Ok(())
+}
+
+fn detach_two_way_relation(
+    space: &str,
+    _collection_path: &str,
+    column: &Column,
+    delete_reverse_column: bool,
+) -> Result<(), AppError> {
+    let Some(reverse_name) = column.two_way.as_deref() else {
+        return Ok(());
+    };
+    let Some(relation) = column.relation.as_deref() else {
+        return Ok(());
+    };
+    if delete_reverse_column {
+        let mut reverse_schema = read_schema_or_default(space, relation)?;
+        let before = reverse_schema.columns.len();
+        reverse_schema
+            .columns
+            .retain(|candidate| candidate.name != reverse_name);
+        if reverse_schema.columns.len() != before {
+            strip_string_refs_in_views(&mut reverse_schema.views, reverse_name);
+            write_schema(space, relation, &reverse_schema)?;
+        }
+    } else {
+        let mut reverse_schema = read_schema_or_default(space, relation)?;
+        if let Some(reverse) = reverse_schema
+            .columns
+            .iter_mut()
+            .find(|candidate| candidate.name == reverse_name)
+        {
+            reverse.two_way = None;
+            write_schema(space, relation, &reverse_schema)?;
+        }
+    }
+    for file in collection_markdown_files(space, relation)? {
+        mutate_frontmatter(&file, |meta| {
+            meta.extra.remove(reverse_name);
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+pub fn cascade_clean_deleted_entries(
+    space: &str,
+    deleted_paths: &[String],
+) -> Result<(), AppError> {
+    if deleted_paths.is_empty() {
+        return Ok(());
+    }
+    let mut touched = Vec::new();
+    for collection in list_collections(space)? {
+        touched.extend(collection_markdown_files(space, &collection.path)?);
+    }
+    with_rollback(touched, || {
+        for collection in list_collections(space)? {
+            let schema = read_schema_or_default(space, &collection.path)?;
+            let relation_columns: Vec<Column> = schema
+                .columns
+                .iter()
+                .filter(|column| column.type_ == PropertyType::Relation)
+                .cloned()
+                .collect();
+            if relation_columns.is_empty() {
+                continue;
+            }
+            for file in collection_markdown_files(space, &collection.path)? {
+                mutate_frontmatter(&file, |meta| {
+                    for column in &relation_columns {
+                        let Some(relation) = column.relation.as_deref() else {
+                            continue;
+                        };
+                        let deleted_values = deleted_paths
+                            .iter()
+                            .filter_map(|path| value_relative_to_collection(relation, path).ok())
+                            .collect::<HashSet<_>>();
+                        if deleted_values.is_empty() {
+                            continue;
+                        }
+                        let Some(existing) = meta.extra.get(&column.name).cloned() else {
+                            continue;
+                        };
+                        let mut values = relation_values_from_value(column, &existing)?;
+                        let before = values.len();
+                        values.retain(|value| !deleted_values.contains(value));
+                        if values.len() != before {
+                            let next = relation_value_from_values(column, values);
+                            if next.is_null()
+                                || next
+                                    .as_sequence()
+                                    .is_some_and(|sequence| sequence.is_empty())
+                            {
+                                meta.extra.remove(&column.name);
+                            } else {
+                                meta.extra.insert(column.name.clone(), next);
+                            }
+                        }
+                    }
+                    Ok(())
+                })?;
+            }
+        }
+        Ok(())
+    })
+}
+
+pub fn rewrite_relation_paths_for_move(
+    space: &str,
+    old_path: &str,
+    new_path: &str,
+) -> Result<(), AppError> {
+    let mut old_path = normalize_rel_path(old_path);
+    let mut new_path = normalize_rel_path(new_path);
+    if old_path == new_path {
+        return Ok(());
+    }
+
+    let new_abs = Path::new(space).join(&new_path);
+    let collection_rename = new_abs.is_dir() && new_abs.join(SCHEMA_FILE).is_file();
+    let old_collection_path = old_path.clone();
+    let new_collection_path = new_path.clone();
+    if new_abs.is_dir() && new_abs.join("README.md").is_file() {
+        old_path = format!("{old_path}/README.md");
+        new_path = format!("{new_path}/README.md");
+    }
+    let mut touched = Vec::new();
+    for collection in list_collections(space)? {
+        touched.push(collection_dir(space, &collection.path).join(SCHEMA_FILE));
+        touched.extend(collection_markdown_files(space, &collection.path)?);
+    }
+
+    with_rollback(touched, || {
+        if collection_rename {
+            rewrite_relation_collection_paths(space, &old_collection_path, &new_collection_path)?;
+        }
+
+        let Some((_, new_root)) = resolve_collection_schema_result(space, &new_path)? else {
+            return Ok(());
+        };
+        let relation = rel_path_string(&new_root);
+        let old_value = match value_relative_to_collection(&relation, &old_path) {
+            Ok(value) => value,
+            Err(_) => return Ok(()),
+        };
+        let new_value = value_relative_to_collection(&relation, &new_path)?;
+        rewrite_relation_value_refs(space, &relation, &old_value, &new_value)
+    })
+}
+
+pub fn rewrite_internal_relation_refs_for_copy(
+    space: &str,
+    source_root: &str,
+    dest_root: &str,
+) -> Result<(), AppError> {
+    let space_path = Path::new(space);
+    let source_rel = normalize_rel_path(source_root);
+    let dest_rel = normalize_rel_path(dest_root);
+    let source_abs = if source_rel.is_empty() || source_rel == "." {
+        space_path.to_path_buf()
+    } else {
+        space_path.join(&source_rel)
+    };
+    let dest_abs = if dest_rel.is_empty() || dest_rel == "." {
+        space_path.to_path_buf()
+    } else {
+        space_path.join(&dest_rel)
+    };
+    if !source_abs.exists() || !dest_abs.exists() {
+        return Ok(());
+    }
+
+    let mut file_map = HashMap::new();
+    collect_copied_markdown_path_map(space_path, &source_abs, &dest_abs, &mut file_map)?;
+    let mut schema_dirs = Vec::new();
+    collect_copied_collection_dirs(space_path, &source_abs, &dest_abs, &mut schema_dirs)?;
+
+    if file_map.is_empty() && schema_dirs.is_empty() {
+        return Ok(());
+    }
+
+    let collection_map = schema_dirs
+        .iter()
+        .map(|(old_collection, new_collection, _)| (old_collection.clone(), new_collection.clone()))
+        .collect::<HashMap<_, _>>();
+    let mut touched = file_map
+        .values()
+        .map(|path| space_path.join(path))
+        .collect::<Vec<_>>();
+    touched.extend(schema_dirs.iter().map(|(_, _, dir)| dir.join(SCHEMA_FILE)));
+
+    with_rollback(touched, || {
+        let changed_collections =
+            rewrite_copied_schema_relation_roots(space, &schema_dirs, &collection_map)?;
+        rewrite_copied_relation_values(space, &file_map)?;
+        for collection_path in changed_collections {
+            let schema = read_schema_or_default(space, &collection_path)?;
+            validate_schema_relations_in_space(space, &collection_path, &schema)?;
+        }
+        Ok(())
+    })
+}
+
+fn collect_copied_markdown_path_map(
+    space: &Path,
+    source_abs: &Path,
+    dest_abs: &Path,
+    out: &mut HashMap<String, String>,
+) -> Result<(), AppError> {
+    if source_abs.is_file() {
+        if dest_abs.is_file() && is_markdown_path(source_abs) && is_markdown_path(dest_abs) {
+            out.insert(
+                copy_rel_from_abs(space, source_abs),
+                copy_rel_from_abs(space, dest_abs),
+            );
+        }
+        return Ok(());
+    }
+
+    if !source_abs.is_dir() || !dest_abs.is_dir() {
+        return Ok(());
+    }
+
+    for item in fs::read_dir(source_abs)? {
+        let item = item?;
+        let source_child = item.path();
+        let dest_child = dest_abs.join(item.file_name());
+        if source_child.is_dir() {
+            collect_copied_markdown_path_map(space, &source_child, &dest_child, out)?;
+        } else if source_child.is_file()
+            && dest_child.is_file()
+            && is_markdown_path(&source_child)
+            && is_markdown_path(&dest_child)
+        {
+            out.insert(
+                copy_rel_from_abs(space, &source_child),
+                copy_rel_from_abs(space, &dest_child),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn collect_copied_collection_dirs(
+    space: &Path,
+    source_abs: &Path,
+    dest_abs: &Path,
+    out: &mut Vec<(String, String, PathBuf)>,
+) -> Result<(), AppError> {
+    if !source_abs.is_dir() || !dest_abs.is_dir() {
+        return Ok(());
+    }
+
+    if source_abs.join(SCHEMA_FILE).is_file() && dest_abs.join(SCHEMA_FILE).is_file() {
+        out.push((
+            copy_rel_from_abs(space, source_abs),
+            copy_rel_from_abs(space, dest_abs),
+            dest_abs.to_path_buf(),
+        ));
+    }
+
+    for item in fs::read_dir(source_abs)? {
+        let item = item?;
+        let source_child = item.path();
+        if source_child.is_dir() {
+            collect_copied_collection_dirs(
+                space,
+                &source_child,
+                &dest_abs.join(item.file_name()),
+                out,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn rewrite_copied_schema_relation_roots(
+    space: &str,
+    schema_dirs: &[(String, String, PathBuf)],
+    collection_map: &HashMap<String, String>,
+) -> Result<Vec<String>, AppError> {
+    let mut changed_collections = Vec::new();
+    for (_, new_collection, _) in schema_dirs {
+        let mut schema = read_schema_or_default(space, new_collection)?;
+        let mut changed = false;
+        for column in &mut schema.columns {
+            if column.type_ != PropertyType::Relation {
+                continue;
+            }
+            let Some(relation) = column.relation.as_deref() else {
+                continue;
+            };
+            let relation = normalize_collection_path(relation)?;
+            if let Some(new_relation) = collection_map.get(&relation) {
+                column.relation = Some(new_relation.clone());
+                changed = true;
+            }
+        }
+        if changed {
+            write_schema_without_relation_validation(space, new_collection, &schema)?;
+            changed_collections.push(new_collection.clone());
+        }
+    }
+    Ok(changed_collections)
+}
+
+fn rewrite_copied_relation_values(
+    space: &str,
+    file_map: &HashMap<String, String>,
+) -> Result<(), AppError> {
+    let mut dest_files = file_map.values().cloned().collect::<Vec<_>>();
+    dest_files.sort();
+    dest_files.dedup();
+
+    for dest_rel in dest_files {
+        let Some((schema, _)) = resolve_collection_schema_result(space, &dest_rel)? else {
+            continue;
+        };
+        let columns = schema
+            .columns
+            .iter()
+            .filter(|column| column.type_ == PropertyType::Relation)
+            .cloned()
+            .collect::<Vec<_>>();
+        if columns.is_empty() {
+            continue;
+        }
+
+        let dest_abs = Path::new(space).join(&dest_rel);
+        mutate_frontmatter(&dest_abs, |meta| {
+            for column in &columns {
+                let Some(relation) = column.relation.as_deref() else {
+                    continue;
+                };
+                let relation = normalize_collection_path(relation)?;
+                let Some(existing) = meta.extra.get(&column.name).cloned() else {
+                    continue;
+                };
+                let mut values = relation_values_from_value(column, &existing)?;
+                let mut changed = false;
+                for value in &mut values {
+                    let old_full = join_collection_value(&relation, value);
+                    if let Some(new_full) = file_map.get(&old_full) {
+                        *value = value_relative_to_collection(&relation, new_full)?;
+                        changed = true;
+                    }
+                }
+                if changed {
+                    let mut seen = HashSet::new();
+                    values.retain(|value| seen.insert(value.clone()));
+                    let next = relation_value_from_values(column, values);
+                    if next.is_null()
+                        || next
+                            .as_sequence()
+                            .is_some_and(|sequence| sequence.is_empty())
+                    {
+                        meta.extra.remove(&column.name);
+                    } else {
+                        meta.extra.insert(column.name.clone(), next);
+                    }
+                }
+            }
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+fn write_schema_without_relation_validation(
+    space: &str,
+    collection_path: &str,
+    schema: &CollectionSchema,
+) -> Result<(), AppError> {
+    let mut schema = schema.clone();
+    normalize_schema(&mut schema);
+    validate_schema(&schema)?;
+    let dir = collection_dir(space, collection_path);
+    fs::create_dir_all(&dir)?;
+    let yaml = serde_yml::to_string(&schema)
+        .map_err(|e| schema_error(format!("could not serialize schema: {e}")))?;
+    fs::write(dir.join(SCHEMA_FILE), yaml)?;
+    Ok(())
+}
+
+fn is_markdown_path(path: &Path) -> bool {
+    path.extension().and_then(|ext| ext.to_str()) == Some("md")
+}
+
+fn copy_rel_from_abs(space: &Path, path: &Path) -> String {
+    let rel = path
+        .strip_prefix(space)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    if rel.is_empty() { ".".to_string() } else { rel }
+}
+
+fn rewrite_relation_collection_paths(
+    space: &str,
+    old_collection: &str,
+    new_collection: &str,
+) -> Result<(), AppError> {
+    let old_collection = collection_root_for_schema(old_collection);
+    let new_collection = collection_root_for_schema(new_collection);
+    for collection in list_collections(space)? {
+        let mut schema = read_schema_or_default(space, &collection.path)?;
+        let mut changed = false;
+        for column in &mut schema.columns {
+            if column.type_ == PropertyType::Relation
+                && column.relation.as_deref() == Some(old_collection.as_str())
+            {
+                column.relation = Some(new_collection.clone());
+                changed = true;
+            }
+        }
+        if changed {
+            write_schema(space, &collection.path, &schema)?;
+        }
+    }
+    Ok(())
+}
+
+fn rewrite_relation_value_refs(
+    space: &str,
+    relation: &str,
+    old_value: &str,
+    new_value: &str,
+) -> Result<(), AppError> {
+    for collection in list_collections(space)? {
+        let schema = read_schema_or_default(space, &collection.path)?;
+        let columns: Vec<Column> = schema
+            .columns
+            .iter()
+            .filter(|column| {
+                column.type_ == PropertyType::Relation
+                    && column.relation.as_deref() == Some(relation)
+            })
+            .cloned()
+            .collect();
+        if columns.is_empty() {
+            continue;
+        }
+        for file in collection_markdown_files(space, &collection.path)? {
+            mutate_frontmatter(&file, |meta| {
+                for column in &columns {
+                    let Some(existing) = meta.extra.get(&column.name).cloned() else {
+                        continue;
+                    };
+                    let mut values = relation_values_from_value(column, &existing)?;
+                    let mut changed = false;
+                    for value in &mut values {
+                        if value == old_value {
+                            *value = new_value.to_string();
+                            changed = true;
+                        }
+                    }
+                    if changed {
+                        let mut seen = HashSet::new();
+                        values.retain(|value| seen.insert(value.clone()));
+                        meta.extra.insert(
+                            column.name.clone(),
+                            relation_value_from_values(column, values),
+                        );
+                    }
+                }
+                Ok(())
+            })?;
+        }
+    }
+    Ok(())
 }
 
 pub fn validate_schema(schema: &CollectionSchema) -> Result<(), AppError> {
@@ -612,6 +1412,18 @@ pub fn validate_schema(schema: &CollectionSchema) -> Result<(), AppError> {
                     schema_error(format!("status column '{}' requires options", column.name))
                 })?;
                 validate_options(&column.name, options, true)?;
+            }
+            PropertyType::Relation => {
+                let relation = column.relation.as_deref().ok_or_else(|| {
+                    schema_error(format!(
+                        "relation column '{}' requires relation",
+                        column.name
+                    ))
+                })?;
+                validate_relation_path_shape(relation)?;
+                if let Some(two_way) = column.two_way.as_deref() {
+                    validate_relation_column_name(two_way)?;
+                }
             }
             _ => {}
         }
@@ -1224,6 +2036,7 @@ fn field_type(
             PropertyType::Date => FieldType::Date,
             PropertyType::Person => FieldType::Person,
             PropertyType::Checkbox => FieldType::Checkbox,
+            PropertyType::Relation => FieldType::Multi,
         });
     }
     match field {
@@ -1301,6 +2114,243 @@ pub fn validate_entry_field_value(
     validate_property_value(column, value)
 }
 
+pub fn update_relation_entry_field(
+    space: &str,
+    file_path: &str,
+    field: &str,
+    value: Value,
+) -> Result<Option<entry::Entry>, AppError> {
+    let Some((schema, collection_root)) = resolve_collection_schema_result(space, file_path)?
+    else {
+        return Ok(None);
+    };
+    let Some(column) = schema.columns.iter().find(|column| column.name == field) else {
+        return Ok(None);
+    };
+    if column.type_ != PropertyType::Relation {
+        return Ok(None);
+    }
+
+    let source_path = normalize_rel_path(file_path);
+    let source_abs = Path::new(space).join(&source_path);
+    let relation = column
+        .relation
+        .as_deref()
+        .ok_or_else(|| schema_error(format!("relation column '{field}' requires relation")))?;
+    let normalized = normalize_relation_update_value(space, column, relation, &value)?;
+    let reverse_name = column.two_way.clone();
+    let source_collection = rel_path_string(&collection_root);
+    let source_value = value_relative_to_collection(&source_collection, &source_path)?;
+
+    let mut touched = vec![source_abs.clone()];
+    if reverse_name.is_some() {
+        let old_values = read_relation_field_values_from_file(&source_abs, column)?;
+        let new_values = relation_values_from_value(column, &normalized)?;
+        for value in old_values.iter().chain(new_values.iter()) {
+            touched.push(Path::new(space).join(join_collection_value(relation, value)));
+        }
+    }
+
+    with_rollback(touched, || {
+        let raw = fs::read_to_string(&source_abs)?;
+        let Some((mut meta, body)) = frontmatter::try_parse(&raw)? else {
+            return Err(AppError::FrontmatterParse(
+                "relation fields require frontmatter".to_string(),
+            ));
+        };
+        let old_values =
+            relation_values_from_value(column, meta.extra.get(field).unwrap_or(&Value::Null))?;
+        let new_values = relation_values_from_value(column, &normalized)?;
+        if let Some(reverse_name) = reverse_name.as_deref() {
+            sync_reverse_relation_values(
+                space,
+                relation,
+                reverse_name,
+                &source_collection,
+                &source_value,
+                &old_values,
+                &new_values,
+            )?;
+        }
+        if normalized.is_null()
+            || normalized
+                .as_sequence()
+                .is_some_and(|sequence| sequence.is_empty())
+        {
+            meta.extra.remove(field);
+        } else {
+            meta.extra.insert(field.to_string(), normalized);
+        }
+        fs::write(&source_abs, frontmatter::serialize(&meta, &body))?;
+        Ok(Some(entry::Entry {
+            meta,
+            body,
+            path: source_path.clone(),
+        }))
+    })
+}
+
+fn normalize_relation_update_value(
+    space: &str,
+    column: &Column,
+    relation: &str,
+    value: &Value,
+) -> Result<Value, AppError> {
+    if value.is_null() {
+        return Ok(Value::Null);
+    }
+    if column.limit == Some(RelationLimit::One) {
+        let raw = value.as_str().ok_or_else(|| {
+            schema_error(format!(
+                "{} must be a relation path string or null",
+                column.name
+            ))
+        })?;
+        return canonicalize_relation_target_value(space, relation, raw).map(Value::String);
+    }
+
+    let raw_values: Vec<String> = if let Some(raw) = value.as_str() {
+        vec![raw.to_string()]
+    } else {
+        value
+            .as_sequence()
+            .ok_or_else(|| {
+                schema_error(format!(
+                    "{} must be a relation path string or array",
+                    column.name
+                ))
+            })?
+            .iter()
+            .map(|item| {
+                item.as_str().map(ToOwned::to_owned).ok_or_else(|| {
+                    schema_error(format!("{} must contain only strings", column.name))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let mut seen = HashSet::new();
+    let mut normalized = Vec::new();
+    for raw in raw_values {
+        let value = canonicalize_relation_target_value(space, relation, &raw)?;
+        if seen.insert(value.clone()) {
+            normalized.push(Value::String(value));
+        }
+    }
+    Ok(Value::Sequence(normalized))
+}
+
+fn read_relation_field_values_from_file(
+    path: &Path,
+    column: &Column,
+) -> Result<Vec<String>, AppError> {
+    let raw = fs::read_to_string(path)?;
+    let Some((meta, _)) = frontmatter::try_parse(&raw)? else {
+        return Ok(Vec::new());
+    };
+    relation_values_from_value(column, meta.extra.get(&column.name).unwrap_or(&Value::Null))
+}
+
+fn relation_values_from_value(column: &Column, value: &Value) -> Result<Vec<String>, AppError> {
+    validate_relation_value_shape(column, value)
+}
+
+fn sync_reverse_relation_values(
+    space: &str,
+    target_collection: &str,
+    reverse_name: &str,
+    source_collection: &str,
+    source_value: &str,
+    old_values: &[String],
+    new_values: &[String],
+) -> Result<(), AppError> {
+    let old: HashSet<&str> = old_values.iter().map(String::as_str).collect();
+    let new: HashSet<&str> = new_values.iter().map(String::as_str).collect();
+    for removed in old.difference(&new) {
+        let target_path = join_collection_value(target_collection, removed);
+        mutate_relation_reverse_file(
+            space,
+            &target_path,
+            reverse_name,
+            source_collection,
+            source_value,
+            false,
+        )?;
+    }
+    for added in new.difference(&old) {
+        let target_path = join_collection_value(target_collection, added);
+        mutate_relation_reverse_file(
+            space,
+            &target_path,
+            reverse_name,
+            source_collection,
+            source_value,
+            true,
+        )?;
+    }
+    Ok(())
+}
+
+fn mutate_relation_reverse_file(
+    space: &str,
+    target_path: &str,
+    reverse_name: &str,
+    source_collection: &str,
+    source_value: &str,
+    add: bool,
+) -> Result<(), AppError> {
+    let target_abs = Path::new(space).join(target_path);
+    if !target_abs.is_file() {
+        return Ok(());
+    }
+    let Some((target_schema, _)) = resolve_collection_schema_result(space, target_path)? else {
+        return Ok(());
+    };
+    let Some(reverse_column) = target_schema
+        .columns
+        .iter()
+        .find(|column| column.name == reverse_name && column.type_ == PropertyType::Relation)
+    else {
+        return Ok(());
+    };
+    ensure_compatible_reverse(reverse_column, source_collection, "")?;
+    mutate_frontmatter(&target_abs, |meta| {
+        let mut values = relation_values_from_value(
+            reverse_column,
+            meta.extra.get(reverse_name).unwrap_or(&Value::Null),
+        )?;
+        if add {
+            if !values.iter().any(|value| value == source_value) {
+                values.push(source_value.to_string());
+            }
+        } else {
+            values.retain(|value| value != source_value);
+        }
+        let next = relation_value_from_values(reverse_column, values);
+        if next.is_null()
+            || next
+                .as_sequence()
+                .is_some_and(|sequence| sequence.is_empty())
+        {
+            meta.extra.remove(reverse_name);
+        } else {
+            meta.extra.insert(reverse_name.to_string(), next);
+        }
+        Ok(())
+    })
+}
+
+fn relation_value_from_values(column: &Column, values: Vec<String>) -> Value {
+    if column.limit == Some(RelationLimit::One) {
+        values
+            .into_iter()
+            .next()
+            .map(Value::String)
+            .unwrap_or(Value::Null)
+    } else {
+        Value::Sequence(values.into_iter().map(Value::String).collect())
+    }
+}
+
 pub fn validate_property_value(column: &Column, value: &Value) -> Result<(), AppError> {
     if value.is_null() {
         return Ok(());
@@ -1346,6 +2396,7 @@ pub fn validate_property_value(column: &Column, value: &Value) -> Result<(), App
         PropertyType::Person | PropertyType::Url | PropertyType::Email | PropertyType::Phone => {
             expect_string_value(&column.name, value).map(|_| ())
         }
+        PropertyType::Relation => validate_relation_value_shape(column, value).map(|_| ()),
         PropertyType::Checkbox => {
             if value.as_bool().is_some() {
                 Ok(())
@@ -1360,6 +2411,141 @@ fn expect_string_value<'a>(field: &str, value: &'a Value) -> Result<&'a str, App
     value
         .as_str()
         .ok_or_else(|| schema_error(format!("{field} must be a string")))
+}
+
+fn validate_relation_column_name(name: &str) -> Result<(), AppError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(schema_error("two_way column name cannot be empty"));
+    }
+    if RESERVED_FIELDS.contains(&trimmed) {
+        return Err(schema_error(format!(
+            "two_way column name '{trimmed}' is reserved"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_relation_path_shape(path: &str) -> Result<(), AppError> {
+    let normalized = normalize_rel_path(path);
+    if normalized.is_empty() {
+        return Err(schema_error("relation path cannot be empty"));
+    }
+    if path.starts_with('/') || path.contains('\\') {
+        return Err(schema_error(
+            "relation path must be space-relative and use '/'",
+        ));
+    }
+    if normalized
+        .split('/')
+        .any(|part| part.is_empty() || part == "." || part == "..")
+        && normalized != "."
+    {
+        return Err(schema_error(
+            "relation path cannot contain empty, '.' or '..' segments",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_relation_value_shape(column: &Column, value: &Value) -> Result<Vec<String>, AppError> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+
+    if column.limit == Some(RelationLimit::One) {
+        let raw = value.as_str().ok_or_else(|| {
+            schema_error(format!(
+                "{} must be a relation path string or null",
+                column.name
+            ))
+        })?;
+        return Ok(vec![normalize_relation_value_shape(raw)?]);
+    }
+
+    if let Some(raw) = value.as_str() {
+        return Ok(vec![normalize_relation_value_shape(raw)?]);
+    }
+
+    let sequence = value.as_sequence().ok_or_else(|| {
+        schema_error(format!(
+            "{} must be an array of relation path strings",
+            column.name
+        ))
+    })?;
+    let mut seen = HashSet::new();
+    let mut values = Vec::new();
+    for item in sequence {
+        let raw = item.as_str().ok_or_else(|| {
+            schema_error(format!(
+                "{} must contain only relation path strings",
+                column.name
+            ))
+        })?;
+        let normalized = normalize_relation_value_shape(raw)?;
+        if seen.insert(normalized.clone()) {
+            values.push(normalized);
+        }
+    }
+    Ok(values)
+}
+
+fn enforce_relation_limit_one_existing_values(
+    space: &str,
+    collection_path: &str,
+    column: &Column,
+) -> Result<(), AppError> {
+    if column.type_ != PropertyType::Relation || column.limit != Some(RelationLimit::One) {
+        return Ok(());
+    }
+    let mut many_column = column.clone();
+    many_column.limit = None;
+    for file in collection_markdown_files(space, collection_path)? {
+        mutate_frontmatter(&file, |meta| {
+            let existing = meta.extra.get(&column.name).cloned().unwrap_or(Value::Null);
+            let values = relation_values_from_value(&many_column, &existing)?;
+            if values.len() > 1 {
+                let rel = file
+                    .strip_prefix(space)
+                    .unwrap_or(&file)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                return Err(schema_error(format!(
+                    "relation column '{}' cannot be limited to one item while '{}' has {} values",
+                    column.name,
+                    rel,
+                    values.len()
+                )));
+            }
+            let next = relation_value_from_values(column, values);
+            if next.is_null() {
+                meta.extra.remove(&column.name);
+            } else {
+                meta.extra.insert(column.name.clone(), next);
+            }
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+fn normalize_relation_value_shape(raw: &str) -> Result<String, AppError> {
+    if raw.starts_with('/') || raw.contains('\\') {
+        return Err(schema_error("relation value must be relative and use '/'"));
+    }
+    let normalized = normalize_rel_path(raw);
+    if normalized.is_empty() || normalized == "." {
+        return Err(schema_error("relation value cannot be empty"));
+    }
+    if normalized
+        .split('/')
+        .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err(schema_error(
+            "relation value cannot contain empty, '.' or '..' segments",
+        ));
+    }
+    Ok(normalized)
 }
 
 fn option_names(column: &Column) -> HashSet<&str> {
@@ -1577,8 +2763,9 @@ pub fn add_schema_column(
     if column.type_ == PropertyType::Status && column.options.is_none() {
         column.options = Some(default_status_options());
     }
-    let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
-    with_rollback(vec![schema_path], || {
+    let mut touched = vec![collection_dir(space, collection_path).join(SCHEMA_FILE)];
+    extend_relation_side_effect_paths(space, collection_path, &column, &mut touched)?;
+    with_rollback(touched, || {
         let mut schema = read_schema_or_default(space, collection_path)?;
         if schema
             .columns
@@ -1590,8 +2777,10 @@ pub fn add_schema_column(
                 column.name
             )));
         }
-        schema.columns.push(column);
+        normalize_column_relation_paths(&mut column)?;
+        schema.columns.push(column.clone());
         write_schema(space, collection_path, &schema)?;
+        ensure_two_way_schema_and_values(space, collection_path, &column)?;
         Ok(schema)
     })
 }
@@ -1608,9 +2797,15 @@ pub fn change_schema_type(
     touched.extend(collection_markdown_files(space, collection_path)?);
     with_rollback(touched, || {
         let mut schema = read_schema_or_default(space, collection_path)?;
+        let old_column = schema
+            .columns
+            .iter()
+            .find(|column| column.name == column_name)
+            .cloned();
         let column = find_column_mut(&mut schema, column_name)?;
         column.type_ = new_type;
         normalize_column_for_new_type(column, conversion_strategy.as_ref())?;
+        normalize_column_relation_paths(column)?;
         let column_snapshot = column.clone();
         validate_schema(&schema)?;
 
@@ -1624,7 +2819,16 @@ pub fn change_schema_type(
             })?;
         }
 
+        enforce_relation_limit_one_existing_values(space, collection_path, &column_snapshot)?;
         write_schema(space, collection_path, &schema)?;
+        if old_column
+            .as_ref()
+            .is_some_and(|old| old.type_ == PropertyType::Relation && old.two_way.is_some())
+            && column_snapshot.type_ != PropertyType::Relation
+        {
+            detach_two_way_relation(space, collection_path, old_column.as_ref().unwrap(), true)?;
+        }
+        ensure_two_way_schema_and_values(space, collection_path, &column_snapshot)?;
         Ok(schema)
     })
 }
@@ -1643,6 +2847,7 @@ pub fn rename_schema_column(
         if schema.columns.iter().any(|column| column.name == new_name) {
             return Err(schema_error(format!("column '{new_name}' already exists")));
         }
+        let old_column = find_column_mut(&mut schema, old_name)?.clone();
         find_column_mut(&mut schema, old_name)?.name = new_name.to_string();
         replace_string_refs_in_views(&mut schema.views, old_name, new_name);
         validate_schema(&schema)?;
@@ -1660,6 +2865,9 @@ pub fn rename_schema_column(
         }
 
         write_schema(space, collection_path, &schema)?;
+        if old_column.type_ == PropertyType::Relation {
+            update_reverse_pair_name(space, collection_path, &old_column, new_name)?;
+        }
         Ok(schema)
     })
 }
@@ -1670,13 +2878,39 @@ pub fn update_schema_column(
     column_name: &str,
     patch: Value,
 ) -> Result<CollectionSchema, AppError> {
-    let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
-    with_rollback(vec![schema_path], || {
+    let mut touched = vec![collection_dir(space, collection_path).join(SCHEMA_FILE)];
+    {
+        let schema = read_schema_or_default(space, collection_path)?;
+        if let Some(column) = schema
+            .columns
+            .iter()
+            .find(|column| column.name == column_name)
+        {
+            if column.type_ == PropertyType::Relation {
+                touched.extend(collection_markdown_files(space, collection_path)?);
+            }
+            extend_relation_side_effect_paths(space, collection_path, column, &mut touched)?;
+        }
+    }
+    with_rollback(touched, || {
         let mut schema = read_schema_or_default(space, collection_path)?;
+        let old_column = find_column_mut(&mut schema, column_name)?.clone();
         let column = find_column_mut(&mut schema, column_name)?;
         apply_column_patch(column, patch)?;
+        normalize_column_relation_paths(column)?;
+        let new_column = column.clone();
         validate_schema(&schema)?;
+        enforce_relation_limit_one_existing_values(space, collection_path, &new_column)?;
         write_schema(space, collection_path, &schema)?;
+        if old_column.type_ == PropertyType::Relation
+            && old_column.two_way.is_some()
+            && (new_column.type_ != PropertyType::Relation
+                || new_column.two_way != old_column.two_way
+                || new_column.relation != old_column.relation)
+        {
+            detach_two_way_relation(space, collection_path, &old_column, true)?;
+        }
+        ensure_two_way_schema_and_values(space, collection_path, &new_column)?;
         Ok(schema)
     })
 }
@@ -1692,8 +2926,23 @@ pub fn delete_schema_column(
     if delete_values {
         touched.extend(collection_markdown_files(space, collection_path)?);
     }
+    {
+        let schema = read_schema_or_default(space, collection_path)?;
+        if let Some(column) = schema
+            .columns
+            .iter()
+            .find(|column| column.name == column_name)
+        {
+            extend_relation_side_effect_paths(space, collection_path, column, &mut touched)?;
+        }
+    }
     with_rollback(touched, || {
         let mut schema = read_schema_or_default(space, collection_path)?;
+        let old_column = schema
+            .columns
+            .iter()
+            .find(|column| column.name == column_name)
+            .cloned();
         let before = schema.columns.len();
         schema.columns.retain(|column| column.name != column_name);
         if schema.columns.len() == before {
@@ -1713,6 +2962,12 @@ pub fn delete_schema_column(
         }
 
         write_schema(space, collection_path, &schema)?;
+        if let Some(old_column) = old_column
+            .as_ref()
+            .filter(|column| column.type_ == PropertyType::Relation && column.two_way.is_some())
+        {
+            detach_two_way_relation(space, collection_path, old_column, true)?;
+        }
         Ok(schema)
     })
 }
@@ -2283,6 +3538,25 @@ pub struct CollectionInfo {
     pub nested: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedRelation {
+    pub title: String,
+    pub icon: Option<String>,
+    pub file_path: String,
+    pub collection_root_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelationBacklink {
+    pub file_path: String,
+    pub collection_root_path: String,
+    pub column: String,
+    pub value: String,
+    pub title: String,
+}
+
 pub fn list_collections(space: &str) -> Result<Vec<CollectionInfo>, AppError> {
     let root = Path::new(space);
     let mut infos = Vec::new();
@@ -2539,6 +3813,204 @@ pub async fn query_entries(
         include_nested,
         sort.is_empty(),
     )
+}
+
+pub async fn resolve_relation(
+    pool: &SqlitePool,
+    relation: &str,
+    value: &str,
+) -> Result<Option<ResolvedRelation>, AppError> {
+    let relation = normalize_collection_path(relation)?;
+    let value = normalize_relation_value_shape(value)?;
+    let file_path = join_collection_value(&relation, &value);
+    let row = sqlx::query(
+        "SELECT title, icon, file_path, collection_root_path FROM entries WHERE file_path = ? LIMIT 1",
+    )
+    .bind(&file_path)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|row| {
+        let collection_root_path: Option<String> = row.get("collection_root_path");
+        ResolvedRelation {
+            title: row.get("title"),
+            icon: row.get("icon"),
+            file_path: row.get("file_path"),
+            collection_root_path: collection_root_path.unwrap_or_default(),
+        }
+    }))
+}
+
+pub async fn resolve_relations_batch(
+    pool: &SqlitePool,
+    relation: &str,
+    values: &[String],
+) -> Result<Vec<Option<ResolvedRelation>>, AppError> {
+    let relation = normalize_collection_path(relation)?;
+    let mut file_paths = Vec::with_capacity(values.len());
+    for value in values {
+        file_paths.push(join_collection_value(
+            &relation,
+            &normalize_relation_value_shape(value)?,
+        ));
+    }
+    if file_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut query = QueryBuilder::<Sqlite>::new(
+        "SELECT title, icon, file_path, collection_root_path FROM entries WHERE file_path IN (",
+    );
+    let mut separated = query.separated(", ");
+    for file_path in &file_paths {
+        separated.push_bind(file_path);
+    }
+    separated.push_unseparated(")");
+    let rows = query.build().fetch_all(pool).await?;
+    let mut by_path = HashMap::new();
+    for row in rows {
+        let collection_root_path: Option<String> = row.get("collection_root_path");
+        let file_path: String = row.get("file_path");
+        by_path.insert(
+            file_path.clone(),
+            ResolvedRelation {
+                title: row.get("title"),
+                icon: row.get("icon"),
+                file_path,
+                collection_root_path: collection_root_path.unwrap_or_default(),
+            },
+        );
+    }
+    Ok(file_paths
+        .iter()
+        .map(|path| by_path.get(path).cloned())
+        .collect())
+}
+
+pub fn query_relation_backlinks(
+    space: &str,
+    target_path: &str,
+    source_collection_path: Option<&str>,
+    source_column: Option<&str>,
+) -> Result<Vec<RelationBacklink>, AppError> {
+    let target = normalize_rel_path(target_path);
+    let mut out = Vec::new();
+    for collection in list_collections(space)? {
+        if source_collection_path
+            .map(collection_root_for_schema)
+            .as_deref()
+            .is_some_and(|source| source != collection.path)
+        {
+            continue;
+        }
+        let schema = read_schema_or_default(space, &collection.path)?;
+        let columns: Vec<Column> = schema
+            .columns
+            .iter()
+            .filter(|column| {
+                column.type_ == PropertyType::Relation
+                    && source_column.is_none_or(|name| name == column.name)
+            })
+            .cloned()
+            .collect();
+        for column in columns {
+            let Some(relation) = column.relation.as_deref() else {
+                continue;
+            };
+            let Ok(target_value) = value_relative_to_collection(relation, &target) else {
+                continue;
+            };
+            for file in collection_markdown_files(space, &collection.path)? {
+                let raw = fs::read_to_string(&file)?;
+                let Some((meta, _)) = frontmatter::try_parse(&raw)? else {
+                    continue;
+                };
+                let values = relation_values_from_value(
+                    &column,
+                    meta.extra.get(&column.name).unwrap_or(&Value::Null),
+                )?;
+                if values.iter().any(|value| value == &target_value) {
+                    let file_path = file
+                        .strip_prefix(space)
+                        .unwrap_or(&file)
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    out.push(RelationBacklink {
+                        file_path,
+                        collection_root_path: collection.path.clone(),
+                        column: column.name.clone(),
+                        value: target_value.clone(),
+                        title: meta.title,
+                    });
+                }
+            }
+        }
+    }
+    out.sort_by(|a, b| {
+        a.collection_root_path
+            .cmp(&b.collection_root_path)
+            .then_with(|| a.column.cmp(&b.column))
+            .then_with(|| a.file_path.cmp(&b.file_path))
+    });
+    Ok(out)
+}
+
+pub fn repair_two_way_relation(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+    strategy: &str,
+) -> Result<(), AppError> {
+    let schema = read_schema_or_default(space, collection_path)?;
+    let column = schema
+        .columns
+        .iter()
+        .find(|column| column.name == column_name && column.type_ == PropertyType::Relation)
+        .cloned()
+        .ok_or_else(|| schema_error(format!("relation column '{column_name}' not found")))?;
+    let reverse_name = column
+        .two_way
+        .as_deref()
+        .ok_or_else(|| schema_error(format!("relation column '{column_name}' is not two-way")))?;
+    let relation = column.relation.as_deref().ok_or_else(|| {
+        schema_error(format!("relation column '{column_name}' requires relation"))
+    })?;
+    let mut touched = Vec::new();
+    touched.extend(collection_markdown_files(space, collection_path)?);
+    touched.extend(collection_markdown_files(space, relation)?);
+    with_rollback(touched, || match strategy {
+        "from_this_side" => {
+            for file in collection_markdown_files(space, relation)? {
+                mutate_frontmatter(&file, |meta| {
+                    meta.extra.remove(reverse_name);
+                    Ok(())
+                })?;
+            }
+            materialize_two_way_reverse_values(space, collection_path, &column)
+        }
+        "from_related_side" => {
+            for file in collection_markdown_files(space, collection_path)? {
+                mutate_frontmatter(&file, |meta| {
+                    meta.extra.remove(column_name);
+                    Ok(())
+                })?;
+            }
+            let reverse_schema = read_schema_or_default(space, relation)?;
+            let reverse = reverse_schema
+                .columns
+                .iter()
+                .find(|candidate| {
+                    candidate.name == reverse_name && candidate.type_ == PropertyType::Relation
+                })
+                .cloned()
+                .ok_or_else(|| {
+                    schema_error(format!("reverse column '{reverse_name}' not found"))
+                })?;
+            materialize_two_way_reverse_values(space, relation, &reverse)
+        }
+        _ => Err(schema_error(format!(
+            "unknown relation repair strategy '{strategy}'"
+        ))),
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -3403,9 +4875,40 @@ fn normalize_column_for_new_type(
             for option in column.options.iter_mut().flatten() {
                 option.group = None;
             }
+            column.relation = None;
+            column.limit = None;
+            column.two_way = None;
+        }
+        PropertyType::Relation => {
+            column.options = None;
+            column.display = None;
+            column.min = None;
+            column.max = None;
+            column.color = None;
+            column.time_by_default = None;
+            column.range_by_default = None;
+            if let Some(relation) = strategy.and_then(|value| value.get("relation")) {
+                column.relation = relation.as_str().map(ToOwned::to_owned);
+            }
+            if let Some(limit) = strategy.and_then(|value| value.get("limit")) {
+                column.limit = if limit.is_null() {
+                    None
+                } else {
+                    Some(
+                        serde_yml::from_value(limit.clone())
+                            .map_err(|e| schema_error(format!("invalid relation limit: {e}")))?,
+                    )
+                };
+            }
+            if let Some(two_way) = strategy.and_then(|value| value.get("two_way")) {
+                column.two_way = two_way.as_str().map(ToOwned::to_owned);
+            }
         }
         _ => {
             column.options = None;
+            column.relation = None;
+            column.limit = None;
+            column.two_way = None;
         }
     }
     Ok(())
@@ -3459,6 +4962,7 @@ fn convert_value_for_type(value: Value, column: &Column) -> Value {
         PropertyType::Person | PropertyType::Url | PropertyType::Email | PropertyType::Phone => {
             value_to_scalar_string(&value).map(Value::String)
         }
+        PropertyType::Relation => convert_value_for_relation(value, column),
     };
 
     converted
@@ -3502,6 +5006,33 @@ fn value_to_bool(value: &Value) -> Option<bool> {
             _ => None,
         },
         _ => None,
+    }
+}
+
+fn convert_value_for_relation(value: Value, column: &Column) -> Option<Value> {
+    if value.is_null() {
+        return Some(Value::Null);
+    }
+    if column.limit == Some(RelationLimit::One) {
+        return value_to_first_string(&value)
+            .and_then(|raw| normalize_relation_value_shape(&raw).ok())
+            .map(Value::String);
+    }
+    match value {
+        Value::Sequence(sequence) => {
+            let mut seen = HashSet::new();
+            let values = sequence
+                .into_iter()
+                .filter_map(|item| value_to_scalar_string(&item))
+                .filter_map(|raw| normalize_relation_value_shape(&raw).ok())
+                .filter(|normalized| seen.insert(normalized.clone()))
+                .map(Value::String)
+                .collect();
+            Some(Value::Sequence(values))
+        }
+        other => value_to_scalar_string(&other)
+            .and_then(|raw| normalize_relation_value_shape(&raw).ok())
+            .map(|item| Value::Sequence(vec![Value::String(item)])),
     }
 }
 
@@ -3724,6 +5255,15 @@ fn apply_column_patch(column: &mut Column, patch: Value) -> Result<(), AppError>
     if mapping.contains_key("options") {
         column.options = nullable_from_mapping(mapping, "options")?;
     }
+    if mapping.contains_key("relation") {
+        column.relation = nullable_from_mapping(mapping, "relation")?;
+    }
+    if mapping.contains_key("limit") {
+        column.limit = nullable_from_mapping(mapping, "limit")?;
+    }
+    if mapping.contains_key("two_way") {
+        column.two_way = nullable_from_mapping(mapping, "two_way")?;
+    }
     Ok(())
 }
 
@@ -3873,6 +5413,9 @@ fn infer_column(field: &str, value: &Value) -> Column {
         color: None,
         time_by_default: None,
         range_by_default: None,
+        relation: None,
+        limit: None,
+        two_way: None,
     };
 
     if column.type_ == PropertyType::MultiSelect {
@@ -4122,6 +5665,139 @@ views: []
     }
 
     #[test]
+    fn relation_schema_roundtrips_yaml_shape() {
+        let raw = r#"
+columns:
+  - name: Sprint
+    type: relation
+    relation: sprints
+    limit: one
+    two_way: Tasks
+views: []
+"#;
+        let schema: CollectionSchema = serde_yml::from_str(raw).unwrap();
+        validate_schema(&schema).unwrap();
+        let column = &schema.columns[0];
+        assert_eq!(column.type_, PropertyType::Relation);
+        assert_eq!(column.relation.as_deref(), Some("sprints"));
+        assert_eq!(column.limit, Some(RelationLimit::One));
+        assert_eq!(column.two_way.as_deref(), Some("Tasks"));
+
+        let serialized = serde_yml::to_string(&schema).unwrap();
+        assert!(serialized.contains("type: relation"));
+        assert!(serialized.contains("relation: sprints"));
+        assert!(serialized.contains("limit: one"));
+        assert!(serialized.contains("two_way: Tasks"));
+    }
+
+    #[test]
+    fn relation_value_shape_normalizes_unique_many_and_rejects_dot_segments() {
+        let column = Column {
+            name: "Tasks".into(),
+            type_: PropertyType::Relation,
+            default: None,
+            options: None,
+            display: None,
+            min: None,
+            max: None,
+            color: None,
+            time_by_default: None,
+            range_by_default: None,
+            relation: Some("tasks".into()),
+            limit: None,
+            two_way: None,
+        };
+        let value: Value = serde_yml::from_str("[a.md, a.md, folder/README.md]").unwrap();
+        let normalized = validate_relation_value_shape(&column, &value).unwrap();
+        assert_eq!(normalized, vec!["a.md", "folder/README.md"]);
+
+        let bad: Value = serde_yml::from_str("../a.md").unwrap();
+        assert!(validate_relation_value_shape(&column, &bad).is_err());
+    }
+
+    #[test]
+    fn copy_rewrite_updates_internal_relation_values_in_same_collection() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        fs::create_dir_all(space.join("tasks/folder")).unwrap();
+        fs::create_dir_all(space.join("tasks/folder-copy")).unwrap();
+        fs::write(
+            space.join("tasks/schema.yaml"),
+            "columns:\n  - name: Related\n    type: relation\n    relation: tasks\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("tasks/folder/a.md"),
+            "---\nid: a\ntitle: A\ncreated: now\nupdated: now\nRelated:\n  - folder/b.md\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("tasks/folder/b.md"),
+            "---\nid: b\ntitle: B\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("tasks/folder-copy/a.md"),
+            "---\nid: a2\ntitle: A copy\ncreated: now\nupdated: now\nRelated:\n  - folder/b.md\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("tasks/folder-copy/b.md"),
+            "---\nid: b2\ntitle: B copy\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+
+        rewrite_internal_relation_refs_for_copy(
+            space.to_str().unwrap(),
+            "tasks/folder",
+            "tasks/folder-copy",
+        )
+        .unwrap();
+
+        let raw = fs::read_to_string(space.join("tasks/folder-copy/a.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        let related = meta.extra.get("Related").unwrap().as_sequence().unwrap();
+        assert_eq!(related[0].as_str(), Some("folder-copy/b.md"));
+    }
+
+    #[test]
+    fn copy_rewrite_updates_relation_schema_roots_inside_copied_tree() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        fs::create_dir_all(space.join("source/a")).unwrap();
+        fs::create_dir_all(space.join("source/b")).unwrap();
+        fs::create_dir_all(space.join("copy/a")).unwrap();
+        fs::create_dir_all(space.join("copy/b")).unwrap();
+        fs::write(
+            space.join("source/a/schema.yaml"),
+            "columns:\n  - name: B\n    type: relation\n    relation: source/b\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("source/b/schema.yaml"),
+            "columns:\n  - name: A\n    type: relation\n    relation: source/a\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("copy/a/schema.yaml"),
+            "columns:\n  - name: B\n    type: relation\n    relation: source/b\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("copy/b/schema.yaml"),
+            "columns:\n  - name: A\n    type: relation\n    relation: source/a\nviews: []\n",
+        )
+        .unwrap();
+
+        rewrite_internal_relation_refs_for_copy(space.to_str().unwrap(), "source", "copy").unwrap();
+
+        let schema_a = read_collection_schema(space.to_str().unwrap(), "copy/a").unwrap();
+        let schema_b = read_collection_schema(space.to_str().unwrap(), "copy/b").unwrap();
+        assert_eq!(schema_a.columns[0].relation.as_deref(), Some("copy/b"));
+        assert_eq!(schema_b.columns[0].relation.as_deref(), Some("copy/a"));
+    }
+
+    #[test]
     fn schema_validation_rejects_reserved_duplicates_and_bad_status() {
         let duplicate = r#"
 columns:
@@ -4184,6 +5860,9 @@ views: []
             color: None,
             time_by_default: None,
             range_by_default: None,
+            relation: None,
+            limit: None,
+            two_way: None,
         };
         let ok: Value = serde_yml::from_str("start: 2026-04-20\nend: 2026-04-22\n").unwrap();
         validate_property_value(&column, &ok).unwrap();

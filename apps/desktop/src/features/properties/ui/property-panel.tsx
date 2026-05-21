@@ -23,6 +23,7 @@ import type {
   EntrySchemaResult,
   Person,
   PropertyOption,
+  RelationContext,
 } from "../model/types";
 import {
   shouldClosePropertyEditorOnChange,
@@ -45,6 +46,7 @@ import * as m from "@/paraglide/messages.js";
 interface PropertyPanelProps {
   spacePath: string;
   projectPath?: string | null;
+  spaceId?: string | null;
   filePath: string;
   metaId: string;
   schemaResult: EntrySchemaResult;
@@ -67,6 +69,7 @@ type DialogState =
 export function PropertyPanel({
   spacePath,
   projectPath,
+  spaceId,
   filePath,
   metaId,
   schemaResult,
@@ -145,6 +148,15 @@ export function PropertyPanel({
 
   const columnNames = new Set(schema.columns.map((column) => column.name));
   const orphanEntries = Object.entries(values).filter(([key]) => !columnNames.has(key));
+  const relationContext = useMemo(
+    () => ({
+      spacePath,
+      projectPath,
+      spaceId,
+      currentFilePath: filePath,
+    }),
+    [filePath, projectPath, spaceId, spacePath],
+  );
 
   return (
     <div className="flex flex-col gap-3">
@@ -169,6 +181,7 @@ export function PropertyPanel({
                   disabled={state.message === m.property_state_type_conflict()}
                   editing={editingField === column.name}
                   persons={persons}
+                  relationContext={relationContext}
                   onRequestPersons={loadPersons}
                   onEditChange={(editing) =>
                     setEditingField(editing ? column.name : null)
@@ -265,6 +278,7 @@ export function PropertyPanel({
       <AddColumnDialog
         open={dialog?.type === "add-column"}
         onOpenChange={(open) => !open && setDialog(null)}
+        collectionPath={collectionRootPath}
         onSubmit={async (column) => {
           await schemaInvoke("add_schema_column", { column }).catch(handleSchemaError);
           setDialog(null);
@@ -274,6 +288,7 @@ export function PropertyPanel({
         open={dialog?.type === "change-type"}
         onOpenChange={(open) => !open && setDialog(null)}
         column={dialog?.type === "change-type" ? dialog.column : null}
+        collectionPath={collectionRootPath}
         onSubmit={async (newType, conversionStrategy) => {
           if (dialog?.type !== "change-type") return;
           await schemaInvoke("change_schema_type", {
@@ -362,6 +377,7 @@ function PropertyPanelValue({
   disabled,
   editing,
   persons,
+  relationContext,
   onRequestPersons,
   onEditChange,
   onValueChange,
@@ -372,6 +388,7 @@ function PropertyPanelValue({
   disabled: boolean;
   editing: boolean;
   persons: Person[];
+  relationContext: RelationContext;
   onRequestPersons: (allTime: boolean) => Promise<Person[]>;
   onEditChange: (editing: boolean) => void;
   onValueChange: (value: unknown) => Promise<void>;
@@ -394,6 +411,7 @@ function PropertyPanelValue({
           disabled={disabled}
           autoOpen
           persons={persons}
+          relationContext={relationContext}
           onRequestPersons={onRequestPersons}
           onChange={(nextValue) => {
             const close = shouldClosePropertyEditorOnChange(column.type);
@@ -420,7 +438,12 @@ function PropertyPanelValue({
       onClick={() => onEditChange(true)}
     >
       <span className="min-w-0 flex-1">
-        <PropertyValue column={column} value={value} persons={persons} />
+        <PropertyValue
+          column={column}
+          value={value}
+          persons={persons}
+          relationContext={relationContext}
+        />
       </span>
     </button>
   );

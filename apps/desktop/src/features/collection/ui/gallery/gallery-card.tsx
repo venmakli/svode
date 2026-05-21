@@ -60,6 +60,7 @@ function GalleryCardContent({
   coverFit,
   coverAspect,
   spacePath,
+  projectPath,
   persons,
   nestedCollection,
   folder,
@@ -170,6 +171,11 @@ function GalleryCardContent({
               entry={entry}
               columns={metaColumns}
               persons={persons}
+              relationContext={{
+                spacePath,
+                projectPath,
+                currentFilePath: entry.path,
+              }}
               className="gap-x-1.5 gap-y-1 pt-0.5"
               onRequestPersons={onRequestPersons}
               onUpdateField={onUpdateField}

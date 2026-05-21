@@ -113,7 +113,93 @@ export function TypeSettingsPane({
       </div>
     );
   }
+  if (column.type === "relation") {
+    return (
+      <RelationSettingsPane
+        column={column}
+        spacePath={spacePath}
+        onPatchColumn={onPatchColumn}
+      />
+    );
+  }
   return null;
+}
+
+function RelationSettingsPane({
+  column,
+  spacePath,
+  onPatchColumn,
+}: {
+  column: Column;
+  spacePath: string;
+  onPatchColumn: (patch: Record<string, unknown>) => void;
+}) {
+  const [collections, setCollections] = useState<Array<{ path: string; title: string }>>([]);
+  const [reverseName, setReverseName] = useState(column.twoWay ?? column.two_way ?? "");
+
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<Array<{ path: string; title: string }>>("list_collections", {
+      space: spacePath,
+    })
+      .then((items) => {
+        if (!cancelled) setCollections(items);
+      })
+      .catch(() => {
+        if (!cancelled) setCollections([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [spacePath]);
+
+  const relation = column.relation || ".";
+  const options = collections.length > 0 ? collections.map((item) => item.path) : [relation];
+  const twoWay = Boolean(column.twoWay ?? column.two_way);
+
+  return (
+    <div className="flex flex-col gap-2 p-3">
+      <ColumnSelect
+        label={m.property_relation_linked_collection()}
+        value={relation}
+        options={options.includes(relation) ? options : [relation, ...options]}
+        onChange={(nextRelation) => onPatchColumn({ relation: nextRelation })}
+      />
+      <ToggleRow
+        label={m.property_relation_limit_one()}
+        checked={column.limit === "one"}
+        onChange={(checked) => onPatchColumn({ limit: checked ? "one" : null })}
+      />
+      <ToggleRow
+        label={m.property_relation_show_related()}
+        checked={twoWay}
+        onChange={(checked) => {
+          const fallback = reverseName.trim() || m.property_relation_reverse_default();
+          onPatchColumn({ two_way: checked ? fallback : null });
+        }}
+      />
+      {twoWay ? (
+        <label className="flex items-center gap-2 text-sm">
+          <span className="w-20 text-muted-foreground">
+            {m.property_relation_reverse_name()}
+          </span>
+          <Input
+            value={reverseName}
+            className="h-8 flex-1"
+            placeholder={m.property_relation_reverse_default()}
+            onChange={(event) => setReverseName(event.target.value)}
+            onBlur={() => {
+              const next = reverseName.trim();
+              if (next) onPatchColumn({ two_way: next });
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+            }}
+          />
+        </label>
+      ) : null}
+    </div>
+  );
 }
 
 function OptionsPane({

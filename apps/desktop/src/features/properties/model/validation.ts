@@ -11,7 +11,12 @@ import {
 } from "../lib/utils";
 
 export function shouldClosePropertyEditorOnChange(type: Column["type"]) {
-  return type !== "date" && type !== "multi_select" && type !== "url";
+  return (
+    type !== "date" &&
+    type !== "multi_select" &&
+    type !== "url" &&
+    type !== "relation"
+  );
 }
 
 export function validatePropertyValue(
@@ -60,6 +65,11 @@ export function validatePropertyValue(
         (value !== null &&
           typeof value === "object" &&
           isValidUrl(normalizeUrlValue(value).href))
+        ? { invalid: false }
+        : { invalid: true, message: m.property_state_type_conflict() };
+    case "relation":
+      return typeof value === "string" ||
+        (Array.isArray(value) && value.every((item) => typeof item === "string"))
         ? { invalid: false }
         : { invalid: true, message: m.property_state_type_conflict() };
     default:

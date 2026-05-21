@@ -16,7 +16,7 @@ use crate::git::commands::{GitState, require_cli};
 use crate::index::{self, IndexKey, IndexState, ResolvedDocLink};
 use crate::properties::{
     self, CollectionInfo, CollectionSchema, Column, EntrySchemaResponse, Filter, Person,
-    PropertyOption, PropertyType, Sort, View,
+    PropertyOption, PropertyType, RelationBacklink, ResolvedRelation, Sort, View,
 };
 use crate::space::config;
 
@@ -225,6 +225,9 @@ pub async fn update_entry_field(
         if let Err(e) = index::update::update_entry(&index_state, project, &abs_target).await {
             tracing::warn!("index update_entry failed for {file_path}: {e}");
         }
+        reindex_space_dir(&index_state, &space).await;
+    } else {
+        reindex_space_dir(&index_state, &space).await;
     }
 
     Ok(updated)
@@ -295,7 +298,7 @@ pub async fn add_schema_column(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
     let message = format!("Add column \"{}\"", column.name);
-    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
+    let paths = properties::schema_column_mutation_paths(&space, &collection_path, &column, false)?;
     let schema = properties::add_schema_column(&space, &collection_path, column)?;
     maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
@@ -910,6 +913,69 @@ pub async fn query_entries(
 }
 
 #[tauri::command]
+pub async fn resolve_relation(
+    space: String,
+    relation: String,
+    value: String,
+    project_path: Option<String>,
+    index_state: State<'_, IndexState>,
+) -> Result<Option<ResolvedRelation>, AppError> {
+    let pool = pool_for_space(&index_state, &space, project_path.as_deref()).await?;
+    properties::resolve_relation(&pool, &relation, &value).await
+}
+
+#[tauri::command]
+pub async fn resolve_relations_batch(
+    space: String,
+    relation: String,
+    values: Vec<String>,
+    project_path: Option<String>,
+    index_state: State<'_, IndexState>,
+) -> Result<Vec<Option<ResolvedRelation>>, AppError> {
+    let pool = pool_for_space(&index_state, &space, project_path.as_deref()).await?;
+    properties::resolve_relations_batch(&pool, &relation, &values).await
+}
+
+#[tauri::command]
+pub fn query_relation_backlinks(
+    space: String,
+    target_path: String,
+    source_collection_path: Option<String>,
+    source_column: Option<String>,
+) -> Result<Vec<RelationBacklink>, AppError> {
+    properties::query_relation_backlinks(
+        &space,
+        &target_path,
+        source_collection_path.as_deref(),
+        source_column.as_deref(),
+    )
+}
+
+#[tauri::command]
+pub async fn repair_two_way_relation(
+    space: String,
+    collection_path: String,
+    column: String,
+    strategy: String,
+    project_path: Option<String>,
+    index_state: State<'_, IndexState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<(), AppError> {
+    let paths = properties::schema_mutation_paths(&space, &collection_path, true)?;
+    properties::repair_two_way_relation(&space, &collection_path, &column, &strategy)?;
+    reindex_space_dir(&index_state, &space).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        format!("Repair two-way relation \"{column}\""),
+    )
+    .await;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn list_collections(space: String) -> Result<Vec<CollectionInfo>, AppError> {
     properties::list_collections(&space)
 }
@@ -1149,6 +1215,9 @@ pub async fn delete_entry(
         if let Err(e) = index::update::delete_entry(&index_state, project, &abs_old).await {
             tracing::warn!("index delete_entry failed for {path}: {e}");
         }
+        reindex_space_dir(&index_state, &space).await;
+    } else {
+        reindex_space_dir(&index_state, &space).await;
     }
     maybe_autocommit_structural(
         &autocommit,

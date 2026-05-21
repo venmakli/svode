@@ -13,6 +13,7 @@ import {
   Group,
   Hash,
   Link,
+  ListTree,
   Mail,
   Plus,
   Phone,
@@ -988,6 +989,7 @@ function fieldTypeLabel(type: PropertyType) {
     url: String(m.table_property_type_url()),
     email: String(m.table_property_type_email()),
     phone: String(m.table_property_type_phone()),
+    relation: String(m.table_property_type_relation()),
   };
   return labels[type];
 }
@@ -1005,6 +1007,7 @@ function propertyTypeIcon(type: PropertyType) {
     url: Link,
     email: Mail,
     phone: Phone,
+    relation: ListTree,
   };
   return icons[type];
 }

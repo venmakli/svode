@@ -11,7 +11,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { PropertyBadge } from "./property-badge";
-import type { Column, Person } from "../model/types";
+import type { Column, Person, RelationContext } from "../model/types";
 import {
   colorStyle,
   formatDateValue,
@@ -24,6 +24,7 @@ import {
   valueToString,
 } from "../lib/utils";
 import * as m from "@/paraglide/messages.js";
+import { RelationValue } from "./relation-control";
 
 export function PropertyValueActions({
   column,
@@ -75,16 +76,27 @@ export function PropertyValue({
   column,
   value,
   persons = [],
+  relationContext,
 }: {
   column: Column;
   value: unknown;
   persons?: Person[];
+  relationContext?: RelationContext;
 }) {
   if (isEmptyValue(value)) {
     return <span className="text-muted-foreground">-</span>;
   }
   if (column.type === "person") {
     return <PersonValue value={value} persons={persons} />;
+  }
+  if (column.type === "relation") {
+    return (
+      <RelationValue
+        column={column}
+        value={value}
+        context={relationContext}
+      />
+    );
   }
   if (column.type === "select" || column.type === "status") {
     const option =

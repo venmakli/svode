@@ -361,6 +361,8 @@ export function ListView({
                 density={density}
                 cardFields={cardFields}
                 metaColumns={metaColumns}
+                spacePath={spacePath}
+                projectPath={projectPath}
                 persons={persons}
                 disabledReorder={hasSort}
                 focused={focusedPath === row.entry.path}

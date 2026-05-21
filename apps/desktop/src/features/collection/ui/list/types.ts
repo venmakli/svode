@@ -48,6 +48,8 @@ export interface ListRowProps {
   density: "compact" | "comfortable";
   cardFields: string[];
   metaColumns: Column[];
+  spacePath: string;
+  projectPath?: string | null;
   persons: Person[];
   disabledReorder: boolean;
   focused: boolean;

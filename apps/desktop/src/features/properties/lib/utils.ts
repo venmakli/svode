@@ -22,6 +22,7 @@ export const PROPERTY_TYPES: { value: PropertyType; label: string }[] = [
   { value: "url", label: "URL" },
   { value: "email", label: "Email" },
   { value: "phone", label: "Phone" },
+  { value: "relation", label: "Relation" },
 ];
 
 export const STATUS_GROUPS: { value: StatusGroup; label: string }[] = [
@@ -49,6 +50,7 @@ export function normalizeColumn(column: Column): Column {
     type: (column.type ?? (column as unknown as { type_: PropertyType }).type_) as PropertyType,
     timeByDefault: column.timeByDefault ?? column.time_by_default ?? false,
     rangeByDefault: column.rangeByDefault ?? column.range_by_default ?? false,
+    twoWay: column.twoWay ?? column.two_way ?? null,
   };
 }
 

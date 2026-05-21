@@ -9,7 +9,8 @@ export type PropertyType =
   | "checkbox"
   | "url"
   | "email"
-  | "phone";
+  | "phone"
+  | "relation";
 
 export type ColorName =
   | "neutral"
@@ -48,6 +49,10 @@ export interface Column {
   time_by_default?: boolean | null;
   rangeByDefault?: boolean | null;
   range_by_default?: boolean | null;
+  relation?: string | null;
+  limit?: "one" | null;
+  twoWay?: string | null;
+  two_way?: string | null;
 }
 
 export interface CollectionSchema {
@@ -83,4 +88,21 @@ export interface Person {
 export interface DateRangeValue {
   start: string;
   end: string;
+}
+
+export interface RelationContext {
+  spacePath: string;
+  projectPath?: string | null;
+  spaceId?: string | null;
+  currentFilePath?: string | null;
+  onOpenPath?: (path: string) => void;
+}
+
+export interface ResolvedRelationEntry {
+  title: string;
+  icon?: string | null;
+  filePath?: string;
+  file_path?: string;
+  collectionRootPath?: string | null;
+  collection_root_path?: string | null;
 }

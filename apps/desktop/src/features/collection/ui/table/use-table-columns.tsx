@@ -196,6 +196,11 @@ export function useTableColumns({
                 column={property}
                 persons={persons}
                 onRequestPersons={onRequestPersons}
+                relationContext={{
+                  spacePath,
+                  projectPath,
+                  currentFilePath: row.original.entry.path,
+                }}
                 value={row.original.entry.meta.extra?.[property.name] ?? null}
                 editing={
                   editing?.path === row.original.entry.path &&

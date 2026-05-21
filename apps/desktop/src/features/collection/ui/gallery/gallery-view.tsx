@@ -377,6 +377,7 @@ export function GalleryView({
                   coverFit={coverFit}
                   coverAspect={coverAspect}
                   spacePath={spacePath}
+                  projectPath={projectPath}
                   persons={persons}
                   nestedCollection={nestedCollection}
                   folder={isFolderEntry(entry)}

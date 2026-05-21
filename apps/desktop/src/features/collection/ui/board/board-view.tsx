@@ -601,6 +601,8 @@ export function BoardView({
                   nestedCollectionPaths,
                   disabledReorder: hasSort,
                   overlay: false,
+                  spacePath,
+                  projectPath,
                   persons,
                   onRequestPersons: loadPersons,
                   onUpdateField: (entry, column, value) =>
@@ -628,6 +630,8 @@ export function BoardView({
             disabledReorder={hasSort}
             active
             overlay
+            spacePath={spacePath}
+            projectPath={projectPath}
             persons={persons}
             onRequestPersons={loadPersons}
             onOpen={onOpenEntry}

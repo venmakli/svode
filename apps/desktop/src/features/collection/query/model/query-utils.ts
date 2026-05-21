@@ -80,6 +80,14 @@ const FILTER_OPS_BY_TYPE: Record<PropertyType, FilterOp[]> = {
     "group_not_in",
   ],
   person: ["eq", "neq", "in", "not_in", "is_empty", "is_not_empty"],
+  relation: [
+    "contains",
+    "not_contains",
+    "contains_any",
+    "not_contains_any",
+    "is_empty",
+    "is_not_empty",
+  ],
 };
 
 export function viewStateStorageKey(collectionPath: string, viewName: string) {

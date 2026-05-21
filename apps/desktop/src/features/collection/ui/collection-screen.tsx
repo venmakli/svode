@@ -996,6 +996,7 @@ export function CollectionScreen({
             <PropertyPanel
               spacePath={spacePath}
               projectPath={projectPath}
+              spaceId={spaceId}
               filePath={readmePath}
               metaId={entry.meta.id}
               schemaResult={propertiesSchema}

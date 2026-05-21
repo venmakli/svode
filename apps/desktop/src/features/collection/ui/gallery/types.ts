@@ -44,6 +44,7 @@ export interface GalleryCardProps {
   coverFit: "cover" | "contain";
   coverAspect: string;
   spacePath: string;
+  projectPath?: string | null;
   persons: Person[];
   nestedCollection: boolean;
   folder: boolean;

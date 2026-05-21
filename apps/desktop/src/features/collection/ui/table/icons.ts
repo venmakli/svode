@@ -5,6 +5,7 @@ import {
   Flag,
   Hash,
   Link,
+  ListTree,
   Mail,
   Phone,
   Tag,
@@ -26,6 +27,7 @@ export const PROPERTY_TYPE_ICONS: Record<PropertyType, LucideIcon> = {
   url: Link,
   email: Mail,
   phone: Phone,
+  relation: ListTree,
 };
 
 export const TITLE_ICON = Type;

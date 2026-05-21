@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 import { validatePropertyValue } from "@/features/properties/model";
 import type { Entry } from "@/features/editor/types";
-import type { Column, Person } from "@/features/properties/model";
+import type { Column, Person, RelationContext } from "@/features/properties/model";
 import { isEmptyValue } from "@/features/properties/lib";
 import { PropertyControl, PropertyValue } from "@/features/properties/ui";
 
@@ -9,12 +9,14 @@ export function BoardPropertyFlow({
   entry,
   columns,
   persons,
+  relationContext,
   onRequestPersons,
   onUpdateField,
 }: {
   entry: Entry;
   columns: Column[];
   persons: Person[];
+  relationContext?: RelationContext;
   onRequestPersons: (allTime: boolean) => Promise<Person[]>;
   onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
 }) {
@@ -25,6 +27,7 @@ export function BoardPropertyFlow({
         entry={entry}
         column={column}
         persons={persons}
+        relationContext={relationContext}
         onRequestPersons={onRequestPersons}
         onUpdateField={onUpdateField}
       />
@@ -39,12 +42,14 @@ function BoardPropertyChip({
   entry,
   column,
   persons,
+  relationContext,
   onRequestPersons,
   onUpdateField,
 }: {
   entry: Entry;
   column: Column;
   persons: Person[];
+  relationContext?: RelationContext;
   onRequestPersons: (allTime: boolean) => Promise<Person[]>;
   onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
 }) {
@@ -52,7 +57,9 @@ function BoardPropertyChip({
   if (isEmptyValue(value) && column.type !== "checkbox") return null;
 
   const validation = validatePropertyValue(column, value);
-  const interactive = column.type === "person" && Boolean(onUpdateField);
+  const interactive =
+    (column.type === "person" || column.type === "relation") &&
+    Boolean(onUpdateField);
   const fullWidth =
     (column.type === "number" && column.display === "bar") ||
     column.type === "text" ||
@@ -87,11 +94,17 @@ function BoardPropertyChip({
             value={value}
             invalid={validation.invalid}
             persons={persons}
+            relationContext={relationContext}
             onRequestPersons={onRequestPersons}
             onChange={(next) => onUpdateField?.(entry, column, next)}
           />
         ) : (
-          <PropertyValue column={column} value={value} persons={persons} />
+          <PropertyValue
+            column={column}
+            value={value}
+            persons={persons}
+            relationContext={relationContext}
+          />
         )}
       </span>
     </div>

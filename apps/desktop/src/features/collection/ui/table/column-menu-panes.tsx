@@ -9,6 +9,7 @@ import {
   Filter,
   Flag,
   Grid2X2,
+  ListTree,
   Trash2,
   User,
   type LucideIcon,
@@ -246,6 +247,7 @@ function hasTypeSettings(column: Column) {
     "date",
     "number",
     "person",
+    "relation",
   ].includes(column.type);
 }
 
@@ -269,6 +271,9 @@ function typeSettingsMeta(column: Column): {
   }
   if (column.type === "person") {
     return { icon: User, label: m.table_type_settings_person() };
+  }
+  if (column.type === "relation") {
+    return { icon: ListTree, label: m.table_type_settings_relation() };
   }
 
   return null;

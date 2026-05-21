@@ -222,13 +222,15 @@ export function CalendarView({
 
   const propertyContext = useMemo(
     () => ({
+      spacePath,
+      projectPath,
       persons,
       onRequestPersons: loadPersons,
       onUpdateField: (entry: Entry, column: Column, value: unknown) => {
         void updateField(entry, column.name, value);
       },
     }),
-    [loadPersons, persons, updateField],
+    [loadPersons, persons, projectPath, spacePath, updateField],
   );
 
   const handleDayCellDidMount = useCallback(

@@ -55,7 +55,9 @@ import type {
   DateRangeValue,
   Person,
   PropertyOption,
+  RelationContext,
 } from "../model/types";
+import { RelationControl } from "./relation-control";
 import { PropertyBadge } from "./property-badge";
 import {
   STATUS_GROUPS,
@@ -90,6 +92,7 @@ interface PropertyControlProps {
   disabled?: boolean;
   autoOpen?: boolean;
   persons?: Person[];
+  relationContext?: RelationContext;
   onRequestPersons?: (allTime: boolean) => Promise<Person[]>;
   onChange: (value: unknown) => void | Promise<void>;
   onOpenChange?: (open: boolean) => void;
@@ -102,6 +105,7 @@ export function PropertyControl({
   disabled,
   autoOpen,
   persons = [],
+  relationContext,
   onRequestPersons,
   onChange,
   onOpenChange,
@@ -177,6 +181,19 @@ export function PropertyControl({
           autoOpen={autoOpen}
           persons={persons}
           onRequestPersons={onRequestPersons}
+          onChange={onChange}
+          onOpenChange={onOpenChange}
+        />
+      );
+    case "relation":
+      return (
+        <RelationControl
+          column={column}
+          value={value}
+          invalid={invalid}
+          disabled={disabled}
+          autoOpen={autoOpen}
+          context={relationContext}
           onChange={onChange}
           onOpenChange={onOpenChange}
         />

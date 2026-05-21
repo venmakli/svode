@@ -357,7 +357,11 @@ export function TableView({
     const next = await invoke<CollectionSchema>("add_schema_column", {
       space: spacePath,
       collectionPath,
-      column: { name, type },
+      column: {
+        name,
+        type,
+        relation: type === "relation" ? collectionPath || "." : undefined,
+      },
       projectPath: projectPath ?? null,
     });
     onSchemaChange(normalizeSchema(next));

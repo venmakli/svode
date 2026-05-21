@@ -86,6 +86,7 @@ export function propertyTypeLabel(type: PropertyType) {
     url: String(m.table_property_type_url()),
     email: String(m.table_property_type_email()),
     phone: String(m.table_property_type_phone()),
+    relation: String(m.table_property_type_relation()),
   };
   return labels[type];
 }

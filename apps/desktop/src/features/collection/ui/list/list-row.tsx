@@ -64,6 +64,8 @@ function ListRowContent({
   density,
   cardFields,
   metaColumns,
+  spacePath,
+  projectPath,
   persons,
   disabledReorder,
   focused,
@@ -199,6 +201,11 @@ function ListRowContent({
             entry={entry}
             columns={metaColumns}
             persons={persons}
+            relationContext={{
+              spacePath,
+              projectPath,
+              currentFilePath: entry.path,
+            }}
             mode="inline"
             className="max-w-[46vw] justify-end gap-x-2 gap-y-0.5 overflow-hidden"
             onRequestPersons={onRequestPersons}

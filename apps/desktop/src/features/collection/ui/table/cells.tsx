@@ -10,6 +10,7 @@ import {
 } from "@/features/properties/model";
 import { PropertyControl } from "@/features/properties/ui";
 import type { Column, Person } from "@/features/properties/model";
+import type { RelationContext } from "@/features/properties/model";
 import { valueToString } from "@/features/properties/lib";
 import {
   NumberPreview,
@@ -23,6 +24,7 @@ export function PropertyCell({
   column,
   persons,
   onRequestPersons,
+  relationContext,
   value,
   editing,
   onEdit,
@@ -32,6 +34,7 @@ export function PropertyCell({
   column: Column;
   persons: Person[];
   onRequestPersons: (allTime: boolean) => Promise<Person[]>;
+  relationContext?: RelationContext;
   value: unknown;
   editing: boolean;
   onEdit: () => void;
@@ -93,6 +96,7 @@ export function PropertyCell({
             invalid={validation.invalid}
             autoOpen
             persons={persons}
+            relationContext={relationContext}
             onChange={(next) =>
               onCommit(next, {
                 close: shouldClosePropertyEditorOnChange(column.type),
@@ -125,7 +129,12 @@ export function PropertyCell({
       }}
     >
       <span className="min-w-0 flex-1 truncate">
-        <PropertyValue column={column} value={value} persons={persons} />
+        <PropertyValue
+          column={column}
+          value={value}
+          persons={persons}
+          relationContext={relationContext}
+        />
       </span>
       <PropertyValueActions column={column} value={value} />
     </div>

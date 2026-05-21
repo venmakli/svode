@@ -76,6 +76,8 @@ export interface BoardCardProps {
   disabledReorder: boolean;
   active: boolean;
   overlay?: boolean;
+  spacePath: string;
+  projectPath?: string | null;
   persons: Person[];
   onRequestPersons: (allTime: boolean) => Promise<Person[]>;
   onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;

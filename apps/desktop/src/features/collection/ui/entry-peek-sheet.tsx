@@ -270,6 +270,7 @@ function StandardEntryPeek({
             <PropertyPanel
               spacePath={spacePath}
               projectPath={projectPath}
+              spaceId={spaceId}
               filePath={entry.path}
               metaId={entry.meta.id}
               schemaResult={schemaResult}

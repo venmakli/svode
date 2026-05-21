@@ -230,6 +230,11 @@ function CalendarPropertyControl({
         value={value}
         invalid={validation.invalid}
         persons={propertyContext.persons}
+        relationContext={{
+          spacePath: propertyContext.spacePath,
+          projectPath: propertyContext.projectPath,
+          currentFilePath: entry.path,
+        }}
         onRequestPersons={propertyContext.onRequestPersons}
         onChange={(next) => propertyContext.onUpdateField(entry, column, next)}
       />

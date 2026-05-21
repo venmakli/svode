@@ -3,12 +3,13 @@ import { validatePropertyValue } from "@/features/properties/model";
 import { isEmptyValue, valueToString } from "@/features/properties/lib";
 import { PropertyControl, PropertyValue } from "@/features/properties/ui";
 import type { Entry } from "@/features/editor/types";
-import type { Column, Person } from "@/features/properties/model";
+import type { Column, Person, RelationContext } from "@/features/properties/model";
 
 export function CardPropertyFlow({
   entry,
   columns,
   persons,
+  relationContext,
   className,
   mode = "card",
   onRequestPersons,
@@ -17,6 +18,7 @@ export function CardPropertyFlow({
   entry: Entry;
   columns: Column[];
   persons: Person[];
+  relationContext?: RelationContext;
   className?: string;
   mode?: "card" | "inline";
   onRequestPersons: (allTime: boolean) => Promise<Person[]>;
@@ -29,6 +31,7 @@ export function CardPropertyFlow({
         entry={entry}
         column={column}
         persons={persons}
+        relationContext={relationContext}
         mode={mode}
         onRequestPersons={onRequestPersons}
         onUpdateField={onUpdateField}
@@ -48,6 +51,7 @@ function CardPropertyItem({
   entry,
   column,
   persons,
+  relationContext,
   mode,
   onRequestPersons,
   onUpdateField,
@@ -55,6 +59,7 @@ function CardPropertyItem({
   entry: Entry;
   column: Column;
   persons: Person[];
+  relationContext?: RelationContext;
   mode: "card" | "inline";
   onRequestPersons: (allTime: boolean) => Promise<Person[]>;
   onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
@@ -95,11 +100,17 @@ function CardPropertyItem({
             value={value}
             invalid={validation.invalid}
             persons={persons}
+            relationContext={relationContext}
             onRequestPersons={onRequestPersons}
             onChange={(next) => onUpdateField?.(entry, column, next)}
           />
         ) : (
-          <PropertyValue column={column} value={value} persons={persons} />
+          <PropertyValue
+            column={column}
+            value={value}
+            persons={persons}
+            relationContext={relationContext}
+          />
         )}
       </span>
     </div>
@@ -120,6 +131,7 @@ function isInteractiveCardType(column: Column) {
     column.type === "status" ||
     column.type === "date" ||
     column.type === "person" ||
+    column.type === "relation" ||
     column.type === "checkbox"
   );
 }

@@ -42,8 +42,10 @@ interface BaseDialogProps {
 export function AddColumnDialog({
   open,
   onOpenChange,
+  collectionPath,
   onSubmit,
 }: BaseDialogProps & {
+  collectionPath?: string | null;
   onSubmit: (column: Column) => Promise<void>;
 }) {
   const [name, setName] = useState("");
@@ -124,6 +126,7 @@ export function AddColumnDialog({
                 name: name.trim(),
                 type,
                 options: needsOptions ? parseOptions(options, type) : undefined,
+                relation: type === "relation" ? collectionPath || "." : undefined,
               };
               void onSubmit(column).finally(() => setIsSaving(false));
             }}
@@ -140,9 +143,11 @@ export function ChangeTypeDialog({
   open,
   onOpenChange,
   column,
+  collectionPath,
   onSubmit,
 }: BaseDialogProps & {
   column: Column | null;
+  collectionPath?: string | null;
   onSubmit: (
     newType: PropertyType,
     conversionStrategy?: Record<string, unknown>,
@@ -227,7 +232,11 @@ export function ChangeTypeDialog({
               setIsSaving(true);
               void onSubmit(
                 type,
-                needsStatusGroups ? { groups } : undefined,
+                needsStatusGroups
+                  ? { groups }
+                  : type === "relation"
+                    ? { relation: collectionPath || "." }
+                    : undefined,
               ).finally(() => setIsSaving(false));
             }}
           >

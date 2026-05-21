@@ -1,0 +1,416 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { FileText, Link2Off, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+import { useLayoutStore } from "@/stores/layout";
+import type { Entry } from "@/features/editor/types";
+import {
+  normalizeRelationRoot,
+  queryRelationTargets,
+  relationValueForPath,
+  resolveRelationsBatch,
+  resolvedRelationPath,
+} from "../api/relation-api";
+import type { Column, RelationContext, ResolvedRelationEntry } from "../model";
+import * as m from "@/paraglide/messages.js";
+
+interface RelationControlProps {
+  column: Column;
+  value: unknown;
+  invalid?: boolean;
+  disabled?: boolean;
+  autoOpen?: boolean;
+  context?: RelationContext;
+  onChange: (value: unknown) => void | Promise<void>;
+  onOpenChange?: (open: boolean) => void;
+}
+
+export function RelationControl({
+  column,
+  value,
+  invalid,
+  disabled,
+  autoOpen,
+  context,
+  onChange,
+  onOpenChange,
+}: RelationControlProps) {
+  const [open, setOpen] = useState(Boolean(autoOpen));
+  const [query, setQuery] = useState("");
+  const [targets, setTargets] = useState<Entry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const relation = normalizeRelationRoot(column.relation);
+  const values = useRelationValues(column, value);
+  const limitOne = column.limit === "one";
+
+  useEffect(() => {
+    if (!autoOpen) return;
+    setOpen(true);
+  }, [autoOpen]);
+
+  useEffect(() => {
+    onOpenChange?.(open);
+  }, [onOpenChange, open]);
+
+  useEffect(() => {
+    if (!open || !context?.spacePath || !relation) return;
+    let cancelled = false;
+    setLoading(true);
+    void queryRelationTargets({
+      spacePath: context.spacePath,
+      projectPath: context.projectPath,
+      relation,
+      query,
+    })
+      .then((entries) => {
+        if (!cancelled) setTargets(entries);
+      })
+      .catch(() => {
+        if (!cancelled) setTargets([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [context?.projectPath, context?.spacePath, open, query, relation]);
+
+  const selected = useMemo(() => new Set(values), [values]);
+
+  const commit = useCallback(
+    async (nextValues: string[]) => {
+      if (limitOne) {
+        await onChange(nextValues[0] ?? null);
+        setOpen(false);
+        return;
+      }
+      await onChange(nextValues.length > 0 ? nextValues : null);
+    },
+    [limitOne, onChange],
+  );
+
+  const addTarget = useCallback(
+    (entry: Entry) => {
+      const nextValue = relationValueForPath(relation, entry.path);
+      if (!nextValue || selected.has(nextValue)) return;
+      const nextValues = limitOne ? [nextValue] : [...values, nextValue];
+      void commit(nextValues);
+    },
+    [commit, limitOne, relation, selected, values],
+  );
+
+  const removeValue = useCallback(
+    (target: string) => {
+      void commit(values.filter((item) => item !== target));
+    },
+    [commit, values],
+  );
+
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-1">
+      <RelationValue
+        column={column}
+        value={value}
+        context={context}
+        onRemove={disabled ? undefined : removeValue}
+      />
+      {(!limitOne || values.length === 0) && !disabled ? (
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "h-7 rounded-md px-2 text-xs text-muted-foreground",
+                invalid && "ring-1 ring-warning",
+              )}
+            >
+              {values.length === 0
+                ? m.property_relation_add()
+                : m.property_relation_add_another()}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-72 p-0">
+            <Command shouldFilter={false}>
+              <CommandInput
+                value={query}
+                onValueChange={setQuery}
+                placeholder={m.property_relation_search_placeholder()}
+              />
+              <CommandList>
+                <CommandEmpty>
+                  {loading
+                    ? m.property_relation_loading()
+                    : m.property_relation_empty()}
+                </CommandEmpty>
+                <CommandGroup heading={m.property_relation_targets()}>
+                  {targets.map((entry) => {
+                    const targetValue = relationValueForPath(relation, entry.path);
+                    return (
+                      <CommandItem
+                        key={entry.path}
+                        value={`${entry.meta.title} ${entry.path}`}
+                        disabled={selected.has(targetValue)}
+                        onSelect={() => addTarget(entry)}
+                      >
+                        <EntryIcon icon={entry.meta.icon} />
+                        <span className="min-w-0 flex-1 truncate">
+                          {entry.meta.title}
+                        </span>
+                        <span className="max-w-28 truncate text-xs text-muted-foreground">
+                          {targetValue}
+                        </span>
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+      ) : null}
+    </div>
+  );
+}
+
+export function RelationValue({
+  column,
+  value,
+  context,
+  onRemove,
+}: {
+  column: Column;
+  value: unknown;
+  context?: RelationContext;
+  onRemove?: (value: string) => void;
+}) {
+  const values = useRelationValues(column, value);
+  const relation = normalizeRelationRoot(column.relation);
+  const resolved = useResolvedRelations(context, relation, values);
+  const openDocument = useLayoutStore((state) => state.openDocument);
+
+  if (values.length === 0) {
+    return <span className="text-muted-foreground">-</span>;
+  }
+
+  const openPath = (path: string) => {
+    if (!path) return;
+    if (context?.onOpenPath) {
+      context.onOpenPath(path);
+      return;
+    }
+    openDocument(path, context?.spaceId ?? undefined);
+  };
+
+  return (
+    <span className="flex min-w-0 flex-wrap items-center gap-1">
+      {values.map((item) => {
+        const target = resolved.get(item);
+        const status = relationStatus(relation, target);
+        return (
+          <RelationChip
+            key={item}
+            value={item}
+            target={target}
+            status={status}
+            onOpen={() => openPath(target ? resolvedRelationPath(target) : "")}
+            onRemove={onRemove}
+          />
+        );
+      })}
+    </span>
+  );
+}
+
+function RelationChip({
+  value,
+  target,
+  status,
+  onOpen,
+  onRemove,
+}: {
+  value: string;
+  target: ResolvedRelationEntry | null | undefined;
+  status: "ok" | "orphan" | "out-of-scope";
+  onOpen: () => void;
+  onRemove?: (value: string) => void;
+}) {
+  const broken = status !== "ok";
+  const chip = (
+    <Badge
+      variant={broken ? "outline" : "secondary"}
+      className={cn(
+        "max-w-56 gap-1 rounded-full",
+        broken && "cursor-not-allowed text-muted-foreground line-through",
+      )}
+    >
+      {broken ? <Link2Off data-icon="inline-start" /> : <EntryIcon icon={target?.icon} />}
+      <span className="min-w-0 truncate">
+        {target?.title ?? compactRelationPath(value)}
+      </span>
+      {onRemove ? (
+        <button
+          type="button"
+          className="rounded-full text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onRemove(value);
+          }}
+        >
+          <X data-icon="inline-end" />
+          <span className="sr-only">{m.property_relation_remove()}</span>
+        </button>
+      ) : null}
+    </Badge>
+  );
+
+  if (broken) {
+    const tooltip =
+      status === "orphan"
+        ? m.property_relation_orphan_tooltip()
+        : m.property_relation_out_of_scope_tooltip();
+    return (
+      <Popover>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <PopoverTrigger asChild>
+                <button type="button" className="min-w-0" disabled={!onRemove}>
+                  {chip}
+                </button>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <TooltipContent>{tooltip}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+        <PopoverContent align="start" className="w-52 p-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="w-full justify-start text-destructive"
+            disabled={!onRemove}
+            onClick={() => onRemove?.(value)}
+          >
+            <X data-icon="inline-start" />
+            {m.property_relation_remove()}
+          </Button>
+        </PopoverContent>
+      </Popover>
+    );
+  }
+
+  return (
+    <button type="button" className="min-w-0" onClick={onOpen}>
+      {chip}
+    </button>
+  );
+}
+
+function EntryIcon({ icon }: { icon?: string | null }) {
+  if (icon) {
+    return (
+      <span data-icon="inline-start" className="shrink-0 text-xs">
+        {icon}
+      </span>
+    );
+  }
+  return <FileText data-icon="inline-start" />;
+}
+
+function useResolvedRelations(
+  context: RelationContext | undefined,
+  relation: string,
+  values: string[],
+) {
+  const [resolved, setResolved] = useState<Map<string, ResolvedRelationEntry | null>>(
+    () => new Map(),
+  );
+  const key = values.join("\n");
+
+  useEffect(() => {
+    if (!context?.spacePath || values.length === 0) {
+      setResolved(new Map());
+      return;
+    }
+    let cancelled = false;
+    void resolveRelationsBatch({
+      spacePath: context.spacePath,
+      projectPath: context.projectPath,
+      relation,
+      values,
+    })
+      .then((items) => {
+        if (cancelled) return;
+        setResolved(new Map(values.map((item, index) => [item, items[index] ?? null])));
+      })
+      .catch(() => {
+        if (!cancelled) setResolved(new Map(values.map((item) => [item, null])));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [context?.projectPath, context?.spacePath, key, relation]);
+
+  return resolved;
+}
+
+function useRelationValues(column: Column, value: unknown) {
+  return useMemo(() => normalizeRelationValues(column, value), [column, value]);
+}
+
+function normalizeRelationValues(column: Column, value: unknown) {
+  const raw = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? [value]
+      : [];
+  const values = Array.from(
+    new Set(
+      raw
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.replace(/\\/g, "/").replace(/^\/+/, ""))
+        .filter(Boolean),
+    ),
+  );
+  return column.limit === "one" ? values.slice(0, 1) : values;
+}
+
+function relationStatus(
+  relation: string,
+  target: ResolvedRelationEntry | null | undefined,
+) {
+  if (!target) return "orphan";
+  const root = target.collectionRootPath ?? target.collection_root_path ?? null;
+  if (root && normalizeRelationRoot(root) !== relation) return "out-of-scope";
+  return "ok";
+}
+
+function compactRelationPath(value: string) {
+  const parts = value.split("/").filter(Boolean);
+  if (parts.length <= 2) return value;
+  return `${parts[0]}/.../${parts.at(-1)}`;
+}

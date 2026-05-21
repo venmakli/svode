@@ -56,6 +56,8 @@ export function BoardCardContent({
   nestedCollectionPaths,
   active,
   overlay,
+  spacePath,
+  projectPath,
   persons,
   onRequestPersons,
   onUpdateField,
@@ -123,6 +125,11 @@ export function BoardCardContent({
               entry={entry}
               columns={customColumns}
               persons={persons}
+              relationContext={{
+                spacePath,
+                projectPath,
+                currentFilePath: entry.path,
+              }}
               onRequestPersons={onRequestPersons}
               onUpdateField={overlay ? undefined : onUpdateField}
             />

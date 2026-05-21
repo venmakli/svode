@@ -204,6 +204,11 @@ pub fn duplicate(
         vec![dest_root.clone()]
     };
     rewrite_markdown_identities(&files, Some(&root_head), Some(&new_title), None, None, None)?;
+    properties::rewrite_internal_relation_refs_for_copy(
+        space,
+        &rel_from_abs(Path::new(space), &source.root_abs),
+        &rel_from_abs(Path::new(space), &dest_root),
+    )?;
 
     Ok(DuplicatedTemplate {
         head_path,
@@ -278,6 +283,11 @@ pub fn instantiate(
             Some((space, head_rel.as_str())),
             Some(&contextual_defaults),
             None,
+        )?;
+        properties::rewrite_internal_relation_refs_for_copy(
+            space,
+            &rel_from_abs(Path::new(space), &source.root_abs),
+            &rel_from_abs(Path::new(space), &head_abs),
         )?;
         append_order(
             Path::new(space),
@@ -373,6 +383,11 @@ fn instantiate_hierarchy(
             }
         }
         fs::rename(&stage_root, dest_root_abs)?;
+        properties::rewrite_internal_relation_refs_for_copy(
+            space,
+            &rel_from_abs(Path::new(space), &source.root_abs),
+            &rel_from_abs(Path::new(space), dest_root_abs),
+        )?;
         Ok(())
     })();
 
