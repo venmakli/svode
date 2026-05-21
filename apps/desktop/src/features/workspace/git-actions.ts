@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
+import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
 import type { SyncResult, GitStatus } from "@/types/git";
 import type { SpaceConfig } from "@/types/space";
@@ -16,6 +17,14 @@ async function isAutoSyncEnabled(spacePath: string): Promise<boolean> {
     return cfg.git?.autoSync === true;
   } catch {
     return false;
+  }
+}
+
+function clearCommittedReviewMarkers(paths: string[]) {
+  if (paths.length === 0) return;
+  const editor = useEditorStore.getState();
+  for (const path of paths) {
+    editor.clearAiModified(path);
   }
 }
 
@@ -76,6 +85,9 @@ export async function commitFileAndMaybeSync(
       filePath,
     });
     useGitStore.getState().applyStatus(spacePath, status);
+    if (!status.files.some((file) => file.path === filePath)) {
+      clearCommittedReviewMarkers([filePath]);
+    }
   } catch (err) {
     console.error("git_commit_file failed:", err);
     return;
@@ -95,12 +107,19 @@ export async function commitAllSpace(
   spacePath: string,
   projectPath?: string,
 ): Promise<void> {
+  const previousDirtyPaths =
+    useGitStore.getState().statuses[spacePath]?.files.map((file) => file.path) ??
+    [];
   try {
     const status = await invoke<GitStatus>("git_commit_all", {
       projectPath: projectPath ?? null,
       spacePath,
     });
     useGitStore.getState().applyStatus(spacePath, status);
+    const stillDirty = new Set(status.files.map((file) => file.path));
+    clearCommittedReviewMarkers(
+      previousDirtyPaths.filter((path) => !stillDirty.has(path)),
+    );
   } catch (err) {
     console.error("git_commit_all failed:", err);
     return;

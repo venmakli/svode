@@ -47,7 +47,7 @@ import {
   RenameColumnDialog,
   RenameOptionDialog,
 } from "./schema-dialogs";
-import { normalizeSchema, valueToString } from "../lib/utils";
+import { hasOption, normalizeSchema, valueToString } from "../lib/utils";
 import * as m from "@/paraglide/messages.js";
 
 interface PropertyPanelProps {
@@ -191,6 +191,33 @@ export function PropertyPanel({
     [filePath, projectPath, spaceId, spacePath],
   );
 
+  const clearOrphanValues = useCallback(
+    async (field: string) => {
+      await schemaInvoke("clear_field_values", { field });
+      setPanelValues((current) => {
+        const next = { ...current };
+        delete next[field];
+        return next;
+      });
+    },
+    [schemaInvoke],
+  );
+
+  const clearInvalidOptionValues = useCallback(
+    async (column: Column, optionNames: string[]) => {
+      if (optionNames.length === 0) return;
+      await schemaInvoke("clear_option_values", {
+        columnName: column.name,
+        optionNames,
+      });
+      setPanelValues((current) => ({
+        ...current,
+        [column.name]: removeOptionValues(current[column.name], optionNames),
+      }));
+    },
+    [schemaInvoke],
+  );
+
   return (
     <div className="flex flex-col gap-3">
       <div
@@ -203,6 +230,10 @@ export function PropertyPanel({
       >
         {schema.columns.map((column) => {
           const state = validatePropertyValue(column, panelValues[column.name]);
+          const invalidOptions = invalidOptionValues(
+            column,
+            panelValues[column.name],
+          );
           return (
             <div key={column.name} className="contents group/property-row">
               <PropertyLabel
@@ -245,7 +276,15 @@ export function PropertyPanel({
                           type="button"
                           variant="ghost"
                           size="xs"
-                          onClick={() => void onValueChange(column.name, null)}
+                          onClick={() =>
+                            void (invalidOptions.length > 0
+                              ? clearInvalidOptionValues(
+                                  column,
+                                  invalidOptions,
+                                )
+                              : onValueChange(column.name, null)
+                            ).catch(handleSchemaError)
+                          }
                         >
                           {m.property_action_clear_values()}
                         </Button>
@@ -306,7 +345,9 @@ export function PropertyPanel({
                 type="button"
                 variant="ghost"
                 size="icon-xs"
-                onClick={() => void onValueChange(field, null)}
+                onClick={() =>
+                  void clearOrphanValues(field).catch(handleSchemaError)
+                }
               >
                 <Trash2 />
                 <span className="sr-only">
@@ -428,6 +469,40 @@ export function PropertyPanel({
       />
     </div>
   );
+}
+
+function invalidOptionValues(column: Column, value: unknown): string[] {
+  if (
+    column.type !== "select" &&
+    column.type !== "multi_select" &&
+    column.type !== "status"
+  ) {
+    return [];
+  }
+
+  const raw =
+    typeof value === "string"
+      ? [value]
+      : Array.isArray(value)
+        ? value.filter((item): item is string => typeof item === "string")
+        : [];
+  return Array.from(
+    new Set(raw.filter((item) => item && !hasOption(column, item))),
+  );
+}
+
+function removeOptionValues(value: unknown, optionNames: string[]) {
+  const names = new Set(optionNames);
+  if (typeof value === "string") {
+    return names.has(value) ? null : value;
+  }
+  if (Array.isArray(value)) {
+    const next = value.filter(
+      (item) => typeof item !== "string" || !names.has(item),
+    );
+    return next.length > 0 ? next : null;
+  }
+  return value;
 }
 
 function PropertyPanelValue({

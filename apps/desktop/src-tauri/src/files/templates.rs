@@ -34,6 +34,7 @@ pub struct TemplateInfo {
 
 pub struct DeletedTemplate {
     pub title: String,
+    pub root_path: String,
 }
 
 pub struct DuplicatedTemplate {
@@ -168,6 +169,7 @@ pub fn delete(
     }
     Ok(DeletedTemplate {
         title: source.title,
+        root_path: rel_from_abs(Path::new(space), &source.root_abs),
     })
 }
 

@@ -1842,7 +1842,7 @@ pub fn delete(
     space: &str,
     path: &str,
     backlink_index: Option<&BacklinkIndex>,
-) -> Result<(), AppError> {
+) -> Result<Vec<std::path::PathBuf>, AppError> {
     let abs_path = resolve(space, path);
 
     if !abs_path.exists() {
@@ -1850,6 +1850,12 @@ pub fn delete(
     }
 
     let deleted_paths = collect_deleted_entry_paths(Path::new(space), &abs_path)?;
+    let cascade_touched =
+        match crate::properties::cascade_clean_deleted_entries(space, &deleted_paths) {
+            Ok(paths) => paths,
+            Err(error) => return Err(error),
+        };
+
     let delete_parent = abs_path.parent().unwrap_or(Path::new(space));
     let tombstone = unique_child_path(delete_parent, ".combai-delete", None);
     fs::rename(&abs_path, &tombstone)?;
@@ -1859,17 +1865,13 @@ pub fn delete(
         return Err(error);
     }
 
-    if let Err(error) = crate::properties::cascade_clean_deleted_entries(space, &deleted_paths) {
-        return Err(error);
-    }
-
     if let Some(index) = backlink_index {
         for deleted_path in &deleted_paths {
             index.remove_file(deleted_path);
         }
     }
 
-    Ok(())
+    Ok(cascade_touched)
 }
 
 fn cascade_remove_tombstone(tombstone: &Path) -> Result<(), AppError> {

@@ -1119,14 +1119,15 @@ fn detach_two_way_relation(
 pub fn cascade_clean_deleted_entries(
     space: &str,
     deleted_paths: &[String],
-) -> Result<(), AppError> {
+) -> Result<Vec<PathBuf>, AppError> {
     if deleted_paths.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let mut touched = Vec::new();
     for collection in list_collections(space)? {
         touched.extend(collection_markdown_files(space, &collection.path)?);
     }
+    let mut changed = Vec::new();
     with_rollback(touched, || {
         for collection in list_collections(space)? {
             let schema = read_schema_or_default(space, &collection.path)?;
@@ -1140,7 +1141,7 @@ pub fn cascade_clean_deleted_entries(
                 continue;
             }
             for file in collection_markdown_files(space, &collection.path)? {
-                mutate_frontmatter(&file, |meta| {
+                let did_change = mutate_frontmatter(&file, |meta| {
                     for column in &relation_columns {
                         let Some(relation) = column.relation.as_deref() else {
                             continue;
@@ -1173,10 +1174,14 @@ pub fn cascade_clean_deleted_entries(
                     }
                     Ok(())
                 })?;
+                if did_change {
+                    changed.push(file);
+                }
             }
         }
         Ok(())
-    })
+    })?;
+    Ok(changed)
 }
 
 pub fn rewrite_relation_paths_for_move(
@@ -2673,7 +2678,8 @@ fn mutate_relation_reverse_file(
             meta.extra.insert(reverse_name.to_string(), next);
         }
         Ok(())
-    })
+    })?;
+    Ok(())
 }
 
 fn relation_value_from_values(column: &Column, values: Vec<String>) -> Value {
@@ -3905,6 +3911,116 @@ pub fn delete_option(
         write_schema(space, collection_path, &schema)?;
         Ok(schema)
     })
+}
+
+pub fn clear_field_values(
+    space: &str,
+    collection_path: &str,
+    field: &str,
+) -> Result<Vec<PathBuf>, AppError> {
+    let files = collection_markdown_files(space, collection_path)?;
+    let mut changed = Vec::new();
+    with_rollback(files.clone(), || {
+        for file in &files {
+            let did_change = mutate_frontmatter(file, |meta| {
+                meta.extra.remove(field);
+                Ok(())
+            })?;
+            if did_change {
+                changed.push(file.clone());
+            }
+        }
+        Ok(())
+    })?;
+    Ok(changed)
+}
+
+pub fn clear_option_values(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+    option_names: &[String],
+) -> Result<Vec<PathBuf>, AppError> {
+    if option_names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let schema = read_schema_or_default(space, collection_path)?;
+    let column = schema
+        .columns
+        .iter()
+        .find(|column| column.name == column_name)
+        .ok_or_else(|| schema_error(format!("column '{column_name}' not found")))?;
+    ensure_option_column(column)?;
+
+    let files = collection_markdown_files(space, collection_path)?;
+    let mut changed = Vec::new();
+    with_rollback(files.clone(), || {
+        for file in &files {
+            let did_change = mutate_frontmatter(file, |meta| {
+                if let Some(value) = meta.extra.get_mut(column_name) {
+                    for option_name in option_names {
+                        delete_option_value(value, option_name);
+                    }
+                    if value.is_null()
+                        || value
+                            .as_sequence()
+                            .is_some_and(|sequence| sequence.is_empty())
+                    {
+                        meta.extra.remove(column_name);
+                    }
+                }
+                Ok(())
+            })?;
+            if did_change {
+                changed.push(file.clone());
+            }
+        }
+        Ok(())
+    })?;
+    Ok(changed)
+}
+
+pub fn replace_option_values(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+    old_option_name: &str,
+    new_option_name: &str,
+) -> Result<Vec<PathBuf>, AppError> {
+    let schema = read_schema_or_default(space, collection_path)?;
+    let column = schema
+        .columns
+        .iter()
+        .find(|column| column.name == column_name)
+        .ok_or_else(|| schema_error(format!("column '{column_name}' not found")))?;
+    ensure_option_column(column)?;
+    if !column
+        .options
+        .as_ref()
+        .is_some_and(|options| options.iter().any(|option| option.name == new_option_name))
+    {
+        return Err(schema_error(format!(
+            "option '{new_option_name}' not found"
+        )));
+    }
+
+    let files = collection_markdown_files(space, collection_path)?;
+    let mut changed = Vec::new();
+    with_rollback(files.clone(), || {
+        for file in &files {
+            let did_change = mutate_frontmatter(file, |meta| {
+                if let Some(value) = meta.extra.get_mut(column_name) {
+                    replace_option_value(value, old_option_name, new_option_name);
+                }
+                Ok(())
+            })?;
+            if did_change {
+                changed.push(file.clone());
+            }
+        }
+        Ok(())
+    })?;
+    Ok(changed)
 }
 
 pub fn update_option(
@@ -6294,20 +6410,21 @@ fn collect_md_files_inner(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), AppE
     Ok(())
 }
 
-fn mutate_frontmatter<F>(path: &Path, mut f: F) -> Result<(), AppError>
+fn mutate_frontmatter<F>(path: &Path, mut f: F) -> Result<bool, AppError>
 where
     F: FnMut(&mut EntryMeta) -> Result<(), AppError>,
 {
     let raw = fs::read_to_string(path)?;
     let Some((mut meta, body)) = frontmatter::try_parse(&raw)? else {
-        return Ok(());
+        return Ok(false);
     };
     let before = meta.extra.clone();
     f(&mut meta)?;
     if meta.extra != before {
         fs::write(path, frontmatter::serialize(&meta, &body))?;
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }
 
 fn with_rollback<T, F>(paths: Vec<PathBuf>, f: F) -> Result<T, AppError>

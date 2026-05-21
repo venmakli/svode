@@ -24,6 +24,40 @@ fn basename(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
+fn abs_entry_path(space: &str, rel_path: &str) -> PathBuf {
+    Path::new(space).join(rel_path)
+}
+
+fn order_path(space: &str) -> PathBuf {
+    Path::new(space).join(".combai").join("order.json")
+}
+
+fn root_path_for_head(path: &str) -> &str {
+    if path
+        .rsplit_once('/')
+        .is_some_and(|(_, name)| name.eq_ignore_ascii_case("README.md"))
+    {
+        return path
+            .rsplit_once('/')
+            .map(|(parent, _)| parent)
+            .unwrap_or(path);
+    }
+    path
+}
+
+fn entry_paths_with_order(space: &str, paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
+    let mut out = vec![order_path(space)];
+    out.extend(paths);
+    out
+}
+
+fn schema_path(space: &str, collection_path: &str) -> PathBuf {
+    if collection_path.is_empty() || collection_path == "." {
+        return Path::new(space).join("schema.yaml");
+    }
+    Path::new(space).join(collection_path).join("schema.yaml")
+}
+
 fn entry_history_name(path: &str) -> String {
     let normalized = path.trim_matches('/').replace('\\', "/");
     let path = Path::new(&normalized);
@@ -45,16 +79,36 @@ fn entry_history_name(path: &str) -> String {
         .to_string()
 }
 
-fn maybe_autocommit_structural(
+fn property_type_message(type_: PropertyType) -> &'static str {
+    match type_ {
+        PropertyType::Text => "text",
+        PropertyType::Number => "number",
+        PropertyType::UniqueId => "unique_id",
+        PropertyType::Select => "select",
+        PropertyType::MultiSelect => "multi_select",
+        PropertyType::Status => "status",
+        PropertyType::Date => "date",
+        PropertyType::Relation => "relation",
+        PropertyType::Actor => "actor",
+        PropertyType::Person => "person",
+        PropertyType::Checkbox => "checkbox",
+        PropertyType::Url => "url",
+        PropertyType::Email => "email",
+        PropertyType::Phone => "phone",
+    }
+}
+
+fn maybe_autocommit_structural_paths(
     autocommit: &AutocommitService,
     project_path: Option<&str>,
     space_path: &str,
     op: StructuralOp,
+    paths: Vec<PathBuf>,
 ) {
     let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
         return;
     };
-    autocommit.schedule_structural(PathBuf::from(proj), PathBuf::from(space_path), op);
+    autocommit.schedule_structural_paths(PathBuf::from(proj), PathBuf::from(space_path), op, paths);
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -83,17 +137,20 @@ async fn schedule_modified_source_spaces(
         return;
     };
     let project = Path::new(proj);
-    let mut seen = std::collections::HashSet::new();
+    let mut by_space: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
     for item in modified {
-        if !seen.insert(item.space_id.clone()) {
-            continue;
-        }
         match state.space_path_of(project, item.space_id.as_deref()).await {
             Ok(space_path) => {
-                autocommit.schedule_structural(project.to_path_buf(), space_path, op.clone())
+                by_space
+                    .entry(space_path.clone())
+                    .or_default()
+                    .push(space_path.join(&item.path));
             }
             Err(e) => tracing::warn!("schedule modified backlink source failed: {e}"),
         }
+    }
+    for (space_path, paths) in by_space {
+        autocommit.schedule_structural_paths(project.to_path_buf(), space_path, op.clone(), paths);
     }
 }
 
@@ -169,7 +226,8 @@ pub async fn create_entry(
         reindex_space_dir(&index_state, &space).await;
     }
     if properties::unique_id_schema_path_for_entry(&space, &created.path)?.is_some() {
-        let paths = properties::unique_id_mutation_paths_for_entry(&space, &created.path)?;
+        let mut paths = properties::unique_id_mutation_paths_for_entry(&space, &created.path)?;
+        paths.push(order_path(&space));
         maybe_autocommit_schema(
             &autocommit,
             project_path.as_deref(),
@@ -179,11 +237,12 @@ pub async fn create_entry(
         )
         .await;
     } else {
-        maybe_autocommit_structural(
+        maybe_autocommit_structural_paths(
             &autocommit,
             project_path.as_deref(),
             &space,
             StructuralOp::Create(basename(&created.path)),
+            entry_paths_with_order(&space, [abs_entry_path(&space, &created.path)]),
         );
     }
     Ok(created)
@@ -198,11 +257,12 @@ pub fn create_folder(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
     let folder_path = entry::create_folder(&space, parent_path.as_deref(), &name)?;
-    maybe_autocommit_structural(
+    maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
         &space,
         StructuralOp::Create(basename(&folder_path)),
+        entry_paths_with_order(&space, [abs_entry_path(&space, &folder_path)]),
     );
     Ok(folder_path)
 }
@@ -273,6 +333,56 @@ async fn maybe_autocommit_schema(
     }
 }
 
+fn snapshot_paths(paths: &[PathBuf]) -> Result<Vec<(PathBuf, Option<Vec<u8>>)>, AppError> {
+    let mut seen = std::collections::HashSet::new();
+    let mut snapshots = Vec::new();
+    for path in paths {
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        let content = if path.exists() {
+            Some(std::fs::read(path)?)
+        } else {
+            None
+        };
+        snapshots.push((path.clone(), content));
+    }
+    Ok(snapshots)
+}
+
+fn changed_paths(snapshot: Vec<(PathBuf, Option<Vec<u8>>)>) -> Result<Vec<PathBuf>, AppError> {
+    let mut changed = Vec::new();
+    for (path, before) in snapshot {
+        let after = if path.exists() {
+            Some(std::fs::read(&path)?)
+        } else {
+            None
+        };
+        if before != after {
+            changed.push(path);
+        }
+    }
+    Ok(changed)
+}
+
+fn append_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
+}
+
+fn append_unsnapshotted_paths(
+    paths: &mut Vec<PathBuf>,
+    snapshotted: &[PathBuf],
+    candidates: Vec<PathBuf>,
+) {
+    for path in candidates {
+        if !snapshotted.iter().any(|existing| existing == &path) {
+            append_unique_path(paths, path);
+        }
+    }
+}
+
 async fn pool_for_space(
     index_state: &IndexState,
     space: &str,
@@ -321,7 +431,9 @@ pub async fn add_schema_column(
         &column,
         materializes_unique_id,
     )?;
+    let snapshot = snapshot_paths(&paths)?;
     let schema = properties::add_schema_column(&space, &collection_path, column)?;
+    let paths = changed_paths(snapshot)?;
     maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
@@ -336,13 +448,18 @@ pub async fn change_schema_type(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    let message = format!("Change column \"{column_name}\" type to {new_type:?}");
+    let message = format!(
+        "Change column \"{column_name}\" type to {}",
+        property_type_message(new_type)
+    );
     let mut paths = properties::schema_column_name_mutation_paths(
         &space,
         &collection_path,
         &column_name,
         true,
     )?;
+    let snapshotted = paths.clone();
+    let snapshot = snapshot_paths(&snapshotted)?;
     let conversion_strategy = conversion_strategy.map(json_to_yaml_value).transpose()?;
     let schema = properties::change_schema_type(
         &space,
@@ -356,14 +473,22 @@ pub async fn change_schema_type(
         .iter()
         .find(|column| column.name == column_name)
     {
-        paths.extend(properties::schema_column_mutation_paths(
-            &space,
-            &collection_path,
-            column,
-            true,
-        )?);
+        append_unsnapshotted_paths(
+            &mut paths,
+            &snapshotted,
+            properties::schema_column_mutation_paths(&space, &collection_path, column, true)?,
+        );
     }
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    let mut changed = changed_paths(snapshot)?;
+    append_unsnapshotted_paths(&mut changed, &snapshotted, paths);
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        changed,
+        message,
+    )
+    .await;
     Ok(schema)
 }
 
@@ -428,13 +553,15 @@ pub async fn rename_schema_column(
 ) -> Result<CollectionSchema, AppError> {
     let paths =
         properties::schema_column_name_mutation_paths(&space, &collection_path, &old_name, true)?;
+    let snapshot = snapshot_paths(&paths)?;
     let schema = properties::rename_schema_column(&space, &collection_path, &old_name, &new_name)?;
+    let paths = changed_paths(snapshot)?;
     maybe_autocommit_schema(
         &autocommit,
         project_path.as_deref(),
         &space,
         paths,
-        format!("Rename column \"{old_name}\" to \"{new_name}\""),
+        format!("Rename column \"{old_name}\" → \"{new_name}\""),
     )
     .await;
     Ok(schema)
@@ -455,6 +582,8 @@ pub async fn update_schema_column(
         &column_name,
         false,
     )?;
+    let snapshotted = paths.clone();
+    let snapshot = snapshot_paths(&snapshotted)?;
     let patch = json_to_yaml_value(patch)?;
     let schema = properties::update_schema_column(&space, &collection_path, &column_name, patch)?;
     if let Some(column) = schema
@@ -462,18 +591,24 @@ pub async fn update_schema_column(
         .iter()
         .find(|column| column.name == column_name)
     {
-        paths.extend(properties::schema_column_mutation_paths(
-            &space,
-            &collection_path,
-            column,
-            column.type_ == PropertyType::Relation,
-        )?);
+        append_unsnapshotted_paths(
+            &mut paths,
+            &snapshotted,
+            properties::schema_column_mutation_paths(
+                &space,
+                &collection_path,
+                column,
+                column.type_ == PropertyType::Relation,
+            )?,
+        );
     }
+    let mut changed = changed_paths(snapshot)?;
+    append_unsnapshotted_paths(&mut changed, &snapshotted, paths);
     maybe_autocommit_schema(
         &autocommit,
         project_path.as_deref(),
         &space,
-        paths,
+        changed,
         format!("Update column \"{column_name}\""),
     )
     .await;
@@ -491,8 +626,10 @@ pub async fn delete_schema_column(
 ) -> Result<CollectionSchema, AppError> {
     let delete_values = delete_values.unwrap_or(false);
     let paths = properties::schema_mutation_paths(&space, &collection_path, delete_values)?;
+    let snapshot = snapshot_paths(&paths)?;
     let schema =
         properties::delete_schema_column(&space, &collection_path, &column_name, delete_values)?;
+    let paths = changed_paths(snapshot)?;
     let suffix = if delete_values { " and values" } else { "" };
     maybe_autocommit_schema(
         &autocommit,
@@ -532,6 +669,7 @@ pub async fn rename_option(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
     let paths = properties::schema_mutation_paths(&space, &collection_path, true)?;
+    let snapshot = snapshot_paths(&paths)?;
     let schema = properties::rename_option(
         &space,
         &collection_path,
@@ -539,12 +677,13 @@ pub async fn rename_option(
         &old_option_name,
         &new_option_name,
     )?;
+    let paths = changed_paths(snapshot)?;
     maybe_autocommit_schema(
         &autocommit,
         project_path.as_deref(),
         &space,
         paths,
-        format!("Rename option \"{column_name}\": \"{old_option_name}\" to \"{new_option_name}\""),
+        format!("Rename option \"{column_name}\": \"{old_option_name}\" → \"{new_option_name}\""),
     )
     .await;
     Ok(schema)
@@ -562,6 +701,7 @@ pub async fn delete_option(
 ) -> Result<CollectionSchema, AppError> {
     let delete_values = delete_values.unwrap_or(false);
     let paths = properties::schema_mutation_paths(&space, &collection_path, delete_values)?;
+    let snapshot = snapshot_paths(&paths)?;
     let schema = properties::delete_option(
         &space,
         &collection_path,
@@ -569,6 +709,7 @@ pub async fn delete_option(
         &option_name,
         delete_values,
     )?;
+    let paths = changed_paths(snapshot)?;
     let suffix = if delete_values { " and values" } else { "" };
     maybe_autocommit_schema(
         &autocommit,
@@ -633,6 +774,80 @@ pub async fn promote_orphan(
     )
     .await;
     Ok(schema)
+}
+
+#[tauri::command]
+pub async fn clear_field_values(
+    space: String,
+    collection_path: String,
+    field: String,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<(), AppError> {
+    let paths = properties::clear_field_values(&space, &collection_path, &field)?;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        format!("Clear field \"{field}\" values"),
+    )
+    .await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn clear_option_values(
+    space: String,
+    collection_path: String,
+    column_name: String,
+    option_name: Option<String>,
+    option_names: Option<Vec<String>>,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<(), AppError> {
+    let mut names = option_names.unwrap_or_default();
+    if let Some(option_name) = option_name {
+        names.push(option_name);
+    }
+    names.sort();
+    names.dedup();
+    let paths = properties::clear_option_values(&space, &collection_path, &column_name, &names)?;
+    let message = if names.len() == 1 {
+        format!("Clear option \"{column_name}\": \"{}\" values", names[0])
+    } else {
+        format!("Clear option \"{column_name}\" values")
+    };
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn replace_option_values(
+    space: String,
+    collection_path: String,
+    column_name: String,
+    old_option_name: String,
+    new_option_name: String,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<(), AppError> {
+    let paths = properties::replace_option_values(
+        &space,
+        &collection_path,
+        &column_name,
+        &old_option_name,
+        &new_option_name,
+    )?;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        format!("Replace option \"{column_name}\": \"{old_option_name}\" → \"{new_option_name}\""),
+    )
+    .await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -704,11 +919,13 @@ pub async fn create_template(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
     let path = templates::create(&space, &collection_path, &title, kind)?;
-    maybe_autocommit_structural(
+    let root = root_path_for_head(&path);
+    maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
         &space,
         StructuralOp::CreateTemplate(title),
+        vec![abs_entry_path(&space, root)],
     );
     Ok(path)
 }
@@ -722,11 +939,12 @@ pub async fn delete_template(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
     let deleted = templates::delete(&space, &collection_path, &template_slug)?;
-    maybe_autocommit_structural(
+    maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
         &space,
         StructuralOp::DeleteTemplate(deleted.title),
+        vec![abs_entry_path(&space, &deleted.root_path)],
     );
     Ok(())
 }
@@ -740,7 +958,8 @@ pub async fn duplicate_template(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
     let duplicated = templates::duplicate(&space, &collection_path, &template_slug)?;
-    maybe_autocommit_structural(
+    let root = root_path_for_head(&duplicated.head_path);
+    maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
         &space,
@@ -748,6 +967,7 @@ pub async fn duplicate_template(
             old: duplicated.old_title,
             new: duplicated.new_title,
         },
+        vec![abs_entry_path(&space, root)],
     );
     Ok(duplicated.head_path)
 }
@@ -783,7 +1003,8 @@ pub async fn instantiate_template(
         contextual_defaults,
     )?;
     reindex_space_dir(&index_state, &space).await;
-    maybe_autocommit_structural(
+    let root = root_path_for_head(&instantiated.entry.path);
+    maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
         &space,
@@ -791,6 +1012,7 @@ pub async fn instantiate_template(
             title: instantiated.template_title,
             parent: parent_dir,
         },
+        entry_paths_with_order(&space, [abs_entry_path(&space, root)]),
     );
     Ok(instantiated.entry)
 }
@@ -1283,7 +1505,7 @@ pub async fn write_entry(
     // flush can drain it before the user-commit (Rename before Update).
     if !skip_rename {
         if let Some(ref new_path) = result.new_path {
-            maybe_autocommit_structural(
+            maybe_autocommit_structural_paths(
                 &autocommit,
                 project_path.as_deref(),
                 &space,
@@ -1291,6 +1513,13 @@ pub async fn write_entry(
                     old: basename(&path),
                     new: basename(new_path),
                 },
+                entry_paths_with_order(
+                    &space,
+                    [
+                        abs_entry_path(&space, &path),
+                        abs_entry_path(&space, new_path),
+                    ],
+                ),
             );
         }
     }
@@ -1307,7 +1536,7 @@ pub async fn delete_entry(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
     let backlink_index = backlinks_for_space(&index_state, &space).await;
-    entry::delete(&space, &path, Some(&backlink_index))?;
+    let cascade_touched = entry::delete(&space, &path, Some(&backlink_index))?;
 
     if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
@@ -1326,11 +1555,14 @@ pub async fn delete_entry(
     } else {
         reindex_space_dir(&index_state, &space).await;
     }
-    maybe_autocommit_structural(
+    let mut paths = entry_paths_with_order(&space, [abs_entry_path(&space, &path)]);
+    paths.extend(cascade_touched);
+    maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
         &space,
         StructuralOp::Delete(basename(&path)),
+        paths,
     );
     Ok(())
 }
@@ -1409,7 +1641,7 @@ pub async fn rename_entry(
         let _ = backlink_index.update_file(Path::new(&space), &to);
         modified
     };
-    maybe_autocommit_structural(
+    maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
         &space,
@@ -1417,6 +1649,10 @@ pub async fn rename_entry(
             old: basename(&from),
             new: basename(&to),
         },
+        entry_paths_with_order(
+            &space,
+            [abs_entry_path(&space, &from), abs_entry_path(&space, &to)],
+        ),
     );
     Ok(modified)
 }
@@ -1496,14 +1732,17 @@ pub async fn move_entry(
     let mut unique_id_paths =
         properties::unique_id_mutation_paths_for_entry_tree(Path::new(&space), &new_path)?;
     if unique_id_paths.is_empty() {
-        maybe_autocommit_structural(
+        maybe_autocommit_structural_paths(
             &autocommit,
             project_path.as_deref(),
             &space,
             StructuralOp::Move(basename(&new_path)),
+            entry_paths_with_order(&space, [old_abs.clone(), abs_entry_path(&space, &new_path)]),
         );
     } else {
         unique_id_paths.push(old_abs);
+        unique_id_paths.push(abs_entry_path(&space, &new_path));
+        unique_id_paths.push(order_path(&space));
         maybe_autocommit_schema(
             &autocommit,
             project_path.as_deref(),
@@ -1642,11 +1881,18 @@ pub async fn nest_entry(
             .update_file_backlinks(project, target_space_id.as_deref(), &new_path)
             .await;
     }
-    maybe_autocommit_structural(
+    maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
         &space,
         StructuralOp::Move(basename(&new_path)),
+        entry_paths_with_order(
+            &space,
+            [
+                abs_entry_path(&space, &path),
+                abs_entry_path(&space, &new_path),
+            ],
+        ),
     );
     Ok(new_path)
 }
@@ -1701,11 +1947,18 @@ pub async fn unnest_entry(
             .update_file_backlinks(project, target_space_id.as_deref(), &new_path)
             .await;
     }
-    maybe_autocommit_structural(
+    maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
         &space,
         StructuralOp::Move(basename(&new_path)),
+        entry_paths_with_order(
+            &space,
+            [
+                abs_entry_path(&space, &path),
+                abs_entry_path(&space, &new_path),
+            ],
+        ),
     );
     Ok(new_path)
 }
@@ -1723,11 +1976,20 @@ pub async fn convert_entry_to_folder(
     let entry =
         entry::convert_entry_to_folder(Path::new(&space), &entry_id, Some(&backlink_index))?;
     reindex_space_dir(&index_state, &space).await;
-    maybe_autocommit_structural(
+    let folder_root = root_path_for_head(&entry.path);
+    let old_leaf = format!("{folder_root}.md");
+    maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
         &space,
         StructuralOp::ConvertToFolder(entry_history_name(&entry.path)),
+        entry_paths_with_order(
+            &space,
+            [
+                abs_entry_path(&space, &old_leaf),
+                abs_entry_path(&space, &entry.path),
+            ],
+        ),
     );
     Ok(entry)
 }
@@ -1744,11 +2006,23 @@ pub async fn convert_entry_to_leaf(
     ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
     let entry = entry::convert_entry_to_leaf(Path::new(&space), &entry_id, Some(&backlink_index))?;
     reindex_space_dir(&index_state, &space).await;
-    maybe_autocommit_structural(
+    let old_readme = entry
+        .path
+        .strip_suffix(".md")
+        .map(|root| format!("{root}/README.md"))
+        .unwrap_or_else(|| entry.path.clone());
+    maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
         &space,
         StructuralOp::ConvertToLeaf(entry_history_name(&entry.path)),
+        entry_paths_with_order(
+            &space,
+            [
+                abs_entry_path(&space, &old_readme),
+                abs_entry_path(&space, &entry.path),
+            ],
+        ),
     );
     Ok(entry)
 }
@@ -1763,11 +2037,12 @@ pub async fn convert_entry_to_nested_collection(
 ) -> Result<(), AppError> {
     let collection_path = entry::convert_entry_to_nested_collection(Path::new(&space), &entry_id)?;
     reindex_space_dir(&index_state, &space).await;
-    maybe_autocommit_structural(
+    maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
         &space,
         StructuralOp::MakeCollection(entry_history_name(&collection_path)),
+        vec![schema_path(&space, &collection_path)],
     );
     Ok(())
 }
@@ -1782,11 +2057,18 @@ pub async fn convert_bare_folder_to_collection(
 ) -> Result<Entry, AppError> {
     let entry = entry::convert_bare_folder_to_collection(Path::new(&space), &folder_path)?;
     reindex_space_dir(&index_state, &space).await;
-    maybe_autocommit_structural(
+    maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
         &space,
         StructuralOp::MakeCollection(entry_history_name(&folder_path)),
+        vec![
+            abs_entry_path(
+                &space,
+                &format!("{}/README.md", folder_path.trim_matches('/')),
+            ),
+            schema_path(&space, &folder_path),
+        ],
     );
     Ok(entry)
 }
@@ -1805,7 +2087,7 @@ pub async fn duplicate_entry(
     let unique_id_paths =
         properties::unique_id_mutation_paths_for_entry_tree(Path::new(&space), &entry.path)?;
     if unique_id_paths.is_empty() {
-        maybe_autocommit_structural(
+        maybe_autocommit_structural_paths(
             &autocommit,
             project_path.as_deref(),
             &space,
@@ -1813,17 +2095,23 @@ pub async fn duplicate_entry(
                 old: old_name,
                 new: entry_history_name(&entry.path),
             },
+            entry_paths_with_order(
+                &space,
+                [abs_entry_path(&space, root_path_for_head(&entry.path))],
+            ),
         );
     } else {
+        let mut paths = entry_paths_with_order(
+            &space,
+            [abs_entry_path(&space, root_path_for_head(&entry.path))],
+        );
+        paths.extend(unique_id_paths);
         maybe_autocommit_schema(
             &autocommit,
             project_path.as_deref(),
             &space,
-            unique_id_paths,
-            format!(
-                "Duplicate {} with fresh unique_id",
-                entry_history_name(&entry.path)
-            ),
+            paths,
+            format!("Duplicate {old_name} → {}", entry_history_name(&entry.path)),
         )
         .await;
     }
@@ -1843,11 +2131,12 @@ pub fn save_tree_order(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
     tree::write_order(Path::new(&space), &order)?;
-    maybe_autocommit_structural(
+    maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
         &space,
         StructuralOp::Reorder,
+        vec![order_path(&space)],
     );
     Ok(())
 }

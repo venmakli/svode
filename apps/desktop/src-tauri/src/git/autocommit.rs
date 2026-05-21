@@ -77,6 +77,7 @@ struct PendingBatch {
     git_type: Option<SpaceGitType>,
     target_repo: Option<PathBuf>,
     ops: Vec<StructuralOp>,
+    paths: Vec<PathBuf>,
     timer: Option<JoinHandle<()>>,
 }
 
@@ -97,17 +98,17 @@ impl AutocommitService {
         }
     }
 
-    /// Schedule an autocommit for a structural change in the given space.
+    /// Schedule a path-scoped autocommit for a structural change.
     ///
     /// The op is pushed into `pending` synchronously, before returning — this
     /// way any `flush_*` invoked afterwards sees the effect immediately. The
-    /// debounce timer and (eager) target-repo resolution run in background
-    /// tasks and only cache into the batch on completion.
-    pub fn schedule_structural(
+    /// debounce timer and target-repo resolution run in background tasks.
+    pub fn schedule_structural_paths(
         &self,
         project_path: PathBuf,
         space_path: PathBuf,
         op: StructuralOp,
+        paths: Vec<PathBuf>,
     ) {
         let needs_resolve = {
             let mut map = self.pending.lock().unwrap();
@@ -118,11 +119,13 @@ impl AutocommitService {
                     git_type: None,
                     target_repo: None,
                     ops: Vec::new(),
+                    paths: Vec::new(),
                     timer: None,
                 });
             // Project path is stable for a given space, keep defensively synced.
             entry.project_path = project_path.clone();
             entry.ops.push(op);
+            entry.paths.extend(paths);
 
             if let Some(handle) = entry.timer.take() {
                 handle.abort();
@@ -235,11 +238,9 @@ impl AutocommitService {
             SpaceGitType::Independent | SpaceGitType::Submodule => space_path.clone(),
         };
 
-        // For inline, drain pending structural of the same target repo first
+        // Drain pending structural of the same target repo first
         // so our config add doesn't sweep their changes under our message.
-        if matches!(git_type, SpaceGitType::Inline) {
-            self.flush_target_repo(&target_repo).await;
-        }
+        self.flush_target_repo(&target_repo).await;
 
         do_commit_system(&self.app, &project_path, &space_path, git_type, kind).await
     }
@@ -266,9 +267,7 @@ impl AutocommitService {
             SpaceGitType::Independent | SpaceGitType::Submodule => space_path.clone(),
         };
 
-        if matches!(git_type, SpaceGitType::Inline) {
-            self.flush_target_repo(&target_repo).await;
-        }
+        self.flush_target_repo(&target_repo).await;
 
         do_commit_paths(
             &self.app,
@@ -383,6 +382,7 @@ async fn fire_batch(
         git_type,
         &target_repo,
         &message,
+        batch.paths,
     )
     .await
     {
@@ -390,62 +390,25 @@ async fn fire_batch(
     }
 }
 
-/// Run a routed commit under the target repo's lock and emit event.
+/// Run a routed, path-scoped commit under the target repo's lock and emit event.
 async fn run_autocommit(
     app: &AppHandle,
     project_path: &Path,
     space_path: &Path,
     git_type: SpaceGitType,
-    target_repo: &Path,
+    _target_repo: &Path,
     message: &str,
+    paths: Vec<PathBuf>,
 ) -> Result<(), AppError> {
-    let git_state = app.state::<GitState>();
-    let cli = match git_state.cli.clone() {
-        Some(c) => c,
-        None => return Err(AppError::GitNotFound),
-    };
-
-    let lock = git_state.get_lock(target_repo).await;
-    let _guard = lock.lock().await;
-
-    let created =
-        ops::commit_all_routed_with_message(&cli, project_path, space_path, message).await?;
-
-    if created {
-        emit_committed(app, space_path, target_repo);
-        // Pointer update in root for submodule is done inside commit_all_routed_with_message.
-        if matches!(git_type, SpaceGitType::Submodule) {
-            emit_committed(app, space_path, project_path);
-        }
-
-        // Trigger auto-sync if enabled on the config repo (inline reads root,
-        // independent/submodule read the space's own config).
-        let config_repo: PathBuf = match git_type {
-            SpaceGitType::Inline => project_path.to_path_buf(),
-            SpaceGitType::Independent | SpaceGitType::Submodule => space_path.to_path_buf(),
-        };
-        if is_auto_sync_enabled(&config_repo) {
-            let cli_sync = cli.clone();
-            let sync_target = target_repo.to_path_buf();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = crate::git::sync::sync(&cli_sync, &sync_target).await {
-                    tracing::warn!("auto-sync failed for {}: {}", sync_target.display(), e);
-                }
-            });
-        }
-
-        // For submodule, also auto-sync root if enabled there.
-        if matches!(git_type, SpaceGitType::Submodule) && is_auto_sync_enabled(project_path) {
-            let cli_sync = cli.clone();
-            let root = project_path.to_path_buf();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = crate::git::sync::sync(&cli_sync, &root).await {
-                    tracing::warn!("auto-sync (root) failed for {}: {}", root.display(), e);
-                }
-            });
-        }
+    if paths.is_empty() {
+        tracing::warn!(
+            "autocommit: structural batch for {} has no touched paths, skipping",
+            space_path.display()
+        );
+        return Ok(());
     }
 
+    do_commit_paths(app, project_path, space_path, git_type, paths, message).await?;
     Ok(())
 }
 

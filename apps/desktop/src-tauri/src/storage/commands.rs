@@ -107,10 +107,11 @@ pub async fn upload_asset(
     let cfg = read_space_config(&target_dir)?;
     let strategy = cfg.assets.as_ref().map(|a| a.strategy).unwrap_or_default();
     if !matches!(strategy, AssetsStrategy::Local) {
-        autocommit.schedule_structural(
+        autocommit.schedule_structural_paths(
             project.clone(),
             target_dir.clone(),
             StructuralOp::Create(result.rel_path.clone()),
+            vec![target_dir.join(&result.rel_path)],
         );
     }
 

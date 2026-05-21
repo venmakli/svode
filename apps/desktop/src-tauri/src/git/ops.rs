@@ -733,43 +733,6 @@ pub async fn submodule_update_pointer(
     Ok(())
 }
 
-/// Commit routed with an explicit message.
-pub async fn commit_all_routed_with_message(
-    cli: &GitCli,
-    project_path: &Path,
-    space_path: &Path,
-    message: &str,
-) -> Result<bool, AppError> {
-    let git_type = detect_space_git_type(cli, project_path, space_path).await?;
-    match git_type {
-        SpaceGitType::Inline => {
-            let space_folder = space_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            // For root-level ops (project_path == space_path) stage everything.
-            if space_path == project_path {
-                add_all(cli, project_path).await?;
-            } else {
-                add(cli, project_path, &space_folder).await?;
-            }
-            commit(cli, project_path, message).await
-        }
-        SpaceGitType::Independent => {
-            add_all(cli, space_path).await?;
-            commit(cli, space_path, message).await
-        }
-        SpaceGitType::Submodule => {
-            add_all(cli, space_path).await?;
-            let created = commit(cli, space_path, message).await?;
-            if created {
-                submodule_update_pointer(cli, project_path, space_path).await?;
-            }
-            Ok(created)
-        }
-    }
-}
-
 /// Stage a specific path inside a repo and commit with a fixed message.
 pub async fn commit_path_with_message(
     cli: &GitCli,
