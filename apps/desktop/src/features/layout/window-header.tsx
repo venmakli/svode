@@ -15,10 +15,11 @@ import { CloudUploadButton } from "@/features/workspace/cloud-upload-button";
 import { useCommandPaletteStore } from "@/features/search/store";
 import * as m from "@/paraglide/messages.js";
 import { MainBreadcrumbs } from "./main-breadcrumbs";
+import { ProjectOpenersMenu } from "./project-openers-menu";
 
 export function WindowHeader() {
   const { activeDocument, toggleChatPanel } = useLayoutStore();
-  const { goHome } = useSpaceStore();
+  const { activeRootPath, goHome } = useSpaceStore();
   const setCommandPaletteOpen = useCommandPaletteStore((s) => s.setOpen);
   const { toggleSidebar } = useSidebar();
   const isFullscreen = useFullscreen();
@@ -98,9 +99,10 @@ export function WindowHeader() {
         {isSpaceRoute && <MainBreadcrumbs />}
       </div>
 
-      {/* Right: cloud upload + chat panel toggle */}
-      <div className="flex shrink-0 items-center">
+      {/* Right: cloud upload + external openers + chat panel toggle */}
+      <div className="flex shrink-0 items-center gap-1">
         {isSpaceRoute && <CloudUploadButton />}
+        {isSpaceRoute && <ProjectOpenersMenu projectPath={activeRootPath} />}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

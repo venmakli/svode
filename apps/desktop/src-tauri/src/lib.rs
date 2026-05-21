@@ -135,6 +135,8 @@ pub fn run() {
             commands::space::write_agents_md,
             commands::space::clone_missing_space,
             commands::space::remove_missing_space,
+            commands::project_openers::list_project_openers,
+            commands::project_openers::open_project_in_tool,
             agent::commands::agent_send,
             agent::commands::agent_stop,
             agent::commands::agent_list_available,
