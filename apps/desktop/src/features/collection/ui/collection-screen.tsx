@@ -936,7 +936,7 @@ export function CollectionScreen({
 
   return (
     <div className="flex min-h-full flex-col">
-      <div className="flex shrink-0 flex-col gap-4 px-6 pb-3 pt-5">
+      <div className="flex shrink-0 flex-col gap-4 px-6 pb-3">
         <div>
           {hasReadme ? (
             <EntryIdentityHeader

@@ -121,7 +121,7 @@ export function EntryPeekSheet({
   const contentClassName = useMemo(
     () =>
       cn(
-        "gap-0 p-0 data-[side=right]:sm:max-w-none",
+        "gap-0 p-0 pt-5 data-[side=right]:sm:max-w-none",
         "shadow-[-24px_0_60px_color-mix(in_oklch,black_20%,transparent)]",
       ),
     [],
