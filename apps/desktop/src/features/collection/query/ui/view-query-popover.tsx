@@ -55,8 +55,8 @@ import {
 import * as m from "@/paraglide/messages.js";
 import { MultiPanePopover } from "./multi-pane-popover";
 import {
-  defaultFilterOp,
-  filterOpsForType,
+  defaultFilterOpForField,
+  filterOpsForField,
   FILTER_OP_LABELS,
   isMultiValueOp,
   needsFilterValue,
@@ -145,7 +145,7 @@ export function ViewQueryPopover({
     if (!selected) return;
     setFilterDraft({
       index: null,
-      filter: { field: selected.name, op: defaultFilterOp(selected.type) },
+      filter: { field: selected.name, op: defaultFilterOpForField(selected) },
     });
     setPane("filterEditor");
   }
@@ -622,7 +622,7 @@ export function FilterEditor({
   onChange: (filter: QueryFilter) => void;
 }) {
   const field = queryField(schema, draft.field, "filter");
-  const ops = field ? filterOpsForType(field.type) : [];
+  const ops = field ? filterOpsForField(field) : [];
   return (
     <div className="flex flex-col gap-3 p-3">
       <Select
@@ -695,7 +695,7 @@ function FilterValueControl({
       />
     );
   }
-  if (field.type === "person") {
+  if (field.type === "actor" || field.type === "person") {
     return (
       <PersonChecklist
         persons={persons}
@@ -721,7 +721,7 @@ function FilterValueControl({
       </ToggleGroup>
     );
   }
-  if (field.type === "number") {
+  if (field.type === "number" || field.type === "unique_id") {
     return (
       <Input
         type="number"
@@ -984,7 +984,9 @@ function fieldTypeLabel(type: PropertyType) {
     multi_select: String(m.table_property_type_multi_select()),
     status: String(m.table_property_type_status()),
     date: String(m.table_property_type_date()),
-    person: String(m.table_property_type_person()),
+    unique_id: String(m.table_property_type_unique_id()),
+    actor: String(m.table_property_type_actor()),
+    person: String(m.table_property_type_actor()),
     checkbox: String(m.table_property_type_checkbox()),
     url: String(m.table_property_type_url()),
     email: String(m.table_property_type_email()),
@@ -1002,6 +1004,8 @@ function propertyTypeIcon(type: PropertyType) {
     multi_select: Tag,
     status: Flag,
     date: Calendar,
+    unique_id: Hash,
+    actor: User,
     person: User,
     checkbox: Check,
     url: Link,

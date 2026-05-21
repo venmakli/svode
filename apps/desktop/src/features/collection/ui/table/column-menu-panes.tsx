@@ -12,6 +12,7 @@ import {
   ListTree,
   Trash2,
   User,
+  KeyRound,
   type LucideIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -246,7 +247,8 @@ function hasTypeSettings(column: Column) {
     "status",
     "date",
     "number",
-    "person",
+    "actor",
+    "unique_id",
     "relation",
   ].includes(column.type);
 }
@@ -269,8 +271,11 @@ function typeSettingsMeta(column: Column): {
   if (column.type === "number") {
     return { icon: BarChart3, label: m.table_type_settings_number() };
   }
-  if (column.type === "person") {
-    return { icon: User, label: m.table_type_settings_person() };
+  if (column.type === "actor" || column.type === "person") {
+    return { icon: User, label: m.table_type_settings_actor() };
+  }
+  if (column.type === "unique_id") {
+    return { icon: KeyRound, label: m.table_type_settings_unique_id() };
   }
   if (column.type === "relation") {
     return { icon: ListTree, label: m.table_type_settings_relation() };

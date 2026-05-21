@@ -22,6 +22,8 @@ export const PROPERTY_TYPE_ICONS: Record<PropertyType, LucideIcon> = {
   multi_select: Tag,
   status: Flag,
   date: Calendar,
+  unique_id: Hash,
+  actor: User,
   person: User,
   checkbox: Check,
   url: Link,

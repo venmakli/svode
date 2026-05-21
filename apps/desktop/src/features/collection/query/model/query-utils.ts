@@ -1,4 +1,7 @@
-import type { CollectionSchema, PropertyType } from "@/features/properties/model";
+import type {
+  CollectionSchema,
+  PropertyType,
+} from "@/features/properties/model";
 import { normalizeSchema } from "@/features/properties/lib";
 import type {
   CollectionView,
@@ -57,6 +60,7 @@ const FILTER_OPS_BY_TYPE: Record<PropertyType, FilterOp[]> = {
   phone: ["contains", "eq", "neq", "not_contains", "is_empty", "is_not_empty"],
   number: ["eq", "neq", "gt", "lt", "gte", "lte", "is_empty", "is_not_empty"],
   date: ["eq", "neq", "before", "after", "is_empty", "is_not_empty"],
+  unique_id: ["eq", "neq", "in", "not_in", "is_empty", "is_not_empty"],
   checkbox: ["eq", "neq"],
   select: ["eq", "neq", "in", "not_in", "is_empty", "is_not_empty"],
   multi_select: [
@@ -79,6 +83,7 @@ const FILTER_OPS_BY_TYPE: Record<PropertyType, FilterOp[]> = {
     "group_in",
     "group_not_in",
   ],
+  actor: ["eq", "neq", "in", "not_in", "is_empty", "is_not_empty"],
   person: ["eq", "neq", "in", "not_in", "is_empty", "is_not_empty"],
   relation: [
     "contains",
@@ -94,7 +99,9 @@ export function viewStateStorageKey(collectionPath: string, viewName: string) {
   return `view-state-${collectionPath}-${viewName}`;
 }
 
-export function normalizeCollectionView(view: CollectionView | null | undefined): ViewQueryConfig {
+export function normalizeCollectionView(
+  view: CollectionView | null | undefined,
+): ViewQueryConfig {
   return {
     name: view?.name ?? "",
     type: view?.type ?? "table",
@@ -104,7 +111,10 @@ export function normalizeCollectionView(view: CollectionView | null | undefined)
   };
 }
 
-export function queryFields(schema: CollectionSchema, context: "filter" | "sort" | "group") {
+export function queryFields(
+  schema: CollectionSchema,
+  context: "filter" | "sort" | "group",
+) {
   const normalized = normalizeSchema(schema);
   const customFields: QueryField[] = normalized.columns.map((column) => ({
     name: column.name,
@@ -123,23 +133,60 @@ export function queryFields(schema: CollectionSchema, context: "filter" | "sort"
       ...customFields.filter((field) => field.type !== "multi_select"),
     ];
   }
-  return customFields.filter((field) =>
-    field.type === "select" || field.type === "status" || field.type === "person"
+  return customFields.filter(
+    (field) =>
+      field.type === "select" ||
+      field.type === "status" ||
+      field.type === "person" ||
+      (field.type === "actor" && !field.column?.multiple),
   );
 }
 
-export function queryField(schema: CollectionSchema, fieldName: string, context: "filter" | "sort" | "group") {
-  return queryFields(schema, context).find((field) => field.name === fieldName) ?? null;
+export function queryField(
+  schema: CollectionSchema,
+  fieldName: string,
+  context: "filter" | "sort" | "group",
+) {
+  return (
+    queryFields(schema, context).find((field) => field.name === fieldName) ??
+    null
+  );
 }
 
 export function filterOpsForType(type: PropertyType) {
   return FILTER_OPS_BY_TYPE[type] ?? [];
 }
 
+export function filterOpsForField(field: QueryField) {
+  if (field.type === "actor" && field.column?.multiple) {
+    return [
+      "contains",
+      "not_contains",
+      "contains_any",
+      "not_contains_any",
+      "is_empty",
+      "is_not_empty",
+    ] satisfies FilterOp[];
+  }
+  return filterOpsForType(field.type);
+}
+
 export function defaultFilterOp(type: PropertyType): FilterOp {
-  if (type === "text" || type === "url" || type === "email" || type === "phone") return "contains";
+  if (
+    type === "text" ||
+    type === "url" ||
+    type === "email" ||
+    type === "phone"
+  ) {
+    return "contains";
+  }
   if (type === "multi_select") return "contains";
   return "eq";
+}
+
+export function defaultFilterOpForField(field: QueryField): FilterOp {
+  if (field.type === "actor" && field.column?.multiple) return "contains";
+  return defaultFilterOp(field.type);
 }
 
 export function needsFilterValue(op: FilterOp) {
@@ -147,7 +194,14 @@ export function needsFilterValue(op: FilterOp) {
 }
 
 export function isMultiValueOp(op: FilterOp) {
-  return op === "in" || op === "not_in" || op === "contains_any" || op === "not_contains_any" || op === "group_in" || op === "group_not_in";
+  return (
+    op === "in" ||
+    op === "not_in" ||
+    op === "contains_any" ||
+    op === "not_contains_any" ||
+    op === "group_in" ||
+    op === "group_not_in"
+  );
 }
 
 export function validateQuery(
@@ -168,7 +222,7 @@ export function validateQuery(
       invalidFilters.push(filter);
       continue;
     }
-    if (!filterOpsForType(field.type).includes(filter.op)) {
+    if (!filterOpsForField(field).includes(filter.op)) {
       issues.push({ field: filter.field, reason: "invalid_operator" });
       invalidFilters.push(filter);
       continue;
@@ -222,9 +276,22 @@ function isFilterValueValid(filter: QueryFilter, type: PropertyType) {
   const raw = filter.values ?? filter.value;
   if (raw === undefined || raw === null || raw === "") return false;
   if (isMultiValueOp(filter.op)) return Array.isArray(raw) && raw.length > 0;
-  if (type === "number") return typeof raw === "number" || (typeof raw === "string" && raw.trim() !== "" && Number.isFinite(Number(raw)));
+  if (type === "number" || type === "unique_id") {
+    return (
+      typeof raw === "number" ||
+      (typeof raw === "string" &&
+        raw.trim() !== "" &&
+        Number.isFinite(Number(raw)))
+    );
+  }
   if (type === "checkbox") return typeof raw === "boolean";
-  if (type === "select" || type === "multi_select" || type === "status" || type === "person") {
+  if (
+    type === "select" ||
+    type === "multi_select" ||
+    type === "status" ||
+    type === "person" ||
+    type === "actor"
+  ) {
     return typeof raw === "string" || (Array.isArray(raw) && raw.length > 0);
   }
   return true;
@@ -243,7 +310,7 @@ export function resolveViewQuery(
         filter: ephemeral.filter ?? persistent.filter,
         sort: ephemeral.sort ?? persistent.sort,
         groupBy: Object.prototype.hasOwnProperty.call(ephemeral, "groupBy")
-          ? ephemeral.groupBy ?? null
+          ? (ephemeral.groupBy ?? null)
           : persistent.groupBy,
       }
     : persistent;
@@ -258,7 +325,9 @@ export function resolveViewQuery(
     persistent,
     merged,
     baseViewHash,
-    sharedChanged: Boolean(ephemeral && ephemeral.baseViewHash !== baseViewHash),
+    sharedChanged: Boolean(
+      ephemeral && ephemeral.baseViewHash !== baseViewHash,
+    ),
     hasLocalChanges: Boolean(ephemeral && hasStoredQueryChanges(ephemeral)),
     invalidFilters: validation.invalidFilters,
     invalidSorts: validation.invalidSorts,
@@ -281,10 +350,13 @@ export function viewQueryHash(schema: CollectionSchema, view: ViewQueryConfig) {
       columns: normalized.columns.map((column) => ({
         name: column.name,
         type: column.type,
-        options: column.options?.map((option) => ({
-          name: option.name,
-          group: option.group ?? null,
-        })) ?? null,
+        multiple: column.multiple ?? null,
+        prefix: column.prefix ?? null,
+        options:
+          column.options?.map((option) => ({
+            name: option.name,
+            group: option.group ?? null,
+          })) ?? null,
       })),
     }),
   );
@@ -323,7 +395,10 @@ export function readStoredViewQuery(key: string): StoredViewQueryState | null {
   }
 }
 
-export function writeStoredViewQuery(key: string, value: StoredViewQueryState | null) {
+export function writeStoredViewQuery(
+  key: string,
+  value: StoredViewQueryState | null,
+) {
   if (!value || !hasStoredQueryChanges(value)) {
     window.localStorage.removeItem(key);
     return;

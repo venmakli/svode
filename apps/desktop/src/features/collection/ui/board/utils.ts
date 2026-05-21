@@ -36,7 +36,8 @@ export function isGroupableColumn(column: Column | null | undefined) {
   return (
     column?.type === "select" ||
     column?.type === "status" ||
-    column?.type === "person"
+    column?.type === "person" ||
+    (column?.type === "actor" && !column.multiple)
   );
 }
 

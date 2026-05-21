@@ -1,7 +1,10 @@
+use std::path::Path;
+
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 
 use crate::error::AppError;
+use crate::properties::{self, Column, PropertyType};
 
 /// Per-pool query row carrier. Crosses module boundaries internally; the
 /// wire-shape returned to the frontend is `SearchItem` (built by
@@ -128,6 +131,123 @@ pub async fn search_by_title(
         .collect())
 }
 
+/// Exact lookup for collection `unique_id` display values such as `ISSUE-24`.
+///
+/// The SQLite index has entry fields, but not schema column config. The command
+/// layer passes the source space path so this lookup can read each collection
+/// schema and interpret prefix/number semantics correctly.
+pub async fn search_unique_id_exact(
+    pool: &SqlitePool,
+    space_path: &Path,
+    query: &str,
+    limit: i64,
+) -> Result<Vec<SearchResult>, AppError> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let collections = sqlx::query(
+        r#"
+        SELECT DISTINCT collection_root_path
+        FROM entries
+        WHERE in_collection = 1 AND collection_root_path IS NOT NULL
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| AppError::Index(format!("unique_id collections lookup failed: {e}")))?;
+
+    let mut results = Vec::new();
+    for row in collections {
+        if results.len() >= limit as usize {
+            break;
+        }
+        let collection_path = row.get::<String, _>("collection_root_path");
+        let Ok(schema) =
+            properties::read_collection_schema(&space_path.to_string_lossy(), &collection_path)
+        else {
+            continue;
+        };
+        let Some(column) = schema
+            .columns
+            .iter()
+            .find(|column| column.type_ == PropertyType::UniqueId)
+        else {
+            continue;
+        };
+        let Some(number) = unique_id_query_number(column, trimmed) else {
+            continue;
+        };
+        let remaining = limit - results.len() as i64;
+        results
+            .extend(unique_id_rows(pool, &collection_path, &column.name, number, remaining).await?);
+    }
+
+    Ok(results)
+}
+
+fn unique_id_query_number(column: &Column, query: &str) -> Option<u64> {
+    if let Some(prefix) = column.prefix.as_deref().filter(|prefix| !prefix.is_empty()) {
+        return query
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.strip_prefix('-'))
+            .and_then(|number| number.parse::<u64>().ok())
+            .filter(|number| *number >= 1);
+    }
+    query.parse::<u64>().ok().filter(|number| *number >= 1)
+}
+
+async fn unique_id_rows(
+    pool: &SqlitePool,
+    collection_path: &str,
+    field: &str,
+    number: u64,
+    limit: i64,
+) -> Result<Vec<SearchResult>, AppError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            id,
+            file_path AS path,
+            COALESCE(title, '') AS title,
+            'page' AS type,
+            collection_root_path AS table_name,
+            updated AS updated_at
+        FROM entries
+        WHERE in_collection = 1
+          AND collection_root_path = ?
+          AND CAST(json_extract(fields, ?) AS INTEGER) = ?
+        ORDER BY updated DESC
+        LIMIT ?
+        "#,
+    )
+    .bind(collection_path)
+    .bind(json_path(field))
+    .bind(number as i64)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| AppError::Index(format!("unique_id lookup failed: {e}")))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| SearchResult {
+            id: r.get::<String, _>("id"),
+            path: r.get::<String, _>("path"),
+            title: r.get::<String, _>("title"),
+            entry_type: r.get::<String, _>("type"),
+            snippet: None,
+            table_name: r.get::<Option<String>, _>("table_name"),
+            updated_at: r.get::<Option<String>, _>("updated_at"),
+        })
+        .collect())
+}
+
+fn json_path(field: &str) -> String {
+    format!("$.\"{}\"", field.replace('"', "\\\""))
+}
+
 /// Full-text search via FTS5, with optional filters on `type` and
 /// `table_name`. Results are sorted by BM25 relevance.
 pub async fn search_fts(
@@ -224,4 +344,56 @@ pub async fn recent(pool: &SqlitePool, limit: i64) -> Result<Vec<SearchResult>, 
             updated_at: r.get::<Option<String>, _>("updated_at"),
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn unique_id_exact_search_resolves_prefixed_display_value() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        std::fs::create_dir_all(space.join("tasks")).unwrap();
+        std::fs::write(
+            space.join("tasks/schema.yaml"),
+            "columns:\n  - { name: Key, type: unique_id, prefix: ISSUE, next: 25 }\nviews: []\n",
+        )
+        .unwrap();
+
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            r#"
+            CREATE TABLE entries (
+                id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                title TEXT NOT NULL,
+                updated TEXT NOT NULL,
+                collection_root_path TEXT,
+                in_collection INTEGER NOT NULL,
+                fields TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"
+            INSERT INTO entries (
+                id, file_path, title, updated, collection_root_path, in_collection, fields
+            ) VALUES ('1', 'tasks/a.md', 'A', '2026-01-01', 'tasks', 1, '{"Key":24}')
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let rows = search_unique_id_exact(&pool, space, "ISSUE-24", 10)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].path, "tasks/a.md");
+    }
 }

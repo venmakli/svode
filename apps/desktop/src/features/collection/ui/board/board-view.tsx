@@ -118,7 +118,10 @@ export function BoardView({
     [cardFields, groupBy, schema],
   );
   const hasPersonCardField = useMemo(
-    () => customColumns.some((column) => column.type === "person"),
+    () =>
+      customColumns.some(
+        (column) => column.type === "actor" || column.type === "person",
+      ),
     [customColumns],
   );
   const topLevelEntries = useMemo(
@@ -198,7 +201,12 @@ export function BoardView({
   }, [loadEntries, refreshToken]);
 
   useEffect(() => {
-    if (groupColumn?.type !== "person" && !hasPersonCardField) return;
+    if (
+      groupColumn?.type !== "actor" &&
+      groupColumn?.type !== "person" &&
+      !hasPersonCardField
+    )
+      return;
     void loadPersons().catch((error) => {
       console.warn("Failed to load board persons:", error);
     });

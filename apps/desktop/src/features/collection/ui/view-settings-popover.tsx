@@ -36,7 +36,7 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { MultiPanePopover } from "@/features/collection/query";
 import {
-  defaultFilterOp,
+  defaultFilterOpForField,
   queryField,
   queryFields,
 } from "@/features/collection/query";
@@ -214,7 +214,7 @@ export function ViewSettingsPopover({
     if (!selected) return;
     setFilterDraft({
       index: null,
-      filter: { field: selected.name, op: defaultFilterOp(selected.type) },
+      filter: { field: selected.name, op: defaultFilterOpForField(selected) },
     });
     setPane("filterEditor");
   }
@@ -331,7 +331,10 @@ export function ViewSettingsPopover({
       index: existingIndex >= 0 ? existingIndex : null,
       filter: existing
         ? { ...existing }
-        : { field, op: defaultFilterOp(fieldInfo?.type ?? "text") },
+        : {
+            field,
+            op: fieldInfo ? defaultFilterOpForField(fieldInfo) : "contains",
+          },
     });
     setPane("filterEditor");
   }

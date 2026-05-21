@@ -1,7 +1,11 @@
 import { cn } from "@/lib/utils";
 import { validatePropertyValue } from "@/features/properties/model";
 import type { Entry } from "@/features/editor/types";
-import type { Column, Person, RelationContext } from "@/features/properties/model";
+import type {
+  Column,
+  Person,
+  RelationContext,
+} from "@/features/properties/model";
 import { isEmptyValue } from "@/features/properties/lib";
 import { PropertyControl, PropertyValue } from "@/features/properties/ui";
 
@@ -58,7 +62,9 @@ function BoardPropertyChip({
 
   const validation = validatePropertyValue(column, value);
   const interactive =
-    (column.type === "person" || column.type === "relation") &&
+    (column.type === "actor" ||
+      column.type === "person" ||
+      column.type === "relation") &&
     Boolean(onUpdateField);
   const fullWidth =
     (column.type === "number" && column.display === "bar") ||

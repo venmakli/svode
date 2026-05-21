@@ -13,14 +13,17 @@ import {
 import { PropertyBadge } from "./property-badge";
 import type { Column, Person, RelationContext } from "../model/types";
 import {
+  actorPerson,
   colorStyle,
   formatDateValue,
   gravatarUrl,
   hashIndex,
   initialsForPerson,
   isEmptyValue,
+  normalizeActorValues,
   optionByName,
   personDisplayName,
+  uniqueIdDisplay,
   valueToString,
 } from "../lib/utils";
 import * as m from "@/paraglide/messages.js";
@@ -33,9 +36,16 @@ export function PropertyValueActions({
   column: Column;
   value: unknown;
 }) {
-  if (!["text", "url", "email", "phone"].includes(column.type)) return null;
+  if (!["text", "url", "email", "phone", "unique_id"].includes(column.type)) {
+    return null;
+  }
   if (isEmptyValue(value)) return null;
-  const raw = column.type === "url" ? urlHref(value) : valueToString(value);
+  const raw =
+    column.type === "url"
+      ? urlHref(value)
+      : column.type === "unique_id"
+        ? uniqueIdDisplay(column, value)
+        : valueToString(value);
   return (
     <span className="flex text-muted-foreground opacity-0 group-focus-within/cell:opacity-100 group-hover/cell:opacity-100">
       {column.type === "url" ? (
@@ -86,16 +96,21 @@ export function PropertyValue({
   if (isEmptyValue(value)) {
     return <span className="text-muted-foreground">-</span>;
   }
-  if (column.type === "person") {
-    return <PersonValue value={value} persons={persons} />;
+  if (column.type === "unique_id") {
+    return (
+      uniqueIdDisplay(column, value) || (
+        <span className="text-muted-foreground">
+          {m.property_state_no_key()}
+        </span>
+      )
+    );
+  }
+  if (column.type === "actor" || column.type === "person") {
+    return <ActorValue column={column} value={value} persons={persons} />;
   }
   if (column.type === "relation") {
     return (
-      <RelationValue
-        column={column}
-        value={value}
-        context={relationContext}
-      />
+      <RelationValue column={column} value={value} context={relationContext} />
     );
   }
   if (column.type === "select" || column.type === "status") {
@@ -176,6 +191,53 @@ export function PersonValue({
       <PersonAvatar person={person} />
       <span className="min-w-0 truncate">{personDisplayName(person)}</span>
     </span>
+  );
+}
+
+export function ActorValue({
+  column,
+  value,
+  persons = [],
+}: {
+  column: Column;
+  value: unknown;
+  persons?: Person[];
+}) {
+  const emails = column.multiple
+    ? normalizeActorValues(value)
+    : typeof value === "string" && value
+      ? [value]
+      : [];
+  if (emails.length === 0)
+    return <span className="text-muted-foreground">-</span>;
+
+  if (!column.multiple) {
+    return <PersonValue value={emails[0]} persons={persons} />;
+  }
+
+  const resolved = emails.map((email) => actorPerson(email, persons));
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex min-w-0 items-center">
+            {resolved.slice(0, 3).map((person, index) => (
+              <span key={person.email} className={cn(index > 0 && "-ml-1.5")}>
+                <PersonAvatar person={person} />
+              </span>
+            ))}
+            {resolved.length > 3 ? (
+              <span className="ml-1 text-xs text-muted-foreground">
+                +{resolved.length - 3}
+              </span>
+            ) : null}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>
+          {resolved.map((person) => personDisplayName(person)).join(", ")}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 

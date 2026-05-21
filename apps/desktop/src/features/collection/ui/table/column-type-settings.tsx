@@ -98,7 +98,7 @@ export function TypeSettingsPane({
       </div>
     );
   }
-  if (column.type === "person") {
+  if (column.type === "actor" || column.type === "person") {
     return (
       <div className="flex flex-col gap-2 p-3">
         <ColumnSelect
@@ -111,6 +111,62 @@ export function TypeSettingsPane({
             })
           }
         />
+        <ToggleRow
+          label={m.property_actor_multiple()}
+          checked={Boolean(column.multiple)}
+          onChange={(checked) => onPatchColumn({ multiple: checked })}
+        />
+      </div>
+    );
+  }
+  if (column.type === "unique_id") {
+    const normalizeCounter = () => {
+      void invoke<CollectionSchema>("normalize_unique_id_counter", {
+        space: spacePath,
+        collectionPath,
+        projectPath: projectPath ?? null,
+      })
+        .then(onSchemaChange)
+        .catch((error) => {
+          console.error(error);
+          toast.error(errorMessage(error));
+        });
+    };
+
+    return (
+      <div className="flex flex-col gap-2 p-3">
+        <label className="flex items-center gap-2 text-sm">
+          <span className="w-20 text-muted-foreground">
+            {m.property_unique_id_prefix()}
+          </span>
+          <Input
+            defaultValue={column.prefix ?? ""}
+            className="h-8 flex-1"
+            placeholder="ISSUE"
+            onBlur={(event) =>
+              onPatchColumn({
+                prefix: event.currentTarget.value.trim() || null,
+              })
+            }
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+            }}
+          />
+        </label>
+        <div className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
+          {m.property_unique_id_next({
+            next: String(column.next ?? 1),
+          })}
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          className="self-start"
+          onClick={normalizeCounter}
+        >
+          {m.property_unique_id_normalize()}
+        </Button>
       </div>
     );
   }
@@ -135,8 +191,12 @@ function RelationSettingsPane({
   spacePath: string;
   onPatchColumn: (patch: Record<string, unknown>) => void | Promise<void>;
 }) {
-  const [collections, setCollections] = useState<Array<{ path: string; title: string }>>([]);
-  const [reverseName, setReverseName] = useState(column.twoWay ?? column.two_way ?? "");
+  const [collections, setCollections] = useState<
+    Array<{ path: string; title: string }>
+  >([]);
+  const [reverseName, setReverseName] = useState(
+    column.twoWay ?? column.two_way ?? "",
+  );
 
   useEffect(() => {
     setReverseName(column.twoWay ?? column.two_way ?? "");
@@ -199,7 +259,8 @@ function RelationSettingsPane({
         label={m.property_relation_show_related()}
         checked={twoWay}
         onChange={(checked) => {
-          const fallback = reverseName.trim() || m.property_relation_reverse_default();
+          const fallback =
+            reverseName.trim() || m.property_relation_reverse_default();
           if (checked) setReverseName(fallback);
           patchRelation({ two_way: checked ? fallback : null });
         }}

@@ -144,7 +144,10 @@ export function TableView({
   );
   const hasSort = sort.length > 0;
   const hasPersonColumn = useMemo(
-    () => schema.columns.some((column) => column.type === "person"),
+    () =>
+      schema.columns.some(
+        (column) => column.type === "actor" || column.type === "person",
+      ),
     [schema.columns],
   );
 

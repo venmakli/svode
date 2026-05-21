@@ -17,7 +17,8 @@ export const PROPERTY_TYPES: { value: PropertyType; label: string }[] = [
   { value: "multi_select", label: "Multi-select" },
   { value: "status", label: "Status" },
   { value: "date", label: "Date" },
-  { value: "person", label: "Person" },
+  { value: "unique_id", label: "ID" },
+  { value: "actor", label: "Actor" },
   { value: "checkbox", label: "Checkbox" },
   { value: "url", label: "URL" },
   { value: "email", label: "Email" },
@@ -45,12 +46,20 @@ export const COLOR_NAMES: ColorName[] = [
 ];
 
 export function normalizeColumn(column: Column): Column {
+  const rawType = (column.type ??
+    (column as unknown as { type_: PropertyType }).type_) as PropertyType;
+  const type = rawType === "person" ? "actor" : rawType;
   return {
     ...column,
-    type: (column.type ?? (column as unknown as { type_: PropertyType }).type_) as PropertyType,
+    type,
     timeByDefault: column.timeByDefault ?? column.time_by_default ?? false,
     rangeByDefault: column.rangeByDefault ?? column.range_by_default ?? false,
     twoWay: column.twoWay ?? column.two_way ?? null,
+    multiple: type === "actor" ? Boolean(column.multiple) : column.multiple,
+    prefix:
+      typeof column.prefix === "string" && column.prefix.trim()
+        ? column.prefix.trim()
+        : null,
   };
 }
 
@@ -97,8 +106,58 @@ export function isEmptyValue(value: unknown): boolean {
 export function valueToString(value: unknown): string {
   if (value === null || value === undefined) return "";
   if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "number" || typeof value === "boolean")
+    return String(value);
   return JSON.stringify(value);
+}
+
+export function uniqueIdNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const parsed = Number(value.trim());
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+  }
+  return null;
+}
+
+export function uniqueIdDisplay(column: Column, value: unknown): string {
+  const number = uniqueIdNumber(value);
+  if (number === null) return "";
+  const prefix = column.prefix?.trim();
+  return prefix ? `${prefix}-${number}` : String(number);
+}
+
+export function normalizeActorValues(value: unknown): string[] {
+  const raw = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? [value]
+      : [];
+  const seen = new Set<string>();
+  const values: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const email = item.trim().toLowerCase();
+    if (!email || seen.has(email)) continue;
+    seen.add(email);
+    values.push(email);
+  }
+  return values;
+}
+
+export function actorPerson(email: string, persons: Person[]): Person {
+  return (
+    persons.find(
+      (person) => person.email.toLowerCase() === email.toLowerCase(),
+    ) ?? {
+      email,
+      name: email,
+      commitCount: 0,
+      isMe: false,
+    }
+  );
 }
 
 export function isValidEmail(value: string): boolean {
@@ -121,7 +180,9 @@ export function isValidUrl(value: string): boolean {
   }
 }
 
-export function initialsForPerson(person: Pick<Person, "name" | "email">): string {
+export function initialsForPerson(
+  person: Pick<Person, "name" | "email">,
+): string {
   const label = person.name || person.email;
   const parts = label
     .split(/[\s._-]+/)
@@ -150,7 +211,8 @@ export function hashIndex(value: string, modulo: number): number {
   let hash = 2166136261;
   for (let index = 0; index < value.length; index += 1) {
     hash ^= value.charCodeAt(index);
-    hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+    hash +=
+      (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
   }
   return Math.abs(hash >>> 0) % modulo;
 }
@@ -208,7 +270,10 @@ export function todayIsoDate(offsetDays = 0): string {
   return `${year}-${month}-${day}`;
 }
 
-export function formatDateValue(value: unknown, display: string | null | undefined): string {
+export function formatDateValue(
+  value: unknown,
+  display: string | null | undefined,
+): string {
   const normalized = normalizeDateInput(value);
   if (!normalized.start) return "";
   const start = formatOneDate(normalized.start, display);
@@ -217,7 +282,10 @@ export function formatDateValue(value: unknown, display: string | null | undefin
   return `${start} - ${end}`;
 }
 
-function formatOneDate(value: string, display: string | null | undefined): string {
+function formatOneDate(
+  value: string,
+  display: string | null | undefined,
+): string {
   const date = new Date(value.includes("T") ? value : `${value}T00:00`);
   if (Number.isNaN(date.getTime())) return value;
   const dateStyle =
@@ -235,7 +303,7 @@ function md5(input: string): string {
     words[index >> 2] |= bytes[index] << ((index % 4) * 8);
   }
   const bitLength = bytes.length * 8;
-  words[bitLength >> 5] |= 0x80 << bitLength % 32;
+  words[bitLength >> 5] |= 0x80 << (bitLength % 32);
   words[(((bitLength + 64) >>> 9) << 4) + 14] = bitLength;
 
   let a = 0x67452301;
@@ -326,23 +394,62 @@ function md5(input: string): string {
   return [a, b, c, d].map(toHex).join("");
 }
 
-function cmn(q: number, a: number, b: number, x: number, s: number, t: number): number {
+function cmn(
+  q: number,
+  a: number,
+  b: number,
+  x: number,
+  s: number,
+  t: number,
+): number {
   return add32(rotateLeft(add32(add32(a, q), add32(x || 0, t)), s), b);
 }
 
-function ff(a: number, b: number, c: number, d: number, x: number, s: number, t: number): number {
+function ff(
+  a: number,
+  b: number,
+  c: number,
+  d: number,
+  x: number,
+  s: number,
+  t: number,
+): number {
   return cmn((b & c) | (~b & d), a, b, x, s, t);
 }
 
-function gg(a: number, b: number, c: number, d: number, x: number, s: number, t: number): number {
+function gg(
+  a: number,
+  b: number,
+  c: number,
+  d: number,
+  x: number,
+  s: number,
+  t: number,
+): number {
   return cmn((b & d) | (c & ~d), a, b, x, s, t);
 }
 
-function hh(a: number, b: number, c: number, d: number, x: number, s: number, t: number): number {
+function hh(
+  a: number,
+  b: number,
+  c: number,
+  d: number,
+  x: number,
+  s: number,
+  t: number,
+): number {
   return cmn(b ^ c ^ d, a, b, x, s, t);
 }
 
-function ii(a: number, b: number, c: number, d: number, x: number, s: number, t: number): number {
+function ii(
+  a: number,
+  b: number,
+  c: number,
+  d: number,
+  x: number,
+  s: number,
+  t: number,
+): number {
   return cmn(c ^ (b | ~d), a, b, x, s, t);
 }
 

@@ -15,8 +15,15 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import type { Entry } from "@/features/editor/types";
 import { cn } from "@/lib/utils";
-import { AlertTriangle, MoreHorizontal, Plus, RotateCcw, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  MoreHorizontal,
+  Plus,
+  RotateCcw,
+  Trash2,
+} from "lucide-react";
 import type {
   CollectionSchema,
   Column,
@@ -78,24 +85,36 @@ export function PropertyPanel({
   onValueChange,
   onSchemaChange,
 }: PropertyPanelProps) {
-  const [schema, setSchema] = useState(() => normalizeSchema(schemaResult.schema));
+  const [schema, setSchema] = useState(() =>
+    normalizeSchema(schemaResult.schema),
+  );
   const [collectionRootPath, setCollectionRootPath] = useState(
     schemaResult.collectionRootPath ?? schemaResult.collection_root_path ?? "",
   );
   const [dialog, setDialog] = useState<DialogState>(null);
   const [persons, setPersons] = useState<Person[]>([]);
   const [editingField, setEditingField] = useState<string | null>(null);
+  const [panelValues, setPanelValues] = useState(values);
 
   useEffect(() => {
     setSchema(normalizeSchema(schemaResult.schema));
     setCollectionRootPath(
-      schemaResult.collectionRootPath ?? schemaResult.collection_root_path ?? "",
+      schemaResult.collectionRootPath ??
+        schemaResult.collection_root_path ??
+        "",
     );
     setEditingField(null);
   }, [schemaResult]);
 
-  const hasPerson = useMemo(
-    () => schema.columns.some((column) => column.type === "person"),
+  useEffect(() => {
+    setPanelValues(values);
+  }, [values]);
+
+  const hasActor = useMemo(
+    () =>
+      schema.columns.some(
+        (column) => column.type === "actor" || column.type === "person",
+      ),
     [schema.columns],
   );
 
@@ -113,12 +132,12 @@ export function PropertyPanel({
   );
 
   useEffect(() => {
-    if (hasPerson) {
+    if (hasActor) {
       void loadPersons().catch((error) => {
         console.warn("Failed to load persons:", error);
       });
     }
-  }, [hasPerson, loadPersons]);
+  }, [hasActor, loadPersons]);
 
   const refreshSchema = useCallback(async () => {
     const result = await invoke<EntrySchemaResult | null>("get_entry_schema", {
@@ -127,7 +146,9 @@ export function PropertyPanel({
     });
     if (result) {
       setSchema(normalizeSchema(result.schema));
-      setCollectionRootPath(result.collectionRootPath ?? result.collection_root_path ?? "");
+      setCollectionRootPath(
+        result.collectionRootPath ?? result.collection_root_path ?? "",
+      );
     }
     onSchemaChange?.(result);
     return result;
@@ -146,8 +167,20 @@ export function PropertyPanel({
     [collectionRootPath, projectPath, refreshSchema, spacePath],
   );
 
+  const assignUniqueId = useCallback(async () => {
+    const entry = await invoke<Entry>("assign_unique_id", {
+      space: spacePath,
+      filePath,
+      projectPath: projectPath ?? null,
+    });
+    setPanelValues(entry.meta.extra ?? {});
+    await refreshSchema();
+  }, [filePath, projectPath, refreshSchema, spacePath]);
+
   const columnNames = new Set(schema.columns.map((column) => column.name));
-  const orphanEntries = Object.entries(values).filter(([key]) => !columnNames.has(key));
+  const orphanEntries = Object.entries(panelValues).filter(
+    ([key]) => !columnNames.has(key),
+  );
   const relationContext = useMemo(
     () => ({
       spacePath,
@@ -169,14 +202,18 @@ export function PropertyPanel({
         )}
       >
         {schema.columns.map((column) => {
-          const state = validatePropertyValue(column, values[column.name]);
+          const state = validatePropertyValue(column, panelValues[column.name]);
           return (
             <div key={column.name} className="contents group/property-row">
-              <PropertyLabel column={column} invalid={state.invalid} message={state.message} />
+              <PropertyLabel
+                column={column}
+                invalid={state.invalid}
+                message={state.message}
+              />
               <div className="min-w-0">
                 <PropertyPanelValue
                   column={column}
-                  value={values[column.name]}
+                  value={panelValues[column.name]}
                   invalid={state.invalid}
                   disabled={state.message === m.property_state_type_conflict()}
                   editing={editingField === column.name}
@@ -198,7 +235,9 @@ export function PropertyPanel({
                           type="button"
                           variant="ghost"
                           size="xs"
-                          onClick={() => setDialog({ type: "add-option", column })}
+                          onClick={() =>
+                            setDialog({ type: "add-option", column })
+                          }
                         >
                           {m.property_action_readd_option()}
                         </Button>
@@ -211,6 +250,18 @@ export function PropertyPanel({
                           {m.property_action_clear_values()}
                         </Button>
                       </>
+                    )}
+                    {column.type === "unique_id" && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        onClick={() =>
+                          void assignUniqueId().catch(handleSchemaError)
+                        }
+                      >
+                        {m.property_action_assign_key()}
+                      </Button>
                     )}
                   </div>
                 ) : null}
@@ -258,7 +309,9 @@ export function PropertyPanel({
                 onClick={() => void onValueChange(field, null)}
               >
                 <Trash2 />
-                <span className="sr-only">{m.property_action_clear_values()}</span>
+                <span className="sr-only">
+                  {m.property_action_clear_values()}
+                </span>
               </Button>
             </div>
           </div>
@@ -269,7 +322,12 @@ export function PropertyPanel({
         <span className="text-xs text-muted-foreground">
           {m.property_collection_path({ path: collectionRootPath })}
         </span>
-        <Button type="button" variant="outline" size="sm" onClick={() => setDialog({ type: "add-column" })}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setDialog({ type: "add-column" })}
+        >
           <Plus data-icon="inline-start" />
           {m.editor_frontmatter_add_field()}
         </Button>
@@ -280,7 +338,9 @@ export function PropertyPanel({
         onOpenChange={(open) => !open && setDialog(null)}
         collectionPath={collectionRootPath}
         onSubmit={async (column) => {
-          await schemaInvoke("add_schema_column", { column }).catch(handleSchemaError);
+          await schemaInvoke("add_schema_column", { column }).catch(
+            handleSchemaError,
+          );
           setDialog(null);
         }}
       />
@@ -438,7 +498,7 @@ function PropertyPanelValue({
         invalid && "ring-1 ring-warning",
       )}
       onClick={() => {
-        if (!disabled) onEditChange(true);
+        if (!disabled && column.type !== "unique_id") onEditChange(true);
       }}
       onKeyDown={(event) => {
         if (disabled) return;
@@ -494,7 +554,9 @@ function ColumnActions({
   onDialog: (dialog: DialogState) => void;
 }) {
   const hasOptions =
-    column.type === "select" || column.type === "multi_select" || column.type === "status";
+    column.type === "select" ||
+    column.type === "multi_select" ||
+    column.type === "status";
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -509,22 +571,30 @@ function ColumnActions({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem onSelect={() => onDialog({ type: "rename-column", column })}>
+        <DropdownMenuItem
+          onSelect={() => onDialog({ type: "rename-column", column })}
+        >
           {m.space_rename()}
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => onDialog({ type: "change-type", column })}>
+        <DropdownMenuItem
+          onSelect={() => onDialog({ type: "change-type", column })}
+        >
           {m.property_action_change_type()}
         </DropdownMenuItem>
         {hasOptions ? (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => onDialog({ type: "add-option", column })}>
+            <DropdownMenuItem
+              onSelect={() => onDialog({ type: "add-option", column })}
+            >
               {m.property_action_add_option()}
             </DropdownMenuItem>
             {(column.options ?? []).map((option) => (
               <DropdownMenuItem
                 key={option.name}
-                onSelect={() => onDialog({ type: "rename-option", column, option })}
+                onSelect={() =>
+                  onDialog({ type: "rename-option", column, option })
+                }
               >
                 {m.property_action_rename_option({ name: option.name })}
               </DropdownMenuItem>
@@ -533,7 +603,9 @@ function ColumnActions({
               <DropdownMenuItem
                 key={`delete-${option.name}`}
                 variant="destructive"
-                onSelect={() => onDialog({ type: "delete-option", column, option })}
+                onSelect={() =>
+                  onDialog({ type: "delete-option", column, option })
+                }
               >
                 {m.property_action_delete_option({ name: option.name })}
               </DropdownMenuItem>

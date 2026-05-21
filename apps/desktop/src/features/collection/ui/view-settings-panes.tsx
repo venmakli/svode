@@ -306,8 +306,12 @@ export function GroupPane({
   activeGroupBy: string | null;
   onSelect: (field: string) => void;
 }) {
-  const groupable = schema.columns.filter((column) =>
-    ["status", "select", "person"].includes(column.type),
+  const groupable = schema.columns.filter(
+    (column) =>
+      column.type === "status" ||
+      column.type === "select" ||
+      column.type === "person" ||
+      (column.type === "actor" && !column.multiple),
   );
   return (
     <div className="flex flex-col p-1">

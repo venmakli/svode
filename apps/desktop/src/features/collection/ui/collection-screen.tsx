@@ -406,7 +406,11 @@ export function CollectionScreen({
       const groupBy =
         schema.columns.find((column) => column.type === "status")?.name ??
         schema.columns.find((column) => column.type === "select")?.name ??
-        schema.columns.find((column) => column.type === "person")?.name ??
+        schema.columns.find(
+          (column) =>
+            (column.type === "actor" || column.type === "person") &&
+            !column.multiple,
+        )?.name ??
         null;
       return groupBy
         ? { type: nextType, group_by: groupBy }

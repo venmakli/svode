@@ -3,7 +3,11 @@ import { validatePropertyValue } from "@/features/properties/model";
 import { isEmptyValue, valueToString } from "@/features/properties/lib";
 import { PropertyControl, PropertyValue } from "@/features/properties/ui";
 import type { Entry } from "@/features/editor/types";
-import type { Column, Person, RelationContext } from "@/features/properties/model";
+import type {
+  Column,
+  Person,
+  RelationContext,
+} from "@/features/properties/model";
 
 export function CardPropertyFlow({
   entry,
@@ -130,6 +134,7 @@ function isInteractiveCardType(column: Column) {
     column.type === "multi_select" ||
     column.type === "status" ||
     column.type === "date" ||
+    column.type === "actor" ||
     column.type === "person" ||
     column.type === "relation" ||
     column.type === "checkbox"

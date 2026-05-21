@@ -29,11 +29,13 @@ const RESERVED_FIELDS: &[&str] = &[
 pub enum PropertyType {
     Text,
     Number,
+    UniqueId,
     Select,
     MultiSelect,
     Status,
     Date,
     Relation,
+    Actor,
     Person,
     Checkbox,
     Url,
@@ -134,6 +136,12 @@ pub struct Column {
     pub limit: Option<RelationLimit>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub two_way: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multiple: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -397,6 +405,135 @@ impl PersonCacheState {
 
 fn schema_error(message: impl Into<String>) -> AppError {
     AppError::General(format!("schema error: {}", message.into()))
+}
+
+fn is_actor_type(ty: PropertyType) -> bool {
+    matches!(ty, PropertyType::Actor | PropertyType::Person)
+}
+
+fn actor_multiple(column: &Column) -> bool {
+    column.multiple.unwrap_or(false)
+}
+
+fn yaml_u64(value: u64) -> Value {
+    serde_yml::to_value(value).unwrap_or(Value::Null)
+}
+
+fn unique_id_value(value: &Value) -> Option<u64> {
+    value.as_u64().filter(|value| *value >= 1)
+}
+
+fn trim_unique_id_prefix(prefix: Option<String>) -> Option<String> {
+    prefix.and_then(|prefix| {
+        let trimmed = prefix.trim().to_string();
+        (!trimmed.is_empty()).then_some(trimmed)
+    })
+}
+
+fn validate_unique_id_prefix(column_name: &str, prefix: &str) -> Result<(), AppError> {
+    if prefix
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        Ok(())
+    } else {
+        Err(schema_error(format!(
+            "unique_id column '{column_name}' prefix can contain only ASCII letters, digits, '_' or '-'"
+        )))
+    }
+}
+
+fn parse_unique_id_filter_value(column: &Column, value: &Value) -> Result<u64, AppError> {
+    if let Some(number) = unique_id_value(value) {
+        return Ok(number);
+    }
+    let Some(raw) = value.as_str() else {
+        return Err(schema_error(format!(
+            "filter '{}' requires positive integer or display id",
+            column.name
+        )));
+    };
+    let trimmed = raw.trim();
+    let numeric = if let Some(prefix) = column.prefix.as_deref().filter(|prefix| !prefix.is_empty())
+    {
+        trimmed
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.strip_prefix('-'))
+            .ok_or_else(|| {
+                schema_error(format!(
+                    "filter '{}' display id must use prefix '{}'",
+                    column.name, prefix
+                ))
+            })?
+    } else {
+        trimmed
+    };
+    numeric
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value >= 1)
+        .ok_or_else(|| {
+            schema_error(format!(
+                "filter '{}' requires positive integer or display id",
+                column.name
+            ))
+        })
+}
+
+fn canonical_actor_email(raw: &str) -> String {
+    raw.trim().to_lowercase()
+}
+
+fn warn_if_invalid_actor_email(raw: &str) {
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || trimmed.contains(char::is_whitespace)
+        || !trimmed.contains('@')
+        || trimmed.starts_with('@')
+        || trimmed.ends_with('@')
+    {
+        tracing::warn!("actor value {:?} is not a valid email shape", raw);
+    }
+}
+
+fn normalize_actor_value(column: &Column, value: Value) -> Result<Value, AppError> {
+    if value.is_null() {
+        return Ok(Value::Null);
+    }
+
+    if actor_multiple(column) {
+        let raw_values: Vec<String> = match value {
+            Value::Sequence(sequence) => sequence
+                .into_iter()
+                .map(|item| {
+                    item.as_str().map(ToOwned::to_owned).ok_or_else(|| {
+                        schema_error(format!("{} must contain only strings", column.name))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            other => vec![expect_string_value(&column.name, &other)?.to_string()],
+        };
+        let mut seen = HashSet::new();
+        let mut normalized = Vec::new();
+        for raw in raw_values {
+            warn_if_invalid_actor_email(&raw);
+            let email = canonical_actor_email(&raw);
+            if !email.is_empty() && seen.insert(email.clone()) {
+                normalized.push(Value::String(email));
+            }
+        }
+        return Ok(Value::Sequence(normalized));
+    }
+
+    let raw = match &value {
+        Value::Sequence(sequence) => sequence
+            .iter()
+            .find_map(Value::as_str)
+            .ok_or_else(|| schema_error(format!("{} must contain an actor email", column.name)))?,
+        _ => expect_string_value(&column.name, &value)?,
+    };
+    warn_if_invalid_actor_email(raw);
+    Ok(Value::String(canonical_actor_email(raw)))
 }
 
 pub fn default_status_options() -> Vec<PropertyOption> {
@@ -809,6 +946,9 @@ fn normalize_column_relation_paths(column: &mut Column) -> Result<(), AppError> 
         column.two_way = None;
         return Ok(());
     }
+    column.prefix = None;
+    column.next = None;
+    column.multiple = None;
     if let Some(relation) = column.relation.take() {
         column.relation = Some(normalize_collection_path(&relation)?);
     }
@@ -860,6 +1000,9 @@ fn ensure_two_way_schema_and_values(
             relation: Some(source_collection.clone()),
             limit: None,
             two_way: Some(column.name.clone()),
+            prefix: None,
+            next: None,
+            multiple: None,
         });
     }
     write_schema(space, relation, &reverse_schema)?;
@@ -1438,6 +1581,7 @@ fn rewrite_relation_value_refs(
 pub fn validate_schema(schema: &CollectionSchema) -> Result<(), AppError> {
     let mut names = HashSet::new();
     let mut status_count = 0;
+    let mut unique_id_count = 0;
     let mut column_names = HashSet::new();
 
     for column in &schema.columns {
@@ -1482,18 +1626,52 @@ pub fn validate_schema(schema: &CollectionSchema) -> Result<(), AppError> {
                     validate_relation_column_name(two_way)?;
                 }
             }
+            PropertyType::UniqueId => {
+                unique_id_count += 1;
+                let next = column.next.ok_or_else(|| {
+                    schema_error(format!("unique_id column '{}' requires next", column.name))
+                })?;
+                if next < 1 {
+                    return Err(schema_error(format!(
+                        "unique_id column '{}' next must be >= 1",
+                        column.name
+                    )));
+                }
+                if let Some(prefix) = column.prefix.as_deref() {
+                    validate_unique_id_prefix(&column.name, prefix)?;
+                }
+                if column.default.is_some() {
+                    return Err(schema_error(format!(
+                        "unique_id column '{}' cannot define default",
+                        column.name
+                    )));
+                }
+            }
+            PropertyType::Actor | PropertyType::Person => {
+                if let Some(default) = column.default.as_ref() {
+                    validate_property_value(column, default)?;
+                }
+            }
             _ => {}
         }
 
         validate_column_display(column)?;
 
-        if let Some(default) = column.default.as_ref() {
+        if !is_actor_type(column.type_)
+            && column.type_ != PropertyType::UniqueId
+            && let Some(default) = column.default.as_ref()
+        {
             validate_property_value(column, default)?;
         }
     }
 
     if status_count > 1 {
         return Err(schema_error("schema can contain at most one status column"));
+    }
+    if unique_id_count > 1 {
+        return Err(schema_error(
+            "schema can contain at most one unique_id column",
+        ));
     }
 
     if let Some(system_fields) = schema.system_fields.as_ref() {
@@ -1557,6 +1735,23 @@ pub fn normalize_schema(schema: &mut CollectionSchema) {
         }
     }
 
+    for column in &mut schema.columns {
+        if column.type_ == PropertyType::Person {
+            column.type_ = PropertyType::Actor;
+            column.multiple.get_or_insert(false);
+        }
+        if column.type_ == PropertyType::Actor {
+            column.multiple = Some(column.multiple.unwrap_or(false));
+        } else {
+            column.multiple = None;
+        }
+        if column.type_ == PropertyType::UniqueId {
+            column.prefix = trim_unique_id_prefix(column.prefix.take());
+        } else {
+            column.prefix = None;
+            column.next = None;
+        }
+    }
     let autopick_board = autopick_board_group_by(schema);
     let autopick_date = autopick_calendar_date_field(schema);
     for view in &mut schema.views {
@@ -1610,9 +1805,11 @@ fn autopick_board_group_by(schema: &CollectionSchema) -> Option<String> {
     for ty in [
         PropertyType::Status,
         PropertyType::Select,
-        PropertyType::Person,
+        PropertyType::Actor,
     ] {
-        if let Some(column) = schema.columns.iter().find(|column| column.type_ == ty) {
+        if let Some(column) = schema.columns.iter().find(|column| {
+            column.type_ == ty && (ty != PropertyType::Actor || !actor_multiple(column))
+        }) {
             return Some(column.name.clone());
         }
     }
@@ -1777,10 +1974,10 @@ fn validate_custom_field_context(
     let allowed = match context {
         FieldContext::Filter | FieldContext::VisibleField | FieldContext::CardField => true,
         FieldContext::Sort => true,
-        FieldContext::GroupBy => matches!(
-            column.type_,
-            PropertyType::Select | PropertyType::Status | PropertyType::Person
-        ),
+        FieldContext::GroupBy => {
+            matches!(column.type_, PropertyType::Select | PropertyType::Status)
+                || (is_actor_type(column.type_) && !actor_multiple(column))
+        }
         FieldContext::DateField => column.type_ == PropertyType::Date,
         FieldContext::ColorField => {
             matches!(column.type_, PropertyType::Select | PropertyType::Status)
@@ -1819,6 +2016,15 @@ fn validate_filter_op(schema: &CollectionSchema, filter: &Filter) -> Result<(), 
                 | FilterOp::IsEmpty
                 | FilterOp::IsNotEmpty
         ),
+        FieldType::UniqueId => matches!(
+            filter.op,
+            FilterOp::Eq
+                | FilterOp::Neq
+                | FilterOp::In
+                | FilterOp::NotIn
+                | FilterOp::IsEmpty
+                | FilterOp::IsNotEmpty
+        ),
         FieldType::Date => matches!(
             filter.op,
             FilterOp::Eq
@@ -1839,6 +2045,15 @@ fn validate_filter_op(schema: &CollectionSchema, filter: &Filter) -> Result<(), 
                 | FilterOp::IsNotEmpty
         ),
         FieldType::Multi => matches!(
+            filter.op,
+            FilterOp::Contains
+                | FilterOp::NotContains
+                | FilterOp::ContainsAny
+                | FilterOp::NotContainsAny
+                | FilterOp::IsEmpty
+                | FilterOp::IsNotEmpty
+        ),
+        FieldType::ActorMulti => matches!(
             filter.op,
             FilterOp::Contains
                 | FilterOp::NotContains
@@ -1874,12 +2089,14 @@ fn validate_filter_op(schema: &CollectionSchema, filter: &Filter) -> Result<(), 
 enum FieldType {
     TextLike,
     Number,
+    UniqueId,
     Date,
     Checkbox,
     SelectLike,
     Multi,
     Status,
     Person,
+    ActorMulti,
 }
 
 enum FilterArity {
@@ -1999,6 +2216,14 @@ fn validate_filter_value(
                 )));
             }
         }
+        FieldType::UniqueId => {
+            let column = schema
+                .columns
+                .iter()
+                .find(|column| column.name == filter.field)
+                .ok_or_else(|| schema_error(format!("field '{}' not found", filter.field)))?;
+            parse_unique_id_filter_value(column, value)?;
+        }
         FieldType::Date => validate_date_filter_value(&filter.field, value)?,
         FieldType::Checkbox => {
             if value.as_bool().is_none() {
@@ -2020,9 +2245,9 @@ fn validate_filter_value(
             })?;
             validate_declared_option(schema, &filter.field, raw)?;
         }
-        FieldType::Person => {
+        FieldType::Person | FieldType::ActorMulti => {
             value.as_str().ok_or_else(|| {
-                schema_error(format!("filter '{}' requires person email", filter.field))
+                schema_error(format!("filter '{}' requires actor email", filter.field))
             })?;
         }
     }
@@ -2087,11 +2312,15 @@ fn field_type(
                 FieldType::TextLike
             }
             PropertyType::Number => FieldType::Number,
+            PropertyType::UniqueId => FieldType::UniqueId,
             PropertyType::Select => FieldType::SelectLike,
             PropertyType::MultiSelect => FieldType::Multi,
             PropertyType::Status => FieldType::Status,
             PropertyType::Date => FieldType::Date,
-            PropertyType::Person => FieldType::Person,
+            PropertyType::Actor | PropertyType::Person if actor_multiple(column) => {
+                FieldType::ActorMulti
+            }
+            PropertyType::Actor | PropertyType::Person => FieldType::Person,
             PropertyType::Checkbox => FieldType::Checkbox,
             PropertyType::Relation => FieldType::Multi,
         });
@@ -2169,6 +2398,57 @@ pub fn validate_entry_field_value(
         return Ok(());
     };
     validate_property_value(column, value)
+}
+
+pub fn ensure_entry_field_writable(
+    space: &str,
+    file_path: &str,
+    field: &str,
+) -> Result<(), AppError> {
+    let Some((schema, _)) = resolve_collection_schema_result(space, file_path)? else {
+        return Ok(());
+    };
+    let Some(column) = schema.columns.iter().find(|column| column.name == field) else {
+        return Ok(());
+    };
+    if column.type_ == PropertyType::UniqueId {
+        return Err(schema_error(format!(
+            "unique_id field '{field}' is read-only"
+        )));
+    }
+    Ok(())
+}
+
+pub fn normalize_entry_field_value(
+    space: &str,
+    file_path: &str,
+    field: &str,
+    value: Value,
+) -> Result<Value, AppError> {
+    let Some((schema, _)) = resolve_collection_schema_result(space, file_path)? else {
+        return Ok(value);
+    };
+    let Some(column) = schema.columns.iter().find(|column| column.name == field) else {
+        return Ok(value);
+    };
+    normalize_property_value_for_write(column, value)
+}
+
+fn normalize_property_value_for_write(column: &Column, value: Value) -> Result<Value, AppError> {
+    if value.is_null() {
+        return Ok(Value::Null);
+    }
+    match column.type_ {
+        PropertyType::UniqueId => Err(schema_error(format!(
+            "unique_id field '{}' is read-only",
+            column.name
+        ))),
+        PropertyType::Actor | PropertyType::Person => normalize_actor_value(column, value),
+        _ => {
+            validate_property_value(column, &value)?;
+            Ok(value)
+        }
+    }
 }
 
 pub fn update_relation_entry_field(
@@ -2422,6 +2702,16 @@ pub fn validate_property_value(column: &Column, value: &Value) -> Result<(), App
                 Err(schema_error(format!("{} must be a number", column.name)))
             }
         }
+        PropertyType::UniqueId => {
+            if unique_id_value(value).is_some() {
+                Ok(())
+            } else {
+                Err(schema_error(format!(
+                    "{} must be a positive integer",
+                    column.name
+                )))
+            }
+        }
         PropertyType::Select | PropertyType::Status => {
             let value = expect_string_value(&column.name, value)?;
             if option_names(column).contains(value) {
@@ -2450,7 +2740,8 @@ pub fn validate_property_value(column: &Column, value: &Value) -> Result<(), App
             Ok(())
         }
         PropertyType::Date => validate_date_value(&column.name, value),
-        PropertyType::Person | PropertyType::Url | PropertyType::Email | PropertyType::Phone => {
+        PropertyType::Actor | PropertyType::Person => validate_actor_value_shape(column, value),
+        PropertyType::Url | PropertyType::Email | PropertyType::Phone => {
             expect_string_value(&column.name, value).map(|_| ())
         }
         PropertyType::Relation => validate_relation_value_shape(column, value).map(|_| ()),
@@ -2468,6 +2759,20 @@ fn expect_string_value<'a>(field: &str, value: &'a Value) -> Result<&'a str, App
     value
         .as_str()
         .ok_or_else(|| schema_error(format!("{field} must be a string")))
+}
+
+fn validate_actor_value_shape(column: &Column, value: &Value) -> Result<(), AppError> {
+    if actor_multiple(column) {
+        let values = value.as_sequence().ok_or_else(|| {
+            schema_error(format!("{} must be an array of actor emails", column.name))
+        })?;
+        for item in values {
+            expect_string_value(&column.name, item)?;
+        }
+        Ok(())
+    } else {
+        expect_string_value(&column.name, value).map(|_| ())
+    }
 }
 
 fn validate_relation_column_name(name: &str) -> Result<(), AppError> {
@@ -2718,8 +3023,11 @@ pub fn apply_schema_defaults_for_path(
         if meta.extra.contains_key(&column.name) {
             continue;
         }
-        if let Some(default) = column.default {
-            meta.extra.insert(column.name, default);
+        if let Some(default) = column.default.clone() {
+            let default = normalize_property_value_for_write(&column, default)?;
+            if !default.is_null() {
+                meta.extra.insert(column.name, default);
+            }
             changed = true;
         }
     }
@@ -2745,8 +3053,12 @@ pub fn apply_contextual_defaults_for_path(
         let Some(column) = schema.columns.iter().find(|column| column.name == *field) else {
             continue;
         };
-        validate_property_value(column, value)?;
-        meta.extra.insert(field.clone(), value.clone());
+        let value = normalize_property_value_for_write(column, value.clone())?;
+        if value.is_null() {
+            meta.extra.remove(field);
+        } else {
+            meta.extra.insert(field.clone(), value);
+        }
         changed = true;
     }
     Ok(changed)
@@ -2775,8 +3087,12 @@ pub fn apply_contextual_defaults_for_path_strict(
             .iter()
             .find(|column| column.name == *field)
             .ok_or_else(|| schema_error(format!("unknown contextual default field '{field}'")))?;
-        validate_property_value(column, value)?;
-        meta.extra.insert(field.clone(), value.clone());
+        let value = normalize_property_value_for_write(column, value.clone())?;
+        if value.is_null() {
+            meta.extra.remove(field);
+        } else {
+            meta.extra.insert(field.clone(), value);
+        }
         changed = true;
     }
     Ok(changed)
@@ -2803,13 +3119,348 @@ fn apply_schema_defaults_to_file(space: &Path, rel_path: &str) -> Result<(), App
     let space_str = space.to_string_lossy();
     let entry = entry::read(&space_str, rel_path)?;
     let mut meta = entry.meta;
-    if apply_schema_defaults_for_path(&space_str, rel_path, &mut meta)? {
+    let changed_defaults = apply_schema_defaults_for_path(&space_str, rel_path, &mut meta)?;
+    let changed_unique_id = assign_unique_id_to_meta_for_path(&space_str, rel_path, &mut meta)?;
+    if changed_defaults || changed_unique_id {
         fs::write(
             space.join(rel_path),
             frontmatter::serialize(&meta, &entry.body),
         )?;
     }
     Ok(())
+}
+
+pub fn unique_id_mutation_paths_for_entry(
+    space: &str,
+    file_path: &str,
+) -> Result<Vec<PathBuf>, AppError> {
+    let mut paths = vec![Path::new(space).join(normalize_rel_path(file_path))];
+    if let Some(schema_path) = unique_id_schema_path_for_entry(space, file_path)? {
+        paths.push(schema_path);
+    }
+    Ok(paths)
+}
+
+pub fn unique_id_mutation_paths_for_entry_tree(
+    space: &Path,
+    rel_path: &str,
+) -> Result<Vec<PathBuf>, AppError> {
+    let mut paths = Vec::new();
+    for file in markdown_files_in_tree(space, rel_path)? {
+        let rel = copy_rel_from_abs(space, &file);
+        if let Some(schema_path) = unique_id_schema_path_for_entry(&space.to_string_lossy(), &rel)?
+        {
+            paths.push(file);
+            paths.push(schema_path);
+        }
+    }
+    dedupe_paths(paths)
+}
+
+pub fn unique_id_schema_path_for_entry(
+    space: &str,
+    file_path: &str,
+) -> Result<Option<PathBuf>, AppError> {
+    let Some((schema, root)) = resolve_collection_schema_result(space, file_path)? else {
+        return Ok(None);
+    };
+    if schema
+        .columns
+        .iter()
+        .any(|column| column.type_ == PropertyType::UniqueId)
+    {
+        Ok(Some(Path::new(space).join(root).join(SCHEMA_FILE)))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn assign_unique_ids_to_entry_tree(
+    space: &Path,
+    rel_path: &str,
+    force: bool,
+) -> Result<(), AppError> {
+    for file in markdown_files_in_tree(space, rel_path)? {
+        let rel = copy_rel_from_abs(space, &file);
+        assign_unique_id_to_file(&space.to_string_lossy(), &rel, force)?;
+    }
+    Ok(())
+}
+
+pub fn assign_unique_id(space: &str, file_path: &str) -> Result<entry::Entry, AppError> {
+    let paths = unique_id_mutation_paths_for_entry(space, file_path)?;
+    with_rollback(paths, || {
+        assign_unique_id_to_file(space, file_path, true)?;
+        entry::read(space, file_path)
+    })
+}
+
+pub fn normalize_unique_id_counter(
+    space: &str,
+    collection_path: &str,
+) -> Result<CollectionSchema, AppError> {
+    let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
+    with_rollback(vec![schema_path], || {
+        let mut schema = read_schema_or_default(space, collection_path)?;
+        let Some(column) = schema
+            .columns
+            .iter()
+            .find(|column| column.type_ == PropertyType::UniqueId)
+            .cloned()
+        else {
+            return Ok(schema);
+        };
+        let values = collection_unique_id_values(space, collection_path, &column.name, None)?;
+        let max_existing = values.iter().map(|(_, value)| *value).max().unwrap_or(0);
+        let required_next = next_after(max_existing)?;
+        let current_next = column.next.unwrap_or(1);
+        if current_next < required_next {
+            set_unique_id_next(&mut schema, &column.name, required_next)?;
+            write_schema(space, collection_path, &schema)?;
+        }
+        read_schema_or_default(space, collection_path)
+    })
+}
+
+fn assign_unique_id_to_file(space: &str, file_path: &str, force: bool) -> Result<bool, AppError> {
+    let rel = normalize_rel_path(file_path);
+    let abs = Path::new(space).join(&rel);
+    let raw = fs::read_to_string(&abs)?;
+    let Some((mut meta, body)) = frontmatter::try_parse(&raw)? else {
+        return Ok(false);
+    };
+    let changed = if force {
+        force_assign_unique_id_to_meta(space, &rel, &mut meta)?
+    } else {
+        assign_unique_id_to_meta_for_path(space, &rel, &mut meta)?
+    };
+    if changed {
+        fs::write(abs, frontmatter::serialize(&meta, &body))?;
+    }
+    Ok(changed)
+}
+
+pub fn assign_unique_id_to_meta_for_path(
+    space: &str,
+    file_path: &str,
+    meta: &mut EntryMeta,
+) -> Result<bool, AppError> {
+    assign_unique_id_to_meta_inner(space, file_path, meta, false)
+}
+
+fn force_assign_unique_id_to_meta(
+    space: &str,
+    file_path: &str,
+    meta: &mut EntryMeta,
+) -> Result<bool, AppError> {
+    assign_unique_id_to_meta_inner(space, file_path, meta, true)
+}
+
+fn assign_unique_id_to_meta_inner(
+    space: &str,
+    file_path: &str,
+    meta: &mut EntryMeta,
+    force: bool,
+) -> Result<bool, AppError> {
+    let Some((mut schema, root)) = resolve_collection_schema_result(space, file_path)? else {
+        return Ok(false);
+    };
+    let collection_path = rel_path_string(&root);
+    let Some(column) = schema
+        .columns
+        .iter()
+        .find(|column| column.type_ == PropertyType::UniqueId)
+        .cloned()
+    else {
+        return Ok(false);
+    };
+    let field = column.name.clone();
+    let existing = meta.extra.get(&field).and_then(unique_id_value);
+    let values = collection_unique_id_values(space, &collection_path, &field, Some(file_path))?;
+    let duplicate = existing.is_some_and(|value| values.iter().any(|(_, other)| *other == value));
+    let invalid_or_missing = existing.is_none();
+    let mut changed = false;
+
+    if force || invalid_or_missing || duplicate {
+        let fresh = next_unique_id_value(&schema, &values)?;
+        meta.extra.insert(field.clone(), yaml_u64(fresh));
+        set_unique_id_next(&mut schema, &field, next_after(fresh)?)?;
+        write_schema(space, &collection_path, &schema)?;
+        return Ok(true);
+    }
+
+    if let Some(existing) = existing {
+        let required_next = next_after(existing)?;
+        if column.next.unwrap_or(1) < required_next {
+            set_unique_id_next(&mut schema, &field, required_next)?;
+            write_schema(space, &collection_path, &schema)?;
+            changed = true;
+        }
+    }
+    Ok(changed)
+}
+
+fn materialize_unique_id_column(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+) -> Result<(), AppError> {
+    let mut schema = read_schema_or_default(space, collection_path)?;
+    let files = sorted_collection_markdown_files_for_unique_id(space, collection_path)?;
+    let mut used = HashSet::new();
+    let mut next = schema
+        .columns
+        .iter()
+        .find(|column| column.name == column_name)
+        .and_then(|column| column.next)
+        .unwrap_or(1)
+        .max(1);
+
+    for file in files {
+        let raw = fs::read_to_string(&file)?;
+        let Some((mut meta, body)) = frontmatter::try_parse(&raw)? else {
+            continue;
+        };
+        let existing = meta.extra.get(column_name).and_then(unique_id_value);
+        let keep = existing.is_some_and(|value| used.insert(value));
+        if keep {
+            next = next.max(next_after(existing.unwrap())?);
+            continue;
+        }
+        while used.contains(&next) {
+            next = next_after(next)?;
+        }
+        let assigned = next;
+        used.insert(assigned);
+        meta.extra
+            .insert(column_name.to_string(), yaml_u64(assigned));
+        fs::write(&file, frontmatter::serialize(&meta, &body))?;
+        next = next_after(assigned)?;
+    }
+
+    set_unique_id_next(&mut schema, column_name, next)?;
+    write_schema(space, collection_path, &schema)
+}
+
+fn collection_unique_id_values(
+    space: &str,
+    collection_path: &str,
+    field: &str,
+    exclude_path: Option<&str>,
+) -> Result<Vec<(String, u64)>, AppError> {
+    let exclude = exclude_path.map(normalize_rel_path);
+    let mut values = Vec::new();
+    for file in collection_markdown_files(space, collection_path)? {
+        let rel = copy_rel_from_abs(Path::new(space), &file);
+        if exclude.as_deref() == Some(rel.as_str()) {
+            continue;
+        }
+        let raw = fs::read_to_string(&file)?;
+        let Some((meta, _)) = frontmatter::try_parse(&raw)? else {
+            continue;
+        };
+        if let Some(value) = meta.extra.get(field).and_then(unique_id_value) {
+            values.push((rel, value));
+        }
+    }
+    Ok(values)
+}
+
+fn next_unique_id_value(
+    schema: &CollectionSchema,
+    existing_values: &[(String, u64)],
+) -> Result<u64, AppError> {
+    let schema_next = schema
+        .columns
+        .iter()
+        .find(|column| column.type_ == PropertyType::UniqueId)
+        .and_then(|column| column.next)
+        .unwrap_or(1)
+        .max(1);
+    let max_existing = existing_values
+        .iter()
+        .map(|(_, value)| *value)
+        .max()
+        .unwrap_or(0);
+    Ok(schema_next.max(next_after(max_existing)?))
+}
+
+fn set_unique_id_next(
+    schema: &mut CollectionSchema,
+    field: &str,
+    next: u64,
+) -> Result<(), AppError> {
+    let column = schema
+        .columns
+        .iter_mut()
+        .find(|column| column.name == field && column.type_ == PropertyType::UniqueId)
+        .ok_or_else(|| schema_error(format!("unique_id column '{field}' not found")))?;
+    column.next = Some(next.max(1));
+    Ok(())
+}
+
+fn next_after(value: u64) -> Result<u64, AppError> {
+    value
+        .checked_add(1)
+        .ok_or_else(|| schema_error("unique_id counter overflow"))
+}
+
+fn sorted_collection_markdown_files_for_unique_id(
+    space: &str,
+    collection_path: &str,
+) -> Result<Vec<PathBuf>, AppError> {
+    let order = crate::files::tree::read_order(Path::new(space));
+    let mut rows = Vec::new();
+    for file in collection_markdown_files(space, collection_path)? {
+        let rel = copy_rel_from_abs(Path::new(space), &file);
+        let parent = entry_parent_dir(&rel);
+        let order_name = entry_order_name(&rel);
+        let order_index = order
+            .get(if parent.is_empty() {
+                "."
+            } else {
+                parent.as_str()
+            })
+            .and_then(|items| items.iter().position(|item| item == &order_name));
+        let title = fs::read_to_string(&file)
+            .ok()
+            .and_then(|raw| {
+                frontmatter::try_parse(&raw)
+                    .ok()
+                    .flatten()
+                    .map(|(meta, _)| meta.title)
+            })
+            .unwrap_or_default()
+            .to_lowercase();
+        rows.push((file, parent, order_index, title, rel));
+    }
+    rows.sort_by(|a, b| {
+        a.1.cmp(&b.1)
+            .then_with(|| a.2.is_none().cmp(&b.2.is_none()))
+            .then_with(|| a.2.unwrap_or(usize::MAX).cmp(&b.2.unwrap_or(usize::MAX)))
+            .then_with(|| a.3.cmp(&b.3))
+            .then_with(|| a.4.cmp(&b.4))
+    });
+    Ok(rows.into_iter().map(|row| row.0).collect())
+}
+
+fn markdown_files_in_tree(space: &Path, rel_path: &str) -> Result<Vec<PathBuf>, AppError> {
+    let abs = space.join(normalize_rel_path(rel_path));
+    if abs.is_dir() {
+        collect_md_files(&abs)
+    } else if abs.extension().and_then(|ext| ext.to_str()) == Some("md") {
+        Ok(vec![abs])
+    } else {
+        Ok(Vec::new())
+    }
+}
+
+fn dedupe_paths(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>, AppError> {
+    let mut seen = HashSet::new();
+    Ok(paths
+        .into_iter()
+        .filter(|path| seen.insert(path.clone()))
+        .collect())
 }
 
 pub fn add_schema_column(
@@ -2820,7 +3471,20 @@ pub fn add_schema_column(
     if column.type_ == PropertyType::Status && column.options.is_none() {
         column.options = Some(default_status_options());
     }
+    if column.type_ == PropertyType::Person {
+        column.type_ = PropertyType::Actor;
+    }
+    if column.type_ == PropertyType::Actor {
+        column.multiple = Some(column.multiple.unwrap_or(false));
+    }
+    if column.type_ == PropertyType::UniqueId {
+        column.next = Some(column.next.unwrap_or(1).max(1));
+        column.prefix = trim_unique_id_prefix(column.prefix.take());
+    }
     let mut touched = vec![collection_dir(space, collection_path).join(SCHEMA_FILE)];
+    if column.type_ == PropertyType::UniqueId {
+        touched.extend(collection_markdown_files(space, collection_path)?);
+    }
     extend_relation_side_effect_paths(space, collection_path, &column, &mut touched)?;
     with_rollback(touched, || {
         let mut schema = read_schema_or_default(space, collection_path)?;
@@ -2836,7 +3500,12 @@ pub fn add_schema_column(
         }
         normalize_column_relation_paths(&mut column)?;
         schema.columns.push(column.clone());
+        validate_schema(&schema)?;
         write_schema(space, collection_path, &schema)?;
+        if column.type_ == PropertyType::UniqueId {
+            materialize_unique_id_column(space, collection_path, &column.name)?;
+            schema = read_schema_or_default(space, collection_path)?;
+        }
         ensure_two_way_schema_and_values(space, collection_path, &column)?;
         Ok(schema)
     })
@@ -2885,7 +3554,11 @@ pub fn change_schema_type(
         for file in &files {
             mutate_frontmatter(file, |meta| {
                 if let Some(value) = meta.extra.get_mut(column_name) {
-                    *value = convert_value_for_type(value.clone(), &column_snapshot);
+                    *value = convert_value_for_type_from_old(
+                        value.clone(),
+                        old_column.as_ref(),
+                        &column_snapshot,
+                    );
                 }
                 Ok(())
             })?;
@@ -2893,6 +3566,10 @@ pub fn change_schema_type(
 
         enforce_relation_limit_one_existing_values(space, collection_path, &column_snapshot)?;
         write_schema(space, collection_path, &schema)?;
+        if column_snapshot.type_ == PropertyType::UniqueId {
+            materialize_unique_id_column(space, collection_path, &column_snapshot.name)?;
+            schema = read_schema_or_default(space, collection_path)?;
+        }
         if old_column
             .as_ref()
             .is_some_and(|old| old.type_ == PropertyType::Relation && old.two_way.is_some())
@@ -2971,6 +3648,9 @@ pub fn update_schema_column(
             let mut patched = column.clone();
             apply_column_patch(&mut patched, patch.clone())?;
             normalize_column_relation_paths(&mut patched)?;
+            if is_actor_cardinality_change(column, &patched) {
+                touched.extend(collection_markdown_files(space, collection_path)?);
+            }
             extend_relation_side_effect_paths(space, collection_path, &patched, &mut touched)?;
         }
     }
@@ -2982,6 +3662,7 @@ pub fn update_schema_column(
         normalize_column_relation_paths(column)?;
         let new_column = column.clone();
         validate_schema(&schema)?;
+        rewrite_actor_cardinality_values(space, collection_path, &old_column, &new_column)?;
         enforce_relation_limit_one_existing_values(space, collection_path, &new_column)?;
         write_schema(space, collection_path, &schema)?;
         if old_column.type_ == PropertyType::Relation
@@ -2995,6 +3676,63 @@ pub fn update_schema_column(
         ensure_two_way_schema_and_values(space, collection_path, &new_column)?;
         Ok(schema)
     })
+}
+
+fn is_actor_cardinality_change(old_column: &Column, new_column: &Column) -> bool {
+    is_actor_type(old_column.type_)
+        && is_actor_type(new_column.type_)
+        && actor_multiple(old_column) != actor_multiple(new_column)
+}
+
+fn rewrite_actor_cardinality_values(
+    space: &str,
+    collection_path: &str,
+    old_column: &Column,
+    new_column: &Column,
+) -> Result<(), AppError> {
+    if !is_actor_cardinality_change(old_column, new_column) {
+        return Ok(());
+    }
+
+    for file in collection_markdown_files(space, collection_path)? {
+        mutate_frontmatter(&file, |meta| {
+            let Some(value) = meta.extra.get(&new_column.name).cloned() else {
+                return Ok(());
+            };
+            let next = actor_value_for_cardinality_toggle(new_column, value)?;
+            if next.is_null()
+                || next
+                    .as_sequence()
+                    .is_some_and(|sequence| sequence.is_empty())
+            {
+                meta.extra.remove(&new_column.name);
+            } else {
+                meta.extra.insert(new_column.name.clone(), next);
+            }
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+fn actor_value_for_cardinality_toggle(column: &Column, value: Value) -> Result<Value, AppError> {
+    if actor_multiple(column) {
+        return normalize_actor_value(column, value);
+    }
+    if let Value::Sequence(sequence) = &value {
+        let values: Vec<&Value> = sequence.iter().filter(|item| !item.is_null()).collect();
+        if values.is_empty() {
+            return Ok(Value::Null);
+        }
+        if values.len() > 1 {
+            return Err(schema_error(format!(
+                "actor column '{}' has multiple values; choose one before disabling multiple",
+                column.name
+            )));
+        }
+        return normalize_actor_value(column, values[0].clone());
+    }
+    normalize_actor_value(column, value)
 }
 
 pub fn delete_schema_column(
@@ -3737,14 +4475,58 @@ async fn resolve_query_filters(
                 resolve_filter_macro_container(ty, value, me_email.as_deref())?;
             }
         }
+        normalize_filter_values_for_query(schema, &mut filter)?;
         resolved.push(filter);
     }
     Ok(resolved)
 }
 
+fn normalize_filter_values_for_query(
+    schema: &CollectionSchema,
+    filter: &mut Filter,
+) -> Result<(), AppError> {
+    let ty = field_type(schema, &filter.field, FieldContext::Filter)?;
+    let column = schema
+        .columns
+        .iter()
+        .find(|column| column.name == filter.field);
+    if let Some(value) = filter.value.as_mut() {
+        normalize_filter_value_for_query(column, ty, value)?;
+    }
+    if let Some(values) = filter.values.as_mut() {
+        for value in values {
+            normalize_filter_value_for_query(column, ty, value)?;
+        }
+    }
+    Ok(())
+}
+
+fn normalize_filter_value_for_query(
+    column: Option<&Column>,
+    ty: FieldType,
+    value: &mut Value,
+) -> Result<(), AppError> {
+    match ty {
+        FieldType::UniqueId => {
+            let column = column.ok_or_else(|| schema_error("unique_id field not found"))?;
+            *value = yaml_u64(parse_unique_id_filter_value(column, value)?);
+        }
+        FieldType::Person | FieldType::ActorMulti => {
+            if let Some(raw) = value.as_str() {
+                *value = Value::String(canonical_actor_email(raw));
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn query_filters_need_me(schema: &CollectionSchema, filters: &[Filter]) -> Result<bool, AppError> {
     for filter in filters {
-        if field_type(schema, &filter.field, FieldContext::Filter)? != FieldType::Person {
+        if !matches!(
+            field_type(schema, &filter.field, FieldContext::Filter)?,
+            FieldType::Person | FieldType::ActorMulti
+        ) {
             continue;
         }
         if filter_value_refs(filter)
@@ -3800,10 +4582,10 @@ fn resolve_filter_macro_value(
     match ty {
         FieldType::Date => resolve_today_macro(raw)
             .map(|resolved| resolved.map(Value::String).unwrap_or_else(|| value.clone())),
-        FieldType::Person if raw == "@me" => me_email
+        FieldType::Person | FieldType::ActorMulti if raw == "@me" => me_email
             .map(|email| Value::String(email.to_string()))
             .ok_or_else(|| schema_error("@me requires git user.email")),
-        FieldType::Person => Ok(Value::String(raw.to_lowercase())),
+        FieldType::Person | FieldType::ActorMulti => Ok(Value::String(canonical_actor_email(raw))),
         _ => Ok(value.clone()),
     }
 }
@@ -4168,10 +4950,10 @@ fn push_filter_sql(
         }
         FilterOp::Eq => push_binary_filter(query, schema, filter, ty, "=")?,
         FilterOp::Neq => push_binary_filter(query, schema, filter, ty, "!=")?,
-        FilterOp::Contains if ty == FieldType::Multi => {
+        FilterOp::Contains if matches!(ty, FieldType::Multi | FieldType::ActorMulti) => {
             push_array_contains_filter(query, schema, filter, false)?
         }
-        FilterOp::NotContains if ty == FieldType::Multi => {
+        FilterOp::NotContains if matches!(ty, FieldType::Multi | FieldType::ActorMulti) => {
             push_array_contains_filter(query, schema, filter, true)?
         }
         FilterOp::Contains => push_like_filter(query, schema, filter, false)?,
@@ -4250,7 +5032,7 @@ fn push_number_field_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str) {
 
 fn push_filter_field_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str, ty: FieldType) {
     match ty {
-        FieldType::Number => push_number_field_expr(query, field),
+        FieldType::Number | FieldType::UniqueId => push_number_field_expr(query, field),
         FieldType::Date => push_date_field_expr(query, field),
         _ => push_field_expr(query, field),
     }
@@ -4272,7 +5054,7 @@ fn push_empty_expr(
     push_field_expr(query, field);
     query.push(" IS NULL OR ");
     match ty {
-        FieldType::Multi => {
+        FieldType::Multi | FieldType::ActorMulti => {
             query.push("json_array_length(");
             push_field_expr(query, field);
             query.push(") = 0");
@@ -4529,7 +5311,7 @@ fn push_sort_sql(
             push_text_sort_expr(query, field);
             query.push(sort_direction(desc));
         }
-        FieldType::Number => {
+        FieldType::Number | FieldType::UniqueId => {
             push_number_field_expr(query, field);
             query.push(sort_direction(desc));
         }
@@ -4544,7 +5326,7 @@ fn push_sort_sql(
         FieldType::SelectLike | FieldType::Status => {
             push_option_sort_sql(query, schema, field, desc)?;
         }
-        FieldType::Multi => {
+        FieldType::Multi | FieldType::ActorMulti => {
             push_multi_select_sort_sql(query, schema, field, desc)?;
         }
     }
@@ -4969,6 +5751,9 @@ fn normalize_column_for_new_type(
             column.color = None;
             column.time_by_default = None;
             column.range_by_default = None;
+            column.prefix = None;
+            column.next = None;
+            column.multiple = None;
             if let Some(relation) = strategy.and_then(|value| value.get("relation")) {
                 column.relation = relation.as_str().map(ToOwned::to_owned);
             }
@@ -4986,11 +5771,54 @@ fn normalize_column_for_new_type(
                 column.two_way = two_way.as_str().map(ToOwned::to_owned);
             }
         }
+        PropertyType::UniqueId => {
+            column.options = None;
+            column.display = None;
+            column.min = None;
+            column.max = None;
+            column.color = None;
+            column.time_by_default = None;
+            column.range_by_default = None;
+            column.relation = None;
+            column.limit = None;
+            column.two_way = None;
+            column.multiple = None;
+            column.prefix = strategy
+                .and_then(|value| value.get("prefix"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+                .or_else(|| column.prefix.clone());
+            column.prefix = trim_unique_id_prefix(column.prefix.take());
+            column.next = Some(column.next.unwrap_or(1).max(1));
+        }
+        PropertyType::Actor | PropertyType::Person => {
+            column.type_ = PropertyType::Actor;
+            column.options = None;
+            column.display = None;
+            column.min = None;
+            column.max = None;
+            column.color = None;
+            column.time_by_default = None;
+            column.range_by_default = None;
+            column.relation = None;
+            column.limit = None;
+            column.two_way = None;
+            column.prefix = None;
+            column.next = None;
+            let multiple = strategy
+                .and_then(|value| value.get("multiple"))
+                .and_then(Value::as_bool)
+                .unwrap_or_else(|| column.multiple.unwrap_or(false));
+            column.multiple = Some(multiple);
+        }
         _ => {
             column.options = None;
             column.relation = None;
             column.limit = None;
             column.two_way = None;
+            column.prefix = None;
+            column.next = None;
+            column.multiple = None;
         }
     }
     Ok(())
@@ -5013,6 +5841,28 @@ fn apply_status_groups(column: &mut Column, groups: &Value) -> Result<(), AppErr
     Ok(())
 }
 
+fn convert_value_for_type_from_old(
+    value: Value,
+    old_column: Option<&Column>,
+    column: &Column,
+) -> Value {
+    if old_column.is_some_and(|old| old.type_ == PropertyType::UniqueId)
+        && column.type_ == PropertyType::Text
+        && let Some(number) = unique_id_value(&value)
+    {
+        return Value::String(unique_id_display_value(old_column.unwrap(), number));
+    }
+    convert_value_for_type(value, column)
+}
+
+fn unique_id_display_value(column: &Column, number: u64) -> String {
+    if let Some(prefix) = column.prefix.as_deref().filter(|prefix| !prefix.is_empty()) {
+        format!("{prefix}-{number}")
+    } else {
+        number.to_string()
+    }
+}
+
 fn convert_value_for_type(value: Value, column: &Column) -> Value {
     let original = value.clone();
     let converted = match column.type_ {
@@ -5020,6 +5870,7 @@ fn convert_value_for_type(value: Value, column: &Column) -> Value {
         PropertyType::Number => {
             value_to_f64(&value).and_then(|number| serde_yml::to_value(number).ok())
         }
+        PropertyType::UniqueId => value_to_unique_id_number(&value).map(yaml_u64),
         PropertyType::Select | PropertyType::Status => {
             value_to_first_string(&value).map(Value::String)
         }
@@ -5041,7 +5892,8 @@ fn convert_value_for_type(value: Value, column: &Column) -> Value {
                 value_to_scalar_string(&value).map(Value::String)
             }
         }
-        PropertyType::Person | PropertyType::Url | PropertyType::Email | PropertyType::Phone => {
+        PropertyType::Actor | PropertyType::Person => normalize_actor_value(column, value).ok(),
+        PropertyType::Url | PropertyType::Email | PropertyType::Phone => {
             value_to_scalar_string(&value).map(Value::String)
         }
         PropertyType::Relation => convert_value_for_relation(value, column),
@@ -5074,6 +5926,18 @@ fn value_to_f64(value: &Value) -> Option<f64> {
         Value::Number(_) => value.as_f64(),
         Value::String(value) => value.trim().parse::<f64>().ok(),
         Value::Bool(value) => Some(if *value { 1.0 } else { 0.0 }),
+        _ => None,
+    }
+}
+
+fn value_to_unique_id_number(value: &Value) -> Option<u64> {
+    match value {
+        Value::Number(_) => unique_id_value(value),
+        Value::String(value) => value
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .filter(|number| *number >= 1),
         _ => None,
     }
 }
@@ -5346,6 +6210,13 @@ fn apply_column_patch(column: &mut Column, patch: Value) -> Result<(), AppError>
     if mapping.contains_key("two_way") {
         column.two_way = nullable_from_mapping(mapping, "two_way")?;
     }
+    if mapping.contains_key("prefix") {
+        column.prefix = nullable_from_mapping(mapping, "prefix")?;
+        column.prefix = trim_unique_id_prefix(column.prefix.take());
+    }
+    if mapping.contains_key("multiple") {
+        column.multiple = nullable_from_mapping(mapping, "multiple")?;
+    }
     Ok(())
 }
 
@@ -5498,6 +6369,9 @@ fn infer_column(field: &str, value: &Value) -> Column {
         relation: None,
         limit: None,
         two_way: None,
+        prefix: None,
+        next: None,
+        multiple: None,
     };
 
     if column.type_ == PropertyType::MultiSelect {
@@ -5717,6 +6591,27 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    fn test_column(name: &str, type_: PropertyType) -> Column {
+        Column {
+            name: name.into(),
+            type_,
+            default: None,
+            options: None,
+            display: None,
+            min: None,
+            max: None,
+            color: None,
+            time_by_default: None,
+            range_by_default: None,
+            relation: None,
+            limit: None,
+            two_way: None,
+            prefix: None,
+            next: None,
+            multiple: None,
+        }
+    }
+
     #[test]
     fn schema_roundtrips_utf8_names_and_mixed_options() {
         let raw = r#"
@@ -5788,6 +6683,9 @@ views: []
             relation: Some("tasks".into()),
             limit: None,
             two_way: None,
+            prefix: None,
+            next: None,
+            multiple: None,
         };
         let value: Value = serde_yml::from_str("[a.md, a.md, folder/README.md]").unwrap();
         let normalized = validate_relation_value_shape(&column, &value).unwrap();
@@ -5913,6 +6811,9 @@ views: []
             relation: Some("sprints".into()),
             limit: None,
             two_way: Some("Tasks".into()),
+            prefix: None,
+            next: None,
+            multiple: None,
         };
 
         assert!(add_schema_column(space.to_str().unwrap(), "tasks", column).is_err());
@@ -5977,6 +6878,310 @@ views: []
     }
 
     #[test]
+    fn unique_id_and_actor_schema_shape_validate_and_normalize() {
+        let raw = r#"
+columns:
+  - name: Key
+    type: unique_id
+    prefix: " ISSUE "
+    next: 7
+  - name: Assignee
+    type: actor
+    multiple: false
+  - name: Reviewers
+    type: actor
+    multiple: true
+views: []
+"#;
+        let mut schema: CollectionSchema = serde_yml::from_str(raw).unwrap();
+        normalize_schema(&mut schema);
+        validate_schema(&schema).unwrap();
+        assert_eq!(schema.columns[0].prefix.as_deref(), Some("ISSUE"));
+        assert_eq!(schema.columns[1].multiple, Some(false));
+        assert_eq!(schema.columns[2].multiple, Some(true));
+
+        let hyphen_prefix: CollectionSchema = serde_yml::from_str(
+            r#"
+columns:
+  - { name: Key, type: unique_id, prefix: "ISSUE-KEY", next: 1 }
+views: []
+"#,
+        )
+        .unwrap();
+        validate_schema(&hyphen_prefix).unwrap();
+
+        let bad_prefix: CollectionSchema = serde_yml::from_str(
+            r#"
+columns:
+  - { name: Key, type: unique_id, prefix: "ISSUE KEY", next: 1 }
+views: []
+"#,
+        )
+        .unwrap();
+        assert!(validate_schema(&bad_prefix).is_err());
+
+        let duplicate_unique_id: CollectionSchema = serde_yml::from_str(
+            r#"
+columns:
+  - { name: Key, type: unique_id, next: 1 }
+  - { name: Other, type: unique_id, next: 2 }
+views: []
+"#,
+        )
+        .unwrap();
+        assert!(validate_schema(&duplicate_unique_id).is_err());
+
+        let mut legacy_person: CollectionSchema = serde_yml::from_str(
+            r#"
+columns:
+  - { name: Owner, type: person }
+views: []
+"#,
+        )
+        .unwrap();
+        normalize_schema(&mut legacy_person);
+        assert_eq!(legacy_person.columns[0].type_, PropertyType::Actor);
+        assert_eq!(legacy_person.columns[0].multiple, Some(false));
+    }
+
+    #[test]
+    fn add_unique_id_materializes_existing_rows_and_sets_next() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        fs::create_dir_all(space.join("tasks")).unwrap();
+        fs::create_dir_all(space.join(".combai")).unwrap();
+        fs::write(space.join("tasks/schema.yaml"), "columns: []\nviews: []\n").unwrap();
+        fs::write(
+            space.join(".combai/order.json"),
+            r#"{"tasks":["b.md","a.md"]}"#,
+        )
+        .unwrap();
+        fs::write(
+            space.join("tasks/a.md"),
+            "---\nid: a\ntitle: A\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("tasks/b.md"),
+            "---\nid: b\ntitle: B\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+
+        let mut column = test_column("Key", PropertyType::UniqueId);
+        column.prefix = Some("ISSUE".into());
+        let schema = add_schema_column(space.to_str().unwrap(), "tasks", column).unwrap();
+        assert_eq!(schema.columns[0].next, Some(3));
+
+        let b = entry::read(space.to_str().unwrap(), "tasks/b.md").unwrap();
+        let a = entry::read(space.to_str().unwrap(), "tasks/a.md").unwrap();
+        assert_eq!(b.meta.extra.get("Key").and_then(unique_id_value), Some(1));
+        assert_eq!(a.meta.extra.get("Key").and_then(unique_id_value), Some(2));
+    }
+
+    #[test]
+    fn unique_id_create_delete_duplicate_and_repair_do_not_reuse_numbers() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        fs::create_dir_all(space.join("tasks")).unwrap();
+        fs::write(
+            space.join("tasks/schema.yaml"),
+            "columns:\n  - name: Key\n    type: unique_id\n    prefix: ISSUE\n    next: 1\nviews: []\n",
+        )
+        .unwrap();
+
+        let first = entry::create(space.to_str().unwrap(), Some("tasks"), "First").unwrap();
+        assert_eq!(
+            first.meta.extra.get("Key").and_then(unique_id_value),
+            Some(1)
+        );
+        fs::remove_file(space.join(&first.path)).unwrap();
+        let second = entry::create(space.to_str().unwrap(), Some("tasks"), "Second").unwrap();
+        assert_eq!(
+            second.meta.extra.get("Key").and_then(unique_id_value),
+            Some(2)
+        );
+
+        let duplicated = entry::duplicate_entry(space, &second.path).unwrap();
+        assert_eq!(
+            duplicated.meta.extra.get("Key").and_then(unique_id_value),
+            Some(3)
+        );
+
+        let schema = read_collection_schema(space.to_str().unwrap(), "tasks").unwrap();
+        assert_eq!(schema.columns[0].next, Some(4));
+
+        mutate_frontmatter(&space.join(&duplicated.path), |meta| {
+            meta.extra.insert("Key".into(), yaml_u64(2));
+            Ok(())
+        })
+        .unwrap();
+        let repaired = assign_unique_id(space.to_str().unwrap(), &duplicated.path).unwrap();
+        assert_eq!(
+            repaired.meta.extra.get("Key").and_then(unique_id_value),
+            Some(4)
+        );
+        let schema = normalize_unique_id_counter(space.to_str().unwrap(), "tasks").unwrap();
+        assert_eq!(schema.columns[0].next, Some(5));
+    }
+
+    #[test]
+    fn unique_id_update_is_readonly_and_actor_values_are_normalized() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        fs::create_dir_all(space.join("tasks")).unwrap();
+        fs::write(
+            space.join("tasks/schema.yaml"),
+            "columns:\n  - { name: Key, type: unique_id, next: 1 }\n  - { name: Owner, type: actor, multiple: false }\n  - { name: Reviewers, type: actor, multiple: true }\nviews: []\n",
+        )
+        .unwrap();
+        let created = entry::create(space.to_str().unwrap(), Some("tasks"), "Task").unwrap();
+
+        assert!(
+            entry::update_field(
+                space.to_str().unwrap(),
+                &created.path,
+                "Key",
+                serde_json::json!(99),
+            )
+            .is_err()
+        );
+
+        let updated = entry::update_field(
+            space.to_str().unwrap(),
+            &created.path,
+            "Owner",
+            serde_json::json!(" ME@EXAMPLE.COM "),
+        )
+        .unwrap();
+        assert_eq!(
+            updated.meta.extra.get("Owner").and_then(Value::as_str),
+            Some("me@example.com")
+        );
+
+        let updated = entry::update_field(
+            space.to_str().unwrap(),
+            &created.path,
+            "Reviewers",
+            serde_json::json!(["A@Example.com", "a@example.com", "bad value"]),
+        )
+        .unwrap();
+        let reviewers: Vec<_> = updated
+            .meta
+            .extra
+            .get("Reviewers")
+            .unwrap()
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect();
+        assert_eq!(reviewers, vec!["a@example.com", "bad value"]);
+    }
+
+    #[tokio::test]
+    async fn unique_id_and_actor_query_filters_use_numeric_and_multi_semantics() {
+        let schema: CollectionSchema = serde_yml::from_str(
+            r#"
+columns:
+  - { name: Key, type: unique_id, prefix: ISSUE, next: 4 }
+  - { name: Owner, type: actor, multiple: false }
+  - { name: Reviewers, type: actor, multiple: true }
+views: []
+"#,
+        )
+        .unwrap();
+        validate_schema(&schema).unwrap();
+
+        let mut display_filter = Filter {
+            field: "Key".into(),
+            op: FilterOp::Eq,
+            value: Some(Value::String("ISSUE-2".into())),
+            values: None,
+        };
+        validate_filter_op(&schema, &display_filter).unwrap();
+        normalize_filter_values_for_query(&schema, &mut display_filter).unwrap();
+        assert_eq!(
+            display_filter.value.as_ref().and_then(unique_id_value),
+            Some(2)
+        );
+
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            r#"
+            CREATE TABLE entries (
+                file_path TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                created TEXT NOT NULL,
+                updated TEXT NOT NULL,
+                collection_root_path TEXT,
+                in_collection INTEGER NOT NULL,
+                is_entry_head INTEGER NOT NULL,
+                fields TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        for (path, title, fields) in [
+            (
+                "tasks/a.md",
+                "A",
+                serde_json::json!({"Key":10,"Owner":"me@example.com","Reviewers":["a@example.com"]}),
+            ),
+            (
+                "tasks/b.md",
+                "B",
+                serde_json::json!({"Key":2,"Owner":"other@example.com","Reviewers":["me@example.com"]}),
+            ),
+            (
+                "tasks/c.md",
+                "C",
+                serde_json::json!({"Key":3,"Owner":"me@example.com","Reviewers":["other@example.com"]}),
+            ),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO entries (
+                    file_path, title, description, created, updated, collection_root_path,
+                    in_collection, is_entry_head, fields
+                ) VALUES (?, ?, NULL, '2026-01-01', '2026-01-01', 'tasks', 1, 1, ?)
+                "#,
+            )
+            .bind(path)
+            .bind(title)
+            .bind(fields.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let filters = vec![Filter {
+            field: "Reviewers".into(),
+            op: FilterOp::Contains,
+            value: Some(Value::String("me@example.com".into())),
+            values: None,
+        }];
+        let rows = query_entry_rows(&pool, &schema, "tasks", &filters, &[], None, None)
+            .await
+            .unwrap();
+        let titles: Vec<_> = rows.into_iter().map(|row| row.title).collect();
+        assert_eq!(titles, vec!["B"]);
+
+        let sort = vec![Sort {
+            field: "Key".into(),
+            desc: false,
+        }];
+        let rows = query_entry_rows(&pool, &schema, "tasks", &[], &sort, None, None)
+            .await
+            .unwrap();
+        let titles: Vec<_> = rows.into_iter().map(|row| row.title).collect();
+        assert_eq!(titles, vec!["B", "C", "A"]);
+    }
+
+    #[test]
     fn resolver_uses_readme_parent_exception() {
         let tmp = TempDir::new().unwrap();
         let space = tmp.path();
@@ -6021,6 +7226,9 @@ views: []
             relation: None,
             limit: None,
             two_way: None,
+            prefix: None,
+            next: None,
+            multiple: None,
         };
         let ok: Value = serde_yml::from_str("start: 2026-04-20\nend: 2026-04-22\n").unwrap();
         validate_property_value(&column, &ok).unwrap();

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
-  defaultFilterOp,
+  defaultFilterOpForField,
   queryField,
 } from "@/features/collection/query";
 import type {
@@ -51,7 +51,7 @@ export function FieldFilterPane({
 
   function addDraft() {
     if (!info) return;
-    setDraft({ field, op: defaultFilterOp(info.type) });
+    setDraft({ field, op: defaultFilterOpForField(info) });
   }
 
   function applyDraft() {

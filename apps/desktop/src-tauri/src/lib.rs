@@ -54,6 +54,8 @@ pub fn run() {
             commands::files::update_entry_field,
             commands::files::add_schema_column,
             commands::files::change_schema_type,
+            commands::files::assign_unique_id,
+            commands::files::normalize_unique_id_counter,
             commands::files::rename_schema_column,
             commands::files::update_schema_column,
             commands::files::delete_schema_column,

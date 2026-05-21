@@ -132,7 +132,9 @@ export function ListView({
   );
   const hasSort = sort.length > 0;
   const queryFiltered = searchQuery.trim().length > 0 || filters.length > 0;
-  const hasPersonField = metaColumns.some((column) => column.type === "person");
+  const hasPersonField = metaColumns.some(
+    (column) => column.type === "actor" || column.type === "person",
+  );
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),

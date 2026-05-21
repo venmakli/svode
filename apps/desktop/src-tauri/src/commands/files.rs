@@ -168,12 +168,24 @@ pub async fn create_entry(
     } else {
         reindex_space_dir(&index_state, &space).await;
     }
-    maybe_autocommit_structural(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        StructuralOp::Create(basename(&created.path)),
-    );
+    if properties::unique_id_schema_path_for_entry(&space, &created.path)?.is_some() {
+        let paths = properties::unique_id_mutation_paths_for_entry(&space, &created.path)?;
+        maybe_autocommit_schema(
+            &autocommit,
+            project_path.as_deref(),
+            &space,
+            paths,
+            format!("Create {} with unique_id", basename(&created.path)),
+        )
+        .await;
+    } else {
+        maybe_autocommit_structural(
+            &autocommit,
+            project_path.as_deref(),
+            &space,
+            StructuralOp::Create(basename(&created.path)),
+        );
+    }
     Ok(created)
 }
 
@@ -297,8 +309,18 @@ pub async fn add_schema_column(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    let message = format!("Add column \"{}\"", column.name);
-    let paths = properties::schema_column_mutation_paths(&space, &collection_path, &column, false)?;
+    let materializes_unique_id = column.type_ == PropertyType::UniqueId;
+    let message = if materializes_unique_id {
+        format!("Add and materialize unique_id \"{}\"", column.name)
+    } else {
+        format!("Add column \"{}\"", column.name)
+    };
+    let paths = properties::schema_column_mutation_paths(
+        &space,
+        &collection_path,
+        &column,
+        materializes_unique_id,
+    )?;
     let schema = properties::add_schema_column(&space, &collection_path, column)?;
     maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
@@ -342,6 +364,56 @@ pub async fn change_schema_type(
         )?);
     }
     maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    Ok(schema)
+}
+
+#[tauri::command]
+pub async fn assign_unique_id(
+    space: String,
+    file_path: String,
+    project_path: Option<String>,
+    index_state: State<'_, IndexState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<Entry, AppError> {
+    let paths = properties::unique_id_mutation_paths_for_entry(&space, &file_path)?;
+    let entry = properties::assign_unique_id(&space, &file_path)?;
+    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+        let project = Path::new(proj);
+        let abs_target = Path::new(&space).join(&entry.path);
+        if let Err(e) = index::update::update_entry(&index_state, project, &abs_target).await {
+            tracing::warn!("index update_entry failed for {}: {e}", entry.path);
+        }
+    } else {
+        reindex_space_dir(&index_state, &space).await;
+    }
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        format!("Repair unique_id for {}", entry_history_name(&entry.path)),
+    )
+    .await;
+    Ok(entry)
+}
+
+#[tauri::command]
+pub async fn normalize_unique_id_counter(
+    space: String,
+    collection_path: String,
+    project_path: Option<String>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<CollectionSchema, AppError> {
+    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
+    let schema = properties::normalize_unique_id_counter(&space, &collection_path)?;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        paths,
+        "Normalize unique_id counter".to_string(),
+    )
+    .await;
     Ok(schema)
 }
 
@@ -1360,6 +1432,7 @@ pub async fn move_entry(
 ) -> Result<String, AppError> {
     let backlink_index = backlinks_for_space(&index_state, &space).await;
     let was_dir = Path::new(&space).join(&from).is_dir();
+    let old_abs = Path::new(&space).join(&from);
     ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
     let new_path = entry::move_entry(
         Path::new(&space),
@@ -1420,12 +1493,26 @@ pub async fn move_entry(
                 .await;
         }
     }
-    maybe_autocommit_structural(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        StructuralOp::Move(basename(&new_path)),
-    );
+    let mut unique_id_paths =
+        properties::unique_id_mutation_paths_for_entry_tree(Path::new(&space), &new_path)?;
+    if unique_id_paths.is_empty() {
+        maybe_autocommit_structural(
+            &autocommit,
+            project_path.as_deref(),
+            &space,
+            StructuralOp::Move(basename(&new_path)),
+        );
+    } else {
+        unique_id_paths.push(old_abs);
+        maybe_autocommit_schema(
+            &autocommit,
+            project_path.as_deref(),
+            &space,
+            unique_id_paths,
+            format!("Move {} with unique_id", basename(&new_path)),
+        )
+        .await;
+    }
     Ok(new_path)
 }
 
@@ -1715,15 +1802,31 @@ pub async fn duplicate_entry(
     let old_name = entry_history_name(&file_path);
     let entry = entry::duplicate_entry(Path::new(&space), &file_path)?;
     reindex_space_dir(&index_state, &space).await;
-    maybe_autocommit_structural(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        StructuralOp::Duplicate {
-            old: old_name,
-            new: entry_history_name(&entry.path),
-        },
-    );
+    let unique_id_paths =
+        properties::unique_id_mutation_paths_for_entry_tree(Path::new(&space), &entry.path)?;
+    if unique_id_paths.is_empty() {
+        maybe_autocommit_structural(
+            &autocommit,
+            project_path.as_deref(),
+            &space,
+            StructuralOp::Duplicate {
+                old: old_name,
+                new: entry_history_name(&entry.path),
+            },
+        );
+    } else {
+        maybe_autocommit_schema(
+            &autocommit,
+            project_path.as_deref(),
+            &space,
+            unique_id_paths,
+            format!(
+                "Duplicate {} with fresh unique_id",
+                entry_history_name(&entry.path)
+            ),
+        )
+        .await;
+    }
     Ok(entry)
 }
 

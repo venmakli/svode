@@ -49,6 +49,7 @@ import {
   Mail,
   PhoneCall,
   Text,
+  X,
 } from "lucide-react";
 import type {
   Column,
@@ -60,6 +61,7 @@ import type {
 import { RelationControl } from "./relation-control";
 import { PropertyBadge } from "./property-badge";
 import {
+  actorPerson,
   STATUS_GROUPS,
   colorStyle,
   formatDateValue,
@@ -73,6 +75,7 @@ import {
   isValidPhone,
   isValidUrl,
   normalizeDateInput,
+  normalizeActorValues,
   optionByName,
   optionColor,
   personCommitCount,
@@ -80,6 +83,7 @@ import {
   personIsMe,
   personLastCommitAt,
   todayIsoDate,
+  uniqueIdDisplay,
   valueToString,
 } from "../lib/utils";
 import { fallbackUrlTitle, normalizeUrlValue } from "../lib/url";
@@ -171,9 +175,14 @@ export function PropertyControl({
           onOpenChange={onOpenChange}
         />
       );
+    case "unique_id":
+      return (
+        <UniqueIdControl column={column} value={value} invalid={invalid} />
+      );
+    case "actor":
     case "person":
       return (
-        <PersonControl
+        <ActorControl
           column={column}
           value={value}
           invalid={invalid}
@@ -855,7 +864,40 @@ function DateControl({
   );
 }
 
-function PersonControl({
+function UniqueIdControl({
+  column,
+  value,
+  invalid,
+}: Pick<PropertyControlProps, "column" | "value" | "invalid">) {
+  const display = uniqueIdDisplay(column, value);
+  return (
+    <div
+      className={cn(
+        "group/control flex h-8 min-w-0 items-center gap-1.5 rounded-md border border-transparent px-1.5 text-sm",
+        invalid && "border-warning",
+      )}
+    >
+      <span
+        className={cn(
+          "min-w-0 truncate rounded-full bg-muted px-2 py-0.5 font-mono text-xs text-foreground",
+          !display && "font-sans text-muted-foreground",
+        )}
+      >
+        {display || m.property_state_no_key()}
+      </span>
+      <IconAction
+        label={m.property_action_copy()}
+        className="opacity-0 group-focus-within/control:opacity-100 group-hover/control:opacity-100"
+        onClick={() => copyValue(display)}
+        disabled={!display}
+      >
+        <Copy />
+      </IconAction>
+    </div>
+  );
+}
+
+function ActorControl({
   column,
   value,
   invalid,
@@ -877,11 +919,14 @@ function PersonControl({
   | "onOpenChange"
 > & { column: Column }) {
   const [open, setOpen] = useAutoOpen(autoOpen, onOpenChange);
-  const email = typeof value === "string" ? value : "";
-  const selected =
-    persons.find(
-      (person) => person.email.toLowerCase() === email.toLowerCase(),
-    ) ?? (email ? { email, name: email, commitCount: 0, isMe: false } : null);
+  const multiple = Boolean(column.multiple);
+  const emails = multiple
+    ? normalizeActorValues(value)
+    : typeof value === "string" && value
+      ? [value.trim().toLowerCase()]
+      : [];
+  const selected = emails.map((email) => actorPerson(email, persons));
+  const selectedSet = new Set(emails);
   const [allTime, setAllTime] = useState(column.display === "all_time");
   const [freeform, setFreeform] = useState("");
 
@@ -906,6 +951,28 @@ function PersonControl({
     return { me, recent, all };
   }, [persons]);
 
+  const setActor = (email: string) => {
+    const normalized = email.trim().toLowerCase();
+    if (!normalized) return;
+    if (!multiple) {
+      void onChange(normalized);
+      setOpen(false);
+      return;
+    }
+    if (selectedSet.has(normalized)) {
+      void onChange(emails.filter((item) => item.toLowerCase() !== normalized));
+    } else {
+      void onChange([...emails, normalized]);
+    }
+  };
+
+  const addFreeform = () => {
+    const email = freeform.trim().toLowerCase();
+    if (!isValidEmail(email)) return;
+    setActor(email);
+    setFreeform("");
+  };
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -919,8 +986,12 @@ function PersonControl({
             invalid && "ring-1 ring-warning",
           )}
         >
-          {selected ? (
-            <PersonInline person={selected} />
+          {selected.length > 0 ? (
+            multiple ? (
+              <ActorStack persons={selected} />
+            ) : (
+              <PersonInline person={selected[0]} />
+            )
           ) : (
             <span className="text-muted-foreground">{m.property_empty()}</span>
           )}
@@ -931,6 +1002,12 @@ function PersonControl({
           <CommandInput
             value={freeform}
             onValueChange={setFreeform}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && isValidEmail(freeform.trim())) {
+                event.preventDefault();
+                addFreeform();
+              }
+            }}
             placeholder={m.property_person_search()}
           />
           <CommandList>
@@ -938,22 +1015,58 @@ function PersonControl({
             <PersonGroup
               heading="Me"
               persons={sortedPersons.me}
-              selectedEmail={email}
-              onSelect={(person) => void onChange(person.email)}
+              selectedEmails={selectedSet}
+              multiple={multiple}
+              onSelect={(person) => setActor(person.email)}
             />
             <PersonGroup
               heading="Recent"
               persons={sortedPersons.recent}
-              selectedEmail={email}
-              onSelect={(person) => void onChange(person.email)}
+              selectedEmails={selectedSet}
+              multiple={multiple}
+              onSelect={(person) => setActor(person.email)}
             />
             <PersonGroup
               heading="All"
               persons={sortedPersons.all}
-              selectedEmail={email}
-              onSelect={(person) => void onChange(person.email)}
+              selectedEmails={selectedSet}
+              multiple={multiple}
+              onSelect={(person) => setActor(person.email)}
             />
           </CommandList>
+          {multiple && selected.length > 0 ? (
+            <div className="flex flex-wrap gap-1 border-t p-2">
+              {selected.map((person) => (
+                <Button
+                  key={person.email}
+                  type="button"
+                  variant="secondary"
+                  size="xs"
+                  className="min-w-0 max-w-full justify-start rounded-full px-2"
+                  onClick={() =>
+                    void onChange(
+                      emails.filter((email) => email !== person.email),
+                    )
+                  }
+                >
+                  <span className="truncate">{personDisplayName(person)}</span>
+                  <X data-icon="inline-end" />
+                </Button>
+              ))}
+            </div>
+          ) : null}
+          <div className="border-t p-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start"
+              disabled={!isValidEmail(freeform.trim())}
+              onClick={addFreeform}
+            >
+              {m.property_person_enter_to_assign()}
+            </Button>
+          </div>
           <div className="flex items-center justify-between border-t px-3 py-2">
             <span className="text-xs text-muted-foreground">
               {m.property_person_all_time()}
@@ -1157,12 +1270,14 @@ function PhoneControl({
 function PersonGroup({
   heading,
   persons,
-  selectedEmail,
+  selectedEmails,
+  multiple,
   onSelect,
 }: {
   heading: string;
   persons: Person[];
-  selectedEmail: string;
+  selectedEmails: Set<string>;
+  multiple: boolean;
   onSelect: (person: Person) => void;
 }) {
   if (persons.length === 0) return null;
@@ -1171,12 +1286,16 @@ function PersonGroup({
       {persons.map((person) => (
         <CommandItem
           key={person.email}
-          data-checked={
-            person.email.toLowerCase() === selectedEmail.toLowerCase()
-          }
+          data-checked={selectedEmails.has(person.email.toLowerCase())}
           value={`${person.name} ${person.email}`}
           onSelect={() => onSelect(person)}
         >
+          {multiple ? (
+            <Checkbox
+              checked={selectedEmails.has(person.email.toLowerCase())}
+              className="pointer-events-none"
+            />
+          ) : null}
           <PersonAvatar person={person} />
           <span className="min-w-0 flex-1 truncate">
             {personDisplayName(person)}
@@ -1187,6 +1306,23 @@ function PersonGroup({
         </CommandItem>
       ))}
     </CommandGroup>
+  );
+}
+
+function ActorStack({ persons }: { persons: Person[] }) {
+  return (
+    <span className="inline-flex min-w-0 items-center">
+      {persons.slice(0, 3).map((person, index) => (
+        <span key={person.email} className={cn(index > 0 && "-ml-1.5")}>
+          <PersonAvatar person={person} />
+        </span>
+      ))}
+      {persons.length > 3 ? (
+        <span className="ml-1 text-xs text-muted-foreground">
+          +{persons.length - 3}
+        </span>
+      ) : null}
+    </span>
   );
 }
 

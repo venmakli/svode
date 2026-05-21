@@ -211,7 +211,9 @@ function nestedPreviewValueClass(column: Column) {
     return "max-w-20 shrink truncate";
   }
   if (column.type === "date") return "max-w-64 shrink truncate";
-  if (column.type === "person") return "max-w-44 shrink truncate";
+  if (column.type === "actor" || column.type === "person") {
+    return "max-w-44 shrink truncate";
+  }
   if (column.type === "multi_select") return "max-w-52 shrink truncate";
   if (column.type === "select" || column.type === "status") {
     return "shrink-0";

@@ -2,7 +2,7 @@ use serde::{
     Deserialize, Serialize,
     ser::{SerializeStruct, Serializer},
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -410,6 +410,42 @@ fn collect_entry_md_files(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), App
     Ok(())
 }
 
+fn with_file_rollback<T, F>(paths: Vec<PathBuf>, f: F) -> Result<T, AppError>
+where
+    F: FnOnce() -> Result<T, AppError>,
+{
+    let mut seen = HashSet::new();
+    let mut snapshots = Vec::new();
+    for path in paths {
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        let content = if path.exists() {
+            Some(fs::read(&path)?)
+        } else {
+            None
+        };
+        snapshots.push((path, content));
+    }
+
+    match f() {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            for (path, content) in snapshots {
+                if let Some(content) = content {
+                    if let Some(parent) = path.parent() {
+                        let _ = fs::create_dir_all(parent);
+                    }
+                    let _ = fs::write(path, content);
+                } else if path.exists() {
+                    let _ = fs::remove_file(path);
+                }
+            }
+            Err(error)
+        }
+    }
+}
+
 fn find_entry_path_by_id(space: &Path, entry_id: &str) -> Result<String, AppError> {
     let mut files = Vec::new();
     collect_entry_md_files(space, &mut files)?;
@@ -511,8 +547,15 @@ pub fn create_with_contextual_defaults(
     }
 
     let body = "";
-    let content = frontmatter::serialize(&meta, body);
-    fs::write(&abs_path, &content)?;
+    let mut rollback_paths =
+        crate::properties::unique_id_mutation_paths_for_entry(space, &rel_path)?;
+    rollback_paths.push(abs_path.clone());
+    with_file_rollback(rollback_paths, || {
+        crate::properties::assign_unique_id_to_meta_for_path(space, &rel_path, &mut meta)?;
+        let content = frontmatter::serialize(&meta, body);
+        fs::write(&abs_path, &content)?;
+        Ok(())
+    })?;
 
     // Append to order.json so the new file appears at the end
     let filename = Path::new(&rel_path)
@@ -1090,10 +1133,12 @@ pub fn update_field(
     field: &str,
     value: serde_json::Value,
 ) -> Result<Entry, AppError> {
-    if !matches!(
+    let is_custom = !matches!(
         field,
         "id" | "created" | "updated" | "title" | "icon" | "description" | "cover"
-    ) {
+    );
+    if is_custom {
+        crate::properties::ensure_entry_field_writable(space, path, field)?;
         let yaml_value = serde_yml::to_value(value.clone())
             .map_err(|e| invalid_entry_field(format!("{field}: {e}")))?;
         if let Some(entry) =
@@ -1115,17 +1160,18 @@ pub fn update_field(
         None => (meta_for_file_without_frontmatter(&abs_path, path)?, content),
     };
 
-    if !matches!(
-        field,
-        "id" | "created" | "updated" | "title" | "icon" | "description" | "cover"
-    ) && !value.is_null()
-    {
+    if is_custom && !value.is_null() {
         let yaml_value = serde_yml::to_value(value.clone())
             .map_err(|e| invalid_entry_field(format!("{field}: {e}")))?;
+        let yaml_value =
+            crate::properties::normalize_entry_field_value(space, path, field, yaml_value)?;
         crate::properties::validate_entry_field_value(space, path, field, &yaml_value)?;
+        meta.extra.insert(field.to_string(), yaml_value);
+    } else if is_custom {
+        meta.extra.remove(field);
+    } else {
+        apply_entry_field_update(&mut meta, field, value)?;
     }
-
-    apply_entry_field_update(&mut meta, field, value)?;
     meta.updated = now_rfc3339();
 
     let full_content = frontmatter::serialize(&meta, &body);
@@ -1745,6 +1791,11 @@ pub fn duplicate_entry(space: &Path, file_path: &str) -> Result<Entry, AppError>
         &space.to_string_lossy(),
         &rel_from_abs(space, &root_source_abs),
         &rel_from_abs(space, &dest_abs),
+    )?;
+    crate::properties::assign_unique_ids_to_entry_tree(
+        space,
+        &rel_from_abs(space, &dest_abs),
+        true,
     )?;
 
     let dir_key = rel_from_abs(space, &parent_abs);

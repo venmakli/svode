@@ -5,6 +5,8 @@ export type PropertyType =
   | "multi_select"
   | "status"
   | "date"
+  | "unique_id"
+  | "actor"
   | "person"
   | "checkbox"
   | "url"
@@ -53,6 +55,9 @@ export interface Column {
   limit?: "one" | null;
   twoWay?: string | null;
   two_way?: string | null;
+  prefix?: string | null;
+  next?: number | null;
+  multiple?: boolean | null;
 }
 
 export interface CollectionSchema {

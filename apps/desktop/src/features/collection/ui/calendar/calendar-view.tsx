@@ -166,7 +166,7 @@ export function CalendarView({
     : 0;
   const visibleCount = visibleEventCount(events, visibleRange);
   const hasPersonCardField = customColumns.some(
-    (column) => column.type === "person",
+    (column) => column.type === "actor" || column.type === "person",
   );
   const locale = getLocale();
 

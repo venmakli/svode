@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -230,6 +231,7 @@ pub async fn search_project_entries_by_title(
     let project = PathBuf::from(&project_path);
     let state = app.state::<IndexState>();
     let keys = scope_to_keys(&state, &project, scope).await;
+    let keys_for_unique_id = keys.clone();
     let total = keys.len();
     let lim = limit.unwrap_or(DEFAULT_LIMIT);
 
@@ -243,6 +245,9 @@ pub async fn search_project_entries_by_title(
     let q_lc = query.to_lowercase();
     // Concat with key, score prefix-match (lowercase).
     let mut merged: Vec<(IndexKey, SearchResult, u8)> = Vec::new();
+    for (key, hit) in search_unique_id_exact(&state, &keys_for_unique_id, &query, lim).await {
+        merged.push((key, hit, 0));
+    }
     for p in pools {
         for hit in p.hits {
             let prefix = if hit.title.to_lowercase().starts_with(&q_lc) {
@@ -264,6 +269,8 @@ pub async fn search_project_entries_by_title(
             }
         })
     });
+    let mut seen = HashSet::new();
+    merged.retain(|(key, hit, _)| seen.insert((key.clone(), hit.path.clone())));
     merged.truncate(lim as usize);
 
     let mut items = Vec::with_capacity(merged.len());
@@ -276,6 +283,40 @@ pub async fn search_project_entries_by_title(
         indexed_spaces: indexed,
         total_spaces: total,
     })
+}
+
+async fn search_unique_id_exact(
+    state: &IndexState,
+    keys: &[IndexKey],
+    query: &str,
+    limit: i64,
+) -> Vec<(IndexKey, SearchResult)> {
+    let mut results = Vec::new();
+    for key in keys {
+        if results.len() >= limit as usize {
+            break;
+        }
+        let flag = state.reindex_active_flag(key).await;
+        if flag.load(Ordering::SeqCst) {
+            continue;
+        }
+        let Ok(pool) = state.get_or_create(key).await else {
+            continue;
+        };
+        let Ok(space_path) = state.dir_for_key(key).await else {
+            continue;
+        };
+        let remaining = limit - results.len() as i64;
+        match search::search_unique_id_exact(&pool, &space_path, query, remaining).await {
+            Ok(hits) => {
+                results.extend(hits.into_iter().map(|hit| (key.clone(), hit)));
+            }
+            Err(error) => {
+                tracing::warn!("unique_id search failed for {:?}: {error}", key);
+            }
+        }
+    }
+    results
 }
 
 /// Project-wide FTS5 search. Fans out across pools; merges via round-robin

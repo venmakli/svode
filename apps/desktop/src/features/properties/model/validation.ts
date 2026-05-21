@@ -2,6 +2,7 @@ import * as m from "@/paraglide/messages.js";
 import type { Column } from "./types";
 import { normalizeUrlValue } from "../lib/url";
 import {
+  normalizeActorValues,
   hasOption,
   isDateRangeValue,
   isEmptyValue,
@@ -15,7 +16,9 @@ export function shouldClosePropertyEditorOnChange(type: Column["type"]) {
     type !== "date" &&
     type !== "multi_select" &&
     type !== "url" &&
-    type !== "relation"
+    type !== "relation" &&
+    type !== "actor" &&
+    type !== "person"
   );
 }
 
@@ -52,6 +55,21 @@ export function validatePropertyValue(
       return typeof value === "string" || isDateRangeValue(value)
         ? { invalid: false }
         : { invalid: true, message: m.property_state_type_conflict() };
+    case "unique_id":
+      return typeof value === "number" && Number.isInteger(value) && value > 0
+        ? { invalid: false }
+        : { invalid: true, message: m.property_state_no_key() };
+    case "actor":
+    case "person":
+      if (column.multiple) {
+        return Array.isArray(value) &&
+          normalizeActorValues(value).length === value.length
+          ? { invalid: false }
+          : { invalid: true, message: m.property_state_type_conflict() };
+      }
+      return typeof value === "string"
+        ? { invalid: false }
+        : { invalid: true, message: m.property_state_type_conflict() };
     case "email":
       return typeof value === "string" && isValidEmail(value)
         ? { invalid: false }
@@ -69,7 +87,8 @@ export function validatePropertyValue(
         : { invalid: true, message: m.property_state_type_conflict() };
     case "relation":
       return typeof value === "string" ||
-        (Array.isArray(value) && value.every((item) => typeof item === "string"))
+        (Array.isArray(value) &&
+          value.every((item) => typeof item === "string"))
         ? { invalid: false }
         : { invalid: true, message: m.property_state_type_conflict() };
     default:
