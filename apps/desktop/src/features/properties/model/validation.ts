@@ -29,6 +29,17 @@ export function validatePropertyValue(
   invalid: boolean;
   message?: string;
 } {
+  if (column.type === "unique_id") {
+    if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+      return { invalid: false };
+    }
+    return {
+      invalid: true,
+      message: isEmptyValue(value)
+        ? m.property_state_no_key()
+        : m.property_state_invalid_key(),
+    };
+  }
   if (isEmptyValue(value)) return { invalid: false };
   switch (column.type) {
     case "number":
@@ -55,10 +66,6 @@ export function validatePropertyValue(
       return typeof value === "string" || isDateRangeValue(value)
         ? { invalid: false }
         : { invalid: true, message: m.property_state_type_conflict() };
-    case "unique_id":
-      return typeof value === "number" && Number.isInteger(value) && value > 0
-        ? { invalid: false }
-        : { invalid: true, message: m.property_state_no_key() };
     case "actor":
     case "person":
       if (column.multiple) {

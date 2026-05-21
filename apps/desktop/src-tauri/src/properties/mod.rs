@@ -5326,8 +5326,11 @@ fn push_sort_sql(
         FieldType::SelectLike | FieldType::Status => {
             push_option_sort_sql(query, schema, field, desc)?;
         }
-        FieldType::Multi | FieldType::ActorMulti => {
+        FieldType::Multi => {
             push_multi_select_sort_sql(query, schema, field, desc)?;
+        }
+        FieldType::ActorMulti => {
+            push_actor_multi_sort_sql(query, field, desc);
         }
     }
     Ok(())
@@ -5430,6 +5433,13 @@ fn push_multi_lex_key_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str) {
     );
     push_field_expr(query, field);
     query.push(") ORDER BY value))");
+}
+
+fn push_actor_multi_sort_sql(query: &mut QueryBuilder<'_, Sqlite>, field: &str, desc: bool) {
+    query.push("(SELECT LOWER(CAST(json_each.value AS TEXT)) FROM json_each(");
+    push_field_expr(query, field);
+    query.push(") ORDER BY json_each.key LIMIT 1)");
+    query.push(sort_direction(desc));
 }
 
 fn filter_values(filter: &Filter) -> Result<Vec<Value>, AppError> {
@@ -7141,6 +7151,11 @@ views: []
                 "C",
                 serde_json::json!({"Key":3,"Owner":"me@example.com","Reviewers":["other@example.com"]}),
             ),
+            (
+                "tasks/d.md",
+                "D",
+                serde_json::json!({"Key":11,"Owner":"other@example.com","Reviewers":["z@example.com","a@example.com"]}),
+            ),
         ] {
             sqlx::query(
                 r#"
@@ -7178,7 +7193,17 @@ views: []
             .await
             .unwrap();
         let titles: Vec<_> = rows.into_iter().map(|row| row.title).collect();
-        assert_eq!(titles, vec!["B", "C", "A"]);
+        assert_eq!(titles, vec!["B", "C", "A", "D"]);
+
+        let sort = vec![Sort {
+            field: "Reviewers".into(),
+            desc: false,
+        }];
+        let rows = query_entry_rows(&pool, &schema, "tasks", &[], &sort, None, None)
+            .await
+            .unwrap();
+        let titles: Vec<_> = rows.into_iter().map(|row| row.title).collect();
+        assert_eq!(titles, vec!["A", "B", "C", "D"]);
     }
 
     #[test]

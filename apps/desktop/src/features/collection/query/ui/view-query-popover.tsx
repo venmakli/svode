@@ -721,7 +721,12 @@ function FilterValueControl({
       </ToggleGroup>
     );
   }
-  if (field.type === "number" || field.type === "unique_id") {
+  if (field.type === "unique_id") {
+    return (
+      <UniqueIdFilterInput field={field} filter={filter} onChange={onChange} />
+    );
+  }
+  if (field.type === "number") {
     return (
       <Input
         type="number"
@@ -749,6 +754,52 @@ function FilterValueControl({
     <Input
       value={typeof filter.value === "string" ? filter.value : ""}
       onChange={(event) => onChange({ ...filter, value: event.target.value })}
+    />
+  );
+}
+
+function UniqueIdFilterInput({
+  field,
+  filter,
+  onChange,
+}: {
+  field: QueryField;
+  filter: QueryFilter;
+  onChange: (filter: QueryFilter) => void;
+}) {
+  const multiple = isMultiValueOp(filter.op);
+  const values = filterValues(filter).map(String);
+  const value = multiple
+    ? values.join(", ")
+    : typeof filter.value === "number" || typeof filter.value === "string"
+      ? String(filter.value)
+      : "";
+  const placeholder = field.column?.prefix?.trim()
+    ? `${field.column.prefix.trim()}-24`
+    : "24";
+
+  return (
+    <Input
+      type="text"
+      inputMode="text"
+      value={value}
+      placeholder={multiple ? `${placeholder}, ${placeholder}` : placeholder}
+      onChange={(event) => {
+        const next = event.target.value;
+        if (multiple) {
+          onChange(
+            filterWithValues(
+              filter,
+              next
+                .split(",")
+                .map((item) => item.trim())
+                .filter(Boolean),
+            ),
+          );
+        } else {
+          onChange({ ...filter, value: next, values: undefined });
+        }
+      }}
     />
   );
 }

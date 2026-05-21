@@ -129,6 +129,22 @@ export function uniqueIdDisplay(column: Column, value: unknown): string {
   return prefix ? `${prefix}-${number}` : String(number);
 }
 
+export function uniqueIdRawDisplay(value: unknown): string {
+  if (isEmptyValue(value)) return "";
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "";
+  }
+}
+
 export function normalizeActorValues(value: unknown): string[] {
   const raw = Array.isArray(value)
     ? value

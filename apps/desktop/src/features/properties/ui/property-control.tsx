@@ -84,6 +84,7 @@ import {
   personLastCommitAt,
   todayIsoDate,
   uniqueIdDisplay,
+  uniqueIdRawDisplay,
   valueToString,
 } from "../lib/utils";
 import { fallbackUrlTitle, normalizeUrlValue } from "../lib/url";
@@ -870,6 +871,8 @@ function UniqueIdControl({
   invalid,
 }: Pick<PropertyControlProps, "column" | "value" | "invalid">) {
   const display = uniqueIdDisplay(column, value);
+  const raw = uniqueIdRawDisplay(value);
+  const label = display || raw || m.property_state_no_key();
   return (
     <div
       className={cn(
@@ -883,13 +886,13 @@ function UniqueIdControl({
           !display && "font-sans text-muted-foreground",
         )}
       >
-        {display || m.property_state_no_key()}
+        {label}
       </span>
       <IconAction
         label={m.property_action_copy()}
         className="opacity-0 group-focus-within/control:opacity-100 group-hover/control:opacity-100"
-        onClick={() => copyValue(display)}
-        disabled={!display}
+        onClick={() => copyValue(display || raw)}
+        disabled={!display && !raw}
       >
         <Copy />
       </IconAction>

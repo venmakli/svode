@@ -24,6 +24,7 @@ import {
   optionByName,
   personDisplayName,
   uniqueIdDisplay,
+  uniqueIdRawDisplay,
   valueToString,
 } from "../lib/utils";
 import * as m from "@/paraglide/messages.js";
@@ -44,7 +45,7 @@ export function PropertyValueActions({
     column.type === "url"
       ? urlHref(value)
       : column.type === "unique_id"
-        ? uniqueIdDisplay(column, value)
+        ? uniqueIdDisplay(column, value) || uniqueIdRawDisplay(value)
         : valueToString(value);
   return (
     <span className="flex text-muted-foreground opacity-0 group-focus-within/cell:opacity-100 group-hover/cell:opacity-100">
@@ -93,17 +94,20 @@ export function PropertyValue({
   persons?: Person[];
   relationContext?: RelationContext;
 }) {
-  if (isEmptyValue(value)) {
-    return <span className="text-muted-foreground">-</span>;
-  }
   if (column.type === "unique_id") {
+    const display = uniqueIdDisplay(column, value);
+    const raw = uniqueIdRawDisplay(value);
     return (
-      uniqueIdDisplay(column, value) || (
+      display ||
+      raw || (
         <span className="text-muted-foreground">
           {m.property_state_no_key()}
         </span>
       )
     );
+  }
+  if (isEmptyValue(value)) {
+    return <span className="text-muted-foreground">-</span>;
   }
   if (column.type === "actor" || column.type === "person") {
     return <ActorValue column={column} value={value} persons={persons} />;

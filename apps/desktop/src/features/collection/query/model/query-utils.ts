@@ -227,7 +227,7 @@ export function validateQuery(
       invalidFilters.push(filter);
       continue;
     }
-    if (!isFilterValueValid(filter, field.type)) {
+    if (!isFilterValueValid(filter, field)) {
       issues.push({ field: filter.field, reason: "invalid_value" });
       invalidFilters.push(filter);
       continue;
@@ -271,12 +271,20 @@ export function validateQuery(
   };
 }
 
-function isFilterValueValid(filter: QueryFilter, type: PropertyType) {
+function isFilterValueValid(filter: QueryFilter, field: QueryField) {
   if (!needsFilterValue(filter.op)) return true;
   const raw = filter.values ?? filter.value;
   if (raw === undefined || raw === null || raw === "") return false;
+  if (field.type === "unique_id") {
+    const values = Array.isArray(raw) ? raw : [raw];
+    return (
+      (!isMultiValueOp(filter.op) || Array.isArray(raw)) &&
+      values.length > 0 &&
+      values.every((value) => parseUniqueIdFilterValue(value, field))
+    );
+  }
   if (isMultiValueOp(filter.op)) return Array.isArray(raw) && raw.length > 0;
-  if (type === "number" || type === "unique_id") {
+  if (field.type === "number") {
     return (
       typeof raw === "number" ||
       (typeof raw === "string" &&
@@ -284,17 +292,32 @@ function isFilterValueValid(filter: QueryFilter, type: PropertyType) {
         Number.isFinite(Number(raw)))
     );
   }
-  if (type === "checkbox") return typeof raw === "boolean";
+  if (field.type === "checkbox") return typeof raw === "boolean";
   if (
-    type === "select" ||
-    type === "multi_select" ||
-    type === "status" ||
-    type === "person" ||
-    type === "actor"
+    field.type === "select" ||
+    field.type === "multi_select" ||
+    field.type === "status" ||
+    field.type === "person" ||
+    field.type === "actor"
   ) {
     return typeof raw === "string" || (Array.isArray(raw) && raw.length > 0);
   }
   return true;
+}
+
+function parseUniqueIdFilterValue(value: unknown, field: QueryField) {
+  if (typeof value === "number") {
+    return Number.isInteger(value) && value > 0;
+  }
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) return Number(trimmed) > 0;
+  const prefix = field.column?.prefix?.trim();
+  if (!prefix) return false;
+  const number = trimmed.startsWith(`${prefix}-`)
+    ? trimmed.slice(prefix.length + 1)
+    : "";
+  return /^\d+$/.test(number) && Number(number) > 0;
 }
 
 export function resolveViewQuery(
