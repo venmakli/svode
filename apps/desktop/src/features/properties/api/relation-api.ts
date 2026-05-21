@@ -32,10 +32,11 @@ export async function queryRelationTargets({
   relation: string;
   query: string;
 }) {
-  const filters = query.trim()
-    ? [{ field: "title", op: "contains", value: query.trim() }]
+  const trimmed = query.trim();
+  const filters = trimmed
+    ? [{ field: "title", op: "contains", value: trimmed }]
     : null;
-  return invoke<Entry[]>("query_entries", {
+  const entries = await invoke<Entry[]>("query_entries", {
     space: spacePath,
     collectionPath: relation,
     filters,
@@ -45,6 +46,33 @@ export async function queryRelationTargets({
     offset: null,
     projectPath: projectPath ?? null,
   });
+  if (!trimmed) return entries;
+
+  const normalized = trimmed.toLowerCase();
+  const matchingEntries = entries.filter(
+    (entry) =>
+      entry.meta.title.toLowerCase().includes(normalized) ||
+      relationValueForPath(relation, entry.path).toLowerCase().includes(normalized),
+  );
+  if (matchingEntries.length > 0) return matchingEntries;
+
+  const fallback = await invoke<Entry[]>("query_entries", {
+    space: spacePath,
+    collectionPath: relation,
+    filters: null,
+    sort: null,
+    includeNested: true,
+    limit: 200,
+    offset: null,
+    projectPath: projectPath ?? null,
+  });
+  return fallback
+    .filter(
+      (entry) =>
+        entry.meta.title.toLowerCase().includes(normalized) ||
+        relationValueForPath(relation, entry.path).toLowerCase().includes(normalized),
+    )
+    .slice(0, 50);
 }
 
 export function relationValueForPath(relation: string, filePath: string) {

@@ -19,6 +19,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { invoke } from "@tauri-apps/api/core";
 import { GripVertical, Plus, X } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -55,7 +56,7 @@ export function TypeSettingsPane({
   collectionPath: string;
   projectPath?: string | null;
   onSchemaChange: (schema: CollectionSchema) => void;
-  onPatchColumn: (patch: Record<string, unknown>) => void;
+  onPatchColumn: (patch: Record<string, unknown>) => void | Promise<void>;
 }) {
   if (
     column.type === "select" ||
@@ -132,10 +133,14 @@ function RelationSettingsPane({
 }: {
   column: Column;
   spacePath: string;
-  onPatchColumn: (patch: Record<string, unknown>) => void;
+  onPatchColumn: (patch: Record<string, unknown>) => void | Promise<void>;
 }) {
   const [collections, setCollections] = useState<Array<{ path: string; title: string }>>([]);
   const [reverseName, setReverseName] = useState(column.twoWay ?? column.two_way ?? "");
+
+  useEffect(() => {
+    setReverseName(column.twoWay ?? column.two_way ?? "");
+  }, [column.twoWay, column.two_way]);
 
   useEffect(() => {
     let cancelled = false;
@@ -154,28 +159,49 @@ function RelationSettingsPane({
   }, [spacePath]);
 
   const relation = column.relation || ".";
-  const options = collections.length > 0 ? collections.map((item) => item.path) : [relation];
+  const collectionOptions = collections.map((item) => ({
+    value: item.path,
+    label: item.title || item.path,
+    description: item.path,
+  }));
+  const options = collectionOptions.some((item) => item.value === relation)
+    ? collectionOptions
+    : [
+        {
+          value: relation,
+          label: collectionLabelForPath(collections, relation),
+          description: relation,
+        },
+        ...collectionOptions,
+      ];
   const twoWay = Boolean(column.twoWay ?? column.two_way);
+  const patchRelation = (patch: Record<string, unknown>) => {
+    void Promise.resolve(onPatchColumn(patch)).catch((error) => {
+      console.error(error);
+      toast.error(errorMessage(error));
+    });
+  };
 
   return (
     <div className="flex flex-col gap-2 p-3">
       <ColumnSelect
         label={m.property_relation_linked_collection()}
         value={relation}
-        options={options.includes(relation) ? options : [relation, ...options]}
-        onChange={(nextRelation) => onPatchColumn({ relation: nextRelation })}
+        options={options}
+        onChange={(nextRelation) => patchRelation({ relation: nextRelation })}
       />
       <ToggleRow
         label={m.property_relation_limit_one()}
         checked={column.limit === "one"}
-        onChange={(checked) => onPatchColumn({ limit: checked ? "one" : null })}
+        onChange={(checked) => patchRelation({ limit: checked ? "one" : null })}
       />
       <ToggleRow
         label={m.property_relation_show_related()}
         checked={twoWay}
         onChange={(checked) => {
           const fallback = reverseName.trim() || m.property_relation_reverse_default();
-          onPatchColumn({ two_way: checked ? fallback : null });
+          if (checked) setReverseName(fallback);
+          patchRelation({ two_way: checked ? fallback : null });
         }}
       />
       {twoWay ? (
@@ -190,7 +216,7 @@ function RelationSettingsPane({
             onChange={(event) => setReverseName(event.target.value)}
             onBlur={() => {
               const next = reverseName.trim();
-              if (next) onPatchColumn({ two_way: next });
+              if (next) patchRelation({ two_way: next });
             }}
             onKeyDown={(event) => {
               if (event.key === "Enter") event.currentTarget.blur();
@@ -559,7 +585,7 @@ function ColumnSelect({
 }: {
   label: string;
   value: string;
-  options: string[];
+  options: ColumnSelectOption[];
   onChange: (value: string) => void;
 }) {
   return (
@@ -571,16 +597,58 @@ function ColumnSelect({
         </SelectTrigger>
         <SelectContent>
           <SelectGroup>
-            {options.map((option) => (
-              <SelectItem key={option} value={option}>
-                {option}
-              </SelectItem>
-            ))}
+            {options.map((option) => {
+              const normalized = normalizeColumnSelectOption(option);
+              return (
+                <SelectItem key={normalized.value} value={normalized.value}>
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate">{normalized.label}</span>
+                    {normalized.description ? (
+                      <span className="truncate text-xs text-muted-foreground">
+                        {normalized.description}
+                      </span>
+                    ) : null}
+                  </span>
+                </SelectItem>
+              );
+            })}
           </SelectGroup>
         </SelectContent>
       </Select>
     </label>
   );
+}
+
+type ColumnSelectOption =
+  | string
+  | {
+      value: string;
+      label: string;
+      description?: string | null;
+    };
+
+function normalizeColumnSelectOption(option: ColumnSelectOption) {
+  if (typeof option === "string") {
+    return { value: option, label: option, description: null };
+  }
+  return option;
+}
+
+function collectionLabelForPath(
+  collections: Array<{ path: string; title: string }>,
+  path: string,
+) {
+  return collections.find((item) => item.path === path)?.title || path;
+}
+
+function errorMessage(error: unknown) {
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  return m.toast_error();
 }
 
 function ToggleRow({

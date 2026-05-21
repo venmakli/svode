@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { FileText, Link2Off, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -75,6 +75,7 @@ export function RelationControl({
   useEffect(() => {
     if (!open || !context?.spacePath || !relation) return;
     let cancelled = false;
+    setTargets([]);
     setLoading(true);
     void queryRelationTargets({
       spacePath: context.spacePath,
@@ -227,8 +228,14 @@ export function RelationValue({
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-1">
       {values.map((item) => {
-        const target = resolved.get(item);
-        const status = relationStatus(relation, target);
+        const hasResolution = resolved.has(item);
+        const target = hasResolution ? resolved.get(item) : undefined;
+        const status = relationStatus({
+          relation,
+          target,
+          hasContext: Boolean(context?.spacePath),
+          hasResolution,
+        });
         return (
           <RelationChip
             key={item}
@@ -253,37 +260,47 @@ function RelationChip({
 }: {
   value: string;
   target: ResolvedRelationEntry | null | undefined;
-  status: "ok" | "orphan" | "out-of-scope";
+  status: RelationChipStatus;
   onOpen: () => void;
   onRemove?: (value: string) => void;
 }) {
-  const broken = status !== "ok";
-  const chip = (
+  const broken = status === "orphan" || status === "out-of-scope";
+  const pending = status === "loading" || status === "unresolved";
+  const label = target?.title ?? compactRelationPath(value);
+  const triggerClassName = cn(
+    "inline-flex min-w-0 items-center gap-1 py-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3",
+    onRemove ? "pl-1.5 pr-1" : "px-1.5",
+  );
+  const icon = broken ? (
+    <Link2Off data-icon="inline-start" />
+  ) : (
+    <EntryIcon icon={target?.icon} />
+  );
+  const removeButton = onRemove ? (
+    <button
+      type="button"
+      className="inline-flex h-full shrink-0 items-center rounded-full px-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3"
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onRemove(value);
+      }}
+    >
+      <X data-icon="inline-end" />
+      <span className="sr-only">{m.property_relation_remove()}</span>
+    </button>
+  ) : null;
+  const chipContainer = (children: ReactNode) => (
     <Badge
-      variant={broken ? "outline" : "secondary"}
+      variant={broken || pending ? "outline" : "secondary"}
       className={cn(
-        "max-w-56 gap-1 rounded-full",
-        broken && "cursor-not-allowed text-muted-foreground line-through",
+        "max-w-56 gap-0 rounded-full px-0",
+        broken && "text-muted-foreground",
+        pending && "text-muted-foreground",
       )}
     >
-      {broken ? <Link2Off data-icon="inline-start" /> : <EntryIcon icon={target?.icon} />}
-      <span className="min-w-0 truncate">
-        {target?.title ?? compactRelationPath(value)}
-      </span>
-      {onRemove ? (
-        <button
-          type="button"
-          className="rounded-full text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onRemove(value);
-          }}
-        >
-          <X data-icon="inline-end" />
-          <span className="sr-only">{m.property_relation_remove()}</span>
-        </button>
-      ) : null}
+      {children}
+      {removeButton}
     </Badge>
   );
 
@@ -292,41 +309,82 @@ function RelationChip({
       status === "orphan"
         ? m.property_relation_orphan_tooltip()
         : m.property_relation_out_of_scope_tooltip();
+    const trigger = onRemove ? (
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={triggerClassName}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          {icon}
+          <span className="min-w-0 truncate line-through">{label}</span>
+        </button>
+      </PopoverTrigger>
+    ) : (
+      <span className={triggerClassName} tabIndex={0}>
+        {icon}
+        <span className="min-w-0 truncate line-through">{label}</span>
+      </span>
+    );
     return (
-      <Popover>
+      <Popover modal={false}>
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
-              <PopoverTrigger asChild>
-                <button type="button" className="min-w-0" disabled={!onRemove}>
-                  {chip}
-                </button>
-              </PopoverTrigger>
+              <span className="inline-flex min-w-0">{chipContainer(trigger)}</span>
             </TooltipTrigger>
             <TooltipContent>{tooltip}</TooltipContent>
           </Tooltip>
         </TooltipProvider>
-        <PopoverContent align="start" className="w-52 p-1">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="w-full justify-start text-destructive"
-            disabled={!onRemove}
-            onClick={() => onRemove?.(value)}
-          >
-            <X data-icon="inline-start" />
-            {m.property_relation_remove()}
-          </Button>
-        </PopoverContent>
+        {onRemove ? (
+          <PopoverContent align="start" className="w-52 p-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start text-destructive"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onRemove(value);
+              }}
+            >
+              <X data-icon="inline-start" />
+              {m.property_relation_remove()}
+            </Button>
+          </PopoverContent>
+        ) : null}
       </Popover>
     );
   }
 
+  if (pending || !target) {
+    return chipContainer(
+      <span className={triggerClassName}>
+        {icon}
+        <span className="min-w-0 truncate">{label}</span>
+      </span>,
+    );
+  }
+
   return (
-    <button type="button" className="min-w-0" onClick={onOpen}>
-      {chip}
-    </button>
+    chipContainer(
+      <button
+        type="button"
+        className={triggerClassName}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onOpen();
+        }}
+      >
+        {icon}
+        <span className="min-w-0 truncate">{label}</span>
+      </button>,
+    )
   );
 }
 
@@ -399,10 +457,21 @@ function normalizeRelationValues(column: Column, value: unknown) {
   return column.limit === "one" ? values.slice(0, 1) : values;
 }
 
-function relationStatus(
-  relation: string,
-  target: ResolvedRelationEntry | null | undefined,
-) {
+type RelationChipStatus = "loading" | "unresolved" | "ok" | "orphan" | "out-of-scope";
+
+function relationStatus({
+  relation,
+  target,
+  hasContext,
+  hasResolution,
+}: {
+  relation: string;
+  target: ResolvedRelationEntry | null | undefined;
+  hasContext: boolean;
+  hasResolution: boolean;
+}): RelationChipStatus {
+  if (!hasContext) return "unresolved";
+  if (!hasResolution) return "loading";
   if (!target) return "orphan";
   const root = target.collectionRootPath ?? target.collection_root_path ?? null;
   if (root && normalizeRelationRoot(root) !== relation) return "out-of-scope";

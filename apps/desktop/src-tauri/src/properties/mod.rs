@@ -650,6 +650,12 @@ fn ensure_compatible_reverse(
             reverse.name
         )));
     }
+    if reverse.limit == Some(RelationLimit::One) {
+        return Err(schema_error(format!(
+            "reverse column '{}' cannot be limited to one item",
+            reverse.name
+        )));
+    }
     Ok(())
 }
 
@@ -758,6 +764,23 @@ pub fn schema_column_mutation_paths(
     let mut paths = schema_mutation_paths(space, collection_path, include_markdown)?;
     extend_relation_side_effect_paths(space, collection_path, column, &mut paths)?;
     Ok(paths)
+}
+
+pub fn schema_column_name_mutation_paths(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+    include_markdown: bool,
+) -> Result<Vec<PathBuf>, AppError> {
+    let schema = read_schema_or_default(space, collection_path)?;
+    if let Some(column) = schema
+        .columns
+        .iter()
+        .find(|column| column.name == column_name)
+    {
+        return schema_column_mutation_paths(space, collection_path, column, include_markdown);
+    }
+    schema_mutation_paths(space, collection_path, include_markdown)
 }
 
 fn extend_relation_side_effect_paths(
@@ -1018,20 +1041,18 @@ pub fn rewrite_relation_paths_for_move(
     old_path: &str,
     new_path: &str,
 ) -> Result<(), AppError> {
-    let mut old_path = normalize_rel_path(old_path);
-    let mut new_path = normalize_rel_path(new_path);
+    let old_path = normalize_rel_path(old_path);
+    let new_path = normalize_rel_path(new_path);
     if old_path == new_path {
         return Ok(());
     }
 
-    let new_abs = Path::new(space).join(&new_path);
+    let space_path = Path::new(space);
+    let new_abs = space_path.join(&new_path);
     let collection_rename = new_abs.is_dir() && new_abs.join(SCHEMA_FILE).is_file();
     let old_collection_path = old_path.clone();
     let new_collection_path = new_path.clone();
-    if new_abs.is_dir() && new_abs.join("README.md").is_file() {
-        old_path = format!("{old_path}/README.md");
-        new_path = format!("{new_path}/README.md");
-    }
+    let moved_paths = moved_markdown_path_pairs(space_path, &old_path, &new_path, &new_abs)?;
     let mut touched = Vec::new();
     for collection in list_collections(space)? {
         touched.push(collection_dir(space, &collection.path).join(SCHEMA_FILE));
@@ -1043,17 +1064,53 @@ pub fn rewrite_relation_paths_for_move(
             rewrite_relation_collection_paths(space, &old_collection_path, &new_collection_path)?;
         }
 
-        let Some((_, new_root)) = resolve_collection_schema_result(space, &new_path)? else {
-            return Ok(());
-        };
-        let relation = rel_path_string(&new_root);
-        let old_value = match value_relative_to_collection(&relation, &old_path) {
-            Ok(value) => value,
-            Err(_) => return Ok(()),
-        };
-        let new_value = value_relative_to_collection(&relation, &new_path)?;
-        rewrite_relation_value_refs(space, &relation, &old_value, &new_value)
+        for (old_file, new_file) in &moved_paths {
+            let Some((_, new_root)) = resolve_collection_schema_result(space, new_file)? else {
+                continue;
+            };
+            let relation = rel_path_string(&new_root);
+            let old_value = match value_relative_to_collection(&relation, old_file) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let new_value = value_relative_to_collection(&relation, new_file)?;
+            rewrite_relation_value_refs(space, &relation, &old_value, &new_value)?;
+        }
+        Ok(())
     })
+}
+
+fn moved_markdown_path_pairs(
+    space: &Path,
+    old_path: &str,
+    new_path: &str,
+    new_abs: &Path,
+) -> Result<Vec<(String, String)>, AppError> {
+    if new_abs.is_dir() {
+        let new_prefix = normalize_rel_path(new_path);
+        let old_prefix = normalize_rel_path(old_path);
+        let mut pairs = Vec::new();
+        for file in collect_md_files(new_abs)? {
+            let new_file = rel_path_string(file.strip_prefix(space).unwrap_or(&file));
+            let suffix = new_file
+                .strip_prefix(&format!("{new_prefix}/"))
+                .unwrap_or(&new_file);
+            let old_file = if old_prefix.is_empty() {
+                suffix.to_string()
+            } else {
+                format!("{old_prefix}/{suffix}")
+            };
+            pairs.push((old_file, new_file));
+        }
+        return Ok(pairs);
+    }
+    if new_abs.extension().and_then(|ext| ext.to_str()) == Some("md") {
+        return Ok(vec![(
+            normalize_rel_path(old_path),
+            normalize_rel_path(new_path),
+        )]);
+    }
+    Ok(Vec::new())
 }
 
 pub fn rewrite_internal_relation_refs_for_copy(
@@ -2795,6 +2852,21 @@ pub fn change_schema_type(
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     let mut touched = vec![schema_path];
     touched.extend(collection_markdown_files(space, collection_path)?);
+    {
+        let schema = read_schema_or_default(space, collection_path)?;
+        if let Some(old_column) = schema
+            .columns
+            .iter()
+            .find(|column| column.name == column_name)
+        {
+            extend_relation_side_effect_paths(space, collection_path, old_column, &mut touched)?;
+            let mut new_column = old_column.clone();
+            new_column.type_ = new_type;
+            normalize_column_for_new_type(&mut new_column, conversion_strategy.as_ref())?;
+            normalize_column_relation_paths(&mut new_column)?;
+            extend_relation_side_effect_paths(space, collection_path, &new_column, &mut touched)?;
+        }
+    }
     with_rollback(touched, || {
         let mut schema = read_schema_or_default(space, collection_path)?;
         let old_column = schema
@@ -2842,6 +2914,12 @@ pub fn rename_schema_column(
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     let mut touched = vec![schema_path];
     touched.extend(collection_markdown_files(space, collection_path)?);
+    {
+        let schema = read_schema_or_default(space, collection_path)?;
+        if let Some(old_column) = schema.columns.iter().find(|column| column.name == old_name) {
+            extend_relation_side_effect_paths(space, collection_path, old_column, &mut touched)?;
+        }
+    }
     with_rollback(touched, || {
         let mut schema = read_schema_or_default(space, collection_path)?;
         if schema.columns.iter().any(|column| column.name == new_name) {
@@ -2890,6 +2968,10 @@ pub fn update_schema_column(
                 touched.extend(collection_markdown_files(space, collection_path)?);
             }
             extend_relation_side_effect_paths(space, collection_path, column, &mut touched)?;
+            let mut patched = column.clone();
+            apply_column_patch(&mut patched, patch.clone())?;
+            normalize_column_relation_paths(&mut patched)?;
+            extend_relation_side_effect_paths(space, collection_path, &patched, &mut touched)?;
         }
     }
     with_rollback(touched, || {
@@ -5758,6 +5840,82 @@ views: []
         let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
         let related = meta.extra.get("Related").unwrap().as_sequence().unwrap();
         assert_eq!(related[0].as_str(), Some("folder-copy/b.md"));
+    }
+
+    #[test]
+    fn move_rewrite_updates_descendant_relation_values_in_same_collection() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        fs::create_dir_all(space.join("tasks/folder/sub")).unwrap();
+        fs::write(
+            space.join("tasks/schema.yaml"),
+            "columns:\n  - name: Related\n    type: relation\n    relation: tasks\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("tasks/links.md"),
+            "---\nid: links\ntitle: Links\ncreated: now\nupdated: now\nRelated:\n  - folder/a.md\n  - folder/sub/b.md\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("tasks/folder/a.md"),
+            "---\nid: a\ntitle: A\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("tasks/folder/sub/b.md"),
+            "---\nid: b\ntitle: B\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+        fs::rename(space.join("tasks/folder"), space.join("tasks/moved")).unwrap();
+
+        rewrite_relation_paths_for_move(space.to_str().unwrap(), "tasks/folder", "tasks/moved")
+            .unwrap();
+
+        let raw = fs::read_to_string(space.join("tasks/links.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        let related: Vec<_> = meta
+            .extra
+            .get("Related")
+            .unwrap()
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect();
+        assert_eq!(related, vec!["moved/a.md", "moved/sub/b.md"]);
+    }
+
+    #[test]
+    fn two_way_relation_rejects_limit_one_reverse_column() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        fs::create_dir_all(space.join("tasks")).unwrap();
+        fs::create_dir_all(space.join("sprints")).unwrap();
+        fs::write(space.join("tasks/schema.yaml"), "columns: []\nviews: []\n").unwrap();
+        fs::write(
+            space.join("sprints/schema.yaml"),
+            "columns:\n  - name: Tasks\n    type: relation\n    relation: tasks\n    limit: one\nviews: []\n",
+        )
+        .unwrap();
+
+        let column = Column {
+            name: "Sprint".into(),
+            type_: PropertyType::Relation,
+            default: None,
+            options: None,
+            display: None,
+            min: None,
+            max: None,
+            color: None,
+            time_by_default: None,
+            range_by_default: None,
+            relation: Some("sprints".into()),
+            limit: None,
+            two_way: Some("Tasks".into()),
+        };
+
+        assert!(add_schema_column(space.to_str().unwrap(), "tasks", column).is_err());
     }
 
     #[test]

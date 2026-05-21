@@ -459,6 +459,8 @@ export function TableView({
               sortedEntries={filteredTopLevel}
               hasSort={hasSort}
               persons={persons}
+              spacePath={spacePath}
+              projectPath={projectPath}
               onOpenEntry={onOpenEntry}
               onOpenNestedPeek={onOpenNestedPeek ?? onOpenEntry}
               onOpenFullPage={onOpenFullPage}

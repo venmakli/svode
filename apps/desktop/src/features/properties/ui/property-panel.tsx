@@ -428,14 +428,25 @@ function PropertyPanelValue({
   }
 
   return (
-    <button
-      type="button"
-      disabled={disabled}
+    <div
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      aria-disabled={disabled}
       className={cn(
         "flex min-h-8 w-full min-w-0 items-center rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
+        disabled && "pointer-events-none opacity-50",
         invalid && "ring-1 ring-warning",
       )}
-      onClick={() => onEditChange(true)}
+      onClick={() => {
+        if (!disabled) onEditChange(true);
+      }}
+      onKeyDown={(event) => {
+        if (disabled) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onEditChange(true);
+        }
+      }}
     >
       <span className="min-w-0 flex-1">
         <PropertyValue
@@ -445,7 +456,7 @@ function PropertyPanelValue({
           relationContext={relationContext}
         />
       </span>
-    </button>
+    </div>
   );
 }
 

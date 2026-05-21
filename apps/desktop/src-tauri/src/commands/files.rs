@@ -315,7 +315,12 @@ pub async fn change_schema_type(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
     let message = format!("Change column \"{column_name}\" type to {new_type:?}");
-    let paths = properties::schema_mutation_paths(&space, &collection_path, true)?;
+    let mut paths = properties::schema_column_name_mutation_paths(
+        &space,
+        &collection_path,
+        &column_name,
+        true,
+    )?;
     let conversion_strategy = conversion_strategy.map(json_to_yaml_value).transpose()?;
     let schema = properties::change_schema_type(
         &space,
@@ -324,6 +329,18 @@ pub async fn change_schema_type(
         new_type,
         conversion_strategy,
     )?;
+    if let Some(column) = schema
+        .columns
+        .iter()
+        .find(|column| column.name == column_name)
+    {
+        paths.extend(properties::schema_column_mutation_paths(
+            &space,
+            &collection_path,
+            column,
+            true,
+        )?);
+    }
     maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
@@ -337,7 +354,8 @@ pub async fn rename_schema_column(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    let paths = properties::schema_mutation_paths(&space, &collection_path, true)?;
+    let paths =
+        properties::schema_column_name_mutation_paths(&space, &collection_path, &old_name, true)?;
     let schema = properties::rename_schema_column(&space, &collection_path, &old_name, &new_name)?;
     maybe_autocommit_schema(
         &autocommit,
@@ -359,9 +377,26 @@ pub async fn update_schema_column(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
+    let mut paths = properties::schema_column_name_mutation_paths(
+        &space,
+        &collection_path,
+        &column_name,
+        false,
+    )?;
     let patch = json_to_yaml_value(patch)?;
     let schema = properties::update_schema_column(&space, &collection_path, &column_name, patch)?;
+    if let Some(column) = schema
+        .columns
+        .iter()
+        .find(|column| column.name == column_name)
+    {
+        paths.extend(properties::schema_column_mutation_paths(
+            &space,
+            &collection_path,
+            column,
+            column.type_ == PropertyType::Relation,
+        )?);
+    }
     maybe_autocommit_schema(
         &autocommit,
         project_path.as_deref(),

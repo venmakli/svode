@@ -29,6 +29,8 @@ export function TableRowsBody({
   sortedEntries,
   hasSort,
   persons,
+  spacePath,
+  projectPath,
   onOpenEntry,
   onOpenNestedPeek,
   onOpenFullPage,
@@ -43,6 +45,8 @@ export function TableRowsBody({
   sortedEntries: Entry[];
   hasSort: boolean;
   persons: Person[];
+  spacePath: string;
+  projectPath?: string | null;
   onOpenEntry: (entry: Entry) => void;
   onOpenNestedPeek: (entry: Entry) => void;
   onOpenFullPage: (entry: Entry) => void;
@@ -100,6 +104,8 @@ export function TableRowsBody({
                       row={original}
                       schema={original.nestedSchema}
                       persons={persons}
+                      spacePath={spacePath}
+                      projectPath={projectPath}
                     />
                   </TableCell>
                 ) : (
@@ -132,10 +138,14 @@ function NestedSchemaPreview({
   row,
   schema,
   persons,
+  spacePath,
+  projectPath,
 }: {
   row: CollectionTableRow;
   schema: CollectionSchema;
   persons: Person[];
+  spacePath: string;
+  projectPath?: string | null;
 }) {
   const values = nestedPreviewFields(schema)
     .filter((field) => field !== "title")
@@ -176,7 +186,16 @@ function NestedSchemaPreview({
                 nestedPreviewValueClass(column),
               )}
             >
-              <PropertyValue column={column} value={value} persons={persons} />
+              <PropertyValue
+                column={column}
+                value={value}
+                persons={persons}
+                relationContext={{
+                  spacePath,
+                  projectPath,
+                  currentFilePath: row.entry.path,
+                }}
+              />
             </span>
           ))}
         </span>

@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -78,14 +79,19 @@ export function ColumnMenuPopover({
 
   const patchColumn = async (patch: Record<string, unknown>) => {
     if (!column) return;
-    const next = await invoke<CollectionSchema>("update_schema_column", {
-      space: spacePath,
-      collectionPath,
-      columnName: column.name,
-      patch,
-      projectPath: projectPath ?? null,
-    });
-    onSchemaChange(next);
+    try {
+      const next = await invoke<CollectionSchema>("update_schema_column", {
+        space: spacePath,
+        collectionPath,
+        columnName: column.name,
+        patch,
+        projectPath: projectPath ?? null,
+      });
+      onSchemaChange(next);
+    } catch (error) {
+      console.error(error);
+      toast.error(errorMessage(error));
+    }
   };
 
   const panes = [
@@ -138,7 +144,12 @@ export function ColumnMenuPopover({
               conversionStrategy:
                 type === "relation" ? { relation: collectionPath || "." } : null,
               projectPath: projectPath ?? null,
-            }).then(onSchemaChange);
+            })
+              .then(onSchemaChange)
+              .catch((error) => {
+                console.error(error);
+                toast.error(errorMessage(error));
+              });
           }}
         />
       ) : null,
@@ -240,4 +251,14 @@ export function ColumnMenuPopover({
       </AlertDialog>
     </>
   );
+}
+
+function errorMessage(error: unknown) {
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  return m.toast_error();
 }

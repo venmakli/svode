@@ -374,6 +374,24 @@ fn unique_child_path(parent: &Path, stem: &str, extension: Option<&str>) -> Path
     ))
 }
 
+fn rewrite_relations_after_fs_move(
+    space: &Path,
+    old_rel: &str,
+    new_rel: &str,
+    old_abs: &Path,
+    new_abs: &Path,
+) -> Result<(), AppError> {
+    if let Err(error) = crate::properties::rewrite_relation_paths_for_move(
+        &space.to_string_lossy(),
+        old_rel,
+        new_rel,
+    ) {
+        let _ = fs::rename(new_abs, old_abs);
+        return Err(error);
+    }
+    Ok(())
+}
+
 fn collect_entry_md_files(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), AppError> {
     for entry in fs::read_dir(root)? {
         let entry = entry?;
@@ -784,6 +802,14 @@ pub fn write(
                                 let _ = fs::rename(&new_dir_abs, &old_dir_abs);
                                 return Err(error);
                             }
+                            if let Err(error) = crate::properties::rewrite_relation_paths_for_move(
+                                space,
+                                &parent_rel.to_string_lossy(),
+                                &new_dir_rel,
+                            ) {
+                                let _ = fs::rename(&new_dir_abs, &old_dir_abs);
+                                return Err(error);
+                            }
                             new_path = Some(renamed_path);
                         }
                         // If collision, content is already saved, just skip rename
@@ -804,6 +830,12 @@ pub fn write(
                     fs::rename(&abs_path, &new_abs)?;
                     if let Err(error) =
                         crate::properties::rename_template_slug_references(space, path, &new_rel)
+                    {
+                        let _ = fs::rename(&new_abs, &abs_path);
+                        return Err(error);
+                    }
+                    if let Err(error) =
+                        crate::properties::rewrite_relation_paths_for_move(space, path, &new_rel)
                     {
                         let _ = fs::rename(&new_abs, &abs_path);
                         return Err(error);
@@ -1146,7 +1178,7 @@ pub fn move_entry(
 
     fs::rename(&abs_from, &abs_to)?;
     crate::properties::apply_schema_defaults_to_entry_tree(space, &new_rel)?;
-    crate::properties::rewrite_relation_paths_for_move(&space.to_string_lossy(), from, &new_rel)?;
+    rewrite_relations_after_fs_move(space, from, &new_rel, &abs_from, &abs_to)?;
 
     // Update backlinks. For folder moves, every .md descendant sits under a
     // new path now — rewrite their inbound links too, not just the folder itself
@@ -1213,7 +1245,11 @@ pub fn nest_entry(
         .unwrap_or(&new_abs)
         .to_string_lossy()
         .to_string();
-    crate::properties::rewrite_relation_paths_for_move(&space.to_string_lossy(), path, &new_rel)?;
+    if let Err(error) = rewrite_relations_after_fs_move(space, path, &new_rel, &abs_path, &new_abs)
+    {
+        let _ = fs::remove_dir(&folder);
+        return Err(error);
+    }
 
     // Update backlinks
     if let Some(index) = backlink_index {
@@ -1291,7 +1327,13 @@ pub fn unnest_entry(
         .unwrap_or(&new_abs)
         .to_string_lossy()
         .to_string();
-    crate::properties::rewrite_relation_paths_for_move(&space.to_string_lossy(), path, &new_rel)?;
+    if let Err(error) =
+        crate::properties::rewrite_relation_paths_for_move(&space.to_string_lossy(), path, &new_rel)
+    {
+        let _ = fs::create_dir_all(folder);
+        let _ = fs::rename(&new_abs, &abs_path);
+        return Err(error);
+    }
 
     // Update backlinks
     if let Some(index) = backlink_index {
@@ -1339,7 +1381,11 @@ pub fn convert_entry_to_folder(
     let new_abs = folder_abs.join("README.md");
     fs::rename(&abs_path, &new_abs)?;
     let new_rel = rel_from_abs(space, &new_abs);
-    crate::properties::rewrite_relation_paths_for_move(&space.to_string_lossy(), &path, &new_rel)?;
+    if let Err(error) = rewrite_relations_after_fs_move(space, &path, &new_rel, &abs_path, &new_abs)
+    {
+        let _ = fs::remove_dir(&folder_abs);
+        return Err(error);
+    }
 
     let parent_rel = Path::new(&path).parent().unwrap_or(Path::new(""));
     let dir_key = dir_key_for(parent_rel);
@@ -1516,7 +1562,15 @@ pub fn convert_entry_to_leaf(
     fs::rename(&readme_abs, &leaf_abs)?;
     let _ = fs::remove_dir_all(folder_abs);
     let new_rel = rel_from_abs(space, &leaf_abs);
-    crate::properties::rewrite_relation_paths_for_move(&space.to_string_lossy(), &path, &new_rel)?;
+    if let Err(error) = crate::properties::rewrite_relation_paths_for_move(
+        &space.to_string_lossy(),
+        &path,
+        &new_rel,
+    ) {
+        let _ = fs::create_dir_all(folder_abs);
+        let _ = fs::rename(&leaf_abs, &readme_abs);
+        return Err(error);
+    }
 
     let parent_rel = Path::new(&path)
         .parent()
@@ -1745,18 +1799,34 @@ pub fn delete(
     }
 
     let deleted_paths = collect_deleted_entry_paths(Path::new(space), &abs_path)?;
-    crate::properties::cascade_clean_deleted_entries(space, &deleted_paths)?;
+    let delete_parent = abs_path.parent().unwrap_or(Path::new(space));
+    let tombstone = unique_child_path(delete_parent, ".combai-delete", None);
+    fs::rename(&abs_path, &tombstone)?;
 
-    if abs_path.is_dir() {
-        fs::remove_dir_all(&abs_path)?;
-    } else {
-        fs::remove_file(&abs_path)?;
+    if let Err(error) = cascade_remove_tombstone(&tombstone) {
+        let _ = fs::rename(&tombstone, &abs_path);
+        return Err(error);
+    }
+
+    if let Err(error) = crate::properties::cascade_clean_deleted_entries(space, &deleted_paths) {
+        return Err(error);
     }
 
     if let Some(index) = backlink_index {
-        index.remove_file(path);
+        for deleted_path in &deleted_paths {
+            index.remove_file(deleted_path);
+        }
     }
 
+    Ok(())
+}
+
+fn cascade_remove_tombstone(tombstone: &Path) -> Result<(), AppError> {
+    if tombstone.is_dir() {
+        fs::remove_dir_all(tombstone)?;
+    } else {
+        fs::remove_file(tombstone)?;
+    }
     Ok(())
 }
 
@@ -1792,7 +1862,7 @@ pub fn rename(space: &str, from: &str, to: &str) -> Result<(), AppError> {
     }
 
     fs::rename(&abs_from, &abs_to)?;
-    crate::properties::rewrite_relation_paths_for_move(space, from, to)?;
+    rewrite_relations_after_fs_move(Path::new(space), from, to, &abs_from, &abs_to)?;
 
     // Update order.json: rename entry in parent's order list
     let old_name = Path::new(from)
