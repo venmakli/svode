@@ -20,6 +20,7 @@ import { selectActiveSpacePath, useSpaceStore } from "@/stores/space";
 import { EmptyProjectState } from "@/features/workspace/empty-project-state";
 import { ChatPanel } from "@/features/chat/chat-panel";
 import { CommandPalette } from "@/features/search/command-palette";
+import { TerminalPanelHost } from "@/features/terminal";
 import type { TreeNode } from "@/types/space";
 import { CollectionScreen, EntryDocumentScreen } from "@/features/collection";
 
@@ -43,16 +44,12 @@ function MainContent() {
     useSpaceStore();
   const watchSpacePath = useSpaceStore(selectActiveSpacePath);
   const documentSpaceId = activeDocumentSpaceId ?? activeRootId;
-  const tree = documentSpaceId
-    ? (fileTrees[documentSpaceId] ?? [])
-    : [];
+  const tree = documentSpaceId ? (fileTrees[documentSpaceId] ?? []) : [];
   const activeNode = activeDocument
     ? findNodeInTree(tree, activeDocument)
     : null;
   const activeSpace = documentSpaceId
-    ? [...rootSpaces, ...spaces].find(
-        (space) => space.id === documentSpaceId,
-      )
+    ? [...rootSpaces, ...spaces].find((space) => space.id === documentSpaceId)
     : null;
   const isCollection = Boolean(
     activeNode?.has_schema && activeSpace && documentSpaceId,
@@ -194,7 +191,16 @@ export function MainLayout() {
         <WindowHeader />
         <AppSidebar />
         <SidebarInset className="pt-[44px] min-h-0 overflow-hidden">
-          {activeRootId && isEmpty ? <EmptyProjectState /> : <MainContent />}
+          <div className="flex h-full min-h-0 flex-col overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {activeRootId && isEmpty ? (
+                <EmptyProjectState />
+              ) : (
+                <MainContent />
+              )}
+            </div>
+            <TerminalPanelHost />
+          </div>
         </SidebarInset>
         {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
         <GitMissingDialog open={available === false} onRecheck={recheck} />

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import { ChevronDown, Code2, FolderOpen, SquareTerminal } from "lucide-react";
 import { toast } from "sonner";
@@ -12,12 +12,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import * as m from "@/paraglide/messages.js";
+import {
+  TerminalPrimaryAction,
+  type TerminalTarget,
+} from "@/features/terminal";
 import {
   listProjectOpeners,
   openProjectInTool,
@@ -26,9 +25,13 @@ import {
 
 interface ProjectOpenersMenuProps {
   projectPath: string | null;
+  terminalTarget: TerminalTarget | null;
 }
 
-export function ProjectOpenersMenu({ projectPath }: ProjectOpenersMenuProps) {
+export function ProjectOpenersMenu({
+  projectPath,
+  terminalTarget,
+}: ProjectOpenersMenuProps) {
   const [openers, setOpeners] = useState<ProjectOpener[]>([]);
   const [openingId, setOpeningId] = useState<string | null>(null);
 
@@ -54,23 +57,10 @@ export function ProjectOpenersMenu({ projectPath }: ProjectOpenersMenuProps) {
     };
   }, [projectPath]);
 
-  const primaryOpener = useMemo(() => {
-    return (
-      openers.find((opener) => opener.id === "vscode") ??
-      openers.find((opener) => opener.kind === "editor") ??
-      openers.find((opener) => opener.kind === "file_manager") ??
-      openers[0] ??
-      null
-    );
-  }, [openers]);
+  if (!projectPath) return null;
 
-  if (!projectPath || openers.length === 0) return null;
-
-  const PrimaryIcon = primaryOpener ? iconForOpener(primaryOpener) : Code2;
   const isOpening = openingId !== null;
-  const primaryLabel = primaryOpener
-    ? m.project_openers_open_in({ name: primaryOpener.label })
-    : m.project_openers_tooltip();
+  const dropdownDisabled = isOpening || openers.length === 0;
 
   async function handleOpen(opener: ProjectOpener) {
     if (!projectPath || openingId) return;
@@ -89,28 +79,13 @@ export function ProjectOpenersMenu({ projectPath }: ProjectOpenersMenuProps) {
   return (
     <DropdownMenu>
       <ButtonGroup>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="outline"
-              size="icon-sm"
-              aria-label={primaryLabel}
-              disabled={!primaryOpener || isOpening}
-              onClick={() => {
-                if (primaryOpener) void handleOpen(primaryOpener);
-              }}
-            >
-              <PrimaryIcon />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{primaryLabel}</TooltipContent>
-        </Tooltip>
+        <TerminalPrimaryAction target={terminalTarget} />
         <DropdownMenuTrigger asChild>
           <Button
             variant="outline"
             size="icon-sm"
             aria-label={m.project_openers_tooltip()}
-            disabled={isOpening}
+            disabled={dropdownDisabled}
           >
             <ChevronDown />
           </Button>

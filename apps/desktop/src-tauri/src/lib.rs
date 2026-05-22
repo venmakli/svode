@@ -8,6 +8,7 @@ mod index;
 mod properties;
 mod space;
 mod storage;
+mod terminal;
 
 use std::sync::Arc;
 
@@ -35,6 +36,7 @@ pub fn run() {
         .manage(git::GitState::new())
         .manage(index::IndexState::new())
         .manage(properties::PersonCacheState::new())
+        .manage(terminal::TerminalManager::new())
         .setup(|app| {
             let service = Arc::new(git::autocommit::AutocommitService::new(
                 app.handle().clone(),
@@ -187,11 +189,19 @@ pub fn run() {
             storage::commands::resolve_asset_url,
             storage::lfs::repair_lfs,
             storage::lfs::get_lfs_state,
+            terminal::commands::terminal_spawn,
+            terminal::commands::terminal_write,
+            terminal::commands::terminal_resize,
+            terminal::commands::terminal_kill,
+            terminal::commands::terminal_list,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let tauri::RunEvent::ExitRequested { .. } = event {
+                let terminal_manager = app_handle.state::<terminal::TerminalManager>();
+                terminal_manager.kill_all();
+
                 let autocommit = app_handle.state::<Arc<git::autocommit::AutocommitService>>();
                 tauri::async_runtime::block_on(async {
                     autocommit.flush_all().await;

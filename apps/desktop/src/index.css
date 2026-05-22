@@ -5,6 +5,7 @@
 @import "tw-shimmer";
 @import "streamdown/styles.css";
 @import "shadcn/tailwind.css";
+@import "@xterm/xterm/css/xterm.css";
 @import "@fontsource-variable/nunito-sans";
 
 @custom-variant dark (&:is(.dark *));

@@ -29,7 +29,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Check, ChevronDown, ChevronsUpDown, Plus, Settings, Trash2 } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ChevronsUpDown,
+  Plus,
+  Settings,
+  Trash2,
+} from "lucide-react";
 
 import { useSpaceStore } from "@/stores/space";
 import { useLayoutStore } from "@/stores/layout";
@@ -86,7 +93,11 @@ export function AppSidebar() {
   }
 
   return (
-    <Sidebar variant="floating" collapsible="offcanvas" className="pt-[44px]">
+    <Sidebar
+      variant="floating"
+      collapsible="offcanvas"
+      className="pt-[44px] pr-0"
+    >
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
@@ -100,9 +111,14 @@ export function AppSidebar() {
                   <ChevronDown className="ml-auto h-4 w-4 opacity-50" />
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="min-w-[var(--radix-dropdown-menu-trigger-width)]">
+              <DropdownMenuContent
+                align="start"
+                className="min-w-[var(--radix-dropdown-menu-trigger-width)]"
+              >
                 {activeRootPath && (
-                  <DropdownMenuItem onClick={() => openSpaceSettings(activeRootPath)}>
+                  <DropdownMenuItem
+                    onClick={() => openSpaceSettings(activeRootPath)}
+                  >
                     <Settings className="mr-2 h-4 w-4" />
                     {m.sidebar_project_settings()}
                   </DropdownMenuItem>
@@ -180,14 +196,16 @@ export function AppSidebar() {
         </SidebarMenu>
       </SidebarFooter>
 
-      <CreateSpaceDialog
-        open={createWsOpen}
-        onOpenChange={setCreateWsOpen}
-      />
+      <CreateSpaceDialog open={createWsOpen} onOpenChange={setCreateWsOpen} />
 
       <AlertDialog
         open={deleteOpen}
-        onOpenChange={(open) => { if (!open) { setDeleteOpen(false); setDeleteFiles(false); } }}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteOpen(false);
+            setDeleteFiles(false);
+          }
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>

@@ -13,13 +13,15 @@ import { useFullscreen } from "@/hooks/use-fullscreen";
 import { cn } from "@/lib/utils";
 import { CloudUploadButton } from "@/features/workspace/cloud-upload-button";
 import { useCommandPaletteStore } from "@/features/search/store";
+import { buildProjectTerminalTarget } from "@/features/terminal";
 import * as m from "@/paraglide/messages.js";
 import { MainBreadcrumbs } from "./main-breadcrumbs";
 import { ProjectOpenersMenu } from "./project-openers-menu";
 
 export function WindowHeader() {
   const { activeDocument, toggleChatPanel } = useLayoutStore();
-  const { activeRootPath, goHome } = useSpaceStore();
+  const { activeRootId, activeRootName, activeRootPath, goHome } =
+    useSpaceStore();
   const setCommandPaletteOpen = useCommandPaletteStore((s) => s.setOpen);
   const { toggleSidebar } = useSidebar();
   const isFullscreen = useFullscreen();
@@ -27,11 +29,14 @@ export function WindowHeader() {
   const matches = useMatches();
 
   const chatToggleDisabled = !activeDocument;
+  const terminalTarget = buildProjectTerminalTarget({
+    id: activeRootId,
+    name: activeRootName,
+    path: activeRootPath,
+  });
 
   // Check if we're on the /space route
-  const isSpaceRoute = matches.some(
-    (match) => match.fullPath === "/space",
-  );
+  const isSpaceRoute = matches.some((match) => match.fullPath === "/space");
 
   function handleGoHome() {
     goHome();
@@ -51,11 +56,7 @@ export function WindowHeader() {
         <div className="flex shrink-0 items-center">
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={toggleSidebar}
-              >
+              <Button variant="ghost" size="icon-sm" onClick={toggleSidebar}>
                 <PanelLeft className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
@@ -65,11 +66,7 @@ export function WindowHeader() {
           {isSpaceRoute && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={handleGoHome}
-                >
+                <Button variant="ghost" size="icon-sm" onClick={handleGoHome}>
                   <Home className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
@@ -102,7 +99,12 @@ export function WindowHeader() {
       {/* Right: cloud upload + external openers + chat panel toggle */}
       <div className="flex shrink-0 items-center gap-1">
         {isSpaceRoute && <CloudUploadButton />}
-        {isSpaceRoute && <ProjectOpenersMenu projectPath={activeRootPath} />}
+        {isSpaceRoute && (
+          <ProjectOpenersMenu
+            projectPath={activeRootPath}
+            terminalTarget={terminalTarget}
+          />
+        )}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
