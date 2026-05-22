@@ -6,7 +6,8 @@ use std::time::SystemTime;
 
 use crate::error::AppError;
 use crate::files::frontmatter;
-use crate::index::normalize_rel;
+use crate::index::normalize_rel_root_result;
+use crate::repo_path::{RootMode, repo_relative_from_base};
 
 /// Format a SystemTime as RFC3339 UTC.
 fn format_system_time(time: SystemTime) -> String {
@@ -116,12 +117,7 @@ pub(crate) struct IndexedEntry {
 /// Build an `IndexedEntry` from an absolute file path. Parses frontmatter,
 /// falling back to synthesized values if absent or invalid.
 pub(crate) fn build_entry(space_dir: &Path, abs_path: &Path) -> Result<IndexedEntry, AppError> {
-    let rel_path = abs_path
-        .strip_prefix(space_dir)
-        .unwrap_or(abs_path)
-        .to_string_lossy()
-        .to_string();
-    let rel_path = normalize_rel(&rel_path);
+    let rel_path = repo_relative_from_base(space_dir, abs_path, RootMode::Reject)?;
 
     let raw = fs::read_to_string(abs_path)?;
 
@@ -199,7 +195,7 @@ pub(crate) fn build_entry(space_dir: &Path, abs_path: &Path) -> Result<IndexedEn
 
     Ok(IndexedEntry {
         id,
-        parent_path: parent_path_for(&rel_path),
+        parent_path: parent_path_for(&rel_path)?,
         rel_path,
         title,
         icon,
@@ -216,16 +212,18 @@ pub(crate) fn build_entry(space_dir: &Path, abs_path: &Path) -> Result<IndexedEn
 }
 
 fn root_path_for_index(path: &Path) -> String {
-    let rel = normalize_rel(&path.to_string_lossy());
+    let rel = normalize_rel_root_result(&path.to_string_lossy())
+        .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
     if rel.is_empty() { ".".to_string() } else { rel }
 }
 
-fn parent_path_for(rel_path: &str) -> String {
-    Path::new(rel_path)
+fn parent_path_for(rel_path: &str) -> Result<String, AppError> {
+    let parent = Path::new(rel_path)
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
-        .map(|p| normalize_rel(&p.to_string_lossy()))
-        .unwrap_or_else(|| ".".to_string())
+        .map(|p| normalize_rel_root_result(&p.to_string_lossy()))
+        .transpose()?;
+    Ok(parent.unwrap_or_else(|| ".".to_string()))
 }
 
 /// Serialize custom frontmatter fields as JSON for the `fields` column.
@@ -353,12 +351,7 @@ struct IndexedAsset {
 /// outside the transaction so blocking metadata reads don't hold the SQLite
 /// write lock.
 fn build_asset(space_dir: &Path, abs_path: &Path) -> Result<IndexedAsset, AppError> {
-    let rel_path = abs_path
-        .strip_prefix(space_dir)
-        .unwrap_or(abs_path)
-        .to_string_lossy()
-        .to_string();
-    let rel_path = normalize_rel(&rel_path);
+    let rel_path = repo_relative_from_base(space_dir, abs_path, RootMode::Reject)?;
 
     let file_name = abs_path
         .file_name()

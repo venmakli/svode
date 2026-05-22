@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::Command as StdCommand;
 
 use serde::Serialize;
 use tokio::process::Command;
@@ -29,15 +30,15 @@ pub struct GitCli {
 impl GitCli {
     /// Detect git binary and LFS availability.
     pub fn detect() -> Result<Self, AppError> {
-        let git_path = which::which("git").map_err(|_| AppError::GitNotFound)?;
+        let git_path = resolve_git_binary()?;
 
         tracing::info!("Found git at: {}", git_path.display());
 
-        let lfs_available = which::which("git-lfs").is_ok();
+        let lfs_available = detect_lfs_extension(&git_path);
         if lfs_available {
-            tracing::info!("Git LFS is available");
+            tracing::info!("Git LFS is available via git lfs version");
         } else {
-            tracing::debug!("Git LFS not found");
+            tracing::debug!("Git LFS extension not available");
         }
 
         Ok(Self {
@@ -72,8 +73,9 @@ impl GitCli {
     ) -> Result<GitOutput, AppError> {
         tracing::debug!("git {} (in {})", args.join(" "), space_dir.display());
 
+        let git_args = args_with_quote_path(args);
         let mut cmd = Command::new(&self.git_path);
-        cmd.args(args)
+        cmd.args(&git_args)
             .current_dir(space_dir)
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("LC_ALL", "C.UTF-8");
@@ -109,8 +111,9 @@ impl GitCli {
     pub async fn exec_no_dir(&self, args: &[&str]) -> Result<GitOutput, AppError> {
         tracing::debug!("git {}", args.join(" "));
 
+        let git_args = args_with_quote_path(args);
         let output = Command::new(&self.git_path)
-            .args(args)
+            .args(&git_args)
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("LC_ALL", "C.UTF-8")
             .output()
@@ -129,7 +132,7 @@ impl GitCli {
     /// Check git and git-lfs availability with version info.
     pub async fn check_availability(&self) -> GitAvailability {
         let version_output = Command::new(&self.git_path)
-            .args(["--version"])
+            .args(["-c", "core.quotePath=false", "--version"])
             .env("GIT_TERMINAL_PROMPT", "0")
             .output()
             .await;
@@ -144,4 +147,79 @@ impl GitCli {
             git_version,
         }
     }
+}
+
+fn args_with_quote_path<'a>(args: &'a [&'a str]) -> Vec<&'a str> {
+    let mut out = Vec::with_capacity(args.len() + 2);
+    out.push("-c");
+    out.push("core.quotePath=false");
+    out.extend_from_slice(args);
+    out
+}
+
+fn resolve_git_binary() -> Result<PathBuf, AppError> {
+    if let Ok(path) = which::which("git") {
+        return Ok(path);
+    }
+
+    for candidate in git_fallback_candidates() {
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    Err(AppError::GitNotFound)
+}
+
+fn detect_lfs_extension(git_path: &Path) -> bool {
+    StdCommand::new(git_path)
+        .args(["-c", "core.quotePath=false", "lfs", "version"])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("LC_ALL", "C.UTF-8")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn git_fallback_candidates() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Some(root) = std::env::var_os("ProgramFiles") {
+        out.push(PathBuf::from(&root).join("Git").join("cmd").join("git.exe"));
+        out.push(PathBuf::from(root).join("Git").join("bin").join("git.exe"));
+    }
+    if let Some(root) = std::env::var_os("ProgramFiles(x86)") {
+        out.push(PathBuf::from(root).join("Git").join("cmd").join("git.exe"));
+    }
+    if let Some(root) = std::env::var_os("LOCALAPPDATA") {
+        out.push(
+            PathBuf::from(root)
+                .join("Programs")
+                .join("Git")
+                .join("cmd")
+                .join("git.exe"),
+        );
+    }
+    if let Some(root) = std::env::var_os("USERPROFILE") {
+        out.push(
+            PathBuf::from(root)
+                .join("scoop")
+                .join("shims")
+                .join("git.exe"),
+        );
+    }
+    out.push(PathBuf::from("C:/ProgramData/chocolatey/bin/git.exe"));
+    out
+}
+
+#[cfg(not(windows))]
+fn git_fallback_candidates() -> Vec<PathBuf> {
+    [
+        "/usr/bin/git",
+        "/usr/local/bin/git",
+        "/opt/homebrew/bin/git",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .collect()
 }

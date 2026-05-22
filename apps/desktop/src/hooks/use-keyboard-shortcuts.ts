@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useLayoutStore } from "@/stores/layout";
 import { useSpaceStore } from "@/stores/space";
+import { isTerminalKeyboardEvent } from "@/features/terminal";
 
 export function useKeyboardShortcuts() {
   const { toggleChatPanel, closeDocument, openAppSettings } = useLayoutStore();
@@ -10,6 +11,7 @@ export function useKeyboardShortcuts() {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      if (isTerminalKeyboardEvent(e)) return;
       const isMeta = e.metaKey || e.ctrlKey;
 
       // Cmd+, — open app settings

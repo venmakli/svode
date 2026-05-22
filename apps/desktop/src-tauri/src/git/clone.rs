@@ -42,7 +42,15 @@ pub async fn clone_with_progress(
     // post-clone probe in `storage/lfs.rs`. Without this, a missing/wrong
     // LFS credential would fail the entire clone.
     let mut child = Command::new(cli.git_path())
-        .args(["clone", "--progress", "--", url, target_str])
+        .args([
+            "-c",
+            "core.quotePath=false",
+            "clone",
+            "--progress",
+            "--",
+            url,
+            target_str,
+        ])
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("LC_ALL", "C.UTF-8")
         .env("GIT_LFS_SKIP_SMUDGE", "1")
@@ -122,6 +130,16 @@ pub async fn clone_with_progress(
         )));
     }
 
+    let config_out = cli
+        .exec(target_dir, &["config", "core.quotePath", "false"])
+        .await?;
+    if config_out.exit_code != 0 {
+        return Err(AppError::GitCommandFailed(format!(
+            "git config core.quotePath failed: {}",
+            config_out.stderr.trim()
+        )));
+    }
+
     Ok(())
 }
 
@@ -141,7 +159,16 @@ pub async fn submodule_add_with_progress(
         .to_string();
 
     let mut child = Command::new(cli.git_path())
-        .args(["submodule", "add", "--progress", "--", url, space_folder])
+        .args([
+            "-c",
+            "core.quotePath=false",
+            "submodule",
+            "add",
+            "--progress",
+            "--",
+            url,
+            space_folder,
+        ])
         .current_dir(project_path)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("LC_ALL", "C.UTF-8")
@@ -215,6 +242,17 @@ pub async fn submodule_add_with_progress(
         }
         return Err(AppError::GitCommandFailed(format!(
             "git submodule add failed: {trimmed}"
+        )));
+    }
+
+    let target_dir = project_path.join(space_folder);
+    let config_out = cli
+        .exec(&target_dir, &["config", "core.quotePath", "false"])
+        .await?;
+    if config_out.exit_code != 0 {
+        return Err(AppError::GitCommandFailed(format!(
+            "git config core.quotePath failed: {}",
+            config_out.stderr.trim()
         )));
     }
 

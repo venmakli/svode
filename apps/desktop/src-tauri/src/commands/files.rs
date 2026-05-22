@@ -19,6 +19,7 @@ use crate::properties::{
     PropertyOption, PropertyType, RelationBacklink, RelationTwoWayDiagnostics, ResolvedRelation,
     SchemaMutationWarning, Sort, View,
 };
+use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::config;
 
 fn basename(path: &str) -> String {
@@ -2215,19 +2216,23 @@ pub async fn suggest_link_fix(
     target_space_id: Option<String>,
     broken_path: String,
     index_state: State<'_, IndexState>,
+    git_state: State<'_, GitState>,
 ) -> Result<Vec<LinkFixSuggestion>, AppError> {
     let project = Path::new(&project_path);
     let target_dir = index_state
         .space_path_of(project, target_space_id.as_deref())
         .await?;
+    let broken_path = normalize_repo_relative(&broken_path, RootMode::Reject)?;
 
     let mut suggestions = Vec::new();
-    if let Some((path, reason)) = git_rename_suggestion(&target_dir, &broken_path) {
-        suggestions.push(LinkFixSuggestion {
-            label: label_for_path(&path),
-            path,
-            reason,
-        });
+    if let Ok(cli) = require_cli(&git_state) {
+        if let Some((path, reason)) = git_rename_suggestion(&cli, &target_dir, &broken_path).await {
+            suggestions.push(LinkFixSuggestion {
+                label: label_for_path(&path),
+                path,
+                reason,
+            });
+        }
     }
 
     for path in similar_path_suggestions(&target_dir, &broken_path)? {
@@ -2247,38 +2252,59 @@ pub async fn suggest_link_fix(
     Ok(suggestions)
 }
 
-fn git_rename_suggestion(space_dir: &Path, broken_path: &str) -> Option<(String, String)> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(space_dir)
-        .args([
-            "log",
-            "--diff-filter=R",
-            "--name-status",
-            "--pretty=format:%ct",
-            "--all",
-            "--",
-            "*.md",
-        ])
-        .output()
+async fn git_rename_suggestion(
+    cli: &crate::git::cli::GitCli,
+    space_dir: &Path,
+    broken_path: &str,
+) -> Option<(String, String)> {
+    let output = cli
+        .exec(
+            space_dir,
+            &[
+                "log",
+                "--diff-filter=R",
+                "--name-status",
+                "-z",
+                "--pretty=format:%ct%x00",
+                "--all",
+                "--",
+                "*.md",
+            ],
+        )
+        .await
         .ok()?;
-    if !output.status.success() {
+    if output.exit_code != 0 {
         return None;
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let (path, ts) = parse_git_rename_suggestion_z(&output.stdout, broken_path)?;
+    let days = chrono::DateTime::from_timestamp(ts, 0)
+        .map(|dt| (chrono::Utc::now() - dt).num_days().max(0))
+        .unwrap_or(0);
+    Some((path, format!("renamed {days} days ago")))
+}
+
+fn parse_git_rename_suggestion_z(stdout: &str, broken_path: &str) -> Option<(String, i64)> {
+    let broken_path = normalize_repo_relative(broken_path, RootMode::Reject).ok()?;
     let mut current_ts: Option<i64> = None;
-    for line in stdout.lines() {
-        if let Ok(ts) = line.trim().parse::<i64>() {
+    let mut tokens = stdout
+        .split('\0')
+        .map(|token| token.trim_matches('\n'))
+        .filter(|token| !token.is_empty());
+
+    while let Some(token) = tokens.next() {
+        if let Ok(ts) = token.trim().parse::<i64>() {
             current_ts = Some(ts);
             continue;
         }
-        let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.len() >= 3 && cols[0].starts_with('R') && cols[1] == broken_path {
-            let days = current_ts
-                .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0))
-                .map(|dt| (chrono::Utc::now() - dt).num_days().max(0))
-                .unwrap_or(0);
-            return Some((cols[2].to_string(), format!("renamed {days} days ago")));
+        if !token.starts_with('R') {
+            continue;
+        }
+        let old_path = tokens.next()?;
+        let new_path = tokens.next()?;
+        let old_path = normalize_repo_relative(old_path, RootMode::Reject).ok()?;
+        if old_path == broken_path {
+            let new_path = normalize_repo_relative(new_path, RootMode::Reject).ok()?;
+            return Some((new_path, current_ts.unwrap_or(0)));
         }
     }
     None
@@ -2292,11 +2318,7 @@ fn similar_path_suggestions(space_dir: &Path, broken_path: &str) -> Result<Vec<S
         .to_lowercase();
     let mut candidates = Vec::new();
     for file in crate::files::backlinks::collect_md_files(space_dir, &[])? {
-        let rel = file
-            .strip_prefix(space_dir)
-            .unwrap_or(&file)
-            .to_string_lossy()
-            .replace('\\', "/");
+        let rel = crate::repo_path::repo_relative_from_base(space_dir, &file, RootMode::Reject)?;
         let stem = Path::new(&rel)
             .file_stem()
             .and_then(|s| s.to_str())
@@ -2342,4 +2364,21 @@ fn levenshtein(a: &str, b: &str) -> usize {
         std::mem::swap(&mut prev, &mut curr);
     }
     prev[b_chars.len()]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_git_rename_suggestion_z_with_spaces_and_cyrillic() {
+        let output = concat!(
+            "1710000000\0",
+            "R100\0docs/старое имя.md\0docs/new name.md\0",
+        );
+
+        let parsed = parse_git_rename_suggestion_z(output, "docs/старое имя.md").unwrap();
+
+        assert_eq!(parsed, ("docs/new name.md".to_string(), 1710000000));
+    }
 }

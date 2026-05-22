@@ -78,15 +78,16 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError
 /// Get list of conflicted files.
 pub async fn conflict_files(cli: &GitCli, space_dir: &Path) -> Result<Vec<String>, AppError> {
     let out = cli
-        .exec(space_dir, &["diff", "--name-only", "--diff-filter=U"])
+        .exec(space_dir, &["diff", "--name-only", "-z", "--diff-filter=U"])
         .await?;
 
-    Ok(out
-        .stdout
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(|l| l.to_string())
-        .collect())
+    out.stdout
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            crate::repo_path::normalize_repo_relative(path, crate::repo_path::RootMode::Reject)
+        })
+        .collect()
 }
 
 /// Resolve conflicts: stage all and commit, then push.

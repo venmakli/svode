@@ -6,6 +6,7 @@ mod git;
 mod identity;
 mod index;
 mod properties;
+mod repo_path;
 mod space;
 mod storage;
 mod terminal;

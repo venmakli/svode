@@ -15,6 +15,7 @@ import {
   commitFileAndMaybeSync,
   syncSpace,
 } from "@/features/workspace/git-actions";
+import { isTerminalKeyboardEvent } from "@/features/terminal";
 import { useGitStore } from "@/stores/git";
 import {
   deserializeWithConflicts,
@@ -516,6 +517,7 @@ export function PlateDocumentEditor({
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (isTerminalKeyboardEvent(e)) return;
       if (
         (e.metaKey || e.ctrlKey) &&
         e.shiftKey &&

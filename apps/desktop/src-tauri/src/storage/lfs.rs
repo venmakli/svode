@@ -17,6 +17,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::error::AppError;
 use crate::git::GitState;
 use crate::index::{IndexKey, IndexState};
+use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::config::read_space_config;
 use crate::space::types::AssetsStrategy;
 
@@ -143,6 +144,7 @@ pub fn maybe_auto_pull_after_sync(
 ) {
     let has_pointer = changed_rel_paths
         .iter()
+        .filter_map(|p| normalize_repo_relative(p, RootMode::Reject).ok())
         .filter(|p| p.starts_with(".assets/"))
         .any(|p| is_lfs_pointer(&target_dir.join(p)));
     if !has_pointer {

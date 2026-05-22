@@ -4,6 +4,7 @@ use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 
 use crate::error::AppError;
+use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_base};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -129,7 +130,7 @@ pub async fn upload(
         .unwrap_or_default();
     let mime = mime_for(&ext);
 
-    let rel_path = format!(".assets/{asset_name}");
+    let rel_path = normalize_repo_relative(&format!(".assets/{asset_name}"), RootMode::Reject)?;
     let created_at = chrono::Utc::now().to_rfc3339();
 
     sqlx::query(
@@ -200,16 +201,7 @@ pub async fn update_asset(
     let pool = state.get_or_create(&key).await?;
     let target_dir = state.dir_for_key(&key).await?;
 
-    let rel = abs_path
-        .strip_prefix(&target_dir)
-        .map_err(|_| {
-            AppError::Index(format!(
-                "asset path outside target dir: {}",
-                abs_path.display()
-            ))
-        })?
-        .to_string_lossy()
-        .replace('\\', "/");
+    let rel = repo_relative_from_base(&target_dir, abs_path, RootMode::Reject)?;
 
     if !abs_path.exists() {
         sqlx::query("DELETE FROM assets WHERE rel_path = ?")

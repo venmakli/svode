@@ -286,9 +286,18 @@ pub async fn apply_strategy(
         };
         s3::write_agent_config(space_dir, &agent_cfg)?;
 
-        let bin_str = bin.to_string_lossy().to_string();
+        let bin = bin.canonicalize().unwrap_or_else(|_| bin.to_path_buf());
+        if !bin.is_absolute() {
+            return Err(AppError::Storage(format!(
+                "lfs-dal path must be absolute: {}",
+                bin.display()
+            )));
+        }
+        let bin_str = bin
+            .to_str()
+            .ok_or_else(|| AppError::Storage("lfs-dal path must be valid UTF-8".into()))?;
         let pairs: [(&str, &str); 3] = [
-            ("lfs.customtransfer.lfs-dal.path", bin_str.as_str()),
+            ("lfs.customtransfer.lfs-dal.path", bin_str),
             ("lfs.customtransfer.lfs-dal.concurrent", "true"),
             ("lfs.standalonetransferagent", "lfs-dal"),
         ];

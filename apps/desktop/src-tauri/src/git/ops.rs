@@ -4,6 +4,7 @@ use serde::Serialize;
 
 use super::cli::GitCli;
 use crate::AppError;
+use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::types::SpaceGitType;
 
 const GITIGNORE_TEMPLATE: &str = "# CombAI local files
@@ -32,6 +33,12 @@ pub struct FileGitStatus {
     pub path: String,
     /// "modified" | "untracked" | "conflict"
     pub state: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NameStatusRecord {
+    status: char,
+    path: String,
 }
 
 /// Get configured remote URL (origin).
@@ -131,10 +138,10 @@ pub async fn init(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Get space git status by parsing `git status --porcelain=v2 --branch`.
+/// Get space git status by parsing `git status --porcelain=v2 --branch -z`.
 pub async fn status(cli: &GitCli, space_dir: &Path) -> Result<GitStatus, AppError> {
     let out = cli
-        .exec(space_dir, &["status", "--porcelain=v2", "--branch"])
+        .exec(space_dir, &["status", "--porcelain=v2", "--branch", "-z"])
         .await?;
 
     if out.exit_code != 0 {
@@ -144,6 +151,10 @@ pub async fn status(cli: &GitCli, space_dir: &Path) -> Result<GitStatus, AppErro
         )));
     }
 
+    parse_status_porcelain_v2_z(&out.stdout)
+}
+
+fn parse_status_porcelain_v2_z(stdout: &str) -> Result<GitStatus, AppError> {
     let mut branch = String::from("HEAD");
     let mut ahead: u32 = 0;
     let mut behind: u32 = 0;
@@ -153,13 +164,24 @@ pub async fn status(cli: &GitCli, space_dir: &Path) -> Result<GitStatus, AppErro
     let mut tracking: Option<String> = None;
     let mut files: Vec<FileGitStatus> = Vec::new();
 
-    for line in out.stdout.lines() {
-        if let Some(rest) = line.strip_prefix("# branch.head ") {
+    let records: Vec<&str> = stdout.split('\0').collect();
+    let mut idx = 0;
+    while idx < records.len() {
+        let record = records[idx];
+        idx += 1;
+        if record.is_empty() {
+            continue;
+        }
+
+        if let Some(rest) = record.strip_prefix("# branch.head ") {
             branch = rest.to_string();
-        } else if let Some(rest) = line.strip_prefix("# branch.upstream ") {
+            continue;
+        }
+        if let Some(rest) = record.strip_prefix("# branch.upstream ") {
             tracking = Some(rest.to_string());
-        } else if let Some(rest) = line.strip_prefix("# branch.ab ") {
-            // Format: +N -M
+            continue;
+        }
+        if let Some(rest) = record.strip_prefix("# branch.ab ") {
             for part in rest.split_whitespace() {
                 if let Some(n) = part.strip_prefix('+') {
                     ahead = n.parse().unwrap_or(0);
@@ -167,62 +189,51 @@ pub async fn status(cli: &GitCli, space_dir: &Path) -> Result<GitStatus, AppErro
                     behind = n.parse().unwrap_or(0);
                 }
             }
-        } else if line.starts_with("u ") {
-            // Unmerged entry: "u XY sub m1 m2 m3 h1 h2 h3 path"
+            continue;
+        }
+
+        if record.starts_with("u ") {
             has_conflicts = true;
-            if let Some(path) = line.split_whitespace().nth(10) {
+            if let Some(path) = split_status_fields(record, 11).get(10) {
                 files.push(FileGitStatus {
-                    path: path.to_string(),
+                    path: normalize_git_path(path)?,
                     state: "conflict".to_string(),
                 });
             }
-        } else if line.starts_with("1 ") {
-            // Changed entry: "1 XY sub mH mI mW hH hI path"
-            let parts: Vec<&str> = line.splitn(9, ' ').collect();
-            if parts.len() >= 9 {
-                let xy = parts[1];
-                if xy.len() >= 2 {
-                    let x = xy.as_bytes()[0];
-                    let y = xy.as_bytes()[1];
-                    if x != b'.' {
-                        has_staged = true;
-                    }
-                    if y != b'.' {
-                        has_unstaged = true;
-                    }
-                }
+            continue;
+        }
+
+        if record.starts_with("1 ") {
+            let fields = split_status_fields(record, 9);
+            if fields.len() >= 9 {
+                update_staged_flags(fields[1], &mut has_staged, &mut has_unstaged);
                 files.push(FileGitStatus {
-                    path: parts[8].to_string(),
+                    path: normalize_git_path(fields[8])?,
                     state: "modified".to_string(),
                 });
             }
-        } else if line.starts_with("2 ") {
-            // Renamed/copied: "2 XY sub mH mI mW hH hI Xscore path\tsource"
-            let parts: Vec<&str> = line.splitn(10, ' ').collect();
-            if parts.len() >= 10 {
-                let xy = parts[1];
-                if xy.len() >= 2 {
-                    let x = xy.as_bytes()[0];
-                    let y = xy.as_bytes()[1];
-                    if x != b'.' {
-                        has_staged = true;
-                    }
-                    if y != b'.' {
-                        has_unstaged = true;
-                    }
-                }
-                let path_field = parts[9];
-                let path = path_field.split('\t').next().unwrap_or(path_field);
+            continue;
+        }
+
+        if record.starts_with("2 ") {
+            let fields = split_status_fields(record, 10);
+            if fields.len() >= 10 {
+                update_staged_flags(fields[1], &mut has_staged, &mut has_unstaged);
                 files.push(FileGitStatus {
-                    path: path.to_string(),
+                    path: normalize_git_path(fields[9])?,
                     state: "modified".to_string(),
                 });
+                if idx < records.len() && !records[idx].is_empty() {
+                    idx += 1;
+                }
             }
-        } else if let Some(rest) = line.strip_prefix("? ") {
-            // Untracked file
+            continue;
+        }
+
+        if let Some(rest) = record.strip_prefix("? ") {
             has_unstaged = true;
             files.push(FileGitStatus {
-                path: rest.to_string(),
+                path: normalize_git_path(rest)?,
                 state: "untracked".to_string(),
             });
         }
@@ -238,6 +249,28 @@ pub async fn status(cli: &GitCli, space_dir: &Path) -> Result<GitStatus, AppErro
         tracking,
         files,
     })
+}
+
+fn split_status_fields(record: &str, fields: usize) -> Vec<&str> {
+    record.splitn(fields, ' ').collect()
+}
+
+fn update_staged_flags(xy: &str, has_staged: &mut bool, has_unstaged: &mut bool) {
+    if xy.len() < 2 {
+        return;
+    }
+    let x = xy.as_bytes()[0];
+    let y = xy.as_bytes()[1];
+    if x != b'.' {
+        *has_staged = true;
+    }
+    if y != b'.' {
+        *has_unstaged = true;
+    }
+}
+
+fn normalize_git_path(path: &str) -> Result<String, AppError> {
+    normalize_repo_relative(path, RootMode::Reject)
 }
 
 /// Stage a specific file.
@@ -329,22 +362,22 @@ pub async fn generate_commit_message(cli: &GitCli, space_dir: &Path) -> Result<S
 
     // Also check diff --cached --name-status for accurate categorization
     let name_status = cli
-        .exec(space_dir, &["diff", "--cached", "--name-status"])
+        .exec(space_dir, &["diff", "--cached", "--name-status", "-z"])
         .await?;
 
-    for line in name_status.stdout.lines() {
-        let parts: Vec<&str> = line.splitn(2, '\t').collect();
-        if parts.len() < 2 {
-            continue;
-        }
-        let status = parts[0].trim();
-        let file = parts[1].rsplit('/').next().unwrap_or(parts[1]).to_string();
+    for record in parse_name_status_z(&name_status.stdout)? {
+        let file = record
+            .path
+            .rsplit('/')
+            .next()
+            .unwrap_or(&record.path)
+            .to_string();
 
-        match status.chars().next() {
-            Some('A') => added.push(file),
-            Some('M') => modified.push(file),
-            Some('D') => deleted.push(file),
-            Some('R') => modified.push(file),
+        match record.status {
+            'A' => added.push(file),
+            'M' => modified.push(file),
+            'D' => deleted.push(file),
+            'R' => modified.push(file),
             _ => modified.push(file),
         }
     }
@@ -396,10 +429,54 @@ pub async fn generate_commit_message(cli: &GitCli, space_dir: &Path) -> Result<S
     }
 }
 
+fn parse_name_status_z(stdout: &str) -> Result<Vec<NameStatusRecord>, AppError> {
+    let tokens: Vec<&str> = stdout
+        .split('\0')
+        .filter(|token| !token.is_empty())
+        .collect();
+    let mut records = Vec::new();
+    let mut idx = 0;
+    while idx < tokens.len() {
+        let status = tokens[idx];
+        idx += 1;
+        let Some(kind) = status.chars().next() else {
+            continue;
+        };
+        if matches!(kind, 'R' | 'C') {
+            if idx + 1 >= tokens.len() {
+                break;
+            }
+            idx += 1;
+            let path = normalize_git_path(tokens[idx])?;
+            idx += 1;
+            records.push(NameStatusRecord { status: kind, path });
+            continue;
+        }
+        if idx >= tokens.len() {
+            break;
+        }
+        let path = normalize_git_path(tokens[idx])?;
+        idx += 1;
+        records.push(NameStatusRecord { status: kind, path });
+    }
+    Ok(records)
+}
+
+fn parse_nul_paths(stdout: &str) -> Result<Vec<String>, AppError> {
+    stdout
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(normalize_git_path)
+        .collect()
+}
+
 /// Get list of files changed since last pull.
 pub async fn diff_after_pull(cli: &GitCli, space_dir: &Path) -> Result<Vec<String>, AppError> {
     let out = cli
-        .exec(space_dir, &["diff", "--name-only", "HEAD@{1}", "HEAD"])
+        .exec(
+            space_dir,
+            &["diff", "--name-only", "-z", "HEAD@{1}", "HEAD"],
+        )
         .await?;
 
     if out.exit_code != 0 {
@@ -407,12 +484,7 @@ pub async fn diff_after_pull(cli: &GitCli, space_dir: &Path) -> Result<Vec<Strin
         return Ok(Vec::new());
     }
 
-    Ok(out
-        .stdout
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(|l| l.to_string())
-        .collect())
+    parse_nul_paths(&out.stdout)
 }
 
 // --- Per-space git type ---
@@ -857,4 +929,93 @@ pub async fn unpushed_commits(
         }
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_status_z_with_spaces_cyrillic_untracked_modified_conflict_and_rename() {
+        let output = concat!(
+            "# branch.head main\0",
+            "# branch.upstream origin/main\0",
+            "# branch.ab +2 -1\0",
+            "1 .M N... 100644 100644 100644 abc abc docs/space file.md\0",
+            "u UU N... 100644 100644 100644 100644 a b c конфликт.md\0",
+            "2 R. N... 100644 100644 100644 abc abc R100 renamed file.md\0old file.md\0",
+            "? новый файл.md\0",
+        );
+
+        let status = parse_status_porcelain_v2_z(output).unwrap();
+
+        assert_eq!(status.branch, "main");
+        assert_eq!(status.tracking.as_deref(), Some("origin/main"));
+        assert_eq!(status.ahead, 2);
+        assert_eq!(status.behind, 1);
+        assert!(status.has_staged);
+        assert!(status.has_unstaged);
+        assert!(status.has_conflicts);
+        assert_eq!(status.files.len(), 4);
+        assert!(
+            status
+                .files
+                .iter()
+                .any(|file| { file.path == "docs/space file.md" && file.state == "modified" })
+        );
+        assert!(
+            status
+                .files
+                .iter()
+                .any(|file| { file.path == "конфликт.md" && file.state == "conflict" })
+        );
+        assert!(
+            status
+                .files
+                .iter()
+                .any(|file| { file.path == "renamed file.md" && file.state == "modified" })
+        );
+        assert!(
+            status
+                .files
+                .iter()
+                .any(|file| { file.path == "новый файл.md" && file.state == "untracked" })
+        );
+    }
+
+    #[test]
+    fn parses_name_status_z_including_rename_records() {
+        let output = concat!(
+            "A\0new file.md\0",
+            "M\0папка/старый файл.md\0",
+            "R100\0old name.md\0new name.md\0",
+        );
+
+        let records = parse_name_status_z(output).unwrap();
+
+        assert_eq!(
+            records,
+            vec![
+                NameStatusRecord {
+                    status: 'A',
+                    path: "new file.md".to_string()
+                },
+                NameStatusRecord {
+                    status: 'M',
+                    path: "папка/старый файл.md".to_string()
+                },
+                NameStatusRecord {
+                    status: 'R',
+                    path: "new name.md".to_string()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_nul_path_output() {
+        let paths = parse_nul_paths("docs/a file.md\0кириллица.md\0").unwrap();
+
+        assert_eq!(paths, vec!["docs/a file.md", "кириллица.md"]);
+    }
 }

@@ -165,20 +165,16 @@ pub fn ensure_agent_gitignore(space_dir: &Path) -> Result<(), AppError> {
 /// dir of the standalone crate. Returns an absolute path so git's
 /// `lfs.customtransfer.lfs-dal.path` config never relies on cwd.
 pub fn resolve_agent_binary(_app_handle: &tauri::AppHandle) -> Result<PathBuf, AppError> {
-    let exe_name = if cfg!(windows) {
-        "lfs-dal.exe"
-    } else {
-        "lfs-dal"
-    };
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut candidates = Vec::new();
 
     // 1. Bundled sidecar — Tauri places externalBin next to the host binary
     //    after stripping the target-triple suffix, so a plain `lfs-dal[.exe]`
     //    in the same directory wins for production builds.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
-            let candidate = parent.join(exe_name);
-            if candidate.exists() {
-                return Ok(candidate);
+            for name in lfs_dal_plain_names() {
+                candidates.push(parent.join(name));
             }
         }
     }
@@ -188,32 +184,100 @@ pub fn resolve_agent_binary(_app_handle: &tauri::AppHandle) -> Result<PathBuf, A
     //    relative lookup is enough.
     let triple = std::env::var("TARGET").ok().or_else(rustc_host_triple);
     if let Some(triple) = triple.as_deref() {
-        let suffixed = if cfg!(windows) {
-            format!("lfs-dal-{triple}.exe")
-        } else {
-            format!("lfs-dal-{triple}")
-        };
-        let candidate = PathBuf::from("binaries").join(&suffixed);
-        if candidate.exists() {
-            return Ok(candidate.canonicalize().unwrap_or(candidate));
+        for name in lfs_dal_suffixed_names(triple) {
+            candidates.push(manifest_dir.join("binaries").join(name));
         }
     }
 
     // 3. Last-ditch dev fallback — the crate's own cargo target dir, in case
     //    someone ran `cargo build` by hand without going through the script.
-    for rel in [
-        "../../crates/lfs-dal/target/release/lfs-dal",
-        "../../crates/lfs-dal/target/debug/lfs-dal",
-    ] {
-        let p = PathBuf::from(rel);
-        if p.exists() {
-            return Ok(p.canonicalize().unwrap_or(p));
+    for profile in ["release", "debug"] {
+        for name in lfs_dal_plain_names() {
+            candidates.push(
+                manifest_dir
+                    .join("../../crates/lfs-dal/target")
+                    .join(profile)
+                    .join(name),
+            );
         }
+    }
+
+    for candidate in candidates {
+        if !candidate.exists() {
+            continue;
+        }
+        let absolute = candidate.canonicalize().map_err(|e| {
+            AppError::Storage(format!(
+                "lfs-dal binary path could not be canonicalized ({}): {e}",
+                candidate.display()
+            ))
+        })?;
+        validate_agent_binary(&absolute)?;
+        return Ok(absolute);
     }
 
     Err(AppError::Storage(
         "lfs-dal binary not found — run `bun run build:lfs-dal` or rebuild the app bundle".into(),
     ))
+}
+
+fn lfs_dal_plain_names() -> Vec<String> {
+    lfs_dal_plain_names_for(cfg!(windows))
+}
+
+fn lfs_dal_plain_names_for(windows: bool) -> Vec<String> {
+    if windows {
+        vec!["lfs-dal.exe".to_string(), "lfs-dal".to_string()]
+    } else {
+        vec!["lfs-dal".to_string()]
+    }
+}
+
+fn lfs_dal_suffixed_names(triple: &str) -> Vec<String> {
+    lfs_dal_suffixed_names_for(triple, cfg!(windows))
+}
+
+fn lfs_dal_suffixed_names_for(triple: &str, windows: bool) -> Vec<String> {
+    if windows {
+        vec![format!("lfs-dal-{triple}.exe"), format!("lfs-dal-{triple}")]
+    } else {
+        vec![format!("lfs-dal-{triple}")]
+    }
+}
+
+fn validate_agent_binary(path: &Path) -> Result<(), AppError> {
+    if !path.is_absolute() {
+        return Err(AppError::Storage(format!(
+            "lfs-dal binary path must be absolute: {}",
+            path.display()
+        )));
+    }
+    if !path.is_file() {
+        return Err(AppError::Storage(format!(
+            "lfs-dal binary is not a file: {}",
+            path.display()
+        )));
+    }
+    validate_agent_binary_executable(path)
+}
+
+#[cfg(target_os = "linux")]
+fn validate_agent_binary_executable(path: &Path) -> Result<(), AppError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mode = std::fs::metadata(path)?.permissions().mode();
+    if mode & 0o111 == 0 {
+        return Err(AppError::Storage(format!(
+            "lfs-dal binary is not executable: {}",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn validate_agent_binary_executable(_path: &Path) -> Result<(), AppError> {
+    Ok(())
 }
 
 /// Cheap shell-out to ask rustc for the host triple. Cached lazily would be
@@ -287,4 +351,33 @@ pub async fn check_connection(
         ));
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lfs_dal_names_include_windows_exe_fallbacks() {
+        assert_eq!(
+            lfs_dal_plain_names_for(true),
+            vec!["lfs-dal.exe".to_string(), "lfs-dal".to_string()]
+        );
+        assert_eq!(
+            lfs_dal_suffixed_names_for("x86_64-pc-windows-msvc", true),
+            vec![
+                "lfs-dal-x86_64-pc-windows-msvc.exe".to_string(),
+                "lfs-dal-x86_64-pc-windows-msvc".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn lfs_dal_names_use_plain_unix_binary_names() {
+        assert_eq!(lfs_dal_plain_names_for(false), vec!["lfs-dal".to_string()]);
+        assert_eq!(
+            lfs_dal_suffixed_names_for("aarch64-apple-darwin", false),
+            vec!["lfs-dal-aarch64-apple-darwin".to_string()]
+        );
+    }
 }

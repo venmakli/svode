@@ -9,6 +9,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::error::AppError;
 use crate::files::WriteNonceRegistry;
 use crate::index::{IndexKey, IndexState};
+use crate::repo_path::{RootMode, repo_relative_from_base};
 
 struct WatcherHandle {
     _watcher: RecommendedWatcher,
@@ -199,11 +200,16 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
     let nonces = app.state::<Arc<WriteNonceRegistry>>();
 
     for (path, kind) in seen {
-        let rel_path = path
-            .strip_prefix(space)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .to_string();
+        let rel_path = match repo_relative_from_base(space_root, &path, RootMode::Reject) {
+            Ok(path) => path,
+            Err(e) => {
+                tracing::warn!(
+                    "watcher skipped invalid repo-relative path {}: {e}",
+                    path.display()
+                );
+                continue;
+            }
+        };
 
         let event_name = match kind {
             EventKind::Create(_) => "file:created",

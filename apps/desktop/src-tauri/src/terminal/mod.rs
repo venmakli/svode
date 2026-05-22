@@ -306,6 +306,7 @@ fn canonical_cwd(cwd: &str) -> Result<PathBuf, AppError> {
     Ok(canonical)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ShellCommand {
     program: String,
     args: Vec<String>,
@@ -323,15 +324,23 @@ impl ShellCommand {
 
 #[cfg(windows)]
 fn default_shell() -> ShellCommand {
+    select_windows_shell(|candidate| {
+        which::which(candidate)
+            .ok()
+            .map(|path| path.to_string_lossy().to_string())
+    })
+}
+
+#[cfg(windows)]
+fn select_windows_shell(mut resolve: impl FnMut(&str) -> Option<String>) -> ShellCommand {
     for candidate in ["pwsh", "powershell"] {
-        if let Ok(path) = which::which(candidate) {
+        if let Some(program) = resolve(candidate) {
             return ShellCommand {
-                program: path.to_string_lossy().to_string(),
+                program,
                 args: Vec::new(),
             };
         }
     }
-
     ShellCommand {
         program: "cmd.exe".to_string(),
         args: Vec::new(),
@@ -340,17 +349,21 @@ fn default_shell() -> ShellCommand {
 
 #[cfg(not(windows))]
 fn default_shell() -> ShellCommand {
-    if let Ok(shell) = std::env::var("SHELL") {
-        if !shell.trim().is_empty() && command_exists(&shell) {
+    select_unix_shell(std::env::var("SHELL").ok().as_deref(), command_exists)
+}
+
+#[cfg(not(windows))]
+fn select_unix_shell(env_shell: Option<&str>, exists: impl Fn(&str) -> bool) -> ShellCommand {
+    if let Some(shell) = env_shell {
+        if !shell.trim().is_empty() && exists(shell) {
             return ShellCommand {
-                program: shell,
+                program: shell.to_string(),
                 args: vec!["-l".to_string()],
             };
         }
     }
-
     for candidate in ["/bin/zsh", "/bin/bash", "/bin/sh"] {
-        if Path::new(candidate).exists() {
+        if exists(candidate) {
             return ShellCommand {
                 program: candidate.to_string(),
                 args: vec!["-l".to_string()],
@@ -371,5 +384,54 @@ fn command_exists(command: &str) -> bool {
         path.exists()
     } else {
         which::which(command).is_ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(not(windows))]
+    #[test]
+    fn unix_shell_prefers_valid_shell_env() {
+        let shell = select_unix_shell(Some("/custom/zsh"), |candidate| candidate == "/custom/zsh");
+
+        assert_eq!(
+            shell,
+            ShellCommand {
+                program: "/custom/zsh".to_string(),
+                args: vec!["-l".to_string()],
+            }
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn unix_shell_falls_back_to_standard_shells() {
+        let shell = select_unix_shell(Some("/missing/shell"), |candidate| candidate == "/bin/bash");
+
+        assert_eq!(
+            shell,
+            ShellCommand {
+                program: "/bin/bash".to_string(),
+                args: vec!["-l".to_string()],
+            }
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_shell_prefers_powershell_core() {
+        let shell = select_windows_shell(|candidate| {
+            (candidate == "pwsh").then(|| "C:\\Program Files\\PowerShell\\pwsh.exe".to_string())
+        });
+
+        assert_eq!(
+            shell,
+            ShellCommand {
+                program: "C:\\Program Files\\PowerShell\\pwsh.exe".to_string(),
+                args: Vec::new(),
+            }
+        );
     }
 }

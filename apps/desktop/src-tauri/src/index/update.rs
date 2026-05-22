@@ -2,7 +2,7 @@ use sqlx::SqlitePool;
 use std::path::Path;
 
 use crate::error::AppError;
-use crate::index::normalize_rel;
+use crate::index::normalize_rel_result;
 use crate::index::reindex::{build_entry, full_reindex, upsert_entry};
 use crate::index::{IndexKey, IndexState};
 
@@ -43,7 +43,7 @@ pub async fn update_entry(
     let dir = state.dir_for_key(&key).await?;
     let pool = state.get_or_create(&key).await?;
 
-    let normalized = normalize_rel(&rel_path);
+    let normalized = normalize_rel_result(&rel_path)?;
     let abs = dir.join(&normalized);
 
     // Serialize against `full_reindex` for the same pool. Without this, an
@@ -89,7 +89,7 @@ pub async fn delete_entry(
 
 /// Delete an entry row by its relative path inside an already-resolved pool.
 pub async fn delete_entry_path(pool: &SqlitePool, rel_path: &str) -> Result<(), AppError> {
-    let normalized = normalize_rel(rel_path);
+    let normalized = normalize_rel_result(rel_path)?;
     sqlx::query("DELETE FROM entries WHERE file_path = ?")
         .bind(&normalized)
         .execute(pool)
@@ -121,7 +121,7 @@ pub async fn reindex_after_pull(
     }
 
     for rel in changed_files {
-        let normalized = normalize_rel(&rel);
+        let normalized = normalize_rel_result(&rel)?;
         let abs = dir.join(&normalized);
 
         // Don't filter by extension — pull may have deleted .md files and we

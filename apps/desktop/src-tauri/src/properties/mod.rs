@@ -12,6 +12,7 @@ use crate::error::AppError;
 use crate::files::entry::{ColorName, EntryMeta};
 use crate::files::{entry, frontmatter};
 use crate::git::cli::GitCli;
+use crate::repo_path::{RootMode, normalize_repo_relative};
 
 const SCHEMA_FILE: &str = "schema.yaml";
 const RESERVED_FIELDS: &[&str] = &[
@@ -640,10 +641,12 @@ fn find_collection_root(space: &Path, file_path: &str) -> Option<PathBuf> {
 }
 
 fn normalize_rel_path(path: &str) -> String {
-    path.trim_matches('/')
-        .replace('\\', "/")
-        .trim_start_matches("./")
-        .to_string()
+    normalize_repo_relative(path, RootMode::Allow).unwrap_or_else(|_| {
+        path.trim_matches('/')
+            .replace('\\', "/")
+            .trim_start_matches("./")
+            .to_string()
+    })
 }
 
 fn rel_path_string(path: &Path) -> String {
@@ -683,8 +686,9 @@ fn collection_root_for_fs(collection_path: &str) -> String {
 }
 
 fn normalize_collection_path(path: &str) -> Result<String, AppError> {
-    validate_relation_path_shape(path)?;
-    Ok(collection_root_for_schema(path))
+    normalize_repo_relative(path, RootMode::Allow)
+        .map_err(|e| schema_error(e.to_string()))
+        .map(|rel| if rel.is_empty() { ".".to_string() } else { rel })
 }
 
 fn join_collection_value(collection_path: &str, value: &str) -> String {
@@ -2867,25 +2871,9 @@ fn validate_relation_column_name(name: &str) -> Result<(), AppError> {
 }
 
 fn validate_relation_path_shape(path: &str) -> Result<(), AppError> {
-    let normalized = normalize_rel_path(path);
-    if normalized.is_empty() {
-        return Err(schema_error("relation path cannot be empty"));
-    }
-    if path.starts_with('/') || path.contains('\\') {
-        return Err(schema_error(
-            "relation path must be space-relative and use '/'",
-        ));
-    }
-    if normalized
-        .split('/')
-        .any(|part| part.is_empty() || part == "." || part == "..")
-        && normalized != "."
-    {
-        return Err(schema_error(
-            "relation path cannot contain empty, '.' or '..' segments",
-        ));
-    }
-    Ok(())
+    normalize_repo_relative(path, RootMode::Allow)
+        .map(|_| ())
+        .map_err(|e| schema_error(e.to_string()))
 }
 
 fn validate_relation_value_shape(column: &Column, value: &Value) -> Result<Vec<String>, AppError> {
@@ -2970,22 +2958,7 @@ fn enforce_relation_limit_one_existing_values(
 }
 
 fn normalize_relation_value_shape(raw: &str) -> Result<String, AppError> {
-    if raw.starts_with('/') || raw.contains('\\') {
-        return Err(schema_error("relation value must be relative and use '/'"));
-    }
-    let normalized = normalize_rel_path(raw);
-    if normalized.is_empty() || normalized == "." {
-        return Err(schema_error("relation value cannot be empty"));
-    }
-    if normalized
-        .split('/')
-        .any(|part| part.is_empty() || part == "." || part == "..")
-    {
-        return Err(schema_error(
-            "relation value cannot contain empty, '.' or '..' segments",
-        ));
-    }
-    Ok(normalized)
+    normalize_repo_relative(raw, RootMode::Reject).map_err(|e| schema_error(e.to_string()))
 }
 
 fn option_names(column: &Column) -> HashSet<&str> {

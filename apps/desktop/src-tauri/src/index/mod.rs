@@ -18,6 +18,7 @@ use crate::files::backlinks::{
     LinkSource, ModifiedLinkSource, collect_md_files, dedupe_modified_sources,
     is_external_or_anchor_url, link_stem, markdown_url_path, replace_link_urls_between,
 };
+use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_path};
 use crate::space::config;
 use crate::space::types::{SpaceConfig, SpaceStatus};
 use crate::storage::lfs::LfsState;
@@ -26,7 +27,15 @@ const REINDEX_PARALLELISM: usize = 4;
 
 /// Normalize a relative path to forward slashes for cross-platform DB storage.
 pub(crate) fn normalize_rel(path: &str) -> String {
-    path.replace('\\', "/")
+    normalize_rel_result(path).unwrap_or_else(|_| path.replace('\\', "/"))
+}
+
+pub(crate) fn normalize_rel_result(path: &str) -> Result<String, AppError> {
+    normalize_repo_relative(path, RootMode::Reject)
+}
+
+pub(crate) fn normalize_rel_root_result(path: &str) -> Result<String, AppError> {
+    normalize_repo_relative(path, RootMode::Allow)
 }
 
 /// Identity of an index pool inside a project.
@@ -156,17 +165,13 @@ pub fn resolve_index_target(
         AppError::Index(format!("path outside project root: {}", abs_path.display()))
     })?;
 
-    let segments: Vec<&str> = rel
-        .components()
-        .filter_map(|c| match c {
-            Component::Normal(s) => s.to_str(),
-            _ => None,
-        })
-        .collect();
+    let rel = repo_relative_from_path(rel, RootMode::Allow)?;
 
-    if segments.is_empty() {
+    if rel == "." {
         return Ok((IndexKey::Root(project.to_path_buf()), String::new()));
     }
+
+    let segments: Vec<&str> = rel.split('/').collect();
 
     if let Some(space_id) = cache.by_folder.get(segments[0]) {
         if !matches!(cache.status_by_id.get(space_id), Some(SpaceStatus::Ready)) {
@@ -414,7 +419,7 @@ impl IndexState {
             .key_for_project_space_id(project, source_space_id)
             .await?;
         let source_dir = self.dir_for_key(&source_key).await?;
-        let source_rel = normalize_rel(source_path);
+        let source_rel = normalize_rel_result(source_path)?;
         let target_link = markdown_url_path(url);
         let source_parent_rel = Path::new(&source_rel).parent().unwrap_or(Path::new(""));
         let source_parent_abs = source_dir.join(source_parent_rel);
@@ -501,7 +506,7 @@ impl IndexState {
             });
         }
 
-        let target_rel = normalize_rel(&segments.join("/"));
+        let target_rel = normalize_rel_result(&segments.join("/"))?;
         let exists = target_abs.exists();
         Ok(ResolvedDocLink {
             target_space_id: None,
@@ -527,7 +532,7 @@ impl IndexState {
             .key_for_project_space_id(project, source_space_id)
             .await?;
         let source_dir = self.dir_for_key(&source_key).await?;
-        let source_rel = normalize_rel(source_path);
+        let source_rel = normalize_rel_result(source_path)?;
         let target_link = markdown_url_path(url);
 
         let source_parent_rel = Path::new(&source_rel).parent().unwrap_or(Path::new(""));
@@ -541,7 +546,7 @@ impl IndexState {
         let cache = cache_guard.get(project).cloned().unwrap_or_default();
         drop(cache_guard);
         match resolve_index_target(project, &cache, &target_abs) {
-            Ok((key, rel)) if !rel.is_empty() => Ok(Some((key, normalize_rel(&rel)))),
+            Ok((key, rel)) if !rel.is_empty() => Ok(Some((key, normalize_rel_result(&rel)?))),
             Ok(_) => Ok(None),
             Err(_) => Ok(None),
         }
@@ -565,7 +570,7 @@ impl IndexState {
             .key_for_project_space_id(project, source_space_id)
             .await?;
         let source_dir = self.dir_for_key(&source_key).await?;
-        let source_rel = normalize_rel(source_rel_path);
+        let source_rel = normalize_rel_result(source_rel_path)?;
         let source = Self::source_for_key(&source_key, &source_rel);
         self.remove_source_from_project(project, &source).await;
 
@@ -639,7 +644,7 @@ impl IndexState {
         let source_key = self
             .key_for_project_space_id(project, source_space_id)
             .await?;
-        let source_rel = normalize_rel(source_rel_path);
+        let source_rel = normalize_rel_result(source_rel_path)?;
         let source = Self::source_for_key(&source_key, &source_rel);
         self.remove_source_from_project(project, &source).await;
         let pool = self.get_or_create(&source_key).await?;
@@ -688,11 +693,7 @@ impl IndexState {
             .await?;
 
         for file in files {
-            let rel = file
-                .strip_prefix(&dir)
-                .unwrap_or(&file)
-                .to_string_lossy()
-                .to_string();
+            let rel = crate::repo_path::repo_relative_from_base(&dir, &file, RootMode::Reject)?;
             self.update_file_backlinks(key.project(), source_space_id.as_deref(), &rel)
                 .await?;
         }
@@ -793,8 +794,8 @@ impl IndexState {
             .key_for_project_space_id(project, target_space_id)
             .await?;
         let target_index = self.backlinks_for(&target_key).await;
-        let old_norm = normalize_rel(old_folder);
-        let new_norm = normalize_rel(new_folder);
+        let old_norm = normalize_rel_result(old_folder)?;
+        let new_norm = normalize_rel_result(new_folder)?;
         let mut all = Vec::new();
         for old_target in target_index.target_paths_under(&old_norm) {
             let remainder = old_target

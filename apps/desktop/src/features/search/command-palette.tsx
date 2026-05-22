@@ -14,6 +14,7 @@ import { useSelectResult } from "./use-select-result";
 import { ResultItem } from "./result-item";
 import { dedupKey } from "./utils";
 import type { SearchItem } from "./types";
+import { isTerminalKeyboardEvent } from "@/features/terminal";
 import * as m from "@/paraglide/messages.js";
 
 export function CommandPalette() {
@@ -33,6 +34,7 @@ export function CommandPalette() {
   useEffect(() => {
     if (!activeRootPath) return;
     function onKey(e: KeyboardEvent) {
+      if (isTerminalKeyboardEvent(e)) return;
       const isMeta = e.metaKey || e.ctrlKey;
       if (isMeta && e.key.toLowerCase() === "p" && !e.shiftKey && !e.altKey) {
         e.preventDefault();
