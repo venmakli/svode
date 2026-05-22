@@ -25,12 +25,14 @@ import {
   Trash2,
 } from "lucide-react";
 import type {
+  ChangeSchemaTypeResult,
   CollectionSchema,
   Column,
   EntrySchemaResult,
   Person,
   PropertyOption,
   RelationContext,
+  SchemaMutationWarning,
 } from "../model/types";
 import {
   shouldClosePropertyEditorOnChange,
@@ -392,11 +394,20 @@ export function PropertyPanel({
         collectionPath={collectionRootPath}
         onSubmit={async (newType, conversionStrategy) => {
           if (dialog?.type !== "change-type") return;
-          await schemaInvoke("change_schema_type", {
-            columnName: dialog.column.name,
-            newType,
-            conversionStrategy,
-          }).catch(handleSchemaError);
+          const result = await invoke<ChangeSchemaTypeResult>(
+            "change_schema_type",
+            {
+              space: spacePath,
+              collectionPath: collectionRootPath,
+              projectPath: projectPath ?? null,
+              columnName: dialog.column.name,
+              newType,
+              conversionStrategy,
+            },
+          ).catch(handleSchemaError);
+          if (!result) return;
+          showSchemaMutationWarnings(result.warnings);
+          await refreshSchema();
           setDialog(null);
         }}
       />
@@ -619,6 +630,19 @@ function PropertyLabel({
       <span className="truncate">{column.name}</span>
     </div>
   );
+}
+
+function showSchemaMutationWarnings(warnings: SchemaMutationWarning[]) {
+  for (const warning of warnings) {
+    if (warning.code === "relation_unconverted_values") {
+      toast.warning(
+        m.property_relation_convert_warning({
+          count: String(warning.count),
+          field: warning.field,
+        }),
+      );
+    }
+  }
 }
 
 function ColumnActions({

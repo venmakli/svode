@@ -16,7 +16,8 @@ use crate::git::commands::{GitState, require_cli};
 use crate::index::{self, IndexKey, IndexState, ResolvedDocLink};
 use crate::properties::{
     self, CollectionInfo, CollectionSchema, Column, EntrySchemaResponse, Filter, Person,
-    PropertyOption, PropertyType, RelationBacklink, ResolvedRelation, Sort, View,
+    PropertyOption, PropertyType, RelationBacklink, RelationTwoWayDiagnostics, ResolvedRelation,
+    SchemaMutationWarning, Sort, View,
 };
 use crate::space::config;
 
@@ -43,6 +44,13 @@ fn root_path_for_head(path: &str) -> &str {
             .unwrap_or(path);
     }
     path
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangeSchemaTypeResult {
+    pub schema: CollectionSchema,
+    pub warnings: Vec<SchemaMutationWarning>,
 }
 
 fn entry_paths_with_order(space: &str, paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
@@ -447,7 +455,7 @@ pub async fn change_schema_type(
     conversion_strategy: Option<serde_json::Value>,
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<ChangeSchemaTypeResult, AppError> {
     let message = format!(
         "Change column \"{column_name}\" type to {}",
         property_type_message(new_type)
@@ -461,7 +469,7 @@ pub async fn change_schema_type(
     let snapshotted = paths.clone();
     let snapshot = snapshot_paths(&snapshotted)?;
     let conversion_strategy = conversion_strategy.map(json_to_yaml_value).transpose()?;
-    let schema = properties::change_schema_type(
+    let (schema, warnings) = properties::change_schema_type_with_warnings(
         &space,
         &collection_path,
         &column_name,
@@ -489,7 +497,7 @@ pub async fn change_schema_type(
         message,
     )
     .await;
-    Ok(schema)
+    Ok(ChangeSchemaTypeResult { schema, warnings })
 }
 
 #[tauri::command]
@@ -1281,18 +1289,36 @@ pub fn query_relation_backlinks(
 }
 
 #[tauri::command]
+pub fn diagnose_two_way_relation(
+    space: String,
+    collection_path: String,
+    column: String,
+) -> Result<RelationTwoWayDiagnostics, AppError> {
+    properties::diagnose_two_way_relation(&space, &collection_path, &column)
+}
+
+#[tauri::command]
 pub async fn repair_two_way_relation(
     space: String,
     collection_path: String,
     column: String,
     strategy: String,
+    reverse_column: Option<String>,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
-    let paths = properties::schema_mutation_paths(&space, &collection_path, true)?;
-    properties::repair_two_way_relation(&space, &collection_path, &column, &strategy)?;
+    let paths = properties::relation_repair_mutation_paths(&space, &collection_path, &column)?;
+    let snapshot = snapshot_paths(&paths)?;
+    properties::repair_two_way_relation(
+        &space,
+        &collection_path,
+        &column,
+        &strategy,
+        reverse_column.as_deref(),
+    )?;
     reindex_space_dir(&index_state, &space).await;
+    let paths = changed_paths(snapshot)?;
     maybe_autocommit_schema(
         &autocommit,
         project_path.as_deref(),

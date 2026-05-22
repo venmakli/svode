@@ -1,6 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Entry } from "@/features/editor/types";
-import type { ResolvedRelationEntry } from "../model/types";
+import type {
+  RelationTwoWayDiagnostics,
+  ResolvedRelationEntry,
+} from "../model/types";
 
 export async function resolveRelationsBatch({
   spacePath,
@@ -73,6 +76,52 @@ export async function queryRelationTargets({
         relationValueForPath(relation, entry.path).toLowerCase().includes(normalized),
     )
     .slice(0, 50);
+}
+
+export async function diagnoseTwoWayRelation({
+  spacePath,
+  collectionPath,
+  column,
+}: {
+  spacePath: string;
+  collectionPath: string;
+  column: string;
+}) {
+  return invoke<RelationTwoWayDiagnostics>("diagnose_two_way_relation", {
+    space: spacePath,
+    collectionPath,
+    column,
+  });
+}
+
+export async function repairTwoWayRelation({
+  spacePath,
+  projectPath,
+  collectionPath,
+  column,
+  strategy,
+  reverseColumn,
+}: {
+  spacePath: string;
+  projectPath?: string | null;
+  collectionPath: string;
+  column: string;
+  strategy:
+    | "from_this_side"
+    | "from_related_side"
+    | "choose_reverse_column"
+    | "create_reverse_column"
+    | "detach_two_way";
+  reverseColumn?: string | null;
+}) {
+  return invoke<void>("repair_two_way_relation", {
+    space: spacePath,
+    collectionPath,
+    column,
+    strategy,
+    reverseColumn: reverseColumn ?? null,
+    projectPath: projectPath ?? null,
+  });
 }
 
 export function relationValueForPath(relation: string, filePath: string) {

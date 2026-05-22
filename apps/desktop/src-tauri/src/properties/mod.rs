@@ -761,6 +761,15 @@ fn ensure_compatible_reverse(
     current_collection: &str,
     current_column: &str,
 ) -> Result<(), AppError> {
+    ensure_compatible_reverse_with_limit_policy(reverse, current_collection, current_column, false)
+}
+
+fn ensure_compatible_reverse_with_limit_policy(
+    reverse: &Column,
+    current_collection: &str,
+    current_column: &str,
+    allow_limit_one: bool,
+) -> Result<(), AppError> {
     if reverse.type_ != PropertyType::Relation {
         return Err(schema_error(format!(
             "reverse column '{}' is not a relation",
@@ -787,7 +796,7 @@ fn ensure_compatible_reverse(
             reverse.name
         )));
     }
-    if reverse.limit == Some(RelationLimit::One) {
+    if reverse.limit == Some(RelationLimit::One) && !allow_limit_one {
         return Err(schema_error(format!(
             "reverse column '{}' cannot be limited to one item",
             reverse.name
@@ -843,10 +852,9 @@ fn write_schema(
 
 fn validate_schema_relations_in_space(
     space: &str,
-    collection_path: &str,
+    _collection_path: &str,
     schema: &CollectionSchema,
 ) -> Result<(), AppError> {
-    let current = collection_root_for_schema(collection_path);
     for column in &schema.columns {
         if column.type_ != PropertyType::Relation {
             continue;
@@ -867,14 +875,6 @@ fn validate_schema_relations_in_space(
         }
         if let Some(reverse_name) = column.two_way.as_deref() {
             validate_relation_column_name(reverse_name)?;
-            let reverse_schema = read_schema_or_default(space, &relation)?;
-            if let Some(reverse) = reverse_schema
-                .columns
-                .iter()
-                .find(|candidate| candidate.name == reverse_name)
-            {
-                ensure_compatible_reverse(reverse, &current, &column.name)?;
-            }
         }
     }
     Ok(())
@@ -1014,6 +1014,23 @@ fn materialize_two_way_reverse_values(
     collection_path: &str,
     column: &Column,
 ) -> Result<(), AppError> {
+    materialize_two_way_reverse_values_with_limit_policy(space, collection_path, column, false)
+}
+
+fn materialize_two_way_reverse_values_allowing_limit_one_reverse(
+    space: &str,
+    collection_path: &str,
+    column: &Column,
+) -> Result<(), AppError> {
+    materialize_two_way_reverse_values_with_limit_policy(space, collection_path, column, true)
+}
+
+fn materialize_two_way_reverse_values_with_limit_policy(
+    space: &str,
+    collection_path: &str,
+    column: &Column,
+    allow_limit_one_reverse: bool,
+) -> Result<(), AppError> {
     let Some(reverse_name) = column.two_way.as_deref() else {
         return Ok(());
     };
@@ -1032,14 +1049,16 @@ fn materialize_two_way_reverse_values(
             .replace('\\', "/");
         let source_value = value_relative_to_collection(&source_collection, &rel)?;
         let values = read_relation_field_values_from_file(&file, column)?;
-        sync_reverse_relation_values(
+        sync_reverse_relation_values_with_limit_policy(
             space,
             relation,
             reverse_name,
+            &column.name,
             &source_collection,
             &source_value,
             &[],
             &values,
+            allow_limit_one_reverse,
         )?;
     }
     Ok(())
@@ -1213,9 +1232,17 @@ pub fn rewrite_relation_paths_for_move(
         }
 
         for (old_file, new_file) in &moved_paths {
+            let old_root = find_collection_root(space_path, old_file);
             let Some((_, new_root)) = resolve_collection_schema_result(space, new_file)? else {
                 continue;
             };
+            if let Some(old_root) = old_root.as_ref().filter(|old_root| *old_root != &new_root) {
+                let relation = rel_path_string(old_root);
+                if let Ok(old_value) = value_relative_to_collection(&relation, old_file) {
+                    rewrite_relation_value_refs(space, &relation, &old_value, new_file)?;
+                }
+                continue;
+            }
             let relation = rel_path_string(&new_root);
             let old_value = match value_relative_to_collection(&relation, old_file) {
                 Ok(value) => value,
@@ -2508,6 +2535,7 @@ pub fn update_relation_entry_field(
                 space,
                 relation,
                 reverse_name,
+                field,
                 &source_collection,
                 &source_value,
                 &old_values,
@@ -2600,45 +2628,76 @@ fn sync_reverse_relation_values(
     space: &str,
     target_collection: &str,
     reverse_name: &str,
+    source_column_name: &str,
     source_collection: &str,
     source_value: &str,
     old_values: &[String],
     new_values: &[String],
 ) -> Result<(), AppError> {
+    sync_reverse_relation_values_with_limit_policy(
+        space,
+        target_collection,
+        reverse_name,
+        source_column_name,
+        source_collection,
+        source_value,
+        old_values,
+        new_values,
+        true,
+    )
+}
+
+fn sync_reverse_relation_values_with_limit_policy(
+    space: &str,
+    target_collection: &str,
+    reverse_name: &str,
+    source_column_name: &str,
+    source_collection: &str,
+    source_value: &str,
+    old_values: &[String],
+    new_values: &[String],
+    allow_limit_one_reverse: bool,
+) -> Result<(), AppError> {
     let old: HashSet<&str> = old_values.iter().map(String::as_str).collect();
     let new: HashSet<&str> = new_values.iter().map(String::as_str).collect();
     for removed in old.difference(&new) {
         let target_path = join_collection_value(target_collection, removed);
-        mutate_relation_reverse_file(
+        mutate_relation_reverse_file_with_limit_policy(
             space,
             &target_path,
             reverse_name,
+            source_column_name,
             source_collection,
             source_value,
             false,
+            allow_limit_one_reverse,
         )?;
     }
     for added in new.difference(&old) {
         let target_path = join_collection_value(target_collection, added);
-        mutate_relation_reverse_file(
+        mutate_relation_reverse_file_with_limit_policy(
             space,
             &target_path,
             reverse_name,
+            source_column_name,
             source_collection,
             source_value,
             true,
+            allow_limit_one_reverse,
         )?;
     }
     Ok(())
 }
 
-fn mutate_relation_reverse_file(
+fn mutate_relation_reverse_file_with_limit_policy(
     space: &str,
     target_path: &str,
     reverse_name: &str,
+    source_column_name: &str,
     source_collection: &str,
     source_value: &str,
     add: bool,
+    allow_limit_one_reverse: bool,
 ) -> Result<(), AppError> {
     let target_abs = Path::new(space).join(target_path);
     if !target_abs.is_file() {
@@ -2654,13 +2713,26 @@ fn mutate_relation_reverse_file(
     else {
         return Ok(());
     };
-    ensure_compatible_reverse(reverse_column, source_collection, "")?;
+    ensure_compatible_reverse_with_limit_policy(
+        reverse_column,
+        source_collection,
+        source_column_name,
+        allow_limit_one_reverse,
+    )?;
     mutate_frontmatter(&target_abs, |meta| {
         let mut values = relation_values_from_value(
             reverse_column,
             meta.extra.get(reverse_name).unwrap_or(&Value::Null),
         )?;
         if add {
+            if reverse_column.limit == Some(RelationLimit::One)
+                && values.iter().any(|value| value != source_value)
+            {
+                return Err(schema_error(format!(
+                    "relation column '{}' cannot contain multiple reverse values",
+                    reverse_column.name
+                )));
+            }
             if !values.iter().any(|value| value == source_value) {
                 values.push(source_value.to_string());
             }
@@ -3517,6 +3589,7 @@ pub fn add_schema_column(
     })
 }
 
+#[allow(dead_code)]
 pub fn change_schema_type(
     space: &str,
     collection_path: &str,
@@ -3524,6 +3597,23 @@ pub fn change_schema_type(
     new_type: PropertyType,
     conversion_strategy: Option<Value>,
 ) -> Result<CollectionSchema, AppError> {
+    change_schema_type_with_warnings(
+        space,
+        collection_path,
+        column_name,
+        new_type,
+        conversion_strategy,
+    )
+    .map(|(schema, _)| schema)
+}
+
+pub fn change_schema_type_with_warnings(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+    new_type: PropertyType,
+    conversion_strategy: Option<Value>,
+) -> Result<(CollectionSchema, Vec<SchemaMutationWarning>), AppError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     let mut touched = vec![schema_path];
     touched.extend(collection_markdown_files(space, collection_path)?);
@@ -3543,6 +3633,7 @@ pub fn change_schema_type(
         }
     }
     with_rollback(touched, || {
+        let mut warnings = Vec::new();
         let mut schema = read_schema_or_default(space, collection_path)?;
         let old_column = schema
             .columns
@@ -3557,17 +3648,52 @@ pub fn change_schema_type(
         validate_schema(&schema)?;
 
         let files = collection_markdown_files(space, collection_path)?;
+        let unconverted_relation_field = if column_snapshot.type_ == PropertyType::Relation {
+            Some(unique_extra_field_name(
+                space,
+                collection_path,
+                &schema,
+                &format!("{column_name} (unconverted)"),
+            )?)
+        } else {
+            None
+        };
+        let mut unconverted_relation_rows = 0usize;
         for file in &files {
             mutate_frontmatter(file, |meta| {
-                if let Some(value) = meta.extra.get_mut(column_name) {
-                    *value = convert_value_for_type_from_old(
-                        value.clone(),
-                        old_column.as_ref(),
-                        &column_snapshot,
-                    );
+                if let Some(value) = meta.extra.remove(column_name) {
+                    if let Some(extra_field) = unconverted_relation_field.as_deref() {
+                        let (converted, extra) =
+                            convert_value_for_relation_change(space, &column_snapshot, value)?;
+                        if let Some(converted) = converted {
+                            meta.extra.insert(column_name.to_string(), converted);
+                        }
+                        if let Some(extra) = extra {
+                            meta.extra.insert(extra_field.to_string(), extra);
+                            unconverted_relation_rows += 1;
+                        }
+                    } else {
+                        meta.extra.insert(
+                            column_name.to_string(),
+                            convert_value_for_type_from_old(
+                                value,
+                                old_column.as_ref(),
+                                &column_snapshot,
+                            ),
+                        );
+                    }
                 }
                 Ok(())
             })?;
+        }
+        if let Some(field) = unconverted_relation_field {
+            if unconverted_relation_rows > 0 {
+                warnings.push(SchemaMutationWarning {
+                    code: "relation_unconverted_values".to_string(),
+                    field,
+                    count: unconverted_relation_rows,
+                });
+            }
         }
 
         enforce_relation_limit_one_existing_values(space, collection_path, &column_snapshot)?;
@@ -3584,7 +3710,7 @@ pub fn change_schema_type(
             detach_two_way_relation(space, collection_path, old_column.as_ref().unwrap(), true)?;
         }
         ensure_two_way_schema_and_values(space, collection_path, &column_snapshot)?;
-        Ok(schema)
+        Ok((schema, warnings))
     })
 }
 
@@ -4493,6 +4619,74 @@ pub struct RelationBacklink {
     pub title: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationTwoWaySchemaStatus {
+    Ok,
+    NotTwoWay,
+    MissingReverse,
+    IncompatibleReverse,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompatibleReverseChoice {
+    pub name: String,
+    pub two_way: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationDriftKind {
+    MissingReverse,
+    MissingSource,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelationDriftRow {
+    pub kind: RelationDriftKind,
+    pub source_file_path: String,
+    pub target_file_path: String,
+    pub source_value: String,
+    pub target_value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RelationDriftSummary {
+    pub missing_reverse_count: usize,
+    pub missing_source_count: usize,
+    pub rows: Vec<RelationDriftRow>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelationTwoWayDiagnostics {
+    pub collection_path: String,
+    pub column: String,
+    pub relation: Option<String>,
+    pub reverse_column: Option<String>,
+    pub schema_status: RelationTwoWaySchemaStatus,
+    pub schema_message: Option<String>,
+    pub compatible_reverse_choices: Vec<CompatibleReverseChoice>,
+    pub drift: RelationDriftSummary,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaMutationWarning {
+    pub code: String,
+    pub field: String,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RelationEdge {
+    source_value: String,
+    target_value: String,
+}
+
 pub fn list_collections(space: &str) -> Result<Vec<CollectionInfo>, AppError> {
     let root = Path::new(space);
     let mut infos = Vec::new();
@@ -4803,21 +4997,11 @@ pub async fn resolve_relation(
     let relation = normalize_collection_path(relation)?;
     let value = normalize_relation_value_shape(value)?;
     let file_path = join_collection_value(&relation, &value);
-    let row = sqlx::query(
-        "SELECT title, icon, file_path, collection_root_path FROM entries WHERE file_path = ? LIMIT 1",
-    )
-    .bind(&file_path)
-    .fetch_optional(pool)
-    .await?;
-    Ok(row.map(|row| {
-        let collection_root_path: Option<String> = row.get("collection_root_path");
-        ResolvedRelation {
-            title: row.get("title"),
-            icon: row.get("icon"),
-            file_path: row.get("file_path"),
-            collection_root_path: collection_root_path.unwrap_or_default(),
-        }
-    }))
+    let resolved = fetch_resolved_relation(pool, &file_path).await?;
+    if resolved.is_some() || value == file_path {
+        return Ok(resolved);
+    }
+    fetch_resolved_relation(pool, &value).await
 }
 
 pub async fn resolve_relations_batch(
@@ -4826,14 +5010,24 @@ pub async fn resolve_relations_batch(
     values: &[String],
 ) -> Result<Vec<Option<ResolvedRelation>>, AppError> {
     let relation = normalize_collection_path(relation)?;
-    let mut file_paths = Vec::with_capacity(values.len());
+    let mut candidates = Vec::with_capacity(values.len());
+    let mut lookup_paths = Vec::new();
+    let mut seen_paths = HashSet::new();
     for value in values {
-        file_paths.push(join_collection_value(
-            &relation,
-            &normalize_relation_value_shape(value)?,
-        ));
+        let value = normalize_relation_value_shape(value)?;
+        let primary = join_collection_value(&relation, &value);
+        let fallback = if value == primary { None } else { Some(value) };
+        if seen_paths.insert(primary.clone()) {
+            lookup_paths.push(primary.clone());
+        }
+        if let Some(fallback_path) = fallback.as_ref() {
+            if seen_paths.insert(fallback_path.clone()) {
+                lookup_paths.push(fallback_path.clone());
+            }
+        }
+        candidates.push((primary, fallback));
     }
-    if file_paths.is_empty() {
+    if lookup_paths.is_empty() {
         return Ok(Vec::new());
     }
 
@@ -4841,29 +5035,49 @@ pub async fn resolve_relations_batch(
         "SELECT title, icon, file_path, collection_root_path FROM entries WHERE file_path IN (",
     );
     let mut separated = query.separated(", ");
-    for file_path in &file_paths {
+    for file_path in &lookup_paths {
         separated.push_bind(file_path);
     }
     separated.push_unseparated(")");
     let rows = query.build().fetch_all(pool).await?;
     let mut by_path = HashMap::new();
     for row in rows {
-        let collection_root_path: Option<String> = row.get("collection_root_path");
         let file_path: String = row.get("file_path");
-        by_path.insert(
-            file_path.clone(),
-            ResolvedRelation {
-                title: row.get("title"),
-                icon: row.get("icon"),
-                file_path,
-                collection_root_path: collection_root_path.unwrap_or_default(),
-            },
-        );
+        by_path.insert(file_path, resolved_relation_from_row(row));
     }
-    Ok(file_paths
+    Ok(candidates
         .iter()
-        .map(|path| by_path.get(path).cloned())
+        .map(|(primary, fallback)| {
+            by_path.get(primary).cloned().or_else(|| {
+                fallback
+                    .as_ref()
+                    .and_then(|fallback_path| by_path.get(fallback_path).cloned())
+            })
+        })
         .collect())
+}
+
+async fn fetch_resolved_relation(
+    pool: &SqlitePool,
+    file_path: &str,
+) -> Result<Option<ResolvedRelation>, AppError> {
+    let row = sqlx::query(
+        "SELECT title, icon, file_path, collection_root_path FROM entries WHERE file_path = ? LIMIT 1",
+    )
+    .bind(file_path)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(resolved_relation_from_row))
+}
+
+fn resolved_relation_from_row(row: sqlx::sqlite::SqliteRow) -> ResolvedRelation {
+    let collection_root_path: Option<String> = row.get("collection_root_path");
+    ResolvedRelation {
+        title: row.get("title"),
+        icon: row.get("icon"),
+        file_path: row.get("file_path"),
+        collection_root_path: collection_root_path.unwrap_or_default(),
+    }
 }
 
 pub fn query_relation_backlinks(
@@ -4934,11 +5148,232 @@ pub fn query_relation_backlinks(
     Ok(out)
 }
 
+pub fn diagnose_two_way_relation(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+) -> Result<RelationTwoWayDiagnostics, AppError> {
+    let collection_path = collection_root_for_schema(collection_path);
+    let schema = read_schema_or_default(space, &collection_path)?;
+    let column = schema
+        .columns
+        .iter()
+        .find(|column| column.name == column_name && column.type_ == PropertyType::Relation)
+        .cloned()
+        .ok_or_else(|| schema_error(format!("relation column '{column_name}' not found")))?;
+    let relation = column
+        .relation
+        .as_deref()
+        .map(normalize_collection_path)
+        .transpose()?;
+    let reverse_column = column.two_way.clone();
+    let choices = if let Some(relation) = relation.as_deref() {
+        compatible_reverse_choices(space, &collection_path, column_name, relation)?
+    } else {
+        Vec::new()
+    };
+
+    let mut schema_status = RelationTwoWaySchemaStatus::NotTwoWay;
+    let mut schema_message = None;
+    let mut drift = RelationDriftSummary::default();
+
+    if let (Some(relation), Some(reverse_name)) = (relation.as_deref(), reverse_column.as_deref()) {
+        let reverse_schema = read_schema_or_default(space, relation)?;
+        if let Some(reverse) = reverse_schema
+            .columns
+            .iter()
+            .find(|candidate| candidate.name == reverse_name)
+        {
+            match ensure_compatible_reverse_with_limit_policy(
+                reverse,
+                &collection_path,
+                column_name,
+                true,
+            ) {
+                Ok(()) if reverse.two_way.as_deref() == Some(column_name) => {
+                    schema_status = RelationTwoWaySchemaStatus::Ok;
+                    drift = detect_relation_value_drift(
+                        space,
+                        &collection_path,
+                        &column,
+                        relation,
+                        reverse,
+                    )?;
+                }
+                Ok(()) => {
+                    schema_status = RelationTwoWaySchemaStatus::IncompatibleReverse;
+                    schema_message = Some(format!(
+                        "reverse column '{reverse_name}' is not paired with '{column_name}'"
+                    ));
+                }
+                Err(error) => {
+                    schema_status = RelationTwoWaySchemaStatus::IncompatibleReverse;
+                    schema_message = Some(error.to_string());
+                }
+            }
+        } else {
+            schema_status = RelationTwoWaySchemaStatus::MissingReverse;
+            schema_message = Some(format!("reverse column '{reverse_name}' not found"));
+        }
+    }
+
+    Ok(RelationTwoWayDiagnostics {
+        collection_path,
+        column: column_name.to_string(),
+        relation,
+        reverse_column,
+        schema_status,
+        schema_message,
+        compatible_reverse_choices: choices,
+        drift,
+    })
+}
+
+fn compatible_reverse_choices(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+    relation: &str,
+) -> Result<Vec<CompatibleReverseChoice>, AppError> {
+    let mut choices = Vec::new();
+    let reverse_schema = read_schema_or_default(space, relation)?;
+    for candidate in &reverse_schema.columns {
+        if candidate.type_ != PropertyType::Relation {
+            continue;
+        }
+        if candidate.limit == Some(RelationLimit::One) {
+            continue;
+        }
+        let Some(candidate_relation) = candidate.relation.as_deref() else {
+            continue;
+        };
+        if normalize_collection_path(candidate_relation)
+            .ok()
+            .as_deref()
+            != Some(collection_path)
+        {
+            continue;
+        }
+        if candidate
+            .two_way
+            .as_deref()
+            .is_some_and(|paired| paired != column_name)
+        {
+            continue;
+        }
+        choices.push(CompatibleReverseChoice {
+            name: candidate.name.clone(),
+            two_way: candidate.two_way.clone(),
+        });
+    }
+    choices.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(choices)
+}
+
+fn detect_relation_value_drift(
+    space: &str,
+    collection_path: &str,
+    column: &Column,
+    relation: &str,
+    reverse: &Column,
+) -> Result<RelationDriftSummary, AppError> {
+    let source_edges = relation_edges_for_column(space, collection_path, column)?;
+    let reverse_edges = relation_edges_for_column(space, relation, reverse)?
+        .into_iter()
+        .map(|edge| RelationEdge {
+            source_value: edge.target_value,
+            target_value: edge.source_value,
+        })
+        .collect::<HashSet<_>>();
+
+    let mut rows = Vec::new();
+    for edge in source_edges.difference(&reverse_edges) {
+        rows.push(RelationDriftRow {
+            kind: RelationDriftKind::MissingReverse,
+            source_file_path: join_collection_value(collection_path, &edge.source_value),
+            target_file_path: join_collection_value(relation, &edge.target_value),
+            source_value: edge.source_value.clone(),
+            target_value: edge.target_value.clone(),
+        });
+    }
+    let missing_reverse_count = rows.len();
+    for edge in reverse_edges.difference(&source_edges) {
+        rows.push(RelationDriftRow {
+            kind: RelationDriftKind::MissingSource,
+            source_file_path: join_collection_value(collection_path, &edge.source_value),
+            target_file_path: join_collection_value(relation, &edge.target_value),
+            source_value: edge.source_value.clone(),
+            target_value: edge.target_value.clone(),
+        });
+    }
+    let missing_source_count = rows.len() - missing_reverse_count;
+    rows.sort_by(|a, b| {
+        a.source_file_path
+            .cmp(&b.source_file_path)
+            .then_with(|| a.target_file_path.cmp(&b.target_file_path))
+            .then_with(|| a.kind.cmp(&b.kind))
+    });
+
+    Ok(RelationDriftSummary {
+        missing_reverse_count,
+        missing_source_count,
+        rows,
+    })
+}
+
+fn relation_edges_for_column(
+    space: &str,
+    collection_path: &str,
+    column: &Column,
+) -> Result<HashSet<RelationEdge>, AppError> {
+    let source_collection = collection_root_for_schema(collection_path);
+    let mut edges = HashSet::new();
+    for file in collection_markdown_files(space, collection_path)? {
+        let file_path = file
+            .strip_prefix(space)
+            .unwrap_or(&file)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let source_value = value_relative_to_collection(&source_collection, &file_path)?;
+        for target_value in read_relation_field_values_from_file(&file, column)? {
+            edges.insert(RelationEdge {
+                source_value: source_value.clone(),
+                target_value,
+            });
+        }
+    }
+    Ok(edges)
+}
+
+pub fn relation_repair_mutation_paths(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+) -> Result<Vec<PathBuf>, AppError> {
+    let mut paths = Vec::new();
+    paths.push(collection_dir(space, collection_path).join(SCHEMA_FILE));
+    paths.extend(collection_markdown_files(space, collection_path)?);
+    let schema = read_schema_or_default(space, collection_path)?;
+    if let Some(column) = schema
+        .columns
+        .iter()
+        .find(|column| column.name == column_name && column.type_ == PropertyType::Relation)
+    {
+        if let Some(relation) = column.relation.as_deref() {
+            let relation = normalize_collection_path(relation)?;
+            paths.push(collection_dir(space, &relation).join(SCHEMA_FILE));
+            paths.extend(collection_markdown_files(space, &relation)?);
+        }
+    }
+    dedupe_paths(paths)
+}
+
 pub fn repair_two_way_relation(
     space: &str,
     collection_path: &str,
     column_name: &str,
     strategy: &str,
+    reverse_column: Option<&str>,
 ) -> Result<(), AppError> {
     let schema = read_schema_or_default(space, collection_path)?;
     let column = schema
@@ -4957,6 +5392,8 @@ pub fn repair_two_way_relation(
     let mut touched = Vec::new();
     touched.extend(collection_markdown_files(space, collection_path)?);
     touched.extend(collection_markdown_files(space, relation)?);
+    touched.push(collection_dir(space, collection_path).join(SCHEMA_FILE));
+    touched.push(collection_dir(space, relation).join(SCHEMA_FILE));
     with_rollback(touched, || match strategy {
         "from_this_side" => {
             for file in collection_markdown_files(space, relation)? {
@@ -4985,12 +5422,196 @@ pub fn repair_two_way_relation(
                 .ok_or_else(|| {
                     schema_error(format!("reverse column '{reverse_name}' not found"))
                 })?;
-            materialize_two_way_reverse_values(space, relation, &reverse)
+            materialize_two_way_reverse_values_allowing_limit_one_reverse(space, relation, &reverse)
         }
+        "choose_reverse_column" => {
+            let reverse_name = required_reverse_repair_column(reverse_column)?;
+            choose_two_way_reverse_column(space, collection_path, column_name, reverse_name)
+        }
+        "create_reverse_column" => {
+            let reverse_name = reverse_column.unwrap_or(reverse_name);
+            create_two_way_reverse_column(space, collection_path, column_name, reverse_name)
+        }
+        "detach_two_way" => detach_current_two_way_relation(
+            space,
+            collection_path,
+            column_name,
+            reverse_column.or(Some(reverse_name)),
+        ),
         _ => Err(schema_error(format!(
             "unknown relation repair strategy '{strategy}'"
         ))),
     })
+}
+
+fn required_reverse_repair_column<'a>(
+    reverse_column: Option<&'a str>,
+) -> Result<&'a str, AppError> {
+    reverse_column
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| schema_error("reverse column is required for this repair strategy"))
+}
+
+fn choose_two_way_reverse_column(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+    reverse_name: &str,
+) -> Result<(), AppError> {
+    validate_relation_column_name(reverse_name)?;
+    let source_collection = collection_root_for_schema(collection_path);
+    let mut schema = read_schema_or_default(space, collection_path)?;
+    let relation = {
+        let column = find_column_mut(&mut schema, column_name)?;
+        if column.type_ != PropertyType::Relation {
+            return Err(schema_error(format!(
+                "column '{column_name}' is not a relation"
+            )));
+        }
+        column
+            .relation
+            .as_deref()
+            .map(normalize_collection_path)
+            .transpose()?
+            .ok_or_else(|| {
+                schema_error(format!("relation column '{column_name}' requires relation"))
+            })?
+    };
+    let mut reverse_schema = read_schema_or_default(space, &relation)?;
+    let reverse = reverse_schema
+        .columns
+        .iter_mut()
+        .find(|candidate| candidate.name == reverse_name)
+        .ok_or_else(|| schema_error(format!("reverse column '{reverse_name}' not found")))?;
+    ensure_compatible_reverse(reverse, &source_collection, column_name)?;
+
+    find_column_mut(&mut schema, column_name)?.two_way = Some(reverse_name.to_string());
+    reverse.two_way = Some(column_name.to_string());
+    write_schema(space, collection_path, &schema)?;
+    write_schema(space, &relation, &reverse_schema)?;
+    let column = schema
+        .columns
+        .iter()
+        .find(|column| column.name == column_name)
+        .cloned()
+        .ok_or_else(|| schema_error(format!("relation column '{column_name}' not found")))?;
+    materialize_two_way_reverse_values(space, collection_path, &column)
+}
+
+fn create_two_way_reverse_column(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+    reverse_name: &str,
+) -> Result<(), AppError> {
+    validate_relation_column_name(reverse_name)?;
+    let source_collection = collection_root_for_schema(collection_path);
+    let mut schema = read_schema_or_default(space, collection_path)?;
+    let relation = {
+        let column = find_column_mut(&mut schema, column_name)?;
+        if column.type_ != PropertyType::Relation {
+            return Err(schema_error(format!(
+                "column '{column_name}' is not a relation"
+            )));
+        }
+        column
+            .relation
+            .as_deref()
+            .map(normalize_collection_path)
+            .transpose()?
+            .ok_or_else(|| {
+                schema_error(format!("relation column '{column_name}' requires relation"))
+            })?
+    };
+    let mut reverse_schema = read_schema_or_default(space, &relation)?;
+    if reverse_schema
+        .columns
+        .iter()
+        .any(|candidate| candidate.name == reverse_name)
+    {
+        return Err(schema_error(format!(
+            "reverse column '{reverse_name}' already exists"
+        )));
+    }
+
+    find_column_mut(&mut schema, column_name)?.two_way = Some(reverse_name.to_string());
+    reverse_schema.columns.push(Column {
+        name: reverse_name.to_string(),
+        type_: PropertyType::Relation,
+        default: None,
+        options: None,
+        display: None,
+        min: None,
+        max: None,
+        color: None,
+        time_by_default: None,
+        range_by_default: None,
+        relation: Some(source_collection),
+        limit: None,
+        two_way: Some(column_name.to_string()),
+        prefix: None,
+        next: None,
+        multiple: None,
+    });
+    write_schema(space, collection_path, &schema)?;
+    write_schema(space, &relation, &reverse_schema)?;
+    let column = schema
+        .columns
+        .iter()
+        .find(|column| column.name == column_name)
+        .cloned()
+        .ok_or_else(|| schema_error(format!("relation column '{column_name}' not found")))?;
+    materialize_two_way_reverse_values(space, collection_path, &column)
+}
+
+fn detach_current_two_way_relation(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+    reverse_column: Option<&str>,
+) -> Result<(), AppError> {
+    let source_collection = collection_root_for_schema(collection_path);
+    let mut schema = read_schema_or_default(space, collection_path)?;
+    let (relation, old_reverse_name) = {
+        let column = find_column_mut(&mut schema, column_name)?;
+        if column.type_ != PropertyType::Relation {
+            return Err(schema_error(format!(
+                "column '{column_name}' is not a relation"
+            )));
+        }
+        let relation = column
+            .relation
+            .as_deref()
+            .map(normalize_collection_path)
+            .transpose()?
+            .ok_or_else(|| {
+                schema_error(format!("relation column '{column_name}' requires relation"))
+            })?;
+        let old_reverse_name = column.two_way.take();
+        (relation, old_reverse_name)
+    };
+    write_schema(space, collection_path, &schema)?;
+
+    let reverse_name = reverse_column
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or(old_reverse_name);
+    if let Some(reverse_name) = reverse_name {
+        let mut reverse_schema = read_schema_or_default(space, &relation)?;
+        if let Some(reverse) = reverse_schema
+            .columns
+            .iter_mut()
+            .find(|candidate| candidate.name == reverse_name)
+        {
+            if ensure_compatible_reverse(reverse, &source_collection, column_name).is_ok() {
+                reverse.two_way = None;
+                write_schema(space, &relation, &reverse_schema)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -6108,6 +6729,119 @@ fn convert_value_for_relation(value: Value, column: &Column) -> Option<Value> {
     }
 }
 
+fn convert_value_for_relation_change(
+    space: &str,
+    column: &Column,
+    value: Value,
+) -> Result<(Option<Value>, Option<Value>), AppError> {
+    if value.is_null() {
+        return Ok((None, None));
+    }
+    let relation = column.relation.as_deref().ok_or_else(|| {
+        schema_error(format!(
+            "relation column '{}' requires relation",
+            column.name
+        ))
+    })?;
+
+    if column.limit == Some(RelationLimit::One) {
+        let mut converted = None;
+        let mut extra = Vec::new();
+        let items = match value {
+            Value::Sequence(sequence) => sequence,
+            other => vec![other],
+        };
+        for item in items {
+            let Some(raw) = value_to_scalar_string(&item) else {
+                extra.push(item);
+                continue;
+            };
+            match canonicalize_relation_target_value(space, relation, &raw) {
+                Ok(value) if converted.is_none() => {
+                    converted = Some(Value::String(value));
+                }
+                Ok(_) | Err(_) => extra.push(Value::String(raw)),
+            }
+        }
+        let extra = match extra.len() {
+            0 => None,
+            1 => Some(extra.remove(0)),
+            _ => Some(Value::Sequence(extra)),
+        };
+        return Ok((converted, extra));
+    }
+
+    let mut seen = HashSet::new();
+    let mut converted = Vec::new();
+    let mut extra = Vec::new();
+    match value {
+        Value::Sequence(sequence) => {
+            for item in sequence {
+                let Some(raw) = value_to_scalar_string(&item) else {
+                    extra.push(item);
+                    continue;
+                };
+                match canonicalize_relation_target_value(space, relation, &raw) {
+                    Ok(value) if seen.insert(value.clone()) => {
+                        converted.push(Value::String(value));
+                    }
+                    Ok(_) => {}
+                    Err(_) => extra.push(Value::String(raw)),
+                }
+            }
+        }
+        other => {
+            let Some(raw) = value_to_scalar_string(&other) else {
+                return Ok((None, Some(other)));
+            };
+            match canonicalize_relation_target_value(space, relation, &raw) {
+                Ok(value) => converted.push(Value::String(value)),
+                Err(_) => extra.push(Value::String(raw)),
+            }
+        }
+    }
+
+    let converted = (!converted.is_empty()).then_some(Value::Sequence(converted));
+    let extra = match extra.len() {
+        0 => None,
+        1 => Some(extra.remove(0)),
+        _ => Some(Value::Sequence(extra)),
+    };
+    Ok((converted, extra))
+}
+
+fn unique_extra_field_name(
+    space: &str,
+    collection_path: &str,
+    schema: &CollectionSchema,
+    base: &str,
+) -> Result<String, AppError> {
+    let mut used: HashSet<String> = schema
+        .columns
+        .iter()
+        .map(|column| column.name.clone())
+        .collect();
+    for file in collection_markdown_files(space, collection_path)? {
+        let raw = fs::read_to_string(file)?;
+        if let Some((meta, _)) = frontmatter::try_parse(&raw)? {
+            used.extend(meta.extra.keys().cloned());
+        }
+    }
+    if !used.contains(base) {
+        return Ok(base.to_string());
+    }
+    for index in 2..=1000 {
+        let candidate = format!("{base} {index}");
+        if !used.contains(&candidate) {
+            return Ok(candidate);
+        }
+    }
+    Ok(format!(
+        "{base} {}",
+        ulid::Ulid::new().to_string().to_lowercase()
+    ))
+}
+
 fn replace_string_refs_in_views(views: &mut [View], old: &str, new: &str) {
     for view in views {
         replace_string_refs_in_view(view, old, new);
@@ -6911,6 +7645,184 @@ views: []
         assert_eq!(related, vec!["moved/a.md", "moved/sub/b.md"]);
     }
 
+    #[tokio::test]
+    async fn move_to_another_collection_keeps_old_relation_out_of_scope() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        fs::create_dir_all(space.join("tasks")).unwrap();
+        fs::create_dir_all(space.join("archive")).unwrap();
+        fs::create_dir_all(space.join("projects")).unwrap();
+        fs::write(space.join("tasks/schema.yaml"), "columns: []\nviews: []\n").unwrap();
+        fs::write(
+            space.join("archive/schema.yaml"),
+            "columns: []\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("projects/schema.yaml"),
+            "columns:\n  - name: Work\n    type: relation\n    relation: tasks\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("tasks/a.md"),
+            "---\nid: a\ntitle: A\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("projects/p.md"),
+            "---\nid: p\ntitle: Project\ncreated: now\nupdated: now\nWork: a.md\n---\n",
+        )
+        .unwrap();
+        fs::rename(space.join("tasks/a.md"), space.join("archive/a.md")).unwrap();
+
+        rewrite_relation_paths_for_move(space.to_str().unwrap(), "tasks/a.md", "archive/a.md")
+            .unwrap();
+
+        let raw = fs::read_to_string(space.join("projects/p.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        let work_values: Vec<_> = meta
+            .extra
+            .get("Work")
+            .unwrap()
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect();
+        assert_eq!(work_values, vec!["archive/a.md"]);
+
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            r#"
+            CREATE TABLE entries (
+                file_path TEXT NOT NULL,
+                title TEXT NOT NULL,
+                icon TEXT,
+                description TEXT,
+                created TEXT NOT NULL,
+                updated TEXT NOT NULL,
+                collection_root_path TEXT,
+                in_collection INTEGER NOT NULL,
+                is_entry_head INTEGER NOT NULL,
+                fields TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"
+            INSERT INTO entries (
+                file_path, title, icon, description, created, updated, collection_root_path,
+                in_collection, is_entry_head, fields
+            ) VALUES ('archive/a.md', 'A', NULL, NULL, '2026-01-01', '2026-01-01', 'archive', 1, 1, '{}')
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let resolved = resolve_relation(&pool, "tasks", "archive/a.md")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved.file_path, "archive/a.md");
+        assert_eq!(resolved.collection_root_path, "archive");
+
+        let batch = resolve_relations_batch(&pool, "tasks", &["archive/a.md".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(batch[0].as_ref().unwrap().file_path, "archive/a.md");
+    }
+
+    #[test]
+    fn change_schema_type_to_relation_preserves_unconverted_values_as_orphan_extra() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        fs::create_dir_all(space.join("tasks")).unwrap();
+        fs::create_dir_all(space.join("sprints")).unwrap();
+        fs::write(
+            space.join("tasks/schema.yaml"),
+            "columns:\n  - name: Sprint\n    type: text\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("sprints/schema.yaml"),
+            "columns: []\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("sprints/sprint-1.md"),
+            "---\nid: s1\ntitle: Sprint 1\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("tasks/a.md"),
+            "---\nid: a\ntitle: A\ncreated: now\nupdated: now\nSprint: sprint-1.md\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("tasks/b.md"),
+            "---\nid: b\ntitle: B\ncreated: now\nupdated: now\nSprint: missing.md\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("tasks/c.md"),
+            "---\nid: c\ntitle: C\ncreated: now\nupdated: now\nSprint:\n  - sprint-1.md\n  - missing-2.md\n---\n",
+        )
+        .unwrap();
+
+        let strategy: Value = serde_yml::from_str("relation: sprints\nlimit: one\n").unwrap();
+        let (schema, warnings) = change_schema_type_with_warnings(
+            space.to_str().unwrap(),
+            "tasks",
+            "Sprint",
+            PropertyType::Relation,
+            Some(strategy),
+        )
+        .unwrap();
+
+        assert_eq!(schema.columns[0].type_, PropertyType::Relation);
+        assert_eq!(schema.columns[0].relation.as_deref(), Some("sprints"));
+        assert_eq!(schema.columns[0].limit, Some(RelationLimit::One));
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, "relation_unconverted_values");
+        assert_eq!(warnings[0].field, "Sprint (unconverted)");
+        assert_eq!(warnings[0].count, 2);
+
+        let raw = fs::read_to_string(space.join("tasks/a.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        assert_eq!(
+            meta.extra.get("Sprint").and_then(Value::as_str),
+            Some("sprint-1.md")
+        );
+        assert!(!meta.extra.contains_key("Sprint (unconverted)"));
+
+        let raw = fs::read_to_string(space.join("tasks/b.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        assert!(!meta.extra.contains_key("Sprint"));
+        assert_eq!(
+            meta.extra
+                .get("Sprint (unconverted)")
+                .and_then(Value::as_str),
+            Some("missing.md")
+        );
+
+        let raw = fs::read_to_string(space.join("tasks/c.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        assert_eq!(
+            meta.extra.get("Sprint").and_then(Value::as_str),
+            Some("sprint-1.md")
+        );
+        assert_eq!(
+            meta.extra
+                .get("Sprint (unconverted)")
+                .and_then(Value::as_str),
+            Some("missing-2.md")
+        );
+    }
+
     #[test]
     fn two_way_relation_rejects_limit_one_reverse_column() {
         let tmp = TempDir::new().unwrap();
@@ -6944,6 +7856,283 @@ views: []
         };
 
         assert!(add_schema_column(space.to_str().unwrap(), "tasks", column).is_err());
+    }
+
+    #[test]
+    fn two_way_relation_diagnoses_and_creates_missing_reverse_column() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        fs::create_dir_all(space.join("tasks")).unwrap();
+        fs::create_dir_all(space.join("sprints")).unwrap();
+        fs::write(
+            space.join("tasks/schema.yaml"),
+            "columns:\n  - name: Sprint\n    type: relation\n    relation: sprints\n    limit: one\n    two_way: Tasks\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("sprints/schema.yaml"),
+            "columns: []\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("tasks/a.md"),
+            "---\nid: a\ntitle: A\ncreated: now\nupdated: now\nSprint: sprint-1.md\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("sprints/sprint-1.md"),
+            "---\nid: s1\ntitle: Sprint 1\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+
+        let diagnostics =
+            diagnose_two_way_relation(space.to_str().unwrap(), "tasks", "Sprint").unwrap();
+        assert_eq!(
+            diagnostics.schema_status,
+            RelationTwoWaySchemaStatus::MissingReverse
+        );
+        assert_eq!(diagnostics.reverse_column.as_deref(), Some("Tasks"));
+
+        repair_two_way_relation(
+            space.to_str().unwrap(),
+            "tasks",
+            "Sprint",
+            "create_reverse_column",
+            Some("Tasks"),
+        )
+        .unwrap();
+
+        let source_schema = read_collection_schema(space.to_str().unwrap(), "tasks").unwrap();
+        let reverse_schema = read_collection_schema(space.to_str().unwrap(), "sprints").unwrap();
+        assert_eq!(source_schema.columns[0].two_way.as_deref(), Some("Tasks"));
+        let reverse = reverse_schema
+            .columns
+            .iter()
+            .find(|column| column.name == "Tasks")
+            .unwrap();
+        assert_eq!(reverse.type_, PropertyType::Relation);
+        assert_eq!(reverse.relation.as_deref(), Some("tasks"));
+        assert_eq!(reverse.two_way.as_deref(), Some("Sprint"));
+
+        let raw = fs::read_to_string(space.join("sprints/sprint-1.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        let tasks: Vec<_> = meta
+            .extra
+            .get("Tasks")
+            .unwrap()
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect();
+        assert_eq!(tasks, vec!["a.md"]);
+
+        let diagnostics =
+            diagnose_two_way_relation(space.to_str().unwrap(), "tasks", "Sprint").unwrap();
+        assert_eq!(diagnostics.schema_status, RelationTwoWaySchemaStatus::Ok);
+        assert_eq!(diagnostics.drift.missing_reverse_count, 0);
+        assert_eq!(diagnostics.drift.missing_source_count, 0);
+    }
+
+    #[test]
+    fn two_way_relation_detects_and_repairs_value_drift() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        fs::create_dir_all(space.join("tasks")).unwrap();
+        fs::create_dir_all(space.join("sprints")).unwrap();
+        fs::write(
+            space.join("tasks/schema.yaml"),
+            "columns:\n  - name: Sprint\n    type: relation\n    relation: sprints\n    limit: one\n    two_way: Tasks\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("sprints/schema.yaml"),
+            "columns:\n  - name: Tasks\n    type: relation\n    relation: tasks\n    two_way: Sprint\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("tasks/a.md"),
+            "---\nid: a\ntitle: A\ncreated: now\nupdated: now\nSprint: sprint-1.md\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("sprints/sprint-1.md"),
+            "---\nid: s1\ntitle: Sprint 1\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+
+        let diagnostics =
+            diagnose_two_way_relation(space.to_str().unwrap(), "tasks", "Sprint").unwrap();
+        assert_eq!(diagnostics.schema_status, RelationTwoWaySchemaStatus::Ok);
+        assert_eq!(diagnostics.drift.missing_reverse_count, 1);
+        assert_eq!(diagnostics.drift.missing_source_count, 0);
+
+        repair_two_way_relation(
+            space.to_str().unwrap(),
+            "tasks",
+            "Sprint",
+            "from_this_side",
+            None,
+        )
+        .unwrap();
+        let raw = fs::read_to_string(space.join("sprints/sprint-1.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        assert_eq!(
+            meta.extra
+                .get("Tasks")
+                .unwrap()
+                .as_sequence()
+                .unwrap()
+                .first()
+                .unwrap()
+                .as_str(),
+            Some("a.md")
+        );
+
+        mutate_frontmatter(&space.join("tasks/a.md"), |meta| {
+            meta.extra.remove("Sprint");
+            Ok(())
+        })
+        .unwrap();
+        let diagnostics =
+            diagnose_two_way_relation(space.to_str().unwrap(), "tasks", "Sprint").unwrap();
+        assert_eq!(diagnostics.drift.missing_reverse_count, 0);
+        assert_eq!(diagnostics.drift.missing_source_count, 1);
+
+        repair_two_way_relation(
+            space.to_str().unwrap(),
+            "tasks",
+            "Sprint",
+            "from_related_side",
+            None,
+        )
+        .unwrap();
+        let raw = fs::read_to_string(space.join("tasks/a.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        assert_eq!(
+            meta.extra.get("Sprint").and_then(Value::as_str),
+            Some("sprint-1.md")
+        );
+    }
+
+    #[test]
+    fn two_way_relation_reverse_side_update_allows_paired_limit_one() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        fs::create_dir_all(space.join("tasks")).unwrap();
+        fs::create_dir_all(space.join("sprints")).unwrap();
+        fs::write(
+            space.join("tasks/schema.yaml"),
+            "columns:\n  - name: Sprint\n    type: relation\n    relation: sprints\n    limit: one\n    two_way: Tasks\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("sprints/schema.yaml"),
+            "columns:\n  - name: Tasks\n    type: relation\n    relation: tasks\n    two_way: Sprint\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("tasks/a.md"),
+            "---\nid: a\ntitle: A\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("sprints/sprint-1.md"),
+            "---\nid: s1\ntitle: Sprint 1\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("sprints/sprint-2.md"),
+            "---\nid: s2\ntitle: Sprint 2\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+
+        update_relation_entry_field(
+            space.to_str().unwrap(),
+            "sprints/sprint-1.md",
+            "Tasks",
+            serde_yml::to_value(vec!["a.md"]).unwrap(),
+        )
+        .unwrap();
+
+        let raw = fs::read_to_string(space.join("tasks/a.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        assert_eq!(
+            meta.extra.get("Sprint").and_then(Value::as_str),
+            Some("sprint-1.md")
+        );
+
+        let conflict = update_relation_entry_field(
+            space.to_str().unwrap(),
+            "sprints/sprint-2.md",
+            "Tasks",
+            serde_yml::to_value(vec!["a.md"]).unwrap(),
+        );
+        assert!(conflict.is_err());
+    }
+
+    #[test]
+    fn two_way_relation_can_choose_compatible_reverse_column() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        fs::create_dir_all(space.join("tasks")).unwrap();
+        fs::create_dir_all(space.join("sprints")).unwrap();
+        fs::write(
+            space.join("tasks/schema.yaml"),
+            "columns:\n  - name: Sprint\n    type: relation\n    relation: sprints\n    limit: one\n    two_way: Missing\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("sprints/schema.yaml"),
+            "columns:\n  - name: Work\n    type: relation\n    relation: tasks\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("tasks/a.md"),
+            "---\nid: a\ntitle: A\ncreated: now\nupdated: now\nSprint: sprint-1.md\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("sprints/sprint-1.md"),
+            "---\nid: s1\ntitle: Sprint 1\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+
+        let diagnostics =
+            diagnose_two_way_relation(space.to_str().unwrap(), "tasks", "Sprint").unwrap();
+        assert_eq!(
+            diagnostics.schema_status,
+            RelationTwoWaySchemaStatus::MissingReverse
+        );
+        assert_eq!(diagnostics.compatible_reverse_choices[0].name, "Work");
+
+        repair_two_way_relation(
+            space.to_str().unwrap(),
+            "tasks",
+            "Sprint",
+            "choose_reverse_column",
+            Some("Work"),
+        )
+        .unwrap();
+
+        let source_schema = read_collection_schema(space.to_str().unwrap(), "tasks").unwrap();
+        let reverse_schema = read_collection_schema(space.to_str().unwrap(), "sprints").unwrap();
+        assert_eq!(source_schema.columns[0].two_way.as_deref(), Some("Work"));
+        assert_eq!(reverse_schema.columns[0].two_way.as_deref(), Some("Sprint"));
+
+        let raw = fs::read_to_string(space.join("sprints/sprint-1.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        assert_eq!(
+            meta.extra
+                .get("Work")
+                .unwrap()
+                .as_sequence()
+                .unwrap()
+                .first()
+                .unwrap()
+                .as_str(),
+            Some("a.md")
+        );
     }
 
     #[test]

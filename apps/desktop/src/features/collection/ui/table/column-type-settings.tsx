@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   closestCenter,
   DndContext,
@@ -18,7 +18,16 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { invoke } from "@tauri-apps/api/core";
-import { GripVertical, Plus, X } from "lucide-react";
+import {
+  AlertTriangle,
+  GripVertical,
+  Link2,
+  Plus,
+  RefreshCcw,
+  Unlink,
+  Wrench,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,8 +45,13 @@ import type {
   ColorName,
   Column,
   PropertyOption,
+  RelationTwoWayDiagnostics,
   StatusGroup,
 } from "@/features/properties/model";
+import {
+  diagnoseTwoWayRelation,
+  repairTwoWayRelation,
+} from "@/features/properties/api/relation-api";
 import { STATUS_GROUPS } from "@/features/properties/lib";
 import { SettingsRow, SettingsSection } from "../settings-row";
 import { ColorPicker } from "./color-picker";
@@ -175,6 +189,9 @@ export function TypeSettingsPane({
       <RelationSettingsPane
         column={column}
         spacePath={spacePath}
+        collectionPath={collectionPath}
+        projectPath={projectPath}
+        onSchemaChange={onSchemaChange}
         onPatchColumn={onPatchColumn}
       />
     );
@@ -185,10 +202,16 @@ export function TypeSettingsPane({
 function RelationSettingsPane({
   column,
   spacePath,
+  collectionPath,
+  projectPath,
+  onSchemaChange,
   onPatchColumn,
 }: {
   column: Column;
   spacePath: string;
+  collectionPath: string;
+  projectPath?: string | null;
+  onSchemaChange: (schema: CollectionSchema) => void;
   onPatchColumn: (patch: Record<string, unknown>) => void | Promise<void>;
 }) {
   const [collections, setCollections] = useState<
@@ -197,6 +220,11 @@ function RelationSettingsPane({
   const [reverseName, setReverseName] = useState(
     column.twoWay ?? column.two_way ?? "",
   );
+  const [diagnostics, setDiagnostics] =
+    useState<RelationTwoWayDiagnostics | null>(null);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const [selectedReverse, setSelectedReverse] = useState("");
+  const [repairing, setRepairing] = useState<string | null>(null);
 
   useEffect(() => {
     setReverseName(column.twoWay ?? column.two_way ?? "");
@@ -235,11 +263,83 @@ function RelationSettingsPane({
         ...collectionOptions,
       ];
   const twoWay = Boolean(column.twoWay ?? column.two_way);
+  const loadDiagnostics = useCallback(
+    async (cancelled?: () => boolean) => {
+      if (!twoWay) {
+        setDiagnostics(null);
+        setDiagnosticsLoading(false);
+        return;
+      }
+      setDiagnosticsLoading(true);
+      try {
+        const next = await diagnoseTwoWayRelation({
+          spacePath,
+          collectionPath,
+          column: column.name,
+        });
+        if (cancelled?.()) return;
+        setDiagnostics(next);
+        setSelectedReverse((current) => {
+          if (current) return current;
+          return next.compatibleReverseChoices[0]?.name ?? "";
+        });
+      } catch (error) {
+        if (cancelled?.()) return;
+        console.error(error);
+        setDiagnostics(null);
+      } finally {
+        if (!cancelled?.()) setDiagnosticsLoading(false);
+      }
+    },
+    [collectionPath, column.name, spacePath, twoWay],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadDiagnostics(() => cancelled);
+    return () => {
+      cancelled = true;
+    };
+  }, [loadDiagnostics, column.relation, column.twoWay, column.two_way]);
+
   const patchRelation = (patch: Record<string, unknown>) => {
     void Promise.resolve(onPatchColumn(patch)).catch((error) => {
       console.error(error);
       toast.error(errorMessage(error));
     });
+  };
+  const runRepair = async (
+    strategy:
+      | "from_this_side"
+      | "from_related_side"
+      | "choose_reverse_column"
+      | "create_reverse_column"
+      | "detach_two_way",
+    reverseColumn?: string | null,
+  ) => {
+    setRepairing(strategy);
+    try {
+      await repairTwoWayRelation({
+        spacePath,
+        projectPath,
+        collectionPath,
+        column: column.name,
+        strategy,
+        reverseColumn,
+      });
+      const schema = await invoke<CollectionSchema>("get_collection_schema", {
+        space: spacePath,
+        collectionPath,
+      });
+      onSchemaChange(schema);
+      await loadDiagnostics();
+      toast.success(m.property_relation_repair_success());
+    } catch (error) {
+      console.error(error);
+      toast.error(errorMessage(error));
+    } finally {
+      setRepairing(null);
+    }
   };
 
   return (
@@ -285,8 +385,192 @@ function RelationSettingsPane({
           />
         </label>
       ) : null}
+      {twoWay ? (
+        <RelationDiagnosticsPanel
+          diagnostics={diagnostics}
+          loading={diagnosticsLoading}
+          selectedReverse={selectedReverse}
+          reverseName={reverseName}
+          repairing={repairing}
+          onSelectReverse={setSelectedReverse}
+          onRepair={runRepair}
+        />
+      ) : null}
     </div>
   );
+}
+
+function RelationDiagnosticsPanel({
+  diagnostics,
+  loading,
+  selectedReverse,
+  reverseName,
+  repairing,
+  onSelectReverse,
+  onRepair,
+}: {
+  diagnostics: RelationTwoWayDiagnostics | null;
+  loading: boolean;
+  selectedReverse: string;
+  reverseName: string;
+  repairing: string | null;
+  onSelectReverse: (value: string) => void;
+  onRepair: (
+    strategy:
+      | "from_this_side"
+      | "from_related_side"
+      | "choose_reverse_column"
+      | "create_reverse_column"
+      | "detach_two_way",
+    reverseColumn?: string | null,
+  ) => void | Promise<void>;
+}) {
+  if (loading || !diagnostics) return null;
+
+  const schemaStatus =
+    diagnostics.schemaStatus ?? diagnostics.schema_status ?? "not_two_way";
+  const reverseColumn =
+    diagnostics.reverseColumn ?? diagnostics.reverse_column ?? reverseName;
+  const choices =
+    diagnostics.compatibleReverseChoices ??
+    diagnostics.compatible_reverse_choices ??
+    [];
+  const drift = diagnostics.drift;
+  const missingReverse =
+    drift.missingReverseCount ?? drift.missing_reverse_count ?? 0;
+  const missingSource =
+    drift.missingSourceCount ?? drift.missing_source_count ?? 0;
+  const hasSchemaWarning = schemaStatus !== "ok";
+  const hasDrift = missingReverse + missingSource > 0;
+
+  if (!hasSchemaWarning && !hasDrift) return null;
+
+  const createName =
+    reverseColumn?.trim() || reverseName.trim() || m.property_relation_reverse_default();
+  const description = hasSchemaWarning
+    ? diagnostics.schemaMessage ??
+      diagnostics.schema_message ??
+      schemaWarningDescription(schemaStatus)
+    : m.property_relation_drift_counts({
+        reverse: String(missingReverse),
+        source: String(missingSource),
+      });
+
+  return (
+    <div className="rounded-md border border-warning/40 bg-warning/10 p-2 text-xs">
+      <div className="flex gap-2">
+        <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warning" />
+        <div className="min-w-0 flex-1">
+          <div className="font-medium text-foreground">
+            {hasSchemaWarning
+              ? m.property_relation_schema_warning()
+              : m.property_relation_sync_warning()}
+          </div>
+          <div className="mt-0.5 text-muted-foreground">{description}</div>
+        </div>
+      </div>
+
+      {hasSchemaWarning && choices.length > 0 ? (
+        <div className="mt-2">
+          <Select
+            value={selectedReverse || choices[0]?.name}
+            onValueChange={onSelectReverse}
+          >
+            <SelectTrigger className="h-7 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {choices.map((choice) => (
+                  <SelectItem key={choice.name} value={choice.name}>
+                    {choice.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </div>
+      ) : null}
+
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {hasDrift ? (
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              disabled={Boolean(repairing)}
+              onClick={() => onRepair("from_this_side")}
+            >
+              <RefreshCcw data-icon="inline-start" />
+              {m.property_relation_repair_this_side()}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              disabled={Boolean(repairing)}
+              onClick={() => onRepair("from_related_side")}
+            >
+              <RefreshCcw data-icon="inline-start" />
+              {m.property_relation_repair_related_side()}
+            </Button>
+          </>
+        ) : null}
+        {hasSchemaWarning && choices.length > 0 ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            disabled={Boolean(repairing) || !(selectedReverse || choices[0]?.name)}
+            onClick={() =>
+              onRepair(
+                "choose_reverse_column",
+                selectedReverse || choices[0]?.name,
+              )
+            }
+          >
+            <Link2 data-icon="inline-start" />
+            {m.property_relation_choose_reverse()}
+          </Button>
+        ) : null}
+        {schemaStatus === "missing_reverse" ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            disabled={Boolean(repairing)}
+            onClick={() => onRepair("create_reverse_column", createName)}
+          >
+            <Wrench data-icon="inline-start" />
+            {m.property_relation_create_reverse()}
+          </Button>
+        ) : null}
+        {hasSchemaWarning ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            disabled={Boolean(repairing)}
+            onClick={() => onRepair("detach_two_way", reverseColumn)}
+          >
+            <Unlink data-icon="inline-start" />
+            {m.property_relation_detach_two_way()}
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function schemaWarningDescription(
+  status: RelationTwoWayDiagnostics["schemaStatus"],
+) {
+  if (status === "missing_reverse") return m.property_relation_missing_reverse();
+  if (status === "incompatible_reverse") {
+    return m.property_relation_incompatible_reverse();
+  }
+  return m.property_relation_schema_warning_desc();
 }
 
 function OptionsPane({

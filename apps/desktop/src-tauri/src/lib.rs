@@ -87,6 +87,7 @@ pub fn run() {
             commands::files::resolve_relation,
             commands::files::resolve_relations_batch,
             commands::files::query_relation_backlinks,
+            commands::files::diagnose_two_way_relation,
             commands::files::repair_two_way_relation,
             commands::files::list_collections,
             commands::files::list_persons,

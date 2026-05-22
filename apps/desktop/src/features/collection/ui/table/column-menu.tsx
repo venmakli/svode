@@ -17,7 +17,12 @@ import type {
   CollectionView,
   UseViewQueryResult,
 } from "@/features/collection/query";
-import type { CollectionSchema, Column } from "@/features/properties/model";
+import type {
+  ChangeSchemaTypeResult,
+  CollectionSchema,
+  Column,
+  SchemaMutationWarning,
+} from "@/features/properties/model";
 import type { Person } from "@/features/properties/model";
 import { FieldFilterPane, FieldSortPane } from "./column-query-pane";
 import {
@@ -136,7 +141,7 @@ export function ColumnMenuPopover({
         <TypePane
           activeType={column.type}
           onSelect={(type) => {
-            void invoke<CollectionSchema>("change_schema_type", {
+            void invoke<ChangeSchemaTypeResult>("change_schema_type", {
               space: spacePath,
               collectionPath,
               columnName: field,
@@ -145,7 +150,10 @@ export function ColumnMenuPopover({
                 type === "relation" ? { relation: collectionPath || "." } : null,
               projectPath: projectPath ?? null,
             })
-              .then(onSchemaChange)
+              .then((result) => {
+                onSchemaChange(result.schema);
+                showSchemaMutationWarnings(result.warnings);
+              })
               .catch((error) => {
                 console.error(error);
                 toast.error(errorMessage(error));
@@ -251,6 +259,19 @@ export function ColumnMenuPopover({
       </AlertDialog>
     </>
   );
+}
+
+function showSchemaMutationWarnings(warnings: SchemaMutationWarning[]) {
+  for (const warning of warnings) {
+    if (warning.code === "relation_unconverted_values") {
+      toast.warning(
+        m.property_relation_convert_warning({
+          count: String(warning.count),
+          field: warning.field,
+        }),
+      );
+    }
+  }
 }
 
 function errorMessage(error: unknown) {
