@@ -24,11 +24,6 @@ export function CommandPalette() {
 
   const activeRootPath = useSpaceStore((s) => s.activeRootPath);
 
-  const [query, setQuery] = useState("");
-  useEffect(() => {
-    if (!open) setQuery("");
-  }, [open]);
-
   // ⌘P / Ctrl+P toggles the palette. Bound only inside a project (the /space
   // route is mounted) so the Home page doesn't intercept the shortcut.
   useEffect(() => {
@@ -45,6 +40,27 @@ export function CommandPalette() {
     return () => window.removeEventListener("keydown", onKey);
   }, [activeRootPath, toggle]);
 
+  if (!open) return null;
+
+  return (
+    <CommandPaletteDialog
+      activeRootPath={activeRootPath}
+      open={open}
+      setOpen={setOpen}
+    />
+  );
+}
+
+function CommandPaletteDialog({
+  activeRootPath,
+  open,
+  setOpen,
+}: {
+  activeRootPath: string | null;
+  open: boolean;
+  setOpen: (open: boolean) => void;
+}) {
+  const [query, setQuery] = useState("");
   const search = useSearch(query, activeRootPath);
   const handleSelect = useSelectResult();
 
