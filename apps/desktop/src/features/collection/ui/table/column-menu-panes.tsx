@@ -16,6 +16,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { FILTER_OP_LABELS } from "@/features/collection/query";
 import type { QueryFilter, QuerySort } from "@/features/collection/query";
 import type {
@@ -23,9 +24,16 @@ import type {
   Column,
   PropertyType,
 } from "@/features/properties/model";
+import {
+  isSensitiveColumn,
+  isSensitivePropertyType,
+} from "@/features/properties/lib";
 import { SettingsRow, SettingsSection } from "../settings-row";
 import { PROPERTY_TYPE_ICONS } from "./icons";
-import { propertyTypeLabel } from "./property-type-picker";
+import {
+  propertyTypeLabel,
+  SensitivePropertyTypeHint,
+} from "./property-type-picker";
 import { uniqueColumnName } from "./utils";
 import * as m from "@/paraglide/messages.js";
 
@@ -172,17 +180,30 @@ export function TypePane({
   onSelect: (type: PropertyType) => void;
 }) {
   return (
-    <div className="p-1">
-      {Object.entries(PROPERTY_TYPE_ICONS).map(([type, Icon]) => (
-        <SettingsRow
-          key={type}
-          icon={Icon}
-          label={propertyTypeLabel(type as PropertyType)}
-          right={type === activeType ? <Check data-icon="inline-end" /> : null}
-          onClick={() => onSelect(type as PropertyType)}
-        />
-      ))}
-    </div>
+    <TooltipProvider>
+      <div className="p-1">
+        {Object.entries(PROPERTY_TYPE_ICONS).map(([type, Icon]) => {
+          const propertyType = type as PropertyType;
+          const isActive = type === activeType;
+          return (
+            <SettingsRow
+              key={type}
+              icon={Icon}
+              label={propertyTypeLabel(propertyType)}
+              right={
+                <span className="flex items-center gap-2">
+                  {isSensitivePropertyType(propertyType) ? (
+                    <SensitivePropertyTypeHint />
+                  ) : null}
+                  {isActive ? <Check data-icon="inline-end" /> : null}
+                </span>
+              }
+              onClick={() => onSelect(propertyType)}
+            />
+          );
+        })}
+      </div>
+    </TooltipProvider>
   );
 }
 
@@ -203,36 +224,40 @@ export function ColumnDangerActions({
   onSchemaChange: (schema: CollectionSchema) => void;
   onDelete: () => void;
 }) {
+  const sensitive = isSensitiveColumn(column);
+
   return (
-    <div className="flex flex-col">
-      <SettingsRow
-        icon={Copy}
-        label={m.table_duplicate_column()}
-        right={null}
-        onClick={() => {
-          const duplicate = {
-            ...column,
-            name: uniqueColumnName(
-              schema,
-              `${column.name} (${m.table_duplicate_column_suffix()})`,
-            ),
-          };
-          void invoke<CollectionSchema>("add_schema_column", {
-            space: spacePath,
-            collectionPath,
-            column: duplicate,
-            projectPath: projectPath ?? null,
-          }).then(onSchemaChange);
-        }}
-      />
-      <SettingsRow
-        icon={Trash2}
-        label={m.table_delete_column()}
-        right={null}
-        destructive
-        onClick={onDelete}
-      />
-    </div>
+    <TooltipProvider>
+      <div className="flex flex-col">
+        <SettingsRow
+          icon={Copy}
+          label={m.table_duplicate_column()}
+          right={null}
+          onClick={() => {
+            const duplicate = {
+              ...column,
+              name: uniqueColumnName(
+                schema,
+                `${column.name} (${m.table_duplicate_column_suffix()})`,
+              ),
+            };
+            void invoke<CollectionSchema>("add_schema_column", {
+              space: spacePath,
+              collectionPath,
+              column: duplicate,
+              projectPath: projectPath ?? null,
+            }).then(onSchemaChange);
+          }}
+        />
+        <SettingsRow
+          icon={Trash2}
+          label={m.table_delete_column()}
+          right={sensitive ? <SensitivePropertyTypeHint /> : null}
+          destructive
+          onClick={onDelete}
+        />
+      </div>
+    </TooltipProvider>
   );
 }
 

@@ -14,6 +14,8 @@ export type PropertyType =
   | "phone"
   | "relation";
 
+export type PropertySensitivity = "pii" | "none";
+
 export type ColorName =
   | "neutral"
   | "gray"
@@ -58,6 +60,7 @@ export interface Column {
   prefix?: string | null;
   next?: number | null;
   multiple?: boolean | null;
+  sensitivity?: PropertySensitivity | null;
 }
 
 export interface CollectionSchema {

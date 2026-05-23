@@ -46,6 +46,13 @@ pub enum PropertyType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum ColumnSensitivity {
+    Pii,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RelationLimit {
     One,
 }
@@ -115,6 +122,8 @@ pub struct Column {
     pub name: String,
     #[serde(rename = "type")]
     pub type_: PropertyType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sensitivity: Option<ColumnSensitivity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -410,6 +419,23 @@ fn schema_error(message: impl Into<String>) -> AppError {
 
 fn is_actor_type(ty: PropertyType) -> bool {
     matches!(ty, PropertyType::Actor | PropertyType::Person)
+}
+
+pub fn column_effective_sensitivity(column: &Column) -> ColumnSensitivity {
+    if let Some(sensitivity) = column.sensitivity {
+        return sensitivity;
+    }
+    match column.type_ {
+        PropertyType::Email | PropertyType::Phone => ColumnSensitivity::Pii,
+        _ => ColumnSensitivity::None,
+    }
+}
+
+pub fn schema_has_sensitive_columns(schema: &CollectionSchema) -> bool {
+    schema
+        .columns
+        .iter()
+        .any(|column| column_effective_sensitivity(column) == ColumnSensitivity::Pii)
 }
 
 fn actor_multiple(column: &Column) -> bool {
@@ -993,6 +1019,7 @@ fn ensure_two_way_schema_and_values(
         reverse_schema.columns.push(Column {
             name: reverse_name.to_string(),
             type_: PropertyType::Relation,
+            sensitivity: None,
             default: None,
             options: None,
             display: None,
@@ -1775,6 +1802,11 @@ pub fn normalize_schema(schema: &mut CollectionSchema) {
         if column.type_ == PropertyType::Person {
             column.type_ = PropertyType::Actor;
             column.multiple.get_or_insert(false);
+        }
+        if column.sensitivity.is_none()
+            && matches!(column.type_, PropertyType::Email | PropertyType::Phone)
+        {
+            column.sensitivity = Some(ColumnSensitivity::Pii);
         }
         if column.type_ == PropertyType::Actor {
             column.multiple = Some(column.multiple.unwrap_or(false));
@@ -5512,6 +5544,7 @@ fn create_two_way_reverse_column(
     reverse_schema.columns.push(Column {
         name: reverse_name.to_string(),
         type_: PropertyType::Relation,
+        sensitivity: None,
         default: None,
         options: None,
         display: None,
@@ -7025,6 +7058,9 @@ fn apply_column_patch(column: &mut Column, patch: Value) -> Result<(), AppError>
     if mapping.contains_key("color") {
         column.color = nullable_from_mapping(mapping, "color")?;
     }
+    if mapping.contains_key("sensitivity") {
+        column.sensitivity = nullable_from_mapping(mapping, "sensitivity")?;
+    }
     if mapping.contains_key("time_by_default") {
         column.time_by_default = nullable_from_mapping(mapping, "time_by_default")?;
     }
@@ -7192,6 +7228,7 @@ fn infer_column(field: &str, value: &Value) -> Column {
     let mut column = Column {
         name: field.to_string(),
         type_: infer_type(value),
+        sensitivity: None,
         default: None,
         options: None,
         display: None,
@@ -7429,6 +7466,7 @@ mod tests {
         Column {
             name: name.into(),
             type_,
+            sensitivity: None,
             default: None,
             options: None,
             display: None,
@@ -7502,10 +7540,59 @@ views: []
     }
 
     #[test]
+    fn sensitivity_defaults_phone_email_and_preserves_explicit_none() {
+        let mut schema: CollectionSchema = serde_yml::from_str(
+            r#"
+columns:
+  - { name: Email, type: email }
+  - { name: Phone, type: phone }
+  - { name: PublicPhone, type: phone, sensitivity: none }
+  - { name: Owner, type: actor }
+  - { name: Notes, type: text }
+views: []
+"#,
+        )
+        .unwrap();
+
+        normalize_schema(&mut schema);
+
+        assert_eq!(schema.columns[0].sensitivity, Some(ColumnSensitivity::Pii));
+        assert_eq!(schema.columns[1].sensitivity, Some(ColumnSensitivity::Pii));
+        assert_eq!(schema.columns[2].sensitivity, Some(ColumnSensitivity::None));
+        assert_eq!(
+            column_effective_sensitivity(&schema.columns[2]),
+            ColumnSensitivity::None
+        );
+        assert_eq!(schema.columns[3].sensitivity, None);
+        assert_eq!(
+            column_effective_sensitivity(&schema.columns[3]),
+            ColumnSensitivity::None
+        );
+        assert_eq!(schema.columns[4].sensitivity, None);
+        assert!(schema_has_sensitive_columns(&schema));
+    }
+
+    #[test]
+    fn read_schema_applies_sensitivity_defaults_and_accepts_legacy_schema() {
+        let tmp = TempDir::new().unwrap();
+        let schema_path = tmp.path().join("schema.yaml");
+        fs::write(
+            &schema_path,
+            "columns:\n  - { name: Email, type: email }\n  - { name: Title, type: text }\nviews: []\n",
+        )
+        .unwrap();
+
+        let schema = read_schema_at(&schema_path).unwrap();
+        assert_eq!(schema.columns[0].sensitivity, Some(ColumnSensitivity::Pii));
+        assert_eq!(schema.columns[1].sensitivity, None);
+    }
+
+    #[test]
     fn relation_value_shape_normalizes_unique_many_and_rejects_dot_segments() {
         let column = Column {
             name: "Tasks".into(),
             type_: PropertyType::Relation,
+            sensitivity: None,
             default: None,
             options: None,
             display: None,
@@ -7812,6 +7899,7 @@ views: []
         let column = Column {
             name: "Sprint".into(),
             type_: PropertyType::Relation,
+            sensitivity: None,
             default: None,
             options: None,
             display: None,
@@ -8519,6 +8607,7 @@ views: []
         let column = Column {
             name: "Due".into(),
             type_: PropertyType::Date,
+            sensitivity: None,
             default: None,
             options: None,
             display: None,

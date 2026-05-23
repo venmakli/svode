@@ -801,6 +801,7 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
     let render_renames = |items: &[(&String, &String)]| -> String {
         match items.len() {
             0 => String::new(),
+            1 if items[0].0 == items[0].1 => format!("Rename {}", items[0].0),
             1 => format!("Rename {} \u{2192} {}", items[0].0, items[0].1),
             n => format!("Rename {} files", n),
         }
@@ -1060,6 +1061,15 @@ mod tests {
             new: s("new.md"),
         }];
         assert_eq!(aggregate_message(&ops), "Rename old.md \u{2192} new.md");
+    }
+
+    #[test]
+    fn single_safe_rename_omits_repeated_target() {
+        let ops = vec![StructuralOp::Rename {
+            old: s("collection entry"),
+            new: s("collection entry"),
+        }];
+        assert_eq!(aggregate_message(&ops), "Rename collection entry");
     }
 
     #[test]

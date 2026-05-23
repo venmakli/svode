@@ -49,6 +49,8 @@ export function normalizeColumn(column: Column): Column {
   const rawType = (column.type ??
     (column as unknown as { type_: PropertyType }).type_) as PropertyType;
   const type = rawType === "person" ? "actor" : rawType;
+  const sensitivity =
+    column.sensitivity ?? (type === "email" || type === "phone" ? "pii" : null);
   return {
     ...column,
     type,
@@ -60,6 +62,7 @@ export function normalizeColumn(column: Column): Column {
       typeof column.prefix === "string" && column.prefix.trim()
         ? column.prefix.trim()
         : null,
+    sensitivity,
   };
 }
 
@@ -100,6 +103,17 @@ export function isEmptyValue(value: unknown): boolean {
     value === undefined ||
     value === "" ||
     (Array.isArray(value) && value.length === 0)
+  );
+}
+
+export function isSensitivePropertyType(type: PropertyType): boolean {
+  return type === "email" || type === "phone";
+}
+
+export function isSensitiveColumn(column: Column): boolean {
+  return (
+    column.sensitivity === "pii" ||
+    (column.sensitivity == null && isSensitivePropertyType(column.type))
   );
 }
 

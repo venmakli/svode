@@ -396,4 +396,73 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].path, "tasks/a.md");
     }
+
+    #[tokio::test]
+    async fn global_search_does_not_match_collection_field_values() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            r#"
+            CREATE TABLE entries (
+                id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                body_preview TEXT,
+                updated TEXT NOT NULL,
+                collection_root_path TEXT,
+                in_collection INTEGER NOT NULL,
+                fields TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"
+            CREATE VIRTUAL TABLE entries_fts USING fts5(
+                title,
+                description,
+                body_preview,
+                content='entries',
+                content_rowid='rowid'
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"
+            INSERT INTO entries (
+                rowid, id, file_path, title, description, body_preview,
+                updated, collection_root_path, in_collection, fields
+            ) VALUES (
+                1, '1', 'contacts/ivan.md', 'Customer record', '',
+                'Regular note body', '2026-01-01', 'contacts', 1,
+                '{"Phone":"+15550001234","Email":"person@example.com"}'
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"
+            INSERT INTO entries_fts(rowid, title, description, body_preview)
+            SELECT rowid, title, description, body_preview FROM entries
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let title_rows = search_by_title(&pool, "15550001234", 10).await.unwrap();
+        let fts_rows = search_fts(&pool, "15550001234", None, None, 10)
+            .await
+            .unwrap();
+
+        assert!(title_rows.is_empty());
+        assert!(fts_rows.is_empty());
+    }
 }

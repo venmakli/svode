@@ -107,6 +107,78 @@ fn property_type_message(type_: PropertyType) -> &'static str {
     }
 }
 
+fn schema_commit_message(
+    schema: &CollectionSchema,
+    default: impl Into<String>,
+    sensitive: &'static str,
+) -> String {
+    schema_commit_message_with_previous(schema, false, default, sensitive)
+}
+
+fn schema_commit_message_with_previous(
+    schema: &CollectionSchema,
+    was_sensitive: bool,
+    default: impl Into<String>,
+    sensitive: &'static str,
+) -> String {
+    if was_sensitive || properties::schema_has_sensitive_columns(schema) {
+        sensitive.to_string()
+    } else {
+        default.into()
+    }
+}
+
+fn collection_has_sensitive_columns(space: &str, collection_path: &str) -> bool {
+    properties::read_collection_schema(space, collection_path)
+        .map(|schema| properties::schema_has_sensitive_columns(&schema))
+        .unwrap_or(false)
+}
+
+fn entry_in_sensitive_collection(space: &str, path: &str) -> bool {
+    properties::resolve_collection_schema_result(space, path)
+        .ok()
+        .flatten()
+        .is_some_and(|(schema, _)| properties::schema_has_sensitive_columns(&schema))
+}
+
+fn entry_commit_name(space: &str, path: &str) -> String {
+    if entry_in_sensitive_collection(space, path) {
+        "collection entry".to_string()
+    } else {
+        basename(path)
+    }
+}
+
+fn entry_history_commit_name(space: &str, path: &str) -> String {
+    if entry_in_sensitive_collection(space, path) {
+        "collection entry".to_string()
+    } else {
+        entry_history_name(path)
+    }
+}
+
+fn entry_rename_op(space: &str, from: &str, to: &str) -> StructuralOp {
+    if entry_in_sensitive_collection(space, from) || entry_in_sensitive_collection(space, to) {
+        StructuralOp::Rename {
+            old: "collection entry".to_string(),
+            new: "collection entry".to_string(),
+        }
+    } else {
+        StructuralOp::Rename {
+            old: basename(from),
+            new: basename(to),
+        }
+    }
+}
+
+fn template_name_for_commit(space: &str, collection_path: &str, name: String) -> String {
+    if collection_has_sensitive_columns(space, collection_path) {
+        "collection template".to_string()
+    } else {
+        name
+    }
+}
+
 fn maybe_autocommit_structural_paths(
     autocommit: &AutocommitService,
     project_path: Option<&str>,
@@ -237,20 +309,18 @@ pub async fn create_entry(
     if properties::unique_id_schema_path_for_entry(&space, &created.path)?.is_some() {
         let mut paths = properties::unique_id_mutation_paths_for_entry(&space, &created.path)?;
         paths.push(order_path(&space));
-        maybe_autocommit_schema(
-            &autocommit,
-            project_path.as_deref(),
-            &space,
-            paths,
-            format!("Create {} with unique_id", basename(&created.path)),
-        )
-        .await;
+        let message = if entry_in_sensitive_collection(&space, &created.path) {
+            "Create collection entry with unique_id".to_string()
+        } else {
+            format!("Create {} with unique_id", basename(&created.path))
+        };
+        maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     } else {
         maybe_autocommit_structural_paths(
             &autocommit,
             project_path.as_deref(),
             &space,
-            StructuralOp::Create(basename(&created.path)),
+            StructuralOp::Create(entry_commit_name(&space, &created.path)),
             entry_paths_with_order(&space, [abs_entry_path(&space, &created.path)]),
         );
     }
@@ -270,7 +340,7 @@ pub fn create_folder(
         &autocommit,
         project_path.as_deref(),
         &space,
-        StructuralOp::Create(basename(&folder_path)),
+        StructuralOp::Create(entry_commit_name(&space, &folder_path)),
         entry_paths_with_order(&space, [abs_entry_path(&space, &folder_path)]),
     );
     Ok(folder_path)
@@ -429,7 +499,7 @@ pub async fn add_schema_column(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
     let materializes_unique_id = column.type_ == PropertyType::UniqueId;
-    let message = if materializes_unique_id {
+    let default_message = if materializes_unique_id {
         format!("Add and materialize unique_id \"{}\"", column.name)
     } else {
         format!("Add column \"{}\"", column.name)
@@ -443,6 +513,7 @@ pub async fn add_schema_column(
     let snapshot = snapshot_paths(&paths)?;
     let schema = properties::add_schema_column(&space, &collection_path, column)?;
     let paths = changed_paths(snapshot)?;
+    let message = schema_commit_message(&schema, default_message, "Update collection field");
     maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
@@ -457,7 +528,8 @@ pub async fn change_schema_type(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<ChangeSchemaTypeResult, AppError> {
-    let message = format!(
+    let was_sensitive = collection_has_sensitive_columns(&space, &collection_path);
+    let default_message = format!(
         "Change column \"{column_name}\" type to {}",
         property_type_message(new_type)
     );
@@ -495,7 +567,12 @@ pub async fn change_schema_type(
         project_path.as_deref(),
         &space,
         changed,
-        message,
+        schema_commit_message_with_previous(
+            &schema,
+            was_sensitive,
+            default_message,
+            "Update collection field",
+        ),
     )
     .await;
     Ok(ChangeSchemaTypeResult { schema, warnings })
@@ -525,7 +602,11 @@ pub async fn assign_unique_id(
         project_path.as_deref(),
         &space,
         paths,
-        format!("Repair unique_id for {}", entry_history_name(&entry.path)),
+        if entry_in_sensitive_collection(&space, &entry.path) {
+            "Repair unique_id for collection entry".to_string()
+        } else {
+            format!("Repair unique_id for {}", entry_history_name(&entry.path))
+        },
     )
     .await;
     Ok(entry)
@@ -560,19 +641,19 @@ pub async fn rename_schema_column(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
+    let was_sensitive = collection_has_sensitive_columns(&space, &collection_path);
     let paths =
         properties::schema_column_name_mutation_paths(&space, &collection_path, &old_name, true)?;
     let snapshot = snapshot_paths(&paths)?;
     let schema = properties::rename_schema_column(&space, &collection_path, &old_name, &new_name)?;
     let paths = changed_paths(snapshot)?;
-    maybe_autocommit_schema(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        paths,
+    let message = schema_commit_message_with_previous(
+        &schema,
+        was_sensitive,
         format!("Rename column \"{old_name}\" → \"{new_name}\""),
-    )
-    .await;
+        "Rename sensitive field",
+    );
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
 
@@ -585,6 +666,7 @@ pub async fn update_schema_column(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
+    let was_sensitive = collection_has_sensitive_columns(&space, &collection_path);
     let mut paths = properties::schema_column_name_mutation_paths(
         &space,
         &collection_path,
@@ -613,12 +695,18 @@ pub async fn update_schema_column(
     }
     let mut changed = changed_paths(snapshot)?;
     append_unsnapshotted_paths(&mut changed, &snapshotted, paths);
+    let message = schema_commit_message_with_previous(
+        &schema,
+        was_sensitive,
+        format!("Update column \"{column_name}\""),
+        "Update collection field",
+    );
     maybe_autocommit_schema(
         &autocommit,
         project_path.as_deref(),
         &space,
         changed,
-        format!("Update column \"{column_name}\""),
+        message,
     )
     .await;
     Ok(schema)
@@ -633,6 +721,7 @@ pub async fn delete_schema_column(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
+    let was_sensitive = collection_has_sensitive_columns(&space, &collection_path);
     let delete_values = delete_values.unwrap_or(false);
     let paths = properties::schema_mutation_paths(&space, &collection_path, delete_values)?;
     let snapshot = snapshot_paths(&paths)?;
@@ -640,14 +729,13 @@ pub async fn delete_schema_column(
         properties::delete_schema_column(&space, &collection_path, &column_name, delete_values)?;
     let paths = changed_paths(snapshot)?;
     let suffix = if delete_values { " and values" } else { "" };
-    maybe_autocommit_schema(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        paths,
+    let message = schema_commit_message_with_previous(
+        &schema,
+        was_sensitive,
         format!("Delete column \"{column_name}\"{suffix}"),
-    )
-    .await;
+        "Update collection field",
+    );
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
 
@@ -660,9 +748,10 @@ pub async fn add_option(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    let message = format!("Add option \"{}\" to \"{column_name}\"", option.name);
+    let default_message = format!("Add option \"{}\" to \"{column_name}\"", option.name);
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let schema = properties::add_option(&space, &collection_path, &column_name, option)?;
+    let message = schema_commit_message(&schema, default_message, "Update collection field");
     maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
@@ -687,14 +776,12 @@ pub async fn rename_option(
         &new_option_name,
     )?;
     let paths = changed_paths(snapshot)?;
-    maybe_autocommit_schema(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        paths,
+    let message = schema_commit_message(
+        &schema,
         format!("Rename option \"{column_name}\": \"{old_option_name}\" → \"{new_option_name}\""),
-    )
-    .await;
+        "Update collection field",
+    );
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
 
@@ -720,14 +807,12 @@ pub async fn delete_option(
     )?;
     let paths = changed_paths(snapshot)?;
     let suffix = if delete_values { " and values" } else { "" };
-    maybe_autocommit_schema(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        paths,
+    let message = schema_commit_message(
+        &schema,
         format!("Delete option \"{column_name}\": \"{option_name}\"{suffix}"),
-    )
-    .await;
+        "Update collection field",
+    );
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
 
@@ -752,14 +837,12 @@ pub async fn update_option(
         option,
         patch,
     )?;
-    maybe_autocommit_schema(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        paths,
+    let message = schema_commit_message(
+        &schema,
         format!("Update option \"{column_name}\": \"{option_name}\""),
-    )
-    .await;
+        "Update collection field",
+    );
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
 
@@ -774,14 +857,12 @@ pub async fn promote_orphan(
 ) -> Result<CollectionSchema, AppError> {
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let schema = properties::promote_orphan(&space, &collection_path, &entry_id, &field)?;
-    maybe_autocommit_schema(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        paths,
+    let message = schema_commit_message(
+        &schema,
         format!("Add column \"{field}\""),
-    )
-    .await;
+        "Update collection field",
+    );
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
 
@@ -794,14 +875,12 @@ pub async fn clear_field_values(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
     let paths = properties::clear_field_values(&space, &collection_path, &field)?;
-    maybe_autocommit_schema(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        paths,
-        format!("Clear field \"{field}\" values"),
-    )
-    .await;
+    let message = if collection_has_sensitive_columns(&space, &collection_path) {
+        "Update collection field".to_string()
+    } else {
+        format!("Clear field \"{field}\" values")
+    };
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(())
 }
 
@@ -822,7 +901,9 @@ pub async fn clear_option_values(
     names.sort();
     names.dedup();
     let paths = properties::clear_option_values(&space, &collection_path, &column_name, &names)?;
-    let message = if names.len() == 1 {
+    let message = if collection_has_sensitive_columns(&space, &collection_path) {
+        "Update collection field".to_string()
+    } else if names.len() == 1 {
         format!("Clear option \"{column_name}\": \"{}\" values", names[0])
     } else {
         format!("Clear option \"{column_name}\" values")
@@ -848,14 +929,12 @@ pub async fn replace_option_values(
         &old_option_name,
         &new_option_name,
     )?;
-    maybe_autocommit_schema(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        paths,
-        format!("Replace option \"{column_name}\": \"{old_option_name}\" → \"{new_option_name}\""),
-    )
-    .await;
+    let message = if collection_has_sensitive_columns(&space, &collection_path) {
+        "Update collection field".to_string()
+    } else {
+        format!("Replace option \"{column_name}\": \"{old_option_name}\" → \"{new_option_name}\"")
+    };
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(())
 }
 
@@ -870,14 +949,12 @@ pub async fn update_system_field_label(
 ) -> Result<CollectionSchema, AppError> {
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let schema = properties::update_system_field_label(&space, &collection_path, &field, label)?;
-    maybe_autocommit_schema(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        paths,
+    let message = schema_commit_message(
+        &schema,
         format!("Update system field \"{field}\""),
-    )
-    .await;
+        "Update collection schema",
+    );
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
 
@@ -891,14 +968,12 @@ pub async fn update_document_label(
 ) -> Result<CollectionSchema, AppError> {
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let schema = properties::update_document_label(&space, &collection_path, label)?;
-    maybe_autocommit_schema(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        paths,
-        "Update document tab label".to_string(),
-    )
-    .await;
+    let message = schema_commit_message(
+        &schema,
+        "Update document tab label",
+        "Update collection schema",
+    );
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
 
@@ -933,7 +1008,7 @@ pub async fn create_template(
         &autocommit,
         project_path.as_deref(),
         &space,
-        StructuralOp::CreateTemplate(title),
+        StructuralOp::CreateTemplate(template_name_for_commit(&space, &collection_path, title)),
         vec![abs_entry_path(&space, root)],
     );
     Ok(path)
@@ -952,7 +1027,11 @@ pub async fn delete_template(
         &autocommit,
         project_path.as_deref(),
         &space,
-        StructuralOp::DeleteTemplate(deleted.title),
+        StructuralOp::DeleteTemplate(template_name_for_commit(
+            &space,
+            &collection_path,
+            deleted.title,
+        )),
         vec![abs_entry_path(&space, &deleted.root_path)],
     );
     Ok(())
@@ -973,8 +1052,8 @@ pub async fn duplicate_template(
         project_path.as_deref(),
         &space,
         StructuralOp::DuplicateTemplate {
-            old: duplicated.old_title,
-            new: duplicated.new_title,
+            old: template_name_for_commit(&space, &collection_path, duplicated.old_title),
+            new: template_name_for_commit(&space, &collection_path, duplicated.new_title),
         },
         vec![abs_entry_path(&space, root)],
     );
@@ -1018,8 +1097,12 @@ pub async fn instantiate_template(
         project_path.as_deref(),
         &space,
         StructuralOp::InstantiateTemplate {
-            title: instantiated.template_title,
-            parent: parent_dir,
+            title: template_name_for_commit(&space, &collection_path, instantiated.template_title),
+            parent: if collection_has_sensitive_columns(&space, &collection_path) {
+                "collection".to_string()
+            } else {
+                parent_dir
+            },
         },
         entry_paths_with_order(&space, [abs_entry_path(&space, root)]),
     );
@@ -1040,14 +1123,12 @@ pub async fn set_default_template(
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let schema =
         properties::set_default_template(&space, &collection_path, template_slug.as_deref())?;
-    maybe_autocommit_schema(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        paths,
-        "Update collection templates".to_string(),
-    )
-    .await;
+    let message = schema_commit_message(
+        &schema,
+        "Update collection templates",
+        "Update collection templates",
+    );
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
 
@@ -1062,14 +1143,12 @@ pub async fn reorder_templates(
     templates::validate_template_order(&space, &collection_path, &new_order)?;
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let schema = properties::reorder_templates(&space, &collection_path, new_order)?;
-    maybe_autocommit_schema(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        paths,
-        "Update collection templates".to_string(),
-    )
-    .await;
+    let message = schema_commit_message(
+        &schema,
+        "Update collection templates",
+        "Update collection templates",
+    );
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
 
@@ -1082,9 +1161,10 @@ pub async fn add_view(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    let message = format!("Add view \"{}\"", view.name());
+    let default_message = format!("Add view \"{}\"", view.name());
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let schema = properties::add_view(&space, &collection_path, view, position)?;
+    let message = schema_commit_message(&schema, default_message, "Update collection view");
     maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
@@ -1100,14 +1180,12 @@ pub async fn rename_view(
 ) -> Result<CollectionSchema, AppError> {
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let schema = properties::rename_view(&space, &collection_path, &old_name, &new_name)?;
-    maybe_autocommit_schema(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        paths,
+    let message = schema_commit_message(
+        &schema,
         format!("Rename view \"{old_name}\" \u{2192} \"{new_name}\""),
-    )
-    .await;
+        "Update collection view",
+    );
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
 
@@ -1123,14 +1201,12 @@ pub async fn update_view(
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let patch = json_to_yaml_value(patch)?;
     let schema = properties::update_view(&space, &collection_path, &view_name, patch)?;
-    maybe_autocommit_schema(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        paths,
+    let message = schema_commit_message(
+        &schema,
         format!("Update view \"{view_name}\""),
-    )
-    .await;
+        "Update collection view",
+    );
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
 
@@ -1144,14 +1220,12 @@ pub async fn delete_view(
 ) -> Result<CollectionSchema, AppError> {
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let schema = properties::delete_view(&space, &collection_path, &view_name)?;
-    maybe_autocommit_schema(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        paths,
+    let message = schema_commit_message(
+        &schema,
         format!("Delete view \"{view_name}\""),
-    )
-    .await;
+        "Update collection view",
+    );
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
 
@@ -1166,14 +1240,12 @@ pub async fn duplicate_view(
 ) -> Result<CollectionSchema, AppError> {
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let schema = properties::duplicate_view(&space, &collection_path, &view_name, &new_name)?;
-    maybe_autocommit_schema(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        paths,
+    let message = schema_commit_message(
+        &schema,
         format!("Duplicate view \"{view_name}\" \u{2192} \"{new_name}\""),
-    )
-    .await;
+        "Update collection view",
+    );
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
 
@@ -1187,14 +1259,8 @@ pub async fn reorder_views(
 ) -> Result<CollectionSchema, AppError> {
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let schema = properties::reorder_views(&space, &collection_path, new_order)?;
-    maybe_autocommit_schema(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        paths,
-        "Reorder views".to_string(),
-    )
-    .await;
+    let message = schema_commit_message(&schema, "Reorder views", "Update collection view");
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(schema)
 }
 
@@ -1320,14 +1386,12 @@ pub async fn repair_two_way_relation(
     )?;
     reindex_space_dir(&index_state, &space).await;
     let paths = changed_paths(snapshot)?;
-    maybe_autocommit_schema(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        paths,
-        format!("Repair two-way relation \"{column}\""),
-    )
-    .await;
+    let message = if collection_has_sensitive_columns(&space, &collection_path) {
+        "Update collection field".to_string()
+    } else {
+        format!("Repair two-way relation \"{column}\"")
+    };
+    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     Ok(())
 }
 
@@ -1438,10 +1502,7 @@ pub async fn write_entry(
                             &autocommit,
                             project_path.as_deref(),
                             &modified,
-                            StructuralOp::Rename {
-                                old: basename(&path),
-                                new: basename(new_path),
-                            },
+                            entry_rename_op(&space, &path, new_path),
                         )
                         .await;
                     }
@@ -1476,10 +1537,7 @@ pub async fn write_entry(
                                         &autocommit,
                                         project_path.as_deref(),
                                         &extra,
-                                        StructuralOp::Rename {
-                                            old: basename(&of),
-                                            new: basename(&nf),
-                                        },
+                                        entry_rename_op(&space, &of, &nf),
                                     )
                                     .await;
                                     for item in extra {
@@ -1536,10 +1594,7 @@ pub async fn write_entry(
                 &autocommit,
                 project_path.as_deref(),
                 &space,
-                StructuralOp::Rename {
-                    old: basename(&path),
-                    new: basename(new_path),
-                },
+                entry_rename_op(&space, &path, new_path),
                 entry_paths_with_order(
                     &space,
                     [
@@ -1588,7 +1643,7 @@ pub async fn delete_entry(
         &autocommit,
         project_path.as_deref(),
         &space,
-        StructuralOp::Delete(basename(&path)),
+        StructuralOp::Delete(entry_commit_name(&space, &path)),
         paths,
     );
     Ok(())
@@ -1639,10 +1694,7 @@ pub async fn rename_entry(
             &autocommit,
             project_path.as_deref(),
             &cross,
-            StructuralOp::Rename {
-                old: basename(&from),
-                new: basename(&to),
-            },
+            entry_rename_op(&space, &from, &to),
         )
         .await;
         let key = index_state
@@ -1672,10 +1724,7 @@ pub async fn rename_entry(
         &autocommit,
         project_path.as_deref(),
         &space,
-        StructuralOp::Rename {
-            old: basename(&from),
-            new: basename(&to),
-        },
+        entry_rename_op(&space, &from, &to),
         entry_paths_with_order(
             &space,
             [abs_entry_path(&space, &from), abs_entry_path(&space, &to)],
@@ -1739,7 +1788,7 @@ pub async fn move_entry(
             &autocommit,
             project_path.as_deref(),
             &cross,
-            StructuralOp::Move(basename(&new_path)),
+            StructuralOp::Move(entry_commit_name(&space, &new_path)),
         )
         .await;
         let key = index_state
@@ -1763,7 +1812,7 @@ pub async fn move_entry(
             &autocommit,
             project_path.as_deref(),
             &space,
-            StructuralOp::Move(basename(&new_path)),
+            StructuralOp::Move(entry_commit_name(&space, &new_path)),
             entry_paths_with_order(&space, [old_abs.clone(), abs_entry_path(&space, &new_path)]),
         );
     } else {
@@ -1775,7 +1824,11 @@ pub async fn move_entry(
             project_path.as_deref(),
             &space,
             unique_id_paths,
-            format!("Move {} with unique_id", basename(&new_path)),
+            if entry_in_sensitive_collection(&space, &new_path) {
+                "Move collection entry with unique_id".to_string()
+            } else {
+                format!("Move {} with unique_id", basename(&new_path))
+            },
         )
         .await;
     }
@@ -1898,7 +1951,7 @@ pub async fn nest_entry(
             &autocommit,
             project_path.as_deref(),
             &cross,
-            StructuralOp::Move(basename(&new_path)),
+            StructuralOp::Move(entry_commit_name(&space, &new_path)),
         )
         .await;
         let _ = index_state
@@ -1912,7 +1965,7 @@ pub async fn nest_entry(
         &autocommit,
         project_path.as_deref(),
         &space,
-        StructuralOp::Move(basename(&new_path)),
+        StructuralOp::Move(entry_commit_name(&space, &new_path)),
         entry_paths_with_order(
             &space,
             [
@@ -1964,7 +2017,7 @@ pub async fn unnest_entry(
             &autocommit,
             project_path.as_deref(),
             &cross,
-            StructuralOp::Move(basename(&new_path)),
+            StructuralOp::Move(entry_commit_name(&space, &new_path)),
         )
         .await;
         let _ = index_state
@@ -1978,7 +2031,7 @@ pub async fn unnest_entry(
         &autocommit,
         project_path.as_deref(),
         &space,
-        StructuralOp::Move(basename(&new_path)),
+        StructuralOp::Move(entry_commit_name(&space, &new_path)),
         entry_paths_with_order(
             &space,
             [
@@ -2009,7 +2062,7 @@ pub async fn convert_entry_to_folder(
         &autocommit,
         project_path.as_deref(),
         &space,
-        StructuralOp::ConvertToFolder(entry_history_name(&entry.path)),
+        StructuralOp::ConvertToFolder(entry_history_commit_name(&space, &entry.path)),
         entry_paths_with_order(
             &space,
             [
@@ -2042,7 +2095,7 @@ pub async fn convert_entry_to_leaf(
         &autocommit,
         project_path.as_deref(),
         &space,
-        StructuralOp::ConvertToLeaf(entry_history_name(&entry.path)),
+        StructuralOp::ConvertToLeaf(entry_history_commit_name(&space, &entry.path)),
         entry_paths_with_order(
             &space,
             [
@@ -2068,7 +2121,10 @@ pub async fn convert_entry_to_nested_collection(
         &autocommit,
         project_path.as_deref(),
         &space,
-        StructuralOp::MakeCollection(entry_history_name(&collection_path)),
+        StructuralOp::MakeCollection(entry_history_commit_name(
+            &space,
+            &format!("{collection_path}/README.md"),
+        )),
         vec![schema_path(&space, &collection_path)],
     );
     Ok(())
@@ -2088,7 +2144,10 @@ pub async fn convert_bare_folder_to_collection(
         &autocommit,
         project_path.as_deref(),
         &space,
-        StructuralOp::MakeCollection(entry_history_name(&folder_path)),
+        StructuralOp::MakeCollection(entry_history_commit_name(
+            &space,
+            &format!("{}/README.md", folder_path.trim_matches('/')),
+        )),
         vec![
             abs_entry_path(
                 &space,
@@ -2108,7 +2167,7 @@ pub async fn duplicate_entry(
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
-    let old_name = entry_history_name(&file_path);
+    let old_name = entry_history_commit_name(&space, &file_path);
     let entry = entry::duplicate_entry(Path::new(&space), &file_path)?;
     reindex_space_dir(&index_state, &space).await;
     let unique_id_paths =
@@ -2120,7 +2179,7 @@ pub async fn duplicate_entry(
             &space,
             StructuralOp::Duplicate {
                 old: old_name,
-                new: entry_history_name(&entry.path),
+                new: entry_history_commit_name(&space, &entry.path),
             },
             entry_paths_with_order(
                 &space,
@@ -2138,7 +2197,13 @@ pub async fn duplicate_entry(
             project_path.as_deref(),
             &space,
             paths,
-            format!("Duplicate {old_name} → {}", entry_history_name(&entry.path)),
+            if entry_in_sensitive_collection(&space, &file_path)
+                || entry_in_sensitive_collection(&space, &entry.path)
+            {
+                "Duplicate collection entry".to_string()
+            } else {
+                format!("Duplicate {old_name} → {}", entry_history_name(&entry.path))
+            },
         )
         .await;
     }

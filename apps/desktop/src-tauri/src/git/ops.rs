@@ -4,6 +4,7 @@ use serde::Serialize;
 
 use super::cli::GitCli;
 use crate::AppError;
+use crate::properties;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::types::SpaceGitType;
 
@@ -364,8 +365,13 @@ pub async fn generate_commit_message(cli: &GitCli, space_dir: &Path) -> Result<S
     let name_status = cli
         .exec(space_dir, &["diff", "--cached", "--name-status", "-z"])
         .await?;
+    let records = parse_name_status_z(&name_status.stdout)?;
 
-    for record in parse_name_status_z(&name_status.stdout)? {
+    if staged_changes_touch_sensitive_collection(space_dir, &records) {
+        return Ok(sensitive_commit_message(&records));
+    }
+
+    for record in records {
         let file = record
             .path
             .rsplit('/')
@@ -426,6 +432,35 @@ pub async fn generate_commit_message(cli: &GitCli, space_dir: &Path) -> Result<S
             ));
         }
         Ok(parts.join(", "))
+    }
+}
+
+fn staged_changes_touch_sensitive_collection(
+    repo_dir: &Path,
+    records: &[NameStatusRecord],
+) -> bool {
+    let repo = repo_dir.to_string_lossy();
+    records.iter().any(|record| {
+        properties::resolve_collection_schema_result(&repo, &record.path)
+            .ok()
+            .flatten()
+            .is_some_and(|(schema, _)| properties::schema_has_sensitive_columns(&schema))
+    })
+}
+
+fn sensitive_commit_message(records: &[NameStatusRecord]) -> String {
+    let total = records.len();
+    if total == 0 {
+        return "Update space".to_string();
+    }
+    if total > 1 {
+        return "Update collection entries".to_string();
+    }
+    match records[0].status {
+        'A' => "Create collection entry".to_string(),
+        'D' => "Delete collection entry".to_string(),
+        'R' => "Rename collection entry".to_string(),
+        _ => "Update collection entry".to_string(),
     }
 }
 
@@ -934,6 +969,7 @@ pub async fn unpushed_commits(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn parses_status_z_with_spaces_cyrillic_untracked_modified_conflict_and_rename() {
@@ -1009,6 +1045,45 @@ mod tests {
                     path: "new name.md".to_string()
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn sensitive_collection_changes_use_generic_commit_messages() {
+        let tmp = TempDir::new().unwrap();
+        let contacts = tmp.path().join("contacts");
+        std::fs::create_dir_all(&contacts).unwrap();
+        std::fs::write(
+            contacts.join("schema.yaml"),
+            "columns:\n  - { name: Phone, type: phone }\nviews: []\n",
+        )
+        .unwrap();
+
+        let records = vec![NameStatusRecord {
+            status: 'M',
+            path: "contacts/ivan-petrov.md".to_string(),
+        }];
+
+        assert!(staged_changes_touch_sensitive_collection(
+            tmp.path(),
+            &records
+        ));
+        assert_eq!(
+            sensitive_commit_message(&records),
+            "Update collection entry"
+        );
+        assert_eq!(
+            sensitive_commit_message(&[
+                NameStatusRecord {
+                    status: 'M',
+                    path: "contacts/ivan-petrov.md".to_string(),
+                },
+                NameStatusRecord {
+                    status: 'A',
+                    path: "contacts/jane.md".to_string(),
+                },
+            ]),
+            "Update collection entries"
         );
     }
 

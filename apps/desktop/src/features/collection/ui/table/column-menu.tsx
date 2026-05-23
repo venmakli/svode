@@ -147,7 +147,9 @@ export function ColumnMenuPopover({
               columnName: field,
               newType: type,
               conversionStrategy:
-                type === "relation" ? { relation: collectionPath || "." } : null,
+                type === "relation"
+                  ? { relation: collectionPath || "." }
+                  : null,
               projectPath: projectPath ?? null,
             })
               .then((result) => {

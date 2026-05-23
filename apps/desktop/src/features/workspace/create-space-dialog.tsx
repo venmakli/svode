@@ -3,6 +3,7 @@ import * as m from "@/paraglide/messages.js";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { Info } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -34,10 +35,38 @@ interface CreateSpaceDialogProps {
 }
 
 const CYRILLIC_MAP: Record<string, string> = {
-  а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "yo", ж: "zh",
-  з: "z", и: "i", й: "j", к: "k", л: "l", м: "m", н: "n", о: "o",
-  п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f", х: "kh", ц: "ts",
-  ч: "ch", ш: "sh", щ: "shch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu",
+  а: "a",
+  б: "b",
+  в: "v",
+  г: "g",
+  д: "d",
+  е: "e",
+  ё: "yo",
+  ж: "zh",
+  з: "z",
+  и: "i",
+  й: "j",
+  к: "k",
+  л: "l",
+  м: "m",
+  н: "n",
+  о: "o",
+  п: "p",
+  р: "r",
+  с: "s",
+  т: "t",
+  у: "u",
+  ф: "f",
+  х: "kh",
+  ц: "ts",
+  ч: "ch",
+  ш: "sh",
+  щ: "shch",
+  ъ: "",
+  ы: "y",
+  ь: "",
+  э: "e",
+  ю: "yu",
   я: "ya",
 };
 
@@ -59,16 +88,16 @@ function folderFromUrl(url: string): string {
   const trimmed = url.trim();
   if (!trimmed) return "";
   const lastSegment = trimmed.split("/").pop() ?? "";
-  return lastSegment.replace(/\.git$/, "").toLowerCase().replace(/[^a-z0-9-]/g, "");
+  return lastSegment
+    .replace(/\.git$/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "");
 }
 
-const URL_REGEX =
-  /^(https?:\/\/)\S+|^[\w.-]+@[\w.-]+:\S+$/;
+const URL_REGEX = /^(https?:\/\/)\S+|^[\w.-]+@[\w.-]+:\S+$/;
 
 function sanitizeFolder(value: string): string {
-  return value
-    .replace(/[^a-z0-9-]/g, "")
-    .replace(/^[-.]/, "");
+  return value.replace(/[^a-z0-9-]/g, "").replace(/^[-.]/, "");
 }
 
 export function CreateSpaceDialog({
@@ -85,7 +114,10 @@ export function CreateSpaceDialog({
   const [folderEdited, setFolderEdited] = useState(false);
   const [gitType, setGitType] = useState<SpaceGitType>("inline");
   const [slugCollision, setSlugCollision] = useState(false);
-  const [cloneProgress, setCloneProgress] = useState<{ phase: string; percent: number } | null>(null);
+  const [cloneProgress, setCloneProgress] = useState<{
+    phase: string;
+    percent: number;
+  } | null>(null);
 
   function resetForm() {
     setTab("create");
@@ -100,17 +132,16 @@ export function CreateSpaceDialog({
   }
 
   // Auto-fill folder from name (create) or URL (clone) unless user edited it
-  const autoFolder = tab === "create"
-    ? slugPreview(name)
-    : folderFromUrl(url);
+  const autoFolder = tab === "create" ? slugPreview(name) : folderFromUrl(url);
 
   const effectiveFolder = folderEdited ? folder : autoFolder;
-  const targetPath = activeRootPath && effectiveFolder
-    ? `${activeRootPath}/${effectiveFolder}`
-    : null;
+  const targetPath =
+    activeRootPath && effectiveFolder
+      ? `${activeRootPath}/${effectiveFolder}`
+      : null;
 
   const projectFolderName = activeRootPath
-    ? activeRootPath.split("/").pop() ?? ""
+    ? (activeRootPath.split("/").pop() ?? "")
     : "";
 
   // Reset folderEdited when switching tabs
@@ -133,27 +164,44 @@ export function CreateSpaceDialog({
     let cancelled = false;
     const timer = window.setTimeout(async () => {
       try {
-        const exists = await invoke<boolean>("path_exists", { path: targetPath });
+        const exists = await invoke<boolean>("path_exists", {
+          path: targetPath,
+        });
         if (!cancelled) setSlugCollision(exists);
       } catch {
         if (!cancelled) setSlugCollision(false);
       }
     }, 200);
-    return () => { cancelled = true; window.clearTimeout(timer); };
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [targetPath, effectiveFolder]);
 
   const trimmedUrl = url.trim();
   const urlValid = tab === "create" || URL_REGEX.test(trimmedUrl);
 
-  const isCreateValid = tab === "create" && name.trim() !== "" && effectiveFolder !== "" && !slugCollision;
-  const isCloneValid = tab === "clone" && trimmedUrl !== "" && urlValid && effectiveFolder !== "" && !slugCollision;
+  const isCreateValid =
+    tab === "create" &&
+    name.trim() !== "" &&
+    effectiveFolder !== "" &&
+    !slugCollision;
+  const isCloneValid =
+    tab === "clone" &&
+    trimmedUrl !== "" &&
+    urlValid &&
+    effectiveFolder !== "" &&
+    !slugCollision;
   const isValid = isCreateValid || isCloneValid;
 
-  const handleFolderChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const sanitized = sanitizeFolder(e.target.value);
-    setFolder(sanitized);
-    setFolderEdited(sanitized !== "");
-  }, []);
+  const handleFolderChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const sanitized = sanitizeFolder(e.target.value);
+      setFolder(sanitized);
+      setFolderEdited(sanitized !== "");
+    },
+    [],
+  );
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -161,7 +209,13 @@ export function CreateSpaceDialog({
 
     if (tab === "create") {
       try {
-        await createSpace(activeRootPath, name.trim(), icon, effectiveFolder, gitType);
+        await createSpace(
+          activeRootPath,
+          name.trim(),
+          icon,
+          effectiveFolder,
+          gitType,
+        );
         onOpenChange(false);
         resetForm();
       } catch (err) {
@@ -195,16 +249,13 @@ export function CreateSpaceDialog({
   }) {
     setCloneProgress({ phase: "Starting", percent: 0 });
 
-    const unlisten = await listen<CloneProgress>(
-      "clone:progress",
-      (event) => {
-        if (event.payload.spacePath !== opts.targetPath) return;
-        setCloneProgress({
-          phase: event.payload.phase,
-          percent: event.payload.percent,
-        });
-      },
-    );
+    const unlisten = await listen<CloneProgress>("clone:progress", (event) => {
+      if (event.payload.spacePath !== opts.targetPath) return;
+      setCloneProgress({
+        phase: event.payload.phase,
+        percent: event.payload.percent,
+      });
+    });
 
     try {
       await invoke("git_clone_space", {
@@ -238,7 +289,8 @@ export function CreateSpaceDialog({
     onOpenChange(value);
   }
 
-  const submitLabel = tab === "clone" ? m.git_clone_action() : m.project_create();
+  const submitLabel =
+    tab === "clone" ? m.git_clone_action() : m.project_create();
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
@@ -251,10 +303,18 @@ export function CreateSpaceDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <Tabs value={tab} onValueChange={(v) => setTab(v as "create" | "clone")} className="mt-4">
+          <Tabs
+            value={tab}
+            onValueChange={(v) => setTab(v as "create" | "clone")}
+            className="mt-4"
+          >
             <TabsList className="w-full">
-              <TabsTrigger value="create" className="flex-1">{m.space_tab_create()}</TabsTrigger>
-              <TabsTrigger value="clone" className="flex-1">{m.space_tab_clone()}</TabsTrigger>
+              <TabsTrigger value="create" className="flex-1">
+                {m.space_tab_create()}
+              </TabsTrigger>
+              <TabsTrigger value="clone" className="flex-1">
+                {m.space_tab_clone()}
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="create" className="mt-4">
@@ -295,29 +355,48 @@ export function CreateSpaceDialog({
 
                 <div className="grid gap-2">
                   <Label>{m.space_type_label()}</Label>
-                  <RadioGroup value={gitType} onValueChange={(v) => setGitType(v as SpaceGitType)}>
+                  <RadioGroup
+                    value={gitType}
+                    onValueChange={(v) => setGitType(v as SpaceGitType)}
+                  >
                     <label className="flex items-start gap-3 rounded-md border p-3 cursor-pointer has-[[data-state=checked]]:border-ring">
                       <RadioGroupItem value="inline" className="mt-0.5" />
                       <div>
-                        <div className="text-sm font-medium">{m.space_type_inline()}</div>
-                        <div className="text-xs text-muted-foreground">{m.space_type_inline_desc()}</div>
+                        <div className="text-sm font-medium">
+                          {m.space_type_inline()}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {m.space_type_inline_desc()}
+                        </div>
                       </div>
                     </label>
                     <label className="flex items-start gap-3 rounded-md border p-3 cursor-pointer has-[[data-state=checked]]:border-ring">
                       <RadioGroupItem value="independent" className="mt-0.5" />
                       <div>
-                        <div className="text-sm font-medium">{m.space_type_independent()}</div>
-                        <div className="text-xs text-muted-foreground">{m.space_type_independent_desc()}</div>
+                        <div className="text-sm font-medium">
+                          {m.space_type_independent()}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {m.space_type_independent_desc()}
+                        </div>
                       </div>
                     </label>
                     <label className="flex items-start gap-3 rounded-md border p-3 cursor-pointer has-[[data-state=checked]]:border-ring">
                       <RadioGroupItem value="submodule" className="mt-0.5" />
                       <div>
-                        <div className="text-sm font-medium">{m.space_type_submodule()}</div>
-                        <div className="text-xs text-muted-foreground">{m.space_type_submodule_desc()}</div>
+                        <div className="text-sm font-medium">
+                          {m.space_type_submodule()}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {m.space_type_submodule_desc()}
+                        </div>
                       </div>
                     </label>
                   </RadioGroup>
+                  <div className="flex items-start gap-2 rounded-md bg-muted px-2 py-2 text-xs leading-5 text-muted-foreground">
+                    <Info data-icon="inline-start" />
+                    <span>{m.space_pii_independent_hint()}</span>
+                  </div>
                 </div>
               </div>
             </TabsContent>
@@ -334,7 +413,9 @@ export function CreateSpaceDialog({
                     autoFocus
                   />
                   {!urlValid && trimmedUrl !== "" && (
-                    <p className="text-xs text-destructive">{m.git_clone_url_invalid()}</p>
+                    <p className="text-xs text-destructive">
+                      {m.git_clone_url_invalid()}
+                    </p>
                   )}
                 </div>
 
@@ -360,22 +441,37 @@ export function CreateSpaceDialog({
 
                 <div className="grid gap-2">
                   <Label>{m.space_type_label()}</Label>
-                  <RadioGroup value={gitType} onValueChange={(v) => setGitType(v as SpaceGitType)}>
+                  <RadioGroup
+                    value={gitType}
+                    onValueChange={(v) => setGitType(v as SpaceGitType)}
+                  >
                     <label className="flex items-start gap-3 rounded-md border p-3 cursor-pointer has-[[data-state=checked]]:border-ring">
                       <RadioGroupItem value="independent" className="mt-0.5" />
                       <div>
-                        <div className="text-sm font-medium">{m.space_type_independent()}</div>
-                        <div className="text-xs text-muted-foreground">{m.space_type_independent_desc()}</div>
+                        <div className="text-sm font-medium">
+                          {m.space_type_independent()}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {m.space_type_independent_desc()}
+                        </div>
                       </div>
                     </label>
                     <label className="flex items-start gap-3 rounded-md border p-3 cursor-pointer has-[[data-state=checked]]:border-ring">
                       <RadioGroupItem value="submodule" className="mt-0.5" />
                       <div>
-                        <div className="text-sm font-medium">{m.space_type_submodule()}</div>
-                        <div className="text-xs text-muted-foreground">{m.space_type_submodule_desc()}</div>
+                        <div className="text-sm font-medium">
+                          {m.space_type_submodule()}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {m.space_type_submodule_desc()}
+                        </div>
                       </div>
                     </label>
                   </RadioGroup>
+                  <div className="flex items-start gap-2 rounded-md bg-muted px-2 py-2 text-xs leading-5 text-muted-foreground">
+                    <Info data-icon="inline-start" />
+                    <span>{m.space_pii_independent_hint()}</span>
+                  </div>
                 </div>
               </div>
             </TabsContent>
@@ -391,7 +487,12 @@ export function CreateSpaceDialog({
           )}
 
           <DialogFooter className="mt-4">
-            <Button type="button" variant="outline" onClick={() => handleOpenChange(false)} disabled={!!cloneProgress}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => handleOpenChange(false)}
+              disabled={!!cloneProgress}
+            >
               {m.project_cancel()}
             </Button>
             <Button type="submit" disabled={!isValid || !!cloneProgress}>

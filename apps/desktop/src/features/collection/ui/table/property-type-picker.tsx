@@ -1,13 +1,22 @@
 import { useState, type ReactNode } from "react";
-import { ArrowLeft, Check } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { PropertyType } from "@/features/properties/model";
-import { PROPERTY_TYPES } from "@/features/properties/lib";
+import {
+  isSensitivePropertyType,
+  PROPERTY_TYPES,
+} from "@/features/properties/lib";
 import { PROPERTY_TYPE_ICONS } from "./icons";
 import * as m from "@/paraglide/messages.js";
 
@@ -40,31 +49,36 @@ export function PropertyTypePicker({
             {m.table_property_type_title()}
           </div>
         </div>
-        <div className="p-1">
-          {PROPERTY_TYPES.map((type) => {
-            const Icon = PROPERTY_TYPE_ICONS[type.value];
-            return (
-              <Button
-                key={type.value}
-                type="button"
-                variant="ghost"
-                className="h-9 w-full justify-start gap-3 rounded-lg px-3 text-sm font-normal"
-                onClick={() => {
-                  onSelect(type.value);
-                  setOpen(false);
-                }}
-              >
-                <Icon data-icon="inline-start" />
-                <span className="flex-1 text-left">
-                  {propertyTypeLabel(type.value)}
-                </span>
-                {activeType === type.value ? (
-                  <Check data-icon="inline-end" />
-                ) : null}
-              </Button>
-            );
-          })}
-        </div>
+        <TooltipProvider>
+          <div className="p-1">
+            {PROPERTY_TYPES.map((type) => {
+              const Icon = PROPERTY_TYPE_ICONS[type.value];
+              return (
+                <Button
+                  key={type.value}
+                  type="button"
+                  variant="ghost"
+                  className="h-9 w-full justify-start gap-3 rounded-lg px-3 text-sm font-normal"
+                  onClick={() => {
+                    onSelect(type.value);
+                    setOpen(false);
+                  }}
+                >
+                  <Icon data-icon="inline-start" />
+                  <span className="flex-1 text-left">
+                    {propertyTypeLabel(type.value)}
+                  </span>
+                  {isSensitivePropertyType(type.value) ? (
+                    <SensitivePropertyTypeHint />
+                  ) : null}
+                  {activeType === type.value ? (
+                    <Check data-icon="inline-end" />
+                  ) : null}
+                </Button>
+              );
+            })}
+          </div>
+        </TooltipProvider>
         <div className="border-t px-3 py-2 text-xs leading-5 text-muted-foreground">
           {m.table_property_type_notice()}
         </div>
@@ -91,4 +105,23 @@ export function propertyTypeLabel(type: PropertyType) {
     relation: String(m.table_property_type_relation()),
   };
   return labels[type];
+}
+
+export function SensitivePropertyTypeHint() {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          aria-label={m.property_pii_git_history_hint()}
+          className="inline-flex text-muted-foreground"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <AlertTriangle className="size-3.5" data-icon="inline-end" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="right" align="center" className="max-w-64">
+        {m.property_pii_git_history_hint()}
+      </TooltipContent>
+    </Tooltip>
+  );
 }

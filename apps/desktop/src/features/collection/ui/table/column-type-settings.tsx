@@ -446,11 +446,13 @@ function RelationDiagnosticsPanel({
   if (!hasSchemaWarning && !hasDrift) return null;
 
   const createName =
-    reverseColumn?.trim() || reverseName.trim() || m.property_relation_reverse_default();
+    reverseColumn?.trim() ||
+    reverseName.trim() ||
+    m.property_relation_reverse_default();
   const description = hasSchemaWarning
-    ? diagnostics.schemaMessage ??
+    ? (diagnostics.schemaMessage ??
       diagnostics.schema_message ??
-      schemaWarningDescription(schemaStatus)
+      schemaWarningDescription(schemaStatus))
     : m.property_relation_drift_counts({
         reverse: String(missingReverse),
         source: String(missingSource),
@@ -522,7 +524,9 @@ function RelationDiagnosticsPanel({
             type="button"
             variant="outline"
             size="xs"
-            disabled={Boolean(repairing) || !(selectedReverse || choices[0]?.name)}
+            disabled={
+              Boolean(repairing) || !(selectedReverse || choices[0]?.name)
+            }
             onClick={() =>
               onRepair(
                 "choose_reverse_column",
@@ -566,7 +570,8 @@ function RelationDiagnosticsPanel({
 function schemaWarningDescription(
   status: RelationTwoWayDiagnostics["schemaStatus"],
 ) {
-  if (status === "missing_reverse") return m.property_relation_missing_reverse();
+  if (status === "missing_reverse")
+    return m.property_relation_missing_reverse();
   if (status === "incompatible_reverse") {
     return m.property_relation_incompatible_reverse();
   }
