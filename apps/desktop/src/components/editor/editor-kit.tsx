@@ -3,6 +3,11 @@
 import { type Value, TrailingBlockPlugin } from 'platejs';
 import { type TPlateEditor, useEditorRef } from 'platejs/react';
 
+import {
+  ENABLE_PLATE_ADVANCED_BLOCKS,
+  ENABLE_PLATE_AI,
+  ENABLE_PLATE_REVIEW,
+} from '@/app/feature-flags';
 import { AIKit } from '@/components/editor/plugins/ai-kit';
 import { AlignKit } from '@/components/editor/plugins/align-kit';
 import { AutoformatKit } from '@/components/editor/plugins/autoformat-kit';
@@ -40,19 +45,18 @@ import { ToggleKit } from '@/components/editor/plugins/toggle-kit';
 import { ConflictPlugin } from '@/features/editor/conflict/conflict-plugin';
 
 export const EditorKit = [
-  ...CopilotKit,
-  ...AIKit,
+  ...(ENABLE_PLATE_AI ? [...CopilotKit, ...AIKit] : []),
 
   // Elements
   ...BasicBlocksKit,
   ...CodeBlockKit,
   ...TableKit,
   ...ToggleKit,
-  ...TocKit,
   ...MediaKit,
   ...CalloutKit,
-  ...ColumnKit,
-  ...MathKit,
+  ...(ENABLE_PLATE_ADVANCED_BLOCKS ? TocKit : []),
+  ...(ENABLE_PLATE_ADVANCED_BLOCKS ? ColumnKit : []),
+  ...(ENABLE_PLATE_ADVANCED_BLOCKS ? MathKit : []),
   ...DateKit,
   ...LinkKit,
   ...MentionKit,
@@ -67,9 +71,9 @@ export const EditorKit = [
   ...LineHeightKit,
 
   // Collaboration
-  ...DiscussionKit,
-  ...CommentKit,
-  ...SuggestionKit,
+  ...(ENABLE_PLATE_REVIEW ? DiscussionKit : []),
+  ...(ENABLE_PLATE_REVIEW ? CommentKit : []),
+  ...(ENABLE_PLATE_REVIEW ? SuggestionKit : []),
 
   // Editing
   ...SlashKit,

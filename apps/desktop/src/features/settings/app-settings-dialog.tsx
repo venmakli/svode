@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
+import { ENABLE_LEGACY_AGENT_INTEGRATION } from "@/app/feature-flags";
 import * as m from "@/paraglide/messages.js";
 import { setLocale, getLocale } from "@/paraglide/runtime.js";
 import {
@@ -41,7 +42,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useTheme } from "@/components/ui/theme-provider";
-import { ExternalLink, Keyboard, Paintbrush, RefreshCw, Terminal, User } from "lucide-react";
+import { ExternalLink, Info, Keyboard, Paintbrush, RefreshCw, Terminal, User } from "lucide-react";
+import { useAppVersion } from "@/hooks/use-app-version";
 import { invalidateAppSettings } from "@/hooks/use-app-settings";
 import { useIdentityStore } from "@/features/identity/identity-store";
 import { isValidEmail, isValidName } from "@/features/identity/validation";
@@ -51,13 +53,29 @@ const CLI_AUTH_COMMANDS: Record<string, string> = {
   claude: "claude login",
 };
 
-type Section = "profile" | "appearance" | "cli-agents" | "shortcuts";
+type Section = "profile" | "appearance" | "cli-agents" | "shortcuts" | "about";
 
-const NAV_ITEMS: { key: Section; label: () => string; icon: React.FC<{ className?: string }> }[] = [
-  { key: "profile", label: () => m.settings_profile(), icon: User },
-  { key: "appearance", label: () => m.settings_appearance(), icon: Paintbrush },
-  { key: "cli-agents", label: () => m.settings_cli_agents(), icon: Terminal },
-  { key: "shortcuts", label: () => m.settings_shortcuts(), icon: Keyboard },
+const NAV_ITEMS: {
+  key: Section;
+  label: () => string;
+  icon: React.FC<{ className?: string }>;
+  show: boolean;
+}[] = [
+  { key: "profile", label: () => m.settings_profile(), icon: User, show: true },
+  {
+    key: "appearance",
+    label: () => m.settings_appearance(),
+    icon: Paintbrush,
+    show: true,
+  },
+  {
+    key: "cli-agents",
+    label: () => m.settings_cli_agents(),
+    icon: Terminal,
+    show: ENABLE_LEGACY_AGENT_INTEGRATION,
+  },
+  { key: "shortcuts", label: () => m.settings_shortcuts(), icon: Keyboard, show: true },
+  { key: "about", label: () => m.common_about(), icon: Info, show: true },
 ];
 
 interface AppSettingsDialogProps {
@@ -67,6 +85,7 @@ interface AppSettingsDialogProps {
 
 export function AppSettingsDialog({ open, onOpenChange }: AppSettingsDialogProps) {
   const { theme, setTheme } = useTheme();
+  const version = useAppVersion();
   const [section, setSection] = useState<Section>("profile");
   const [settings, setSettings] = useState<AppSettings | null>(null);
 
@@ -101,7 +120,9 @@ export function AppSettingsDialog({ open, onOpenChange }: AppSettingsDialogProps
     if (open) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- async setState after await
       loadSettings();
-      loadAgents();
+      if (ENABLE_LEGACY_AGENT_INTEGRATION) {
+        loadAgents();
+      }
       setSection("profile");
       setIdentityName(identityGlobal?.name ?? "");
       setIdentityEmail(identityGlobal?.email ?? "");
@@ -171,7 +192,13 @@ export function AppSettingsDialog({ open, onOpenChange }: AppSettingsDialogProps
     return "unauthorized";
   }
 
-  const currentNav = NAV_ITEMS.find((i) => i.key === section)!;
+  const visibleNavItems = NAV_ITEMS.filter((item) => item.show);
+  const currentNav =
+    visibleNavItems.find((i) => i.key === section) ?? visibleNavItems[0];
+  const buildEnv = (import.meta as { env?: Record<string, string | undefined> })
+    .env;
+  const buildCommit = buildEnv?.VITE_COMBAI_BUILD_COMMIT?.trim() ?? "";
+  const releaseUrl = "https://github.com/venmakli/combai/releases";
 
   return (
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -184,7 +211,7 @@ export function AppSettingsDialog({ open, onOpenChange }: AppSettingsDialogProps
                 <SidebarGroup>
                   <SidebarGroupContent>
                     <SidebarMenu>
-                      {NAV_ITEMS.map((item) => (
+                      {visibleNavItems.map((item) => (
                         <SidebarMenuItem key={item.key}>
                           <SidebarMenuButton
                             isActive={section === item.key}
@@ -309,7 +336,7 @@ export function AppSettingsDialog({ open, onOpenChange }: AppSettingsDialogProps
                   </div>
                 )}
 
-                {section === "cli-agents" && (
+                {ENABLE_LEGACY_AGENT_INTEGRATION && section === "cli-agents" && (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <p className="text-sm text-muted-foreground">
@@ -389,6 +416,38 @@ export function AppSettingsDialog({ open, onOpenChange }: AppSettingsDialogProps
                   <p className="text-sm text-muted-foreground">
                     {m.settings_shortcuts()}
                   </p>
+                )}
+
+                {section === "about" && (
+                  <div className="flex max-w-md flex-col gap-4">
+                    <div className="flex flex-col gap-1">
+                      <Label>{m.settings_about_version()}</Label>
+                      <p className="text-sm text-muted-foreground">
+                        {version || "—"}
+                      </p>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <Label>{m.settings_about_build_commit()}</Label>
+                      <p className="text-sm text-muted-foreground">
+                        {buildCommit || m.settings_about_build_commit_unavailable()}
+                      </p>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <Label>{m.settings_about_updates()}</Label>
+                      <p className="text-sm text-muted-foreground">
+                        {m.settings_about_updates_manual()}
+                      </p>
+                    </div>
+                    <a
+                      href={releaseUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex w-fit items-center gap-1 text-sm text-primary hover:underline"
+                    >
+                      {m.settings_about_releases_link()}
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </div>
                 )}
               </div>
             </main>

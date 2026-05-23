@@ -41,6 +41,7 @@ import {
   insertBlock,
   insertInlineElement,
 } from '@/components/editor/transforms';
+import { ENABLE_PLATE_ADVANCED_BLOCKS } from '@/app/feature-flags';
 
 import { ToolbarButton, ToolbarMenuGroup } from './toolbar';
 
@@ -146,11 +147,15 @@ const groups: Group[] = [
         label: 'Image',
         value: KEYS.img,
       },
-      {
-        icon: <FilmIcon />,
-        label: 'Embed',
-        value: KEYS.mediaEmbed,
-      },
+      ...(ENABLE_PLATE_ADVANCED_BLOCKS
+        ? [
+            {
+              icon: <FilmIcon />,
+              label: 'Embed',
+              value: KEYS.mediaEmbed,
+            },
+          ]
+        : []),
     ].map((item) => ({
       ...item,
       onSelect: (editor, value) => {
@@ -158,42 +163,46 @@ const groups: Group[] = [
       },
     })),
   },
-  {
-    group: 'Advanced blocks',
-    items: [
-      {
-        icon: <TableOfContentsIcon />,
-        label: 'Table of contents',
-        value: KEYS.toc,
-      },
-      {
-        icon: <Columns3Icon />,
-        label: '3 columns',
-        value: 'action_three_columns',
-      },
-      {
-        focusEditor: false,
-        icon: <RadicalIcon />,
-        label: 'Equation',
-        value: KEYS.equation,
-      },
-      {
-        icon: <PenToolIcon />,
-        label: 'Excalidraw',
-        value: KEYS.excalidraw,
-      },
-      {
-        icon: <Code2 />,
-        label: 'Code Drawing',
-        value: KEYS.codeDrawing,
-      },
-    ].map((item) => ({
-      ...item,
-      onSelect: (editor, value) => {
-        insertBlock(editor, value);
-      },
-    })),
-  },
+  ...(ENABLE_PLATE_ADVANCED_BLOCKS
+    ? [
+        {
+          group: 'Advanced blocks',
+          items: [
+            {
+              icon: <TableOfContentsIcon />,
+              label: 'Table of contents',
+              value: KEYS.toc,
+            },
+            {
+              icon: <Columns3Icon />,
+              label: '3 columns',
+              value: 'action_three_columns',
+            },
+            {
+              focusEditor: false,
+              icon: <RadicalIcon />,
+              label: 'Equation',
+              value: KEYS.equation,
+            },
+            {
+              icon: <PenToolIcon />,
+              label: 'Excalidraw',
+              value: KEYS.excalidraw,
+            },
+            {
+              icon: <Code2 />,
+              label: 'Code Drawing',
+              value: KEYS.codeDrawing,
+            },
+          ].map((item) => ({
+            ...item,
+            onSelect: (editor: PlateEditor, value: string) => {
+              insertBlock(editor, value);
+            },
+          })),
+        },
+      ]
+    : []),
   {
     group: 'Inline',
     items: [
@@ -208,12 +217,16 @@ const groups: Group[] = [
         label: 'Date',
         value: KEYS.date,
       },
-      {
-        focusEditor: false,
-        icon: <RadicalIcon />,
-        label: 'Inline Equation',
-        value: KEYS.inlineEquation,
-      },
+      ...(ENABLE_PLATE_ADVANCED_BLOCKS
+        ? [
+            {
+              focusEditor: false,
+              icon: <RadicalIcon />,
+              label: 'Inline Equation',
+              value: KEYS.inlineEquation,
+            },
+          ]
+        : []),
     ].map((item) => ({
       ...item,
       onSelect: (editor, value) => {

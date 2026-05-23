@@ -34,6 +34,10 @@ import { type TComboboxInputElement, KEYS } from 'platejs';
 import { PlateElement } from 'platejs/react';
 
 import {
+  ENABLE_PLATE_ADVANCED_BLOCKS,
+  ENABLE_PLATE_AI,
+} from '@/app/feature-flags';
+import {
   insertBlock,
   insertInlineElement,
 } from '@/components/editor/transforms';
@@ -62,19 +66,23 @@ type Group = {
 };
 
 const groups: Group[] = [
-  {
-    group: 'AI',
-    items: [
-      {
-        focusEditor: false,
-        icon: <SparklesIcon />,
-        value: 'AI',
-        onSelect: (editor) => {
-          editor.getApi(AIChatPlugin).aiChat.show();
+  ...(ENABLE_PLATE_AI
+    ? [
+        {
+          group: 'AI',
+          items: [
+            {
+              focusEditor: false,
+              icon: <SparklesIcon />,
+              value: 'AI',
+              onSelect: (editor: PlateEditor) => {
+                editor.getApi(AIChatPlugin).aiChat.show();
+              },
+            },
+          ],
         },
-      },
-    ],
-  },
+      ]
+    : []),
   {
     group: 'Basic blocks',
     items: [
@@ -157,52 +165,56 @@ const groups: Group[] = [
       },
     })),
   },
-  {
-    group: 'Advanced blocks',
-    items: [
-      {
-        icon: <TableOfContentsIcon />,
-        keywords: ['toc'],
-        label: 'Table of contents',
-        value: KEYS.toc,
-      },
-      {
-        icon: <Columns3Icon />,
-        label: '3 columns',
-        value: 'action_three_columns',
-      },
-      {
-        focusEditor: false,
-        icon: <RadicalIcon />,
-        label: 'Equation',
-        value: KEYS.equation,
-      },
-      {
-        icon: <PenToolIcon />,
-        keywords: ['excalidraw'],
-        label: 'Excalidraw',
-        value: KEYS.excalidraw,
-      },
-      {
-        icon: <Code2 />,
-        keywords: [
-          'code-drawing',
-          'diagram',
-          'plantuml',
-          'graphviz',
-          'flowchart',
-          'mermaid',
-        ],
-        label: 'Code Drawing',
-        value: KEYS.codeDrawing,
-      },
-    ].map((item) => ({
-      ...item,
-      onSelect: (editor, value) => {
-        insertBlock(editor, value, { upsert: true });
-      },
-    })),
-  },
+  ...(ENABLE_PLATE_ADVANCED_BLOCKS
+    ? [
+        {
+          group: 'Advanced blocks',
+          items: [
+            {
+              icon: <TableOfContentsIcon />,
+              keywords: ['toc'],
+              label: 'Table of contents',
+              value: KEYS.toc,
+            },
+            {
+              icon: <Columns3Icon />,
+              label: '3 columns',
+              value: 'action_three_columns',
+            },
+            {
+              focusEditor: false,
+              icon: <RadicalIcon />,
+              label: 'Equation',
+              value: KEYS.equation,
+            },
+            {
+              icon: <PenToolIcon />,
+              keywords: ['excalidraw'],
+              label: 'Excalidraw',
+              value: KEYS.excalidraw,
+            },
+            {
+              icon: <Code2 />,
+              keywords: [
+                'code-drawing',
+                'diagram',
+                'plantuml',
+                'graphviz',
+                'flowchart',
+                'mermaid',
+              ],
+              label: 'Code Drawing',
+              value: KEYS.codeDrawing,
+            },
+          ].map((item) => ({
+            ...item,
+            onSelect: (editor: PlateEditor, value: string) => {
+              insertBlock(editor, value, { upsert: true });
+            },
+          })),
+        },
+      ]
+    : []),
   {
     group: 'Inline',
     items: [
@@ -213,12 +225,16 @@ const groups: Group[] = [
         label: 'Date',
         value: KEYS.date,
       },
-      {
-        focusEditor: false,
-        icon: <RadicalIcon />,
-        label: 'Inline Equation',
-        value: KEYS.inlineEquation,
-      },
+      ...(ENABLE_PLATE_ADVANCED_BLOCKS
+        ? [
+            {
+              focusEditor: false,
+              icon: <RadicalIcon />,
+              label: 'Inline Equation',
+              value: KEYS.inlineEquation,
+            },
+          ]
+        : []),
     ].map((item) => ({
       ...item,
       onSelect: (editor, value) => {
@@ -241,18 +257,22 @@ const groups: Group[] = [
         label: 'File',
         value: KEYS.file,
       },
-      {
-        icon: <Film />,
-        keywords: ['video', 'movie'],
-        label: 'Video',
-        value: KEYS.video,
-      },
-      {
-        icon: <AudioLines />,
-        keywords: ['audio', 'sound', 'music'],
-        label: 'Audio',
-        value: KEYS.audio,
-      },
+      ...(ENABLE_PLATE_ADVANCED_BLOCKS
+        ? [
+            {
+              icon: <Film />,
+              keywords: ['video', 'movie'],
+              label: 'Video',
+              value: KEYS.video,
+            },
+            {
+              icon: <AudioLines />,
+              keywords: ['audio', 'sound', 'music'],
+              label: 'Audio',
+              value: KEYS.audio,
+            },
+          ]
+        : []),
     ].map((item) => ({
       ...item,
       focusEditor: false,

@@ -1,3 +1,7 @@
+import {
+  ENABLE_PLATE_ADVANCED_BLOCKS,
+  ENABLE_PLATE_REVIEW,
+} from '@/app/feature-flags';
 import { BaseAlignKit } from './plugins/align-base-kit';
 import { BaseBasicBlocksKit } from './plugins/basic-blocks-base-kit';
 import { BaseBasicMarksKit } from './plugins/basic-marks-base-kit';
@@ -24,11 +28,11 @@ export const BaseEditorKit = [
   ...BaseCodeBlockKit,
   ...BaseTableKit,
   ...BaseToggleKit,
-  ...BaseTocKit,
   ...BaseMediaKit,
   ...BaseCalloutKit,
-  ...BaseColumnKit,
-  ...BaseMathKit,
+  ...(ENABLE_PLATE_ADVANCED_BLOCKS ? BaseTocKit : []),
+  ...(ENABLE_PLATE_ADVANCED_BLOCKS ? BaseColumnKit : []),
+  ...(ENABLE_PLATE_ADVANCED_BLOCKS ? BaseMathKit : []),
   ...BaseDateKit,
   ...BaseLinkKit,
   ...BaseMentionKit,
@@ -37,7 +41,7 @@ export const BaseEditorKit = [
   ...BaseListKit,
   ...BaseAlignKit,
   ...BaseLineHeightKit,
-  ...BaseCommentKit,
-  ...BaseSuggestionKit,
+  ...(ENABLE_PLATE_REVIEW ? BaseCommentKit : []),
+  ...(ENABLE_PLATE_REVIEW ? BaseSuggestionKit : []),
   ...MarkdownKit,
 ];

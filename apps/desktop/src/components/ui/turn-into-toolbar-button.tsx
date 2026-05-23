@@ -37,6 +37,7 @@ import {
   getBlockType,
   setBlockType,
 } from '@/components/editor/transforms';
+import { ENABLE_PLATE_ADVANCED_BLOCKS } from '@/app/feature-flags';
 
 import { ToolbarButton, ToolbarMenuGroup } from './toolbar';
 
@@ -113,30 +114,38 @@ export const turnIntoItems = [
     label: 'Code',
     value: KEYS.codeBlock,
   },
-  {
-    icon: <Code2 />,
-    keywords: [
-      'code-drawing',
-      'diagram',
-      'plantuml',
-      'graphviz',
-      'flowchart',
-      'mermaid',
-    ],
-    label: 'Code Drawing',
-    value: KEYS.codeDrawing,
-  },
+  ...(ENABLE_PLATE_ADVANCED_BLOCKS
+    ? [
+        {
+          icon: <Code2 />,
+          keywords: [
+            'code-drawing',
+            'diagram',
+            'plantuml',
+            'graphviz',
+            'flowchart',
+            'mermaid',
+          ],
+          label: 'Code Drawing',
+          value: KEYS.codeDrawing,
+        },
+      ]
+    : []),
   {
     icon: <QuoteIcon />,
     keywords: ['citation', 'blockquote', '>'],
     label: 'Quote',
     value: KEYS.blockquote,
   },
-  {
-    icon: <Columns3Icon />,
-    label: '3 columns',
-    value: 'action_three_columns',
-  },
+  ...(ENABLE_PLATE_ADVANCED_BLOCKS
+    ? [
+        {
+          icon: <Columns3Icon />,
+          label: '3 columns',
+          value: 'action_three_columns',
+        },
+      ]
+    : []),
 ];
 
 export function TurnIntoToolbarButton(props: DropdownMenuProps) {

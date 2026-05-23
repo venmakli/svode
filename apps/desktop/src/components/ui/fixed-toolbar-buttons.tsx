@@ -17,6 +17,11 @@ import {
 import { KEYS } from 'platejs';
 import { useEditorReadOnly } from 'platejs/react';
 
+import {
+  ENABLE_PLATE_ADVANCED_BLOCKS,
+  ENABLE_PLATE_AI,
+  ENABLE_PLATE_REVIEW,
+} from '@/app/feature-flags';
 import { AIToolbarButton } from './ai-toolbar-button';
 import { AlignToolbarButton } from './align-toolbar-button';
 import { CommentToolbarButton } from './comment-toolbar-button';
@@ -59,19 +64,23 @@ export function FixedToolbarButtons() {
             <RedoToolbarButton />
           </ToolbarGroup>
 
-          <ToolbarGroup>
-            <AIToolbarButton tooltip="AI commands">
-              <WandSparklesIcon />
-            </AIToolbarButton>
-          </ToolbarGroup>
+          {ENABLE_PLATE_AI && (
+            <ToolbarGroup>
+              <AIToolbarButton tooltip="AI commands">
+                <WandSparklesIcon />
+              </AIToolbarButton>
+            </ToolbarGroup>
+          )}
 
-          <ToolbarGroup>
-            <ExportToolbarButton>
-              <ArrowUpToLineIcon />
-            </ExportToolbarButton>
+          {ENABLE_PLATE_ADVANCED_BLOCKS && (
+            <ToolbarGroup>
+              <ExportToolbarButton>
+                <ArrowUpToLineIcon />
+              </ExportToolbarButton>
 
-            <ImportToolbarButton />
-          </ToolbarGroup>
+              <ImportToolbarButton />
+            </ToolbarGroup>
+          )}
 
           <ToolbarGroup>
             <InsertToolbarButton />
@@ -135,8 +144,12 @@ export function FixedToolbarButtons() {
 
           <ToolbarGroup>
             <MediaToolbarButton nodeType={KEYS.img} />
-            <MediaToolbarButton nodeType={KEYS.video} />
-            <MediaToolbarButton nodeType={KEYS.audio} />
+            {ENABLE_PLATE_ADVANCED_BLOCKS && (
+              <>
+                <MediaToolbarButton nodeType={KEYS.video} />
+                <MediaToolbarButton nodeType={KEYS.audio} />
+              </>
+            )}
             <MediaToolbarButton nodeType={KEYS.file} />
           </ToolbarGroup>
 
@@ -158,12 +171,14 @@ export function FixedToolbarButtons() {
         <MarkToolbarButton nodeType={KEYS.highlight} tooltip="Highlight">
           <HighlighterIcon />
         </MarkToolbarButton>
-        <CommentToolbarButton />
+        {ENABLE_PLATE_REVIEW && <CommentToolbarButton />}
       </ToolbarGroup>
 
-      <ToolbarGroup>
-        <ModeToolbarButton />
-      </ToolbarGroup>
+      {ENABLE_PLATE_REVIEW && (
+        <ToolbarGroup>
+          <ModeToolbarButton />
+        </ToolbarGroup>
+      )}
     </div>
   );
 }

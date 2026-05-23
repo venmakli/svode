@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { ENABLE_IN_APP_CHAT } from "@/app/feature-flags";
 
 type SettingsDialog = "app" | "space" | null;
 
@@ -22,11 +23,12 @@ interface LayoutState {
 export const useLayoutStore = create<LayoutState>((set, get) => ({
   activeDocument: null,
   activeDocumentSpaceId: null,
-  chatPanelOpen: true,
+  chatPanelOpen: false,
   settingsDialog: null,
   settingsSpacePath: null,
 
   toggleChatPanel: () => {
+    if (!ENABLE_IN_APP_CHAT) return;
     const { activeDocument } = get();
     if (!activeDocument) return;
     set((s) => ({ chatPanelOpen: !s.chatPanelOpen }));
@@ -35,13 +37,13 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   openDocument: (path, spaceId?) =>
     set((s) => ({
       activeDocument: path,
-      chatPanelOpen: true,
+      chatPanelOpen: ENABLE_IN_APP_CHAT ? s.chatPanelOpen : false,
       // Preserve existing space id if not provided (e.g. rename within same space)
       activeDocumentSpaceId: spaceId ?? s.activeDocumentSpaceId,
     })),
 
   closeDocument: () =>
-    set({ activeDocument: null, activeDocumentSpaceId: null, chatPanelOpen: true }),
+    set({ activeDocument: null, activeDocumentSpaceId: null, chatPanelOpen: false }),
 
   openAppSettings: () =>
     set({ settingsDialog: "app", settingsSpacePath: null }),

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
+import { ENABLE_IN_APP_CHAT } from "@/app/feature-flags";
 import { useLayoutStore } from "@/stores/layout";
 import { useSpaceStore } from "@/stores/space";
 import { isTerminalKeyboardEvent } from "@/features/terminal";
@@ -20,8 +21,7 @@ export function useKeyboardShortcuts() {
         openAppSettings();
       }
 
-      // Cmd+R — toggle chat panel
-      if (isMeta && e.key === "r") {
+      if (ENABLE_IN_APP_CHAT && isMeta && e.key === "r") {
         e.preventDefault();
         toggleChatPanel();
       }

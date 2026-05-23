@@ -13,6 +13,11 @@ import {
 import { KEYS } from 'platejs';
 import { useEditorReadOnly } from 'platejs/react';
 
+import {
+  ENABLE_PLATE_ADVANCED_BLOCKS,
+  ENABLE_PLATE_AI,
+  ENABLE_PLATE_REVIEW,
+} from '@/app/feature-flags';
 import { AIToolbarButton } from './ai-toolbar-button';
 import { CommentToolbarButton } from './comment-toolbar-button';
 import { InlineEquationToolbarButton } from './equation-toolbar-button';
@@ -30,12 +35,14 @@ export function FloatingToolbarButtons() {
     <>
       {!readOnly && (
         <>
-          <ToolbarGroup>
-            <AIToolbarButton tooltip="AI commands">
-              <WandSparklesIcon />
-              Ask AI
-            </AIToolbarButton>
-          </ToolbarGroup>
+          {ENABLE_PLATE_AI && (
+            <ToolbarGroup>
+              <AIToolbarButton tooltip="AI commands">
+                <WandSparklesIcon />
+                Ask AI
+              </AIToolbarButton>
+            </ToolbarGroup>
+          )}
 
           <ToolbarGroup>
             <TurnIntoToolbarButton />
@@ -66,7 +73,7 @@ export function FloatingToolbarButtons() {
               <Code2Icon />
             </MarkToolbarButton>
 
-            <InlineEquationToolbarButton />
+            {ENABLE_PLATE_ADVANCED_BLOCKS && <InlineEquationToolbarButton />}
 
             <LinkToolbarButton />
           </ToolbarGroup>
@@ -74,8 +81,12 @@ export function FloatingToolbarButtons() {
       )}
 
       <ToolbarGroup>
-        <CommentToolbarButton />
-        <SuggestionToolbarButton />
+        {ENABLE_PLATE_REVIEW && (
+          <>
+            <CommentToolbarButton />
+            <SuggestionToolbarButton />
+          </>
+        )}
 
         {!readOnly && <MoreToolbarButton />}
       </ToolbarGroup>

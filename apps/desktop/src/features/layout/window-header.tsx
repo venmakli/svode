@@ -1,5 +1,6 @@
 import { useNavigate, useMatches } from "@tanstack/react-router";
 import { Home, PanelLeft, PanelRight, Search } from "lucide-react";
+import { ENABLE_IN_APP_CHAT } from "@/app/feature-flags";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -105,19 +106,21 @@ export function WindowHeader() {
             terminalTarget={terminalTarget}
           />
         )}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={toggleChatPanel}
-              disabled={chatToggleDisabled}
-            >
-              <PanelRight className="h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">Toggle chat panel (⌘R)</TooltipContent>
-        </Tooltip>
+        {ENABLE_IN_APP_CHAT && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={toggleChatPanel}
+                disabled={chatToggleDisabled}
+              >
+                <PanelRight className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Toggle chat panel (⌘R)</TooltipContent>
+          </Tooltip>
+        )}
       </div>
     </header>
   );
