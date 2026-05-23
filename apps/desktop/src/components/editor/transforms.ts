@@ -134,9 +134,18 @@ export const insertBlock = (
     }
 
     if (!isSameBlockType) {
-      editor.getApi(SuggestionPlugin).suggestion.withoutSuggestions(() => {
+      const removePreviousEmptyBlock = () => {
         editor.tf.removeNodes({ previousEmptyBlock: true });
-      });
+      };
+      const withoutSuggestions = editor
+        .getApi(SuggestionPlugin)
+        ?.suggestion?.withoutSuggestions;
+
+      if (withoutSuggestions) {
+        withoutSuggestions(removePreviousEmptyBlock);
+      } else {
+        removePreviousEmptyBlock();
+      }
     }
   });
 };

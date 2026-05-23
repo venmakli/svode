@@ -59,7 +59,7 @@ export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
 
   const suggestionData = editor
     .getApi(SuggestionPlugin)
-    .suggestion.suggestionData(element) as { type?: string } | undefined;
+    ?.suggestion?.suggestionData?.(element) as { type?: string } | undefined;
 
   // External link — standard rendering
   if (!isDoc) {
