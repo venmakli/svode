@@ -5,6 +5,7 @@ mod files;
 mod git;
 mod identity;
 mod index;
+pub mod mcp;
 mod properties;
 mod repo_path;
 mod space;
@@ -36,6 +37,7 @@ pub fn run() {
         .manage(Arc::new(files::WriteNonceRegistry::new()))
         .manage(git::GitState::new())
         .manage(index::IndexState::new())
+        .manage(mcp::active::ActiveProjectState::new())
         .manage(properties::PersonCacheState::new())
         .manage(terminal::TerminalManager::new())
         .setup(|app| {
@@ -43,6 +45,12 @@ pub fn run() {
                 app.handle().clone(),
             ));
             app.manage(service);
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = mcp::ipc::start_desktop_ipc(handle).await {
+                    tracing::warn!("failed to start MCP desktop IPC: {}", error.message);
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -195,6 +203,14 @@ pub fn run() {
             terminal::commands::terminal_resize,
             terminal::commands::terminal_kill,
             terminal::commands::terminal_list,
+            mcp::commands::mcp_set_active_context,
+            mcp::commands::mcp_clear_active_context,
+            mcp::commands::mcp_get_active_context,
+            mcp::commands::mcp_get_status,
+            mcp::commands::mcp_install_client,
+            mcp::commands::mcp_remove_client,
+            mcp::commands::mcp_print_config,
+            mcp::commands::mcp_run_doctor,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

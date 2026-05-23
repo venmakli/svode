@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "bun run build:lfs-dal && bun run dev",
-    "beforeBuildCommand": "bun run build:lfs-dal && bun run build"
+    "beforeDevCommand": "bun run build:sidecars && bun run dev",
+    "beforeBuildCommand": "bun run build:sidecars && bun run build"
   },
   "app": {
     "windows": [
@@ -35,14 +35,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": [
-      "binaries/lfs-dal"
-    ],
+    "externalBin": ["binaries/lfs-dal", "binaries/combai-mcp"],
     "linux": {
       "deb": {
-        "depends": [
-          "git"
-        ]
+        "depends": ["git"]
       },
       "appimage": {
         "bundleMediaFramework": false

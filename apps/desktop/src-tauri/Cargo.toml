@@ -9,6 +9,10 @@ repository = "https://github.com/venmakli/combai"
 name = "combai_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+name = "combai-mcp"
+path = "src/bin/combai-mcp.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

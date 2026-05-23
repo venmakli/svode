@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
+import { clearMcpActiveContext, setMcpActiveContext } from "@/platform/mcp";
 import type {
   SpaceInfo,
   SpaceConfig,
@@ -60,7 +61,11 @@ interface SpaceState {
     folderName: string,
     gitType: SpaceGitType,
   ) => Promise<SpaceInfo>;
-  deleteSpace: (parentPath: string, spaceId: string, deleteFiles?: boolean) => Promise<void>;
+  deleteSpace: (
+    parentPath: string,
+    spaceId: string,
+    deleteFiles?: boolean,
+  ) => Promise<void>;
   clearActiveSpace: () => void;
 
   // Document/tree methods
@@ -108,6 +113,23 @@ export function selectActiveSpacePath(state: SpaceState): string {
     if (space) return space.path;
   }
   return state.activeRootPath ?? "";
+}
+
+function syncMcpContext(
+  state: SpaceState,
+  activeSpaceId = state.activeSpaceId,
+) {
+  if (!state.activeRootId || !state.activeRootPath || !state.activeRootName) {
+    clearMcpActiveContext().catch((err) =>
+      console.warn("mcp_clear_active_context failed:", err),
+    );
+    return;
+  }
+
+  setMcpActiveContext({
+    projectPath: state.activeRootPath,
+    activeSpaceId,
+  }).catch((err) => console.warn("mcp_set_active_context failed:", err));
 }
 
 export const useSpaceStore = create<SpaceState>((set, get) => ({
@@ -162,12 +184,13 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
         fileTrees: {},
         explicitHome: false,
       });
+      syncMcpContext(get(), null);
       // Load root file tree (project documents) and spaces
       // Grant the webview access to this project's `.assets/` via the
       // Tauri asset protocol. Scope is per-app-session and the call is
       // idempotent — safe to repeat on every project open.
-      invoke("ensure_assets_scope", { spacePath: ws.path }).catch(
-        (err) => console.warn("ensure_assets_scope failed:", err),
+      invoke("ensure_assets_scope", { spacePath: ws.path }).catch((err) =>
+        console.warn("ensure_assets_scope failed:", err),
       );
       await get().refreshTree(id);
       await get().loadExpandedPaths(id);
@@ -230,6 +253,11 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
           }
         : {}),
     }));
+    if (activeRootId === id) {
+      clearMcpActiveContext().catch((err) =>
+        console.warn("mcp_clear_active_context failed:", err),
+      );
+    }
     toast.success(m.toast_project_deleted());
   },
 
@@ -253,6 +281,8 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       const readySpace = spaces.find((s) => s.status === "ready");
       if (readySpace && !get().activeSpaceId) {
         await get().openSpace(readySpace.id);
+      } else {
+        syncMcpContext(get());
       }
     } catch (err) {
       console.error("Failed to load spaces:", err);
@@ -266,9 +296,10 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     const space = get().spaces.find((w) => w.id === id);
     if (space?.status && space.status !== "ready") return;
     set({ activeSpaceId: id });
+    syncMcpContext(get(), id);
     if (space?.path) {
-      invoke("ensure_assets_scope", { spacePath: space.path }).catch(
-        (err) => console.warn("ensure_assets_scope failed:", err),
+      invoke("ensure_assets_scope", { spacePath: space.path }).catch((err) =>
+        console.warn("ensure_assets_scope failed:", err),
       );
     }
     if (!get().fileTrees[id]) {
@@ -281,6 +312,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
 
   clearActiveSpace: () => {
     set({ activeSpaceId: null });
+    syncMcpContext(get(), null);
   },
 
   createSpace: async (parentPath, name, icon, folderName, gitType) => {
@@ -304,6 +336,9 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       spaces: s.spaces.filter((w) => w.id !== spaceId),
       ...(activeSpaceId === spaceId ? { activeSpaceId: null } : {}),
     }));
+    if (activeSpaceId === spaceId) {
+      syncMcpContext(get(), null);
+    }
     toast.success(m.toast_space_deleted());
   },
 
@@ -396,6 +431,9 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       expandedPaths: {},
       explicitHome: true,
     });
+    clearMcpActiveContext().catch((err) =>
+      console.warn("mcp_clear_active_context failed:", err),
+    );
   },
 
   loadExpandedPaths: async (spaceId: string) => {
@@ -443,10 +481,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     return newPath;
   },
 
-  saveOrder: async (
-    spaceId: string,
-    order: Record<string, string[]>,
-  ) => {
+  saveOrder: async (spaceId: string, order: Record<string, string[]>) => {
     const spacePath = findSpacePath(get(), spaceId);
     if (!spacePath) return;
     await invoke("save_tree_order", {

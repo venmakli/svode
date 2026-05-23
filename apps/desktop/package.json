@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "NODE_OPTIONS='--max-old-space-size=8192' vite build",
+    "build:sidecars": "node scripts/build-lfs-dal.mjs && node scripts/build-combai-mcp.mjs",
     "build:lfs-dal": "node scripts/build-lfs-dal.mjs",
+    "build:combai-mcp": "node scripts/build-combai-mcp.mjs",
     "typecheck": "NODE_OPTIONS='--max-old-space-size=8192' tsc -b",
     "preview": "vite preview",
     "tauri": "tauri"

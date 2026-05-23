@@ -1,9 +1,6 @@
 #!/usr/bin/env node
-// Build the lfs-dal sidecar and place it where Tauri's `externalBin` expects:
-// `apps/desktop/src-tauri/binaries/lfs-dal-<target-triple>[.exe]`.
-//
-// Tauri matches the suffix against the host's rustc target triple at bundle
-// time, so we ask rustc itself for the triple instead of guessing per-OS.
+// Build the combai-mcp sidecar and place it where Tauri's `externalBin`
+// expects: `apps/desktop/src-tauri/binaries/combai-mcp-<target-triple>[.exe]`.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import {
@@ -12,26 +9,27 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  writeFileSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const crateDir = resolve(__dirname, "../../../crates/lfs-dal");
-const binariesDir = resolve(__dirname, "../src-tauri/binaries");
+const crateDir = resolve(__dirname, "../src-tauri");
+const binariesDir = resolve(crateDir, "binaries");
 
 function rustcHostTriple() {
   const out = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
-  const m = out.match(/^host:\s*(.+)$/m);
-  if (!m)
+  const match = out.match(/^host:\s*(.+)$/m);
+  if (!match)
     throw new Error(`could not parse host triple from rustc -vV:\n${out}`);
-  return m[1].trim();
+  return match[1].trim();
 }
 
 function run(cmd, args, opts = {}) {
-  const r = spawnSync(cmd, args, { stdio: "inherit", ...opts });
-  if (r.status !== 0) {
-    throw new Error(`${cmd} ${args.join(" ")} failed (${r.status})`);
+  const result = spawnSync(cmd, args, { stdio: "inherit", ...opts });
+  if (result.status !== 0) {
+    throw new Error(`${cmd} ${args.join(" ")} failed (${result.status})`);
   }
 }
 
@@ -51,16 +49,24 @@ function copyIfChanged(src, dest) {
 
 const triple = rustcHostTriple();
 const exeSuffix = process.platform === "win32" ? ".exe" : "";
+const dest = resolve(binariesDir, `combai-mcp-${triple}${exeSuffix}`);
 
-console.log(`[lfs-dal] building for ${triple}`);
-run("cargo", ["build", "--release"], { cwd: crateDir });
+mkdirSync(binariesDir, { recursive: true });
+if (!existsSync(dest)) {
+  writeFileSync(dest, "");
+}
 
-const built = resolve(crateDir, "target/release", `lfs-dal${exeSuffix}`);
+console.log(`[combai-mcp] building for ${triple}`);
+run("cargo", ["build", "--release", "--bin", "combai-mcp"], {
+  cwd: crateDir,
+});
+
+const built = resolve(crateDir, "target/release", `combai-mcp${exeSuffix}`);
 if (!existsSync(built)) {
   throw new Error(`expected build artifact missing: ${built}`);
 }
 
-mkdirSync(binariesDir, { recursive: true });
-const dest = resolve(binariesDir, `lfs-dal-${triple}${exeSuffix}`);
 const copied = copyIfChanged(built, dest);
-console.log(copied ? `[lfs-dal] -> ${dest}` : `[lfs-dal] unchanged ${dest}`);
+console.log(
+  copied ? `[combai-mcp] -> ${dest}` : `[combai-mcp] unchanged ${dest}`,
+);

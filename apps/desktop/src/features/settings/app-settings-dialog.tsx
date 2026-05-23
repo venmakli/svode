@@ -56,6 +56,7 @@ import { useAppVersion } from "@/hooks/use-app-version";
 import { invalidateAppSettings } from "@/hooks/use-app-settings";
 import { useIdentityStore } from "@/features/identity/identity-store";
 import { isValidEmail, isValidName } from "@/features/identity/validation";
+import { McpIntegrationsSection } from "@/features/settings/mcp-section";
 import type { AppSettings, AvailableAgent } from "@/types/space";
 
 const CLI_AUTH_COMMANDS: Record<string, string> = {
@@ -507,25 +508,7 @@ export function AppSettingsDialog({
                 </div>
               )}
 
-              {section === "mcp-integrations" && (
-                <div className="flex max-w-md flex-col gap-4">
-                  <div className="flex items-start gap-3 rounded-md border bg-muted/40 p-3">
-                    <Info
-                      className="mt-0.5 text-muted-foreground"
-                      data-icon="inline-start"
-                    />
-                    <div className="flex flex-col gap-1">
-                      <Label>{m.settings_mcp_pii_warning_title()}</Label>
-                      <p className="text-sm leading-6 text-muted-foreground">
-                        {m.settings_mcp_pii_warning_description()}
-                      </p>
-                    </div>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    {m.settings_mcp_explicit_action_hint()}
-                  </p>
-                </div>
-              )}
+              {section === "mcp-integrations" && <McpIntegrationsSection />}
 
               {section === "shortcuts" && (
                 <p className="text-sm text-muted-foreground">
