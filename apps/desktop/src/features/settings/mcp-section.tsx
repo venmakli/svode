@@ -70,6 +70,17 @@ function reportLines(report: McpDoctorReport | null) {
   return [...report.messages, ...report.errors];
 }
 
+function StatusPath({ value }: { value: string }) {
+  return (
+    <p
+      className="block w-full min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-xs text-muted-foreground"
+      title={value}
+    >
+      {value}
+    </p>
+  );
+}
+
 export function McpIntegrationsSection() {
   const [status, setStatus] = useState<McpStatus | null>(null);
   const [doctor, setDoctor] = useState<McpDoctorReport | null>(null);
@@ -142,25 +153,28 @@ export function McpIntegrationsSection() {
   }
 
   return (
-    <div className="flex max-w-2xl flex-col gap-4">
-      <Alert>
+    <div className="flex w-full min-w-0 max-w-full flex-col gap-4">
+      <Alert className="min-w-0 max-w-full">
         <TriangleAlert data-icon="inline-start" />
-        <AlertTitle>{m.settings_mcp_pii_warning_title()}</AlertTitle>
-        <AlertDescription>
+        <AlertTitle className="min-w-0">
+          {m.settings_mcp_pii_warning_title()}
+        </AlertTitle>
+        <AlertDescription className="min-w-0 max-w-full break-words [overflow-wrap:anywhere]">
           {m.settings_mcp_pii_warning_description()}
         </AlertDescription>
       </Alert>
 
-      <p className="text-sm leading-6 text-muted-foreground">
+      <p className="min-w-0 break-words text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
         {m.settings_mcp_explicit_action_hint()}
       </p>
 
-      <section className="flex flex-col gap-3">
-        <div className="flex items-center justify-between gap-3">
-          <Label>{m.settings_mcp_server_section()}</Label>
+      <section className="flex min-w-0 max-w-full flex-col gap-3">
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <Label className="min-w-0">{m.settings_mcp_server_section()}</Label>
           <Button
             variant="outline"
             size="sm"
+            className="shrink-0"
             onClick={loadStatus}
             disabled={loading}
           >
@@ -172,44 +186,52 @@ export function McpIntegrationsSection() {
           </Button>
         </div>
 
-        <div className="flex items-start justify-between gap-3 rounded-md border p-3">
-          <div className="flex min-w-0 flex-col gap-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-medium">combai-mcp</span>
+        <div className="flex w-full min-w-0 max-w-full items-start justify-between gap-3 overflow-hidden rounded-md border p-3">
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="min-w-0 text-sm font-medium">combai-mcp</span>
               {status ? serverBadge(status.server.status) : null}
             </div>
-            <p className="truncate text-xs text-muted-foreground">
-              {status?.server.command ??
+            <StatusPath
+              value={
+                status?.server.command ??
                 status?.server.message ??
-                m.common_loading()}
-            </p>
+                m.common_loading()
+              }
+            />
           </div>
           {status?.server.status === "installed" ? (
-            <Check className="text-muted-foreground" data-icon="inline-end" />
+            <Check
+              className="shrink-0 text-muted-foreground"
+              data-icon="inline-end"
+            />
           ) : null}
         </div>
       </section>
 
       <Separator />
 
-      <section className="flex flex-col gap-3">
+      <section className="flex min-w-0 max-w-full flex-col gap-3">
         <Label>{m.settings_mcp_clients_section()}</Label>
-        <div className="flex flex-col gap-2">
+        <div className="flex min-w-0 flex-col gap-2">
           {(status?.clients ?? []).map((client) => (
             <div
               key={client.id}
-              className="flex items-start justify-between gap-3 rounded-md border p-3"
+              className="flex w-full min-w-0 max-w-full items-start justify-between gap-3 overflow-hidden rounded-md border p-3"
             >
-              <div className="flex min-w-0 flex-col gap-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium">{client.name}</span>
+              <div className="flex min-w-0 flex-1 flex-col gap-1">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <span className="min-w-0 text-sm font-medium">
+                    {client.name}
+                  </span>
                   {clientBadge(client)}
                 </div>
-                <p className="truncate text-xs text-muted-foreground">
-                  {client.configPath ?? client.path ?? client.message ?? "—"}
-                </p>
+                <StatusPath
+                  value={client.configPath ?? client.path ?? client.message ?? "—"}
+                />
               </div>
               <Switch
+                className="shrink-0"
                 checked={client.installed}
                 disabled={
                   !client.found ||
@@ -228,17 +250,18 @@ export function McpIntegrationsSection() {
 
       <Separator />
 
-      <section className="flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex flex-col gap-1">
+      <section className="flex min-w-0 max-w-full flex-col gap-2">
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <div className="flex min-w-0 flex-col gap-1">
             <Label>{m.settings_mcp_manual_config()}</Label>
-            <p className="text-xs text-muted-foreground">
+            <p className="break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">
               {m.settings_mcp_manual_config_description()}
             </p>
           </div>
           <Button
             variant="outline"
             size="sm"
+            className="shrink-0"
             onClick={handleCopyConfig}
             disabled={!manualConfigText}
           >
@@ -249,16 +272,17 @@ export function McpIntegrationsSection() {
         <Textarea
           readOnly
           value={manualConfigText}
-          className="min-h-32 resize-none font-mono text-xs"
+          className="min-h-32 w-full min-w-0 max-w-full resize-none overflow-x-auto font-mono text-xs"
         />
       </section>
 
-      <section className="flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-3">
-          <Label>{m.settings_mcp_doctor_section()}</Label>
+      <section className="flex min-w-0 max-w-full flex-col gap-2">
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <Label className="min-w-0">{m.settings_mcp_doctor_section()}</Label>
           <Button
             variant="outline"
             size="sm"
+            className="shrink-0"
             onClick={handleDoctor}
             disabled={loading}
           >
@@ -266,7 +290,7 @@ export function McpIntegrationsSection() {
             {m.settings_mcp_run_doctor()}
           </Button>
         </div>
-        <div className="rounded-md border bg-muted/30 p-3">
+        <div className="min-w-0 max-w-full overflow-hidden rounded-md border bg-muted/30 p-3">
           <div className="mb-2">
             {doctor?.ok ? (
               <Badge variant="secondary">{m.settings_mcp_doctor_ok()}</Badge>
@@ -274,9 +298,11 @@ export function McpIntegrationsSection() {
               <Badge variant="outline">{m.settings_mcp_doctor_failed()}</Badge>
             )}
           </div>
-          <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+          <div className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
             {reportLines(doctor).map((line) => (
-              <p key={line}>{line}</p>
+              <p key={line} className="break-all [overflow-wrap:anywhere]">
+                {line}
+              </p>
             ))}
             {reportLines(doctor).length === 0 ? (
               <p>{m.common_loading()}</p>

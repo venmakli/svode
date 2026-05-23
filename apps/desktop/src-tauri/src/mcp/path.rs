@@ -26,6 +26,15 @@ pub fn validate_public_rel_path(path: &str, allow_root: bool) -> Result<String, 
     }
 
     let normalized = raw.replace('\\', "/");
+    if normalized == "." {
+        if allow_root {
+            return Ok(String::new());
+        }
+        return Err(McpBusinessError::new(
+            "INVALID_PATH",
+            "path must not be empty",
+        ));
+    }
     let mut parts = Vec::new();
     for part in normalized.split('/') {
         match part {
@@ -174,6 +183,13 @@ mod tests {
     fn rejects_internal_dirs() {
         assert!(validate_public_rel_path(".git/config", false).is_err());
         assert!(validate_public_rel_path(".combai/config.json", false).is_err());
+    }
+
+    #[test]
+    fn accepts_dot_only_as_root_when_allowed() {
+        assert_eq!(validate_public_rel_path(".", true).unwrap(), "");
+        assert!(validate_public_rel_path(".", false).is_err());
+        assert!(validate_public_rel_path("./docs", true).is_err());
     }
 
     #[test]

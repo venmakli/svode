@@ -498,7 +498,7 @@ async fn create_entry(
                 .collect::<Result<HashMap<_, _>, _>>()
         })
         .transpose()?;
-    let parent = if collection_path == "." {
+    let parent = if collection_path.is_empty() {
         None
     } else {
         Some(collection_path.as_str())

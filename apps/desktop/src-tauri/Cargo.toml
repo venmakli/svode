@@ -4,6 +4,7 @@ version = "0.0.5"
 authors = ["Kamnev Ilya"]
 edition = "2024"
 repository = "https://github.com/venmakli/combai"
+default-run = "combai-desktop"
 
 [lib]
 name = "combai_desktop_lib"

@@ -474,7 +474,7 @@ fn remove_toml_block(input: &str) -> String {
     let mut skipping = false;
     for line in input.lines() {
         let trimmed = line.trim();
-        if trimmed == "[mcp_servers.combai]" {
+        if is_combai_toml_table(trimmed) {
             skipping = true;
             continue;
         }
@@ -486,6 +486,14 @@ fn remove_toml_block(input: &str) -> String {
         }
     }
     output.join("\n")
+}
+
+fn is_combai_toml_table(trimmed: &str) -> bool {
+    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
+        return false;
+    }
+    let table = trimmed.trim_start_matches('[').trim_end_matches(']').trim();
+    table == "mcp_servers.combai" || table.starts_with("mcp_servers.combai.")
 }
 
 fn toml_escape(value: &str) -> String {
@@ -522,6 +530,15 @@ mod tests {
     fn removes_only_combai_toml_block() {
         let input = "[x]\na=1\n[mcp_servers.combai]\ncommand=\"old\"\nargs=[]\n[y]\nb=2\n";
         assert_eq!(remove_toml_block(input), "[x]\na=1\n[y]\nb=2");
+    }
+
+    #[test]
+    fn removes_nested_combai_toml_tables() {
+        let input = "[x]\na=1\n[mcp_servers.combai]\ncommand=\"old\"\n[mcp_servers.combai.env]\nCOMBAI_MCP_DISCOVERY=\"old\"\n[mcp_servers.other]\ncommand=\"keep\"\n";
+        assert_eq!(
+            remove_toml_block(input),
+            "[x]\na=1\n[mcp_servers.other]\ncommand=\"keep\""
+        );
     }
 
     #[test]

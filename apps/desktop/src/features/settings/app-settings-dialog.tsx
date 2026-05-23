@@ -247,13 +247,16 @@ export function AppSettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="overflow-hidden p-0 md:max-h-[500px] md:max-w-[700px] lg:max-w-[800px]">
+      <DialogContent className="w-[calc(100vw-2rem)] overflow-hidden p-0 md:max-h-[500px] md:max-w-[700px] lg:max-w-[800px]">
         <DialogTitle className="sr-only">{m.settings_title()}</DialogTitle>
         <DialogDescription className="sr-only">
           {m.settings_title()}
         </DialogDescription>
-        <SidebarProvider className="items-start">
-          <Sidebar collapsible="none" className="hidden md:flex">
+        <SidebarProvider
+          className="h-[480px] min-w-0 max-w-full items-start overflow-hidden"
+          style={{ minHeight: 0 }}
+        >
+          <Sidebar collapsible="none" className="hidden shrink-0 md:flex">
             <SidebarContent>
               <SidebarGroup>
                 <SidebarGroupContent>
@@ -274,9 +277,9 @@ export function AppSettingsDialog({
               </SidebarGroup>
             </SidebarContent>
           </Sidebar>
-          <main className="flex h-[480px] flex-1 flex-col overflow-hidden">
-            <header className="flex h-12 shrink-0 items-center gap-2 border-b">
-              <div className="flex items-center gap-2 px-4">
+          <main className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
+            <header className="flex h-12 min-w-0 shrink-0 items-center gap-2 border-b">
+              <div className="flex min-w-0 items-center gap-2 px-4">
                 <Breadcrumb>
                   <BreadcrumbList>
                     <BreadcrumbItem className="hidden md:block">
@@ -295,7 +298,7 @@ export function AppSettingsDialog({
                 </Breadcrumb>
               </div>
             </header>
-            <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
+            <div className="flex min-w-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto p-4">
               {section === "profile" && (
                 <div className="space-y-4 max-w-sm">
                   <div className="space-y-1">

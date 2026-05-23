@@ -109,11 +109,12 @@ fn write_discovery_file(
 
 #[cfg(unix)]
 fn write_user_only(path: &PathBuf, bytes: &[u8]) -> Result<(), McpBusinessError> {
-    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let mut options = fs::OpenOptions::new();
     options.create(true).truncate(true).write(true).mode(0o600);
     use std::io::Write;
     let mut file = options.open(path)?;
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
     file.write_all(bytes)?;
     Ok(())
 }
@@ -260,4 +261,26 @@ fn read_discovery_path() -> Option<PathBuf> {
         }
     }
     default_discovery_path().ok().filter(|path| path.exists())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn write_user_only_resets_existing_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("desktop-mcp.json");
+        fs::write(&path, "{}").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_user_only(&path, br#"{"ok":true}"#).unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(fs::read(&path).unwrap(), br#"{"ok":true}"#);
+    }
 }
