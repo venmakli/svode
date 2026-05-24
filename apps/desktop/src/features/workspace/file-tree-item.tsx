@@ -255,7 +255,7 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
       const entry = await invoke<{ path: string }>("create_entry", {
         space: space.path,
         parentPath,
-        title: "Untitled",
+        title: String(m.editor_untitled()),
         projectPath: activeRootPath,
       });
       await refreshTree(spaceId);
@@ -485,7 +485,7 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
         )}
         <DropdownMenuItem onClick={handleNewPage}>
           <FilePlus className="mr-2 h-4 w-4" />
-          {m.space_new_page()}
+          {m.space_nest_page()}
         </DropdownMenuItem>
         <DropdownMenuItem onClick={handleNewFolder}>
           <FolderPlus className="mr-2 h-4 w-4" />

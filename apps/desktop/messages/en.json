@@ -188,6 +188,7 @@
   "space_description_placeholder": "Optional description",
   "space_slug_preview": "Folder: {path}",
   "space_create_subpage": "Create sub-page",
+  "space_nest_page": "Nest page",
   "space_new_page": "New page",
   "space_new_folder": "New folder",
   "space_make_document": "Make document",

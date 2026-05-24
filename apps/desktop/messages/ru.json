@@ -188,6 +188,7 @@
   "space_description_placeholder": "Необязательное описание",
   "space_slug_preview": "Папка: {path}",
   "space_create_subpage": "Создать подстраницу",
+  "space_nest_page": "Вложить страницу",
   "space_new_page": "Новая страница",
   "space_new_folder": "Новая папка",
   "space_make_document": "Сделать документом",

@@ -3,8 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   Copy,
   Database,
+  FilePlus,
   FileText,
-  FolderOpen,
   MoreVertical,
   Star,
   StarOff,
@@ -59,36 +59,45 @@ export function EntryDetailActions({
   onDuplicateTemplate,
 }: EntryDetailActionsProps) {
   const refreshTree = useSpaceStore((state) => state.refreshTree);
-  const [state, setState] = useState<EntryDetailState | null>(null);
+  const [state, setState] = useState<{
+    path: string;
+    detail: EntryDetailState;
+  } | null>(null);
+  const currentState = state?.path === entry.path ? state.detail : null;
 
   useEffect(() => {
     let cancelled = false;
-    setState(null);
     void invoke<EntryDetailState>("get_entry_detail_state", {
       space: spacePath,
       path: entry.path,
     })
       .then((next) => {
-        if (!cancelled) setState(next);
+        if (!cancelled) setState({ path: entry.path, detail: next });
       })
       .catch(() => {
-        if (!cancelled) setState(inferEntryDetailState(entry.path));
+        if (!cancelled) {
+          setState({
+            path: entry.path,
+            detail: inferEntryDetailState(entry.path),
+          });
+        }
       });
     return () => {
       cancelled = true;
     };
   }, [entry.path, spacePath]);
 
-  const form = state?.form ?? inferEntryDetailState(entry.path).form;
+  const form = currentState?.form ?? inferEntryDetailState(entry.path).form;
   const leafDisabledReason = useMemo(() => {
-    if (!state || form !== "folder") return null;
-    const blocked = state.subpageCount > 0 || state.otherFileCount > 0;
+    if (!currentState || form !== "folder") return null;
+    const blocked =
+      currentState.subpageCount > 0 || currentState.otherFileCount > 0;
     if (!blocked) return null;
     return m.entry_convert_leaf_blocked({
-      subpages: state.subpageCount,
-      files: state.otherFileCount,
+      subpages: currentState.subpageCount,
+      files: currentState.otherFileCount,
     });
-  }, [form, state]);
+  }, [currentState, form]);
 
   async function refreshDetail(path: string) {
     await refreshTree(spaceId);
@@ -99,19 +108,30 @@ export function EntryDetailActions({
         path,
       }).catch(() => null),
     ]);
-    if (nextState) setState(nextState);
+    if (nextState) setState({ path, detail: nextState });
     return nextEntry;
   }
 
-  async function convertToFolder() {
-    const next = await invoke<Entry>("convert_entry_to_folder", {
+  async function nestPage() {
+    const folderEntry = await invoke<Entry>("convert_entry_to_folder", {
       space: spacePath,
       entryId: entry.meta.id,
       projectPath: projectPath ?? null,
     });
+    const parentPath = folderEntry.path.replace(/\/readme\.md$/i, "");
+    const childEntry = await invoke<Entry>("create_entry", {
+      space: spacePath,
+      parentPath,
+      title: String(m.editor_untitled()),
+      contextualDefaults: null,
+      projectPath: projectPath ?? null,
+    });
     await refreshTree(spaceId);
-    setState({ form: "folder", subpageCount: 0, otherFileCount: 0 });
-    onConverted?.(next, false);
+    setState({
+      path: folderEntry.path,
+      detail: { form: "folder", subpageCount: 0, otherFileCount: 0 },
+    });
+    onConverted?.(childEntry, false);
   }
 
   async function convertToLeaf() {
@@ -122,7 +142,10 @@ export function EntryDetailActions({
       projectPath: projectPath ?? null,
     });
     await refreshTree(spaceId);
-    setState({ form: "leaf", subpageCount: 0, otherFileCount: 0 });
+    setState({
+      path: next.path,
+      detail: { form: "leaf", subpageCount: 0, otherFileCount: 0 },
+    });
     onConverted?.(next, false);
   }
 
@@ -152,10 +175,10 @@ export function EntryDetailActions({
       <DropdownMenuContent align="end" className="w-64">
         {form === "leaf" ? (
           <DropdownMenuItem
-            onClick={() => void convertToFolder().catch(handleError)}
+            onClick={() => void nestPage().catch(handleError)}
           >
-            <FolderOpen data-icon="inline-start" />
-            {m.entry_convert_to_folder()}
+            <FilePlus data-icon="inline-start" />
+            {m.space_nest_page()}
           </DropdownMenuItem>
         ) : null}
         {form === "folder" ? (
