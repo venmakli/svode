@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { useLayoutStore } from "@/stores/layout";
 import { useSpaceStore } from "@/stores/space";
 import type { Entry } from "@/features/editor/types";
+import { detailPageSectionClassName } from "@/shared/ui/page-layout";
 import type { TreeNode } from "@/types/space";
 import { cn } from "@/lib/utils";
 import { handleError } from "../lib/errors";
@@ -117,7 +118,7 @@ export function EntrySubpages({
   }
 
   return (
-    <section className="mx-auto w-full max-w-[760px] px-6 pb-16 pt-4">
+    <section className={detailPageSectionClassName}>
       <div className="flex items-center justify-between border-t pt-4">
         <h3 className="text-sm font-medium">{m.entry_subpages()}</h3>
         <Button

@@ -18,6 +18,10 @@ import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";
 import { PropertyPanel } from "@/features/properties/ui";
 import { normalizeSchema } from "@/features/properties/lib";
 import type { EntrySchemaResult } from "@/features/properties/model";
+import {
+  detailPageHeaderClassName,
+  detailPageToolbarClassName,
+} from "@/shared/ui/page-layout";
 import { useLayoutStore } from "@/stores/layout";
 import { useSpaceStore } from "@/stores/space";
 import { useViewQuery } from "@/features/collection/query";
@@ -940,7 +944,7 @@ export function CollectionScreen({
 
   return (
     <div className="flex min-h-full flex-col">
-      <div className="flex shrink-0 flex-col gap-4 px-6 pb-3">
+      <div className={detailPageHeaderClassName}>
         <div>
           {hasReadme ? (
             <EntryIdentityHeader
@@ -1022,7 +1026,7 @@ export function CollectionScreen({
       </div>
 
       <Tabs value={activeTab} onValueChange={selectTab} className="gap-0">
-        <div className="flex shrink-0 items-center gap-3 px-4 py-2">
+        <div className={detailPageToolbarClassName}>
           <CollectionTabStrip
             activeTab={activeTab}
             addViewOptions={[

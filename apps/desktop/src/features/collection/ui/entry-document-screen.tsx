@@ -7,6 +7,7 @@ import type { Entry, EntryCover } from "@/features/editor/types";
 import { PropertyPanel } from "@/features/properties/ui";
 import { normalizeSchema } from "@/features/properties/lib";
 import type { EntrySchemaResult } from "@/features/properties/model";
+import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
 import { useLayoutStore } from "@/stores/layout";
 import { useSpaceStore } from "@/stores/space";
 import { DeleteDialogs } from "./delete-dialogs";
@@ -117,7 +118,7 @@ export function EntryDocumentScreen({
 
   return (
     <div className="flex min-h-full flex-col">
-      <div className="flex shrink-0 flex-col gap-4 px-6 pb-3">
+      <div className={detailPageHeaderClassName}>
         <EntryIdentityHeader
           title={entry.meta.title}
           icon={entry.meta.icon}

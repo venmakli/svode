@@ -17,6 +17,7 @@ import { useCollectionPersons } from "@/features/collection/hooks";
 import type { Entry } from "@/features/editor/types";
 import { normalizeSchema } from "@/features/properties/lib";
 import type { CollectionSchema, Column } from "@/features/properties/model";
+import { detailPageViewClassName } from "@/shared/ui/page-layout";
 import { getLocale } from "@/paraglide/runtime.js";
 import { uniqueColumnName } from "../table/utils";
 import {
@@ -338,7 +339,7 @@ export function CalendarView({
   }
 
   return (
-    <div ref={shellRef} className="flex flex-col px-4 pb-4 pt-3">
+    <div ref={shellRef} className={detailPageViewClassName}>
       <div className="combai-calendar flex flex-col rounded-lg bg-background ring-1 ring-foreground/10">
         <CalendarMiniToolbar
           scope={scope}

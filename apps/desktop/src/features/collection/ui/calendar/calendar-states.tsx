@@ -8,6 +8,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import { detailPageViewClassName } from "@/shared/ui/page-layout";
 import * as m from "@/paraglide/messages.js";
 
 export function NoDateFieldState({
@@ -19,7 +20,7 @@ export function NoDateFieldState({
 }) {
   if (loading) return <CalendarLoadingState />;
   return (
-    <div className="flex flex-col px-4 pb-4 pt-3">
+    <div className={detailPageViewClassName}>
       <Empty className="min-h-56 flex-none rounded-lg border">
         <EmptyHeader>
           <EmptyMedia variant="icon">
@@ -40,7 +41,7 @@ export function NoDateFieldState({
 
 export function CalendarLoadingState() {
   return (
-    <div className="flex flex-col gap-2 px-4 pb-4 pt-3">
+    <div className={`${detailPageViewClassName} gap-2`}>
       <div className="flex items-center justify-between rounded-lg border p-3">
         <div className="flex items-center gap-2">
           <Skeleton className="h-8 w-8" />

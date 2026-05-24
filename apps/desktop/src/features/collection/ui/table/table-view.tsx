@@ -18,6 +18,7 @@ import {
 import type { Entry } from "@/features/editor/types";
 import { normalizeSchema } from "@/features/properties/lib";
 import { useSpaceStore } from "@/stores/space";
+import { detailPageViewClassName } from "@/shared/ui/page-layout";
 import type {
   CollectionSchema,
   Column,
@@ -426,7 +427,7 @@ export function TableView({
   const noRows = filteredTopLevel.length === 0;
 
   return (
-    <div className="flex flex-col px-4 pb-4 pt-3">
+    <div className={detailPageViewClassName}>
       <TableShell
         onKeyDown={(event) => {
           if (isEditableTarget(event.target)) return;

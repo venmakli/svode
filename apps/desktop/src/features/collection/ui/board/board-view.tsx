@@ -32,6 +32,7 @@ import type {
 } from "@/features/properties/model";
 import { normalizeSchema } from "@/features/properties/lib";
 import { useSpaceStore } from "@/stores/space";
+import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import { useCollectionPersons } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
 import {
@@ -441,7 +442,11 @@ export function BoardView({
   }
 
   if (loading) {
-    return <div className="px-4 py-3 text-sm text-muted-foreground" />;
+    return (
+      <div
+        className={`${detailPageViewRowClassName} text-sm text-muted-foreground`}
+      />
+    );
   }
 
   const queryFiltered = searchQuery.trim().length > 0 || filters.length > 0;
@@ -560,7 +565,9 @@ export function BoardView({
         setOverGroupKey(null);
       }}
     >
-      <div className="scrollbar-hide overflow-x-auto px-4 py-3">
+      <div
+        className={`scrollbar-hide overflow-x-auto ${detailPageViewRowClassName}`}
+      >
         <div className="flex min-w-max items-start gap-3">
           {renderedColumns.map((column) => {
             const groupEntries = entriesForGroup(

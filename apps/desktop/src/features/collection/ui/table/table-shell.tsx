@@ -26,6 +26,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { Entry } from "@/features/editor/types";
 import type { CollectionSchema } from "@/features/properties/model";
+import { detailPageViewClassName } from "@/shared/ui/page-layout";
 import { PROPERTY_TYPE_ICONS, TITLE_ICON } from "./icons";
 import { defaultColumnWidth } from "./utils";
 import * as m from "@/paraglide/messages.js";
@@ -116,7 +117,7 @@ export function LoadingTable({
   const tableWidth = columnWidths.reduce((sum, width) => sum + width, 62);
 
   return (
-    <div className="flex flex-col px-4 pb-4 pt-3">
+    <div className={detailPageViewClassName}>
       <TableShell>
         <Table
           className="min-w-full table-auto"
@@ -174,7 +175,7 @@ export function LoadingTable({
 
 export function ErrorState({ title }: { title: string }) {
   return (
-    <div className="flex flex-col px-4 pb-4 pt-3">
+    <div className={detailPageViewClassName}>
       <Empty className="min-h-48 flex-none border">
         <EmptyHeader>
           <EmptyMedia variant="icon">

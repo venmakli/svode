@@ -29,6 +29,7 @@ import { useSpaceStore } from "@/stores/space";
 import { useStableViewQueryArgs } from "@/features/collection/query";
 import type { Entry } from "@/features/editor/types";
 import type { Column } from "@/features/properties/model";
+import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import {
   listCollectionInfos,
   queryCollectionEntries,
@@ -350,7 +351,7 @@ export function ListView({
       collisionDetection={closestCenter}
       onDragEnd={(event) => void handleDragEnd(event)}
     >
-      <div className="px-4 py-3">
+      <div className={detailPageViewRowClassName}>
         <div className="overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10">
           <SortableContext
             items={rows.map((row) => row.entry.path)}
@@ -468,7 +469,7 @@ function EmptyState({
 
 function ListSkeleton({ density }: { density: "compact" | "comfortable" }) {
   return (
-    <div className="px-4 py-3">
+    <div className={detailPageViewRowClassName}>
       <div className="overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10">
         {Array.from({ length: 8 }).map((_, index) => (
           <div

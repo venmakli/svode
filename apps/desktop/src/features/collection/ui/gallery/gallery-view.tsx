@@ -37,6 +37,7 @@ import { useStableViewQueryArgs } from "@/features/collection/query";
 import type { Entry } from "@/features/editor/types";
 import type { Column } from "@/features/properties/model";
 import { useSpaceStore } from "@/stores/space";
+import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import {
   listCollectionInfos,
   queryCollectionEntries,
@@ -351,7 +352,7 @@ export function GalleryView({
       collisionDetection={closestCenter}
       onDragEnd={(event) => void handleDragEnd(event)}
     >
-      <div className="px-4 py-3">
+      <div className={detailPageViewRowClassName}>
         <div
           ref={gridRef}
           className="grid items-stretch gap-3.5"
@@ -514,7 +515,7 @@ function EmptyState({
 
 function GallerySkeleton({ cardWidth }: { cardWidth: number }) {
   return (
-    <div className="px-4 py-3">
+    <div className={detailPageViewRowClassName}>
       <div
         className="grid gap-3.5"
         style={{

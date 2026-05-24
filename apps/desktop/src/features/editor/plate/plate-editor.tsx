@@ -24,6 +24,7 @@ import {
 import { Editor, EditorContainer } from "@/components/ui/editor";
 import { FixedToolbar } from "@/components/ui/fixed-toolbar";
 import { FixedToolbarButtons } from "@/components/ui/fixed-toolbar-buttons";
+import { detailPageEditorClassName } from "@/shared/ui/page-layout";
 import { TocSidebar } from "../toc-sidebar";
 import type { Entry, EntryMeta, WriteResult } from "../types";
 import * as m from "@/paraglide/messages.js";
@@ -398,7 +399,6 @@ export function PlateDocumentEditor({
     activeWsId,
   ]);
 
-
   // ⌘S — cancel debounce, materialize (rename + backlinks + structural
   // schedule on the backend), then commit. `flush_target_repo` inside
   // git_commit_file drains the structural batch → Rename commit before user.
@@ -590,8 +590,8 @@ export function PlateDocumentEditor({
             )}
           >
             <Editor
-              variant="default"
-              className={cn(usePageScroll && "h-auto min-h-[320px] pb-32")}
+              variant={usePageScroll ? "none" : "default"}
+              className={cn(usePageScroll && detailPageEditorClassName)}
               placeholder={m.editor_placeholder_body()}
             />
           </EditorContainer>
