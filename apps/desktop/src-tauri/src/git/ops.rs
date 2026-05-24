@@ -271,7 +271,9 @@ fn update_staged_flags(xy: &str, has_staged: &mut bool, has_unstaged: &mut bool)
 }
 
 fn normalize_git_path(path: &str) -> Result<String, AppError> {
-    normalize_repo_relative(path, RootMode::Reject)
+    let normalized = path.replace('\\', "/");
+    let trimmed = normalized.trim_end_matches('/');
+    normalize_repo_relative(trimmed, RootMode::Reject)
 }
 
 /// Stage a specific file.
@@ -981,6 +983,7 @@ mod tests {
             "u UU N... 100644 100644 100644 100644 a b c конфликт.md\0",
             "2 R. N... 100644 100644 100644 abc abc R100 renamed file.md\0old file.md\0",
             "? новый файл.md\0",
+            "? .assets/\0",
         );
 
         let status = parse_status_porcelain_v2_z(output).unwrap();
@@ -992,7 +995,7 @@ mod tests {
         assert!(status.has_staged);
         assert!(status.has_unstaged);
         assert!(status.has_conflicts);
-        assert_eq!(status.files.len(), 4);
+        assert_eq!(status.files.len(), 5);
         assert!(
             status
                 .files
@@ -1016,6 +1019,12 @@ mod tests {
                 .files
                 .iter()
                 .any(|file| { file.path == "новый файл.md" && file.state == "untracked" })
+        );
+        assert!(
+            status
+                .files
+                .iter()
+                .any(|file| { file.path == ".assets" && file.state == "untracked" })
         );
     }
 

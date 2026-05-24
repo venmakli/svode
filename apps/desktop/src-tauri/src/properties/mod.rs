@@ -880,6 +880,14 @@ fn write_schema(
     Ok(())
 }
 
+pub fn write_collection_schema(
+    space: &str,
+    collection_path: &str,
+    schema: &CollectionSchema,
+) -> Result<(), AppError> {
+    write_schema(space, collection_path, schema)
+}
+
 fn validate_schema_relations_in_space(
     space: &str,
     _collection_path: &str,

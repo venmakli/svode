@@ -115,13 +115,24 @@ async fn handle_jsonrpc_line(line: &str) -> Option<Value> {
             json!({
                 "protocolVersion": "2025-06-18",
                 "serverInfo": { "name": "combai", "version": MCP_VERSION },
-                "capabilities": { "tools": {} }
+                "capabilities": { "tools": {} },
+                "instructions": "Use CombAI MCP as a product API, not as raw filesystem access. Create collections for structured repeated data; create documents for narrative pages. Call get_combai_guide when unsure."
             }),
         )),
         "ping" => Some(ok_response(id, json!({}))),
         "tools/list" => Some(ok_response(id, json!({ "tools": tools::definitions() }))),
         "tools/call" => {
             let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
+            if params.get("name").and_then(Value::as_str) == Some("get_combai_guide") {
+                let result = ToolCallResult::ok(
+                    "CombAI MCP guide.",
+                    json!({ "guide": tools::guide_text() }),
+                );
+                return Some(ok_response(
+                    id,
+                    serde_json::to_value(result).unwrap_or_else(|_| json!({})),
+                ));
+            }
             let forwarded = match ipc::desktop_request("tools/call", params).await {
                 Ok(response) => response.tool_result.unwrap_or_else(|| {
                     ToolCallResult::business_error(McpBusinessError::new(
