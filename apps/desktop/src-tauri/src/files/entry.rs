@@ -72,6 +72,12 @@ pub struct WriteResult {
     pub write_nonce: String,
 }
 
+pub struct DeleteResult {
+    pub deleted_root: String,
+    pub deleted_paths: Vec<String>,
+    pub cascade_touched: Vec<PathBuf>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct EntryMeta {
     pub id: String,
@@ -1842,14 +1848,17 @@ pub fn delete(
     space: &str,
     path: &str,
     backlink_index: Option<&BacklinkIndex>,
-) -> Result<Vec<std::path::PathBuf>, AppError> {
-    let abs_path = resolve(space, path);
+) -> Result<DeleteResult, AppError> {
+    let requested_abs_path = resolve(space, path);
+    let space_path = Path::new(space);
+    let abs_path = delete_root_for_path(space_path, &requested_abs_path);
 
     if !abs_path.exists() {
         return Err(AppError::FileNotFound(path.to_string()));
     }
 
-    let deleted_paths = collect_deleted_entry_paths(Path::new(space), &abs_path)?;
+    let deleted_root = rel_from_abs(space_path, &abs_path);
+    let deleted_paths = collect_deleted_entry_paths(space_path, &abs_path)?;
     let cascade_touched =
         match crate::properties::cascade_clean_deleted_entries(space, &deleted_paths) {
             Ok(paths) => paths,
@@ -1871,7 +1880,13 @@ pub fn delete(
         }
     }
 
-    Ok(cascade_touched)
+    cleanup_deleted_order(space_path, &deleted_root);
+
+    Ok(DeleteResult {
+        deleted_root,
+        deleted_paths,
+        cascade_touched,
+    })
 }
 
 fn cascade_remove_tombstone(tombstone: &Path) -> Result<(), AppError> {
@@ -1881,6 +1896,21 @@ fn cascade_remove_tombstone(tombstone: &Path) -> Result<(), AppError> {
         fs::remove_file(tombstone)?;
     }
     Ok(())
+}
+
+fn delete_root_for_path(space: &Path, abs_path: &Path) -> PathBuf {
+    if abs_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
+    {
+        if let Some(parent) = abs_path.parent() {
+            if parent != space {
+                return parent.to_path_buf();
+            }
+        }
+    }
+    abs_path.to_path_buf()
 }
 
 fn collect_deleted_entry_paths(space: &Path, abs_path: &Path) -> Result<Vec<String>, AppError> {
@@ -1894,6 +1924,27 @@ fn collect_deleted_entry_paths(space: &Path, abs_path: &Path) -> Result<Vec<Stri
     } else {
         Ok(vec![rel_from_abs(space, abs_path)])
     }
+}
+
+fn cleanup_deleted_order(space: &Path, deleted_root: &str) {
+    let root = Path::new(deleted_root);
+    let deleted_name = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(deleted_root);
+    let deleted_parent = root.parent().unwrap_or(Path::new(""));
+    let deleted_parent_key = dir_key_for(deleted_parent);
+
+    let mut order = tree::read_order(space);
+    if let Some(items) = order.get_mut(&deleted_parent_key) {
+        items.retain(|item| item != deleted_name);
+    }
+
+    let deleted_key = deleted_root.trim_matches('/');
+    order.remove(deleted_key);
+    let child_prefix = format!("{deleted_key}/");
+    order.retain(|key, _| key == "." || key != deleted_key && !key.starts_with(&child_prefix));
+    let _ = tree::write_order(space, &order);
 }
 
 /// Rename/move an entry on disk.
@@ -2124,6 +2175,44 @@ mod tests {
 
         let e2 = create(ws, Some("docs"), "readme").unwrap();
         assert_eq!(e2.path, "docs/readme-1.md");
+    }
+
+    #[test]
+    fn test_delete_readme_deletes_document_folder_tree() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().to_str().unwrap();
+
+        let readme = create(ws, Some("docs"), "README").unwrap();
+        let child = create(ws, Some("docs/sub"), "Child").unwrap();
+
+        let result = delete(ws, &readme.path, None).unwrap();
+
+        assert_eq!(result.deleted_root, "docs");
+        assert!(result.deleted_paths.contains(&readme.path));
+        assert!(result.deleted_paths.contains(&child.path));
+        assert!(!resolve(ws, "docs").exists());
+    }
+
+    #[test]
+    fn test_delete_collection_readme_deletes_collection_folder() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().to_str().unwrap();
+
+        let folder = create_folder(ws, None, "Tasks").unwrap();
+        let collection = convert_bare_folder_to_collection(Path::new(ws), &folder).unwrap();
+        let entry = create(ws, Some("Tasks"), "Task A").unwrap();
+
+        let result = delete(ws, &collection.path, None).unwrap();
+
+        assert_eq!(result.deleted_root, "Tasks");
+        assert!(result.deleted_paths.contains(&collection.path));
+        assert!(result.deleted_paths.contains(&entry.path));
+        assert!(!resolve(ws, "Tasks").exists());
+        assert!(
+            !tree::read_order(Path::new(ws))
+                .get(".")
+                .is_some_and(|items| items.iter().any(|item| item == "Tasks"))
+        );
     }
 
     #[test]

@@ -20,6 +20,7 @@ import { useSpaceStore } from "@/stores/space";
 import { useLayoutStore } from "@/stores/layout";
 import { SortableFileTree } from "./sortable-file-tree";
 import { FileTreeItem } from "./file-tree-item";
+import { createCollection } from "./api/collections";
 
 export function NavDocuments() {
   const {
@@ -66,18 +67,10 @@ export function NavDocuments() {
 
   async function handleNewCollection() {
     if (!activeRootId || !activeRootPath) return;
-    const title = window.prompt(m.collection_title_prompt(), m.collection_untitled())?.trim();
-    if (!title) return;
     try {
-      const folderPath = await invoke<string>("create_folder", {
-        space: activeRootPath,
-        parentPath: null,
-        name: title,
-        projectPath: activeRootPath,
-      });
-      const entry = await invoke<{ path: string }>("convert_bare_folder_to_collection", {
-        space: activeRootPath,
-        folderPath,
+      const entry = await createCollection({
+        spacePath: activeRootPath,
+        title: m.editor_untitled(),
         projectPath: activeRootPath,
       });
       await refreshTree(activeRootId);

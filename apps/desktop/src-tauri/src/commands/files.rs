@@ -1618,27 +1618,29 @@ pub async fn delete_entry(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
     let backlink_index = backlinks_for_space(&index_state, &space).await;
-    let cascade_touched = entry::delete(&space, &path, Some(&backlink_index))?;
+    let deleted = entry::delete(&space, &path, Some(&backlink_index))?;
 
     if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
         let source_space_id = space_id_for_dir(&index_state, &space).await;
-        if let Err(e) = index_state
-            .remove_file_backlinks(project, source_space_id.as_deref(), &path)
-            .await
-        {
-            tracing::warn!("remove backlinks for deleted entry failed: {e}");
-        }
-        let abs_old = Path::new(&space).join(&path);
-        if let Err(e) = index::update::delete_entry(&index_state, project, &abs_old).await {
-            tracing::warn!("index delete_entry failed for {path}: {e}");
+        for deleted_path in &deleted.deleted_paths {
+            if let Err(e) = index_state
+                .remove_file_backlinks(project, source_space_id.as_deref(), deleted_path)
+                .await
+            {
+                tracing::warn!("remove backlinks for deleted entry failed: {e}");
+            }
+            let abs_old = Path::new(&space).join(deleted_path);
+            if let Err(e) = index::update::delete_entry(&index_state, project, &abs_old).await {
+                tracing::warn!("index delete_entry failed for {deleted_path}: {e}");
+            }
         }
         reindex_space_dir(&index_state, &space).await;
     } else {
         reindex_space_dir(&index_state, &space).await;
     }
-    let mut paths = entry_paths_with_order(&space, [abs_entry_path(&space, &path)]);
-    paths.extend(cascade_touched);
+    let mut paths = entry_paths_with_order(&space, [abs_entry_path(&space, &deleted.deleted_root)]);
+    paths.extend(deleted.cascade_touched);
     maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),

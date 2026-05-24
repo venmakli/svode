@@ -528,7 +528,11 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
         <AlertDialogHeader>
           <AlertDialogTitle>{m.file_delete_title()}</AlertDialogTitle>
           <AlertDialogDescription>
-            {m.file_delete_description()}
+            {node.has_schema
+              ? m.file_delete_collection_description()
+              : node.children.length > 0
+                ? m.file_delete_tree_description()
+                : m.file_delete_description()}
             {deleteDialog.backlinks.length > 0 && (
               <>
                 <br /><br />

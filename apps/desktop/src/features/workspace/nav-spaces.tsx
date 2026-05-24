@@ -68,6 +68,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { CreateSpaceDialog } from "./create-space-dialog";
+import { createCollection } from "./api/collections";
 import { SortableFileTree } from "./sortable-file-tree";
 import { FileTreeItem } from "./file-tree-item";
 import { GitIndicatorIcon } from "./git-status-indicator";
@@ -191,18 +192,10 @@ export function NavSpaces() {
   }
 
   async function handleNewCollection(ws: { id: string; path: string }) {
-    const title = window.prompt(m.collection_title_prompt(), m.collection_untitled())?.trim();
-    if (!title) return;
     try {
-      const folderPath = await invoke<string>("create_folder", {
-        space: ws.path,
-        parentPath: null,
-        name: title,
-        projectPath: activeRootPath,
-      });
-      const entry = await invoke<{ path: string }>("convert_bare_folder_to_collection", {
-        space: ws.path,
-        folderPath,
+      const entry = await createCollection({
+        spacePath: ws.path,
+        title: m.editor_untitled(),
         projectPath: activeRootPath,
       });
       await refreshTree(ws.id);
