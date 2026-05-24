@@ -96,6 +96,7 @@ export function PlateDocumentEditor({
   const titleRef = useRef("");
   const iconRef = useRef<string | null>(null);
   const descriptionRef = useRef("");
+  const editorAnchorRef = useRef<HTMLDivElement>(null);
   const extraRef = useRef<Record<string, unknown> | null>(null);
   const metaIdRef = useRef<string | null>(null);
   const docCacheRef = useRef(new Map<string, Descendant[]>());
@@ -577,6 +578,7 @@ export function PlateDocumentEditor({
         ) : null}
 
         <div
+          ref={editorAnchorRef}
           className={cn(
             "relative",
             usePageScroll ? "overflow-visible" : "flex-1 overflow-hidden",
@@ -595,7 +597,7 @@ export function PlateDocumentEditor({
               placeholder={m.editor_placeholder_body()}
             />
           </EditorContainer>
-          <TocSidebar />
+          <TocSidebar anchorRef={editorAnchorRef} />
         </div>
       </div>
     </Plate>

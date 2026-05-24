@@ -1,17 +1,129 @@
-import { useEffect, useState, useCallback, useRef } from "react";
 import {
-  useTocSideBarState,
-  useTocSideBar,
-} from "@platejs/toc/react";
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+  type MouseEvent,
+  type RefObject,
+} from "react";
+import { NodeApi } from "platejs";
+import type { Heading } from "@platejs/toc";
+import { useTocSideBarState, useTocSideBar } from "@platejs/toc/react";
 import { cn } from "@/lib/utils";
 
 interface TocSidebarProps {
+  anchorOffset?: number;
+  anchorRef?: RefObject<HTMLElement | null>;
   topOffset?: number;
+}
+
+function findScrollableAncestor(element: HTMLElement): HTMLElement | Window {
+  let current = element.parentElement;
+
+  while (current) {
+    const style = window.getComputedStyle(current);
+    const scrollableY =
+      style.overflowY === "auto" ||
+      style.overflowY === "scroll" ||
+      style.overflowY === "overlay";
+
+    if (scrollableY && current.scrollHeight > current.clientHeight) {
+      return current;
+    }
+
+    current = current.parentElement;
+  }
+
+  return window;
+}
+
+function scrollElementToTop(
+  element: HTMLElement,
+  topOffset: number,
+  behavior: ScrollBehavior,
+) {
+  const scrollParent = findScrollableAncestor(element);
+
+  if (scrollParent === window) {
+    window.scrollTo({
+      behavior,
+      top: element.getBoundingClientRect().top + window.scrollY - topOffset,
+    });
+    return;
+  }
+
+  const container = scrollParent as HTMLElement;
+  const containerRect = container.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+
+  container.scrollTo({
+    behavior,
+    top: elementRect.top - containerRect.top + container.scrollTop - topOffset,
+  });
+}
+
+function useStickyAnchorTop(
+  anchorRef: RefObject<HTMLElement | null> | undefined,
+  minTop: number,
+  anchorOffset: number,
+) {
+  const [top, setTop] = useState(minTop);
+  const rafId = useRef<number | null>(null);
+
+  const update = useCallback(() => {
+    const anchorTop = anchorRef?.current?.getBoundingClientRect().top;
+    const nextTop =
+      anchorTop === undefined
+        ? minTop
+        : Math.max(minTop, anchorTop + anchorOffset);
+
+    setTop(Math.round(nextTop));
+  }, [anchorOffset, anchorRef, minTop]);
+
+  const scheduleUpdate = useCallback(() => {
+    if (rafId.current !== null) return;
+    rafId.current = requestAnimationFrame(() => {
+      rafId.current = null;
+      update();
+    });
+  }, [update]);
+
+  useEffect(() => {
+    update();
+
+    window.addEventListener("resize", scheduleUpdate);
+    document.addEventListener("scroll", scheduleUpdate, {
+      capture: true,
+      passive: true,
+    });
+
+    const observer =
+      anchorRef?.current && typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(scheduleUpdate)
+        : null;
+
+    if (anchorRef?.current) {
+      observer?.observe(anchorRef.current);
+    }
+
+    return () => {
+      window.removeEventListener("resize", scheduleUpdate);
+      document.removeEventListener("scroll", scheduleUpdate, {
+        capture: true,
+      });
+      observer?.disconnect();
+      if (rafId.current !== null) {
+        cancelAnimationFrame(rafId.current);
+      }
+    };
+  }, [anchorRef, scheduleUpdate, update]);
+
+  return top;
 }
 
 /**
  * Track which heading is currently visible by listening to scroll events
- * on the EditorContainer (the scrollable ancestor of headings).
+ * from the current document scroll container.
  */
 function useScrollActiveHeading(
   headingList: { id: string; title: string; depth: number }[] | undefined,
@@ -76,23 +188,42 @@ function useScrollActiveHeading(
   return activeId;
 }
 
-export function TocSidebar({ topOffset = 80 }: TocSidebarProps) {
+export function TocSidebar({
+  anchorOffset = 12,
+  anchorRef,
+  topOffset = 80,
+}: TocSidebarProps) {
   const state = useTocSideBarState({
     open: true,
     topOffset,
     rootMargin: "0px 0px 0px 0px",
   });
 
-  const {
-    headingList,
-    activeContentId: plateActiveId,
-  } = state;
+  const { editor, headingList, activeContentId: plateActiveId } = state;
 
   const { navProps, onContentClick } = useTocSideBar(state);
 
   const [isHovered, setIsHovered] = useState(false);
   const scrollActiveId = useScrollActiveHeading(headingList);
   const activeContentId = scrollActiveId || plateActiveId;
+  const stickyTop = useStickyAnchorTop(anchorRef, topOffset, anchorOffset);
+
+  const handleHeadingClick = useCallback(
+    (
+      event: MouseEvent<HTMLButtonElement>,
+      item: Heading,
+      behavior: ScrollBehavior,
+    ) => {
+      onContentClick(event, item, behavior);
+
+      const node = NodeApi.get(editor, item.path);
+      const element = node ? editor.api.toDOMNode(node) : null;
+      if (element instanceof HTMLElement) {
+        scrollElementToTop(element, topOffset, behavior);
+      }
+    },
+    [editor, onContentClick, topOffset],
+  );
 
   if (!headingList || headingList.length === 0) return null;
 
@@ -100,7 +231,8 @@ export function TocSidebar({ topOffset = 80 }: TocSidebarProps) {
     <nav
       {...navProps}
       ref={navProps.ref as React.Ref<HTMLElement>}
-      className="absolute right-2 top-28 z-10 w-auto"
+      className="fixed right-6 z-10 w-auto"
+      style={{ top: stickyTop }}
       onMouseEnter={() => {
         navProps.onMouseEnter();
         setIsHovered(true);
@@ -125,7 +257,7 @@ export function TocSidebar({ topOffset = 80 }: TocSidebarProps) {
                 item.depth === 2 && "w-5",
                 item.depth >= 3 && "w-4",
               )}
-              onClick={(e) => onContentClick(e, item, "smooth")}
+              onClick={(e) => handleHeadingClick(e, item, "smooth")}
             />
           ))}
         </div>
@@ -146,7 +278,7 @@ export function TocSidebar({ topOffset = 80 }: TocSidebarProps) {
                   item.depth === 2 && "pl-3",
                   item.depth >= 3 && "pl-6",
                 )}
-                onClick={(e) => onContentClick(e, item, "smooth")}
+                onClick={(e) => handleHeadingClick(e, item, "smooth")}
               >
                 {item.title}
               </button>
