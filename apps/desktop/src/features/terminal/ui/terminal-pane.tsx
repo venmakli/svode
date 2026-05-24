@@ -21,6 +21,8 @@ interface TerminalPaneProps {
 
 type Disposable = { dispose: () => void };
 
+const SHIFT_ENTER_SEQUENCE = "\x1b[13;2u";
+
 function readCssVar(name: string): string {
   return getComputedStyle(document.documentElement)
     .getPropertyValue(name)
@@ -69,13 +71,35 @@ export function TerminalPane({ tab, active, panelOpen }: TerminalPaneProps) {
       theme: terminalTheme(),
     });
     const fitAddon = new FitAddon();
+    const writeInput = (data: string) => {
+      const ptyId = ptyIdRef.current;
+      if (!ptyId) return;
+      void writeTerminal(ptyId, data).catch((error) => {
+        console.warn("Failed to write terminal input:", error);
+      });
+    };
+
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (
+        event.type === "keydown" &&
+        event.key === "Enter" &&
+        event.shiftKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        writeInput(SHIFT_ENTER_SEQUENCE);
+        return false;
+      }
+
+      return true;
+    });
+
     const disposables: Disposable[] = [
       terminal.onData((data) => {
-        const ptyId = ptyIdRef.current;
-        if (!ptyId) return;
-        void writeTerminal(ptyId, data).catch((error) => {
-          console.warn("Failed to write terminal input:", error);
-        });
+        writeInput(data);
       }),
       terminal.onBinary((data) => {
         const ptyId = ptyIdRef.current;
