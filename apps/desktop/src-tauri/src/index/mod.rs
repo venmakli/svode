@@ -19,8 +19,8 @@ use crate::files::backlinks::{
     is_external_or_anchor_url, link_stem, markdown_url_path, replace_link_urls_between,
 };
 use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_path};
-use crate::space::config;
 use crate::space::types::{SpaceConfig, SpaceStatus};
+use crate::space::{config, project};
 use crate::storage::lfs::LfsState;
 
 const REINDEX_PARALLELISM: usize = 4;
@@ -98,23 +98,7 @@ impl ProjectSpacesCache {
             for sp in spaces {
                 let folder = sp.path.clone();
                 let space_dir = project.join(&folder);
-                let status = if space_dir.exists() {
-                    SpaceStatus::Ready
-                } else if sp.repo.is_some() {
-                    SpaceStatus::Missing
-                } else {
-                    let gitmodules = project.join(".gitmodules");
-                    if gitmodules.exists() {
-                        let content = std::fs::read_to_string(&gitmodules).unwrap_or_default();
-                        if content.contains(&format!("path = {}", folder)) {
-                            SpaceStatus::Missing
-                        } else {
-                            SpaceStatus::Broken
-                        }
-                    } else {
-                        SpaceStatus::Broken
-                    }
-                };
+                let status = project::space_ref_status(project, sp);
                 if matches!(status, SpaceStatus::Ready) {
                     let display = read_child_space_name(&space_dir, &folder);
                     name_by_id.insert(sp.id.clone(), display);

@@ -1,6 +1,8 @@
 use std::path::Path;
 
 use crate::error::AppError;
+use crate::git::ops::SubmoduleConfig;
+use crate::repo_path::{RootMode, normalize_repo_relative};
 
 use super::config;
 use super::registry;
@@ -111,6 +113,94 @@ pub fn open_project_folder(
         "",
         RegistrationTarget::Registry(config_dir),
     )
+}
+
+fn gitmodules_contains_path(parent_path: &Path, space_path: &str) -> bool {
+    let gitmodules = parent_path.join(".gitmodules");
+    if !gitmodules.exists() {
+        return false;
+    }
+    let content = std::fs::read_to_string(gitmodules).unwrap_or_default();
+    content.contains(&format!("path = {space_path}"))
+}
+
+fn submodule_checkout_ready(parent_path: &Path, space_path: &str) -> bool {
+    parent_path
+        .join(space_path)
+        .join(".git")
+        .symlink_metadata()
+        .is_ok()
+}
+
+pub fn space_ref_status(parent_path: &Path, space_ref: &SpaceRef) -> SpaceStatus {
+    let space_path = parent_path.join(&space_ref.path);
+    let is_submodule = gitmodules_contains_path(parent_path, &space_ref.path);
+
+    if space_path.exists() {
+        if is_submodule && !submodule_checkout_ready(parent_path, &space_ref.path) {
+            SpaceStatus::Missing
+        } else {
+            SpaceStatus::Ready
+        }
+    } else if space_ref.repo.is_some() || is_submodule {
+        SpaceStatus::Missing
+    } else {
+        SpaceStatus::Broken
+    }
+}
+
+/// Register direct git submodules from an existing project as CombAI spaces.
+///
+/// This is intentionally conservative: nested submodule paths are skipped
+/// because the current resolver treats project spaces as direct children.
+pub fn import_existing_submodule_spaces(
+    parent_path: &Path,
+    submodules: &[SubmoduleConfig],
+) -> Result<usize, AppError> {
+    if submodules.is_empty() {
+        return Ok(0);
+    }
+
+    let mut parent_config = config::read_space_config(parent_path)?;
+    let spaces = parent_config.spaces.get_or_insert_with(Vec::new);
+    let mut imported = 0usize;
+
+    for submodule in submodules {
+        let normalized =
+            match normalize_repo_relative(&submodule.path.replace('\\', "/"), RootMode::Reject) {
+                Ok(path) => path,
+                Err(e) => {
+                    tracing::warn!("Skipping invalid submodule path {}: {e}", submodule.path);
+                    continue;
+                }
+            };
+
+        if normalized.contains('/') {
+            tracing::warn!(
+                "Skipping nested submodule path {} during CombAI import",
+                normalized
+            );
+            continue;
+        }
+
+        if spaces.iter().any(|space| space.path == normalized) {
+            continue;
+        }
+
+        spaces.push(SpaceRef {
+            id: ulid::Ulid::new().to_string().to_lowercase(),
+            path: normalized,
+            // For submodules, `.gitmodules` remains the source of truth.
+            repo: None,
+        });
+        imported += 1;
+    }
+
+    if imported > 0 {
+        config::write_space_config(parent_path, &parent_config)?;
+    }
+
+    Ok(imported)
 }
 
 /// Delete a root project: remove from registry, optionally delete files.
@@ -262,9 +352,9 @@ pub fn list_spaces(parent_path: &Path) -> Result<Vec<SpaceInfo>, AppError> {
     if let Some(spaces) = &parent_config.spaces {
         for space_ref in spaces {
             let space_path = parent_path.join(&space_ref.path);
-            let exists = space_path.exists();
+            let status = space_ref_status(parent_path, space_ref);
 
-            if exists {
+            if matches!(status, SpaceStatus::Ready) {
                 let space_config = config::read_space_config(&space_path).ok();
                 result.push(SpaceInfo {
                     id: space_ref.id.clone(),
@@ -292,26 +382,10 @@ pub fn list_spaces(parent_path: &Path) -> Result<Vec<SpaceInfo>, AppError> {
                         .map(|s| !s.is_empty())
                         .unwrap_or(false),
                     last_opened: None,
-                    status: SpaceStatus::Ready,
+                    status,
                     lfs_state: LfsState::NotApplicable,
                 });
             } else {
-                // Ghost state: folder missing
-                let status = if space_ref.repo.is_some() {
-                    SpaceStatus::Missing
-                } else {
-                    let gitmodules = parent_path.join(".gitmodules");
-                    if gitmodules.exists() {
-                        let content = std::fs::read_to_string(&gitmodules).unwrap_or_default();
-                        if content.contains(&format!("path = {}", space_ref.path)) {
-                            SpaceStatus::Missing
-                        } else {
-                            SpaceStatus::Broken
-                        }
-                    } else {
-                        SpaceStatus::Broken
-                    }
-                };
                 result.push(SpaceInfo {
                     id: space_ref.id.clone(),
                     name: space_ref.path.clone(),

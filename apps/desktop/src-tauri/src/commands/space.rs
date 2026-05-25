@@ -13,22 +13,33 @@ use crate::space::{config, project, registry, settings, symlinks, types::*};
 use crate::storage::lfs::LfsState;
 
 fn detect_status_for_ref(parent: &Path, sp_ref: &SpaceRef) -> SpaceStatus {
-    let space_dir = parent.join(&sp_ref.path);
-    if space_dir.exists() {
-        SpaceStatus::Ready
-    } else if sp_ref.repo.is_some() {
-        SpaceStatus::Missing
-    } else {
-        let gitmodules = parent.join(".gitmodules");
-        if gitmodules.exists() {
-            let content = std::fs::read_to_string(&gitmodules).unwrap_or_default();
-            if content.contains(&format!("path = {}", sp_ref.path)) {
-                SpaceStatus::Missing
-            } else {
-                SpaceStatus::Broken
+    project::space_ref_status(parent, sp_ref)
+}
+
+async fn import_existing_submodules_if_possible(
+    git_state: &GitState,
+    project_path: &Path,
+) -> usize {
+    let Some(cli) = &git_state.cli else {
+        return 0;
+    };
+
+    match ops::list_submodules(cli, project_path).await {
+        Ok(submodules) => {
+            match project::import_existing_submodule_spaces(project_path, &submodules) {
+                Ok(imported) => imported,
+                Err(e) => {
+                    tracing::warn!(
+                        "import existing submodules failed for {}: {e}",
+                        project_path.display()
+                    );
+                    0
+                }
             }
-        } else {
-            SpaceStatus::Broken
+        }
+        Err(e) => {
+            tracing::warn!("list submodules failed for {}: {e}", project_path.display());
+            0
         }
     }
 }
@@ -195,11 +206,15 @@ pub async fn open_project_folder(
     // combai project).
     let combai_existed_before = sp_path.join(".combai").join("config.json").exists();
 
-    let (id, cfg) = project::open_project_folder(&config_dir, sp_path)?;
+    let had_git_before = sp_path.join(".git").exists();
+    let (id, mut cfg) = project::open_project_folder(&config_dir, sp_path)?;
+    let imported_submodules = import_existing_submodules_if_possible(&git_state, sp_path).await;
+    if imported_submodules > 0 {
+        cfg = config::read_space_config(sp_path)?;
+    }
 
     // Auto git init if no .git/ exists. `ops::init` stages everything
     // (including the fresh .combai/) under a `Scaffold .combai` commit.
-    let had_git_before = sp_path.join(".git").exists();
     if !had_git_before {
         if let Some(cli) = &git_state.cli {
             let lock = git_state.get_lock(sp_path).await;
@@ -218,6 +233,17 @@ pub async fn open_project_folder(
             .await
         {
             tracing::warn!("commit_scaffold failed for opened folder: {e}");
+        }
+    } else if had_git_before && imported_submodules > 0 {
+        if let Err(e) = autocommit
+            .commit_system_now(
+                sp_path.to_path_buf(),
+                sp_path.to_path_buf(),
+                SystemCommitKind::SpaceConfig,
+            )
+            .await
+        {
+            tracing::warn!("commit imported submodules failed for opened folder: {e}");
         }
     }
 
@@ -545,12 +571,23 @@ pub async fn project_clone(
     // Check if .combai/ existed in the clone before we scaffold it.
     let combai_existed_before = path.join(".combai").join("config.json").exists();
 
-    let (id, cfg) = project::open_project_folder(&config_dir, &path)?;
+    let (id, mut cfg) = project::open_project_folder(&config_dir, &path)?;
+    let imported_submodules = import_existing_submodules_if_possible(&git_state, &path).await;
+    if imported_submodules > 0 {
+        cfg = config::read_space_config(&path)?;
+    }
 
     // If we just scaffolded .combai/, commit it.
     if !combai_existed_before {
         if let Err(e) = autocommit.commit_scaffold(path.clone(), path.clone()).await {
             tracing::warn!("commit_scaffold failed after project clone: {e}");
+        }
+    } else if imported_submodules > 0 {
+        if let Err(e) = autocommit
+            .commit_system_now(path.clone(), path.clone(), SystemCommitKind::SpaceConfig)
+            .await
+        {
+            tracing::warn!("commit imported submodules failed after project clone: {e}");
         }
     }
 
@@ -581,6 +618,36 @@ pub fn ensure_assets_scope(app: AppHandle, space_path: String) -> Result<(), App
     app.asset_protocol_scope()
         .allow_directory(&assets_dir, true)
         .map_err(|e| AppError::General(e.to_string()))
+}
+
+#[tauri::command]
+pub async fn ensure_space_scaffold(
+    project_path: String,
+    space_path: String,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<(), AppError> {
+    let path = Path::new(&space_path);
+    if path.join(".combai").join("config.json").exists() {
+        return Ok(());
+    }
+    if !path.is_dir() {
+        return Err(AppError::PathNotAccessible(space_path));
+    }
+
+    let fallback_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "Space".to_string());
+    crate::space::scaffold::scaffold_space(path, &fallback_name, "", "")?;
+
+    if let Err(e) = autocommit
+        .commit_scaffold(PathBuf::from(project_path), path.to_path_buf())
+        .await
+    {
+        tracing::warn!("commit_scaffold failed in ensure_space_scaffold: {e}");
+    }
+
+    Ok(())
 }
 
 // --- Config ---

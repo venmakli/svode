@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 use super::cli::GitCli;
 use crate::AppError;
@@ -37,6 +38,12 @@ pub struct FileGitStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubmoduleConfig {
+    pub path: String,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct NameStatusRecord {
     status: char,
     path: String,
@@ -56,6 +63,71 @@ pub async fn get_remote(cli: &GitCli, space_dir: &Path) -> Result<Option<String>
     } else {
         Ok(Some(url))
     }
+}
+
+/// List submodules declared in `.gitmodules`.
+pub async fn list_submodules(
+    cli: &GitCli,
+    project_path: &Path,
+) -> Result<Vec<SubmoduleConfig>, AppError> {
+    if !project_path.join(".gitmodules").exists() {
+        return Ok(Vec::new());
+    }
+
+    let out = cli
+        .exec(
+            project_path,
+            &[
+                "config",
+                "-f",
+                ".gitmodules",
+                "--get-regexp",
+                "^submodule\\..*\\.",
+            ],
+        )
+        .await?;
+
+    if out.exit_code != 0 {
+        return Ok(Vec::new());
+    }
+
+    Ok(parse_submodule_config_output(&out.stdout))
+}
+
+fn parse_submodule_config_output(stdout: &str) -> Vec<SubmoduleConfig> {
+    #[derive(Default)]
+    struct PartialSubmodule {
+        path: Option<String>,
+        url: Option<String>,
+    }
+
+    let mut by_name: BTreeMap<String, PartialSubmodule> = BTreeMap::new();
+
+    for line in stdout.lines() {
+        let Some((key, value)) = line.split_once(char::is_whitespace) else {
+            continue;
+        };
+        let Some(rest) = key.strip_prefix("submodule.") else {
+            continue;
+        };
+
+        let value = value.trim().to_string();
+        if let Some(name) = rest.strip_suffix(".path") {
+            by_name.entry(name.to_string()).or_default().path = Some(value);
+        } else if let Some(name) = rest.strip_suffix(".url") {
+            by_name.entry(name.to_string()).or_default().url = Some(value);
+        }
+    }
+
+    by_name
+        .into_values()
+        .filter_map(|partial| {
+            partial.path.map(|path| SubmoduleConfig {
+                path,
+                url: partial.url,
+            })
+        })
+        .collect()
 }
 
 /// Set or add the `origin` remote URL.

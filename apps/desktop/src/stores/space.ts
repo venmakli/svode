@@ -295,6 +295,16 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   openSpace: async (id: string) => {
     const space = get().spaces.find((w) => w.id === id);
     if (space?.status && space.status !== "ready") return;
+    if (space?.path && get().activeRootPath) {
+      try {
+        await invoke("ensure_space_scaffold", {
+          projectPath: get().activeRootPath,
+          spacePath: space.path,
+        });
+      } catch (err) {
+        console.warn("ensure_space_scaffold failed:", err);
+      }
+    }
     set({ activeSpaceId: id });
     syncMcpContext(get(), id);
     if (space?.path) {

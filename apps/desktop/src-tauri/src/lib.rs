@@ -141,6 +141,7 @@ pub fn run() {
             commands::space::project_clone,
             commands::space::path_exists,
             commands::space::ensure_assets_scope,
+            commands::space::ensure_space_scaffold,
             commands::space::get_space_config,
             commands::space::save_space_config,
             commands::space::setup_cli_symlinks_cmd,
