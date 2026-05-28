@@ -295,6 +295,8 @@ pub fn get_last_active_project(app: AppHandle) -> Result<Option<String>, AppErro
 #[tauri::command]
 pub async fn open_project(
     app: AppHandle,
+    git_state: State<'_, GitState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
     index_state: State<'_, IndexState>,
     id: String,
 ) -> Result<SpaceConfig, AppError> {
@@ -305,8 +307,24 @@ pub async fn open_project(
 
     let sp_ref = registry::find_space(&config_dir, &id)?
         .ok_or_else(|| AppError::SpaceNotFound(id.clone()))?;
+    let project_path = PathBuf::from(&sp_ref.path);
 
-    let cfg = config::read_space_config(Path::new(&sp_ref.path))?;
+    let imported_submodules =
+        import_existing_submodules_if_possible(&git_state, &project_path).await;
+    if imported_submodules > 0 {
+        if let Err(e) = autocommit
+            .commit_system_now(
+                project_path.clone(),
+                project_path.clone(),
+                SystemCommitKind::SpaceConfig,
+            )
+            .await
+        {
+            tracing::warn!("commit imported submodules failed for project open: {e}");
+        }
+    }
+
+    let cfg = config::read_space_config(&project_path)?;
     registry::update_last_active(&config_dir, &id)?;
     registry::update_last_opened(&config_dir, &id)?;
 
@@ -315,7 +333,6 @@ pub async fn open_project(
     // not block project open — the user can always trigger a manual reindex
     // later. Initial state is not a transit, so no `space:status_changed`
     // emit is needed: the cache snapshot during open_project covers it.
-    let project_path = PathBuf::from(&sp_ref.path);
     if let Err(e) = index_state.open_project(&app, &project_path).await {
         tracing::warn!(
             "index_state.open_project failed for {}: {e}",

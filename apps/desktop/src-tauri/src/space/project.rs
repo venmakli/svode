@@ -125,7 +125,16 @@ fn gitmodules_contains_path(parent_path: &Path, space_path: &str) -> bool {
         return false;
     }
     let content = std::fs::read_to_string(gitmodules).unwrap_or_default();
-    content.contains(&format!("path = {space_path}"))
+    content.lines().any(|line| {
+        let trimmed = line.trim();
+        let Some(rest) = trimmed.strip_prefix("path") else {
+            return false;
+        };
+        let Some((_, value)) = rest.split_once('=') else {
+            return false;
+        };
+        value.trim() == space_path
+    })
 }
 
 fn submodule_checkout_ready(parent_path: &Path, space_path: &str) -> bool {
@@ -438,8 +447,11 @@ pub fn remove_missing_space(parent_path: &Path, space_id: &str) -> Result<(), Ap
 
 #[cfg(test)]
 mod tests {
-    use super::open_project_folder;
+    use super::{import_existing_submodule_spaces, open_project_folder, space_ref_status};
+    use crate::git::ops::SubmoduleConfig;
     use crate::space::registry;
+    use crate::space::scaffold;
+    use crate::space::types::{SpaceRef, SpaceStatus};
 
     #[test]
     fn open_registered_folder_without_svode_recreates_scaffold() {
@@ -463,5 +475,59 @@ mod tests {
         assert_eq!(cfg.name, fallback_name);
         assert!(project_path.join(".svode/config.json").is_file());
         assert!(project_path.join(".svode/local.json").is_file());
+    }
+
+    #[test]
+    fn import_submodules_registers_only_direct_children_without_scaffolding() {
+        let project_dir = tempfile::tempdir().expect("project dir");
+        let project_path = project_dir.path();
+        std::fs::create_dir(project_path.join("docs")).expect("docs dir");
+        scaffold::scaffold_space(project_path, "Root", "", "").expect("root scaffold");
+
+        let imported = import_existing_submodule_spaces(
+            project_path,
+            &[
+                SubmoduleConfig {
+                    path: "docs".to_string(),
+                    url: Some("https://example.com/docs.git".to_string()),
+                },
+                SubmoduleConfig {
+                    path: "libs/nested".to_string(),
+                    url: Some("https://example.com/nested.git".to_string()),
+                },
+            ],
+        )
+        .expect("import submodules");
+
+        let cfg = crate::space::config::read_space_config(project_path).expect("read root config");
+        let spaces = cfg.spaces.expect("spaces");
+
+        assert_eq!(imported, 1);
+        assert_eq!(spaces.len(), 1);
+        assert_eq!(spaces[0].path, "docs");
+        assert_eq!(spaces[0].repo, None);
+        assert!(!project_path.join("docs/.svode/config.json").exists());
+    }
+
+    #[test]
+    fn submodule_status_matches_gitmodules_path_exactly() {
+        let project_dir = tempfile::tempdir().expect("project dir");
+        let project_path = project_dir.path();
+        std::fs::write(
+            project_path.join(".gitmodules"),
+            "[submodule \"foobar\"]\n\tpath = foobar\n\turl = https://example.com/foobar.git\n",
+        )
+        .expect("gitmodules");
+
+        let status = space_ref_status(
+            project_path,
+            &SpaceRef {
+                id: "foo-id".to_string(),
+                path: "foo".to_string(),
+                repo: None,
+            },
+        );
+
+        assert_eq!(status, SpaceStatus::Broken);
     }
 }
