@@ -124,10 +124,8 @@ async fn handle_jsonrpc_line(line: &str) -> Option<Value> {
         "tools/call" => {
             let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
             if params.get("name").and_then(Value::as_str) == Some("get_svode_guide") {
-                let result = ToolCallResult::ok(
-                    "Svode MCP guide.",
-                    json!({ "guide": tools::guide_text() }),
-                );
+                let result =
+                    ToolCallResult::ok("Svode MCP guide.", json!({ "guide": tools::guide_text() }));
                 return Some(ok_response(
                     id,
                     serde_json::to_value(result).unwrap_or_else(|_| json!({})),
