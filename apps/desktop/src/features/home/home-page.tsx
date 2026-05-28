@@ -16,6 +16,19 @@ import { CloneProjectDialog } from "./clone-project-dialog";
 import type { SpaceInfo } from "@/types/space";
 import type { CloneProgress } from "@/types/git";
 
+function getErrorDescription(err: unknown): string | undefined {
+  const message =
+    typeof err === "string"
+      ? err
+      : err instanceof Error
+        ? err.message
+        : err && typeof err === "object" && "message" in err
+          ? String((err as { message: unknown }).message)
+          : "";
+
+  return message.trim() || undefined;
+}
+
 export function HomePage() {
   const navigate = useNavigate();
   const version = useAppVersion();
@@ -74,7 +87,12 @@ export function HomePage() {
   );
 
   const handleCreateProject = useCallback(
-    async (name: string, icon: string, description: string | undefined, path: string) => {
+    async (
+      name: string,
+      icon: string,
+      description: string | undefined,
+      path: string,
+    ) => {
       try {
         const ws = await createRoot(name, icon, description, path);
         setCreateDialogOpen(false);
@@ -94,11 +112,15 @@ export function HomePage() {
             }
           } catch (openErr) {
             console.error("Failed to open existing project:", openErr);
-            toast.error(m.toast_error());
+            toast.error(m.home_open_project_error(), {
+              description: getErrorDescription(openErr),
+            });
           }
         } else {
           console.error("Failed to create project:", err);
-          toast.error(m.toast_error());
+          toast.error(m.toast_error(), {
+            description: getErrorDescription(err),
+          });
         }
       }
     },
@@ -115,7 +137,9 @@ export function HomePage() {
       }
     } catch (err) {
       console.error("Failed to open project folder:", err);
-      toast.error(m.home_open_project_error());
+      toast.error(m.home_open_project_error(), {
+        description: getErrorDescription(err),
+      });
     }
   }, [openRootFolder, openRoot, navigate]);
 
@@ -131,18 +155,39 @@ export function HomePage() {
     async (url: string, targetPath: string) => {
       setCloneDialogOpen(false);
 
-      const repoName = url.split("/").pop()?.replace(/\.git$/, "") || "project";
-      setCloningProject({ name: repoName, path: targetPath, phase: "Starting", percent: 0 });
-
-      const unlisten = await listen<CloneProgress>("clone:progress", (event) => {
-        if (event.payload.spacePath !== targetPath) return;
-        setCloningProject((prev) =>
-          prev ? { ...prev, phase: event.payload.phase, percent: event.payload.percent } : prev,
-        );
+      const repoName =
+        url
+          .split("/")
+          .pop()
+          ?.replace(/\.git$/, "") || "project";
+      setCloningProject({
+        name: repoName,
+        path: targetPath,
+        phase: "Starting",
+        percent: 0,
       });
 
+      const unlisten = await listen<CloneProgress>(
+        "clone:progress",
+        (event) => {
+          if (event.payload.spacePath !== targetPath) return;
+          setCloningProject((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  phase: event.payload.phase,
+                  percent: event.payload.percent,
+                }
+              : prev,
+          );
+        },
+      );
+
       try {
-        const ws = await invoke<SpaceInfo>("project_clone", { url, targetPath });
+        const ws = await invoke<SpaceInfo>("project_clone", {
+          url,
+          targetPath,
+        });
         setCloningProject(null);
         // Add to local store and open
         useSpaceStore.setState((s) => ({
@@ -154,11 +199,16 @@ export function HomePage() {
         }
       } catch (err) {
         console.error("project_clone failed:", err);
-        const message = typeof err === "string" ? err : (err as Error)?.message ?? "error";
+        const message =
+          typeof err === "string" ? err : ((err as Error)?.message ?? "error");
         setCloningProject((prev) =>
-          prev ? { ...prev, phase: "Failed", percent: 0, error: message } : prev,
+          prev
+            ? { ...prev, phase: "Failed", percent: 0, error: message }
+            : prev,
         );
-        toast.error(m.git_clone_failed());
+        toast.error(m.git_clone_failed(), {
+          description: getErrorDescription(err),
+        });
         window.setTimeout(() => setCloningProject(null), 6000);
       } finally {
         unlisten();
@@ -183,10 +233,7 @@ export function HomePage() {
   return (
     <div className="flex flex-col h-screen">
       {/* Drag region header */}
-      <div
-        data-tauri-drag-region
-        className="h-[44px] shrink-0 w-full"
-      />
+      <div data-tauri-drag-region className="h-[44px] shrink-0 w-full" />
 
       {/* Main content */}
       <div className="flex-1 flex flex-col items-center justify-center px-4">
@@ -206,7 +253,9 @@ export function HomePage() {
             onClick={() => setCreateDialogOpen(true)}
           >
             <FolderPlus className="h-5 w-5 text-muted-foreground" />
-            <span className="text-sm font-medium">{m.home_create_project()}</span>
+            <span className="text-sm font-medium">
+              {m.home_create_project()}
+            </span>
           </Card>
           <Card
             className="flex flex-col justify-between w-40 h-24 p-4 hover:bg-accent transition-colors cursor-pointer"
@@ -220,7 +269,9 @@ export function HomePage() {
             onClick={() => setCloneDialogOpen(true)}
           >
             <FolderGit2 className="h-5 w-5 text-muted-foreground" />
-            <span className="text-sm font-medium">{m.home_clone_project()}</span>
+            <span className="text-sm font-medium">
+              {m.home_clone_project()}
+            </span>
           </Card>
         </div>
 

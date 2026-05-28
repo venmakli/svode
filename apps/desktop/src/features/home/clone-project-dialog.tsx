@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as m from "@/paraglide/messages.js";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 import {
   Dialog,
   DialogContent,
@@ -29,16 +30,54 @@ export function CloneProjectDialog({
 }: CloneProjectDialogProps) {
   const [url, setUrl] = useState("");
   const [targetFolder, setTargetFolder] = useState("");
+  const [targetExists, setTargetExists] = useState(false);
+  const [isCheckingTarget, setIsCheckingTarget] = useState(false);
 
   function resetForm() {
     setUrl("");
     setTargetFolder("");
+    setTargetExists(false);
+    setIsCheckingTarget(false);
   }
 
   const trimmedUrl = url.trim();
   const urlValid = trimmedUrl !== "" && URL_REGEX.test(trimmedUrl);
-  const repoName = trimmedUrl.split("/").pop()?.replace(/\.git$/, "") || "";
-  const targetPath = targetFolder && repoName ? `${targetFolder}/${repoName}` : "";
+  const repoName =
+    trimmedUrl
+      .split("/")
+      .pop()
+      ?.replace(/\.git$/, "") || "";
+  const targetPath =
+    targetFolder && repoName ? `${targetFolder}/${repoName}` : "";
+
+  useEffect(() => {
+    if (!urlValid || !targetPath) {
+      setTargetExists(false);
+      setIsCheckingTarget(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsCheckingTarget(true);
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const exists = await invoke<boolean>("path_exists", {
+          path: targetPath,
+        });
+        if (!cancelled) setTargetExists(exists);
+      } catch {
+        if (!cancelled) setTargetExists(false);
+      } finally {
+        if (!cancelled) setIsCheckingTarget(false);
+      }
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [targetPath, urlValid]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -59,7 +98,11 @@ export function CloneProjectDialog({
     }
   }
 
-  const isValid = urlValid && targetFolder.trim() !== "";
+  const isValid =
+    urlValid &&
+    targetFolder.trim() !== "" &&
+    !targetExists &&
+    !isCheckingTarget;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -87,7 +130,9 @@ export function CloneProjectDialog({
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="clone-target">{m.home_clone_target_label()}</Label>
+              <Label htmlFor="clone-target">
+                {m.home_clone_target_label()}
+              </Label>
               <div className="flex gap-2">
                 <Input
                   id="clone-target"
@@ -105,11 +150,15 @@ export function CloneProjectDialog({
                   <FolderOpen className="h-4 w-4" />
                 </Button>
               </div>
-              {targetPath && (
+              {targetExists ? (
+                <p className="text-xs text-destructive">
+                  {m.git_clone_folder_exists({ slug: repoName })}
+                </p>
+              ) : targetPath ? (
                 <p className="text-xs text-muted-foreground truncate">
                   → {targetPath}
                 </p>
-              )}
+              ) : null}
             </div>
           </div>
 

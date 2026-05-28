@@ -93,18 +93,22 @@ pub fn open_project_folder(
         ));
     }
 
-    // Check if already registered
     let reg = registry::read_registry(config_dir)?;
     let path_str = path.to_string_lossy().to_string();
-    if let Some(existing) = reg.spaces.iter().find(|w| w.path == path_str) {
-        let cfg = config::read_space_config(path)?;
-        return Ok((existing.id.clone(), cfg));
-    }
-
     let fallback_name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "Space".to_string());
+
+    // Reopening a registered folder should follow the same contract as opening
+    // an unregistered folder: if `.svode/` is missing, recreate the scaffold.
+    if let Some(existing) = reg.spaces.iter().find(|w| w.path == path_str) {
+        let cfg = match config::read_space_config(path) {
+            Ok(cfg) => cfg,
+            Err(_) => scaffold::scaffold_space(path, &fallback_name, "", "")?,
+        };
+        return Ok((existing.id.clone(), cfg));
+    }
 
     create_and_register(
         path,
@@ -430,4 +434,34 @@ pub fn remove_missing_space(parent_path: &Path, space_id: &str) -> Result<(), Ap
         spaces.retain(|s| s.id != space_id);
     }
     config::write_space_config(parent_path, &parent_config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::open_project_folder;
+    use crate::space::registry;
+
+    #[test]
+    fn open_registered_folder_without_svode_recreates_scaffold() {
+        let config_dir = tempfile::tempdir().expect("config dir");
+        let project_dir = tempfile::tempdir().expect("project dir");
+        let project_path = project_dir.path();
+        let project_path_str = project_path.to_string_lossy().to_string();
+        let fallback_name = project_path
+            .file_name()
+            .expect("folder name")
+            .to_string_lossy()
+            .to_string();
+
+        registry::add_space(config_dir.path(), "registered-id", &project_path_str)
+            .expect("register project");
+
+        let (id, cfg) =
+            open_project_folder(config_dir.path(), project_path).expect("open project folder");
+
+        assert_eq!(id, "registered-id");
+        assert_eq!(cfg.name, fallback_name);
+        assert!(project_path.join(".svode/config.json").is_file());
+        assert!(project_path.join(".svode/local.json").is_file());
+    }
 }
