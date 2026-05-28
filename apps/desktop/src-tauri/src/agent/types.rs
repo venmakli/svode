@@ -112,7 +112,7 @@ pub struct ModelOption {
     pub description: String,
 }
 
-/// Agent-related settings loaded from space `.combai/` config files.
+/// Agent-related settings loaded from space `.svode/` config files.
 #[derive(Debug, Clone, Default)]
 pub struct SpaceAgentConfig {
     /// List of allowed CLI names (e.g. ["claude"])
@@ -121,14 +121,14 @@ pub struct SpaceAgentConfig {
     pub cli_paths: HashMap<String, PathBuf>,
 }
 
-/// Load space agent config from `.combai/config.json` and `.combai/local.json`.
+/// Load space agent config from `.svode/config.json` and `.svode/local.json`.
 ///
 /// Best-effort: missing files or fields silently fall back to defaults.
 pub fn load_space_agent_config(space_dir: &std::path::Path) -> SpaceAgentConfig {
     let mut result = SpaceAgentConfig::default();
 
-    // Read .combai/config.json → agent.clis
-    let config_path = space_dir.join(".combai/config.json");
+    // Read .svode/config.json → agent.clis
+    let config_path = space_dir.join(".svode/config.json");
     if let Ok(data) = std::fs::read_to_string(&config_path) {
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
             if let Some(clis) = parsed
@@ -144,8 +144,8 @@ pub fn load_space_agent_config(space_dir: &std::path::Path) -> SpaceAgentConfig 
         }
     }
 
-    // Read .combai/local.json → agent.cliPaths
-    let local_path = space_dir.join(".combai/local.json");
+    // Read .svode/local.json → agent.cliPaths
+    let local_path = space_dir.join(".svode/local.json");
     if let Ok(data) = std::fs::read_to_string(&local_path) {
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
             if let Some(paths) = parsed

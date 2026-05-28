@@ -82,7 +82,7 @@ pub struct ProjectSpacesCache {
     /// Display name of the root project (`SpaceConfig.name`), surfaced as
     /// `SearchItem.spaceName` for root-pool entries.
     root_name: String,
-    /// space_id → display name (read from each child's `.combai/config.json`).
+    /// space_id → display name (read from each child's `.svode/config.json`).
     /// Populated only for `Ready` spaces; falls back to `folder_name` if the
     /// child config can't be read.
     name_by_id: HashMap<String, String>,
@@ -118,7 +118,7 @@ impl ProjectSpacesCache {
     }
 }
 
-/// Read a child space's display name from its `.combai/config.json`. Falls
+/// Read a child space's display name from its `.svode/config.json`. Falls
 /// back to `folder_name` and logs a warning if the read fails — name is a
 /// UI nicety, not a critical path.
 fn read_child_space_name(space_dir: &Path, folder_name: &str) -> String {
@@ -307,7 +307,7 @@ impl IndexState {
         }
     }
 
-    /// Returns the directory whose `.combai/index.db` backs this key — i.e.,
+    /// Returns the directory whose `.svode/index.db` backs this key — i.e.,
     /// the root project path or the ready child-space path.
     pub async fn dir_for_key(&self, key: &IndexKey) -> Result<PathBuf, AppError> {
         match key {
@@ -845,7 +845,7 @@ impl IndexState {
         }
 
         let dir = self.dir_for_key(key).await?;
-        let db_path = dir.join(".combai").join("index.db");
+        let db_path = dir.join(".svode").join("index.db");
         let pool = db::create_pool(&db_path).await?;
         db::ensure_schema(&pool).await?;
 

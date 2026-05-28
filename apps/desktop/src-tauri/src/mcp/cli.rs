@@ -70,11 +70,11 @@ fn parse_client_arg(args: &[String]) -> Result<McpClient, McpBusinessError> {
 fn print_usage() {
     eprintln!(
         "Usage:
-  combai-mcp --app desktop
-  combai-mcp install --client <claude-code|codex>
-  combai-mcp remove --client <claude-code|codex>
-  combai-mcp print-config --client <claude-code|codex>
-  combai-mcp doctor"
+  svode-mcp --app desktop
+  svode-mcp install --client <claude-code|codex>
+  svode-mcp remove --client <claude-code|codex>
+  svode-mcp print-config --client <claude-code|codex>
+  svode-mcp doctor"
     );
 }
 
@@ -114,18 +114,18 @@ async fn handle_jsonrpc_line(line: &str) -> Option<Value> {
             id,
             json!({
                 "protocolVersion": "2025-06-18",
-                "serverInfo": { "name": "combai", "version": MCP_VERSION },
+                "serverInfo": { "name": "svode", "version": MCP_VERSION },
                 "capabilities": { "tools": {} },
-                "instructions": "Use CombAI MCP as a product API, not as raw filesystem access. Create collections for structured repeated data; create documents for narrative pages. Call get_combai_guide when unsure."
+                "instructions": "Use Svode MCP as a product API, not as raw filesystem access. Create collections for structured repeated data; create documents for narrative pages. Call get_svode_guide when unsure."
             }),
         )),
         "ping" => Some(ok_response(id, json!({}))),
         "tools/list" => Some(ok_response(id, json!({ "tools": tools::definitions() }))),
         "tools/call" => {
             let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
-            if params.get("name").and_then(Value::as_str) == Some("get_combai_guide") {
+            if params.get("name").and_then(Value::as_str) == Some("get_svode_guide") {
                 let result = ToolCallResult::ok(
-                    "CombAI MCP guide.",
+                    "Svode MCP guide.",
                     json!({ "guide": tools::guide_text() }),
                 );
                 return Some(ok_response(

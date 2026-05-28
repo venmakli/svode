@@ -8334,10 +8334,10 @@ views: []
         let tmp = TempDir::new().unwrap();
         let space = tmp.path();
         fs::create_dir_all(space.join("tasks")).unwrap();
-        fs::create_dir_all(space.join(".combai")).unwrap();
+        fs::create_dir_all(space.join(".svode")).unwrap();
         fs::write(space.join("tasks/schema.yaml"), "columns: []\nviews: []\n").unwrap();
         fs::write(
-            space.join(".combai/order.json"),
+            space.join(".svode/order.json"),
             r#"{"tasks":["b.md","a.md"]}"#,
         )
         .unwrap();

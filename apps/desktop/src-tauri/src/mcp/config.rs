@@ -107,9 +107,9 @@ pub struct DoctorReport {
 
 pub fn mcp_binary_name() -> &'static str {
     if cfg!(windows) {
-        "combai-mcp.exe"
+        "svode-mcp.exe"
     } else {
-        "combai-mcp"
+        "svode-mcp"
     }
 }
 
@@ -166,7 +166,7 @@ pub fn resolve_binary_path() -> PathBuf {
 pub fn manual_config_object() -> ManualConfig {
     let command = resolve_binary_path();
     ManualConfig {
-        name: "combai".to_string(),
+        name: "svode".to_string(),
         transport: "stdio".to_string(),
         command: command.to_string_lossy().to_string(),
         args: vec!["--app".to_string(), "desktop".to_string()],
@@ -178,13 +178,13 @@ pub fn manual_config(client: McpClient, command: &Path) -> String {
     match client {
         McpClient::ClaudeCode => {
             format!(
-                "claude mcp add --transport stdio --scope user combai -- {} --app desktop",
+                "claude mcp add --transport stdio --scope user svode -- {} --app desktop",
                 shell_quote(command)
             )
         }
         McpClient::Codex => {
             format!(
-                "[mcp_servers.combai]\ncommand = \"{}\"\nargs = [\"--app\", \"desktop\"]\n",
+                "[mcp_servers.svode]\ncommand = \"{}\"\nargs = [\"--app\", \"desktop\"]\n",
                 toml_escape(&command.to_string_lossy())
             )
         }
@@ -217,7 +217,7 @@ pub fn install_client(client: McpClient) -> Result<ClientConfigResult, McpBusine
                         "stdio",
                         "--scope",
                         "user",
-                        "combai",
+                        "svode",
                         "--",
                     ])
                     .arg(&command)
@@ -225,7 +225,7 @@ pub fn install_client(client: McpClient) -> Result<ClientConfigResult, McpBusine
                     .status()?;
                 if status.success() {
                     result.installed = true;
-                    result.message = "Installed CombAI MCP in Claude Code user scope".to_string();
+                    result.message = "Installed Svode MCP in Claude Code user scope".to_string();
                 } else {
                     result.message =
                         "Claude Code CLI returned an error; use manual config".to_string();
@@ -237,7 +237,7 @@ pub fn install_client(client: McpClient) -> Result<ClientConfigResult, McpBusine
         McpClient::Codex => {
             install_codex_config(&command)?;
             result.installed = true;
-            result.message = "Installed CombAI MCP in ~/.codex/config.toml".to_string();
+            result.message = "Installed Svode MCP in ~/.codex/config.toml".to_string();
         }
     }
     Ok(result)
@@ -249,21 +249,21 @@ pub fn remove_client(client: McpClient) -> Result<ClientConfigResult, McpBusines
         McpClient::ClaudeCode => {
             if which::which("claude").is_ok() {
                 let status = Command::new("claude")
-                    .args(["mcp", "remove", "combai"])
+                    .args(["mcp", "remove", "svode"])
                     .status()?;
                 result.message = if status.success() {
-                    "Removed CombAI MCP from Claude Code".to_string()
+                    "Removed Svode MCP from Claude Code".to_string()
                 } else {
-                    "Claude Code CLI returned an error while removing CombAI MCP".to_string()
+                    "Claude Code CLI returned an error while removing Svode MCP".to_string()
                 };
             } else {
                 result.message =
-                    "Claude Code CLI not found; remove the combai MCP server manually".to_string();
+                    "Claude Code CLI not found; remove the svode MCP server manually".to_string();
             }
         }
         McpClient::Codex => {
             remove_codex_config()?;
-            result.message = "Removed CombAI MCP block from ~/.codex/config.toml".to_string();
+            result.message = "Removed Svode MCP block from ~/.codex/config.toml".to_string();
         }
     }
     Ok(result)
@@ -284,7 +284,7 @@ pub fn status(discovery_present: bool, desktop_reachable: bool) -> McpStatus {
             message: if server_installed {
                 None
             } else {
-                Some("combai-mcp binary was not found or is not executable".to_string())
+                Some("svode-mcp binary was not found or is not executable".to_string())
             },
         },
         clients: vec![
@@ -302,17 +302,17 @@ pub fn doctor(discovery_present: bool, desktop_reachable: bool) -> DoctorReport 
     let executable = is_executable(&binary);
     let mut issues = Vec::new();
     if !exists {
-        issues.push("combai-mcp binary was not found at the resolved path".to_string());
+        issues.push("svode-mcp binary was not found at the resolved path".to_string());
     }
     if exists && !executable {
-        issues.push("combai-mcp exists but is not executable".to_string());
+        issues.push("svode-mcp exists but is not executable".to_string());
     }
     if !discovery_present {
-        issues.push("CombAI desktop discovery file is not present".to_string());
+        issues.push("Svode desktop discovery file is not present".to_string());
     }
     if discovery_present && !desktop_reachable {
         issues.push(
-            "CombAI desktop discovery file exists but desktop IPC is not reachable".to_string(),
+            "Svode desktop discovery file exists but desktop IPC is not reachable".to_string(),
         );
     }
     let command = binary.to_string_lossy().to_string();
@@ -320,14 +320,14 @@ pub fn doctor(discovery_present: bool, desktop_reachable: bool) -> DoctorReport 
         .ok()
         .map(|path| path.to_string_lossy().to_string());
     let mut messages = vec![
-        format!("combai-mcp command: {command}"),
-        format!("CombAI MCP version: {MCP_VERSION}"),
+        format!("svode-mcp command: {command}"),
+        format!("Svode MCP version: {MCP_VERSION}"),
     ];
     if exists && executable {
-        messages.push("combai-mcp binary is present and executable".to_string());
+        messages.push("svode-mcp binary is present and executable".to_string());
     }
     if discovery_present && desktop_reachable {
-        messages.push("CombAI desktop IPC is reachable".to_string());
+        messages.push("Svode desktop IPC is reachable".to_string());
     }
     let errors = issues.clone();
     DoctorReport {
@@ -351,7 +351,7 @@ fn client_status(client: McpClient) -> McpClientStatus {
         McpClient::ClaudeCode => {
             let path = which::which("claude").ok();
             let found = path.is_some();
-            let installed = found && command_success("claude", &["mcp", "get", "combai"]);
+            let installed = found && command_success("claude", &["mcp", "get", "svode"]);
             McpClientStatus {
                 id: client.as_str().to_string(),
                 name: "Claude Code".to_string(),
@@ -376,7 +376,7 @@ fn client_status(client: McpClient) -> McpClientStatus {
             let installed = config_path
                 .as_ref()
                 .and_then(|path| fs::read_to_string(path).ok())
-                .is_some_and(|content| content.contains("[mcp_servers.combai]"));
+                .is_some_and(|content| content.contains("[mcp_servers.svode]"));
             McpClientStatus {
                 id: client.as_str().to_string(),
                 name: "Codex".to_string(),
@@ -414,9 +414,9 @@ fn command_success(command: &str, args: &[&str]) -> bool {
 
 fn mcp_suffixed_name(triple: &str) -> String {
     if cfg!(windows) {
-        format!("combai-mcp-{triple}.exe")
+        format!("svode-mcp-{triple}.exe")
     } else {
-        format!("combai-mcp-{triple}")
+        format!("svode-mcp-{triple}")
     }
 }
 
@@ -442,7 +442,7 @@ fn install_codex_config(command: &Path) -> Result<(), McpBusinessError> {
     let existing = fs::read_to_string(&path).unwrap_or_default();
     let cleaned = remove_toml_block(&existing);
     let block = format!(
-        "\n[mcp_servers.combai]\ncommand = \"{}\"\nargs = [\"--app\", \"desktop\"]\n",
+        "\n[mcp_servers.svode]\ncommand = \"{}\"\nargs = [\"--app\", \"desktop\"]\n",
         toml_escape(&command.to_string_lossy())
     );
     fs::write(path, format!("{}{}", cleaned.trim_end(), block))?;
@@ -474,7 +474,7 @@ fn remove_toml_block(input: &str) -> String {
     let mut skipping = false;
     for line in input.lines() {
         let trimmed = line.trim();
-        if is_combai_toml_table(trimmed) {
+        if is_svode_toml_table(trimmed) {
             skipping = true;
             continue;
         }
@@ -488,12 +488,12 @@ fn remove_toml_block(input: &str) -> String {
     output.join("\n")
 }
 
-fn is_combai_toml_table(trimmed: &str) -> bool {
+fn is_svode_toml_table(trimmed: &str) -> bool {
     if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
         return false;
     }
     let table = trimmed.trim_start_matches('[').trim_end_matches(']').trim();
-    table == "mcp_servers.combai" || table.starts_with("mcp_servers.combai.")
+    table == "mcp_servers.svode" || table.starts_with("mcp_servers.svode.")
 }
 
 fn toml_escape(value: &str) -> String {
@@ -527,14 +527,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn removes_only_combai_toml_block() {
-        let input = "[x]\na=1\n[mcp_servers.combai]\ncommand=\"old\"\nargs=[]\n[y]\nb=2\n";
+    fn removes_only_svode_toml_block() {
+        let input = "[x]\na=1\n[mcp_servers.svode]\ncommand=\"old\"\nargs=[]\n[y]\nb=2\n";
         assert_eq!(remove_toml_block(input), "[x]\na=1\n[y]\nb=2");
     }
 
     #[test]
-    fn removes_nested_combai_toml_tables() {
-        let input = "[x]\na=1\n[mcp_servers.combai]\ncommand=\"old\"\n[mcp_servers.combai.env]\nCOMBAI_MCP_DISCOVERY=\"old\"\n[mcp_servers.other]\ncommand=\"keep\"\n";
+    fn removes_nested_svode_toml_tables() {
+        let input = "[x]\na=1\n[mcp_servers.svode]\ncommand=\"old\"\n[mcp_servers.svode.env]\nSVODE_MCP_DISCOVERY=\"old\"\n[mcp_servers.other]\ncommand=\"keep\"\n";
         assert_eq!(
             remove_toml_block(input),
             "[x]\na=1\n[mcp_servers.other]\ncommand=\"keep\""
@@ -544,8 +544,8 @@ mod tests {
     #[test]
     fn escapes_toml_paths() {
         assert_eq!(
-            toml_escape(r#"C:\Program Files\CombAI "A""#),
-            r#"C:\\Program Files\\CombAI \"A\""#
+            toml_escape(r#"C:\Program Files\Svode "A""#),
+            r#"C:\\Program Files\\Svode \"A\""#
         );
     }
 }

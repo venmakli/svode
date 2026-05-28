@@ -245,7 +245,7 @@ pub async fn set_assets_strategy(
     });
     write_space_config(&target_dir, &config)?;
 
-    // Commit `.gitattributes` + `.gitignore` + `.combai/config.json` via the
+    // Commit `.gitattributes` + `.gitignore` + `.svode/config.json` via the
     // system-commit pipeline so it routes to the correct repo (inline → root,
     // independent/submodule → space) under a single "Update assets strategy"
     // commit. This replaces the bare `git add` that previously lived inside

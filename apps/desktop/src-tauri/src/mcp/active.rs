@@ -94,9 +94,9 @@ mod tests {
     use super::*;
 
     fn write_project_config(project: &Path, space_path: &str) {
-        fs::create_dir_all(project.join(".combai")).unwrap();
+        fs::create_dir_all(project.join(".svode")).unwrap();
         fs::write(
-            project.join(".combai").join("config.json"),
+            project.join(".svode").join("config.json"),
             format!(
                 r#"{{
   "name": "Test",
@@ -137,7 +137,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let project = dir.path().join("project");
         let outside = dir.path().join("outside");
-        fs::create_dir_all(project.join(".combai")).unwrap();
+        fs::create_dir_all(project.join(".svode")).unwrap();
         fs::create_dir_all(&outside).unwrap();
 
         let result = build_context(

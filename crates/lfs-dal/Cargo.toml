@@ -3,8 +3,8 @@ name = "lfs-dal"
 version = "0.0.1"
 edition = "2024"
 authors = ["Kamnev Ilya"]
-repository = "https://github.com/venmakli/combai"
-description = "Git LFS Custom Transfer Agent for CombAI — uploads/downloads asset blobs to S3-compatible storage via OpenDAL."
+repository = "https://github.com/venmakli/svode"
+description = "Git LFS Custom Transfer Agent for Svode — uploads/downloads asset blobs to S3-compatible storage via OpenDAL."
 
 [[bin]]
 name = "lfs-dal"

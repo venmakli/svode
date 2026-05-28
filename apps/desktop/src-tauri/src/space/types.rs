@@ -84,7 +84,7 @@ pub struct RegistryEntry {
     pub path: String,
 }
 
-// --- Space Config (.combai/config.json) ---
+// --- Space Config (.svode/config.json) ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -176,7 +176,7 @@ pub struct SpaceDefaults {
     pub agent: Option<AgentConfig>,
 }
 
-// --- Local Config (.combai/local.json) ---
+// --- Local Config (.svode/local.json) ---
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

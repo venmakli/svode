@@ -6,7 +6,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
     vec![
         def(
             "get_project_info",
-            "Return the active CombAI project and capabilities.",
+            "Return the active Svode project and capabilities.",
             obj(vec![]),
             obj(vec![]),
         ),
@@ -38,7 +38,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "write_document",
-            "Replace a markdown document body. Use this instead of direct filesystem writes so CombAI preserves metadata, validates paths, and reports changedPaths. Does not autocommit.",
+            "Replace a markdown document body. Use this instead of direct filesystem writes so Svode preserves metadata, validates paths, and reports changedPaths. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -52,7 +52,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "create_document",
-            "Create a regular CombAI markdown document, not a collection. Use create_collection for structured data like tasks, CRM contacts, OKRs, backlog rows, assets, or any list/table/board/calendar content. Paths without extension become .md; trailing slash creates README.md.",
+            "Create a regular Svode markdown document, not a collection. Use create_collection for structured data like tasks, CRM contacts, OKRs, backlog rows, assets, or any list/table/board/calendar content. Paths without extension become .md; trailing slash creates README.md.",
             schema(
                 &[
                     space_id(),
@@ -85,7 +85,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "create_collection",
-            "Create a CombAI collection: a directory with README.md identity plus schema.yaml. Use for structured data, tables, boards, calendars, CRM, OKRs, tasks, backlog, inventories, and repeated records. Does not autocommit.",
+            "Create a Svode collection: a directory with README.md identity plus schema.yaml. Use for structured data, tables, boards, calendars, CRM, OKRs, tasks, backlog, inventories, and repeated records. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -105,7 +105,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "convert_to_collection",
-            "Convert an existing markdown leaf, folder document, or bare folder into a CombAI collection by adding schema.yaml. Use when content already exists but should become structured records. Does not autocommit.",
+            "Convert an existing markdown leaf, folder document, or bare folder into a Svode collection by adding schema.yaml. Use when content already exists but should become structured records. Does not autocommit.",
             schema(&[space_id(), str_req("path")], &["path"]),
             obj(vec![]),
         ),
@@ -192,7 +192,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "add_collection_column",
-            "Add a schema column to an existing collection. Column is a CombAI Column object with name, type, and type-specific options. Does not autocommit.",
+            "Add a schema column to an existing collection. Column is a Svode Column object with name, type, and type-specific options. Does not autocommit.",
             schema(
                 &[space_id(), str_req("collectionPath"), obj_req("column")],
                 &["collectionPath", "column"],
@@ -266,13 +266,13 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "get_git_status",
-            "Return read-only Git status for the active/default or selected space. This is only for review/reporting pending changes; CombAI app owns commit/sync/autocommit flows.",
+            "Return read-only Git status for the active/default or selected space. This is only for review/reporting pending changes; Svode app owns commit/sync/autocommit flows.",
             schema(&[space_id()], &[]),
             obj(vec![]),
         ),
         def(
-            "get_combai_guide",
-            "Return agent-facing guidance for working with CombAI documents, collections, entries, metadata, and schema tools.",
+            "get_svode_guide",
+            "Return agent-facing guidance for working with Svode documents, collections, entries, metadata, and schema tools.",
             obj(vec![]),
             obj(vec![]),
         ),
@@ -280,7 +280,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
 }
 
 pub fn guide_text() -> &'static str {
-    r#"CombAI MCP guide:
+    r#"Svode MCP guide:
 - A regular document is a markdown file or a folder README.md. Use create_document for narrative notes, specs, plans, and one-off pages.
 - A collection is a directory with schema.yaml plus README.md identity. Use create_collection for repeated structured data: tasks, backlog, CRM contacts, customers, OKRs, assets, inventory, bugs, sprints, meetings, or anything that should be queried, filtered, sorted, or shown as a table/board/calendar/list/gallery.
 - A collection entry is a markdown document inside an existing collection. Use create_entry only after the collection exists. It creates one record and stores schema fields in frontmatter.
@@ -288,7 +288,7 @@ pub fn guide_text() -> &'static str {
 - Prefer domain operations over direct filesystem writes. Use update_document_metadata for title/icon/description/cover, schema tools for columns/views, write_document for body replacement, and update_entry_fields for entry properties.
 - Do not create plain folders full of loose documents when the user asks for a database, table, tracker, CRM, OKR tree, backlog, kanban, calendar, or structured list. Create a collection with meaningful columns and views, then create entries.
 - For select/status fields, define options with useful colors/icons when possible. For email and phone fields, use type email/phone and sensitivity pii when appropriate.
-- Mutating tools do not autocommit. They return changedPaths. Use get_git_status only when you need a read-only review of pending repository changes; the user commits/syncs in CombAI."#
+- Mutating tools do not autocommit. They return changedPaths. Use get_git_status only when you need a read-only review of pending repository changes; the user commits/syncs in Svode."#
 }
 
 fn def(
@@ -325,7 +325,7 @@ fn obj(props: Vec<(&'static str, Value)>) -> Value {
 fn space_id() -> (&'static str, Value) {
     (
         "spaceId",
-        json!({"type": ["string", "null"], "description": "CombAI space id. null uses the active/default space."}),
+        json!({"type": ["string", "null"], "description": "Svode space id. null uses the active/default space."}),
     )
 }
 

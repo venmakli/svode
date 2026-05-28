@@ -1,13 +1,13 @@
-//! Git LFS Custom Transfer Agent for CombAI.
+//! Git LFS Custom Transfer Agent for Svode.
 //!
 //! Implements the line-delimited JSON protocol described in
 //! <https://github.com/git-lfs/git-lfs/blob/main/docs/custom-transfers.md>
 //! and ships LFS blobs to/from an S3-compatible bucket via OpenDAL.
 //!
-//! Configuration is read from `<cwd>/.combai/lfs-s3-agent.json` — git-lfs runs
+//! Configuration is read from `<cwd>/.svode/lfs-s3-agent.json` — git-lfs runs
 //! the agent with cwd = repo root, so this resolves naturally. Secrets
 //! (access/secret keys) live in the OS keychain under service
-//! `app.combai.desktop.lfs-s3` and the account name recorded in the config
+//! `app.svode.desktop.lfs-s3` and the account name recorded in the config
 //! file. The Tauri host writes both pieces atomically when the user picks the
 //! `lfs-s3` strategy.
 
@@ -18,8 +18,8 @@ use opendal::{Operator, services::S3};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-const KEYCHAIN_SERVICE: &str = "app.combai.desktop.lfs-s3";
-const AGENT_CONFIG_PATH: &str = ".combai/lfs-s3-agent.json";
+const KEYCHAIN_SERVICE: &str = "app.svode.desktop.lfs-s3";
+const AGENT_CONFIG_PATH: &str = ".svode/lfs-s3-agent.json";
 
 /// On-disk config written by the Tauri host. Secrets live in the OS keychain
 /// — only the *lookup key* (`keychain_account`) is recorded here, so this

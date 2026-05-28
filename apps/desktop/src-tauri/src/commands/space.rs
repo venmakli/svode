@@ -148,7 +148,7 @@ pub async fn create_project(
     let sp_path = Path::new(&path);
 
     // Check if project already exists at this path
-    if sp_path.join(".combai").join("config.json").exists() {
+    if sp_path.join(".svode").join("config.json").exists() {
         return Err(AppError::ProjectAlreadyExists(path.clone()));
     }
 
@@ -164,8 +164,8 @@ pub async fn create_project(
         sp_path,
     )?;
 
-    // `ops::init` stages everything (including the fresh `.combai/`) and
-    // makes the initial `Scaffold .combai` commit — no follow-up commit
+    // `ops::init` stages everything (including the fresh `.svode/`) and
+    // makes the initial `Scaffold .svode` commit — no follow-up commit
     // needed here.
     if let Some(cli) = &git_state.cli {
         let lock = git_state.get_lock(sp_path).await;
@@ -201,10 +201,10 @@ pub async fn open_project_folder(
         .map_err(|e| AppError::General(e.to_string()))?;
     let sp_path = Path::new(&path);
 
-    // Track whether `.combai/` was present before we touched the folder —
+    // Track whether `.svode/` was present before we touched the folder —
     // only commit scaffold when we created it (not when opening an existing
-    // combai project).
-    let combai_existed_before = sp_path.join(".combai").join("config.json").exists();
+    // svode project).
+    let svode_existed_before = sp_path.join(".svode").join("config.json").exists();
 
     let had_git_before = sp_path.join(".git").exists();
     let (id, mut cfg) = project::open_project_folder(&config_dir, sp_path)?;
@@ -214,7 +214,7 @@ pub async fn open_project_folder(
     }
 
     // Auto git init if no .git/ exists. `ops::init` stages everything
-    // (including the fresh .combai/) under a `Scaffold .combai` commit.
+    // (including the fresh .svode/) under a `Scaffold .svode` commit.
     if !had_git_before {
         if let Some(cli) = &git_state.cli {
             let lock = git_state.get_lock(sp_path).await;
@@ -225,9 +225,9 @@ pub async fn open_project_folder(
         }
     }
 
-    // If the folder was already a git repo but we just scaffolded .combai/
+    // If the folder was already a git repo but we just scaffolded .svode/
     // into it, commit the scaffold on top of HEAD.
-    if had_git_before && !combai_existed_before {
+    if had_git_before && !svode_existed_before {
         if let Err(e) = autocommit
             .commit_scaffold(sp_path.to_path_buf(), sp_path.to_path_buf())
             .await
@@ -378,7 +378,7 @@ pub async fn create_space(
             {
                 let lock = git_state.get_lock(&space_dir).await;
                 let _guard = lock.lock().await;
-                // ops::init scaffolds the initial commit as `Scaffold .combai`
+                // ops::init scaffolds the initial commit as `Scaffold .svode`
                 // inside the child repo (auto-sync OFF — the repo has no remote).
                 ops::init(&cli, &space_dir).await?;
                 if let Err(e) =
@@ -524,12 +524,12 @@ pub async fn register_cloned_space(
     };
 
     let space_dir = path.join(&folder_name);
-    let combai_existed_before = space_dir.join(".combai").join("config.json").exists();
+    let svode_existed_before = space_dir.join(".svode").join("config.json").exists();
 
     let info =
         project::register_cloned_space(path, &folder_name, &fallback_name, &fallback_icon, repo)?;
 
-    if !combai_existed_before {
+    if !svode_existed_before {
         if let Err(e) = autocommit
             .commit_scaffold(PathBuf::from(&parent_path), space_dir.clone())
             .await
@@ -568,8 +568,8 @@ pub async fn project_clone(
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
 
-    // Check if .combai/ existed in the clone before we scaffold it.
-    let combai_existed_before = path.join(".combai").join("config.json").exists();
+    // Check if .svode/ existed in the clone before we scaffold it.
+    let svode_existed_before = path.join(".svode").join("config.json").exists();
 
     let (id, mut cfg) = project::open_project_folder(&config_dir, &path)?;
     let imported_submodules = import_existing_submodules_if_possible(&git_state, &path).await;
@@ -577,8 +577,8 @@ pub async fn project_clone(
         cfg = config::read_space_config(&path)?;
     }
 
-    // If we just scaffolded .combai/, commit it.
-    if !combai_existed_before {
+    // If we just scaffolded .svode/, commit it.
+    if !svode_existed_before {
         if let Err(e) = autocommit.commit_scaffold(path.clone(), path.clone()).await {
             tracing::warn!("commit_scaffold failed after project clone: {e}");
         }
@@ -627,7 +627,7 @@ pub async fn ensure_space_scaffold(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
     let path = Path::new(&space_path);
-    if path.join(".combai").join("config.json").exists() {
+    if path.join(".svode").join("config.json").exists() {
         return Ok(());
     }
     if !path.is_dir() {
@@ -743,7 +743,7 @@ pub fn check_symlink_health(
 
 #[tauri::command]
 pub fn read_agents_md(space_path: String) -> Result<Option<String>, AppError> {
-    let path = Path::new(&space_path).join(".combai").join("AGENTS.md");
+    let path = Path::new(&space_path).join(".svode").join("AGENTS.md");
     if path.exists() {
         Ok(Some(std::fs::read_to_string(&path)?))
     } else {
@@ -751,7 +751,7 @@ pub fn read_agents_md(space_path: String) -> Result<Option<String>, AppError> {
     }
 }
 
-/// Write `.combai/AGENTS.md` and immediately commit it as a System change
+/// Write `.svode/AGENTS.md` and immediately commit it as a System change
 /// (`Update agent instructions`). Stage-3.5 classifies AI-instruction files
 /// as System; a future AI stage may promote them to their own category.
 #[tauri::command]
@@ -761,9 +761,9 @@ pub async fn write_agents_md(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
-    let combai_dir = Path::new(&space_path).join(".combai");
-    std::fs::create_dir_all(&combai_dir)?;
-    std::fs::write(combai_dir.join("AGENTS.md"), content)?;
+    let svode_dir = Path::new(&space_path).join(".svode");
+    std::fs::create_dir_all(&svode_dir)?;
+    std::fs::write(svode_dir.join("AGENTS.md"), content)?;
 
     if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
         if let Err(e) = autocommit
@@ -866,10 +866,10 @@ pub async fn clone_missing_space(
         }
     }
 
-    // Scaffold .combai/ if not present
-    let combai_dir = space_dir.join(".combai");
-    let combai_existed_before = combai_dir.exists();
-    if !combai_existed_before {
+    // Scaffold .svode/ if not present
+    let svode_dir = space_dir.join(".svode");
+    let svode_existed_before = svode_dir.exists();
+    if !svode_existed_before {
         crate::space::scaffold::scaffold_space(&space_dir, &space_ref.path, "", "")?;
         if let Err(e) = autocommit
             .commit_scaffold(parent.clone(), space_dir.clone())

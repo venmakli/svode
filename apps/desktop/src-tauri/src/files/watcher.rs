@@ -259,7 +259,7 @@ fn sync_index_for_watched_path(space_root: &Path, path: &Path, app: &AppHandle) 
 
 /// Check if a path should be ignored by the watcher.
 ///
-/// We skip anything inside a dotted directory (`.git`, `.combai`, …) with one
+/// We skip anything inside a dotted directory (`.git`, `.svode`, …) with one
 /// exception: `.assets/` is allowed through so we can re-index uploads and
 /// detect LFS pointer changes after a sync.
 fn should_ignore(path: &Path) -> bool {

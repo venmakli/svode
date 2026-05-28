@@ -60,10 +60,10 @@ pub fn validate_public_rel_path(path: &str, allow_root: bool) -> Result<String, 
         ));
     }
     if let Some(first) = parts.first() {
-        if first.eq_ignore_ascii_case(".git") || first.eq_ignore_ascii_case(".combai") {
+        if first.eq_ignore_ascii_case(".git") || first.eq_ignore_ascii_case(".svode") {
             return Err(McpBusinessError::new(
                 "PATH_FORBIDDEN",
-                ".git and .combai paths are not exposed through public MCP document tools",
+                ".git and .svode paths are not exposed through public MCP document tools",
             ));
         }
     }
@@ -114,7 +114,7 @@ pub fn ensure_inside(root: &Path, rel: &str) -> Result<PathBuf, McpBusinessError
     if !normalized.starts_with(&normalized_root) {
         return Err(McpBusinessError::new(
             "PATH_FORBIDDEN",
-            "path resolves outside the active CombAI space",
+            "path resolves outside the active Svode space",
         ));
     }
 
@@ -130,7 +130,7 @@ pub fn ensure_inside(root: &Path, rel: &str) -> Result<PathBuf, McpBusinessError
     } else {
         Err(McpBusinessError::new(
             "PATH_FORBIDDEN",
-            "path resolves outside the active CombAI space",
+            "path resolves outside the active Svode space",
         ))
     }
 }
@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn rejects_internal_dirs() {
         assert!(validate_public_rel_path(".git/config", false).is_err());
-        assert!(validate_public_rel_path(".combai/config.json", false).is_err());
+        assert!(validate_public_rel_path(".svode/config.json", false).is_err());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Default capability set for CombAI desktop",
+  "description": "Default capability set for Svode desktop",
   "windows": ["main"],
   "permissions": [
     "core:default",

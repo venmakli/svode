@@ -727,7 +727,7 @@ fn collect_md_files_inner(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), App
 
 fn create_stage_dir() -> Result<PathBuf, AppError> {
     let path = std::env::temp_dir().join(format!(
-        "combai-template-stage-{}",
+        "svode-template-stage-{}",
         ulid::Ulid::new().to_string().to_lowercase()
     ));
     fs::create_dir_all(&path)?;

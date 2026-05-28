@@ -55,11 +55,11 @@ impl SystemCommitKind {
     /// Paths to stage, relative to the space root.
     fn paths(self) -> &'static [&'static str] {
         match self {
-            SystemCommitKind::SpaceConfig => &[".combai/config.json"],
-            SystemCommitKind::AgentInstructions => &[".combai/AGENTS.md"],
+            SystemCommitKind::SpaceConfig => &[".svode/config.json"],
+            SystemCommitKind::AgentInstructions => &[".svode/AGENTS.md"],
             SystemCommitKind::CliIntegration => &["CLAUDE.md", ".mcp.json", ".claude"],
             SystemCommitKind::AssetsStrategy => {
-                &[".gitattributes", ".gitignore", ".combai/config.json"]
+                &[".gitattributes", ".gitignore", ".svode/config.json"]
             }
         }
     }
@@ -280,7 +280,7 @@ impl AutocommitService {
         .await
     }
 
-    /// Commit the scaffolded `.combai/` directory.
+    /// Commit the scaffolded `.svode/` directory.
     pub async fn commit_scaffold(
         &self,
         project_path: PathBuf,
@@ -609,16 +609,16 @@ async fn do_commit_scaffold(
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    let message = "Scaffold .combai";
+    let message = "Scaffold .svode";
 
     match git_type {
         SpaceGitType::Inline => {
             let lock = git_state.get_lock(project_path).await;
             let _guard = lock.lock().await;
             let rel = if space_path == project_path {
-                ".combai".to_string()
+                ".svode".to_string()
             } else {
-                format!("{}/.combai", space_folder)
+                format!("{}/.svode", space_folder)
             };
             let created = ops::commit_path_with_message(&cli, project_path, &rel, message).await?;
             if created {
@@ -629,7 +629,7 @@ async fn do_commit_scaffold(
             let lock = git_state.get_lock(space_path).await;
             let _guard = lock.lock().await;
             let created =
-                ops::commit_path_with_message(&cli, space_path, ".combai", message).await?;
+                ops::commit_path_with_message(&cli, space_path, ".svode", message).await?;
             if created {
                 emit_committed(app, space_path, space_path);
             }
@@ -638,7 +638,7 @@ async fn do_commit_scaffold(
             let lock = git_state.get_lock(space_path).await;
             let _guard = lock.lock().await;
             let created =
-                ops::commit_path_with_message(&cli, space_path, ".combai", message).await?;
+                ops::commit_path_with_message(&cli, space_path, ".svode", message).await?;
             drop(_guard);
             if created {
                 emit_committed(app, space_path, space_path);

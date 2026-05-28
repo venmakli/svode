@@ -14,20 +14,20 @@ use crate::error::AppError;
 use crate::space::types::AssetsS3Config;
 
 /// Keychain service identifier — must match the constant in `lfs-dal`.
-pub const KEYCHAIN_SERVICE: &str = "app.combai.desktop.lfs-s3";
+pub const KEYCHAIN_SERVICE: &str = "app.svode.desktop.lfs-s3";
 
 /// Path of the agent config file (relative to the space root). The
 /// external lfs-dal binary reads this on init to learn the bucket and the
 /// keychain account name to query. Listed in `.gitignore` so secrets-by-
 /// proxy never leak to the remote.
-pub const AGENT_CONFIG_REL: &str = ".combai/lfs-s3-agent.json";
+pub const AGENT_CONFIG_REL: &str = ".svode/lfs-s3-agent.json";
 
 /// Managed `.gitignore` block that hides the agent config file. Kept tiny on
-/// purpose so it can sit alongside the existing `# combai:assets-ignore`
+/// purpose so it can sit alongside the existing `# svode:assets-ignore`
 /// block without confusion.
-const AGENT_IGNORE_START: &str = "# combai:lfs-s3-agent:start";
-const AGENT_IGNORE_END: &str = "# combai:lfs-s3-agent:end";
-const AGENT_IGNORE_BODY: &str = ".combai/lfs-s3-agent.json";
+const AGENT_IGNORE_START: &str = "# svode:lfs-s3-agent:start";
+const AGENT_IGNORE_END: &str = "# svode:lfs-s3-agent:end";
+const AGENT_IGNORE_BODY: &str = ".svode/lfs-s3-agent.json";
 
 /// Persisted shape of the agent config file. Mirrors the struct in
 /// `crates/lfs-dal/src/main.rs::AgentConfig`.
@@ -131,7 +131,7 @@ pub fn delete_agent_config(space_dir: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Ensure the managed `# combai:lfs-s3-agent` block is present in
+/// Ensure the managed `# svode:lfs-s3-agent` block is present in
 /// `.gitignore` so the agent config file (with its keychain account name) is
 /// never committed. Idempotent.
 pub fn ensure_agent_gitignore(space_dir: &Path) -> Result<(), AppError> {
@@ -318,7 +318,7 @@ pub fn operator_for(
 }
 
 /// Real S3 connection check. Round-trips a 0-byte probe object — write,
-/// stat, delete — under a `.combai-probe/` prefix. We deliberately don't
+/// stat, delete — under a `.svode-probe/` prefix. We deliberately don't
 /// rely on `op.check()` (which calls `stat ""` and trips on buckets that
 /// disallow listing).
 pub async fn check_connection(
@@ -331,11 +331,11 @@ pub async fn check_connection(
     let op = operator_for(&endpoint, &bucket, &region, &access_key, &secret_key)?;
 
     let probe_key = format!(
-        ".combai-probe/{}",
+        ".svode-probe/{}",
         chrono::Utc::now().format("%Y%m%d%H%M%S%f")
     );
 
-    op.write(&probe_key, b"combai-probe".to_vec())
+    op.write(&probe_key, b"svode-probe".to_vec())
         .await
         .map_err(|e| AppError::Storage(format!("S3 probe write failed: {e}")))?;
 

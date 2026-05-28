@@ -911,7 +911,7 @@ export function SpaceSettingsDialog({
 
   function handleOpenAgentsMd() {
     closeSettings();
-    openDocument(".combai/AGENTS.md", activeRootId ?? undefined);
+    openDocument(".svode/AGENTS.md", activeRootId ?? undefined);
   }
 
   function getCliStatus(agent: AvailableAgent): "authorized" | "unauthorized" | "not_found" {

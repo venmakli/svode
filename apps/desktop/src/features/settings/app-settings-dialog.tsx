@@ -242,8 +242,8 @@ export function AppSettingsDialog({
     visibleNavItems.find((i) => i.key === section) ?? visibleNavItems[0];
   const buildEnv = (import.meta as { env?: Record<string, string | undefined> })
     .env;
-  const buildCommit = buildEnv?.VITE_COMBAI_BUILD_COMMIT?.trim() ?? "";
-  const releaseUrl = "https://github.com/venmakli/combai/releases";
+  const buildCommit = buildEnv?.VITE_SVODE_BUILD_COMMIT?.trim() ?? "";
+  const releaseUrl = "https://github.com/venmakli/svode/releases";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

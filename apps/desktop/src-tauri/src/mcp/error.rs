@@ -18,7 +18,7 @@ impl McpBusinessError {
     }
 
     pub fn no_active_project() -> Self {
-        Self::new("NO_ACTIVE_PROJECT", "Open a project in CombAI first")
+        Self::new("NO_ACTIVE_PROJECT", "Open a project in Svode first")
     }
 }
 
@@ -36,7 +36,7 @@ impl From<AppError> for McpBusinessError {
             AppError::GitNoRemote => "GIT_NO_REMOTE",
             AppError::Index(_) => "INDEX_ERROR",
             AppError::Db(_) => "DATABASE_ERROR",
-            _ => "COMBAI_ERROR",
+            _ => "SVODE_ERROR",
         };
         Self::new(code, error.to_string())
     }

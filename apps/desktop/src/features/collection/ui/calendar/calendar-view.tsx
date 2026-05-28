@@ -340,7 +340,7 @@ export function CalendarView({
 
   return (
     <div ref={shellRef} className={detailPageViewClassName}>
-      <div className="combai-calendar flex flex-col rounded-lg bg-background ring-1 ring-foreground/10">
+      <div className="svode-calendar flex flex-col rounded-lg bg-background ring-1 ring-foreground/10">
         <CalendarMiniToolbar
           scope={scope}
           periodLabel={periodLabel}

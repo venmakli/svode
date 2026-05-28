@@ -1,18 +1,18 @@
 [package]
-name = "combai-desktop"
+name = "svode"
 version = "0.0.5"
 authors = ["Kamnev Ilya"]
 edition = "2024"
-repository = "https://github.com/venmakli/combai"
-default-run = "combai-desktop"
+repository = "https://github.com/venmakli/svode"
+default-run = "svode"
 
 [lib]
-name = "combai_desktop_lib"
+name = "svode_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
-name = "combai-mcp"
-path = "src/bin/combai-mcp.rs"
+name = "svode-mcp"
+path = "src/bin/svode-mcp.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

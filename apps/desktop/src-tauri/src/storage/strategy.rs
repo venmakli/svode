@@ -17,10 +17,10 @@ pub struct ApplyStrategyResult {
     pub warnings: Vec<String>,
 }
 
-const IGNORE_START: &str = "# combai:assets-ignore:start";
-const IGNORE_END: &str = "# combai:assets-ignore:end";
-const LFS_START: &str = "# combai:assets-lfs:start";
-const LFS_END: &str = "# combai:assets-lfs:end";
+const IGNORE_START: &str = "# svode:assets-ignore:start";
+const IGNORE_END: &str = "# svode:assets-ignore:end";
+const LFS_START: &str = "# svode:assets-lfs:start";
+const LFS_END: &str = "# svode:assets-lfs:end";
 
 const IGNORE_BODY: &str = ".assets/";
 const LFS_BODY: &str = ".assets/** filter=lfs diff=lfs merge=lfs -text";
@@ -268,7 +268,7 @@ pub async fn apply_strategy(
     }
 
     // --- LFS S3 custom transfer agent (lfs-dal) wiring/teardown. ---
-    // For LfsS3 we (a) write `.combai/lfs-s3-agent.json`, (b) ensure the
+    // For LfsS3 we (a) write `.svode/lfs-s3-agent.json`, (b) ensure the
     // agent config file is gitignored, and (c) configure git to use lfs-dal
     // as the standalone transfer agent. For any other strategy we tear the
     // git config back down so a stale agent doesn't fire on push.
@@ -353,7 +353,7 @@ pub async fn apply_strategy(
         }
     }
 
-    // Staging of `.gitignore`/`.gitattributes`/`.combai/config.json` is now
+    // Staging of `.gitignore`/`.gitattributes`/`.svode/config.json` is now
     // done by the caller via `AutocommitService::commit_system_now` with
     // `SystemCommitKind::AssetsStrategy` — see `storage::commands`.
     Ok(result)

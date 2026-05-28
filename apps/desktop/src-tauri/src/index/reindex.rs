@@ -16,7 +16,7 @@ fn format_system_time(time: SystemTime) -> String {
 }
 
 /// Walk a directory, collecting paths of `.md` files while skipping hidden
-/// directories (those with names starting with `.`) such as `.combai`,
+/// directories (those with names starting with `.`) such as `.svode`,
 /// `.assets`, and `.git`.
 ///
 /// `skip_top_level` lists folder names directly under `base` to skip — used

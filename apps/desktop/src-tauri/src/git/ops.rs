@@ -9,11 +9,11 @@ use crate::properties;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::types::SpaceGitType;
 
-const GITIGNORE_TEMPLATE: &str = "# CombAI local files
-.combai/local.json
-.combai/*.db
-.combai/*.db-wal
-.combai/*.db-shm
+const GITIGNORE_TEMPLATE: &str = "# Svode local files
+.svode/local.json
+.svode/*.db
+.svode/*.db-wal
+.svode/*.db-shm
 ";
 
 #[derive(Debug, Clone, Serialize)]
@@ -205,7 +205,7 @@ pub async fn init(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
     }
 
     // initial commit
-    let _ = commit(cli, space_dir, "Scaffold .combai").await?;
+    let _ = commit(cli, space_dir, "Scaffold .svode").await?;
 
     tracing::info!("Initialized git repo at {}", space_dir.display());
     Ok(())
@@ -706,12 +706,12 @@ pub fn validate_clone_url(url: &str) -> Result<(), AppError> {
 
 // --- .gitignore managed blocks ---
 
-const INLINE_BLOCK_START: &str = "# combai:inline:start";
-const INLINE_BLOCK_END: &str = "# combai:inline:end";
-const INLINE_BLOCK_CONTENT: &str = "*/.combai/local.json\n*/.combai/*.db\n*/.combai/*.db-*";
+const INLINE_BLOCK_START: &str = "# svode:inline:start";
+const INLINE_BLOCK_END: &str = "# svode:inline:end";
+const INLINE_BLOCK_CONTENT: &str = "*/.svode/local.json\n*/.svode/*.db\n*/.svode/*.db-*";
 
-const SPACES_BLOCK_START: &str = "# combai:spaces:start";
-const SPACES_BLOCK_END: &str = "# combai:spaces:end";
+const SPACES_BLOCK_START: &str = "# svode:spaces:start";
+const SPACES_BLOCK_END: &str = "# svode:spaces:end";
 
 /// Ensure the inline wildcard block exists in root .gitignore.
 pub fn ensure_inline_gitignore(project_path: &Path) -> Result<(), AppError> {

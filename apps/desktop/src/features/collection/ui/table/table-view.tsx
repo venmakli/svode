@@ -101,10 +101,10 @@ export function TableView({
       : "default";
   const wrapText = Boolean(view.wrap_text ?? view.wrapText);
   const [expanded, setExpanded] = usePersistentSet(
-    `combai:table-expanded:${spacePath}:${collectionPath}:${name}`,
+    `svode:table-expanded:${spacePath}:${collectionPath}:${name}`,
   );
   const [columnSizing, setColumnSizing] = usePersistentSizing(
-    `combai:table-column-widths:${spacePath}:${collectionPath}`,
+    `svode:table-column-widths:${spacePath}:${collectionPath}`,
   );
   const footerInputRef = useRef<HTMLInputElement | null>(null);
   const footerRef = useRef<HTMLDivElement | null>(null);

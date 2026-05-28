@@ -74,7 +74,7 @@ export function mountCalendarDayNewButton(
 
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "combai-calendar-day-new";
+  button.className = "svode-calendar-day-new";
   button.dataset.calendarInteractive = "true";
   button.dataset.calendarDayNew = "true";
 

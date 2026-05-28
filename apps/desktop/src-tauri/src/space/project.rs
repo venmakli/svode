@@ -149,7 +149,7 @@ pub fn space_ref_status(parent_path: &Path, space_ref: &SpaceRef) -> SpaceStatus
     }
 }
 
-/// Register direct git submodules from an existing project as CombAI spaces.
+/// Register direct git submodules from an existing project as Svode spaces.
 ///
 /// This is intentionally conservative: nested submodule paths are skipped
 /// because the current resolver treats project spaces as direct children.
@@ -177,7 +177,7 @@ pub fn import_existing_submodule_spaces(
 
         if normalized.contains('/') {
             tracing::warn!(
-                "Skipping nested submodule path {} during CombAI import",
+                "Skipping nested submodule path {} during Svode import",
                 normalized
             );
             continue;
@@ -255,7 +255,7 @@ pub fn create_space(
 /// Register a freshly-cloned directory as a space.
 ///
 /// Called by the clone flow after `git clone` completes. Reads or
-/// scaffolds `.combai/config.json` inside the cloned folder, then adds a
+/// scaffolds `.svode/config.json` inside the cloned folder, then adds a
 /// `SpaceRef` entry to the parent's `spaces` list.
 pub fn register_cloned_space(
     parent_path: &Path,

@@ -1866,7 +1866,7 @@ pub fn delete(
         };
 
     let delete_parent = abs_path.parent().unwrap_or(Path::new(space));
-    let tombstone = unique_child_path(delete_parent, ".combai-delete", None);
+    let tombstone = unique_child_path(delete_parent, ".svode-delete", None);
     fs::rename(&abs_path, &tombstone)?;
 
     if let Err(error) = cascade_remove_tombstone(&tombstone) {

@@ -70,7 +70,7 @@ pub fn is_lfs_pointer(path: &Path) -> bool {
 }
 
 /// Probe the LFS state of the pool whose data lives in `target_dir`. The
-/// strategy is read from `target_dir`'s `.combai/config.json`:
+/// strategy is read from `target_dir`'s `.svode/config.json`:
 /// - Local / InGit → NotApplicable (no LFS in play).
 /// - LfsS3 → Ready iff the keychain entry exists, else MissingCreds.
 /// - LfsRemote → run `git lfs pull --dry-run`; success → Ready,

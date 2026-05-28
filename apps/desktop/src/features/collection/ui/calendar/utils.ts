@@ -182,7 +182,7 @@ export function buildCalendarEvents({
       backgroundColor: "transparent",
       borderColor: "transparent",
       textColor: "inherit",
-      classNames: ["combai-calendar-event"],
+      classNames: ["svode-calendar-event"],
       extendedProps: { model },
     });
     return result;

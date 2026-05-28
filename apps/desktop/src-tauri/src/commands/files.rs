@@ -31,7 +31,7 @@ fn abs_entry_path(space: &str, rel_path: &str) -> PathBuf {
 }
 
 fn order_path(space: &str) -> PathBuf {
-    Path::new(space).join(".combai").join("order.json")
+    Path::new(space).join(".svode").join("order.json")
 }
 
 fn root_path_for_head(path: &str) -> &str {

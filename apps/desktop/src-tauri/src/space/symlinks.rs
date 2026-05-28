@@ -75,16 +75,16 @@ fn relative_path(from_dir: &Path, to_path: &Path) -> String {
     parts.join("/")
 }
 
-/// Create symlinks from space root files to `.combai/` sources.
+/// Create symlinks from space root files to `.svode/` sources.
 ///
 /// For each mapping, creates `space/{target}` as a symlink pointing to
-/// `.combai/{source}` using a relative path. Skips if target already exists.
+/// `.svode/{source}` using a relative path. Skips if target already exists.
 pub fn setup_cli_symlinks(space_path: &Path, cli_name: &str) -> Result<Vec<String>, AppError> {
     let mappings = get_mappings(cli_name);
     let mut created = Vec::new();
 
     for m in &mappings {
-        let source = space_path.join(".combai").join(m.source);
+        let source = space_path.join(".svode").join(m.source);
         let target = space_path.join(m.target);
 
         // Skip if target already exists (symlink or real)
@@ -151,7 +151,7 @@ pub fn health_check_symlinks(
     let mut errors = Vec::new();
 
     for m in &mappings {
-        let source = space_path.join(".combai").join(m.source);
+        let source = space_path.join(".svode").join(m.source);
         let target = space_path.join(m.target);
 
         let target_parent = target.parent().unwrap_or(space_path);

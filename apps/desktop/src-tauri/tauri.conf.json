@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicoverbruggen/tauri-settings-schema/refs/heads/v2/schema.json",
-  "productName": "CombAI",
+  "productName": "Svode",
   "version": "0.0.5",
-  "identifier": "app.combai.desktop",
+  "identifier": "app.svode.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "CombAI",
+        "title": "Svode",
         "width": 1200,
         "height": 800,
         "minWidth": 800,
@@ -35,7 +35,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": ["binaries/lfs-dal", "binaries/combai-mcp"],
+    "externalBin": ["binaries/lfs-dal", "binaries/svode-mcp"],
     "linux": {
       "deb": {
         "depends": ["git"]

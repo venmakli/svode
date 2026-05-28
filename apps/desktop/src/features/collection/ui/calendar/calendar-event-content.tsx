@@ -62,9 +62,9 @@ export function CalendarEventContent({
       <ContextMenuTrigger asChild>
         <div
           className={cn(
-            "combai-calendar-event-content group/calendar-event flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left text-[12px] leading-5 ring-1 ring-transparent",
+            "svode-calendar-event-content group/calendar-event flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left text-[12px] leading-5 ring-1 ring-transparent",
             "bg-[var(--calendar-event-soft)] text-foreground hover:ring-[var(--calendar-event-color)]/35",
-            compact && "combai-calendar-event-compact",
+            compact && "svode-calendar-event-compact",
             list && "w-full gap-2 px-0 py-1.5 text-sm",
           )}
           style={eventColorStyle(model.color)}
@@ -77,16 +77,16 @@ export function CalendarEventContent({
                   list && "gap-2",
                 )}
               >
-                <span className="combai-calendar-event-color-bar h-3 w-1 shrink-0 rounded-full bg-[var(--calendar-event-color)]" />
+                <span className="svode-calendar-event-color-bar h-3 w-1 shrink-0 rounded-full bg-[var(--calendar-event-color)]" />
                 {model.cardFields.includes("icon") ? (
-                  <span className="combai-calendar-event-icon shrink-0 text-sm leading-none">
+                  <span className="svode-calendar-event-icon shrink-0 text-sm leading-none">
                     {entry.meta.icon || "·"}
                   </span>
                 ) : null}
                 <div className="min-w-0 flex-1">
-                  <div className="combai-calendar-event-title-row flex min-w-0 items-center gap-1">
+                  <div className="svode-calendar-event-title-row flex min-w-0 items-center gap-1">
                     {arg.timeText && !list ? (
-                      <span className="combai-calendar-event-time shrink-0 text-[11px] text-muted-foreground">
+                      <span className="svode-calendar-event-time shrink-0 text-[11px] text-muted-foreground">
                         {arg.timeText}
                       </span>
                     ) : null}

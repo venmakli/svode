@@ -1,14 +1,14 @@
 {
-  "name": "@combai/desktop",
+  "name": "@svode/desktop",
   "version": "0.0.5",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "NODE_OPTIONS='--max-old-space-size=8192' vite build",
-    "build:sidecars": "node scripts/build-lfs-dal.mjs && node scripts/build-combai-mcp.mjs",
+    "build:sidecars": "node scripts/build-lfs-dal.mjs && node scripts/build-svode-mcp.mjs",
     "build:lfs-dal": "node scripts/build-lfs-dal.mjs",
-    "build:combai-mcp": "node scripts/build-combai-mcp.mjs",
+    "build:svode-mcp": "node scripts/build-svode-mcp.mjs",
     "typecheck": "NODE_OPTIONS='--max-old-space-size=8192' tsc -b",
     "preview": "vite preview",
     "tauri": "tauri"
@@ -18,8 +18,8 @@
     "@ariakit/react": "^0.4.23",
     "@assistant-ui/react": "^0.12.21",
     "@assistant-ui/react-streamdown": "^0.1.6",
-    "@combai/core": "workspace:*",
-    "@combai/ui": "workspace:*",
+    "@svode/core": "workspace:*",
+    "@svode/ui": "workspace:*",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",

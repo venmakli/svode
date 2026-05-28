@@ -192,7 +192,7 @@ export function HomePage() {
       <div className="flex-1 flex flex-col items-center justify-center px-4">
         {/* Branding */}
         <div className="text-center mb-6">
-          <img src="/logo.png" alt="CombAI" className="h-12 w-12 mx-auto mb-2" />
+          <img src="/logo.png" alt="Svode" className="h-12 w-12 mx-auto mb-2" />
           <h1 className="text-2xl font-semibold">{m.home_title()}</h1>
           <p className="text-xs text-muted-foreground mt-1">
             {m.home_version({ version })}

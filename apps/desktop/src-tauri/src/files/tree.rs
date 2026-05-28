@@ -59,23 +59,23 @@ fn read_frontmatter_meta(abs_path: &Path) -> (String, Option<String>, Option<Str
     }
 }
 
-/// Read order.json from space .combai directory.
+/// Read order.json from space .svode directory.
 /// Returns map: directory relative path -> ordered list of child names.
 /// Key "." means space root.
 pub fn read_order(space: &Path) -> HashMap<String, Vec<String>> {
-    let order_path = space.join(".combai").join("order.json");
+    let order_path = space.join(".svode").join("order.json");
     match fs::read_to_string(&order_path) {
         Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
         Err(_) => HashMap::new(),
     }
 }
 
-/// Write order.json to space .combai directory.
+/// Write order.json to space .svode directory.
 pub fn write_order(space: &Path, order: &HashMap<String, Vec<String>>) -> Result<(), AppError> {
-    let combai_dir = space.join(".combai");
-    fs::create_dir_all(&combai_dir)?;
+    let svode_dir = space.join(".svode");
+    fs::create_dir_all(&svode_dir)?;
     let data = serde_json::to_string_pretty(order)?;
-    fs::write(combai_dir.join("order.json"), data)?;
+    fs::write(svode_dir.join("order.json"), data)?;
     Ok(())
 }
 

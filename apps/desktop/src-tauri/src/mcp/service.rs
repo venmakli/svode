@@ -310,10 +310,10 @@ async fn call_tool_inner(
         "update_collection_view" => update_collection_view(&app, decode(args)?).await,
         "delete_collection_view" => delete_collection_view(&app, decode(args)?).await,
         "get_git_status" => get_git_status(&app, decode(args)?).await,
-        "get_combai_guide" => get_combai_guide().await,
+        "get_svode_guide" => get_svode_guide().await,
         _ => Err(McpBusinessError::new(
             "UNKNOWN_TOOL",
-            format!("unknown CombAI MCP tool: {name}"),
+            format!("unknown Svode MCP tool: {name}"),
         )),
     }
 }
@@ -479,7 +479,7 @@ async fn get_project_info(app: &AppHandle) -> Result<ToolCallResult, McpBusiness
         }
     });
     Ok(ToolCallResult::ok(
-        "Active CombAI project information.",
+        "Active Svode project information.",
         structured,
     ))
 }
@@ -1103,9 +1103,9 @@ async fn delete_collection_view(
     ))
 }
 
-async fn get_combai_guide() -> Result<ToolCallResult, McpBusinessError> {
+async fn get_svode_guide() -> Result<ToolCallResult, McpBusinessError> {
     Ok(ToolCallResult::ok(
-        "CombAI MCP guide.",
+        "Svode MCP guide.",
         json!({ "guide": super::tools::guide_text() }),
     ))
 }
@@ -1121,7 +1121,7 @@ async fn get_git_status(
     let _guard = lock.lock().await;
     let status = git::ops::status(&cli, Path::new(&space)).await?;
     Ok(ToolCallResult::ok(
-        "Git status for active CombAI space.",
+        "Git status for active Svode space.",
         json!({ "status": status }),
     ))
 }

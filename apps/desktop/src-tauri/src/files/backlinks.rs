@@ -664,7 +664,7 @@ pub fn validate_links(
     Ok(results)
 }
 
-/// Return true for URLs that are outside CombAI's local markdown-link domain.
+/// Return true for URLs that are outside Svode's local markdown-link domain.
 pub fn is_external_or_anchor_url(url: &str) -> bool {
     url.starts_with("http://")
         || url.starts_with("https://")

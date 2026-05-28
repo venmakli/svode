@@ -36,7 +36,7 @@ pub fn default_discovery_path() -> Result<PathBuf, McpBusinessError> {
         return Ok(home
             .join("Library")
             .join("Application Support")
-            .join("app.combai.desktop")
+            .join("app.svode.desktop")
             .join("desktop-mcp.json"));
     }
     if cfg!(windows) {
@@ -44,13 +44,13 @@ pub fn default_discovery_path() -> Result<PathBuf, McpBusinessError> {
             McpBusinessError::new("APPDATA_NOT_FOUND", "could not resolve APPDATA")
         })?;
         return Ok(PathBuf::from(appdata)
-            .join("app.combai.desktop")
+            .join("app.svode.desktop")
             .join("desktop-mcp.json"));
     }
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .unwrap_or(home_dir()?.join(".local").join("share"));
-    Ok(base.join("app.combai.desktop").join("desktop-mcp.json"))
+    Ok(base.join("app.svode.desktop").join("desktop-mcp.json"))
 }
 
 fn home_dir() -> Result<PathBuf, McpBusinessError> {
@@ -140,7 +140,7 @@ async fn handle_connection(
             tool_result: None,
             error: Some(McpBusinessError::new(
                 "AUTH_FAILED",
-                "invalid CombAI desktop IPC token",
+                "invalid Svode desktop IPC token",
             )),
         }
     } else {
@@ -205,7 +205,7 @@ pub async fn desktop_request(method: &str, params: Value) -> Result<IpcResponse,
     if discovery.host != "127.0.0.1" {
         return Err(McpBusinessError::new(
             "DISCOVERY_INVALID",
-            "CombAI desktop discovery host is not loopback",
+            "Svode desktop discovery host is not loopback",
         ));
     }
     let stream = TcpStream::connect((discovery.host.as_str(), discovery.port)).await?;
@@ -225,7 +225,7 @@ pub async fn desktop_request(method: &str, params: Value) -> Result<IpcResponse,
     if line.is_empty() {
         return Err(McpBusinessError::new(
             "DESKTOP_CLOSED",
-            "CombAI desktop closed the IPC connection",
+            "Svode desktop closed the IPC connection",
         ));
     }
     Ok(serde_json::from_str(&line)?)
@@ -246,7 +246,7 @@ fn read_discovery() -> Result<DiscoveryFile, McpBusinessError> {
     let path = read_discovery_path().ok_or_else(|| {
         McpBusinessError::new(
             "DESKTOP_NOT_RUNNING",
-            "CombAI desktop discovery file was not found",
+            "Svode desktop discovery file was not found",
         )
     })?;
     let content = fs::read_to_string(path)?;
@@ -254,7 +254,7 @@ fn read_discovery() -> Result<DiscoveryFile, McpBusinessError> {
 }
 
 fn read_discovery_path() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("COMBAI_MCP_DISCOVERY") {
+    if let Ok(path) = std::env::var("SVODE_MCP_DISCOVERY") {
         let path = PathBuf::from(path);
         if path.exists() {
             return Some(path);

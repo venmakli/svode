@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Build the combai-mcp sidecar and place it where Tauri's `externalBin`
-// expects: `apps/desktop/src-tauri/binaries/combai-mcp-<target-triple>[.exe]`.
+// Build the svode-mcp sidecar and place it where Tauri's `externalBin`
+// expects: `apps/desktop/src-tauri/binaries/svode-mcp-<target-triple>[.exe]`.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import {
@@ -49,24 +49,24 @@ function copyIfChanged(src, dest) {
 
 const triple = rustcHostTriple();
 const exeSuffix = process.platform === "win32" ? ".exe" : "";
-const dest = resolve(binariesDir, `combai-mcp-${triple}${exeSuffix}`);
+const dest = resolve(binariesDir, `svode-mcp-${triple}${exeSuffix}`);
 
 mkdirSync(binariesDir, { recursive: true });
 if (!existsSync(dest)) {
   writeFileSync(dest, "");
 }
 
-console.log(`[combai-mcp] building for ${triple}`);
-run("cargo", ["build", "--release", "--bin", "combai-mcp"], {
+console.log(`[svode-mcp] building for ${triple}`);
+run("cargo", ["build", "--release", "--bin", "svode-mcp"], {
   cwd: crateDir,
 });
 
-const built = resolve(crateDir, "target/release", `combai-mcp${exeSuffix}`);
+const built = resolve(crateDir, "target/release", `svode-mcp${exeSuffix}`);
 if (!existsSync(built)) {
   throw new Error(`expected build artifact missing: ${built}`);
 }
 
 const copied = copyIfChanged(built, dest);
 console.log(
-  copied ? `[combai-mcp] -> ${dest}` : `[combai-mcp] unchanged ${dest}`,
+  copied ? `[svode-mcp] -> ${dest}` : `[svode-mcp] unchanged ${dest}`,
 );

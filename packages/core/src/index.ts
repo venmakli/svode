@@ -1,2 +1,2 @@
-// @combai/core — shared business logic
+// @svode/core — shared business logic
 export {};

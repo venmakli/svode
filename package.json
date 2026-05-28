@@ -1,9 +1,9 @@
 {
-  "name": "combai",
+  "name": "svode",
   "version": "0.0.1",
   "private": true,
   "author": "Kamnev Ilya",
-  "repository": "https://github.com/venmakli/combai",
+  "repository": "https://github.com/venmakli/svode",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "dev": "bun run --cwd apps/desktop dev",

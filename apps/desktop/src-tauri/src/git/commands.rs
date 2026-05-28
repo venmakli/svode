@@ -124,14 +124,14 @@ pub async fn git_clone_space(
         let _guard = lock.lock().await;
         super::clone::submodule_add_with_progress(&cli, &app, &project, &url, &space_folder)
             .await?;
-        // Scaffold .combai/ if not present
-        let combai_dir = target.join(".combai");
-        let combai_existed_before = combai_dir.exists();
-        if !combai_existed_before {
+        // Scaffold .svode/ if not present
+        let svode_dir = target.join(".svode");
+        let svode_existed_before = svode_dir.exists();
+        if !svode_existed_before {
             crate::space::scaffold::scaffold_space(&target, &space_folder, "", "")?;
         }
         drop(_guard);
-        if !combai_existed_before {
+        if !svode_existed_before {
             if let Err(e) = autocommit.commit_scaffold(project, target).await {
                 tracing::warn!("commit_scaffold failed after submodule clone: {e}");
             }
@@ -186,7 +186,7 @@ pub async fn git_set_remote(
     }
 
     // Commit the config change (reconcile_space_url may have updated parent
-    // .combai/config.json). Routes per space git type.
+    // .svode/config.json). Routes per space git type.
     if let Some(proj_path) = project_path {
         if !proj_path.is_empty() {
             if let Err(e) = autocommit
@@ -242,11 +242,11 @@ pub async fn git_commit_file(
 
     if let Some(proj_path) = project_path.filter(|p| !p.is_empty()) {
         let project = PathBuf::from(&proj_path);
-        // `.combai/AGENTS.md` is classified as a System change (stage 3.5
+        // `.svode/AGENTS.md` is classified as a System change (stage 3.5
         // temporary rule — see 03-autocommit.md). Route through the system
         // commit path so the message is `Update agent instructions` and the
         // commit is isolated from user content.
-        if file_path == ".combai/AGENTS.md" {
+        if file_path == ".svode/AGENTS.md" {
             autocommit
                 .commit_system_now(project, path.clone(), SystemCommitKind::AgentInstructions)
                 .await?;

@@ -23,11 +23,11 @@ pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "combai_desktop_lib=debug".into()),
+                .unwrap_or_else(|_| "svode_lib=debug".into()),
         )
         .init();
 
-    tracing::info!("Starting CombAI desktop app");
+    tracing::info!("Starting Svode desktop app");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
