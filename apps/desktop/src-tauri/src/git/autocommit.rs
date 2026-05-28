@@ -37,6 +37,7 @@ pub enum StructuralOp {
 #[derive(Debug, Clone, Copy)]
 pub enum SystemCommitKind {
     SpaceConfig,
+    Gitignore,
     AgentInstructions,
     CliIntegration,
     AssetsStrategy,
@@ -46,6 +47,7 @@ impl SystemCommitKind {
     fn message(self) -> &'static str {
         match self {
             SystemCommitKind::SpaceConfig => "Update space config",
+            SystemCommitKind::Gitignore => "Update .gitignore",
             SystemCommitKind::AgentInstructions => "Update agent instructions",
             SystemCommitKind::CliIntegration => "Update CLI integration",
             SystemCommitKind::AssetsStrategy => "Update assets strategy",
@@ -56,6 +58,7 @@ impl SystemCommitKind {
     fn paths(self) -> &'static [&'static str] {
         match self {
             SystemCommitKind::SpaceConfig => &[".svode/config.json"],
+            SystemCommitKind::Gitignore => &[".gitignore"],
             SystemCommitKind::AgentInstructions => &[".svode/AGENTS.md"],
             SystemCommitKind::CliIntegration => &["CLAUDE.md", ".mcp.json", ".claude"],
             SystemCommitKind::AssetsStrategy => {
@@ -616,11 +619,15 @@ async fn do_commit_scaffold(
             let lock = git_state.get_lock(project_path).await;
             let _guard = lock.lock().await;
             let rel = if space_path == project_path {
+                ops::ensure_svode_gitignore(project_path)?;
                 ".svode".to_string()
             } else {
+                ops::ensure_inline_gitignore(project_path)?;
                 format!("{}/.svode", space_folder)
             };
-            let created = ops::commit_path_with_message(&cli, project_path, &rel, message).await?;
+            ops::add(&cli, project_path, ".gitignore").await?;
+            ops::add(&cli, project_path, &rel).await?;
+            let created = ops::commit(&cli, project_path, message).await?;
             if created {
                 emit_committed(app, space_path, project_path);
             }
@@ -628,8 +635,10 @@ async fn do_commit_scaffold(
         SpaceGitType::Independent => {
             let lock = git_state.get_lock(space_path).await;
             let _guard = lock.lock().await;
-            let created =
-                ops::commit_path_with_message(&cli, space_path, ".svode", message).await?;
+            ops::ensure_svode_gitignore(space_path)?;
+            ops::add(&cli, space_path, ".gitignore").await?;
+            ops::add(&cli, space_path, ".svode").await?;
+            let created = ops::commit(&cli, space_path, message).await?;
             if created {
                 emit_committed(app, space_path, space_path);
             }
@@ -637,8 +646,10 @@ async fn do_commit_scaffold(
         SpaceGitType::Submodule => {
             let lock = git_state.get_lock(space_path).await;
             let _guard = lock.lock().await;
-            let created =
-                ops::commit_path_with_message(&cli, space_path, ".svode", message).await?;
+            ops::ensure_svode_gitignore(space_path)?;
+            ops::add(&cli, space_path, ".gitignore").await?;
+            ops::add(&cli, space_path, ".svode").await?;
+            let created = ops::commit(&cli, space_path, message).await?;
             drop(_guard);
             if created {
                 emit_committed(app, space_path, space_path);

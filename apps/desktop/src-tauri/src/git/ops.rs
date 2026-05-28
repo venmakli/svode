@@ -16,6 +16,13 @@ const GITIGNORE_TEMPLATE: &str = "# Svode local files
 .svode/*.db-shm
 ";
 
+const SVODE_LOCAL_IGNORE_ENTRIES: &[&str] = &[
+    ".svode/local.json",
+    ".svode/*.db",
+    ".svode/*.db-wal",
+    ".svode/*.db-shm",
+];
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitStatus {
@@ -189,11 +196,7 @@ pub async fn init(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
     cli.exec(space_dir, &["config", "core.quotePath", "false"])
         .await?;
 
-    // write .gitignore
-    let gitignore_path = space_dir.join(".gitignore");
-    if !gitignore_path.exists() {
-        tokio::fs::write(&gitignore_path, GITIGNORE_TEMPLATE).await?;
-    }
+    ensure_svode_gitignore(space_dir)?;
 
     // git add .
     let out = cli.exec(space_dir, &["add", "."]).await?;
@@ -706,6 +709,52 @@ pub fn validate_clone_url(url: &str) -> Result<(), AppError> {
 
 // --- .gitignore managed blocks ---
 
+/// Ensure root-level Svode local runtime files are ignored in this repo.
+///
+/// This is used both for newly initialized spaces and for existing git repos
+/// that Svode scaffolds later. The latter path must update `.gitignore` before
+/// staging `.svode/`, otherwise `.svode/local.json` can be committed.
+pub fn ensure_svode_gitignore(space_dir: &Path) -> Result<bool, AppError> {
+    let gitignore = space_dir.join(".gitignore");
+    let content = if gitignore.exists() {
+        std::fs::read_to_string(&gitignore)?
+    } else {
+        String::new()
+    };
+
+    if content.is_empty() {
+        std::fs::write(&gitignore, GITIGNORE_TEMPLATE)?;
+        return Ok(true);
+    }
+
+    let missing: Vec<&str> = SVODE_LOCAL_IGNORE_ENTRIES
+        .iter()
+        .copied()
+        .filter(|entry| {
+            !content.lines().any(|line| {
+                let trimmed = line.trim();
+                trimmed == *entry || trimmed.strip_prefix('/') == Some(*entry)
+            })
+        })
+        .collect();
+
+    if missing.is_empty() {
+        return Ok(false);
+    }
+
+    let mut new_content = content;
+    if !new_content.ends_with('\n') {
+        new_content.push('\n');
+    }
+    new_content.push_str("# Svode local files\n");
+    for entry in missing {
+        new_content.push_str(entry);
+        new_content.push('\n');
+    }
+    std::fs::write(&gitignore, new_content)?;
+    Ok(true)
+}
+
 const INLINE_BLOCK_START: &str = "# svode:inline:start";
 const INLINE_BLOCK_END: &str = "# svode:inline:end";
 const INLINE_BLOCK_CONTENT: &str = "*/.svode/local.json\n*/.svode/*.db\n*/.svode/*.db-*";
@@ -912,17 +961,6 @@ pub async fn submodule_update_pointer(
     add(cli, root_path, &space_folder).await?;
     commit(cli, root_path, &format!("Update {}", space_folder)).await?;
     Ok(())
-}
-
-/// Stage a specific path inside a repo and commit with a fixed message.
-pub async fn commit_path_with_message(
-    cli: &GitCli,
-    repo_dir: &Path,
-    path_in_repo: &str,
-    message: &str,
-) -> Result<bool, AppError> {
-    add(cli, repo_dir, path_in_repo).await?;
-    commit(cli, repo_dir, message).await
 }
 
 /// Current branch name (via `git rev-parse --abbrev-ref HEAD`).
@@ -1173,5 +1211,41 @@ mod tests {
         let paths = parse_nul_paths("docs/a file.md\0кириллица.md\0").unwrap();
 
         assert_eq!(paths, vec!["docs/a file.md", "кириллица.md"]);
+    }
+
+    #[test]
+    fn ensure_svode_gitignore_creates_root_local_rules() {
+        let tmp = TempDir::new().unwrap();
+
+        let changed = ensure_svode_gitignore(tmp.path()).unwrap();
+        let content = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+
+        assert!(changed);
+        assert!(content.contains(".svode/local.json"));
+        assert!(content.contains(".svode/*.db-wal"));
+
+        let changed_again = ensure_svode_gitignore(tmp.path()).unwrap();
+        let content_again = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+
+        assert!(!changed_again);
+        assert_eq!(content, content_again);
+    }
+
+    #[test]
+    fn ensure_svode_gitignore_appends_missing_rules_without_rewriting_user_rules() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join(".gitignore"),
+            "target/\n/.svode/local.json\n",
+        )
+        .unwrap();
+
+        let changed = ensure_svode_gitignore(tmp.path()).unwrap();
+        let content = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+
+        assert!(changed);
+        assert!(content.starts_with("target/\n/.svode/local.json\n"));
+        assert_eq!(content.matches(".svode/local.json").count(), 1);
+        assert!(content.contains(".svode/*.db-shm"));
     }
 }

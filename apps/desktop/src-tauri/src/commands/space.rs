@@ -208,6 +208,11 @@ pub async fn open_project_folder(
 
     let had_git_before = sp_path.join(".git").exists();
     let (id, mut cfg) = project::open_project_folder(&config_dir, sp_path)?;
+    let gitignore_changed = if had_git_before {
+        ops::ensure_svode_gitignore(sp_path)?
+    } else {
+        false
+    };
     let imported_submodules = import_existing_submodules_if_possible(&git_state, sp_path).await;
     if imported_submodules > 0 {
         cfg = config::read_space_config(sp_path)?;
@@ -234,16 +239,30 @@ pub async fn open_project_folder(
         {
             tracing::warn!("commit_scaffold failed for opened folder: {e}");
         }
-    } else if had_git_before && imported_submodules > 0 {
-        if let Err(e) = autocommit
-            .commit_system_now(
-                sp_path.to_path_buf(),
-                sp_path.to_path_buf(),
-                SystemCommitKind::SpaceConfig,
-            )
-            .await
-        {
-            tracing::warn!("commit imported submodules failed for opened folder: {e}");
+    } else if had_git_before {
+        if gitignore_changed {
+            if let Err(e) = autocommit
+                .commit_system_now(
+                    sp_path.to_path_buf(),
+                    sp_path.to_path_buf(),
+                    SystemCommitKind::Gitignore,
+                )
+                .await
+            {
+                tracing::warn!("commit .gitignore repair failed for opened folder: {e}");
+            }
+        }
+        if imported_submodules > 0 {
+            if let Err(e) = autocommit
+                .commit_system_now(
+                    sp_path.to_path_buf(),
+                    sp_path.to_path_buf(),
+                    SystemCommitKind::SpaceConfig,
+                )
+                .await
+            {
+                tracing::warn!("commit imported submodules failed for opened folder: {e}");
+            }
         }
     }
 
@@ -309,8 +328,25 @@ pub async fn open_project(
         .ok_or_else(|| AppError::SpaceNotFound(id.clone()))?;
     let project_path = PathBuf::from(&sp_ref.path);
 
+    let gitignore_changed = if project_path.join(".git").exists() {
+        ops::ensure_svode_gitignore(&project_path)?
+    } else {
+        false
+    };
     let imported_submodules =
         import_existing_submodules_if_possible(&git_state, &project_path).await;
+    if gitignore_changed {
+        if let Err(e) = autocommit
+            .commit_system_now(
+                project_path.clone(),
+                project_path.clone(),
+                SystemCommitKind::Gitignore,
+            )
+            .await
+        {
+            tracing::warn!("commit .gitignore repair failed for project open: {e}");
+        }
+    }
     if imported_submodules > 0 {
         if let Err(e) = autocommit
             .commit_system_now(
@@ -589,6 +625,7 @@ pub async fn project_clone(
     let svode_existed_before = path.join(".svode").join("config.json").exists();
 
     let (id, mut cfg) = project::open_project_folder(&config_dir, &path)?;
+    let gitignore_changed = ops::ensure_svode_gitignore(&path)?;
     let imported_submodules = import_existing_submodules_if_possible(&git_state, &path).await;
     if imported_submodules > 0 {
         cfg = config::read_space_config(&path)?;
@@ -599,12 +636,22 @@ pub async fn project_clone(
         if let Err(e) = autocommit.commit_scaffold(path.clone(), path.clone()).await {
             tracing::warn!("commit_scaffold failed after project clone: {e}");
         }
-    } else if imported_submodules > 0 {
-        if let Err(e) = autocommit
-            .commit_system_now(path.clone(), path.clone(), SystemCommitKind::SpaceConfig)
-            .await
-        {
-            tracing::warn!("commit imported submodules failed after project clone: {e}");
+    } else {
+        if gitignore_changed {
+            if let Err(e) = autocommit
+                .commit_system_now(path.clone(), path.clone(), SystemCommitKind::Gitignore)
+                .await
+            {
+                tracing::warn!("commit .gitignore repair failed after project clone: {e}");
+            }
+        }
+        if imported_submodules > 0 {
+            if let Err(e) = autocommit
+                .commit_system_now(path.clone(), path.clone(), SystemCommitKind::SpaceConfig)
+                .await
+            {
+                tracing::warn!("commit imported submodules failed after project clone: {e}");
+            }
         }
     }
 
