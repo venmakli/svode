@@ -9,7 +9,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  writeFileSync,
+  rmSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +33,10 @@ function run(cmd, args, opts = {}) {
   }
 }
 
+function exeSuffixForTarget(triple) {
+  return triple.includes("windows") ? ".exe" : "";
+}
+
 function copyIfChanged(src, dest) {
   if (
     existsSync(dest) &&
@@ -47,26 +51,53 @@ function copyIfChanged(src, dest) {
   return true;
 }
 
-const triple = rustcHostTriple();
-const exeSuffix = process.platform === "win32" ? ".exe" : "";
-const dest = resolve(binariesDir, `svode-mcp-${triple}${exeSuffix}`);
+function builtBinaryPath(triple) {
+  const exeSuffix = exeSuffixForTarget(triple);
+  return resolve(crateDir, "target", triple, "release", `svode-mcp${exeSuffix}`);
+}
+
+function buildTarget(triple) {
+  console.log(`[svode-mcp] building for ${triple}`);
+  run("cargo", ["build", "--release", "--bin", "svode-mcp", "--target", triple], {
+    cwd: crateDir,
+  });
+
+  const built = builtBinaryPath(triple);
+  if (!existsSync(built)) {
+    throw new Error(`expected build artifact missing: ${built}`);
+  }
+  return built;
+}
+
+function lipoUniversal(inputs, dest) {
+  if (process.platform !== "darwin") {
+    throw new Error("universal-apple-darwin sidecars can only be built on macOS");
+  }
+  rmSync(dest, { force: true });
+  run("lipo", ["-create", "-output", dest, ...inputs]);
+  chmodSync(dest, 0o755);
+}
+
+const requestedTriple = process.env.TAURI_ENV_TARGET_TRIPLE || rustcHostTriple();
+const targets =
+  requestedTriple === "universal-apple-darwin"
+    ? ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+    : [requestedTriple];
 
 mkdirSync(binariesDir, { recursive: true });
-if (!existsSync(dest)) {
-  writeFileSync(dest, "");
-}
 
-console.log(`[svode-mcp] building for ${triple}`);
-run("cargo", ["build", "--release", "--bin", "svode-mcp"], {
-  cwd: crateDir,
-});
-
-const built = resolve(crateDir, "target/release", `svode-mcp${exeSuffix}`);
-if (!existsSync(built)) {
-  throw new Error(`expected build artifact missing: ${built}`);
-}
-
-const copied = copyIfChanged(built, dest);
-console.log(
-  copied ? `[svode-mcp] -> ${dest}` : `[svode-mcp] unchanged ${dest}`,
+const built = targets.map(buildTarget);
+const dest = resolve(
+  binariesDir,
+  `svode-mcp-${requestedTriple}${exeSuffixForTarget(requestedTriple)}`,
 );
+
+if (requestedTriple === "universal-apple-darwin") {
+  lipoUniversal(built, dest);
+  console.log(`[svode-mcp] -> ${dest}`);
+} else {
+  const copied = copyIfChanged(built[0], dest);
+  console.log(
+    copied ? `[svode-mcp] -> ${dest}` : `[svode-mcp] unchanged ${dest}`,
+  );
+}

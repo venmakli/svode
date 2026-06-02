@@ -1,0 +1,93 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release_notes:
+    runs-on: ubuntu-22.04
+    outputs:
+      body: ${{ steps.extract.outputs.body }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract release notes from CHANGELOG.md
+        id: extract
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          body="$(awk -v version="$version" '
+            $0 == "## [" version "]" || $0 ~ "^## \\[" version "\\] - " { found=1; next }
+            found && /^## \[/ { exit }
+            found && /^\[[^]]+\]:/ { exit }
+            found { print }
+          ' CHANGELOG.md)"
+
+          if [ -z "$(printf '%s' "$body" | tr -d '[:space:]')" ]; then
+            echo "CHANGELOG.md does not contain release notes for ${version}" >&2
+            exit 1
+          fi
+
+          {
+            echo "body<<EOF"
+            printf "%s\n" "$body"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: release_notes
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+          - platform: ubuntu-22.04
+            args: ""
+          - platform: windows-latest
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.platform != 'macos-latest'
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.platform == 'macos-latest'
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsecret-1-dev
+
+      - name: Install dependencies
+        run: bun install
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: Svode ${{ github.ref_name }}
+          releaseBody: ${{ needs.release_notes.outputs.body }}
+          releaseDraft: true
+          prerelease: true
+          args: ${{ matrix.args }}

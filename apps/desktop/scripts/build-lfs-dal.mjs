@@ -12,6 +12,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  rmSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,6 +36,10 @@ function run(cmd, args, opts = {}) {
   }
 }
 
+function exeSuffixForTarget(triple) {
+  return triple.includes("windows") ? ".exe" : "";
+}
+
 function copyIfChanged(src, dest) {
   if (
     existsSync(dest) &&
@@ -49,18 +54,48 @@ function copyIfChanged(src, dest) {
   return true;
 }
 
-const triple = rustcHostTriple();
-const exeSuffix = process.platform === "win32" ? ".exe" : "";
-
-console.log(`[lfs-dal] building for ${triple}`);
-run("cargo", ["build", "--release"], { cwd: crateDir });
-
-const built = resolve(crateDir, "target/release", `lfs-dal${exeSuffix}`);
-if (!existsSync(built)) {
-  throw new Error(`expected build artifact missing: ${built}`);
+function builtBinaryPath(triple) {
+  const exeSuffix = exeSuffixForTarget(triple);
+  return resolve(crateDir, "target", triple, "release", `lfs-dal${exeSuffix}`);
 }
 
+function buildTarget(triple) {
+  console.log(`[lfs-dal] building for ${triple}`);
+  run("cargo", ["build", "--release", "--target", triple], { cwd: crateDir });
+
+  const built = builtBinaryPath(triple);
+  if (!existsSync(built)) {
+    throw new Error(`expected build artifact missing: ${built}`);
+  }
+  return built;
+}
+
+function lipoUniversal(inputs, dest) {
+  if (process.platform !== "darwin") {
+    throw new Error("universal-apple-darwin sidecars can only be built on macOS");
+  }
+  rmSync(dest, { force: true });
+  run("lipo", ["-create", "-output", dest, ...inputs]);
+  chmodSync(dest, 0o755);
+}
+
+const requestedTriple = process.env.TAURI_ENV_TARGET_TRIPLE || rustcHostTriple();
+const targets =
+  requestedTriple === "universal-apple-darwin"
+    ? ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+    : [requestedTriple];
+
 mkdirSync(binariesDir, { recursive: true });
-const dest = resolve(binariesDir, `lfs-dal-${triple}${exeSuffix}`);
-const copied = copyIfChanged(built, dest);
-console.log(copied ? `[lfs-dal] -> ${dest}` : `[lfs-dal] unchanged ${dest}`);
+const built = targets.map(buildTarget);
+const dest = resolve(
+  binariesDir,
+  `lfs-dal-${requestedTriple}${exeSuffixForTarget(requestedTriple)}`,
+);
+
+if (requestedTriple === "universal-apple-darwin") {
+  lipoUniversal(built, dest);
+  console.log(`[lfs-dal] -> ${dest}`);
+} else {
+  const copied = copyIfChanged(built[0], dest);
+  console.log(copied ? `[lfs-dal] -> ${dest}` : `[lfs-dal] unchanged ${dest}`);
+}
