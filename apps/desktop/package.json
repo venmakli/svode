@@ -10,7 +10,7 @@
     "build:lfs-dal": "node scripts/build-lfs-dal.mjs",
     "build:svode-mcp": "node scripts/build-svode-mcp.mjs",
     "paraglide": "paraglide-js compile --project ./project.inlang --outdir ./src/paraglide --silent",
-    "typecheck": "bun run paraglide && NODE_OPTIONS='--max-old-space-size=8192' tsc -b",
+    "typecheck": "bun run paraglide && NODE_OPTIONS='--max-old-space-size=8192' tsc -b --force",
     "preview": "vite preview",
     "tauri": "tauri"
   },

@@ -10,6 +10,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,14 +54,47 @@ function copyIfChanged(src, dest) {
 
 function builtBinaryPath(triple) {
   const exeSuffix = exeSuffixForTarget(triple);
-  return resolve(crateDir, "target", triple, "release", `svode-mcp${exeSuffix}`);
+  return resolve(
+    crateDir,
+    "target",
+    triple,
+    "release",
+    `svode-mcp${exeSuffix}`,
+  );
+}
+
+function sidecarPath(triple) {
+  return resolve(
+    binariesDir,
+    `svode-mcp-${triple}${exeSuffixForTarget(triple)}`,
+  );
+}
+
+function ensureBuildPlaceholder(triple) {
+  const dest = sidecarPath(triple);
+  if (existsSync(dest)) return;
+
+  writeFileSync(
+    dest,
+    triple.includes("windows")
+      ? "@echo off\r\nexit /b 1\r\n"
+      : "#!/bin/sh\nexit 1\n",
+  );
+  if (process.platform !== "win32") {
+    chmodSync(dest, 0o755);
+  }
 }
 
 function buildTarget(triple) {
   console.log(`[svode-mcp] building for ${triple}`);
-  run("cargo", ["build", "--release", "--bin", "svode-mcp", "--target", triple], {
-    cwd: crateDir,
-  });
+  ensureBuildPlaceholder(triple);
+  run(
+    "cargo",
+    ["build", "--release", "--bin", "svode-mcp", "--target", triple],
+    {
+      cwd: crateDir,
+    },
+  );
 
   const built = builtBinaryPath(triple);
   if (!existsSync(built)) {
@@ -71,14 +105,17 @@ function buildTarget(triple) {
 
 function lipoUniversal(inputs, dest) {
   if (process.platform !== "darwin") {
-    throw new Error("universal-apple-darwin sidecars can only be built on macOS");
+    throw new Error(
+      "universal-apple-darwin sidecars can only be built on macOS",
+    );
   }
   rmSync(dest, { force: true });
   run("lipo", ["-create", "-output", dest, ...inputs]);
   chmodSync(dest, 0o755);
 }
 
-const requestedTriple = process.env.TAURI_ENV_TARGET_TRIPLE || rustcHostTriple();
+const requestedTriple =
+  process.env.TAURI_ENV_TARGET_TRIPLE || rustcHostTriple();
 const targets =
   requestedTriple === "universal-apple-darwin"
     ? ["aarch64-apple-darwin", "x86_64-apple-darwin"]
@@ -87,10 +124,7 @@ const targets =
 mkdirSync(binariesDir, { recursive: true });
 
 const built = targets.map(buildTarget);
-const dest = resolve(
-  binariesDir,
-  `svode-mcp-${requestedTriple}${exeSuffixForTarget(requestedTriple)}`,
-);
+const dest = sidecarPath(requestedTriple);
 
 if (requestedTriple === "universal-apple-darwin") {
   lipoUniversal(built, dest);

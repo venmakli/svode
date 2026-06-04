@@ -8,6 +8,5 @@ apps/desktop/src-tauri/binaries/
 .env
 .env.*
 !.env.example
-bun.lock
 
 .claude/
