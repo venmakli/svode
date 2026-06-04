@@ -84,7 +84,7 @@ pub fn write_order(space: &Path, order: &HashMap<String, Vec<String>>) -> Result
 fn apply_order(nodes: &mut Vec<TreeNode>, order_list: Option<&Vec<String>>) {
     let Some(ordered) = order_list else {
         // No custom order: sort alphabetically by name
-        nodes.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        nodes.sort_by_key(|a| a.name.to_lowercase());
         return;
     };
 

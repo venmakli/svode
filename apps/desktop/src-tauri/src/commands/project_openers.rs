@@ -1,4 +1,4 @@
-use std::{env, path::Path, path::PathBuf, process::Command};
+use std::{path::Path, path::PathBuf, process::Command};
 
 use serde::{Deserialize, Serialize};
 
@@ -122,7 +122,7 @@ fn macos_app_exists(app_name: &str) -> bool {
         PathBuf::from("/System/Applications/Utilities").join(&app_bundle),
     ];
 
-    if let Some(home) = env::var_os("HOME") {
+    if let Some(home) = std::env::var_os("HOME") {
         candidates.push(PathBuf::from(home).join("Applications").join(&app_bundle));
     }
 
