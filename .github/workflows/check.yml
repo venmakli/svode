@@ -34,6 +34,9 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             libsecret-1-dev
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: bun run --cwd apps/desktop build:sidecars
       - run: cargo check --manifest-path=apps/desktop/src-tauri/Cargo.toml
       - name: Clippy
         run: |
