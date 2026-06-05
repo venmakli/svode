@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicoverbruggen/tauri-settings-schema/refs/heads/v2/schema.json",
   "productName": "Svode",
-  "version": "0.0.6",
+  "version": "0.0.5",
   "identifier": "app.svode.desktop",
   "build": {
     "frontendDist": "../dist",

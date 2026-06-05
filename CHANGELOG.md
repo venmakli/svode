@@ -2,20 +2,20 @@
 
 ## [Unreleased]
 
-## [0.0.6] - 2026-06-03
+## [0.0.5] - 2026-06-05
 
 ### Added
 
-- Первый installable dogfood snapshot для Svode.
-- GitHub Actions release workflow для draft/prerelease installers на macOS, Windows и Linux.
-- GitHub Actions check workflow для TypeScript, Rust, Clippy и Rust dependency audit.
-- Единый release process через `CHANGELOG.md`, app version sources и GitHub Release body.
-- Bundled `svode-mcp` и `lfs-dal` sidecars для installer artifacts.
+- First installable Svode dogfood snapshot.
+- GitHub Actions release workflow for draft prerelease installers on macOS, Windows, and Linux.
+- GitHub Actions check workflow for TypeScript, Rust, Clippy, and Rust dependency audit.
+- Bundled `svode-mcp` and `lfs-dal` sidecars for installer artifacts.
 
 ### Changed
 
-- Версия desktop app, Tauri package и `svode-mcp` синхронизирована на `0.0.6`.
-- Stage 5 остаётся на `0.0.x` dogfood snapshots; `0.1.0` отложен до первого внутреннего baseline после ручного dogfood.
+- Synchronized the desktop app, Tauri package, and `svode-mcp` release version on `0.0.5`.
+- Established `CHANGELOG.md` as the source of truth for GitHub Release notes.
+- Kept Stage 5 on `0.0.x` dogfood snapshots; `0.1.0` remains deferred until the first internal baseline after manual dogfood.
 
-[Unreleased]: https://github.com/venmakli/svode/compare/v0.0.6...HEAD
-[0.0.6]: https://github.com/venmakli/svode/releases/tag/v0.0.6
+[Unreleased]: https://github.com/venmakli/svode/compare/v0.0.5...HEAD
+[0.0.5]: https://github.com/venmakli/svode/releases/tag/v0.0.5
