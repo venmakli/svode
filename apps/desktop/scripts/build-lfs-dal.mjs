@@ -59,6 +59,13 @@ function builtBinaryPath(triple) {
   return resolve(crateDir, "target", triple, "release", `lfs-dal${exeSuffix}`);
 }
 
+function sidecarPath(triple) {
+  return resolve(
+    binariesDir,
+    `lfs-dal-${triple}${exeSuffixForTarget(triple)}`,
+  );
+}
+
 function buildTarget(triple) {
   console.log(`[lfs-dal] building for ${triple}`);
   run("cargo", ["build", "--release", "--target", triple], { cwd: crateDir });
@@ -87,15 +94,22 @@ const targets =
 
 mkdirSync(binariesDir, { recursive: true });
 const built = targets.map(buildTarget);
-const dest = resolve(
-  binariesDir,
-  `lfs-dal-${requestedTriple}${exeSuffixForTarget(requestedTriple)}`,
-);
 
 if (requestedTriple === "universal-apple-darwin") {
-  lipoUniversal(built, dest);
-  console.log(`[lfs-dal] -> ${dest}`);
+  targets.forEach((target, index) => {
+    const copied = copyIfChanged(built[index], sidecarPath(target));
+    console.log(
+      copied
+        ? `[lfs-dal] -> ${sidecarPath(target)}`
+        : `[lfs-dal] unchanged ${sidecarPath(target)}`,
+    );
+  });
+
+  const universalDest = sidecarPath(requestedTriple);
+  lipoUniversal(built, universalDest);
+  console.log(`[lfs-dal] -> ${universalDest}`);
 } else {
+  const dest = sidecarPath(requestedTriple);
   const copied = copyIfChanged(built[0], dest);
   console.log(copied ? `[lfs-dal] -> ${dest}` : `[lfs-dal] unchanged ${dest}`);
 }

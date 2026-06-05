@@ -127,6 +127,15 @@ const built = targets.map(buildTarget);
 const dest = sidecarPath(requestedTriple);
 
 if (requestedTriple === "universal-apple-darwin") {
+  targets.forEach((target, index) => {
+    const copied = copyIfChanged(built[index], sidecarPath(target));
+    console.log(
+      copied
+        ? `[svode-mcp] -> ${sidecarPath(target)}`
+        : `[svode-mcp] unchanged ${sidecarPath(target)}`,
+    );
+  });
+
   lipoUniversal(built, dest);
   console.log(`[svode-mcp] -> ${dest}`);
 } else {
