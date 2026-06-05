@@ -81,9 +81,20 @@ function lipoUniversal(inputs, dest) {
   if (process.platform !== "darwin") {
     throw new Error("universal-apple-darwin sidecars can only be built on macOS");
   }
+  mkdirSync(dirname(dest), { recursive: true });
   rmSync(dest, { force: true });
   run("lipo", ["-create", "-output", dest, ...inputs]);
   chmodSync(dest, 0o755);
+}
+
+function tauriTargetBinaryPath(triple) {
+  return resolve(
+    __dirname,
+    "../src-tauri/target",
+    triple,
+    "release",
+    `lfs-dal${exeSuffixForTarget(triple)}`,
+  );
 }
 
 const requestedTriple = process.env.TAURI_ENV_TARGET_TRIPLE || rustcHostTriple();
@@ -108,6 +119,10 @@ if (requestedTriple === "universal-apple-darwin") {
   const universalDest = sidecarPath(requestedTriple);
   lipoUniversal(built, universalDest);
   console.log(`[lfs-dal] -> ${universalDest}`);
+
+  const tauriDest = tauriTargetBinaryPath(requestedTriple);
+  lipoUniversal(built, tauriDest);
+  console.log(`[lfs-dal] -> ${tauriDest}`);
 } else {
   const dest = sidecarPath(requestedTriple);
   const copied = copyIfChanged(built[0], dest);

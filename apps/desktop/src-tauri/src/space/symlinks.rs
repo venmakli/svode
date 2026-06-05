@@ -101,7 +101,7 @@ pub fn setup_cli_symlinks(space_path: &Path, cli_name: &str) -> Result<Vec<Strin
         let target_parent = target.parent().unwrap_or(space_path);
         let rel = relative_path(target_parent, &source);
 
-        std::os::unix::fs::symlink(&rel, &target)?;
+        create_symlink(&rel, &target, m.is_dir)?;
         created.push(m.target.to_string());
     }
 
@@ -166,7 +166,7 @@ pub fn health_check_symlinks(
                     }
                     Ok(_) | Err(_) => {
                         // Wrong target or broken — recreate
-                        match recreate_symlink(&target, &rel) {
+                        match recreate_symlink(&target, &rel, m.is_dir) {
                             Ok(()) => restored += 1,
                             Err(e) => errors.push(format!("{}: {}", m.target, e)),
                         }
@@ -185,7 +185,7 @@ pub fn health_check_symlinks(
                 if let Some(parent) = target.parent() {
                     let _ = fs::create_dir_all(parent);
                 }
-                match std::os::unix::fs::symlink(&rel, &target) {
+                match create_symlink(&rel, &target, m.is_dir) {
                     Ok(()) => restored += 1,
                     Err(e) => errors.push(format!("{}: {}", m.target, e)),
                 }
@@ -200,9 +200,9 @@ pub fn health_check_symlinks(
     })
 }
 
-fn recreate_symlink(target: &Path, rel: &str) -> Result<(), AppError> {
+fn recreate_symlink(target: &Path, rel: &str, is_dir: bool) -> Result<(), AppError> {
     fs::remove_file(target)?;
-    std::os::unix::fs::symlink(rel, target)?;
+    create_symlink(rel, target, is_dir)?;
     Ok(())
 }
 
@@ -234,6 +234,20 @@ fn replace_real_with_symlink(
         }
         fs::rename(target, source)?;
     }
-    std::os::unix::fs::symlink(rel, target)?;
+    create_symlink(rel, target, is_dir)?;
     Ok(())
+}
+
+#[cfg(unix)]
+fn create_symlink(rel: &str, target: &Path, _is_dir: bool) -> Result<(), std::io::Error> {
+    std::os::unix::fs::symlink(rel, target)
+}
+
+#[cfg(windows)]
+fn create_symlink(rel: &str, target: &Path, is_dir: bool) -> Result<(), std::io::Error> {
+    if is_dir {
+        std::os::windows::fs::symlink_dir(rel, target)
+    } else {
+        std::os::windows::fs::symlink_file(rel, target)
+    }
 }

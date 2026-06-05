@@ -109,6 +109,7 @@ function lipoUniversal(inputs, dest) {
       "universal-apple-darwin sidecars can only be built on macOS",
     );
   }
+  mkdirSync(dirname(dest), { recursive: true });
   rmSync(dest, { force: true });
   run("lipo", ["-create", "-output", dest, ...inputs]);
   chmodSync(dest, 0o755);
@@ -138,6 +139,10 @@ if (requestedTriple === "universal-apple-darwin") {
 
   lipoUniversal(built, dest);
   console.log(`[svode-mcp] -> ${dest}`);
+
+  const tauriDest = builtBinaryPath(requestedTriple);
+  lipoUniversal(built, tauriDest);
+  console.log(`[svode-mcp] -> ${tauriDest}`);
 } else {
   const copied = copyIfChanged(built[0], dest);
   console.log(
