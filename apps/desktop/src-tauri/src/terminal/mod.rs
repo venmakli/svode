@@ -2,7 +2,7 @@ pub mod commands;
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -379,7 +379,7 @@ fn select_unix_shell(env_shell: Option<&str>, exists: impl Fn(&str) -> bool) -> 
 
 #[cfg(not(windows))]
 fn command_exists(command: &str) -> bool {
-    let path = Path::new(command);
+    let path = std::path::Path::new(command);
     if path.is_absolute() {
         path.exists()
     } else {
