@@ -4,7 +4,7 @@ use std::process::Command as StdCommand;
 use serde::Serialize;
 use tokio::process::Command;
 
-use crate::AppError;
+use crate::{AppError, process};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -75,6 +75,7 @@ impl GitCli {
 
         let git_args = args_with_quote_path(args);
         let mut cmd = Command::new(&self.git_path);
+        process::hide_tokio_window(&mut cmd);
         cmd.args(&git_args)
             .current_dir(space_dir)
             .env("GIT_TERMINAL_PROMPT", "0")
@@ -112,7 +113,9 @@ impl GitCli {
         tracing::debug!("git {}", args.join(" "));
 
         let git_args = args_with_quote_path(args);
-        let output = Command::new(&self.git_path)
+        let mut cmd = Command::new(&self.git_path);
+        process::hide_tokio_window(&mut cmd);
+        let output = cmd
             .args(&git_args)
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("LC_ALL", "C.UTF-8")
@@ -131,7 +134,9 @@ impl GitCli {
 
     /// Check git and git-lfs availability with version info.
     pub async fn check_availability(&self) -> GitAvailability {
-        let version_output = Command::new(&self.git_path)
+        let mut cmd = Command::new(&self.git_path);
+        process::hide_tokio_window(&mut cmd);
+        let version_output = cmd
             .args(["-c", "core.quotePath=false", "--version"])
             .env("GIT_TERMINAL_PROMPT", "0")
             .output()
@@ -172,8 +177,9 @@ fn resolve_git_binary() -> Result<PathBuf, AppError> {
 }
 
 fn detect_lfs_extension(git_path: &Path) -> bool {
-    StdCommand::new(git_path)
-        .args(["-c", "core.quotePath=false", "lfs", "version"])
+    let mut cmd = StdCommand::new(git_path);
+    process::hide_window(&mut cmd);
+    cmd.args(["-c", "core.quotePath=false", "lfs", "version"])
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("LC_ALL", "C.UTF-8")
         .output()

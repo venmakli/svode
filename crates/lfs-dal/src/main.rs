@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 //! Git LFS Custom Transfer Agent for Svode.
 //!
 //! Implements the line-delimited JSON protocol described in
@@ -135,26 +137,24 @@ async fn run() -> Result<()> {
         };
 
         match req {
-            Request::Init { .. } => {
-                match AgentState::load().await {
-                    Ok(s) => {
-                        state = Some(s);
-                        write_line(&mut stdout, &InitResponse::default()).await?;
-                    }
-                    Err(e) => {
-                        write_line(
-                            &mut stdout,
-                            &InitResponse {
-                                error: Some(LfsError {
-                                    code: 2,
-                                    message: format!("init failed: {e:#}"),
-                                }),
-                            },
-                        )
-                        .await?;
-                    }
+            Request::Init { .. } => match AgentState::load().await {
+                Ok(s) => {
+                    state = Some(s);
+                    write_line(&mut stdout, &InitResponse::default()).await?;
                 }
-            }
+                Err(e) => {
+                    write_line(
+                        &mut stdout,
+                        &InitResponse {
+                            error: Some(LfsError {
+                                code: 2,
+                                message: format!("init failed: {e:#}"),
+                            }),
+                        },
+                    )
+                    .await?;
+                }
+            },
             Request::Upload { oid, size, path } => {
                 let resp = match state.as_ref() {
                     Some(s) => s.handle_upload(&oid, size, &path).await,
@@ -254,9 +254,7 @@ impl AgentState {
             move || -> Result<AgentSecrets> {
                 let entry = keyring::Entry::new(KEYCHAIN_SERVICE, &account)
                     .context("opening keychain entry")?;
-                let pw = entry
-                    .get_password()
-                    .context("reading keychain password")?;
+                let pw = entry.get_password().context("reading keychain password")?;
                 let s: AgentSecrets =
                     serde_json::from_str(&pw).context("parsing keychain payload")?;
                 Ok(s)

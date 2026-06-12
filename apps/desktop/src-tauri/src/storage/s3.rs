@@ -11,6 +11,7 @@ use opendal::{Operator, services::S3};
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
+use crate::process;
 use crate::space::types::AssetsS3Config;
 
 /// Keychain service identifier — must match the constant in `lfs-dal`.
@@ -284,10 +285,9 @@ fn validate_agent_binary_executable(_path: &Path) -> Result<(), AppError> {
 /// nice but resolve_agent_binary is rarely called (only on strategy switch),
 /// so we just spawn the process each time.
 fn rustc_host_triple() -> Option<String> {
-    let out = std::process::Command::new("rustc")
-        .arg("-vV")
-        .output()
-        .ok()?;
+    let mut cmd = std::process::Command::new("rustc");
+    process::hide_window(&mut cmd);
+    let out = cmd.arg("-vV").output().ok()?;
     if !out.status.success() {
         return None;
     }

@@ -7,7 +7,7 @@ use tokio::process::Command;
 use crate::agent::AgentProcess;
 use crate::agent::executor::AgentExecutor;
 use crate::agent::types::{AgentConfig, AgentEvent, ModelOption};
-use crate::error::AppError;
+use crate::{error::AppError, process};
 
 /// Claude Code CLI executor.
 pub struct ClaudeCodeExecutor;
@@ -108,6 +108,7 @@ fn detect_cli() -> Option<String> {
 /// Build the CLI command with appropriate flags.
 fn build_command(space_dir: &Path, config: &AgentConfig, cli_path: &str) -> Command {
     let mut cmd = Command::new(cli_path);
+    process::hide_tokio_window(&mut cmd);
     cmd.arg("--print")
         .arg("--verbose")
         .arg("--output-format")

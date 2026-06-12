@@ -7,7 +7,7 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
 use super::cli::GitCli;
-use crate::AppError;
+use crate::{AppError, process};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,7 +41,9 @@ pub async fn clone_with_progress(
     // defer the actual content fetch to the explicit Repair LFS gesture or
     // post-clone probe in `storage/lfs.rs`. Without this, a missing/wrong
     // LFS credential would fail the entire clone.
-    let mut child = Command::new(cli.git_path())
+    let mut cmd = Command::new(cli.git_path());
+    process::hide_tokio_window(&mut cmd);
+    let mut child = cmd
         .args([
             "-c",
             "core.quotePath=false",
@@ -158,7 +160,9 @@ pub async fn submodule_add_with_progress(
         .unwrap_or_default()
         .to_string();
 
-    let mut child = Command::new(cli.git_path())
+    let mut cmd = Command::new(cli.git_path());
+    process::hide_tokio_window(&mut cmd);
+    let mut child = cmd
         .args([
             "-c",
             "core.quotePath=false",

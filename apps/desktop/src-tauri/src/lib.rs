@@ -6,6 +6,7 @@ mod git;
 mod identity;
 mod index;
 pub mod mcp;
+mod process;
 mod properties;
 mod repo_path;
 mod space;

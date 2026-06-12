@@ -9,7 +9,7 @@ use crate::agent::executor::AgentExecutor;
 use crate::agent::types::{
     AgentConfig, AgentEvent, AvailableAgent, ModelOption, load_space_agent_config,
 };
-use crate::error::AppError;
+use crate::{error::AppError, process};
 
 /// Default timeout for agent execution: 10 minutes.
 const DEFAULT_TIMEOUT_SECS: u64 = 600;
@@ -205,11 +205,9 @@ pub async fn agent_respond_permission(
 }
 
 async fn get_cli_version(cli_path: &str) -> Option<String> {
-    let output = tokio::process::Command::new(cli_path)
-        .arg("--version")
-        .output()
-        .await
-        .ok()?;
+    let mut cmd = tokio::process::Command::new(cli_path);
+    process::hide_tokio_window(&mut cmd);
+    let output = cmd.arg("--version").output().await.ok()?;
     if output.status.success() {
         Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
@@ -218,11 +216,9 @@ async fn get_cli_version(cli_path: &str) -> Option<String> {
 }
 
 async fn get_cli_auth_status(cli_path: &str) -> String {
-    match tokio::process::Command::new(cli_path)
-        .args(["auth", "status"])
-        .output()
-        .await
-    {
+    let mut cmd = tokio::process::Command::new(cli_path);
+    process::hide_tokio_window(&mut cmd);
+    match cmd.args(["auth", "status"]).output().await {
         Ok(output) if output.status.success() => "authorized".to_string(),
         Ok(_) => "unauthorized".to_string(),
         Err(_) => "unknown".to_string(),

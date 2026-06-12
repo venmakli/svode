@@ -6,6 +6,8 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
+use crate::process;
+
 use super::MCP_VERSION;
 use super::error::McpBusinessError;
 
@@ -209,7 +211,9 @@ pub fn install_client(client: McpClient) -> Result<ClientConfigResult, McpBusine
     match client {
         McpClient::ClaudeCode => {
             if which::which("claude").is_ok() {
-                let status = Command::new("claude")
+                let mut cmd = Command::new("claude");
+                process::hide_window(&mut cmd);
+                let status = cmd
                     .args([
                         "mcp",
                         "add",
@@ -248,9 +252,9 @@ pub fn remove_client(client: McpClient) -> Result<ClientConfigResult, McpBusines
     match client {
         McpClient::ClaudeCode => {
             if which::which("claude").is_ok() {
-                let status = Command::new("claude")
-                    .args(["mcp", "remove", "svode"])
-                    .status()?;
+                let mut cmd = Command::new("claude");
+                process::hide_window(&mut cmd);
+                let status = cmd.args(["mcp", "remove", "svode"]).status()?;
                 result.message = if status.success() {
                     "Removed Svode MCP from Claude Code".to_string()
                 } else {
@@ -406,8 +410,9 @@ fn client_status_name(found: bool, installed: bool) -> String {
 }
 
 fn command_success(command: &str, args: &[&str]) -> bool {
-    Command::new(command)
-        .args(args)
+    let mut cmd = Command::new(command);
+    process::hide_window(&mut cmd);
+    cmd.args(args)
         .output()
         .is_ok_and(|output| output.status.success())
 }
@@ -421,7 +426,9 @@ fn mcp_suffixed_name(triple: &str) -> String {
 }
 
 fn rustc_host_triple() -> Option<String> {
-    let output = Command::new("rustc").arg("-vV").output().ok()?;
+    let mut cmd = Command::new("rustc");
+    process::hide_window(&mut cmd);
+    let output = cmd.arg("-vV").output().ok()?;
     if !output.status.success() {
         return None;
     }
