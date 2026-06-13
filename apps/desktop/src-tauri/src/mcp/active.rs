@@ -3,8 +3,8 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
-use crate::AppError;
 use crate::space::config;
+use crate::{AppError, system_path};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,9 +60,9 @@ pub fn build_context(
         )));
     }
     Ok(ActiveProjectContext {
-        project_path: project.to_string_lossy().to_string(),
+        project_path: system_path::user_facing_path(&project),
         active_space_id,
-        active_space_path: space_path.to_string_lossy().to_string(),
+        active_space_path: system_path::user_facing_path(&space_path),
     })
 }
 

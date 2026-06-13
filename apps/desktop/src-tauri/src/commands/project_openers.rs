@@ -2,7 +2,7 @@ use std::{path::Path, path::PathBuf, process::Command};
 
 use serde::{Deserialize, Serialize};
 
-use crate::AppError;
+use crate::{AppError, system_path};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -98,7 +98,7 @@ fn resolve_project_dir(project_path: &str) -> Result<PathBuf, AppError> {
         return Err(AppError::PathNotAccessible(project_path.to_string()));
     }
 
-    Ok(canonical)
+    Ok(PathBuf::from(system_path::user_facing_path(&canonical)))
 }
 
 fn spawn(mut command: Command, label: &str) -> Result<(), AppError> {

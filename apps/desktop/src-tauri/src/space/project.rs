@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::error::AppError;
 use crate::git::ops::SubmoduleConfig;
 use crate::repo_path::{RootMode, normalize_repo_relative};
+use crate::system_path;
 
 use super::config;
 use super::registry;
@@ -39,7 +40,7 @@ fn create_and_register(
 
     match target {
         RegistrationTarget::Registry(config_dir) => {
-            registry::add_space(config_dir, &id, &path.to_string_lossy())?;
+            registry::add_space(config_dir, &id, &system_path::user_facing_path(path))?;
         }
         RegistrationTarget::ParentSpace(parent_path, folder_name, repo) => {
             let mut parent_config = config::read_space_config(parent_path)?;
@@ -68,9 +69,9 @@ pub fn create_project(
         std::fs::create_dir_all(path)?;
     }
     if !path.is_dir() {
-        return Err(AppError::PathNotAccessible(
-            path.to_string_lossy().to_string(),
-        ));
+        return Err(AppError::PathNotAccessible(system_path::user_facing_path(
+            path,
+        )));
     }
 
     create_and_register(
@@ -88,13 +89,13 @@ pub fn open_project_folder(
     path: &Path,
 ) -> Result<(String, SpaceConfig), AppError> {
     if !path.exists() || !path.is_dir() {
-        return Err(AppError::PathNotAccessible(
-            path.to_string_lossy().to_string(),
-        ));
+        return Err(AppError::PathNotAccessible(system_path::user_facing_path(
+            path,
+        )));
     }
 
     let reg = registry::read_registry(config_dir)?;
-    let path_str = path.to_string_lossy().to_string();
+    let path_str = system_path::user_facing_path(path);
     let fallback_name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -238,9 +239,9 @@ pub fn create_space(
 ) -> Result<SpaceInfo, AppError> {
     let space_dir = parent_path.join(folder_name);
     if space_dir.exists() {
-        return Err(AppError::FileAlreadyExists(
-            space_dir.to_string_lossy().to_string(),
-        ));
+        return Err(AppError::FileAlreadyExists(system_path::user_facing_path(
+            &space_dir,
+        )));
     }
     std::fs::create_dir_all(&space_dir)?;
 
@@ -257,7 +258,7 @@ pub fn create_space(
         name: cfg.name,
         icon: cfg.icon,
         description: cfg.description,
-        path: space_dir.to_string_lossy().to_string(),
+        path: system_path::user_facing_path(&space_dir),
         has_spaces: false,
         last_opened: None,
         status: SpaceStatus::Ready,
@@ -279,9 +280,9 @@ pub fn register_cloned_space(
 ) -> Result<SpaceInfo, AppError> {
     let space_dir = parent_path.join(folder_name);
     if !space_dir.is_dir() {
-        return Err(AppError::PathNotAccessible(
-            space_dir.to_string_lossy().to_string(),
-        ));
+        return Err(AppError::PathNotAccessible(system_path::user_facing_path(
+            &space_dir,
+        )));
     }
 
     // Check if already registered in parent
@@ -297,7 +298,7 @@ pub fn register_cloned_space(
                 name: cfg.name,
                 icon: cfg.icon,
                 description: cfg.description,
-                path: space_dir.to_string_lossy().to_string(),
+                path: system_path::user_facing_path(&space_dir),
                 has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
                 last_opened: None,
                 status: SpaceStatus::Ready,
@@ -319,7 +320,7 @@ pub fn register_cloned_space(
         name: cfg.name,
         icon: cfg.icon,
         description: cfg.description,
-        path: space_dir.to_string_lossy().to_string(),
+        path: system_path::user_facing_path(&space_dir),
         has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
         last_opened: None,
         status: SpaceStatus::Ready,
@@ -388,7 +389,7 @@ pub fn list_spaces(parent_path: &Path) -> Result<Vec<SpaceInfo>, AppError> {
                         .as_ref()
                         .map(|c| c.description.clone())
                         .unwrap_or_default(),
-                    path: space_path.to_string_lossy().to_string(),
+                    path: system_path::user_facing_path(&space_path),
                     has_spaces: space_config
                         .as_ref()
                         .and_then(|c| c.spaces.as_ref())
@@ -404,7 +405,7 @@ pub fn list_spaces(parent_path: &Path) -> Result<Vec<SpaceInfo>, AppError> {
                     name: space_ref.path.clone(),
                     icon: String::new(),
                     description: String::new(),
-                    path: space_path.to_string_lossy().to_string(),
+                    path: system_path::user_facing_path(&space_path),
                     has_spaces: false,
                     last_opened: None,
                     status,

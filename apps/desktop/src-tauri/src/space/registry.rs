@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use crate::error::AppError;
+use crate::system_path;
 
 use super::types::{RegistryEntry, SpaceRegistry};
 
@@ -13,13 +14,17 @@ pub fn read_registry(config_dir: &Path) -> Result<SpaceRegistry, AppError> {
         return Ok(registry);
     }
     let data = std::fs::read_to_string(&path)?;
-    Ok(serde_json::from_str(&data)?)
+    let mut registry: SpaceRegistry = serde_json::from_str(&data)?;
+    normalize_registry_paths(&mut registry);
+    Ok(registry)
 }
 
 /// Write the space registry to config_dir/spaces.json.
 pub fn write_registry(config_dir: &Path, registry: &SpaceRegistry) -> Result<(), AppError> {
     std::fs::create_dir_all(config_dir)?;
-    let data = serde_json::to_string_pretty(registry)?;
+    let mut registry = registry.clone();
+    normalize_registry_paths(&mut registry);
+    let data = serde_json::to_string_pretty(&registry)?;
     std::fs::write(config_dir.join("spaces.json"), data)?;
     Ok(())
 }
@@ -31,10 +36,47 @@ pub fn add_space(config_dir: &Path, id: &str, path: &str) -> Result<(), AppError
         registry.spaces.push(RegistryEntry {
             id: id.to_string(),
             last_opened: None,
-            path: path.to_string(),
+            path: system_path::user_facing_path_str(path),
         });
     }
     write_registry(config_dir, &registry)
+}
+
+fn normalize_registry_paths(registry: &mut SpaceRegistry) {
+    for space in &mut registry.spaces {
+        space.path = system_path::user_facing_path_str(&space.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_registry_normalizes_windows_verbatim_paths() {
+        let dir = tempfile::tempdir().expect("config dir");
+        std::fs::write(
+            dir.path().join("spaces.json"),
+            r#"{
+  "spaces": [
+    {
+      "id": "root",
+      "lastOpened": null,
+      "path": "\\\\?\\C:\\Users\\eeeoo\\Documents\\pro\\mine"
+    }
+  ],
+  "lastActive": "root"
+}"#,
+        )
+        .expect("write registry");
+
+        let registry = read_registry(dir.path()).expect("read registry");
+
+        assert_eq!(
+            registry.spaces[0].path,
+            r"C:\Users\eeeoo\Documents\pro\mine"
+        );
+    }
 }
 
 /// Find a space ref by id.

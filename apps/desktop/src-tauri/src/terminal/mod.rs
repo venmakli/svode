@@ -11,6 +11,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::error::AppError;
+use crate::system_path;
 
 const OUTPUT_EVENT: &str = "terminal:output";
 const EXIT_EVENT: &str = "terminal:exit";
@@ -73,7 +74,7 @@ impl TerminalManager {
         rows: u16,
     ) -> Result<TerminalSession, AppError> {
         let cwd_path = canonical_cwd(&cwd)?;
-        let cwd_display = cwd_path.to_string_lossy().to_string();
+        let cwd_display = system_path::user_facing_path(&cwd_path);
         let size = pty_size(cols, rows);
         let shell = default_shell();
 
@@ -303,7 +304,7 @@ fn canonical_cwd(cwd: &str) -> Result<PathBuf, AppError> {
         return Err(AppError::PathNotAccessible(cwd.to_string()));
     }
 
-    Ok(canonical)
+    Ok(PathBuf::from(system_path::user_facing_path(&canonical)))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

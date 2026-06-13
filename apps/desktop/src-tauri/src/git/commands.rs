@@ -11,15 +11,16 @@ use super::sync::SyncResult;
 use crate::AppError;
 use crate::index::{IndexKey, IndexState};
 use crate::space::types::SpaceGitType;
+use crate::system_path;
 
 /// Emit `space:synced` after a successful `git_sync(space)` finishes (and any
 /// reindex/post-sync work is done). Consumers — file watcher reindex,
 /// cross-space link re-validation — see a fresh index.
 fn emit_space_synced(app: &AppHandle, key: &IndexKey) {
     let (project_path, space_id) = match key {
-        IndexKey::Root(p) => (p.to_string_lossy().to_string(), None),
+        IndexKey::Root(p) => (system_path::user_facing_path(p), None),
         IndexKey::Space { project, space_id } => (
-            project.to_string_lossy().to_string(),
+            system_path::user_facing_path(project),
             Some(space_id.clone()),
         ),
     };

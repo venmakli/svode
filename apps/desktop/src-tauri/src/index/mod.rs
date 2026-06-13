@@ -22,6 +22,7 @@ use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_pat
 use crate::space::types::{SpaceConfig, SpaceStatus};
 use crate::space::{config, project};
 use crate::storage::lfs::LfsState;
+use crate::system_path;
 
 const REINDEX_PARALLELISM: usize = 4;
 
@@ -260,7 +261,7 @@ impl IndexState {
             let mut map = self.lfs_states.lock().await;
             map.insert(key.clone(), state);
         }
-        let project_path = key.project().to_string_lossy().to_string();
+        let project_path = system_path::user_facing_path(key.project());
         let space_id = Self::space_id_for_key(key);
         let _ = app.emit(
             "space:lfs_state_changed",
@@ -444,7 +445,7 @@ impl IndexState {
         if segments.is_empty() {
             return Ok(ResolvedDocLink {
                 target_space_id: None,
-                target_space_path: Some(project.to_string_lossy().to_string()),
+                target_space_path: Some(system_path::user_facing_path(project)),
                 target_path: None,
                 status: "broken".to_string(),
                 exists: false,
@@ -482,7 +483,7 @@ impl IndexState {
             };
             return Ok(ResolvedDocLink {
                 target_space_id: Some(space_id.clone()),
-                target_space_path: Some(target_space_path.to_string_lossy().to_string()),
+                target_space_path: Some(system_path::user_facing_path(&target_space_path)),
                 target_path: Some(target_rel),
                 status: status.to_string(),
                 exists,
@@ -494,7 +495,7 @@ impl IndexState {
         let exists = target_abs.exists();
         Ok(ResolvedDocLink {
             target_space_id: None,
-            target_space_path: Some(project.to_string_lossy().to_string()),
+            target_space_path: Some(system_path::user_facing_path(project)),
             target_path: Some(target_rel),
             status: "ready".to_string(),
             exists,

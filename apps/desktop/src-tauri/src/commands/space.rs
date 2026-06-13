@@ -11,6 +11,7 @@ use crate::git::ops;
 use crate::index::IndexState;
 use crate::space::{config, project, registry, settings, symlinks, types::*};
 use crate::storage::lfs::LfsState;
+use crate::system_path;
 
 fn detect_status_for_ref(parent: &Path, sp_ref: &SpaceRef) -> SpaceStatus {
     project::space_ref_status(parent, sp_ref)
@@ -48,9 +49,9 @@ fn emit_space_added(app: &AppHandle, project: &Path, info: &SpaceInfo, folder: &
     let _ = app.emit(
         "space:added",
         serde_json::json!({
-            "projectPath": project.to_string_lossy(),
+            "projectPath": system_path::user_facing_path(project),
             "spaceId": info.id,
-            "spacePath": project.join(folder).to_string_lossy(),
+            "spacePath": system_path::user_facing_path(&project.join(folder)),
             "status": info.status,
         }),
     );
@@ -60,7 +61,7 @@ fn emit_space_removed(app: &AppHandle, project: &Path, space_id: &str) {
     let _ = app.emit(
         "space:removed",
         serde_json::json!({
-            "projectPath": project.to_string_lossy(),
+            "projectPath": system_path::user_facing_path(project),
             "spaceId": space_id,
         }),
     );
@@ -76,7 +77,7 @@ fn emit_space_status_changed(
     let _ = app.emit(
         "space:status_changed",
         serde_json::json!({
-            "projectPath": project.to_string_lossy(),
+            "projectPath": system_path::user_facing_path(project),
             "spaceId": space_id,
             "oldStatus": old,
             "newStatus": new,
@@ -180,7 +181,7 @@ pub async fn create_project(
         name: cfg.name,
         icon: cfg.icon,
         description: cfg.description,
-        path,
+        path: system_path::user_facing_path(sp_path),
         has_spaces: false,
         last_opened: None,
         status: SpaceStatus::Ready,
@@ -271,7 +272,7 @@ pub async fn open_project_folder(
         name: cfg.name,
         icon: cfg.icon,
         description: cfg.description,
-        path,
+        path: system_path::user_facing_path(sp_path),
         has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
         last_opened: None,
         status: SpaceStatus::Ready,
@@ -660,7 +661,7 @@ pub async fn project_clone(
         name: cfg.name,
         icon: cfg.icon,
         description: cfg.description,
-        path: target_path,
+        path: system_path::user_facing_path(&path),
         has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
         last_opened: None,
         status: SpaceStatus::Ready,
