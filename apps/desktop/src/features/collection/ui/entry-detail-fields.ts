@@ -11,6 +11,7 @@ import type { Entry } from "@/features/editor/types";
 interface PendingUpdate {
   timer: ReturnType<typeof setTimeout>;
   resolve: (entry: Entry | null) => void;
+  version: number;
 }
 
 export function useDebouncedEntryFieldUpdate({
@@ -27,6 +28,7 @@ export function useDebouncedEntryFieldUpdate({
   delay?: number;
 }) {
   const pendingRef = useRef(new Map<string, PendingUpdate>());
+  const versionsRef = useRef(new Map<string, number>());
 
   useEffect(() => {
     return () => {
@@ -47,6 +49,8 @@ export function useDebouncedEntryFieldUpdate({
       );
 
       const key = `${entry.path}:${field}`;
+      const version = (versionsRef.current.get(key) ?? 0) + 1;
+      versionsRef.current.set(key, version);
       const previous = pendingRef.current.get(key);
       if (previous) {
         clearTimeout(previous.timer);
@@ -55,7 +59,9 @@ export function useDebouncedEntryFieldUpdate({
 
       return new Promise<Entry | null>((resolve, reject) => {
         const timer = setTimeout(() => {
-          pendingRef.current.delete(key);
+          if (pendingRef.current.get(key)?.version === version) {
+            pendingRef.current.delete(key);
+          }
           void invoke<Entry>("update_entry_field", {
             space: spacePath,
             filePath: entry.path,
@@ -64,13 +70,17 @@ export function useDebouncedEntryFieldUpdate({
             projectPath: projectPath ?? null,
           })
             .then((updated) => {
+              if (versionsRef.current.get(key) !== version) {
+                resolve(null);
+                return;
+              }
               setEntry(updated);
               onSaved?.(updated);
               resolve(updated);
             })
             .catch(reject);
         }, delay);
-        pendingRef.current.set(key, { timer, resolve });
+        pendingRef.current.set(key, { timer, resolve, version });
       });
     },
     [delay, onSaved, projectPath, setEntry, spacePath],

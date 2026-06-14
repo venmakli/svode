@@ -27,6 +27,7 @@ import { useSpaceStore } from "@/stores/space";
 import { useViewQuery } from "@/features/collection/query";
 import { DeleteDialogs } from "./delete-dialogs";
 import { EntryDetailActions } from "./entry-detail-actions";
+import { useDebouncedEntryFieldUpdate } from "./entry-detail-fields";
 import { EntrySystemFields } from "./entry-system-fields";
 import { DocumentSettings } from "./document-settings-popover";
 import { EntryPeekSheet, type EntryPeekTarget } from "./entry-peek-sheet";
@@ -161,6 +162,20 @@ export function CollectionScreen({
     asFolder: false,
   });
   const initializedCollectionRef = useRef<string | null>(null);
+  const updateReadmeField = useDebouncedEntryFieldUpdate({
+    spacePath,
+    projectPath,
+    setEntry,
+    onSaved: (updated) => {
+      updateNodeMeta(
+        spaceId,
+        readmePath,
+        updated.meta.title,
+        updated.meta.icon,
+        updated.meta.description ?? null,
+      );
+    },
+  });
 
   const views = useMemo(
     () =>
@@ -342,21 +357,8 @@ export function CollectionScreen({
       setEntry(updated);
       return;
     }
-    const updated = await invoke<Entry>("update_entry_field", {
-      space: spacePath,
-      filePath: readmePath,
-      field,
-      value,
-      projectPath: projectPath ?? null,
-    });
-    setEntry(updated);
-    updateNodeMeta(
-      spaceId,
-      readmePath,
-      updated.meta.title,
-      updated.meta.icon,
-      updated.meta.description ?? null,
-    );
+    if (!entry) return;
+    await updateReadmeField(entry, field, value);
   }
 
   async function updateCover(nextCover: EntryCover | null) {
