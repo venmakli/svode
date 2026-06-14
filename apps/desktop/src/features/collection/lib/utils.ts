@@ -1,25 +1,27 @@
 import type { Entry } from "@/features/editor/types";
-import type {
-  CollectionView,
-  ViewType,
-} from "@/features/collection/query";
+import type { CollectionView, ViewType } from "@/features/collection/query";
 
 export function humanize(path: string) {
-  const name = path.split("/").filter(Boolean).at(-1) ?? path;
+  const normalized = normalizeEntryPath(path);
+  const name = normalized.split("/").filter(Boolean).at(-1) ?? normalized;
   return name
     .replace(/[-_]+/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+export function normalizeEntryPath(path: string) {
+  return path.replace(/\\/g, "/");
+}
+
 export function collectionPathFor(documentPath: string) {
-  if (documentPath.toLowerCase() === "readme.md") return "";
-  return documentPath
-    .replace(/\/readme\.md$/i, "")
-    .replace(/\/README\.md$/, "");
+  const normalized = normalizeEntryPath(documentPath);
+  if (normalized.toLowerCase() === "readme.md") return "";
+  return normalized.replace(/\/readme\.md$/i, "");
 }
 
 export function readmePathFor(collectionPath: string) {
-  return collectionPath ? `${collectionPath}/README.md` : "README.md";
+  const normalized = normalizeEntryPath(collectionPath).replace(/\/+$/g, "");
+  return normalized ? `${normalized}/README.md` : "README.md";
 }
 
 export function viewName(view: unknown): string {

@@ -1,3 +1,5 @@
+import { normalizeEntryPath } from "../lib/utils";
+
 export type TemplateKind = "leaf" | "folder" | "nestedCollection";
 
 export interface TemplateInfo {
@@ -37,8 +39,9 @@ export function templateHeadPath(
   collectionPath: string,
   template: Pick<TemplateInfo, "slug" | "kind">,
 ) {
-  const base = collectionPath
-    ? `${collectionPath}/.templates/${template.slug}`
+  const normalizedCollectionPath = normalizeEntryPath(collectionPath);
+  const base = normalizedCollectionPath
+    ? `${normalizedCollectionPath}/.templates/${template.slug}`
     : `.templates/${template.slug}`;
   return template.kind === "leaf" ? `${base}.md` : `${base}/README.md`;
 }

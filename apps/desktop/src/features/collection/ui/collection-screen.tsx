@@ -56,6 +56,7 @@ import {
   isEditableTarget,
   nextTableViewName,
   nextViewName,
+  normalizeEntryPath,
   readmePathFor,
   viewName,
   viewType,
@@ -89,12 +90,14 @@ function isMarkdownEntryPath(path: string) {
 }
 
 function entryTemplateSlug(collectionPath: string, entryPath: string) {
-  const prefix = collectionPath
-    ? `${collectionPath}/.templates/`
+  const normalizedCollectionPath = normalizeEntryPath(collectionPath);
+  const normalizedEntryPath = normalizeEntryPath(entryPath);
+  const prefix = normalizedCollectionPath
+    ? `${normalizedCollectionPath}/.templates/`
     : ".templates/";
-  const rest = entryPath.startsWith(prefix)
-    ? entryPath.slice(prefix.length)
-    : entryPath;
+  const rest = normalizedEntryPath.startsWith(prefix)
+    ? normalizedEntryPath.slice(prefix.length)
+    : normalizedEntryPath;
   return rest.replace(/\/README\.md$/i, "").replace(/\.md$/i, "");
 }
 
@@ -1357,13 +1360,14 @@ export function CollectionScreen({
         onSetTemplateDefault={setDefaultTemplateForMenu}
         onDuplicateTemplate={async (entryToDuplicate) => {
           const slug = entryTemplateSlug(collectionPath, entryToDuplicate.path);
+          const duplicatePath = normalizeEntryPath(entryToDuplicate.path);
           await duplicateTemplateForMenu({
             slug,
             title: entryToDuplicate.meta.title,
             icon: entryToDuplicate.meta.icon,
-            kind: entryToDuplicate.path.toLowerCase().includes("/schema.yaml")
+            kind: duplicatePath.toLowerCase().includes("/schema.yaml")
               ? "nestedCollection"
-              : entryToDuplicate.path.toLowerCase().endsWith("/readme.md")
+              : duplicatePath.toLowerCase().endsWith("/readme.md")
                 ? "folder"
                 : "leaf",
           });

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { QueryFilter, QuerySort } from "@/features/collection/query";
+import { normalizeEntryPath } from "@/features/collection/lib/utils";
 import type { Entry } from "@/features/editor/types";
 
 export function queryCollectionEntries({
@@ -55,9 +56,10 @@ export async function saveCollectionTreeOrder({
 }
 
 function orderNameForEntry(entry: Entry) {
-  if (entry.path.toLowerCase().endsWith("/readme.md")) {
-    const folder = entry.path.replace(/\/readme\.md$/i, "");
+  const path = normalizeEntryPath(entry.path);
+  if (path.toLowerCase().endsWith("/readme.md")) {
+    const folder = path.replace(/\/readme\.md$/i, "");
     return folder.split("/").at(-1) ?? folder;
   }
-  return entry.path.split("/").at(-1) ?? entry.path;
+  return path.split("/").at(-1) ?? path;
 }

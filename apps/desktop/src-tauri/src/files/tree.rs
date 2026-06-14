@@ -59,13 +59,21 @@ fn read_frontmatter_meta(abs_path: &Path) -> (String, Option<String>, Option<Str
     }
 }
 
+fn repo_path_string(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
 /// Read order.json from space .svode directory.
 /// Returns map: directory relative path -> ordered list of child names.
 /// Key "." means space root.
 pub fn read_order(space: &Path) -> HashMap<String, Vec<String>> {
     let order_path = space.join(".svode").join("order.json");
     match fs::read_to_string(&order_path) {
-        Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
+        Ok(data) => serde_json::from_str::<HashMap<String, Vec<String>>>(&data)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(key, value)| (key.replace('\\', "/"), value))
+            .collect(),
         Err(_) => HashMap::new(),
     }
 }
@@ -114,7 +122,7 @@ fn child_folder_names(space: &Path) -> HashSet<String> {
     if let Ok(cfg) = read_space_config(space) {
         if let Some(spaces) = cfg.spaces {
             for child in spaces {
-                names.insert(child.path);
+                names.insert(child.path.replace('\\', "/"));
             }
         }
     }
@@ -145,10 +153,7 @@ fn read_dir_recursive(
     let dir_key = if dir == base {
         ".".to_string()
     } else {
-        dir.strip_prefix(base)
-            .unwrap_or(dir)
-            .to_string_lossy()
-            .to_string()
+        repo_path_string(dir.strip_prefix(base).unwrap_or(dir))
     };
 
     for entry in entries {
@@ -167,11 +172,8 @@ fn read_dir_recursive(
             }
         }
 
-        let rel_path = abs_path
-            .strip_prefix(base)
-            .unwrap_or(&abs_path)
-            .to_string_lossy()
-            .to_string();
+        let rel_path = abs_path.strip_prefix(base).unwrap_or(&abs_path);
+        let rel_path = repo_path_string(rel_path);
 
         if abs_path.is_dir() {
             // Skip child space folders (registered in parent config)
@@ -239,4 +241,31 @@ fn read_dir_recursive(
     apply_order(&mut nodes, order.get(&dir_key));
 
     Ok(nodes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn read_order_normalizes_windows_directory_keys() {
+        let tmp = TempDir::new().unwrap();
+        let svode = tmp.path().join(".svode");
+        fs::create_dir_all(&svode).unwrap();
+        fs::write(
+            svode.join("order.json"),
+            r#"{"operations\\board":["task.md"],".":["operations"]}"#,
+        )
+        .unwrap();
+
+        let order = read_order(tmp.path());
+
+        assert!(order.contains_key("operations/board"));
+        assert!(!order.contains_key("operations\\board"));
+        assert_eq!(
+            order.get("operations/board").unwrap(),
+            &vec!["task.md".to_string()]
+        );
+    }
 }

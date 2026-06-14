@@ -23,6 +23,7 @@ import type { Entry } from "@/features/editor/types";
 import { detailPageSectionClassName } from "@/shared/ui/page-layout";
 import type { TreeNode } from "@/types/space";
 import { cn } from "@/lib/utils";
+import { normalizeEntryPath } from "../lib/utils";
 import { handleError } from "../lib/errors";
 import * as m from "@/paraglide/messages.js";
 
@@ -164,7 +165,9 @@ export function EntrySubpages({
 
 function SubpageRow({ node, onOpen }: { node: TreeNode; onOpen: () => void }) {
   const sortable = useSortable({ id: node.path });
-  const folder = node.path.toLowerCase().endsWith("/readme.md");
+  const folder = normalizeEntryPath(node.path)
+    .toLowerCase()
+    .endsWith("/readme.md");
   return (
     <div
       ref={sortable.setNodeRef}
@@ -201,8 +204,9 @@ function SubpageRow({ node, onOpen }: { node: TreeNode; onOpen: () => void }) {
 }
 
 function folderPathForReadme(path: string) {
-  if (!path.toLowerCase().endsWith("/readme.md")) return null;
-  return path.replace(/\/readme\.md$/i, "");
+  const normalized = normalizeEntryPath(path);
+  if (!normalized.toLowerCase().endsWith("/readme.md")) return null;
+  return normalized.replace(/\/readme\.md$/i, "");
 }
 
 function findNode(
@@ -210,9 +214,12 @@ function findNode(
   documentPath: string,
   folderPath: string,
 ): TreeNode | null {
+  const normalizedDocumentPath = normalizeEntryPath(documentPath);
   for (const node of nodes) {
-    const nodeFolder = node.path.replace(/\/readme\.md$/i, "");
-    if (node.path === documentPath || nodeFolder === folderPath) return node;
+    const nodePath = normalizeEntryPath(node.path);
+    const nodeFolder = nodePath.replace(/\/readme\.md$/i, "");
+    if (nodePath === normalizedDocumentPath || nodeFolder === folderPath)
+      return node;
     const found = findNode(node.children, documentPath, folderPath);
     if (found) return found;
   }
@@ -220,9 +227,10 @@ function findNode(
 }
 
 function orderNameForNode(node: TreeNode) {
-  if (node.path.toLowerCase().endsWith("/readme.md")) {
+  const path = normalizeEntryPath(node.path);
+  if (path.toLowerCase().endsWith("/readme.md")) {
     return (
-      node.path
+      path
         .replace(/\/readme\.md$/i, "")
         .split("/")
         .at(-1) ?? node.name

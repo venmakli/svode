@@ -2,6 +2,7 @@ import type { DateSelectArg, EventDropArg } from "@fullcalendar/core";
 import type { EventResizeDoneArg } from "@fullcalendar/interaction";
 import type { CSSProperties } from "react";
 import type { CollectionView } from "@/features/collection/query";
+import { normalizeEntryPath } from "@/features/collection/lib/utils";
 import type { Entry } from "@/features/editor/types";
 import type {
   CollectionSchema,
@@ -293,7 +294,7 @@ export function eventColorStyle(color: string | null) {
 }
 
 export function isFolderEntry(entry: Entry) {
-  return entry.path.toLowerCase().endsWith("/readme.md");
+  return normalizeEntryPath(entry.path).toLowerCase().endsWith("/readme.md");
 }
 
 function eventColor(

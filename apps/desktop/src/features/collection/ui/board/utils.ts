@@ -6,6 +6,7 @@ import type {
 } from "@/features/properties/model";
 import { isEmptyValue, personDisplayName } from "@/features/properties/lib";
 import type { CollectionView } from "@/features/collection/query";
+import { normalizeEntryPath } from "@/features/collection/lib/utils";
 import { entryCollectionPath } from "../table/utils";
 import type { BoardColumnGroup } from "./types";
 import * as m from "@/paraglide/messages.js";
@@ -197,7 +198,7 @@ export function isNestedCollectionEntry(
 }
 
 export function isFolderEntry(entry: Entry) {
-  return entry.path.toLowerCase().endsWith("/readme.md");
+  return normalizeEntryPath(entry.path).toLowerCase().endsWith("/readme.md");
 }
 
 function sortedOptions(column: Column) {

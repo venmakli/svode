@@ -1,5 +1,6 @@
 import type { CollectionView } from "@/features/collection/query";
 import type { Entry } from "@/features/editor/types";
+import { normalizeEntryPath } from "@/features/collection/lib/utils";
 import type { CollectionSchema, Column } from "@/features/properties/model";
 import { entryCollectionPath, entryParentDir } from "../table/utils";
 import type { ListRowModel } from "./types";
@@ -97,7 +98,7 @@ export function flattenListRows({
 }
 
 export function isFolderEntry(entry: Entry) {
-  return entry.path.toLowerCase().endsWith("/readme.md");
+  return normalizeEntryPath(entry.path).toLowerCase().endsWith("/readme.md");
 }
 
 export function siblingEntries(entries: Entry[], parentPath: string) {

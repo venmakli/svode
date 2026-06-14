@@ -1,6 +1,7 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { CSSProperties } from "react";
 import type { CollectionView } from "@/features/collection/query";
+import { normalizeEntryPath } from "@/features/collection/lib/utils";
 import type { Entry, EntryCover } from "@/features/editor/types";
 import type {
   CollectionSchema,
@@ -130,7 +131,7 @@ export function isNestedCollectionEntry(
 }
 
 export function isFolderEntry(entry: Entry) {
-  return entry.path.toLowerCase().endsWith("/readme.md");
+  return normalizeEntryPath(entry.path).toLowerCase().endsWith("/readme.md");
 }
 
 export function resolveGalleryCover({

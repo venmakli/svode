@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useSpaceStore } from "@/stores/space";
 import type { Entry } from "@/features/editor/types";
+import { normalizeEntryPath } from "../lib/utils";
 import { handleError } from "../lib/errors";
 import * as m from "@/paraglide/messages.js";
 
@@ -118,7 +119,10 @@ export function EntryDetailActions({
       entryId: entry.meta.id,
       projectPath: projectPath ?? null,
     });
-    const parentPath = folderEntry.path.replace(/\/readme\.md$/i, "");
+    const parentPath = normalizeEntryPath(folderEntry.path).replace(
+      /\/readme\.md$/i,
+      "",
+    );
     const childEntry = await invoke<Entry>("create_entry", {
       space: spacePath,
       parentPath,
@@ -174,9 +178,7 @@ export function EntryDetailActions({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64">
         {form === "leaf" ? (
-          <DropdownMenuItem
-            onClick={() => void nestPage().catch(handleError)}
-          >
+          <DropdownMenuItem onClick={() => void nestPage().catch(handleError)}>
             <FilePlus data-icon="inline-start" />
             {m.space_nest_page()}
           </DropdownMenuItem>
@@ -254,7 +256,7 @@ export function EntryDetailActions({
 }
 
 function inferEntryDetailState(path: string): EntryDetailState {
-  return path.toLowerCase().endsWith("/readme.md")
+  return normalizeEntryPath(path).toLowerCase().endsWith("/readme.md")
     ? { form: "folder", subpageCount: 0, otherFileCount: 0 }
     : { form: "leaf", subpageCount: 0, otherFileCount: 0 };
 }

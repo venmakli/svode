@@ -6,6 +6,7 @@ import type {
   Column,
   PropertyType,
 } from "@/features/properties/model";
+import { normalizeEntryPath } from "@/features/collection/lib/utils";
 import { PROPERTY_TYPES } from "@/features/properties/lib";
 import type { CollectionTableRow } from "./types";
 
@@ -48,13 +49,15 @@ export function minColumnWidth(column?: Column) {
 }
 
 export function entryParentDir(path: string) {
-  const normalized = path.replace(/\/readme\.md$/i, ".md");
+  const normalized = normalizeEntryPath(path).replace(/\/readme\.md$/i, ".md");
   const index = normalized.lastIndexOf("/");
   return index < 0 ? "" : normalized.slice(0, index);
 }
 
 export function entryCollectionPath(entry: Entry) {
-  return entry.path.replace(/\/readme\.md$/i, "").replace(/\.md$/i, "");
+  return normalizeEntryPath(entry.path)
+    .replace(/\/readme\.md$/i, "")
+    .replace(/\.md$/i, "");
 }
 
 export function flattenRows(
@@ -117,7 +120,9 @@ export function isExpandable(
   nestedCollectionPaths: Set<string> = new Set(),
 ) {
   if (!showNested) return false;
-  const folderEntry = entry.path.toLowerCase().endsWith("/readme.md");
+  const folderEntry = normalizeEntryPath(entry.path)
+    .toLowerCase()
+    .endsWith("/readme.md");
   const nestedCollection = nestedCollectionPaths.has(
     entryCollectionPath(entry),
   );
@@ -189,9 +194,10 @@ export async function saveTableOrder(
 }
 
 function orderNameForEntry(entry: Entry) {
-  if (entry.path.toLowerCase().endsWith("/readme.md")) {
-    const folder = entry.path.replace(/\/readme\.md$/i, "");
+  const path = normalizeEntryPath(entry.path);
+  if (path.toLowerCase().endsWith("/readme.md")) {
+    const folder = path.replace(/\/readme\.md$/i, "");
     return folder.split("/").at(-1) ?? folder;
   }
-  return entry.path.split("/").at(-1) ?? entry.path;
+  return path.split("/").at(-1) ?? path;
 }
