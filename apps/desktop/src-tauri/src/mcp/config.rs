@@ -210,8 +210,8 @@ pub fn install_client(client: McpClient) -> Result<ClientConfigResult, McpBusine
     let mut result = print_config(client);
     match client {
         McpClient::ClaudeCode => {
-            if which::which("claude").is_ok() {
-                let mut cmd = Command::new("claude");
+            if let Some(claude) = find_agent_command("claude") {
+                let mut cmd = Command::new(claude);
                 process::hide_window(&mut cmd);
                 let status = cmd
                     .args([
@@ -251,8 +251,8 @@ pub fn remove_client(client: McpClient) -> Result<ClientConfigResult, McpBusines
     let mut result = print_config(client);
     match client {
         McpClient::ClaudeCode => {
-            if which::which("claude").is_ok() {
-                let mut cmd = Command::new("claude");
+            if let Some(claude) = find_agent_command("claude") {
+                let mut cmd = Command::new(claude);
                 process::hide_window(&mut cmd);
                 let status = cmd.args(["mcp", "remove", "svode"]).status()?;
                 result.message = if status.success() {
@@ -353,9 +353,11 @@ pub fn doctor(discovery_present: bool, desktop_reachable: bool) -> DoctorReport 
 fn client_status(client: McpClient) -> McpClientStatus {
     match client {
         McpClient::ClaudeCode => {
-            let path = which::which("claude").ok();
+            let path = find_agent_command("claude");
             let found = path.is_some();
-            let installed = found && command_success("claude", &["mcp", "get", "svode"]);
+            let installed = path
+                .as_deref()
+                .is_some_and(|path| command_success(path, &["mcp", "get", "svode"]));
             McpClientStatus {
                 id: client.as_str().to_string(),
                 name: "Claude Code".to_string(),
@@ -369,18 +371,21 @@ fn client_status(client: McpClient) -> McpClientStatus {
                 message: if found {
                     None
                 } else {
-                    Some("Claude Code CLI was not found in PATH".to_string())
+                    Some(
+                        "Claude Code CLI was not found in PATH or standard install locations"
+                            .to_string(),
+                    )
                 },
             }
         }
         McpClient::Codex => {
-            let path = which::which("codex").ok();
-            let found = path.is_some();
+            let path = find_agent_command("codex");
             let config_path = codex_config_path().ok();
             let installed = config_path
                 .as_ref()
                 .and_then(|path| fs::read_to_string(path).ok())
                 .is_some_and(|content| content.contains("[mcp_servers.svode]"));
+            let found = path.is_some() || config_path.as_ref().is_some_and(|path| path.is_file());
             McpClientStatus {
                 id: client.as_str().to_string(),
                 name: "Codex".to_string(),
@@ -392,7 +397,7 @@ fn client_status(client: McpClient) -> McpClientStatus {
                 message: if found {
                     None
                 } else {
-                    Some("Codex CLI was not found in PATH".to_string())
+                    Some("Codex CLI/config was not found".to_string())
                 },
             }
         }
@@ -400,21 +405,115 @@ fn client_status(client: McpClient) -> McpClientStatus {
 }
 
 fn client_status_name(found: bool, installed: bool) -> String {
-    if !found {
-        "not_found".to_string()
-    } else if installed {
+    if installed {
         "installed".to_string()
+    } else if !found {
+        "not_found".to_string()
     } else {
         "mcp_not_installed".to_string()
     }
 }
 
-fn command_success(command: &str, args: &[&str]) -> bool {
+fn command_success(command: &Path, args: &[&str]) -> bool {
     let mut cmd = Command::new(command);
     process::hide_window(&mut cmd);
     cmd.args(args)
         .output()
         .is_ok_and(|output| output.status.success())
+}
+
+fn find_agent_command(command: &str) -> Option<PathBuf> {
+    if let Ok(path) = which::which(command) {
+        return Some(path);
+    }
+
+    let names = command_candidate_names(command);
+    for dir in agent_command_search_dirs() {
+        for name in &names {
+            let candidate = dir.join(name);
+            if is_executable(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn command_candidate_names(command: &str) -> Vec<String> {
+    if !cfg!(windows) || Path::new(command).extension().is_some() {
+        return vec![command.to_string()];
+    }
+
+    ["exe", "cmd", "bat"]
+        .into_iter()
+        .map(|extension| format!("{command}.{extension}"))
+        .chain(std::iter::once(command.to_string()))
+        .collect()
+}
+
+fn agent_command_search_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(path) = env::var_os("PATH") {
+        for dir in env::split_paths(&path) {
+            push_unique_path(&mut dirs, dir);
+        }
+    }
+
+    if let Ok(home) = home_path() {
+        for suffix in [
+            ".local/bin",
+            ".volta/bin",
+            ".cargo/bin",
+            ".bun/bin",
+            ".npm-global/bin",
+            ".pnpm",
+            "Library/pnpm",
+            "Library/Application Support/pnpm",
+        ] {
+            push_unique_path(&mut dirs, home.join(suffix));
+        }
+
+        if cfg!(windows) {
+            for suffix in [
+                "AppData/Roaming/npm",
+                "AppData/Local/pnpm",
+                "AppData/Local/Programs/pnpm",
+            ] {
+                push_unique_path(&mut dirs, home.join(suffix));
+            }
+        }
+    }
+
+    if cfg!(target_os = "macos") {
+        for path in [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/opt/local/bin",
+            "/usr/bin",
+            "/bin",
+        ] {
+            push_unique_path(&mut dirs, PathBuf::from(path));
+        }
+    }
+
+    if cfg!(windows) {
+        if let Some(appdata) = env::var_os("APPDATA") {
+            push_unique_path(&mut dirs, PathBuf::from(appdata).join("npm"));
+        }
+        if let Some(local_appdata) = env::var_os("LOCALAPPDATA") {
+            let local_appdata = PathBuf::from(local_appdata);
+            push_unique_path(&mut dirs, local_appdata.join("pnpm"));
+            push_unique_path(&mut dirs, local_appdata.join("Programs").join("pnpm"));
+        }
+    }
+
+    dirs
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
 }
 
 fn mcp_suffixed_name(triple: &str) -> String {
@@ -554,5 +653,16 @@ mod tests {
             toml_escape(r#"C:\Program Files\Svode "A""#),
             r#"C:\\Program Files\\Svode \"A\""#
         );
+    }
+
+    #[test]
+    fn installed_client_status_wins_without_cli_path() {
+        assert_eq!(client_status_name(false, true), "installed");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn unix_command_candidates_do_not_add_windows_extensions() {
+        assert_eq!(command_candidate_names("codex"), vec!["codex".to_string()]);
     }
 }
