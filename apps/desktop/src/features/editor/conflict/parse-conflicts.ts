@@ -38,7 +38,9 @@ export function deserializeWithConflicts(
 
   const deserializeSegment = (segment: string) => {
     if (segment.length === 0) return;
-    const nodes = editor.getApi(MarkdownPlugin).markdown.deserialize(segment);
+    const nodes = editor
+      .getApi(MarkdownPlugin)
+      .markdown.deserialize(normalizeMarkdownForPlate(segment));
     if (Array.isArray(nodes)) {
       result.push(...(nodes as Descendant[]));
     }
@@ -65,6 +67,10 @@ export function deserializeWithConflicts(
   }
 
   return result;
+}
+
+export function normalizeMarkdownForPlate(markdown: string): string {
+  return markdown.replace(/<br\s*>/gi, "<br />");
 }
 
 /** Does the given Plate value contain any unresolved conflict elements? */
