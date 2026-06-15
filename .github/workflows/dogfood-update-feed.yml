@@ -1,0 +1,45 @@
+name: dogfood-update-feed
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dogfood-update-feed
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release metadata
+        id: release_meta
+        shell: bash
+        run: |
+          tag="${{ github.event.release.tag_name }}"
+          git fetch --tags --force
+          sha="$(git rev-list -n 1 "$tag")"
+          version="${tag#v}"
+
+          {
+            echo "sha=$sha"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Update dogfood feed
+        env:
+          UPDATE_KIND: stage-release
+          UPDATE_VERSION: ${{ steps.release_meta.outputs.version }}
+          UPDATE_COMMIT: ${{ steps.release_meta.outputs.sha }}
+          UPDATE_URL: ${{ github.event.release.html_url }}
+          UPDATE_NOTES_URL: ${{ github.event.release.html_url }}
+          UPDATE_PUBLISHED_AT: ${{ github.event.release.published_at }}
+        run: node scripts/update-dogfood-feed.mjs

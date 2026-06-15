@@ -7,6 +7,7 @@ import { SpaceSettingsDialog } from "@/features/settings/space-settings-dialog";
 import { IdentityDialog } from "@/features/identity/identity-dialog";
 import { useIdentityCheck } from "@/features/identity/use-identity-check";
 import { useIdentityStore } from "@/features/identity/identity-store";
+import { DogfoodUpdateNotifier } from "@/features/updates";
 
 function SettingsDialogs() {
   const { settingsDialog, settingsSpacePath, closeSettings } = useLayoutStore();
@@ -15,12 +16,16 @@ function SettingsDialogs() {
     <>
       <AppSettingsDialog
         open={settingsDialog === "app"}
-        onOpenChange={(open) => { if (!open) closeSettings(); }}
+        onOpenChange={(open) => {
+          if (!open) closeSettings();
+        }}
       />
       <SpaceSettingsDialog
         open={settingsDialog === "space"}
         spacePath={settingsSpacePath}
-        onOpenChange={(open) => { if (!open) closeSettings(); }}
+        onOpenChange={(open) => {
+          if (!open) closeSettings();
+        }}
       />
     </>
   );
@@ -50,6 +55,7 @@ function IdentityGate() {
 export const Route = createRootRoute({
   component: () => (
     <ThemeProvider defaultTheme="system">
+      <DogfoodUpdateNotifier />
       <IdentityGate />
       <Toaster />
     </ThemeProvider>

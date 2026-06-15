@@ -57,6 +57,7 @@ import { invalidateAppSettings } from "@/hooks/use-app-settings";
 import { useIdentityStore } from "@/features/identity/identity-store";
 import { isValidEmail, isValidName } from "@/features/identity/validation";
 import { McpIntegrationsSection } from "@/features/settings/mcp-section";
+import { getBuildCommit, useDogfoodUpdateCheck } from "@/features/updates";
 import type { AppSettings, AvailableAgent } from "@/types/space";
 
 const CLI_AUTH_COMMANDS: Record<string, string> = {
@@ -240,10 +241,12 @@ export function AppSettingsDialog({
   const visibleNavItems = NAV_ITEMS.filter((item) => item.show);
   const currentNav =
     visibleNavItems.find((i) => i.key === section) ?? visibleNavItems[0];
-  const buildEnv = (import.meta as { env?: Record<string, string | undefined> })
-    .env;
-  const buildCommit = buildEnv?.VITE_SVODE_BUILD_COMMIT?.trim() ?? "";
+  const buildCommit = getBuildCommit();
   const releaseUrl = "https://github.com/venmakli/svode/releases";
+  const updates = useDogfoodUpdateCheck({
+    currentVersion: version,
+    currentBuildCommit: buildCommit,
+  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -537,8 +540,36 @@ export function AppSettingsDialog({
                   <div className="flex flex-col gap-1">
                     <Label>{m.settings_about_updates()}</Label>
                     <p className="text-sm text-muted-foreground">
-                      {m.settings_about_updates_manual()}
+                      {updates.update
+                        ? updateStatusText(updates.update.item.kind)
+                        : updateFallbackText(updates.status)}
                     </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        void updates.check({ silent: false, force: true })
+                      }
+                      disabled={updates.checking || !version}
+                    >
+                      <RefreshCw
+                        className={`mr-2 h-3 w-3 ${updates.checking ? "animate-spin" : ""}`}
+                      />
+                      {updates.checking
+                        ? m.settings_about_updates_checking()
+                        : m.settings_about_updates_check()}
+                    </Button>
+                    {updates.update && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => void updates.openUpdate(updates.update!)}
+                      >
+                        {m.updates_download()}
+                      </Button>
+                    )}
                   </div>
                   <a
                     href={releaseUrl}
@@ -557,4 +588,15 @@ export function AppSettingsDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function updateFallbackText(status: string): string {
+  if (status === "current") return m.settings_about_updates_current();
+  if (status === "error") return m.settings_about_updates_failed();
+  return m.settings_about_updates_manual();
+}
+
+function updateStatusText(kind: "stage-release" | "ci-build"): string {
+  if (kind === "ci-build") return m.settings_about_updates_ci_available();
+  return m.settings_about_updates_release_available();
 }

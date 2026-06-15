@@ -61,6 +61,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Resolve build commit
+        id: build_meta
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - uses: oven-sh/setup-bun@v2
 
       - uses: dtolnay/rust-toolchain@stable
@@ -88,6 +93,7 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VITE_SVODE_BUILD_COMMIT: ${{ steps.build_meta.outputs.sha }}
         with:
           projectPath: apps/desktop
           tagName: ${{ github.ref_name }}
