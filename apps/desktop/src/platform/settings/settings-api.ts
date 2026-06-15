@@ -1,7 +1,22 @@
 import { invokeCommand } from "@/platform/native/invoke";
-import type { AppSettings } from "@/types/space";
 
-export type AppSettingsDto = AppSettings;
+export interface DetectedCliDto {
+  name: string;
+  path: string;
+  version?: string;
+  authStatus: string;
+}
+
+export interface AppAgentSettingsDto {
+  detected: DetectedCliDto[];
+  lastScan?: string;
+}
+
+export interface AppSettingsDto {
+  appearance: { theme: string; language: string };
+  window: { width: number; height: number };
+  agents?: AppAgentSettingsDto;
+}
 
 export function getAppSettings(): Promise<AppSettingsDto> {
   return invokeCommand<AppSettingsDto>("get_app_settings");

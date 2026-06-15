@@ -1,11 +1,74 @@
-import type {
-  SpaceConfig,
-  SpaceGitType,
-  SpaceInfo,
-  TreeNode,
-} from "@/types/space";
+export type SpaceGitTypeDto = "inline" | "independent" | "submodule";
 
-export type SpaceInfoDto = SpaceInfo;
-export type SpaceConfigDto = SpaceConfig;
-export type SpaceGitTypeDto = SpaceGitType;
-export type TreeNodeDto = TreeNode;
+export type SpaceStatusDto = "ready" | "missing" | "broken";
+
+export type LfsStateDto = "n/a" | "ready" | "missing-creds" | "pulling";
+
+export interface SpaceInfoDto {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+  path: string;
+  hasSpaces: boolean;
+  lastOpened: string | null;
+  status: SpaceStatusDto;
+  lfsState: LfsStateDto;
+}
+
+export interface GitSpaceConfigDto {
+  autoSync?: boolean;
+}
+
+export type AssetsStrategyDto = "local" | "in-git" | "lfs-remote" | "lfs-s3";
+
+export interface AssetsS3ConfigDto {
+  endpoint: string;
+  bucket: string;
+  region: string;
+}
+
+export interface AssetsSpaceConfigDto {
+  strategy: AssetsStrategyDto;
+  s3?: AssetsS3ConfigDto;
+}
+
+export interface SpaceRefDto {
+  id: string;
+  path: string;
+  repo?: string;
+}
+
+export interface AgentConfigDto {
+  clis?: string[];
+  defaultModel?: string;
+  systemPrompt?: string;
+  maxTurns?: number;
+  maxTimeout?: number;
+}
+
+export interface SpaceDefaultsDto {
+  agent?: AgentConfigDto;
+}
+
+export interface SpaceConfigDto {
+  name: string;
+  description: string;
+  icon: string;
+  spaces?: SpaceRefDto[];
+  agent?: AgentConfigDto;
+  defaults?: SpaceDefaultsDto;
+  git?: GitSpaceConfigDto;
+  assets?: AssetsSpaceConfigDto;
+}
+
+export interface TreeNodeDto {
+  name: string;
+  path: string;
+  title: string;
+  icon: string | null;
+  description?: string | null;
+  has_changes: boolean;
+  has_schema: boolean;
+  children: TreeNodeDto[];
+}
