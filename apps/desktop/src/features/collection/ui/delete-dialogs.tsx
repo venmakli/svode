@@ -8,7 +8,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import * as m from "@/paraglide/messages.js";
 
 export function DeleteDialogs({

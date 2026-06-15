@@ -24,11 +24,8 @@ import {
   openProject,
   openProjectFolder,
 } from "@/platform/space/space-api";
-import type {
-  SpaceInfo,
-  SpaceGitType,
-  TreeNode,
-} from "@/types/space";
+import type { TreeNode } from "@/features/entry";
+import type { SpaceInfo, SpaceGitType } from "@/features/space";
 
 interface SpaceState {
   // Root spaces (projects on the home page)
@@ -82,6 +79,7 @@ interface SpaceState {
   clearActiveSpace: () => void;
 
   // Document/tree methods
+  createEntry: (spacePath: string, title: string) => Promise<EntryDto | null>;
   createPage: (spacePath: string, title: string) => Promise<EntryDto | null>;
   refreshTree: (spaceId?: string) => Promise<void>;
   updateNodeMeta: (
@@ -361,7 +359,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     toast.success(m.toast_space_deleted());
   },
 
-  createPage: async (spacePath: string, title: string) => {
+  createEntry: async (spacePath: string, title: string) => {
     try {
       const entry = await createEntryNative({
         space: spacePath,
@@ -385,6 +383,9 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       return null;
     }
   },
+
+  createPage: async (spacePath: string, title: string) =>
+    get().createEntry(spacePath, title),
 
   refreshTree: async (spaceId?: string) => {
     const id = spaceId ?? get().activeSpaceId ?? get().activeRootId;

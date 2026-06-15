@@ -10,7 +10,7 @@ import {
   type QueryFilter,
   type QuerySort,
 } from "@/features/collection/query";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import { updateEntryDateValue } from "./utils";
 import * as m from "@/paraglide/messages.js";
 

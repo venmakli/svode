@@ -1,4 +1,4 @@
-import type { SpaceInfo } from "@/types/space";
+import type { SpaceInfo } from "@/features/space";
 import type { TerminalTarget } from "@/features/terminal/model/types";
 
 export function buildProjectTerminalTarget(project: {

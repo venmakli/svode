@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { CoverBanner } from "./cover-banner";
 import { TitleZone } from "./title-zone";
 import { cn } from "@/shared/lib/utils";
-import type { EntryCover } from "./types";
+import type { EntryCover } from "@/features/entry";
 
 interface EntryIdentityHeaderProps {
   title: string;

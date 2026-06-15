@@ -12,7 +12,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import {
   validatePropertyValue,
   type Column,

@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useLayoutStore } from "@/stores/layout";
 import { useSpaceStore } from "@/stores/space";
-import type { TreeNode } from "@/types/space";
+import type { TreeNode } from "@/features/entry";
 
 function findTitleInTree(
   nodes: TreeNode[],

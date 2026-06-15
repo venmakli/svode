@@ -40,14 +40,14 @@ import {
 
 import { useSpaceStore } from "@/stores/space";
 import { useLayoutStore } from "@/stores/layout";
-import { NavDocuments } from "@/features/workspace/nav-documents";
-import { NavSpaces } from "@/features/workspace/nav-spaces";
-import { CreateSpaceDialog } from "@/features/workspace/create-space-dialog";
+import { NavDocuments } from "./nav-documents";
+import { NavSpaces } from "./nav-spaces";
+import { CreateSpaceDialog } from "./create-space-dialog";
 import { useEffectiveIdentity } from "@/features/identity/use-effective-identity";
 import { avatarColorFromEmail } from "@/features/identity/avatar-colors";
 import * as m from "@/paraglide/messages.js";
 
-export function AppSidebar() {
+export function SpaceSidebar() {
   const navigate = useNavigate();
   const {
     rootSpaces,

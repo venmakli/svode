@@ -19,7 +19,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useSpaceStore } from "@/stores/space";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import { normalizeEntryPath } from "../lib/utils";
 import { handleError } from "../lib/errors";
 import * as m from "@/paraglide/messages.js";

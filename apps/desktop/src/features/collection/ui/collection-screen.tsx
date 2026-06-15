@@ -70,7 +70,7 @@ import {
 } from "../model";
 import type { CollectionView, ViewType } from "@/features/collection/query";
 import type { CollectionSchema } from "@/features/properties/model";
-import type { Entry, EntryCover } from "@/features/editor/types";
+import type { Entry, EntryCover } from "@/features/entry";
 import * as m from "@/paraglide/messages.js";
 
 interface CollectionScreenProps {

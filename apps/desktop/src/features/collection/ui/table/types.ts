@@ -1,4 +1,4 @@
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import type {
   CollectionView,
   QueryFilter,

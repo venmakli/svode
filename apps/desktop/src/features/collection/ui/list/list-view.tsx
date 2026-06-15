@@ -27,7 +27,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSpaceStore } from "@/stores/space";
 import { useStableViewQueryArgs } from "@/features/collection/query";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import type { Column } from "@/features/properties/model";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import {

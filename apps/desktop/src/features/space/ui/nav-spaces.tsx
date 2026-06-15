@@ -54,28 +54,23 @@ import {
 } from "lucide-react";
 import { useSpaceStore } from "@/stores/space";
 import { useLayoutStore } from "@/stores/layout";
-import type {
-  TreeNode,
-  SpaceConfig,
-  SpaceInfo,
-  LfsState,
-} from "@/types/space";
+import type { TreeNode } from "@/features/entry";
+import type { LfsState, SpaceConfig, SpaceInfo } from "@/features/space";
 import { listen } from "@/platform/native/events";
-import type { CloneProgress } from "@/types/git";
+import type { CloneProgress } from "@/features/git";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { CreateSpaceDialog } from "./create-space-dialog";
-import { createCollection } from "./api/collections";
+import { createCollection } from "@/features/collection";
 import { SortableFileTree } from "./sortable-file-tree";
 import { FileTreeItem } from "./file-tree-item";
-import { GitIndicatorIcon } from "./git-status-indicator";
-import { SpaceGitWatcher } from "./space-git-watcher";
+import { GitIndicatorIcon, SpaceGitWatcher } from "@/features/git";
 import { useGitStore } from "@/stores/git";
 import { Progress } from "@/components/ui/progress";
-import { commitAllSpace } from "./git-actions";
+import { commitAllSpace } from "@/features/git";
 
 export function NavSpaces() {
   const {
@@ -85,7 +80,7 @@ export function NavSpaces() {
     fileTrees,
     openSpace,
     deleteSpace,
-    createPage,
+    createEntry,
     refreshTree,
     loadSpaces,
   } = useSpaceStore();
@@ -166,7 +161,7 @@ export function NavSpaces() {
 
   async function handleNewPage(ws: { id: string; path: string }) {
     try {
-      const entry = await createPage(ws.path, "Untitled");
+      const entry = await createEntry(ws.path, "Untitled");
       if (entry) {
         openDocument(entry.path, ws.id);
       }

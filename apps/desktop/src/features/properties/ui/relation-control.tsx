@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/shared/lib/utils";
 import { useLayoutStore } from "@/stores/layout";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import {
   normalizeRelationRoot,
   queryRelationTargets,

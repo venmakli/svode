@@ -38,11 +38,11 @@ import { ChevronRight, Database, Ellipsis, FileText, FilePlus, FolderOpen, Folde
 import { useLayoutStore } from "@/stores/layout";
 import { useEditorStore } from "@/stores/editor";
 import { useSpaceStore } from "@/stores/space";
-import type { TreeNode } from "@/types/space";
+import type { Entry, TreeNode } from "@/features/entry";
 import { TreeDndContext } from "./sortable-file-tree";
 import { TreeDropIndicator } from "./tree-drop-indicator";
-import { isDescendantOf } from "./tree-dnd-utilities";
-import { FileGitIndicatorIcon } from "./git-status-indicator";
+import { isDescendantOf } from "../lib/tree-dnd-utilities";
+import { FileGitIndicatorIcon } from "@/features/git";
 import { selectFileIndicator, useGitStore } from "@/stores/git";
 
 interface FileTreeItemProps {
@@ -54,11 +54,6 @@ interface BacklinkInfo {
   sourceSpaceId: string | null;
   sourcePath: string;
   linkCount: number;
-}
-
-interface Entry {
-  path: string;
-  meta: { id: string };
 }
 
 /** Bare folder = directory without readme.md (path doesn't end with .md) */

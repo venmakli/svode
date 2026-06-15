@@ -15,7 +15,7 @@ import {
   useStableViewQueryArgs,
   type CollectionView,
 } from "@/features/collection/query";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import { normalizeSchema } from "@/features/properties/lib";
 import { useSpaceStore } from "@/stores/space";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";

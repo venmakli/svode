@@ -1,4 +1,4 @@
-import { INDENT_WIDTH } from "./tree-dnd-utilities";
+import { INDENT_WIDTH } from "../lib/tree-dnd-utilities";
 
 interface TreeDropIndicatorProps {
   type: "before" | "after";

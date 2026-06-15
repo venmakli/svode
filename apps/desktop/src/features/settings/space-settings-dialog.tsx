@@ -68,14 +68,16 @@ import type {
 } from "@/features/identity/types";
 import { IdentitySection } from "./identity-section";
 import type {
-  SpaceConfig,
   AgentConfig,
-  AvailableAgent,
-  SymlinkHealthReport,
   AssetsStrategy,
   LfsState,
+  SpaceConfig,
+} from "@/features/space";
+import type {
+  AvailableAgent,
+  SymlinkHealthReport,
 } from "@/types/space";
-import type { GitAvailability } from "@/types/git";
+import type { GitAvailability } from "@/features/git";
 
 interface SpaceSettingsDialogProps {
   open: boolean;

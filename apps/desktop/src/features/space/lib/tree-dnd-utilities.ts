@@ -1,5 +1,5 @@
 import { arrayMove } from "@dnd-kit/sortable";
-import type { TreeNode } from "@/types/space";
+import type { TreeNode } from "@/features/entry";
 
 // SidebarMenuSub CSS: ml-2 (8px) + pl-2 (8px) = 16px per nesting level
 export const INDENT_WIDTH = 16;

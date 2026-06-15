@@ -15,7 +15,7 @@ import type {
   EventDropArg,
 } from "@fullcalendar/core";
 import ruLocale from "@fullcalendar/core/locales/ru";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import { CalendarEventContent } from "./calendar-event-content";
 import { unmountCalendarDayNewButton } from "./calendar-dom";
 import type {

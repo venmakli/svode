@@ -14,7 +14,7 @@ import {
   commitAllSpace,
   commitFileAndMaybeSync,
   syncSpace,
-} from "@/features/workspace/git-actions";
+} from "@/features/git";
 import { isTerminalKeyboardEvent } from "@/features/terminal";
 import { useGitStore } from "@/stores/git";
 import {
@@ -26,7 +26,7 @@ import { FixedToolbar } from "@/components/ui/fixed-toolbar";
 import { FixedToolbarButtons } from "@/components/ui/fixed-toolbar-buttons";
 import { detailPageBodyClassName } from "@/shared/ui/page-layout";
 import { TocSidebar } from "../toc-sidebar";
-import type { Entry, EntryMeta, WriteResult } from "../types";
+import type { Entry, EntryMeta, WriteResult } from "@/features/entry";
 import * as m from "@/paraglide/messages.js";
 
 const AUTOSAVE_DEBOUNCE_MS = 1000;

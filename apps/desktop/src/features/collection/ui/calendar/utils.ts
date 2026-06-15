@@ -3,7 +3,7 @@ import type { EventResizeDoneArg } from "@fullcalendar/interaction";
 import type { CSSProperties } from "react";
 import type { CollectionView } from "@/features/collection/query";
 import { normalizeEntryPath } from "@/features/collection/lib/utils";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import type {
   CollectionSchema,
   Column,

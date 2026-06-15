@@ -23,7 +23,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import { useStableViewQueryArgs } from "@/features/collection/query";
 import type {
   Column,

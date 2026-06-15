@@ -16,7 +16,7 @@ import {
 import { joinAbs } from "@/features/editor/doc-link-utils";
 import { cn } from "@/shared/lib/utils";
 import { pickMediaFiles } from "@/platform/filesystem/native-file-picker";
-import type { CoverColorName, EntryCover } from "./types";
+import type { CoverColorName, EntryCover } from "@/features/entry";
 import * as m from "@/paraglide/messages.js";
 
 const COVER_COLORS: { name: CoverColorName; label: string }[] = [

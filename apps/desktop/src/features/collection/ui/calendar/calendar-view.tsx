@@ -14,7 +14,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { addCollectionDateColumn } from "@/features/collection/api";
 import { useCollectionPersons } from "@/features/collection/hooks";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import { normalizeSchema } from "@/features/properties/lib";
 import type { CollectionSchema, Column } from "@/features/properties/model";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";

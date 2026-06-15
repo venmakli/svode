@@ -2,8 +2,8 @@ import { useEffect, useRef } from "react";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { useGitStore } from "@/stores/git";
 import { useSpaceStore, selectActiveSpacePath } from "@/stores/space";
-import type { GitStatus } from "@/types/git";
-import { syncOnOpen } from "./git-actions";
+import type { GitStatus } from "@/features/git";
+import { syncOnOpen } from "../api/git-actions";
 
 /**
  * App-level git hooks that run once for the currently-active space:

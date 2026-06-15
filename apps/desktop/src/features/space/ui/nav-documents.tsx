@@ -20,14 +20,14 @@ import { useSpaceStore } from "@/stores/space";
 import { useLayoutStore } from "@/stores/layout";
 import { SortableFileTree } from "./sortable-file-tree";
 import { FileTreeItem } from "./file-tree-item";
-import { createCollection } from "./api/collections";
+import { createCollection } from "@/features/collection";
 
 export function NavDocuments() {
   const {
     activeRootId,
     activeRootPath,
     fileTrees,
-    createPage,
+    createEntry,
     refreshTree,
   } = useSpaceStore();
   const { openDocument } = useLayoutStore();
@@ -39,7 +39,7 @@ export function NavDocuments() {
   async function handleNewPage() {
     if (!activeRootPath) return;
     try {
-      const entry = await createPage(activeRootPath, "Untitled");
+      const entry = await createEntry(activeRootPath, "Untitled");
       if (entry && activeRootId) {
         openDocument(entry.path, activeRootId);
       }

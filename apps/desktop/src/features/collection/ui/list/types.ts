@@ -4,7 +4,7 @@ import type {
   QuerySort,
   UseViewQueryResult,
 } from "@/features/collection/query";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import type {
   CollectionSchema,
   Column,

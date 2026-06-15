@@ -8,7 +8,7 @@ import {
 import { FileText } from "lucide-react";
 import { useSpaceStore } from "@/stores/space";
 import * as m from "@/paraglide/messages.js";
-import type { TreeNode } from "@/types/space";
+import type { TreeNode } from "@/features/entry";
 
 interface DocItem {
   title: string;
@@ -232,4 +232,3 @@ export function SlashMenuDropdown({
     </div>
   );
 }
-

@@ -13,8 +13,8 @@ import { ProjectList } from "./project-list";
 import { EmptyState } from "./empty-state";
 import { CreateProjectDialog } from "./create-project-dialog";
 import { CloneProjectDialog } from "./clone-project-dialog";
-import type { SpaceInfo } from "@/types/space";
-import type { CloneProgress } from "@/types/git";
+import type { SpaceInfo } from "@/features/space";
+import type { CloneProgress } from "@/features/git";
 
 function getErrorDescription(err: unknown): string | undefined {
   const message =

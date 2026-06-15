@@ -34,7 +34,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useStableViewQueryArgs } from "@/features/collection/query";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import type { Column } from "@/features/properties/model";
 import { useSpaceStore } from "@/stores/space";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";

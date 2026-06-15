@@ -5,7 +5,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Separator } from "@/components/ui/separator";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
-import type { EntryMeta } from "./types";
+import type { EntryMeta } from "@/features/entry";
 import { PropertyPanel } from "@/features/properties/ui";
 import type { EntrySchemaResult } from "@/features/properties/model";
 import * as m from "@/paraglide/messages.js";

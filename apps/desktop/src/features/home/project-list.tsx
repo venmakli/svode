@@ -3,7 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import * as m from "@/paraglide/messages.js";
 import { ProjectCard } from "./project-card";
-import type { SpaceInfo } from "@/types/space";
+import type { SpaceInfo } from "@/features/space";
 
 interface CloningProject {
   name: string;

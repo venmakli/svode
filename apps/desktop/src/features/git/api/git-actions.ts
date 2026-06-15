@@ -3,8 +3,8 @@ import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
-import type { SyncResult, GitStatus } from "@/types/git";
-import type { SpaceConfig } from "@/types/space";
+import type { SyncResult, GitStatus } from "@/features/git";
+import type { SpaceConfig } from "@/features/space";
 
 /**
  * Read the per-space `git.autoSync` setting (default: false).

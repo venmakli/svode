@@ -12,11 +12,11 @@ import { useLayoutStore } from "@/stores/layout";
 import { useSpaceStore } from "@/stores/space";
 import { useFullscreen } from "@/hooks/use-fullscreen";
 import { cn } from "@/shared/lib/utils";
-import { CloudUploadButton } from "@/features/workspace/cloud-upload-button";
+import { CloudUploadButton } from "@/features/git";
 import { useCommandPaletteStore } from "@/features/search/store";
 import { buildProjectTerminalTarget } from "@/features/terminal";
 import * as m from "@/paraglide/messages.js";
-import { MainBreadcrumbs } from "./main-breadcrumbs";
+import { MainBreadcrumbs } from "@/features/space";
 import { ProjectOpenersMenu } from "./project-openers-menu";
 
 export function WindowHeader() {

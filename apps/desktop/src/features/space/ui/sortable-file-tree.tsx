@@ -18,7 +18,7 @@ import { FileText } from "lucide-react";
 import { useSpaceStore } from "@/stores/space";
 import { useLayoutStore } from "@/stores/layout";
 import { useEditorStore } from "@/stores/editor";
-import type { TreeNode } from "@/types/space";
+import type { TreeNode } from "@/features/entry";
 import {
   flattenTree,
   removeCollapsedChildren,
@@ -27,7 +27,7 @@ import {
   getParentDir,
   type FlattenedItem,
   type Projection,
-} from "./tree-dnd-utilities";
+} from "../lib/tree-dnd-utilities";
 
 // --- Context for sharing DnD state with FileTreeItem ---
 

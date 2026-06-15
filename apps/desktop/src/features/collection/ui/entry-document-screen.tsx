@@ -3,7 +3,7 @@ import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { Separator } from "@/components/ui/separator";
 import { EntryIdentityHeader } from "@/features/editor/entry-identity-header";
 import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";
-import type { Entry, EntryCover } from "@/features/editor/types";
+import type { Entry, EntryCover } from "@/features/entry";
 import { PropertyPanel } from "@/features/properties/ui";
 import { normalizeSchema } from "@/features/properties/lib";
 import type { EntrySchemaResult } from "@/features/properties/model";

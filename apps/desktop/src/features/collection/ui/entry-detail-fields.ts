@@ -6,7 +6,7 @@ import {
   type SetStateAction,
 } from "react";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 
 interface PendingUpdate {
   timer: ReturnType<typeof setTimeout>;

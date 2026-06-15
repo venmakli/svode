@@ -20,8 +20,8 @@ import {
 } from "@/components/ui/tooltip";
 import { useGitStore } from "@/stores/git";
 import { useSpaceStore, selectActiveSpacePath } from "@/stores/space";
-import type { GitStatus } from "@/types/git";
-import type { SpaceConfig } from "@/types/space";
+import type { GitStatus } from "@/features/git";
+import type { SpaceConfig } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 
 interface UnpushedCommit {

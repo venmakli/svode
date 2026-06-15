@@ -1,4 +1,4 @@
-import type { EntryMeta } from "@/features/editor/types";
+import type { EntryMeta } from "@/features/entry";
 import {
   Tooltip,
   TooltipContent,

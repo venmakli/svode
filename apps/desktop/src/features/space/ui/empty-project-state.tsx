@@ -17,13 +17,13 @@ import { useSpaceStore } from "@/stores/space";
  * Shown when a project has no documents and no children.
  */
 export function EmptyProjectState() {
-  const { activeRootId, activeRootPath, createPage } = useSpaceStore();
+  const { activeRootId, activeRootPath, createEntry } = useSpaceStore();
   const { openDocument } = useLayoutStore();
 
   async function handleCreatePage() {
     if (!activeRootId || !activeRootPath) return;
     try {
-      const entry = await createPage(activeRootPath, m.editor_untitled());
+      const entry = await createEntry(activeRootPath, m.editor_untitled());
       if (entry) {
         openDocument(entry.path, activeRootId);
       }

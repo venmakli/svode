@@ -1,5 +1,5 @@
 import type { CollectionView } from "@/features/collection/query";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import { normalizeEntryPath } from "@/features/collection/lib/utils";
 import type { CollectionSchema, Column } from "@/features/properties/model";
 import { entryCollectionPath, entryParentDir } from "../table/utils";

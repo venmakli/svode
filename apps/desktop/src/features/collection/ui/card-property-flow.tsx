@@ -2,7 +2,7 @@ import { cn } from "@/shared/lib/utils";
 import { validatePropertyValue } from "@/features/properties/model";
 import { isEmptyValue, valueToString } from "@/features/properties/lib";
 import { PropertyControl, PropertyValue } from "@/features/properties/ui";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import type {
   Column,
   Person,

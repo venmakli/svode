@@ -12,7 +12,7 @@ import { cn } from "@/shared/lib/utils";
 import { useLayoutStore } from "@/stores/layout";
 import { useEditorStore } from "@/stores/editor";
 import { useSpaceStore } from "@/stores/space";
-import { GhostCloneDialog } from "@/features/space/ghost-clone-dialog";
+import { GhostCloneDialog } from "./ghost-clone-dialog";
 import * as m from "@/paraglide/messages.js";
 import {
   Tooltip,

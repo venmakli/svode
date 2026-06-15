@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { checkGitAvailability } from "@/platform/git/git-api";
-import type { GitAvailability } from "@/types/git";
+import type { GitAvailability } from "@/features/git";
 
 /**
  * Check if `git` is installed at startup. Returns:

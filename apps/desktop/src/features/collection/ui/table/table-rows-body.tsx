@@ -11,7 +11,7 @@ import {
 import { flexRender, type Table as ReactTable } from "@tanstack/react-table";
 import { TableBody, TableCell } from "@/components/ui/table";
 import { cn } from "@/shared/lib/utils";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import type {
   CollectionSchema,
   Column,

@@ -1,6 +1,6 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import type { QueryFilter, QuerySort } from "@/features/collection/query";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import type { CollectionSchema, Column } from "@/features/properties/model";
 
 export interface CollectionInfo {

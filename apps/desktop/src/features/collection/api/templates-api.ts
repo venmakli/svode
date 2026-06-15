@@ -1,5 +1,5 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import type { CollectionSchema } from "@/features/properties/model";
 import {
   normalizeTemplateInfo,

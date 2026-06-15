@@ -1,6 +1,6 @@
 import { useMemo, type Dispatch, type SetStateAction } from "react";
 import type { ColumnDef, ColumnSizingState } from "@tanstack/react-table";
-import type { Entry } from "@/features/editor/types";
+import type { Entry } from "@/features/entry";
 import type {
   CollectionView,
   UseViewQueryResult,
