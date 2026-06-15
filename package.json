@@ -9,7 +9,7 @@
     "dev": "bun run --cwd apps/desktop dev",
     "build": "bun run --cwd apps/desktop build",
     "tauri": "bun run --cwd apps/desktop tauri",
-    "check:local": "bun run --cwd apps/desktop typecheck && cargo check --manifest-path=apps/desktop/src-tauri/Cargo.toml",
+    "check:local": "bun run --cwd apps/desktop typecheck && bun run --cwd apps/desktop check:sidecars && cargo check --manifest-path=apps/desktop/src-tauri/Cargo.toml",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
