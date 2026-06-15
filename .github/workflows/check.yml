@@ -2,12 +2,15 @@ name: check
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
+
+concurrency:
+  group: check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   typecheck:
@@ -25,6 +28,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
@@ -34,9 +40,6 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             libsecret-1-dev
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - run: bun run --cwd apps/desktop build:sidecars
       - run: cargo check --manifest-path=apps/desktop/src-tauri/Cargo.toml
       - name: Clippy
         run: |

@@ -22,6 +22,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: build-installers-${{ github.event.inputs.platform }}-${{ github.event.inputs.ref }}
+  cancel-in-progress: true
+
 jobs:
   select-matrix:
     runs-on: ubuntu-22.04
@@ -91,4 +95,4 @@ jobs:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_path }}
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 3
