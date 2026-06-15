@@ -1,7 +1,7 @@
 import { createRootRoute, Outlet } from "@tanstack/react-router";
 import { ThemeProvider } from "@/components/ui/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
-import { useShellStore } from "@/app/shell";
+import { useShellStore } from "@/app/shell/model";
 import { AppSettingsDialog } from "@/features/settings/app-settings-dialog";
 import { SpaceSettingsDialog } from "@/features/settings/space-settings-dialog";
 import { IdentityDialog } from "@/features/identity/identity-dialog";
