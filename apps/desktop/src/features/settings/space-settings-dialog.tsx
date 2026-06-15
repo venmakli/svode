@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { listen } from "@/platform/native/events";
 import { toast } from "sonner";
-import { ENABLE_LEGACY_AGENT_INTEGRATION } from "@/app/feature-flags";
+import { ENABLE_LEGACY_AGENT_INTEGRATION } from "@/app/config/feature-flags";
 import * as m from "@/paraglide/messages.js";
 import {
   Dialog,

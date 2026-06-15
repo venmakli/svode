@@ -36,7 +36,7 @@ import { PlateElement } from 'platejs/react';
 import {
   ENABLE_PLATE_ADVANCED_BLOCKS,
   ENABLE_PLATE_AI,
-} from '@/app/feature-flags';
+} from '@/app/config/feature-flags';
 import {
   insertBlock,
   insertInlineElement,

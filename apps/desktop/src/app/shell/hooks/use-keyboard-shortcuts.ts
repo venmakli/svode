@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ENABLE_IN_APP_CHAT } from "@/app/feature-flags";
+import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
 import { useEntrySelectionStore } from "@/features/entry";
 import { useSpaceStore } from "@/features/space";
 import { isTerminalKeyboardEvent } from "@/features/terminal";

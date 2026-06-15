@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { ENABLE_IN_APP_CHAT } from "@/app/feature-flags";
+import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
 import { useEntrySelectionStore } from "@/features/entry";
 
 type SettingsDialog = "app" | "space" | null;

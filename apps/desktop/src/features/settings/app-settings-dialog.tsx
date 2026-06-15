@@ -5,7 +5,7 @@ import {
   saveAppSettings,
 } from "@/platform/settings/settings-api";
 import { toast } from "sonner";
-import { ENABLE_LEGACY_AGENT_INTEGRATION } from "@/app/feature-flags";
+import { ENABLE_LEGACY_AGENT_INTEGRATION } from "@/app/config/feature-flags";
 import * as m from "@/paraglide/messages.js";
 import { setLocale, getLocale } from "@/paraglide/runtime.js";
 import {

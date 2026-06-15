@@ -1,7 +1,5 @@
-import { useEffect } from "react";
-import { unwatchSpace, watchSpace } from "@/platform/space/space-api";
 import { useEntrySelectionStore } from "@/features/entry";
-import { selectActiveSpacePath, useSpaceStore } from "../model";
+import { useSpaceStore } from "../model";
 import { CollectionScreen, EntryDocumentScreen } from "@/features/collection";
 import type { TreeNode } from "@/features/entry";
 import { EmptyProjectState } from "./empty-project-state";
@@ -28,7 +26,6 @@ export function ActiveSpaceContent() {
     activeRootId,
     activeRootPath,
   } = useSpaceStore();
-  const watchSpacePath = useSpaceStore(selectActiveSpacePath);
   const documentSpaceId = activeDocumentSpaceId ?? activeRootId;
   const tree = documentSpaceId ? (fileTrees[documentSpaceId] ?? []) : [];
   const activeNode = activeDocument
@@ -70,18 +67,6 @@ export function ActiveSpaceContent() {
     ) : (
       <div className="h-full" />
     );
-
-  useEffect(() => {
-    if (!watchSpacePath) return;
-    watchSpace(watchSpacePath).catch((error) =>
-      console.error("Failed to watch space:", error),
-    );
-    return () => {
-      unwatchSpace(watchSpacePath).catch((error) =>
-        console.error("Failed to unwatch space:", error),
-      );
-    };
-  }, [watchSpacePath]);
 
   if (!activeDocument || isEmpty) {
     return (

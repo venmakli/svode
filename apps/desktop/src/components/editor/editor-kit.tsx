@@ -7,7 +7,7 @@ import {
   ENABLE_PLATE_ADVANCED_BLOCKS,
   ENABLE_PLATE_AI,
   ENABLE_PLATE_REVIEW,
-} from '@/app/feature-flags';
+} from '@/app/config/feature-flags';
 import { AIKit } from '@/components/editor/plugins/ai-kit';
 import { AlignKit } from '@/components/editor/plugins/align-kit';
 import { AutoformatKit } from '@/components/editor/plugins/autoformat-kit';

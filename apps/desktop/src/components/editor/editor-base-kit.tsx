@@ -1,7 +1,7 @@
 import {
   ENABLE_PLATE_ADVANCED_BLOCKS,
   ENABLE_PLATE_REVIEW,
-} from '@/app/feature-flags';
+} from '@/app/config/feature-flags';
 import { BaseAlignKit } from './plugins/align-base-kit';
 import { BaseBasicBlocksKit } from './plugins/basic-blocks-base-kit';
 import { BaseBasicMarksKit } from './plugins/basic-marks-base-kit';

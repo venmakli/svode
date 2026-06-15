@@ -9,6 +9,7 @@ import { CommandPalette } from "@/features/search/command-palette";
 import { TerminalPanelHost } from "@/features/terminal";
 import {
   ActiveSpaceContent,
+  SpaceFileWatcher,
   SpaceSidebar,
 } from "@/features/space";
 import {
@@ -71,6 +72,7 @@ export function MainLayout() {
             <TerminalPanelHost />
           </div>
         </SidebarInset>
+        <SpaceFileWatcher />
         {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
         <GitMissingDialog open={available === false} onRecheck={recheck} />
         <CommandPalette />

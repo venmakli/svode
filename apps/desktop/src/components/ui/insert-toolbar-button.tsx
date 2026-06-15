@@ -41,7 +41,7 @@ import {
   insertBlock,
   insertInlineElement,
 } from '@/components/editor/transforms';
-import { ENABLE_PLATE_ADVANCED_BLOCKS } from '@/app/feature-flags';
+import { ENABLE_PLATE_ADVANCED_BLOCKS } from '@/app/config/feature-flags';
 
 import { ToolbarButton, ToolbarMenuGroup } from './toolbar';
 

@@ -1,6 +1,6 @@
 import { useNavigate, useMatches } from "@tanstack/react-router";
 import { Home, PanelLeft, PanelRight, Search } from "lucide-react";
-import { ENABLE_IN_APP_CHAT } from "@/app/feature-flags";
+import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,

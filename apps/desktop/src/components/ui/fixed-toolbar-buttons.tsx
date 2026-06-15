@@ -21,7 +21,7 @@ import {
   ENABLE_PLATE_ADVANCED_BLOCKS,
   ENABLE_PLATE_AI,
   ENABLE_PLATE_REVIEW,
-} from '@/app/feature-flags';
+} from '@/app/config/feature-flags';
 import { AIToolbarButton } from './ai-toolbar-button';
 import { AlignToolbarButton } from './align-toolbar-button';
 import { CommentToolbarButton } from './comment-toolbar-button';
