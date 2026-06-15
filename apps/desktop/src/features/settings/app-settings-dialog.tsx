@@ -1,5 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
+import {
+  getAppSettings,
+  saveAppSettings,
+} from "@/platform/settings/settings-api";
 import { toast } from "sonner";
 import { ENABLE_LEGACY_AGENT_INTEGRATION } from "@/app/feature-flags";
 import * as m from "@/paraglide/messages.js";
@@ -131,7 +135,7 @@ export function AppSettingsDialog({
 
   const loadSettings = useCallback(async () => {
     try {
-      const s = await invoke<AppSettings>("get_app_settings");
+      const s = await getAppSettings();
       setSettings(s);
     } catch (err) {
       console.error("Failed to load settings:", err);
@@ -168,7 +172,7 @@ export function AppSettingsDialog({
       window: { ...settings.window, ...updated.window },
     };
     try {
-      await invoke("save_app_settings", { settingsData: merged });
+      await saveAppSettings(merged);
       setSettings(merged);
       invalidateAppSettings();
       return true;

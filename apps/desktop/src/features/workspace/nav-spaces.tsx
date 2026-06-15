@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
 import * as m from "@/paraglide/messages.js";
 import { toast } from "sonner";
 import {
@@ -60,7 +60,7 @@ import type {
   SpaceInfo,
   LfsState,
 } from "@/types/space";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "@/platform/native/events";
 import type { CloneProgress } from "@/types/git";
 import {
   Tooltip,

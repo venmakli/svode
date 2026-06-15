@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "@/platform/native/events";
 import { useGitStore } from "@/stores/git";
 
 /**

@@ -32,11 +32,11 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import { type MediaKind } from '@/lib/media-types';
+import { type MediaKind } from '@/platform/upload/media-types';
 import {
   filesToFileList,
   pickMediaFiles,
-} from '@/lib/native-file-picker';
+} from '@/platform/filesystem/native-file-picker';
 
 import {
   ToolbarSplitButton,

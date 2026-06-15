@@ -5,8 +5,8 @@ import {
   type AppendMessage,
   type ThreadMessageLike,
 } from "@assistant-ui/react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
+import { listen, type UnlistenFn } from "@/platform/native/events";
 import { useSpaceStore, selectActiveSpacePath, selectActiveSpaceId } from "@/stores/space";
 import { useChatStatusStore } from "@/stores/chat";
 

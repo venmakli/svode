@@ -6,7 +6,7 @@ import { getLinkAttributes } from "@platejs/link";
 import { SuggestionPlugin } from "@platejs/suggestion/react";
 import { PlateElement } from "platejs/react";
 import { FileText } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import { cn } from "@/shared/lib/utils";
 import { useLayoutStore } from "@/stores/layout";

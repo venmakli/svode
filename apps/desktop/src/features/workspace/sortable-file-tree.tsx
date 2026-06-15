@@ -12,7 +12,7 @@ import {
   type DragMoveEvent,
 } from "@dnd-kit/core";
 import { SortableContext } from "@dnd-kit/sortable";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import { FileText } from "lucide-react";
 import { useSpaceStore } from "@/stores/space";

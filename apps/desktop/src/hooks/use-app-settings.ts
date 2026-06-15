@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { getAppSettings } from "@/platform/settings/settings-api";
 import type { AppSettings } from "@/types/space";
 
 let cached: AppSettings | null = null;
@@ -9,7 +9,7 @@ export function useAppSettings(): AppSettings | null {
 
   useEffect(() => {
     if (cached) return;
-    invoke<AppSettings>("get_app_settings")
+    getAppSettings()
       .then((s) => {
         cached = s;
         setSettings(s);

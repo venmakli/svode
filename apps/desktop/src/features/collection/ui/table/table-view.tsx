@@ -8,7 +8,7 @@ import {
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import { Table } from "@/components/ui/table";
 import {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { useSpaceStore, selectActiveSpacePath } from "@/stores/space";
 import { useIdentityStore } from "./identity-store";
 import type { GitIdentity, RepoIdentityResult } from "./types";

@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
 import type { QueryFilter, QuerySort } from "@/features/collection/query";
 import { normalizeEntryPath } from "@/features/collection/lib/utils";
 import type { Entry } from "@/features/editor/types";

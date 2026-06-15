@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import {
   AlertDialog,

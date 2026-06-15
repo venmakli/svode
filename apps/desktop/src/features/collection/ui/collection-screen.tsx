@@ -7,8 +7,8 @@ import {
   type ReactNode,
 } from "react";
 import { arrayMove } from "@dnd-kit/sortable";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
+import { listen } from "@/platform/native/events";
 import { Database } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent } from "@/components/ui/tabs";

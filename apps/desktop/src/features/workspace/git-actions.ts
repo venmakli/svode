@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { useEditorStore } from "@/stores/editor";

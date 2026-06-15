@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { open } from "@tauri-apps/plugin-shell";
+import { openPath } from "@/platform/native/shell";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { fetchDogfoodFeed } from "../api/dogfood-feed";
@@ -48,12 +48,12 @@ export function useDogfoodUpdateCheck({
     if (!targetUrl) return;
 
     try {
-      await open(targetUrl);
+      await openPath(targetUrl);
     } catch (err) {
       console.error("Failed to open update URL:", err);
       if (available.platformUpdate.fallbackUrl) {
         try {
-          await open(available.platformUpdate.fallbackUrl);
+          await openPath(available.platformUpdate.fallbackUrl);
           return;
         } catch (fallbackErr) {
           console.error("Failed to open fallback update URL:", fallbackErr);

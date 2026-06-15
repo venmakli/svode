@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
+import { listen } from "@/platform/native/events";
 import type { CollectionSchema } from "@/features/properties/model";
 import {
   nextStoredQueryState,

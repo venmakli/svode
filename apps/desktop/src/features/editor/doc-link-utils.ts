@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
 import type { SearchItem, SearchResponse } from "@/features/search/types";
 import type { SpaceInfo, TreeNode } from "@/types/space";
 

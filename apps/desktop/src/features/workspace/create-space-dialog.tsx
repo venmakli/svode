@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback } from "react";
 import * as m from "@/paraglide/messages.js";
 import { toast } from "sonner";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
+import { listen } from "@/platform/native/events";
 import { Info } from "lucide-react";
 import {
   Dialog,

@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { ApprovalCard } from "@/components/tool-ui/approval-card";
 import { QuestionFlow } from "@/components/tool-ui/question-flow";
 import { Button } from "@/components/ui/button";

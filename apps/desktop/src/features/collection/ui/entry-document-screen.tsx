@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { Separator } from "@/components/ui/separator";
 import { EntryIdentityHeader } from "@/features/editor/entry-identity-header";
 import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";

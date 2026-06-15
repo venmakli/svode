@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
+import { listen } from "@/platform/native/events";
 import { toast } from "sonner";
 import { ENABLE_LEGACY_AGENT_INTEGRATION } from "@/app/feature-flags";
 import * as m from "@/paraglide/messages.js";

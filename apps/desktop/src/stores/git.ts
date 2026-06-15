@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
+import { getGitStatus } from "@/platform/git/git-api";
 import type { GitStatus } from "@/types/git";
 
 /**
@@ -46,9 +46,7 @@ export const useGitStore = create<GitState>((set) => ({
 
   refreshStatus: async (spacePath) => {
     try {
-      const status = await invoke<GitStatus>("git_status", {
-        spacePath,
-      });
+      const status = await getGitStatus(spacePath);
       set((s) => ({
         statuses: { ...s.statuses, [spacePath]: status },
       }));

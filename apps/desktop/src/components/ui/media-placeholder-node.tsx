@@ -14,8 +14,8 @@ import { PlateElement, useEditorPlugin, withHOC } from 'platejs/react';
 import { toast } from 'sonner';
 
 import { cn } from '@/shared/lib/utils';
-import { type MediaKind } from '@/lib/media-types';
-import { filesToFileList, pickMediaFiles } from '@/lib/native-file-picker';
+import { type MediaKind } from '@/platform/upload/media-types';
+import { filesToFileList, pickMediaFiles } from '@/platform/filesystem/native-file-picker';
 import { useUploadFile } from '@/hooks/use-upload-file';
 
 const CONTENT: Record<

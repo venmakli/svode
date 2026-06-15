@@ -1,21 +1,34 @@
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
+import {
+  createEntry as createEntryNative,
+  getExpandedPaths,
+  listEntries,
+  moveEntry as moveEntryNative,
+  saveExpandedPaths,
+  saveTreeOrder,
+  type EntryDto,
+} from "@/platform/entries/entries-api";
 import { clearMcpActiveContext, setMcpActiveContext } from "@/platform/mcp";
+import {
+  createProject,
+  createSpace as createSpaceNative,
+  deleteProject,
+  deleteSpace as deleteSpaceNative,
+  ensureAssetsScope,
+  ensureSpaceScaffold,
+  getLastActiveProject,
+  listProjects,
+  listSpaces,
+  openProject,
+  openProjectFolder,
+} from "@/platform/space/space-api";
 import type {
   SpaceInfo,
-  SpaceConfig,
   SpaceGitType,
   TreeNode,
 } from "@/types/space";
-
-interface Entry {
-  path: string;
-  title: string;
-  content: string;
-  frontmatter: Record<string, unknown>;
-}
 
 interface SpaceState {
   // Root spaces (projects on the home page)
@@ -69,7 +82,7 @@ interface SpaceState {
   clearActiveSpace: () => void;
 
   // Document/tree methods
-  createPage: (spacePath: string, title: string) => Promise<Entry | null>;
+  createPage: (spacePath: string, title: string) => Promise<EntryDto | null>;
   refreshTree: (spaceId?: string) => Promise<void>;
   updateNodeMeta: (
     spaceId: string,
@@ -150,7 +163,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   loadRootSpaces: async () => {
     set({ isLoadingRoots: true });
     try {
-      const projects = await invoke<SpaceInfo[]>("list_projects");
+      const projects = await listProjects();
       set({ rootSpaces: projects, rootsLoaded: true });
       return projects;
     } catch (err) {
@@ -173,7 +186,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
         throw new Error("Project not found");
       }
 
-      const config = await invoke<SpaceConfig>("open_project", { id });
+      const config = await openProject(id);
       set({
         activeRootId: id,
         activeRootName: config.name,
@@ -189,7 +202,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       // Grant the webview access to this project's `.assets/` via the
       // Tauri asset protocol. Scope is per-app-session and the call is
       // idempotent — safe to repeat on every project open.
-      invoke("ensure_assets_scope", { spacePath: ws.path }).catch((err) =>
+      ensureAssetsScope(ws.path).catch((err) =>
         console.warn("ensure_assets_scope failed:", err),
       );
       await get().refreshTree(id);
@@ -214,7 +227,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   },
 
   createRoot: async (name, icon, description, path) => {
-    const ws = await invoke<SpaceInfo>("create_project", {
+    const ws = await createProject({
       name,
       icon,
       description,
@@ -226,7 +239,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   },
 
   openRootFolder: async (path: string) => {
-    const ws = await invoke<SpaceInfo>("open_project_folder", { path });
+    const ws = await openProjectFolder(path);
     set((s) => {
       const exists = s.rootSpaces.some((w) => w.id === ws.id);
       return exists
@@ -237,7 +250,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   },
 
   deleteRoot: async (id, deleteFiles) => {
-    await invoke("delete_project", { id, deleteFiles });
+    await deleteProject(id, deleteFiles);
     const { activeRootId } = get();
     set((s) => ({
       rootSpaces: s.rootSpaces.filter((w) => w.id !== id),
@@ -263,7 +276,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
 
   getLastActiveRootId: async () => {
     try {
-      return await invoke<string | null>("get_last_active_project");
+      return await getLastActiveProject();
     } catch {
       return null;
     }
@@ -272,9 +285,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   loadSpaces: async (rootPath: string) => {
     set({ isLoadingSpaces: true });
     try {
-      const spaces = await invoke<SpaceInfo[]>("list_spaces", {
-        spacePath: rootPath,
-      });
+      const spaces = await listSpaces(rootPath);
       set({ spaces });
 
       // Auto-select first ready space if none active
@@ -295,12 +306,10 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   openSpace: async (id: string) => {
     const space = get().spaces.find((w) => w.id === id);
     if (space?.status && space.status !== "ready") return;
-    if (space?.path && get().activeRootPath) {
+    const activeRootPath = get().activeRootPath;
+    if (space?.path && activeRootPath) {
       try {
-        await invoke("ensure_space_scaffold", {
-          projectPath: get().activeRootPath,
-          spacePath: space.path,
-        });
+        await ensureSpaceScaffold(activeRootPath, space.path);
       } catch (err) {
         console.warn("ensure_space_scaffold failed:", err);
       }
@@ -308,7 +317,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     set({ activeSpaceId: id });
     syncMcpContext(get(), id);
     if (space?.path) {
-      invoke("ensure_assets_scope", { spacePath: space.path }).catch((err) =>
+      ensureAssetsScope(space.path).catch((err) =>
         console.warn("ensure_assets_scope failed:", err),
       );
     }
@@ -326,7 +335,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   },
 
   createSpace: async (parentPath, name, icon, folderName, gitType) => {
-    const ws = await invoke<SpaceInfo>("create_space", {
+    const ws = await createSpaceNative({
       parentPath,
       name,
       icon,
@@ -340,7 +349,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   },
 
   deleteSpace: async (parentPath, spaceId, deleteFiles) => {
-    await invoke("delete_space", { parentPath, spaceId, deleteFiles });
+    await deleteSpaceNative(parentPath, spaceId, deleteFiles);
     const { activeSpaceId } = get();
     set((s) => ({
       spaces: s.spaces.filter((w) => w.id !== spaceId),
@@ -354,7 +363,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
 
   createPage: async (spacePath: string, title: string) => {
     try {
-      const entry = await invoke<Entry>("create_entry", {
+      const entry = await createEntryNative({
         space: spacePath,
         parentPath: null,
         title,
@@ -385,9 +394,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     if (!spacePath) return;
 
     try {
-      const tree = await invoke<TreeNode[]>("list_entries", {
-        space: spacePath,
-      });
+      const tree = await listEntries(spacePath);
       set((s) => ({
         fileTrees: { ...s.fileTrees, [id]: tree },
       }));
@@ -450,9 +457,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     const spacePath = findSpacePath(get(), spaceId);
     if (!spacePath) return;
     try {
-      const paths = await invoke<string[]>("get_expanded_paths", {
-        space: spacePath,
-      });
+      const paths = await getExpandedPaths(spacePath);
       set((s) => ({
         expandedPaths: { ...s.expandedPaths, [spaceId]: paths },
       }));
@@ -471,17 +476,14 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     }));
     const spacePath = findSpacePath(get(), spaceId);
     if (spacePath) {
-      invoke("save_expanded_paths", {
-        space: spacePath,
-        paths: next,
-      }).catch(() => {});
+      saveExpandedPaths(spacePath, next).catch(() => {});
     }
   },
 
   moveEntry: async (spaceId: string, from: string, toParent: string) => {
     const spacePath = findSpacePath(get(), spaceId);
     if (!spacePath) throw new Error("Space not found");
-    const newPath = await invoke<string>("move_entry", {
+    const newPath = await moveEntryNative({
       space: spacePath,
       from,
       toParent,
@@ -494,7 +496,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   saveOrder: async (spaceId: string, order: Record<string, string[]>) => {
     const spacePath = findSpacePath(get(), spaceId);
     if (!spacePath) return;
-    await invoke("save_tree_order", {
+    await saveTreeOrder({
       space: spacePath,
       order,
       projectPath: get().activeRootPath,

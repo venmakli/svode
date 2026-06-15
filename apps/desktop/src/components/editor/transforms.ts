@@ -22,8 +22,8 @@ import {
   KEYS,
   PathApi,
 } from 'platejs';
-import { type MediaKind } from '@/lib/media-types';
-import { filesToFileList, pickMediaFiles } from '@/lib/native-file-picker';
+import { type MediaKind } from '@/platform/upload/media-types';
+import { filesToFileList, pickMediaFiles } from '@/platform/filesystem/native-file-picker';
 
 const ACTION_THREE_COLUMNS = 'action_three_columns';
 
@@ -72,7 +72,7 @@ const insertBlockMap: Record<
  * base `insert{Image,File,Video,Audio}Placeholder` helpers skips the history
  * tagging and crashes later with `batch.operations` undefined.
  *
- * Uses `@tauri-apps/plugin-dialog` instead of a raw `<input type="file">`
+ * Uses the native dialog platform wrapper instead of a raw `<input type="file">`
  * because WKWebView on macOS silently ignores the `accept` attribute — see
  * `src/lib/native-file-picker.ts` for the full story.
  */

@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
+import { listen, type UnlistenFn } from "@/platform/native/events";
 
 export interface TerminalSession {
   ptyId: string;

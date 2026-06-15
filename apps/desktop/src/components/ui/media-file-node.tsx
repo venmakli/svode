@@ -5,16 +5,14 @@ import type { PlateElementProps } from 'platejs/react';
 
 import { useMediaState } from '@platejs/media/react';
 import { ResizableProvider } from '@platejs/resizable';
-import { open as openPath } from '@tauri-apps/plugin-shell';
+import { openPath } from "@/platform/native/shell";
 import { FileUp } from 'lucide-react';
 import { PlateElement, useReadOnly, withHOC } from 'platejs/react';
 import { toast } from 'sonner';
 
 import { Caption, CaptionTextarea } from './caption';
-import {
-  resolveAssetAbsPath,
-  useResolvedAssetUrl,
-} from '@/hooks/use-resolved-asset-url';
+import { resolveAssetAbsPath } from '@/platform/assets/assets-api';
+import { useResolvedAssetUrl } from '@/hooks/use-resolved-asset-url';
 import { getErrorMessage } from '@/hooks/use-upload-file';
 import { useLayoutStore } from '@/stores/layout';
 import { useSpaceStore } from '@/stores/space';
@@ -101,4 +99,3 @@ export const FileElement = withHOC(
     );
   }
 );
-

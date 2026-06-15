@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
 import type { Entry } from "@/features/editor/types";
 import type {
   RelationTwoWayDiagnostics,

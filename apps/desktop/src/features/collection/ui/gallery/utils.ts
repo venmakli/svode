@@ -1,4 +1,4 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { convertFileSrc } from "@/platform/native/invoke";
 import type { CSSProperties } from "react";
 import type { CollectionView } from "@/features/collection/query";
 import { normalizeEntryPath } from "@/features/collection/lib/utils";

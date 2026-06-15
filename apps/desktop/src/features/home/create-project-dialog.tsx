@@ -1,6 +1,6 @@
 import { useState } from "react";
 import * as m from "@/paraglide/messages.js";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { openDialog } from "@/platform/native/dialog";
 import {
   Dialog,
   DialogContent,

@@ -1,6 +1,11 @@
 import { useEffect, useRef } from "react";
-import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@/platform/native/events";
+import { readEntry } from "@/platform/entries/entries-api";
+import {
+  reindexProject,
+  unwatchSpace,
+  watchSpace,
+} from "@/platform/space/space-api";
 import { toast } from "sonner";
 import type { PlateEditor } from "platejs/react";
 import { deserializeWithConflicts } from "./conflict/parse-conflicts";
@@ -32,7 +37,7 @@ function isSchemaPath(path: string) {
 function reindexProjectForSchemaChange() {
   const projectPath = useSpaceStore.getState().activeRootPath;
   if (!projectPath) return;
-  invoke("reindex_project", { projectPath }).catch((err) =>
+  reindexProject(projectPath).catch((err) =>
     console.warn("Failed to reindex after schema change:", err),
   );
 }
@@ -59,12 +64,12 @@ export function useFileWatcher({
   useEffect(() => {
     if (!spacePath) return;
 
-    invoke("watch_space", { space: spacePath }).catch((err) =>
+    watchSpace(spacePath).catch((err) =>
       console.error("Failed to watch space:", err),
     );
 
     return () => {
-      invoke("unwatch_space", { space: spacePath }).catch(
+      unwatchSpace(spacePath).catch(
         (err) => console.error("Failed to unwatch space:", err),
       );
     };
@@ -105,14 +110,7 @@ export function useFileWatcher({
           return;
         }
         // Debounce not active — reload from disk.
-        invoke<{
-          meta: { id: string; title: string; icon: string | null; created: string; updated: string };
-          body: string;
-          path: string;
-        }>("read_entry", {
-          space: spacePath,
-          path: changedPath,
-        })
+        readEntry(spacePath, changedPath)
           .then((entry) => {
             isLoadingRef.current = true;
             const value = deserializeWithConflicts(editor, entry.body);

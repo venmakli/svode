@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 
 import { useLayoutStore } from "@/stores/layout";
 import {
@@ -7,26 +6,12 @@ import {
   selectActiveSpacePath,
 } from "@/stores/space";
 import { joinAbs } from "@/features/editor/doc-link-utils";
+import {
+  resolveAssetAbsPath,
+  toWebviewAssetUrl,
+} from "@/platform/assets/assets-api";
 
 const EXTERNAL = /^(https?:|data:|blob:|asset:|file:)/i;
-
-/**
- * Resolve the absolute filesystem path of an asset referenced from the active
- * document. Returns the path the backend computed via `resolve_index_target`
- * — callers feed it to `convertFileSrc` for the webview or `openPath` for the
- * shell.
- */
-export async function resolveAssetAbsPath(
-  url: string,
-  projectPath: string,
-  documentAbsPath: string,
-): Promise<string> {
-  return invoke<string>("resolve_asset_url", {
-    projectPath,
-    documentAbsPath,
-    assetPath: url,
-  });
-}
 
 interface ActiveContext {
   projectPath: string;
@@ -91,7 +76,7 @@ export function useResolvedAssetUrl(url: string | undefined): string | undefined
       if (spacePathFallback) {
         const rel = url.replace(/^\.\//, "");
         const absolute = `${spacePathFallback.replace(/\\/g, "/").replace(/\/$/, "")}/${rel}`;
-        setResolved(convertFileSrc(absolute));
+        setResolved(toWebviewAssetUrl(absolute));
       } else {
         setResolved(undefined);
       }
@@ -100,7 +85,7 @@ export function useResolvedAssetUrl(url: string | undefined): string | undefined
     let cancelled = false;
     resolveAssetAbsPath(url, context.projectPath, context.documentAbsPath)
       .then((abs) => {
-        if (!cancelled) setResolved(convertFileSrc(abs));
+        if (!cancelled) setResolved(toWebviewAssetUrl(abs));
       })
       .catch((err) => {
         console.warn("resolve_asset_url failed:", err);

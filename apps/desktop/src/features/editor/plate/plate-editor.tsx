@@ -2,7 +2,7 @@ import { useEffect, useCallback, useRef, useState } from "react";
 import type { Descendant } from "platejs";
 import { Plate, usePlateEditor } from "platejs/react";
 import { MarkdownPlugin } from "@platejs/markdown";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import { EditorKit } from "@/components/editor/editor-kit";
 import { useFileWatcher } from "../use-file-watcher";

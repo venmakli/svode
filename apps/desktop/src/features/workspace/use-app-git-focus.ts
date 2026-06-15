@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { useGitStore } from "@/stores/git";
 import { useSpaceStore, selectActiveSpacePath } from "@/stores/space";
 import type { GitStatus } from "@/types/git";

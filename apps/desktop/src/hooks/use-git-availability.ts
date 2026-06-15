@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { checkGitAvailability } from "@/platform/git/git-api";
 import type { GitAvailability } from "@/types/git";
 
 /**
@@ -20,7 +20,7 @@ export function useGitAvailability(): {
 
   const recheck = async () => {
     try {
-      const status = await invoke<GitAvailability>("git_check_availability");
+      const status = await checkGitAvailability();
       setAvailability(status);
       setAvailable(status.git);
     } catch (err) {

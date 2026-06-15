@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type PointerEvent } from "react";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invokeCommand as invoke } from "@/platform/native/invoke";
 import { ImagePlus, MoveVertical, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 
@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { joinAbs } from "@/features/editor/doc-link-utils";
 import { cn } from "@/shared/lib/utils";
-import { pickMediaFiles } from "@/lib/native-file-picker";
+import { pickMediaFiles } from "@/platform/filesystem/native-file-picker";
 import type { CoverColorName, EntryCover } from "./types";
 import * as m from "@/paraglide/messages.js";
 

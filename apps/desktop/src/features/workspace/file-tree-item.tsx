@@ -1,6 +1,6 @@
 import { useContext, useState, useRef, useEffect, type KeyboardEvent, type ReactElement } from "react";
 import { useSortable } from "@dnd-kit/sortable";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import {

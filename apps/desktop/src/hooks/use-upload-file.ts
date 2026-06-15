@@ -1,9 +1,9 @@
 import * as React from "react";
 
-import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 
 import { joinAbs, makeRelativeDocUrl } from "@/features/editor/doc-link-utils";
+import { uploadAsset, type UploadAssetDto } from "@/platform/upload/upload-api";
 import { useLayoutStore } from "@/stores/layout";
 import { useSpaceStore } from "@/stores/space";
 
@@ -20,14 +20,6 @@ export interface UploadedFile {
   name: string;
   size: number;
   type: string;
-}
-
-interface BackendUploadResult {
-  spaceId: string | null;
-  relPath: string;
-  fileName: string;
-  sizeBytes: number;
-  mime: string;
 }
 
 interface UseUploadFileProps {
@@ -95,7 +87,7 @@ export function useUploadFile({ onUploadComplete, onUploadError }: UseUploadFile
       const bytes = Array.from(new Uint8Array(buffer));
       setProgress(50);
 
-      const result = await invoke<BackendUploadResult>("upload_asset", {
+      const result: UploadAssetDto = await uploadAsset({
         projectPath,
         documentAbsPath,
         fileName: file.name,

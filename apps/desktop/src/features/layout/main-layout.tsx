@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { invoke } from "@tauri-apps/api/core";
+import { unwatchSpace, watchSpace } from "@/platform/space/space-api";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
@@ -76,11 +76,11 @@ function MainContent() {
 
   useEffect(() => {
     if (!watchSpacePath) return;
-    invoke("watch_space", { space: watchSpacePath }).catch((error) =>
+    watchSpace(watchSpacePath).catch((error) =>
       console.error("Failed to watch space:", error),
     );
     return () => {
-      invoke("unwatch_space", { space: watchSpacePath }).catch((error) =>
+      unwatchSpace(watchSpacePath).catch((error) =>
         console.error("Failed to unwatch space:", error),
       );
     };

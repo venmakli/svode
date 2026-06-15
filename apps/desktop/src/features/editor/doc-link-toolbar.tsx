@@ -35,7 +35,7 @@ import {
   useFormInputProps,
   usePluginOption,
 } from "platejs/react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
 
 import { buttonVariants } from "@/components/ui/button";
 import {

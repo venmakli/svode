@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
-import { getVersion } from "@tauri-apps/api/app";
+import { getAppVersion } from "@/platform/native/app";
 
 export function useAppVersion() {
   const [version, setVersion] = useState<string>("");
 
   useEffect(() => {
-    getVersion().then(setVersion);
+    getAppVersion().then(setVersion);
   }, []);
 
   return version;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { Copy, FileText, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {

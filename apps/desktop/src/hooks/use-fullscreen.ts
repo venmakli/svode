@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentAppWindow } from "@/platform/native/window";
 
 export function useFullscreen() {
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
-    const appWindow = getCurrentWindow();
+    const appWindow = getCurrentAppWindow();
 
     appWindow.isFullscreen().then(setIsFullscreen);
 
