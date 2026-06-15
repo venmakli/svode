@@ -26,7 +26,7 @@ import {
 import { EmojiPicker } from "@/components/ui/emoji-picker";
 import { Progress } from "@/components/ui/progress";
 import { useSpaceStore } from "@/stores/space";
-import type { SpaceGitType } from "@/features/space";
+import type { SpaceGitType } from "../model";
 import type { CloneProgress } from "@/features/git";
 
 interface CreateSpaceDialogProps {

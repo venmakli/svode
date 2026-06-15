@@ -2,9 +2,8 @@ import { useEffect, useRef } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
-import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
+import { useKeyboardShortcuts } from "./hooks/use-keyboard-shortcuts";
 import { WindowHeader } from "./window-header";
-import { useGitAvailability } from "@/hooks/use-git-availability";
 import { useSpaceStore } from "@/stores/space";
 import { CommandPalette } from "@/features/search/command-palette";
 import { TerminalPanelHost } from "@/features/terminal";
@@ -16,6 +15,7 @@ import {
   GitMissingDialog,
   SpaceGitWatcher,
   useAppGitFocus,
+  useGitAvailability,
 } from "@/features/git";
 
 export function MainLayout() {

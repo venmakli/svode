@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useGitStore } from "@/stores/git";
 import { useSpaceStore, selectActiveSpacePath } from "@/stores/space";
-import type { GitStatus } from "@/features/git";
+import type { GitStatus } from "../model";
 import type { SpaceConfig } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 

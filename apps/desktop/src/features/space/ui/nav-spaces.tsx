@@ -55,7 +55,7 @@ import {
 import { useSpaceStore } from "@/stores/space";
 import { useLayoutStore } from "@/stores/layout";
 import type { TreeNode } from "@/features/entry";
-import type { LfsState, SpaceConfig, SpaceInfo } from "@/features/space";
+import type { LfsState, SpaceConfig, SpaceInfo } from "../model";
 import { listen } from "@/platform/native/events";
 import type { CloneProgress } from "@/features/git";
 import {

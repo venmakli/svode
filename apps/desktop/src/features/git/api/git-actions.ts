@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
-import type { SyncResult, GitStatus } from "@/features/git";
+import type { SyncResult, GitStatus } from "../model";
 import type { SpaceConfig } from "@/features/space";
 
 /**
