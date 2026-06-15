@@ -17,7 +17,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import { CardPropertyFlow } from "../card-property-flow";
 import type { ListRowProps } from "./types";
 import * as m from "@/paraglide/messages.js";

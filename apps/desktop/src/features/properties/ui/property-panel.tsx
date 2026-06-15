@@ -16,7 +16,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { Entry } from "@/features/editor/types";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import {
   AlertTriangle,
   MoreHorizontal,

@@ -23,7 +23,7 @@ import {
   TableHeader,
   TableRow as ShadcnTableRow,
 } from "@/components/ui/table";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import type { Entry } from "@/features/editor/types";
 import type { CollectionSchema } from "@/features/properties/model";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";

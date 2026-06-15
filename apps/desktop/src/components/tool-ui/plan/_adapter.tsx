@@ -1,4 +1,4 @@
-export { cn } from "@/lib/utils";
+export { cn } from "@/shared/lib/utils";
 export {
   Accordion,
   AccordionItem,

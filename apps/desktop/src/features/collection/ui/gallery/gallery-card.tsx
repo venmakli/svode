@@ -10,7 +10,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import { CardPropertyFlow } from "../card-property-flow";
 import { GalleryCover } from "./gallery-cover";
 import type { GalleryCardProps } from "./types";

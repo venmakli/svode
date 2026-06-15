@@ -17,7 +17,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import { EntryIdentityHeader } from "@/features/editor/entry-identity-header";
 import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";
 import type { Entry, EntryCover } from "@/features/editor/types";

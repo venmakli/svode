@@ -14,7 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { joinAbs } from "@/features/editor/doc-link-utils";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import { pickMediaFiles } from "@/lib/native-file-picker";
 import type { CoverColorName, EntryCover } from "./types";
 import * as m from "@/paraglide/messages.js";

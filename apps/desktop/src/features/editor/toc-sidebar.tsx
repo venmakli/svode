@@ -9,7 +9,7 @@ import {
 import { NodeApi } from "platejs";
 import type { Heading } from "@platejs/toc";
 import { useTocSideBarState, useTocSideBar } from "@platejs/toc/react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 
 interface TocSidebarProps {
   anchorOffset?: number;

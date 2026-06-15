@@ -13,7 +13,7 @@ import { Select as SelectPrimitive } from "radix-ui";
 import { type VariantProps } from "class-variance-authority";
 import { CheckIcon } from "lucide-react";
 import { useAssistantApi } from "@assistant-ui/react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import {
   SelectRoot,
   SelectTrigger,

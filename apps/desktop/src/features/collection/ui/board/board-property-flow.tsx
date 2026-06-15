@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import { validatePropertyValue } from "@/features/properties/model";
 import type { Entry } from "@/features/editor/types";
 import type {

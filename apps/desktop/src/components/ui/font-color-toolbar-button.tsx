@@ -30,7 +30,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { cn } from '@/lib/utils';
+import { cn } from '@/shared/lib/utils';
 
 import { ToolbarButton, ToolbarMenuGroup } from './toolbar';
 

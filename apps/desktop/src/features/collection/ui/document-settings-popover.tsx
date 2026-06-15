@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { MultiPanePopover } from "@/features/collection/query";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import * as m from "@/paraglide/messages.js";
 
 export function DocumentSettings({

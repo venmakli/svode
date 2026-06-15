@@ -34,7 +34,7 @@ import {
   ButtonGroup,
   ButtonGroupSeparator,
 } from "@/components/ui/button-group";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import { MultiPanePopover } from "@/features/collection/query";
 import type { CollectionSchema } from "@/features/properties/model";
 import type { TemplateInfo, TemplateKind } from "../model";

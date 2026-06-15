@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { ChevronRight, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 
 export function SettingsSection({ label }: { label: string }) {
   return (

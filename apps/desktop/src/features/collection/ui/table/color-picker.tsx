@@ -3,7 +3,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import type { ColorName } from "@/features/properties/model";
 import { COLOR_NAMES, colorStyle } from "@/features/properties/lib";
 

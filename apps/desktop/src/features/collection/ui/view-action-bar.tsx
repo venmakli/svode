@@ -6,7 +6,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import type { UseViewQueryResult, ViewType } from "@/features/collection/query";
 import type { CollectionView } from "@/features/collection/query";
 import type { CollectionSchema } from "@/features/properties/model";

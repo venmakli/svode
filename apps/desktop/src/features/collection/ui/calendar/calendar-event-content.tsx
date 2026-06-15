@@ -18,7 +18,7 @@ import {
   type Column,
 } from "@/features/properties/model";
 import { PropertyControl } from "@/features/properties/ui";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import { eventColorStyle } from "./utils";
 import type {
   CalendarEventModel,

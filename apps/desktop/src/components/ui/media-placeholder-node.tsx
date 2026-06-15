@@ -13,7 +13,7 @@ import { KEYS } from 'platejs';
 import { PlateElement, useEditorPlugin, withHOC } from 'platejs/react';
 import { toast } from 'sonner';
 
-import { cn } from '@/lib/utils';
+import { cn } from '@/shared/lib/utils';
 import { type MediaKind } from '@/lib/media-types';
 import { filesToFileList, pickMediaFiles } from '@/lib/native-file-picker';
 import { useUploadFile } from '@/hooks/use-upload-file';

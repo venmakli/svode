@@ -9,7 +9,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { TableCell, TableRow as ShadcnTableRow } from "@/components/ui/table";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import type { CollectionTableRow } from "./types";
 import * as m from "@/paraglide/messages.js";
 

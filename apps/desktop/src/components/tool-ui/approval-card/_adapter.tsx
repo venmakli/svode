@@ -1,2 +1,2 @@
-export { cn } from "@/lib/utils";
+export { cn } from "@/shared/lib/utils";
 export { Separator } from "@/components/ui/separator";

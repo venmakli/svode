@@ -9,7 +9,7 @@ import {
   usePluginOption,
 } from 'platejs/react';
 
-import { cn } from '@/lib/utils';
+import { cn } from '@/shared/lib/utils';
 
 export function AILeaf(props: PlateTextProps) {
   const streaming = usePluginOption(AIChatPlugin, 'streaming');

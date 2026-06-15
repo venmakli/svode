@@ -7,7 +7,7 @@ import {
 } from "react";
 import { SmilePlus, type LucideIcon } from "lucide-react";
 import { EmojiPicker } from "@/components/ui/emoji-picker";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import * as m from "@/paraglide/messages.js";
 
 interface TitleZoneProps {

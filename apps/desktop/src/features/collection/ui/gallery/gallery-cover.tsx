@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import type { Entry } from "@/features/editor/types";
 import type { CollectionSchema } from "@/features/properties/model";
 import { coverStyle, galleryCoverRatio, resolveGalleryCover } from "./utils";

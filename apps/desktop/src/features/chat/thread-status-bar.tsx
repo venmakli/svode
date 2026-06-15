@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useChatStatusStore } from "@/stores/chat";
 import { useSpaceStore } from "@/stores/space";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 
 function formatMs(ms: number): string {
   const seconds = Math.round(ms / 1000);

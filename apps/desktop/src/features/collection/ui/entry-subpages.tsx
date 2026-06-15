@@ -22,7 +22,7 @@ import { useSpaceStore } from "@/stores/space";
 import type { Entry } from "@/features/editor/types";
 import { detailPageSectionClassName } from "@/shared/ui/page-layout";
 import type { TreeNode } from "@/types/space";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import { normalizeEntryPath } from "../lib/utils";
 import { handleError } from "../lib/errors";
 import * as m from "@/paraglide/messages.js";

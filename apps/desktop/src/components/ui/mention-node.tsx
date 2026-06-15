@@ -14,8 +14,8 @@ import {
   useSelected,
 } from 'platejs/react';
 
-import { cn } from '@/lib/utils';
-import { useMounted } from '@/hooks/use-mounted';
+import { cn } from '@/shared/lib/utils';
+import { useMounted } from '@/shared/hooks/use-mounted';
 
 import {
   InlineCombobox,

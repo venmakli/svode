@@ -8,7 +8,7 @@ import { PlateElement } from "platejs/react";
 import { FileText } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import { useLayoutStore } from "@/stores/layout";
 import { useEditorStore } from "@/stores/editor";
 import { useSpaceStore } from "@/stores/space";

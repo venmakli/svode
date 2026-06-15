@@ -21,7 +21,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import { useLayoutStore } from "@/stores/layout";
 import type { Entry } from "@/features/editor/types";
 import {

@@ -12,7 +12,7 @@ import { type VariantProps, cva } from 'class-variance-authority';
 import { PlateElement } from 'platejs/react';
 
 import { Checkbox } from '@/components/ui/checkbox';
-import { cn } from '@/lib/utils';
+import { cn } from '@/shared/lib/utils';
 
 const listVariants = cva('m-0 py-1 ps-6', {
   variants: {

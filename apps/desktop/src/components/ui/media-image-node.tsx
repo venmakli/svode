@@ -8,7 +8,7 @@ import { Image, ImagePlugin, useMediaState } from '@platejs/media/react';
 import { ResizableProvider, useResizableValue } from '@platejs/resizable';
 import { PlateElement, withHOC } from 'platejs/react';
 
-import { cn } from '@/lib/utils';
+import { cn } from '@/shared/lib/utils';
 import { useResolvedAssetUrl } from '@/hooks/use-resolved-asset-url';
 
 import { Caption, CaptionTextarea } from './caption';

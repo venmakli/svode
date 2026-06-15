@@ -10,7 +10,7 @@ import {
 } from "@dnd-kit/sortable";
 import { flexRender, type Table as ReactTable } from "@tanstack/react-table";
 import { TableBody, TableCell } from "@/components/ui/table";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import type { Entry } from "@/features/editor/types";
 import type {
   CollectionSchema,

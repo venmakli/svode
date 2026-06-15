@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import { X } from "lucide-react";
 import type { PropertyOption } from "../model/types";
 import { colorStyle, optionColor } from "../lib/utils";

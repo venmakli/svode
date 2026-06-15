@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import { validatePropertyValue } from "@/features/properties/model";
 import { isEmptyValue, valueToString } from "@/features/properties/lib";
 import { PropertyControl, PropertyValue } from "@/features/properties/ui";

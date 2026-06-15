@@ -11,7 +11,7 @@ import { useSidebar } from "@/components/ui/sidebar";
 import { useLayoutStore } from "@/stores/layout";
 import { useSpaceStore } from "@/stores/space";
 import { useFullscreen } from "@/hooks/use-fullscreen";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import { CloudUploadButton } from "@/features/workspace/cloud-upload-button";
 import { useCommandPaletteStore } from "@/features/search/store";
 import { buildProjectTerminalTarget } from "@/features/terminal";

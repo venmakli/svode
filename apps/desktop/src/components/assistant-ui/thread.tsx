@@ -9,7 +9,7 @@ import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { PermissionCard } from "@/features/chat/permission-card";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import {
   ActionBarMorePrimitive,
   ActionBarPrimitive,

@@ -19,7 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MoreHorizontal, Settings, Trash2 } from "lucide-react";
-import { relativeTime } from "@/lib/relative-time";
+import { relativeTime } from "@/shared/lib/relative-time";
 import type { SpaceInfo } from "@/types/space";
 
 interface ProjectCardProps {

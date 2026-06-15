@@ -9,7 +9,7 @@ import { useFileWatcher } from "../use-file-watcher";
 import { useLayoutStore } from "@/stores/layout";
 import { useSpaceStore } from "@/stores/space";
 import { useEditorStore } from "@/stores/editor";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import {
   commitAllSpace,
   commitFileAndMaybeSync,
@@ -24,7 +24,7 @@ import {
 import { Editor, EditorContainer } from "@/components/ui/editor";
 import { FixedToolbar } from "@/components/ui/fixed-toolbar";
 import { FixedToolbarButtons } from "@/components/ui/fixed-toolbar-buttons";
-import { detailPageEditorClassName } from "@/shared/ui/page-layout";
+import { detailPageBodyClassName } from "@/shared/ui/page-layout";
 import { TocSidebar } from "../toc-sidebar";
 import type { Entry, EntryMeta, WriteResult } from "../types";
 import * as m from "@/paraglide/messages.js";
@@ -593,7 +593,7 @@ export function PlateDocumentEditor({
           >
             <Editor
               variant={usePageScroll ? "none" : "default"}
-              className={cn(usePageScroll && detailPageEditorClassName)}
+              className={cn(usePageScroll && detailPageBodyClassName)}
               placeholder={m.editor_placeholder_body()}
             />
           </EditorContainer>

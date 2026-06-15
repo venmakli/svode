@@ -5,7 +5,7 @@ import {
   InputGroupButton,
   InputGroupInput,
 } from "@/components/ui/input-group";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import * as m from "@/paraglide/messages.js";
 
 export function SearchControl({

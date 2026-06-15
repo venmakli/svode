@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 import { useTerminalStore } from "@/features/terminal/hooks/use-terminal-store";
 import type { TerminalTab } from "@/features/terminal/model/types";
 
