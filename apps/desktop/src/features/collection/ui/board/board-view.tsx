@@ -31,7 +31,7 @@ import type {
   PropertyType,
 } from "@/features/properties/model";
 import { normalizeSchema } from "@/features/properties/lib";
-import { useSpaceStore } from "@/stores/space";
+import { useSpaceStore } from "@/features/space";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import { useCollectionPersons } from "../../hooks";
 import { titleFilter } from "../../lib/utils";

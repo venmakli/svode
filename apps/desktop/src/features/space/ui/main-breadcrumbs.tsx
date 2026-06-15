@@ -12,8 +12,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useLayoutStore } from "@/stores/layout";
-import { useSpaceStore } from "@/stores/space";
+import { useEntrySelectionStore } from "@/features/entry";
+import { useSpaceStore } from "../model";
 import type { TreeNode } from "@/features/entry";
 
 function findTitleInTree(
@@ -60,7 +60,7 @@ function buildSegments(
 
 export function MainBreadcrumbs() {
   const { activeDocument, activeDocumentSpaceId, openDocument } =
-    useLayoutStore();
+    useEntrySelectionStore();
   const { rootSpaces, spaces, fileTrees, openSpace } = useSpaceStore();
 
   if (!activeDocument) return null;

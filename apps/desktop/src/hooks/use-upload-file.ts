@@ -4,8 +4,8 @@ import { toast } from "sonner";
 
 import { joinAbs, makeRelativeDocUrl } from "@/features/editor/doc-link-utils";
 import { uploadAsset, type UploadAssetDto } from "@/platform/upload/upload-api";
-import { useLayoutStore } from "@/stores/layout";
-import { useSpaceStore } from "@/stores/space";
+import { useEntrySelectionStore } from "@/features/entry";
+import { useSpaceStore } from "@/features/space";
 
 /**
  * Shape returned by `useUploadFile` — matches the subset of Plate's
@@ -51,7 +51,7 @@ export function useUploadFile({ onUploadComplete, onUploadError }: UseUploadFile
     // documents while `file.arrayBuffer()` is resolving, we still attribute
     // the asset to the document where the upload was started.
     const { activeDocument, activeDocumentSpaceId } =
-      useLayoutStore.getState();
+      useEntrySelectionStore.getState();
     if (!activeDocument) {
       const err = new Error("No active document");
       toast.error(err.message);

@@ -6,7 +6,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { FileText } from "lucide-react";
-import { useSpaceStore } from "@/stores/space";
+import { useSpaceStore } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 import type { TreeNode } from "@/features/entry";
 

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { getGitStatus } from "@/platform/git/git-api";
-import type { GitStatus } from "@/features/git";
+import type { GitStatus } from "./types";
 
 /**
  * Per-space git state.

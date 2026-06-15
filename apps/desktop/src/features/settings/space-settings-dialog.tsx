@@ -57,9 +57,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useLayoutStore } from "@/stores/layout";
-import { useSpaceStore } from "@/stores/space";
-import { useChatStatusStore, type ModelOption } from "@/stores/chat";
+import { useEntrySelectionStore } from "@/features/entry";
+import { useSpaceStore } from "@/features/space";
+import { useChatStatusStore, type ModelOption } from "@/features/chat";
 import { useIdentityStore } from "@/features/identity/identity-store";
 import { isValidEmail, isValidName } from "@/features/identity/validation";
 import type {
@@ -96,7 +96,7 @@ export function SpaceSettingsDialog({
   spacePath: inputPath,
   onOpenChange,
 }: SpaceSettingsDialogProps) {
-  const { openDocument, closeSettings } = useLayoutStore();
+  const openDocument = useEntrySelectionStore((state) => state.openDocument);
   const { activeRootId, activeRootPath, activeRootName, spaces } =
     useSpaceStore();
 
@@ -912,7 +912,7 @@ export function SpaceSettingsDialog({
 
 
   function handleOpenAgentsMd() {
-    closeSettings();
+    onOpenChange(false);
     openDocument(".svode/AGENTS.md", activeRootId ?? undefined);
   }
 

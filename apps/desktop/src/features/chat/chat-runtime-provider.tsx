@@ -7,8 +7,8 @@ import {
 } from "@assistant-ui/react";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { listen, type UnlistenFn } from "@/platform/native/events";
-import { useSpaceStore, selectActiveSpacePath, selectActiveSpaceId } from "@/stores/space";
-import { useChatStatusStore } from "@/stores/chat";
+import { useSpaceStore, selectActiveSpacePath, selectActiveSpaceId } from "@/features/space";
+import { useChatStatusStore } from "./model";
 
 interface TextDeltaPayload {
   type: "textDelta";

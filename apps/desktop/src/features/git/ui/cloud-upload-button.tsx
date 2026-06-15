@@ -18,8 +18,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useGitStore } from "@/stores/git";
-import { useSpaceStore, selectActiveSpacePath } from "@/stores/space";
+import { useGitStore } from "../model";
+import { useSpaceStore, selectActiveSpacePath } from "@/features/space";
 import type { GitStatus } from "../model";
 import type { SpaceConfig } from "@/features/space";
 import * as m from "@/paraglide/messages.js";

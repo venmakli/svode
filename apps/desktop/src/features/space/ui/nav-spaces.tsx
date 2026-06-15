@@ -52,8 +52,8 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useSpaceStore } from "@/stores/space";
-import { useLayoutStore } from "@/stores/layout";
+import { useSpaceStore } from "../model";
+import { useEntrySelectionStore } from "@/features/entry";
 import type { TreeNode } from "@/features/entry";
 import type { LfsState, SpaceConfig, SpaceInfo } from "../model";
 import { listen } from "@/platform/native/events";
@@ -68,11 +68,15 @@ import { createCollection } from "@/features/collection";
 import { SortableFileTree } from "./sortable-file-tree";
 import { FileTreeItem } from "./file-tree-item";
 import { GitIndicatorIcon, SpaceGitWatcher } from "@/features/git";
-import { useGitStore } from "@/stores/git";
+import { useGitStore } from "@/features/git";
 import { Progress } from "@/components/ui/progress";
 import { commitAllSpace } from "@/features/git";
 
-export function NavSpaces() {
+interface NavSpacesProps {
+  onOpenSpaceSettings: (spacePath: string) => void;
+}
+
+export function NavSpaces({ onOpenSpaceSettings }: NavSpacesProps) {
   const {
     spaces,
     activeSpaceId,
@@ -84,7 +88,7 @@ export function NavSpaces() {
     refreshTree,
     loadSpaces,
   } = useSpaceStore();
-  const { openDocument, openSpaceSettings } = useLayoutStore();
+  const openDocument = useEntrySelectionStore((state) => state.openDocument);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{
     id: string;
@@ -286,7 +290,7 @@ export function NavSpaces() {
                     handleNewPage={handleNewPage}
                     handleNewFolder={handleNewFolder}
                     handleNewCollection={handleNewCollection}
-                    openSpaceSettings={openSpaceSettings}
+                    openSpaceSettings={onOpenSpaceSettings}
                     openSpace={openSpace}
                     setDeleteTarget={setDeleteTarget}
                     handleCloneMissing={handleCloneMissing}

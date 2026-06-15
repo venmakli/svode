@@ -35,15 +35,15 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ChevronRight, Database, Ellipsis, FileText, FilePlus, FolderOpen, FolderPlus, GripVertical, FileSymlink, Pencil, Trash2 } from "lucide-react";
-import { useLayoutStore } from "@/stores/layout";
-import { useEditorStore } from "@/stores/editor";
-import { useSpaceStore } from "@/stores/space";
+import { useEntrySelectionStore } from "@/features/entry";
+import { useEditorStore } from "@/features/editor";
+import { useSpaceStore } from "../model";
 import type { Entry, TreeNode } from "@/features/entry";
 import { TreeDndContext } from "./sortable-file-tree";
 import { TreeDropIndicator } from "./tree-drop-indicator";
 import { isDescendantOf } from "../lib/tree-dnd-utilities";
 import { FileGitIndicatorIcon } from "@/features/git";
-import { selectFileIndicator, useGitStore } from "@/stores/git";
+import { selectFileIndicator, useGitStore } from "@/features/git";
 
 interface FileTreeItemProps {
   node: TreeNode;
@@ -62,7 +62,7 @@ function isBareFolder(node: TreeNode): boolean {
 }
 
 export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
-  const { openDocument, activeDocument } = useLayoutStore();
+  const { openDocument, activeDocument } = useEntrySelectionStore();
   const { unsavedChanges, aiModified } = useEditorStore();
   const { expandedPaths, toggleExpanded, refreshTree, spaces, rootSpaces, activeSpaceId, activeRootId, activeRootPath } =
     useSpaceStore();

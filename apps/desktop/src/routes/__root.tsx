@@ -1,7 +1,7 @@
 import { createRootRoute, Outlet } from "@tanstack/react-router";
 import { ThemeProvider } from "@/components/ui/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
-import { useLayoutStore } from "@/stores/layout";
+import { useShellStore } from "@/app/shell";
 import { AppSettingsDialog } from "@/features/settings/app-settings-dialog";
 import { SpaceSettingsDialog } from "@/features/settings/space-settings-dialog";
 import { IdentityDialog } from "@/features/identity/identity-dialog";
@@ -10,7 +10,7 @@ import { useIdentityStore } from "@/features/identity/identity-store";
 import { DogfoodUpdateNotifier } from "@/features/updates";
 
 function SettingsDialogs() {
-  const { settingsDialog, settingsSpacePath, closeSettings } = useLayoutStore();
+  const { settingsDialog, settingsSpacePath, closeSettings } = useShellStore();
 
   return (
     <>

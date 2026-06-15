@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { useChatStatusStore } from "@/stores/chat";
-import { useSpaceStore } from "@/stores/space";
+import { useChatStatusStore } from "./model";
+import { useSpaceStore } from "@/features/space";
 import { cn } from "@/shared/lib/utils";
 
 function formatMs(ms: number): string {

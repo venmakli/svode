@@ -1,6 +1,6 @@
 import { FileText, XIcon } from "lucide-react";
-import { useChatStatusStore } from "@/stores/chat";
-import { useLayoutStore } from "@/stores/layout";
+import { useChatStatusStore } from "./model";
+import { useEntrySelectionStore } from "@/features/entry";
 
 interface DocMentionChipsProps {
   onRemoveText?: (title: string) => void;
@@ -9,7 +9,7 @@ interface DocMentionChipsProps {
 export function DocMentionChips({ onRemoveText }: DocMentionChipsProps) {
   const docMentions = useChatStatusStore((s) => s.docMentions);
   const removeDocMention = useChatStatusStore((s) => s.removeDocMention);
-  const openDocument = useLayoutStore((s) => s.openDocument);
+  const openDocument = useEntrySelectionStore((s) => s.openDocument);
 
   if (docMentions.length === 0) return null;
 

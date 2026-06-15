@@ -8,9 +8,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useSidebar } from "@/components/ui/sidebar";
-import { useLayoutStore } from "@/stores/layout";
-import { useSpaceStore } from "@/stores/space";
+import { useEntrySelectionStore } from "@/features/entry";
+import { useSpaceStore } from "@/features/space";
 import { useFullscreen } from "./hooks/use-fullscreen";
+import { useShellStore } from "./model";
 import { cn } from "@/shared/lib/utils";
 import { CloudUploadButton } from "@/features/git";
 import { useCommandPaletteStore } from "@/features/search/store";
@@ -20,7 +21,8 @@ import { MainBreadcrumbs } from "@/features/space";
 import { ProjectOpenersMenu } from "./project-openers-menu";
 
 export function WindowHeader() {
-  const { activeDocument, toggleChatPanel } = useLayoutStore();
+  const activeDocument = useEntrySelectionStore((state) => state.activeDocument);
+  const toggleChatPanel = useShellStore((state) => state.toggleChatPanel);
   const { activeRootId, activeRootName, activeRootPath, goHome } =
     useSpaceStore();
   const setCommandPaletteOpen = useCommandPaletteStore((s) => s.setOpen);

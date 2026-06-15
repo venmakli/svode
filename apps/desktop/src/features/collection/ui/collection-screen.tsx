@@ -22,8 +22,8 @@ import {
   detailPageHeaderClassName,
   detailPageToolbarClassName,
 } from "@/shared/ui/page-layout";
-import { useLayoutStore } from "@/stores/layout";
-import { useSpaceStore } from "@/stores/space";
+import { useEntrySelectionStore } from "@/features/entry";
+import { useSpaceStore } from "@/features/space";
 import { useViewQuery } from "@/features/collection/query";
 import { DeleteDialogs } from "./delete-dialogs";
 import { EntryDetailActions } from "./entry-detail-actions";
@@ -120,7 +120,7 @@ export function CollectionScreen({
     [documentPath],
   );
   const readmePath = readmePathFor(collectionPath);
-  const { openDocument } = useLayoutStore();
+  const { openDocument } = useEntrySelectionStore();
   const { refreshTree, updateNodeMeta } = useSpaceStore();
   const [schema, setSchema] = useState<CollectionSchema | null>(null);
   const [entry, setEntry] = useState<Entry | null>(null);

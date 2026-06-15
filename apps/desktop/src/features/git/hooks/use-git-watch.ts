@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { listen } from "@/platform/native/events";
-import { useGitStore } from "@/stores/git";
+import { useGitStore } from "../model";
 
 /**
  * Per-space `space:dirty` listener + initial `git_status` fetch.

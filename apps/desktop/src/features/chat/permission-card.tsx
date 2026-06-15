@@ -3,7 +3,7 @@ import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { ApprovalCard } from "@/components/tool-ui/approval-card";
 import { QuestionFlow } from "@/components/tool-ui/question-flow";
 import { Button } from "@/components/ui/button";
-import { useChatStatusStore } from "@/stores/chat";
+import { useChatStatusStore } from "./model";
 import type { ApprovalDecision, MetadataItem } from "@/components/tool-ui/approval-card";
 import type { QuestionFlowOption } from "@/components/tool-ui/question-flow";
 

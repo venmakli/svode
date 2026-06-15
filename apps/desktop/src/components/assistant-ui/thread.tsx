@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 import { useRef, useState, useCallback, type FC } from "react";
 import { ModelSelector } from "@/components/assistant-ui/model-selector";
-import { useChatStatusStore } from "@/stores/chat";
+import { useChatStatusStore } from "@/features/chat";
 import {
   useSlashMenu,
   SlashMenuDropdown,

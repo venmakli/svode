@@ -4,7 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { useKeyboardShortcuts } from "./hooks/use-keyboard-shortcuts";
 import { WindowHeader } from "./window-header";
-import { useSpaceStore } from "@/stores/space";
+import { useSpaceStore } from "@/features/space";
 import { CommandPalette } from "@/features/search/command-palette";
 import { TerminalPanelHost } from "@/features/terminal";
 import {
@@ -17,6 +17,7 @@ import {
   useAppGitFocus,
   useGitAvailability,
 } from "@/features/git";
+import { useShellStore } from "./model";
 
 export function MainLayout() {
   const navigate = useNavigate();
@@ -29,6 +30,8 @@ export function MainLayout() {
     explicitHome,
   } = useSpaceStore();
   const { available, recheck } = useGitAvailability();
+  const openAppSettings = useShellStore((state) => state.openAppSettings);
+  const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
   const bootstrapAttempted = useRef(false);
 
   useEffect(() => {
@@ -56,7 +59,10 @@ export function MainLayout() {
     <TooltipProvider delayDuration={300}>
       <SidebarProvider className="min-h-0 h-dvh overflow-hidden">
         <WindowHeader />
-        <SpaceSidebar />
+        <SpaceSidebar
+          onOpenAppSettings={openAppSettings}
+          onOpenSpaceSettings={openSpaceSettings}
+        />
         <SidebarInset className="pt-[44px] min-h-0 overflow-hidden">
           <div className="flex h-full min-h-0 flex-col overflow-hidden">
             <div className="min-h-0 flex-1 overflow-hidden">

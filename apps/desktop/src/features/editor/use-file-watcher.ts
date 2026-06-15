@@ -9,9 +9,9 @@ import {
 import { toast } from "sonner";
 import type { PlateEditor } from "platejs/react";
 import { deserializeWithConflicts } from "./conflict/parse-conflicts";
-import { useLayoutStore } from "@/stores/layout";
-import { useSpaceStore } from "@/stores/space";
-import { useEditorStore } from "@/stores/editor";
+import { useEntrySelectionStore } from "@/features/entry";
+import { useSpaceStore } from "@/features/space";
+import { useEditorStore } from "./model";
 import * as m from "@/paraglide/messages.js";
 
 interface FileEvent {
@@ -50,7 +50,7 @@ export function useFileWatcher({
   isDebouncePendingRef,
   isLoadingRef,
 }: UseFileWatcherOptions) {
-  const { closeDocument } = useLayoutStore();
+  const { closeDocument } = useEntrySelectionStore();
   const { refreshTree } = useSpaceStore();
   const { markAiModified, clearAiModified } = useEditorStore();
 

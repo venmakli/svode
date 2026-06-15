@@ -6,9 +6,9 @@ import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import { EditorKit } from "@/components/editor/editor-kit";
 import { useFileWatcher } from "../use-file-watcher";
-import { useLayoutStore } from "@/stores/layout";
-import { useSpaceStore } from "@/stores/space";
-import { useEditorStore } from "@/stores/editor";
+import { useEntrySelectionStore } from "@/features/entry";
+import { useSpaceStore } from "@/features/space";
+import { useEditorStore } from "../model";
 import { cn } from "@/shared/lib/utils";
 import {
   commitAllSpace,
@@ -16,7 +16,7 @@ import {
   syncSpace,
 } from "@/features/git";
 import { isTerminalKeyboardEvent } from "@/features/terminal";
-import { useGitStore } from "@/stores/git";
+import { useGitStore } from "@/features/git";
 import {
   deserializeWithConflicts,
   hasUnresolvedConflicts,
@@ -54,7 +54,7 @@ export function PlateDocumentEditor({
   onDocumentPathChange,
 }: PlateDocumentEditorProps) {
   const { activeDocument, activeDocumentSpaceId, openDocument } =
-    useLayoutStore();
+    useEntrySelectionStore();
   const {
     updateNodeMeta,
     rootSpaces,

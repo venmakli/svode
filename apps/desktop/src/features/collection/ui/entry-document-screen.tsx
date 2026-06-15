@@ -8,8 +8,8 @@ import { PropertyPanel } from "@/features/properties/ui";
 import { normalizeSchema } from "@/features/properties/lib";
 import type { EntrySchemaResult } from "@/features/properties/model";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
-import { useLayoutStore } from "@/stores/layout";
-import { useSpaceStore } from "@/stores/space";
+import { useEntrySelectionStore } from "@/features/entry";
+import { useSpaceStore } from "@/features/space";
 import { DeleteDialogs } from "./delete-dialogs";
 import {
   EntryDetailActions,
@@ -33,7 +33,7 @@ export function EntryDocumentScreen({
   documentPath,
   spaceId,
 }: EntryDocumentScreenProps) {
-  const openDocument = useLayoutStore((state) => state.openDocument);
+  const openDocument = useEntrySelectionStore((state) => state.openDocument);
   const updateNodeMeta = useSpaceStore((state) => state.updateNodeMeta);
   const refreshTree = useSpaceStore((state) => state.refreshTree);
   const [entry, setEntry] = useState<Entry | null>(null);

@@ -14,8 +14,8 @@ import { Caption, CaptionTextarea } from './caption';
 import { resolveAssetAbsPath } from '@/platform/assets/assets-api';
 import { useResolvedAssetUrl } from '@/hooks/use-resolved-asset-url';
 import { getErrorMessage } from '@/hooks/use-upload-file';
-import { useLayoutStore } from '@/stores/layout';
-import { useSpaceStore } from '@/stores/space';
+import { useEntrySelectionStore } from '@/features/entry';
+import { useSpaceStore } from '@/features/space';
 import { joinAbs } from '@/features/editor/doc-link-utils';
 
 export const FileElement = withHOC(
@@ -43,7 +43,7 @@ export const FileElement = withHOC(
         }
         const projectPath = useSpaceStore.getState().activeRootPath;
         const { activeDocument, activeDocumentSpaceId } =
-          useLayoutStore.getState();
+          useEntrySelectionStore.getState();
         if (!projectPath || !activeDocument) return;
         const { rootSpaces, spaces, activeRootId } = useSpaceStore.getState();
         const owner =

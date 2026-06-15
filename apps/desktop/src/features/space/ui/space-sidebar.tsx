@@ -38,8 +38,7 @@ import {
   Trash2,
 } from "lucide-react";
 
-import { useSpaceStore } from "@/stores/space";
-import { useLayoutStore } from "@/stores/layout";
+import { useSpaceStore } from "../model";
 import { NavDocuments } from "./nav-documents";
 import { NavSpaces } from "./nav-spaces";
 import { CreateSpaceDialog } from "./create-space-dialog";
@@ -47,7 +46,15 @@ import { useEffectiveIdentity } from "@/features/identity/use-effective-identity
 import { avatarColorFromEmail } from "@/features/identity/avatar-colors";
 import * as m from "@/paraglide/messages.js";
 
-export function SpaceSidebar() {
+interface SpaceSidebarProps {
+  onOpenAppSettings: () => void;
+  onOpenSpaceSettings: (spacePath: string) => void;
+}
+
+export function SpaceSidebar({
+  onOpenAppSettings,
+  onOpenSpaceSettings,
+}: SpaceSidebarProps) {
   const navigate = useNavigate();
   const {
     rootSpaces,
@@ -59,7 +66,6 @@ export function SpaceSidebar() {
     deleteRoot,
     goHome,
   } = useSpaceStore();
-  const { openAppSettings, openSpaceSettings } = useLayoutStore();
   const { name: identityName, email: identityEmail } = useEffectiveIdentity();
 
   const [createWsOpen, setCreateWsOpen] = useState(false);
@@ -117,7 +123,7 @@ export function SpaceSidebar() {
               >
                 {activeRootPath && (
                   <DropdownMenuItem
-                    onClick={() => openSpaceSettings(activeRootPath)}
+                    onClick={() => onOpenSpaceSettings(activeRootPath)}
                   >
                     <Settings className="mr-2 h-4 w-4" />
                     {m.sidebar_project_settings()}
@@ -166,7 +172,7 @@ export function SpaceSidebar() {
 
       <SidebarContent>
         <NavDocuments />
-        <NavSpaces />
+        <NavSpaces onOpenSpaceSettings={onOpenSpaceSettings} />
       </SidebarContent>
 
       <SidebarFooter>
@@ -176,7 +182,7 @@ export function SpaceSidebar() {
             <SidebarMenuButton
               size="lg"
               className="w-full"
-              onClick={() => openAppSettings()}
+              onClick={onOpenAppSettings}
             >
               <Avatar className="size-8 rounded-lg after:rounded-lg">
                 <AvatarFallback

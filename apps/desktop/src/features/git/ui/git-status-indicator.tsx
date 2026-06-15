@@ -4,7 +4,7 @@ import {
   selectIndicator,
   useGitStore,
   type GitIndicator,
-} from "@/stores/git";
+} from "../model";
 
 interface SpaceIndicatorProps {
   spacePath: string;

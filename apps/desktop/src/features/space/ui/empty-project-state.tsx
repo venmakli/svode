@@ -10,15 +10,15 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { useLayoutStore } from "@/stores/layout";
-import { useSpaceStore } from "@/stores/space";
+import { useEntrySelectionStore } from "@/features/entry";
+import { useSpaceStore } from "../model";
 
 /**
  * Shown when a project has no documents and no children.
  */
 export function EmptyProjectState() {
   const { activeRootId, activeRootPath, createEntry } = useSpaceStore();
-  const { openDocument } = useLayoutStore();
+  const { openDocument } = useEntrySelectionStore();
 
   async function handleCreatePage() {
     if (!activeRootId || !activeRootPath) return;

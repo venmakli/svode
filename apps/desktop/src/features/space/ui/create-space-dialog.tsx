@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/input-group";
 import { EmojiPicker } from "@/components/ui/emoji-picker";
 import { Progress } from "@/components/ui/progress";
-import { useSpaceStore } from "@/stores/space";
+import { useSpaceStore } from "../model";
 import type { SpaceGitType } from "../model";
 import type { CloneProgress } from "@/features/git";
 

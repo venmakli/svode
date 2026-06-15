@@ -9,9 +9,9 @@ import { FileText } from "lucide-react";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import { cn } from "@/shared/lib/utils";
-import { useLayoutStore } from "@/stores/layout";
-import { useEditorStore } from "@/stores/editor";
-import { useSpaceStore } from "@/stores/space";
+import { useEntrySelectionStore } from "@/features/entry";
+import { useEditorStore } from "./model";
+import { useSpaceStore } from "@/features/space";
 import { GhostCloneDialog } from "./ghost-clone-dialog";
 import * as m from "@/paraglide/messages.js";
 import {
@@ -39,9 +39,9 @@ interface LinkResolveResult {
 
 export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
   const { element, editor, children } = props;
-  const { openDocument } = useLayoutStore();
-  const activeDocument = useLayoutStore((s) => s.activeDocument);
-  const activeDocumentSpaceId = useLayoutStore((s) => s.activeDocumentSpaceId);
+  const { openDocument } = useEntrySelectionStore();
+  const activeDocument = useEntrySelectionStore((s) => s.activeDocument);
+  const activeDocumentSpaceId = useEntrySelectionStore((s) => s.activeDocumentSpaceId);
   const activeRootId = useSpaceStore((s) => s.activeRootId);
   const activeRootPath = useSpaceStore((s) => s.activeRootPath);
   const rootSpaces = useSpaceStore((s) => s.rootSpaces);

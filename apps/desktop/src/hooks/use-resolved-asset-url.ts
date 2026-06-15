@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 
-import { useLayoutStore } from "@/stores/layout";
+import { useEntrySelectionStore } from "@/features/entry";
 import {
   useSpaceStore,
   selectActiveSpacePath,
-} from "@/stores/space";
+} from "@/features/space";
 import { joinAbs } from "@/features/editor/doc-link-utils";
 import {
   resolveAssetAbsPath,
@@ -20,8 +20,8 @@ interface ActiveContext {
 
 function useActiveContext(): ActiveContext | null {
   const projectPath = useSpaceStore((s) => s.activeRootPath);
-  const activeDocument = useLayoutStore((s) => s.activeDocument);
-  const activeDocumentSpaceId = useLayoutStore((s) => s.activeDocumentSpaceId);
+  const activeDocument = useEntrySelectionStore((s) => s.activeDocument);
+  const activeDocumentSpaceId = useEntrySelectionStore((s) => s.activeDocumentSpaceId);
   const activeRootId = useSpaceStore((s) => s.activeRootId);
   const rootSpaces = useSpaceStore((s) => s.rootSpaces);
   const spaces = useSpaceStore((s) => s.spaces);

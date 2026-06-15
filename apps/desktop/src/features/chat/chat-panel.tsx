@@ -3,7 +3,7 @@ import { Thread } from "@/components/assistant-ui/thread";
 import { ChatRuntimeProvider } from "./chat-runtime-provider";
 import { ThreadStatusBar } from "./thread-status-bar";
 import { BashToolUI, EditToolUI, WriteToolUI, PlanToolUI } from "./tool-uis";
-import { useChatStatusStore } from "@/stores/chat";
+import { useChatStatusStore } from "./model";
 
 function useFocusComposerShortcut() {
   useEffect(() => {

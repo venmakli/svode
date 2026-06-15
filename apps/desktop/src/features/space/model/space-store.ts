@@ -25,7 +25,7 @@ import {
   openProjectFolder,
 } from "@/platform/space/space-api";
 import type { TreeNode } from "@/features/entry";
-import type { SpaceInfo, SpaceGitType } from "@/features/space";
+import type { SpaceInfo, SpaceGitType } from "./types";
 
 interface SpaceState {
   // Root spaces (projects on the home page)

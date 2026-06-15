@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { unwatchSpace, watchSpace } from "@/platform/space/space-api";
-import { useLayoutStore } from "@/stores/layout";
-import { selectActiveSpacePath, useSpaceStore } from "@/stores/space";
+import { useEntrySelectionStore } from "@/features/entry";
+import { selectActiveSpacePath, useSpaceStore } from "../model";
 import { CollectionScreen, EntryDocumentScreen } from "@/features/collection";
 import type { TreeNode } from "@/features/entry";
 import { EmptyProjectState } from "./empty-project-state";
@@ -20,7 +20,7 @@ function findNodeInTree(
 }
 
 export function ActiveSpaceContent() {
-  const { activeDocument, activeDocumentSpaceId } = useLayoutStore();
+  const { activeDocument, activeDocumentSpaceId } = useEntrySelectionStore();
   const {
     fileTrees,
     rootSpaces,

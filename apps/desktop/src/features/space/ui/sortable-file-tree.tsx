@@ -15,9 +15,9 @@ import { SortableContext } from "@dnd-kit/sortable";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import { FileText } from "lucide-react";
-import { useSpaceStore } from "@/stores/space";
-import { useLayoutStore } from "@/stores/layout";
-import { useEditorStore } from "@/stores/editor";
+import { useSpaceStore } from "../model";
+import { useEntrySelectionStore } from "@/features/entry";
+import { useEditorStore } from "@/features/editor";
 import type { TreeNode } from "@/features/entry";
 import {
   flattenTree,
@@ -314,7 +314,7 @@ export function SortableFileTree({
       const toParent = currentProjection.parentPath;
 
       try {
-        const { activeDocument, openDocument } = useLayoutStore.getState();
+        const { activeDocument, openDocument } = useEntrySelectionStore.getState();
         const { clearUnsaved, suppressPaths } = useEditorStore.getState();
 
         // Auto-nest: if nesting into a non-folder file, convert it first
@@ -424,7 +424,7 @@ export function SortableFileTree({
           const oldParentNode = findNode(freshTree, oldParentReadme);
           if (oldParentNode && oldParentNode.children.length <= 1) {
             try {
-              const currentActive = useLayoutStore.getState().activeDocument;
+              const currentActive = useEntrySelectionStore.getState().activeDocument;
               useEditorStore.getState().suppressPaths([oldParentReadme]);
               const unnestPath = await invoke<string>("unnest_entry", {
                 space: space.path,
@@ -434,7 +434,7 @@ export function SortableFileTree({
               useEditorStore.getState().suppressPaths([unnestPath]);
               if (currentActive === oldParentReadme) {
                 useEditorStore.getState().clearUnsaved(oldParentReadme);
-                useLayoutStore.getState().openDocument(unnestPath, spaceId);
+                useEntrySelectionStore.getState().openDocument(unnestPath, spaceId);
               }
               await refreshTree(spaceId);
             } catch {

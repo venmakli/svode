@@ -1,8 +1,8 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
-import { useEditorStore } from "@/stores/editor";
-import { useGitStore } from "@/stores/git";
+import { useEditorStore } from "@/features/editor";
+import { useGitStore } from "../model";
 import type { SyncResult, GitStatus } from "../model";
 import type { SpaceConfig } from "@/features/space";
 

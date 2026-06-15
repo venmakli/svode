@@ -22,7 +22,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/shared/lib/utils";
-import { useLayoutStore } from "@/stores/layout";
+import { useEntrySelectionStore } from "@/features/entry";
 import type { Entry } from "@/features/entry";
 import {
   normalizeRelationRoot,
@@ -210,7 +210,7 @@ export function RelationValue({
   const values = useRelationValues(column, value);
   const relation = normalizeRelationRoot(column.relation);
   const resolved = useResolvedRelations(context, relation, values);
-  const openDocument = useLayoutStore((state) => state.openDocument);
+  const openDocument = useEntrySelectionStore((state) => state.openDocument);
 
   if (values.length === 0) {
     return <span className="text-muted-foreground">-</span>;

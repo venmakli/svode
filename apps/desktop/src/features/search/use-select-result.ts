@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { toast } from "sonner";
-import { useSpaceStore } from "@/stores/space";
-import { useLayoutStore } from "@/stores/layout";
+import { useSpaceStore } from "@/features/space";
+import { useEntrySelectionStore } from "@/features/entry";
 import { useCommandPaletteStore } from "./store";
 import { joinAbs } from "./utils";
 import type { SearchItem } from "./types";
@@ -16,7 +16,7 @@ export function useSelectResult() {
   const activeRootId = useSpaceStore((s) => s.activeRootId);
   const openSpace = useSpaceStore((s) => s.openSpace);
   const clearActiveSpace = useSpaceStore((s) => s.clearActiveSpace);
-  const openDocument = useLayoutStore((s) => s.openDocument);
+  const openDocument = useEntrySelectionStore((s) => s.openDocument);
   const setOpen = useCommandPaletteStore((s) => s.setOpen);
 
   return useCallback(

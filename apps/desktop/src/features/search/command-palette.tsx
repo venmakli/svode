@@ -7,7 +7,7 @@ import {
   CommandGroup,
   CommandSeparator,
 } from "@/components/ui/command";
-import { useSpaceStore } from "@/stores/space";
+import { useSpaceStore } from "@/features/space";
 import { useCommandPaletteStore } from "./store";
 import { useSearch } from "./use-search";
 import { useSelectResult } from "./use-select-result";
