@@ -16,7 +16,7 @@ import { toast } from 'sonner';
 import { cn } from '@/shared/lib/utils';
 import { type MediaKind } from '@/platform/upload/media-types';
 import { filesToFileList, pickMediaFiles } from '@/platform/filesystem/native-file-picker';
-import { useUploadFile } from '@/hooks/use-upload-file';
+import { useUploadFile } from '@/features/editor/hooks/use-upload-file';
 
 const CONTENT: Record<
   string,

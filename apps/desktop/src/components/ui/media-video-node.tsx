@@ -19,7 +19,7 @@ import {
   Resizable,
   ResizeHandle,
 } from './resize-handle';
-import { useResolvedAssetUrl } from '@/hooks/use-resolved-asset-url';
+import { useResolvedAssetUrl } from '@/features/editor/hooks/use-resolved-asset-url';
 
 export const VideoElement = withHOC(
   ResizableProvider,

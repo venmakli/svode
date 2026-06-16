@@ -5,7 +5,7 @@ import { MarkdownPlugin } from "@platejs/markdown";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import { EditorKit } from "./editor-kit";
-import { useFileWatcher } from "../use-file-watcher";
+import { useFileWatcher } from "../hooks/use-file-watcher";
 import { useEntrySelectionStore } from "@/features/entry";
 import { useSpaceStore } from "@/features/space/model";
 import { useEditorStore } from "../model";
@@ -25,7 +25,7 @@ import { Editor, EditorContainer } from "@/components/ui/editor";
 import { FixedToolbar } from "@/components/ui/fixed-toolbar";
 import { FixedToolbarButtons } from "@/components/ui/fixed-toolbar-buttons";
 import { detailPageBodyClassName } from "@/shared/ui/page-layout";
-import { TocSidebar } from "../toc-sidebar";
+import { TocSidebar } from "../ui/toc-sidebar";
 import type { Entry, EntryMeta, WriteResult } from "@/features/entry";
 import * as m from "@/paraglide/messages.js";
 

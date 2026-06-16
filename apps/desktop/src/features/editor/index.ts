@@ -11,10 +11,10 @@ export {
   resolveRelativeDocPath,
   searchDocLinkTargets,
   stripAnchor,
-} from "./doc-link-utils";
-export { DocLinkElement } from "./doc-link-element";
-export { DocLinkInputElement } from "./doc-link-input-element";
-export { DocLinkFloatingToolbar } from "./doc-link-toolbar";
-export { EntryIdentityHeader } from "./entry-identity-header";
+} from "./lib/doc-link-utils";
+export { DocLinkElement } from "./ui/doc-link-element";
+export { DocLinkInputElement } from "./ui/doc-link-input-element";
+export { DocLinkFloatingToolbar } from "./ui/doc-link-toolbar";
+export { EntryIdentityHeader } from "./ui/entry-identity-header";
 export { PlateDocumentEditor } from "./plate/plate-editor";
-export { TitleZone } from "./title-zone";
+export { TitleZone } from "./ui/title-zone";

@@ -8,7 +8,7 @@ import { ResizableProvider } from '@platejs/resizable';
 import { PlateElement, withHOC } from 'platejs/react';
 
 import { Caption, CaptionTextarea } from './caption';
-import { useResolvedAssetUrl } from '@/hooks/use-resolved-asset-url';
+import { useResolvedAssetUrl } from '@/features/editor/hooks/use-resolved-asset-url';
 
 export const AudioElement = withHOC(
   ResizableProvider,

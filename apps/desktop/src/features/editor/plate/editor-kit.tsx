@@ -44,9 +44,9 @@ import { TocKit } from '@/components/editor/plugins/toc-kit';
 import { ToggleKit } from '@/components/editor/plugins/toggle-kit';
 import { MentionElement } from '@/components/ui/mention-node';
 import { ConflictPlugin } from '../conflict/conflict-plugin';
-import { DocLinkElement } from '../doc-link-element';
-import { DocLinkInputElement } from '../doc-link-input-element';
-import { DocLinkFloatingToolbar } from '../doc-link-toolbar';
+import { DocLinkElement } from '../ui/doc-link-element';
+import { DocLinkInputElement } from '../ui/doc-link-input-element';
+import { DocLinkFloatingToolbar } from '../ui/doc-link-toolbar';
 
 const ProductLinkKit = [
   LinkPlugin.configure({

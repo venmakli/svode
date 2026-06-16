@@ -12,11 +12,11 @@ import { toast } from 'sonner';
 
 import { Caption, CaptionTextarea } from './caption';
 import { resolveAssetAbsPath } from '@/platform/assets/assets-api';
-import { useResolvedAssetUrl } from '@/hooks/use-resolved-asset-url';
-import { getErrorMessage } from '@/hooks/use-upload-file';
+import { useResolvedAssetUrl } from '@/features/editor/hooks/use-resolved-asset-url';
+import { getErrorMessage } from '@/features/editor/hooks/use-upload-file';
 import { useEntrySelectionStore } from '@/features/entry';
 import { useSpaceStore } from '@/features/space/model';
-import { joinAbs } from '@/features/editor/doc-link-utils';
+import { joinAbs } from '@/features/editor/lib/doc-link-utils';
 
 export const FileElement = withHOC(
   ResizableProvider,
