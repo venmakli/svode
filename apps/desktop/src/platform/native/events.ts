@@ -11,7 +11,14 @@ import {
   type UnlistenFn,
 } from "@tauri-apps/api/event";
 
-export type { Event, EventCallback, EventName, EventTarget, Options, UnlistenFn };
+export type {
+  Event,
+  EventCallback,
+  EventName,
+  EventTarget,
+  Options,
+  UnlistenFn,
+};
 
 export function listen<T>(
   event: EventName,

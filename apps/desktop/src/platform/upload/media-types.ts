@@ -19,13 +19,7 @@ export const IMAGE_EXTS = [
 
 export const VIDEO_EXTS = [".mp4", ".mov", ".webm", ".mkv"] as const;
 
-export const AUDIO_EXTS = [
-  ".mp3",
-  ".wav",
-  ".ogg",
-  ".flac",
-  ".m4a",
-] as const;
+export const AUDIO_EXTS = [".mp3", ".wav", ".ogg", ".flac", ".m4a"] as const;
 
 export const IMAGE_MIMES = [
   "image/png",

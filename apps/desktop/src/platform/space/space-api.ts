@@ -20,7 +20,9 @@ export interface CreateProjectInput {
   path: string;
 }
 
-export function createProject(input: CreateProjectInput): Promise<SpaceInfoDto> {
+export function createProject(
+  input: CreateProjectInput,
+): Promise<SpaceInfoDto> {
   return invokeCommand<SpaceInfoDto>("create_project", { ...input });
 }
 

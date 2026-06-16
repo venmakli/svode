@@ -45,9 +45,12 @@ export async function pickMediaFiles(
 
   for (const path of paths) {
     try {
-      const data = await invokeCommand<LocalFileDataDto>("read_file_for_upload", {
-        path,
-      });
+      const data = await invokeCommand<LocalFileDataDto>(
+        "read_file_for_upload",
+        {
+          path,
+        },
+      );
       const bytes = new Uint8Array(data.bytes);
       files.push(new File([bytes], data.name, { type: data.mimeType }));
     } catch (err) {
