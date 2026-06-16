@@ -353,10 +353,17 @@ export function PlateDocumentEditor({
 
   useEffect(() => {
     if (!bodyOnly || !bodyOnlyMeta) return;
-    setMeta(bodyOnlyMeta);
-    setTitle(bodyOnlyMeta.title);
-    setIcon(bodyOnlyMeta.icon);
-    setDescription(bodyOnlyMeta.description ?? "");
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setMeta(bodyOnlyMeta);
+      setTitle(bodyOnlyMeta.title);
+      setIcon(bodyOnlyMeta.icon);
+      setDescription(bodyOnlyMeta.description ?? "");
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [bodyOnly, bodyOnlyMeta]);
 
   // Cancel debounce on unmount
@@ -369,8 +376,8 @@ export function PlateDocumentEditor({
     const { title: newTitle, newPath } = pendingRename;
     clearPendingRename();
 
-    setTitle(newTitle);
     titleRef.current = newTitle;
+    queueMicrotask(() => setTitle(newTitle));
 
     if (newPath) {
       // File was renamed on disk — cache editor content for new path and switch

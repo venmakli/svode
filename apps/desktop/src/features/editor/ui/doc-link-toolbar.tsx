@@ -24,7 +24,6 @@ import {
   FileText,
   Link,
   Loader2,
-  Search,
   Text,
   Unlink,
 } from "lucide-react";
@@ -234,7 +233,9 @@ function LegacyUrlInput({
 function DocLinkTargetPicker() {
   const editor = useEditorRef();
   const activeDocument = useEntrySelectionStore((s) => s.activeDocument);
-  const activeDocumentSpaceId = useEntrySelectionStore((s) => s.activeDocumentSpaceId);
+  const activeDocumentSpaceId = useEntrySelectionStore(
+    (s) => s.activeDocumentSpaceId,
+  );
   const activeRootPath = useSpaceStore((s) => s.activeRootPath);
   const activeRootId = useSpaceStore((s) => s.activeRootId);
   const rootSpaces = useSpaceStore((s) => s.rootSpaces);
@@ -246,7 +247,9 @@ function DocLinkTargetPicker() {
   const sourceSpaceId =
     activeDocumentSpaceId === activeRootId ? null : activeDocumentSpaceId;
   const sourceSpace =
-    sourceSpaceId === null ? null : findSpaceById(rootSpaces, spaces, sourceSpaceId);
+    sourceSpaceId === null
+      ? null
+      : findSpaceById(rootSpaces, spaces, sourceSpaceId);
   const localCurrentSpace = React.useMemo(
     () =>
       sourceSpaceId !== null && sourceSpace
@@ -269,7 +272,12 @@ function DocLinkTargetPicker() {
     let cancelled = false;
     setLoading(true);
     const timer = window.setTimeout(() => {
-      searchDocLinkTargets(activeRootPath, sourceSpaceId, query, localCurrentSpace)
+      searchDocLinkTargets(
+        activeRootPath,
+        sourceSpaceId,
+        query,
+        localCurrentSpace,
+      )
         .then((next) => {
           if (!cancelled) setItems(next);
         })
@@ -358,7 +366,9 @@ function DocLinkEditContent({
   const editor = useEditorRef();
   const selection = useEditorSelection();
   const activeDocument = useEntrySelectionStore((s) => s.activeDocument);
-  const activeDocumentSpaceId = useEntrySelectionStore((s) => s.activeDocumentSpaceId);
+  const activeDocumentSpaceId = useEntrySelectionStore(
+    (s) => s.activeDocumentSpaceId,
+  );
   const activeRootPath = useSpaceStore((s) => s.activeRootPath);
   const activeRootId = useSpaceStore((s) => s.activeRootId);
   const rootSpaces = useSpaceStore((s) => s.rootSpaces);

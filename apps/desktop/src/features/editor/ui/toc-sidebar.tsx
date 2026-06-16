@@ -4,6 +4,7 @@ import {
   useCallback,
   useRef,
   type MouseEvent,
+  type Ref,
   type RefObject,
 } from "react";
 import { NodeApi } from "platejs";
@@ -89,7 +90,7 @@ function useStickyAnchorTop(
   }, [update]);
 
   useEffect(() => {
-    update();
+    scheduleUpdate();
 
     window.addEventListener("resize", scheduleUpdate);
     document.addEventListener("scroll", scheduleUpdate, {
@@ -116,7 +117,7 @@ function useStickyAnchorTop(
         cancelAnimationFrame(rafId.current);
       }
     };
-  }, [anchorRef, scheduleUpdate, update]);
+  }, [anchorRef, scheduleUpdate]);
 
   return top;
 }
@@ -155,7 +156,7 @@ function useScrollActiveHeading(
       currentId = headingList[0].id;
     }
 
-    setActiveId(currentId);
+    queueMicrotask(() => setActiveId(currentId));
   }, [headingList]);
 
   const scheduleUpdate = useCallback(() => {
@@ -169,7 +170,7 @@ function useScrollActiveHeading(
   useEffect(() => {
     if (!headingList || headingList.length === 0) return;
 
-    update();
+    scheduleUpdate();
 
     // Use capture phase to catch scroll events from any container
     document.addEventListener("scroll", scheduleUpdate, {
@@ -183,7 +184,7 @@ function useScrollActiveHeading(
         cancelAnimationFrame(rafId.current);
       }
     };
-  }, [headingList, update, scheduleUpdate]);
+  }, [headingList, scheduleUpdate]);
 
   return activeId;
 }
@@ -202,6 +203,12 @@ export function TocSidebar({
   const { editor, headingList, activeContentId: plateActiveId } = state;
 
   const { navProps, onContentClick } = useTocSideBar(state);
+  const {
+    ref: navRef,
+    onMouseEnter: onNavMouseEnter,
+    onMouseLeave: onNavMouseLeave,
+    ...restNavProps
+  } = navProps;
 
   const [isHovered, setIsHovered] = useState(false);
   const scrollActiveId = useScrollActiveHeading(headingList);
@@ -229,16 +236,16 @@ export function TocSidebar({
 
   return (
     <nav
-      {...navProps}
-      ref={navProps.ref as React.Ref<HTMLElement>}
+      {...restNavProps}
+      ref={navRef as Ref<HTMLElement>}
       className="fixed right-6 z-10 w-auto"
       style={{ top: stickyTop }}
       onMouseEnter={() => {
-        navProps.onMouseEnter();
+        onNavMouseEnter();
         setIsHovered(true);
       }}
       onMouseLeave={(e) => {
-        navProps.onMouseLeave(e);
+        onNavMouseLeave(e);
         setIsHovered(false);
       }}
     >

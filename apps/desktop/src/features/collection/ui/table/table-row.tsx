@@ -32,21 +32,28 @@ export function SortableTableRow({
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
-  const sortable = useSortable({ id: row.entry.path, disabled });
+  const {
+    attributes,
+    isDragging,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+  } = useSortable({ id: row.entry.path, disabled });
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <ShadcnTableRow
-          ref={sortable.setNodeRef}
+          ref={setNodeRef}
           data-table-row-path={row.entry.path}
           className={cn(
             "group/row h-9 bg-background text-[13px] hover:bg-muted/40",
             rowHeightClassName,
-            sortable.isDragging && "opacity-60",
+            isDragging && "opacity-60",
           )}
           style={{
-            transform: CSS.Transform.toString(sortable.transform),
-            transition: sortable.transition,
+            transform: CSS.Transform.toString(transform),
+            transition,
           }}
           onDoubleClick={(event) => {
             if (shouldIgnoreRowOpen(event.target)) return;
@@ -64,8 +71,8 @@ export function SortableTableRow({
                       ? "cursor-default group-hover/row:opacity-35"
                       : "cursor-grab group-hover/row:opacity-100 hover:bg-accent focus-visible:opacity-100 active:cursor-grabbing",
                   )}
-                  {...sortable.attributes}
-                  {...sortable.listeners}
+                  {...attributes}
+                  {...listeners}
                 >
                   <GripVertical />
                 </button>

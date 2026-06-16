@@ -52,13 +52,25 @@ export function TitleZone({
 
   useEffect(() => {
     if (!isTitleFocusedRef.current) {
-      setTitleDraft(displayValue);
+      let cancelled = false;
+      queueMicrotask(() => {
+        if (!cancelled) setTitleDraft(displayValue);
+      });
+      return () => {
+        cancelled = true;
+      };
     }
   }, [displayValue]);
 
   useEffect(() => {
     if (!isDescriptionFocusedRef.current) {
-      setDescriptionDraft(description);
+      let cancelled = false;
+      queueMicrotask(() => {
+        if (!cancelled) setDescriptionDraft(description);
+      });
+      return () => {
+        cancelled = true;
+      };
     }
   }, [description]);
 

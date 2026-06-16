@@ -161,7 +161,7 @@ export function PropertyValue({
   }
   if (column.type === "date") return formatDateValue(value, column.display);
   if (column.type === "checkbox") {
-    return Boolean(value) ? (
+    return value ? (
       <Check data-icon="inline-start" />
     ) : (
       <span className="text-muted-foreground">-</span>

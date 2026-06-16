@@ -34,12 +34,16 @@ export function DocLinkInputElement(
   const spaces = useSpaceStore((s) => s.spaces);
   const fileTrees = useSpaceStore((s) => s.fileTrees);
   const activeDocument = useEntrySelectionStore((s) => s.activeDocument);
-  const activeDocumentSpaceId = useEntrySelectionStore((s) => s.activeDocumentSpaceId);
+  const activeDocumentSpaceId = useEntrySelectionStore(
+    (s) => s.activeDocumentSpaceId,
+  );
   const [items, setItems] = useState<SearchItem[]>([]);
   const sourceSpaceId =
     activeDocumentSpaceId === activeRootId ? null : activeDocumentSpaceId;
   const sourceSpace =
-    sourceSpaceId === null ? null : findSpaceById(rootSpaces, spaces, sourceSpaceId);
+    sourceSpaceId === null
+      ? null
+      : findSpaceById(rootSpaces, spaces, sourceSpaceId);
   const localCurrentSpace = useMemo(
     () =>
       sourceSpaceId !== null && sourceSpace
@@ -55,8 +59,13 @@ export function DocLinkInputElement(
 
   useEffect(() => {
     if (!activeRootPath) {
-      setItems([]);
-      return;
+      let cancelled = false;
+      queueMicrotask(() => {
+        if (!cancelled) setItems([]);
+      });
+      return () => {
+        cancelled = true;
+      };
     }
     let cancelled = false;
     searchDocLinkTargets(activeRootPath, sourceSpaceId, "", localCurrentSpace)

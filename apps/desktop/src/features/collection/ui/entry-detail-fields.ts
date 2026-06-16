@@ -31,12 +31,13 @@ export function useDebouncedEntryFieldUpdate({
   const versionsRef = useRef(new Map<string, number>());
 
   useEffect(() => {
+    const pending = pendingRef.current;
     return () => {
-      for (const pending of pendingRef.current.values()) {
-        clearTimeout(pending.timer);
-        pending.resolve(null);
+      for (const item of pending.values()) {
+        clearTimeout(item.timer);
+        item.resolve(null);
       }
-      pendingRef.current.clear();
+      pending.clear();
     };
   }, []);
 

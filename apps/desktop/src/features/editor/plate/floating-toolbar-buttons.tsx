@@ -1,4 +1,3 @@
-import { useState, useCallback } from "react";
 import {
   BoldPlugin,
   CodePlugin,
@@ -7,8 +6,7 @@ import {
   StrikethroughPlugin,
   UnderlinePlugin,
 } from "@platejs/basic-nodes/react";
-import { FontColorPlugin } from "@platejs/basic-styles/react";
-import { LinkPlugin, triggerFloatingLink } from "@platejs/link/react";
+import { triggerFloatingLink } from "@platejs/link/react";
 import {
   Bold,
   Italic,
@@ -21,7 +19,11 @@ import {
 import { useEditorRef } from "platejs/react";
 
 import { MarkToolbarButton } from "@/components/ui/mark-toolbar-button";
-import { ToolbarButton, ToolbarGroup, ToolbarSeparator } from "@/components/ui/toolbar";
+import {
+  ToolbarButton,
+  ToolbarGroup,
+  ToolbarSeparator,
+} from "@/components/ui/toolbar";
 import { FontColorToolbarButton } from "@/components/ui/font-color-toolbar-button";
 
 export function FloatingToolbarButtons() {

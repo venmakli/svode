@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { FileText, Link2Off, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,6 +40,16 @@ import {
 import type { Column, RelationContext, ResolvedRelationEntry } from "../model";
 import * as m from "@/paraglide/messages.js";
 
+function deferStateUpdate(update: () => void) {
+  let cancelled = false;
+  queueMicrotask(() => {
+    if (!cancelled) update();
+  });
+  return () => {
+    cancelled = true;
+  };
+}
+
 interface RelationControlProps {
   column: Column;
   value: unknown;
@@ -65,7 +81,7 @@ export function RelationControl({
 
   useEffect(() => {
     if (!autoOpen) return;
-    setOpen(true);
+    return deferStateUpdate(() => setOpen(true));
   }, [autoOpen]);
 
   useEffect(() => {
@@ -75,8 +91,12 @@ export function RelationControl({
   useEffect(() => {
     if (!open || !context?.spacePath || !relation) return;
     let cancelled = false;
-    setTargets([]);
-    setLoading(true);
+    queueMicrotask(() => {
+      if (!cancelled) {
+        setTargets([]);
+        setLoading(true);
+      }
+    });
     void queryRelationTargets({
       spacePath: context.spacePath,
       projectPath: context.projectPath,
@@ -168,7 +188,10 @@ export function RelationControl({
                 </CommandEmpty>
                 <CommandGroup heading={m.property_relation_targets()}>
                   {targets.map((entry) => {
-                    const targetValue = relationValueForPath(relation, entry.path);
+                    const targetValue = relationValueForPath(
+                      relation,
+                      entry.path,
+                    );
                     return (
                       <CommandItem
                         key={entry.path}
@@ -334,7 +357,9 @@ function RelationChip({
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
-              <span className="inline-flex min-w-0">{chipContainer(trigger)}</span>
+              <span className="inline-flex min-w-0">
+                {chipContainer(trigger)}
+              </span>
             </TooltipTrigger>
             <TooltipContent>{tooltip}</TooltipContent>
           </Tooltip>
@@ -370,21 +395,19 @@ function RelationChip({
     );
   }
 
-  return (
-    chipContainer(
-      <button
-        type="button"
-        className={triggerClassName}
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          onOpen();
-        }}
-      >
-        {icon}
-        <span className="min-w-0 truncate">{label}</span>
-      </button>,
-    )
+  return chipContainer(
+    <button
+      type="button"
+      className={triggerClassName}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onOpen();
+      }}
+    >
+      {icon}
+      <span className="min-w-0 truncate">{label}</span>
+    </button>,
   );
 }
 
@@ -404,15 +427,13 @@ function useResolvedRelations(
   relation: string,
   values: string[],
 ) {
-  const [resolved, setResolved] = useState<Map<string, ResolvedRelationEntry | null>>(
-    () => new Map(),
-  );
-  const key = values.join("\n");
+  const [resolved, setResolved] = useState<
+    Map<string, ResolvedRelationEntry | null>
+  >(() => new Map());
 
   useEffect(() => {
     if (!context?.spacePath || values.length === 0) {
-      setResolved(new Map());
-      return;
+      return deferStateUpdate(() => setResolved(new Map()));
     }
     let cancelled = false;
     void resolveRelationsBatch({
@@ -423,15 +444,18 @@ function useResolvedRelations(
     })
       .then((items) => {
         if (cancelled) return;
-        setResolved(new Map(values.map((item, index) => [item, items[index] ?? null])));
+        setResolved(
+          new Map(values.map((item, index) => [item, items[index] ?? null])),
+        );
       })
       .catch(() => {
-        if (!cancelled) setResolved(new Map(values.map((item) => [item, null])));
+        if (!cancelled)
+          setResolved(new Map(values.map((item) => [item, null])));
       });
     return () => {
       cancelled = true;
     };
-  }, [context?.projectPath, context?.spacePath, key, relation]);
+  }, [context?.projectPath, context?.spacePath, relation, values]);
 
   return resolved;
 }
@@ -457,7 +481,12 @@ function normalizeRelationValues(column: Column, value: unknown) {
   return column.limit === "one" ? values.slice(0, 1) : values;
 }
 
-type RelationChipStatus = "loading" | "unresolved" | "ok" | "orphan" | "out-of-scope";
+type RelationChipStatus =
+  | "loading"
+  | "unresolved"
+  | "ok"
+  | "orphan"
+  | "out-of-scope";
 
 function relationStatus({
   relation,

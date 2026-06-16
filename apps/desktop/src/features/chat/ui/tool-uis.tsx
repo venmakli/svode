@@ -1,7 +1,6 @@
 import { makeAssistantToolUI } from "@assistant-ui/react";
 import { Terminal } from "@/components/tool-ui/terminal";
 import { CodeDiff } from "@/components/tool-ui/code-diff";
-import { CodeBlock } from "@/components/tool-ui/code-block";
 import { Plan } from "@/components/tool-ui/plan";
 
 let toolUiCounter = 0;
@@ -51,10 +50,7 @@ function langFromFilename(filename?: string): string {
   return map[ext ?? ""] ?? "text";
 }
 
-export const BashToolUI = makeAssistantToolUI<
-  { command?: string },
-  unknown
->({
+export const BashToolUI = makeAssistantToolUI<{ command?: string }, unknown>({
   toolName: "Bash",
   render: ({ args, result, status }) => {
     const command = args.command ?? "";
@@ -131,7 +127,16 @@ export const WriteToolUI = makeAssistantToolUI<
 });
 
 export const PlanToolUI = makeAssistantToolUI<
-  { title?: string; description?: string; todos?: Array<{ id: string; label: string; status: string; description?: string }> },
+  {
+    title?: string;
+    description?: string;
+    todos?: Array<{
+      id: string;
+      label: string;
+      status: string;
+      description?: string;
+    }>;
+  },
   unknown
 >({
   toolName: "Plan",
@@ -148,11 +153,15 @@ export const PlanToolUI = makeAssistantToolUI<
         todos={todos.map((t) => ({
           id: t.id,
           label: t.label,
-          status: (t.status as "pending" | "in_progress" | "completed" | "cancelled") ?? "pending",
+          status:
+            (t.status as
+              | "pending"
+              | "in_progress"
+              | "completed"
+              | "cancelled") ?? "pending",
           description: t.description,
         }))}
       />
     );
   },
 });
-

@@ -33,9 +33,12 @@ export function ThreadStatusBar({ isRunning }: { isRunning: boolean }) {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     if (isRunning) {
       startRef.current = Date.now();
-      setElapsed(0);
+      queueMicrotask(() => {
+        if (!cancelled) setElapsed(0);
+      });
       timerRef.current = setInterval(() => {
         setElapsed(Date.now() - startRef.current);
       }, 500);
@@ -46,6 +49,7 @@ export function ThreadStatusBar({ isRunning }: { isRunning: boolean }) {
       }
     }
     return () => {
+      cancelled = true;
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [isRunning]);

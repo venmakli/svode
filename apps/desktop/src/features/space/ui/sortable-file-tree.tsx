@@ -1,4 +1,11 @@
-import { useState, useCallback, useRef, useMemo, createContext, useEffect } from "react";
+import {
+  useState,
+  useCallback,
+  useRef,
+  useMemo,
+  createContext,
+  useEffect,
+} from "react";
 import {
   DndContext,
   DragOverlay,
@@ -61,7 +68,10 @@ interface SortableFileTreeProps {
  * Build order map from the current tree state.
  * Each directory key maps to its children names in order.
  */
-function buildOrderMap(nodes: TreeNode[], dirKey = "."): Record<string, string[]> {
+function buildOrderMap(
+  nodes: TreeNode[],
+  dirKey = ".",
+): Record<string, string[]> {
   const order: Record<string, string[]> = {};
   order[dirKey] = nodes.map((n) => n.name);
   for (const node of nodes) {
@@ -147,7 +157,10 @@ export function SortableFileTree({
   }, [tree, expandedSet]);
 
   const flatItemsRef = useRef(flatItems);
-  flatItemsRef.current = flatItems;
+
+  useEffect(() => {
+    flatItemsRef.current = flatItems;
+  }, [flatItems]);
 
   const flatItemsMap = useMemo(
     () => new Map(flatItems.map((i) => [i.path, i])),
@@ -257,7 +270,11 @@ export function SortableFileTree({
       }
       if (newOverId) {
         const overNode = findNode(tree, newOverId);
-        if (overNode && overNode.children.length > 0 && !expandedSet.has(newOverId)) {
+        if (
+          overNode &&
+          overNode.children.length > 0 &&
+          !expandedSet.has(newOverId)
+        ) {
           autoExpandTimer.current = setTimeout(() => {
             toggleExpanded(spaceId, newOverId);
           }, 500);
@@ -291,8 +308,9 @@ export function SortableFileTree({
       if (!over || active.id === over.id || !currentProjection) return;
 
       const state = useSpaceStore.getState();
-      const space = state.spaces.find((w) => w.id === spaceId)
-        ?? state.rootSpaces.find((w) => w.id === spaceId);
+      const space =
+        state.spaces.find((w) => w.id === spaceId) ??
+        state.rootSpaces.find((w) => w.id === spaceId);
       if (!space) return;
 
       const fromPath = active.id as string;
@@ -300,29 +318,37 @@ export function SortableFileTree({
       if (!fromNode) return;
 
       // Guard: prevent dropping a folder into its own descendants
-      const fromFolderPath = fromNode.children.length > 0
-        ? fromPath.replace(/\/readme\.md$/i, "")
-        : fromPath;
+      const fromFolderPath =
+        fromNode.children.length > 0
+          ? fromPath.replace(/\/readme\.md$/i, "")
+          : fromPath;
       if (isDescendantOf(currentProjection.parentPath, fromFolderPath)) {
         return;
       }
 
       // For folder documents (path = "folder/readme.md"), tree parent is parent of folder, not folder itself
-      const fromParent = fromNode.children.length > 0
-        ? getParentDir(fromPath.replace(/\/readme\.md$/i, ""))
-        : getParentDir(fromPath);
+      const fromParent =
+        fromNode.children.length > 0
+          ? getParentDir(fromPath.replace(/\/readme\.md$/i, ""))
+          : getParentDir(fromPath);
       const toParent = currentProjection.parentPath;
 
       try {
-        const { activeDocument, openDocument } = useEntrySelectionStore.getState();
+        const { activeDocument, openDocument } =
+          useEntrySelectionStore.getState();
         const { clearUnsaved, suppressPaths } = useEditorStore.getState();
 
         // Auto-nest: if nesting into a non-folder file, convert it first
         // Skip for bare folders (path doesn't end with .md) — they're already directories
         if (currentProjection.type === "child") {
           const targetNode = findNode(tree, currentProjection.overPath);
-          const targetIsBareFolder = targetNode && !targetNode.path.endsWith(".md");
-          if (targetNode && targetNode.children.length === 0 && !targetIsBareFolder) {
+          const targetIsBareFolder =
+            targetNode && !targetNode.path.endsWith(".md");
+          if (
+            targetNode &&
+            targetNode.children.length === 0 &&
+            !targetIsBareFolder
+          ) {
             const nestTarget = currentProjection.overPath;
             const oldName = targetNode.name; // e.g. "doc2.md"
             // Suppress file watcher for structural change
@@ -372,10 +398,11 @@ export function SortableFileTree({
             const overIdx = siblings.indexOf(overNode.name);
             if (fromIdx !== -1 && overIdx !== -1 && fromIdx !== overIdx) {
               siblings.splice(fromIdx, 1);
-              const adjustedIdx =
-                fromIdx < overIdx ? overIdx - 1 : overIdx;
+              const adjustedIdx = fromIdx < overIdx ? overIdx - 1 : overIdx;
               siblings.splice(
-                currentProjection.type === "after" ? adjustedIdx + 1 : adjustedIdx,
+                currentProjection.type === "after"
+                  ? adjustedIdx + 1
+                  : adjustedIdx,
                 0,
                 fromNode.name,
               );
@@ -388,8 +415,12 @@ export function SortableFileTree({
 
         // Different parent — move entry
         // Use actual tree node path (preserves readme.md case from filesystem)
-        const oldParentTreeNode = fromParent ? findParentOf(tree, fromPath) : null;
-        const oldParentReadme = oldParentTreeNode?.path.toLowerCase().endsWith("/readme.md")
+        const oldParentTreeNode = fromParent
+          ? findParentOf(tree, fromPath)
+          : null;
+        const oldParentReadme = oldParentTreeNode?.path
+          .toLowerCase()
+          .endsWith("/readme.md")
           ? oldParentTreeNode.path
           : null;
 
@@ -414,17 +445,21 @@ export function SortableFileTree({
         if (activeDocument === fromPath && newPath && !isBareFolder) {
           // moveEntry returns folder path for doc folders, append readme filename (preserve case)
           const readmeFilename = fromPath.split("/").pop() ?? "README.md";
-          const newDocPath = isDocFolder ? `${newPath}/${readmeFilename}` : newPath;
+          const newDocPath = isDocFolder
+            ? `${newPath}/${readmeFilename}`
+            : newPath;
           openDocument(newDocPath, spaceId);
         }
 
         // Auto-unnest: if the old parent folder now has no children
         if (oldParentReadme) {
-          const freshTree = useSpaceStore.getState().fileTrees[spaceId] ?? currentTree;
+          const freshTree =
+            useSpaceStore.getState().fileTrees[spaceId] ?? currentTree;
           const oldParentNode = findNode(freshTree, oldParentReadme);
           if (oldParentNode && oldParentNode.children.length <= 1) {
             try {
-              const currentActive = useEntrySelectionStore.getState().activeDocument;
+              const currentActive =
+                useEntrySelectionStore.getState().activeDocument;
               useEditorStore.getState().suppressPaths([oldParentReadme]);
               const unnestPath = await invoke<string>("unnest_entry", {
                 space: space.path,
@@ -434,7 +469,9 @@ export function SortableFileTree({
               useEditorStore.getState().suppressPaths([unnestPath]);
               if (currentActive === oldParentReadme) {
                 useEditorStore.getState().clearUnsaved(oldParentReadme);
-                useEntrySelectionStore.getState().openDocument(unnestPath, spaceId);
+                useEntrySelectionStore
+                  .getState()
+                  .openDocument(unnestPath, spaceId);
               }
               await refreshTree(spaceId);
             } catch {
@@ -460,17 +497,24 @@ export function SortableFileTree({
     resetState();
   }, [resetState]);
 
-
   const activeNode = activeId ? findNode(tree, activeId) : null;
 
   // If dragging a folder, compute its folder path for disabling children
   const activeFolderPath = useMemo(() => {
-    if (!activeId || !activeNode || activeNode.children.length === 0) return null;
+    if (!activeId || !activeNode || activeNode.children.length === 0)
+      return null;
     return activeId.replace(/\/readme\.md$/i, "");
   }, [activeId, activeNode]);
 
   const contextValue = useMemo<TreeDndContextValue>(
-    () => ({ activeId, activeFolderPath, overId, projection, flatItems, flatItemsMap }),
+    () => ({
+      activeId,
+      activeFolderPath,
+      overId,
+      projection,
+      flatItems,
+      flatItemsMap,
+    }),
     [activeId, activeFolderPath, overId, projection, flatItems, flatItemsMap],
   );
 
@@ -498,9 +542,7 @@ export function SortableFileTree({
         onDragCancel={handleDragCancel}
       >
         <SortableContext items={sortableIds}>
-          <div data-dnd-space={spaceId}>
-            {children}
-          </div>
+          <div data-dnd-space={spaceId}>{children}</div>
         </SortableContext>
         <DragOverlay dropAnimation={null}>
           {activeNode && (

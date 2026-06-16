@@ -77,18 +77,31 @@ export function EntryPeekSheet({
   );
 
   useEffect(() => {
+    let cancelled = false;
     if (!target) {
-      setEntry(null);
-      setSchemaResult(null);
-      return;
+      queueMicrotask(() => {
+        if (!cancelled) {
+          setEntry(null);
+          setSchemaResult(null);
+        }
+      });
+      return () => {
+        cancelled = true;
+      };
     }
 
-    setEntry(target.entry);
-    setSchemaResult(null);
+    queueMicrotask(() => {
+      if (!cancelled) {
+        setEntry(target.entry);
+        setSchemaResult(null);
+      }
+    });
 
-    if (target.nested) return;
-
-    let cancelled = false;
+    if (target.nested) {
+      return () => {
+        cancelled = true;
+      };
+    }
     void Promise.all([
       invoke<Entry>("read_entry", {
         space: spacePath,
@@ -127,7 +140,8 @@ export function EntryPeekSheet({
     [],
   );
 
-  const currentEntry = entry ?? target?.entry ?? null;
+  const currentEntry =
+    target && entry?.path !== target.entry.path ? target.entry : entry;
   const actionMenu = currentEntry ? (
     <EntryPeekActions
       entry={currentEntry}

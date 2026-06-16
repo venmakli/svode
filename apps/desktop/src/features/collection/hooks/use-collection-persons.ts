@@ -10,8 +10,14 @@ export function useCollectionPersons(spacePath: string) {
   });
 
   useEffect(() => {
+    let cancelled = false;
     cacheRef.current = { allTime: null, persons: [] };
-    setPersons([]);
+    queueMicrotask(() => {
+      if (!cancelled) setPersons([]);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [spacePath]);
 
   const loadPersons = useCallback(

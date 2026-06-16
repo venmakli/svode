@@ -7,7 +7,11 @@ import {
 } from "@assistant-ui/react";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { listen, type UnlistenFn } from "@/platform/native/events";
-import { useSpaceStore, selectActiveSpacePath, selectActiveSpaceId } from "@/features/space";
+import {
+  useSpaceStore,
+  selectActiveSpacePath,
+  selectActiveSpaceId,
+} from "@/features/space";
 import { useChatStatusStore } from "../model";
 
 interface TextDeltaPayload {
@@ -61,8 +65,21 @@ interface PermissionRequestPayload {
 // Content part types matching assistant-ui's ThreadMessageLike content
 type TextPart = { type: "text"; text: string };
 type ReasoningPart = { type: "reasoning"; text: string };
-type ToolCallPart = { type: "tool-call"; toolCallId: string; toolName: string; args: Record<string, JSONValue>; argsText?: string; result?: unknown };
-type JSONValue = string | number | boolean | null | JSONValue[] | { [key: string]: JSONValue };
+type ToolCallPart = {
+  type: "tool-call";
+  toolCallId: string;
+  toolName: string;
+  args: Record<string, JSONValue>;
+  argsText?: string;
+  result?: unknown;
+};
+type JSONValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JSONValue[]
+  | { [key: string]: JSONValue };
 type ContentPart = TextPart | ReasoningPart | ToolCallPart;
 
 /** Mark all tool-call parts that have no result as complete */
@@ -102,7 +119,8 @@ function updateLastAssistant(
   return [...prev.slice(0, -1), updater(last)];
 }
 
-const convertMessage = (message: ThreadMessageLike): ThreadMessageLike => message;
+const convertMessage = (message: ThreadMessageLike): ThreadMessageLike =>
+  message;
 
 export function ChatRuntimeProvider({
   children,
@@ -119,32 +137,42 @@ export function ChatRuntimeProvider({
 
   // Reset when workspace changes & load agent config
   useEffect(() => {
-    setMessages([]);
-    setIsRunning(false);
-    useChatStatusStore.getState().setPendingPermission(null);
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setMessages([]);
+      setIsRunning(false);
+      useChatStatusStore.getState().setPendingPermission(null);
+    });
 
     if (spacePath) {
       // Load available models from backend (per-executor)
       invoke<Array<{ id: string; name: string; description: string }>>(
         "agent_list_models",
         { spacePath },
-      ).then((models) => {
-        useChatStatusStore.getState().setAvailableModels(models);
-      }).catch(() => {
-        // fallback handled by store
-      });
+      )
+        .then((models) => {
+          useChatStatusStore.getState().setAvailableModels(models);
+        })
+        .catch(() => {
+          // fallback handled by store
+        });
 
       // Load default model from workspace config
-      invoke<{ agent?: { defaultModel?: string } }>(
-        "get_space_config",
-        { spacePath },
-      ).then((cfg) => {
-        const agent = cfg.agent as { defaultModel?: string } | null;
-        useChatStatusStore.getState().applyDefaultModel(agent?.defaultModel);
-      }).catch(() => {
-        useChatStatusStore.getState().applyDefaultModel(undefined);
-      });
+      invoke<{ agent?: { defaultModel?: string } }>("get_space_config", {
+        spacePath,
+      })
+        .then((cfg) => {
+          const agent = cfg.agent as { defaultModel?: string } | null;
+          useChatStatusStore.getState().applyDefaultModel(agent?.defaultModel);
+        })
+        .catch(() => {
+          useChatStatusStore.getState().applyDefaultModel(undefined);
+        });
     }
+    return () => {
+      cancelled = true;
+    };
   }, [sessionId, spacePath]);
 
   // Listen to Tauri agent events
@@ -164,16 +192,23 @@ export function ChatRuntimeProvider({
               let parts = getContentParts(last.content);
               // Mark preceding tool calls as done (they finished if we're getting text now)
               parts = markToolCallsDone(parts);
-              const lastText = parts.length > 0 && parts[parts.length - 1].type === "text"
-                ? parts[parts.length - 1] as { type: "text"; text: string }
-                : null;
+              const lastText =
+                parts.length > 0 && parts[parts.length - 1].type === "text"
+                  ? (parts[parts.length - 1] as { type: "text"; text: string })
+                  : null;
 
               if (lastText) {
                 const updated = [...parts];
-                updated[updated.length - 1] = { type: "text", text: lastText.text + e.payload.delta };
+                updated[updated.length - 1] = {
+                  type: "text",
+                  text: lastText.text + e.payload.delta,
+                };
                 return { ...last, content: updated };
               }
-              return { ...last, content: [...parts, { type: "text", text: e.payload.delta }] };
+              return {
+                ...last,
+                content: [...parts, { type: "text", text: e.payload.delta }],
+              };
             }),
           );
         }),
@@ -213,7 +248,10 @@ export function ChatRuntimeProvider({
                 if (parts[i].type === "tool-call") {
                   const tc = parts[i] as ToolCallPart;
                   const updated = [...parts];
-                  updated[i] = { ...tc, argsText: (tc.argsText ?? "") + e.payload.delta };
+                  updated[i] = {
+                    ...tc,
+                    argsText: (tc.argsText ?? "") + e.payload.delta,
+                  };
                   return { ...last, content: updated };
                 }
               }
@@ -230,7 +268,8 @@ export function ChatRuntimeProvider({
             updateLastAssistant(prev, (last) => {
               const parts = getContentParts(last.content);
               // Find last reasoning part to append to
-              const lastPart = parts.length > 0 ? parts[parts.length - 1] : null;
+              const lastPart =
+                parts.length > 0 ? parts[parts.length - 1] : null;
               if (lastPart && lastPart.type === "reasoning") {
                 const updated = [...parts];
                 updated[updated.length - 1] = {
@@ -240,7 +279,13 @@ export function ChatRuntimeProvider({
                 return { ...last, content: updated };
               }
               // New reasoning part
-              return { ...last, content: [...parts, { type: "reasoning", text: e.payload.text }] };
+              return {
+                ...last,
+                content: [
+                  ...parts,
+                  { type: "reasoning", text: e.payload.text },
+                ],
+              };
             }),
           );
         }),
@@ -253,7 +298,10 @@ export function ChatRuntimeProvider({
               const parts = getContentParts(last.content);
               return {
                 ...last,
-                content: [...parts, { type: "text", text: `Error: ${e.payload.message}` }],
+                content: [
+                  ...parts,
+                  { type: "text", text: `Error: ${e.payload.message}` },
+                ],
               };
             }),
           );
@@ -309,7 +357,8 @@ export function ChatRuntimeProvider({
   const onNew = useCallback(
     async (message: AppendMessage) => {
       const textPart = message.content.find((p) => p.type === "text");
-      if (!textPart || textPart.type !== "text" || !textPart.text.trim()) return;
+      if (!textPart || textPart.type !== "text" || !textPart.text.trim())
+        return;
 
       const text = textPart.text;
 
@@ -329,8 +378,11 @@ export function ChatRuntimeProvider({
       useChatStatusStore.getState().setAgentStatus("thinking");
 
       try {
-        const { selectedModel: model, docMentions, clearDocMentions } =
-          useChatStatusStore.getState();
+        const {
+          selectedModel: model,
+          docMentions,
+          clearDocMentions,
+        } = useChatStatusStore.getState();
 
         // Resolve doc-mention chips to file context
         let messageWithContext = text;

@@ -26,7 +26,6 @@ import {
 } from "lucide-react";
 import type {
   ChangeSchemaTypeResult,
-  CollectionSchema,
   Column,
   EntrySchemaResult,
   Person,
@@ -279,12 +278,13 @@ export function PropertyPanel({
                           variant="ghost"
                           size="xs"
                           onClick={() =>
-                            void (invalidOptions.length > 0
-                              ? clearInvalidOptionValues(
-                                  column,
-                                  invalidOptions,
-                                )
-                              : onValueChange(column.name, null)
+                            void (
+                              invalidOptions.length > 0
+                                ? clearInvalidOptionValues(
+                                    column,
+                                    invalidOptions,
+                                  )
+                                : onValueChange(column.name, null)
                             ).catch(handleSchemaError)
                           }
                         >

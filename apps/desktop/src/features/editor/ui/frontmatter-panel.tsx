@@ -52,13 +52,19 @@ export function FrontmatterPanel({
   onOpenChange,
   onPropertyChange,
 }: FrontmatterPanelProps) {
-  const [schemaResult, setSchemaResult] = useState<EntrySchemaResult | null>(null);
+  const [schemaResult, setSchemaResult] = useState<EntrySchemaResult | null>(
+    null,
+  );
 
   useEffect(() => {
     let cancelled = false;
     if (!spacePath || !filePath) {
-      setSchemaResult(null);
-      return;
+      queueMicrotask(() => {
+        if (!cancelled) setSchemaResult(null);
+      });
+      return () => {
+        cancelled = true;
+      };
     }
     invoke<EntrySchemaResult | null>("get_entry_schema", {
       space: spacePath,
@@ -77,7 +83,7 @@ export function FrontmatterPanel({
 
   if (!meta) return null;
 
-  const extraEntries = Object.entries((meta.extra ?? {}) ?? {});
+  const extraEntries = Object.entries(meta.extra ?? {});
 
   return (
     <Collapsible open={isOpen} onOpenChange={onOpenChange} className="mb-1">
@@ -125,7 +131,9 @@ export function FrontmatterPanel({
           ) : extraEntries.length > 0 ? (
             <details className="mt-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
               <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
-                {m.editor_raw_yaml_toggle({ count: String(extraEntries.length) })}
+                {m.editor_raw_yaml_toggle({
+                  count: String(extraEntries.length),
+                })}
               </summary>
               <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
                 {extraEntries.map(([key, value]) => (

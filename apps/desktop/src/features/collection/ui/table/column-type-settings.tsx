@@ -57,6 +57,16 @@ import { SettingsRow, SettingsSection } from "../settings-row";
 import { ColorPicker } from "./color-picker";
 import * as m from "@/paraglide/messages.js";
 
+function deferStateUpdate(update: () => void) {
+  let cancelled = false;
+  queueMicrotask(() => {
+    if (!cancelled) update();
+  });
+  return () => {
+    cancelled = true;
+  };
+}
+
 export function TypeSettingsPane({
   column,
   spacePath,
@@ -774,26 +784,27 @@ function OptionRow({
   onSettled?: () => void;
 }) {
   const [draft, setDraft] = useState(option.name);
-  const sortable = useSortable({ id: option.name });
+  const { attributes, listeners, setNodeRef, transform, transition } =
+    useSortable({ id: option.name });
 
   useEffect(() => {
-    setDraft(option.name);
+    return deferStateUpdate(() => setDraft(option.name));
   }, [option.name]);
 
   return (
     <div
-      ref={sortable.setNodeRef}
+      ref={setNodeRef}
       className="flex h-8 items-center gap-1.5 rounded-md px-1.5 hover:bg-accent/60"
       style={{
-        transform: CSS.Transform.toString(sortable.transform),
-        transition: sortable.transition,
+        transform: CSS.Transform.toString(transform),
+        transition,
       }}
     >
       <button
         type="button"
         className="flex size-[18px] cursor-grab items-center justify-center rounded text-muted-foreground hover:bg-accent active:cursor-grabbing [&_svg]:size-3.5"
-        {...sortable.attributes}
-        {...sortable.listeners}
+        {...attributes}
+        {...listeners}
       >
         <GripVertical />
       </button>
@@ -836,11 +847,11 @@ function StatusGroupDropZone({
   group: StatusGroup;
   children: ReactNode;
 }) {
-  const droppable = useDroppable({ id: `status-group:${group}` });
+  const { isOver, setNodeRef } = useDroppable({ id: `status-group:${group}` });
   return (
     <div
-      ref={droppable.setNodeRef}
-      className={droppable.isOver ? "rounded-md bg-accent/60" : undefined}
+      ref={setNodeRef}
+      className={isOver ? "rounded-md bg-accent/60" : undefined}
     >
       {children}
     </div>
@@ -858,8 +869,10 @@ function NumberSettingsPane({
   const [max, setMax] = useState(column.max == null ? "" : String(column.max));
 
   useEffect(() => {
-    setMin(column.min == null ? "" : String(column.min));
-    setMax(column.max == null ? "" : String(column.max));
+    return deferStateUpdate(() => {
+      setMin(column.min == null ? "" : String(column.min));
+      setMax(column.max == null ? "" : String(column.max));
+    });
   }, [column.max, column.min]);
 
   return (

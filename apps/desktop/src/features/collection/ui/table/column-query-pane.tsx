@@ -46,7 +46,13 @@ export function FieldFilterPane({
   );
 
   useEffect(() => {
-    setDraft(existingFilter ? { ...existingFilter } : null);
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) setDraft(existingFilter ? { ...existingFilter } : null);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [existingFilter, field]);
 
   function addDraft() {
@@ -131,7 +137,13 @@ export function FieldSortPane({
   );
 
   useEffect(() => {
-    setDraft(existingSort ? { ...existingSort } : null);
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) setDraft(existingSort ? { ...existingSort } : null);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [existingSort, field]);
 
   function applyDraft() {

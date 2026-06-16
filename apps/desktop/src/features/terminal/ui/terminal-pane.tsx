@@ -44,11 +44,18 @@ export function TerminalPane({ tab, active, panelOpen }: TerminalPaneProps) {
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const ptyIdRef = useRef<string | null>(tab.ptyId);
+  const activeRef = useRef(active);
+  const panelOpenRef = useRef(panelOpen);
   const closeTab = useTerminalStore((state) => state.closeTab);
 
   useEffect(() => {
     ptyIdRef.current = tab.ptyId;
   }, [tab.ptyId]);
+
+  useEffect(() => {
+    activeRef.current = active;
+    panelOpenRef.current = panelOpen;
+  }, [active, panelOpen]);
 
   const terminalVisible =
     tab.status === "spawning" ||
@@ -124,7 +131,7 @@ export function TerminalPane({ tab, active, panelOpen }: TerminalPaneProps) {
 
     requestAnimationFrame(() => {
       fitAddon.fit();
-      if (active && panelOpen) terminal.focus();
+      if (activeRef.current && panelOpenRef.current) terminal.focus();
     });
 
     return () => {

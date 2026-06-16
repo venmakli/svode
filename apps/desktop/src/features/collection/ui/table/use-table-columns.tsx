@@ -5,11 +5,7 @@ import type {
   CollectionView,
   UseViewQueryResult,
 } from "@/features/collection/query";
-import type {
-  CollectionSchema,
-  Column,
-  Person,
-} from "@/features/properties";
+import type { CollectionSchema, Column, Person } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
 import { ColumnMenuPopover } from "./column-menu";
 import { PropertyCell, TitleCell } from "./cells";
@@ -89,7 +85,7 @@ export function useTableColumns({
             id: "title",
             size: columnSizing.title ?? 260,
             minSize: 200,
-            header: ({ column, header }) => (
+            header: ({ header }) => (
               <ColumnHeader
                 field="title"
                 label={label}
@@ -150,7 +146,7 @@ export function useTableColumns({
           id: field,
           size: columnSizing[field] ?? defaultColumnWidth(property),
           minSize: minColumnWidth(property),
-          header: ({ column, header }) => (
+          header: ({ header }) => (
             <ColumnHeader
               field={field}
               label={field}

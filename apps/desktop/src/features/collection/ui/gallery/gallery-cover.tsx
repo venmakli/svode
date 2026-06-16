@@ -68,8 +68,13 @@ function useLazyVisible(ref: RefObject<Element | null>) {
     const element = ref.current;
     if (!element || visible) return;
     if (typeof IntersectionObserver === "undefined") {
-      setVisible(true);
-      return;
+      let cancelled = false;
+      queueMicrotask(() => {
+        if (!cancelled) setVisible(true);
+      });
+      return () => {
+        cancelled = true;
+      };
     }
     const observer = new IntersectionObserver((entries) => {
       if (entries.some((entry) => entry.isIntersecting)) {

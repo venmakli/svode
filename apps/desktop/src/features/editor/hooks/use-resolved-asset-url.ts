@@ -1,10 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { useEntrySelectionStore } from "@/features/entry";
-import {
-  useSpaceStore,
-  selectActiveSpacePath,
-} from "@/features/space/model";
+import { useSpaceStore, selectActiveSpacePath } from "@/features/space/model";
 import { joinAbs } from "../lib/doc-link-utils";
 import {
   resolveAssetAbsPath,
@@ -21,7 +18,9 @@ interface ActiveContext {
 function useActiveContext(): ActiveContext | null {
   const projectPath = useSpaceStore((s) => s.activeRootPath);
   const activeDocument = useEntrySelectionStore((s) => s.activeDocument);
-  const activeDocumentSpaceId = useEntrySelectionStore((s) => s.activeDocumentSpaceId);
+  const activeDocumentSpaceId = useEntrySelectionStore(
+    (s) => s.activeDocumentSpaceId,
+  );
   const activeRootId = useSpaceStore((s) => s.activeRootId);
   const rootSpaces = useSpaceStore((s) => s.rootSpaces);
   const spaces = useSpaceStore((s) => s.spaces);
@@ -55,19 +54,31 @@ function useActiveContext(): ActiveContext | null {
  * absolute path that the `<img>` element cannot load is the expected broken
  * state — no auto-pull).
  */
-export function useResolvedAssetUrl(url: string | undefined): string | undefined {
+export function useResolvedAssetUrl(
+  url: string | undefined,
+): string | undefined {
   const context = useActiveContext();
   const spacePathFallback = useSpaceStore(selectActiveSpacePath);
   const [resolved, setResolved] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     if (!url) {
-      setResolved(undefined);
-      return;
+      let cancelled = false;
+      queueMicrotask(() => {
+        if (!cancelled) setResolved(undefined);
+      });
+      return () => {
+        cancelled = true;
+      };
     }
     if (EXTERNAL.test(url)) {
-      setResolved(url);
-      return;
+      let cancelled = false;
+      queueMicrotask(() => {
+        if (!cancelled) setResolved(url);
+      });
+      return () => {
+        cancelled = true;
+      };
     }
     if (!context) {
       // No active document yet — fall back to the workspace-relative join so
@@ -76,11 +87,22 @@ export function useResolvedAssetUrl(url: string | undefined): string | undefined
       if (spacePathFallback) {
         const rel = url.replace(/^\.\//, "");
         const absolute = `${spacePathFallback.replace(/\\/g, "/").replace(/\/$/, "")}/${rel}`;
-        setResolved(toWebviewAssetUrl(absolute));
+        let cancelled = false;
+        queueMicrotask(() => {
+          if (!cancelled) setResolved(toWebviewAssetUrl(absolute));
+        });
+        return () => {
+          cancelled = true;
+        };
       } else {
-        setResolved(undefined);
+        let cancelled = false;
+        queueMicrotask(() => {
+          if (!cancelled) setResolved(undefined);
+        });
+        return () => {
+          cancelled = true;
+        };
       }
-      return;
     }
     let cancelled = false;
     resolveAssetAbsPath(url, context.projectPath, context.documentAbsPath)
@@ -94,7 +116,13 @@ export function useResolvedAssetUrl(url: string | undefined): string | undefined
     return () => {
       cancelled = true;
     };
-  }, [url, context?.projectPath, context?.documentAbsPath, spacePathFallback, context]);
+  }, [
+    url,
+    context?.projectPath,
+    context?.documentAbsPath,
+    spacePathFallback,
+    context,
+  ]);
 
   return resolved;
 }

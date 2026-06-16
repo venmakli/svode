@@ -34,6 +34,16 @@ import type { Column, PropertyOption, PropertyType } from "../model/types";
 import { COLOR_NAMES, PROPERTY_TYPES, STATUS_GROUPS } from "../lib/utils";
 import * as m from "@/paraglide/messages.js";
 
+function deferStateUpdate(update: () => void) {
+  let cancelled = false;
+  queueMicrotask(() => {
+    if (!cancelled) update();
+  });
+  return () => {
+    cancelled = true;
+  };
+}
+
 interface BaseDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -56,14 +66,16 @@ export function AddColumnDialog({
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    if (!open) {
-      setName("");
-      setType("text");
-      setOptions("");
-      setPrefix("");
-      setActorMultiple(false);
-      setIsSaving(false);
-    }
+    return deferStateUpdate(() => {
+      if (!open) {
+        setName("");
+        setType("text");
+        setOptions("");
+        setPrefix("");
+        setActorMultiple(false);
+        setIsSaving(false);
+      }
+    });
   }, [open]);
 
   const needsOptions =
@@ -207,19 +219,21 @@ export function ChangeTypeDialog({
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    if (column) {
-      setType(column.type);
-      setPrefix(column.prefix ?? "");
-      setActorMultiple(Boolean(column.multiple));
-      setGroups(
-        Object.fromEntries(
-          (column.options ?? []).map((option) => [
-            option.name,
-            option.group ?? "todo",
-          ]),
-        ),
-      );
-    }
+    return deferStateUpdate(() => {
+      if (column) {
+        setType(column.type);
+        setPrefix(column.prefix ?? "");
+        setActorMultiple(Boolean(column.multiple));
+        setGroups(
+          Object.fromEntries(
+            (column.options ?? []).map((option) => [
+              option.name,
+              option.group ?? "todo",
+            ]),
+          ),
+        );
+      }
+    });
   }, [column]);
 
   const needsStatusGroups = column?.type === "select" && type === "status";
@@ -352,7 +366,7 @@ export function RenameColumnDialog({
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    setName(column?.name ?? "");
+    return deferStateUpdate(() => setName(column?.name ?? ""));
   }, [column]);
 
   return (
@@ -446,7 +460,9 @@ export function AddOptionDialog({
     color: "neutral",
   });
   useEffect(() => {
-    if (!open) setOption({ name: "", color: "neutral" });
+    return deferStateUpdate(() => {
+      if (!open) setOption({ name: "", color: "neutral" });
+    });
   }, [open]);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -486,7 +502,10 @@ export function RenameOptionDialog({
   onSubmit: (newName: string) => Promise<void>;
 }) {
   const [name, setName] = useState("");
-  useEffect(() => setName(option?.name ?? ""), [option]);
+  useEffect(
+    () => deferStateUpdate(() => setName(option?.name ?? "")),
+    [option],
+  );
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>

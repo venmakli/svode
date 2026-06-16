@@ -38,15 +38,24 @@ export function useSearch(
   const reqId = useRef(0);
 
   useEffect(() => {
+    let cancelled = false;
     if (!projectPath) {
-      setState({ query, isEmpty: true, ...EMPTY_STATE });
-      return;
+      queueMicrotask(() => {
+        if (!cancelled) setState({ query, isEmpty: true, ...EMPTY_STATE });
+      });
+      return () => {
+        cancelled = true;
+      };
     }
 
     const trimmed = query.trim();
     const id = ++reqId.current;
     const isEmpty = trimmed.length === 0;
-    setState((s) => ({ ...s, query, isEmpty, isLoading: true }));
+    queueMicrotask(() => {
+      if (!cancelled) {
+        setState((s) => ({ ...s, query, isEmpty, isLoading: true }));
+      }
+    });
 
     // Empty query → fetch recent immediately (no debounce).
     if (isEmpty) {
@@ -70,7 +79,9 @@ export function useSearch(
           if (id !== reqId.current) return;
           setState({ query, isEmpty: true, ...EMPTY_STATE });
         });
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
 
     // Non-empty → debounce 150ms then run title + FTS in parallel.
@@ -115,7 +126,10 @@ export function useSearch(
         });
     }, DEBOUNCE_MS);
 
-    return () => clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [query, projectPath]);
 
   return state;

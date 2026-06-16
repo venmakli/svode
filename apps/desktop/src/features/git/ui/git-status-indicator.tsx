@@ -1,4 +1,4 @@
-import { RefreshCw, AlertTriangle, X, Circle } from "lucide-react";
+import { RefreshCw, AlertTriangle, X } from "lucide-react";
 import {
   selectFileIndicator,
   selectIndicator,
@@ -24,17 +24,29 @@ interface FileIndicatorProps {
   filePath: string;
 }
 
-export function FileGitIndicatorIcon({ spacePath, filePath }: FileIndicatorProps) {
+export function FileGitIndicatorIcon({
+  spacePath,
+  filePath,
+}: FileIndicatorProps) {
   const state = useGitStore((s) => selectFileIndicator(s, spacePath, filePath));
   if (state === "clean") return null;
   return <IndicatorIcon state={state} />;
 }
 
-function IndicatorIcon({ state }: { state: GitIndicator | "dirty" | "syncing" | "conflict" }) {
+function IndicatorIcon({
+  state,
+}: {
+  state: GitIndicator | "dirty" | "syncing" | "conflict";
+}) {
   switch (state) {
     case "dirty":
       return (
-        <span aria-label="uncommitted changes" className="text-xs text-muted-foreground">●</span>
+        <span
+          aria-label="uncommitted changes"
+          className="text-xs text-muted-foreground"
+        >
+          ●
+        </span>
       );
     case "syncing":
       return (

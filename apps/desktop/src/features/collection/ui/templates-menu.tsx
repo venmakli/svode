@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   closestCenter,
   DndContext,
@@ -112,7 +112,7 @@ export function TemplatesSplitButton({
       .filter((template): template is TemplateInfo => Boolean(template));
   }, [orderedSlugs, templates]);
 
-  async function loadTemplates() {
+  const loadTemplates = useCallback(async () => {
     setLoading(true);
     try {
       const next = await onLoadTemplates();
@@ -124,12 +124,18 @@ export function TemplatesSplitButton({
     } finally {
       setLoading(false);
     }
-  }
+  }, [onLoadTemplates]);
 
   useEffect(() => {
     if (!open) return;
-    void loadTemplates();
-  }, [open]);
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) void loadTemplates();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadTemplates, open]);
 
   function handleOpenChange(nextOpen: boolean) {
     setOpen(nextOpen);

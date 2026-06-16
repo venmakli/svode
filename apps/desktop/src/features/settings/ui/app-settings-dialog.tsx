@@ -1,9 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import {
-  getAppSettings,
-  listAvailableAgents,
-  saveAppSettings,
-} from "../api";
+import { getAppSettings, listAvailableAgents, saveAppSettings } from "../api";
 import { toast } from "sonner";
 import { ENABLE_LEGACY_AGENT_INTEGRATION } from "@/app/config/feature-flags";
 import * as m from "@/paraglide/messages.js";
@@ -152,7 +148,6 @@ export function AppSettingsDialog({
 
   useEffect(() => {
     if (open) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- async setState after await
       loadSettings();
       if (ENABLE_LEGACY_AGENT_INTEGRATION) {
         loadAgents();

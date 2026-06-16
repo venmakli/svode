@@ -82,7 +82,13 @@ export function EntryDocumentScreen({
   }, [documentPath, spacePath]);
 
   useEffect(() => {
-    void reload().catch(handleError);
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) void reload().catch(handleError);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [reload]);
 
   async function updateCover(cover: EntryCover | null) {

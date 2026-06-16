@@ -164,27 +164,34 @@ export function EntrySubpages({
 }
 
 function SubpageRow({ node, onOpen }: { node: TreeNode; onOpen: () => void }) {
-  const sortable = useSortable({ id: node.path });
+  const {
+    attributes,
+    isDragging,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+  } = useSortable({ id: node.path });
   const folder = normalizeEntryPath(node.path)
     .toLowerCase()
     .endsWith("/readme.md");
   return (
     <div
-      ref={sortable.setNodeRef}
+      ref={setNodeRef}
       style={{
-        transform: CSS.Transform.toString(sortable.transform),
-        transition: sortable.transition,
+        transform: CSS.Transform.toString(transform),
+        transition,
       }}
       className={cn(
         "group/subpage flex min-h-10 items-center gap-2 border-b px-2 last:border-b-0",
-        sortable.isDragging && "opacity-60",
+        isDragging && "opacity-60",
       )}
     >
       <button
         type="button"
         className="flex size-7 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-muted group-hover/subpage:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        {...sortable.attributes}
-        {...sortable.listeners}
+        {...attributes}
+        {...listeners}
       >
         <GripVertical />
         <span className="sr-only">{m.view_query_sort_notice()}</span>

@@ -16,7 +16,7 @@ import { addCollectionDateColumn } from "@/features/collection/api";
 import { useCollectionPersons } from "@/features/collection/hooks";
 import type { Entry } from "@/features/entry";
 import { normalizeSchema } from "@/features/properties";
-import type { CollectionSchema, Column } from "@/features/properties";
+import type { Column } from "@/features/properties";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
 import { getLocale } from "@/paraglide/runtime.js";
 import { uniqueColumnName } from "../table/utils";

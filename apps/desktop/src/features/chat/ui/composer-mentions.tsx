@@ -58,7 +58,7 @@ export function useSlashMenu(
   cursorPosition: number,
 ): UseSlashMenuResult {
   const { activeSpaceId, fileTrees } = useSpaceStore();
-  const tree = activeSpaceId ? fileTrees[activeSpaceId] ?? [] : [];
+  const tree = activeSpaceId ? (fileTrees[activeSpaceId] ?? []) : [];
   const allDocs = flattenTree(tree);
 
   const [isOpen, setIsOpen] = useState(false);
@@ -98,7 +98,7 @@ export function useSlashMenu(
       setIsOpen(true);
       setSelectedIndex(0);
     },
-    [],
+    [setIsOpen, setQuery, setSelectedIndex, setTriggerStart],
   );
 
   // Filter docs by query
@@ -110,14 +110,14 @@ export function useSlashMenu(
 
   // Handle selection: remove /query from text (doc is added as chip separately)
   const handleSelect = useCallback(
-    (item: DocItem): string => {
+    (_item: DocItem): string => {
       const before = currentValue.slice(0, triggerStart);
       const after = currentValue.slice(cursorPosition);
       const newValue = `${before}${after}`;
       setIsOpen(false);
       return newValue;
     },
-    [currentValue, cursorPosition, triggerStart],
+    [currentValue, cursorPosition, setIsOpen, triggerStart],
   );
 
   // Handle keyboard navigation
@@ -146,10 +146,10 @@ export function useSlashMenu(
           return false;
       }
     },
-    [isOpen, items.length],
+    [isOpen, items.length, setIsOpen, setSelectedIndex],
   );
 
-  const close = useCallback(() => setIsOpen(false), []);
+  const close = useCallback(() => setIsOpen(false), [setIsOpen]);
 
   return {
     isOpen,
@@ -179,7 +179,9 @@ export function SlashMenuDropdown({
   useEffect(() => {
     const list = listRef.current;
     if (!list) return;
-    const selected = list.querySelector("[data-active-item=true]") as HTMLElement | undefined;
+    const selected = list.querySelector("[data-active-item=true]") as
+      | HTMLElement
+      | undefined;
     selected?.scrollIntoView({ block: "nearest" });
   }, [selectedIndex]);
 

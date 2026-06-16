@@ -69,7 +69,6 @@ import {
   hashIndex,
   hasOption,
   initialsForPerson,
-  isDateRangeValue,
   isEmptyValue,
   isValidEmail,
   isValidPhone,
@@ -89,6 +88,16 @@ import {
 } from "../lib/utils";
 import { fallbackUrlTitle, normalizeUrlValue } from "../lib/url";
 import * as m from "@/paraglide/messages.js";
+
+function deferStateUpdate(update: () => void) {
+  let cancelled = false;
+  queueMicrotask(() => {
+    if (!cancelled) update();
+  });
+  return () => {
+    cancelled = true;
+  };
+}
 
 interface PropertyControlProps {
   column: Column;
@@ -270,7 +279,10 @@ function TextControl({
   onChange,
 }: Pick<PropertyControlProps, "value" | "invalid" | "disabled" | "onChange">) {
   const [draft, setDraft] = useState(valueToString(value));
-  useEffect(() => setDraft(valueToString(value)), [value]);
+  useEffect(
+    () => deferStateUpdate(() => setDraft(valueToString(value))),
+    [value],
+  );
   return (
     <div className="group/control relative">
       <Input
@@ -307,7 +319,10 @@ function NumberControl({
 }: PropertyControlProps) {
   const display = column.display ?? "number";
   const [draft, setDraft] = useState(valueToString(value));
-  useEffect(() => setDraft(valueToString(value)), [value]);
+  useEffect(
+    () => deferStateUpdate(() => setDraft(valueToString(value))),
+    [value],
+  );
   const numeric = typeof value === "number" ? value : Number(draft);
   const min = column.min ?? 0;
   const max = column.max ?? 100;
@@ -686,17 +701,19 @@ function DateControl({
   );
 
   useEffect(() => {
-    const next = normalizeDateInput(value);
-    setStartDate(datePart(next.start));
-    setStartTime(timePart(next.start));
-    setEndDate(datePart(next.end));
-    setEndTime(timePart(next.end));
-    setHasTime(
-      next.hasTime || (isEmptyValue(value) && Boolean(column.timeByDefault)),
-    );
-    setIsRange(
-      next.isRange || (isEmptyValue(value) && Boolean(column.rangeByDefault)),
-    );
+    return deferStateUpdate(() => {
+      const next = normalizeDateInput(value);
+      setStartDate(datePart(next.start));
+      setStartTime(timePart(next.start));
+      setEndDate(datePart(next.end));
+      setEndTime(timePart(next.end));
+      setHasTime(
+        next.hasTime || (isEmptyValue(value) && Boolean(column.timeByDefault)),
+      );
+      setIsRange(
+        next.isRange || (isEmptyValue(value) && Boolean(column.rangeByDefault)),
+      );
+    });
   }, [column.rangeByDefault, column.timeByDefault, value]);
 
   const apply = (
@@ -934,9 +951,11 @@ function ActorControl({
   const [freeform, setFreeform] = useState("");
 
   useEffect(() => {
-    const sourceAllTime = column.display === "all_time";
-    setAllTime(sourceAllTime);
-    if (sourceAllTime) void onRequestPersons?.(true);
+    return deferStateUpdate(() => {
+      const sourceAllTime = column.display === "all_time";
+      setAllTime(sourceAllTime);
+      if (sourceAllTime) void onRequestPersons?.(true);
+    });
   }, [column.display, onRequestPersons]);
 
   const sortedPersons = useMemo(() => {
@@ -1115,9 +1134,11 @@ function UrlControl({
   const [draft, setDraft] = useState(normalized.href);
   const [text, setText] = useState(normalized.title);
   useEffect(() => {
-    const next = normalizeUrlValue(value);
-    setDraft(next.href);
-    setText(next.title);
+    return deferStateUpdate(() => {
+      const next = normalizeUrlValue(value);
+      setDraft(next.href);
+      setText(next.title);
+    });
   }, [value]);
   const warning = invalid || (draft ? !isValidUrl(draft) : false);
   const commit = () => {
@@ -1191,7 +1212,10 @@ function EmailControl({
   "value" | "invalid" | "disabled" | "autoOpen" | "onChange"
 >) {
   const [draft, setDraft] = useState(valueToString(value));
-  useEffect(() => setDraft(valueToString(value)), [value]);
+  useEffect(
+    () => deferStateUpdate(() => setDraft(valueToString(value))),
+    [value],
+  );
   const warning = invalid || !isValidEmail(draft);
   return (
     <div className="group/control relative">
@@ -1236,7 +1260,10 @@ function PhoneControl({
   "value" | "invalid" | "disabled" | "autoOpen" | "onChange"
 >) {
   const [draft, setDraft] = useState(valueToString(value));
-  useEffect(() => setDraft(valueToString(value)), [value]);
+  useEffect(
+    () => deferStateUpdate(() => setDraft(valueToString(value))),
+    [value],
+  );
   const warning = invalid || !isValidPhone(draft);
   return (
     <div className="group/control relative">
