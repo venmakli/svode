@@ -1,6 +1,6 @@
 import { useShellStore } from "@/app/shell/model";
-import { AppSettingsDialog } from "@/features/settings/app-settings-dialog";
-import { SpaceSettingsDialog } from "@/features/settings/space-settings-dialog";
+import { AppSettingsDialog } from "@/features/settings";
+import { SpaceSettingsDialog } from "@/features/settings";
 
 export function SettingsDialogs() {
   const { settingsDialog, settingsSpacePath, closeSettings } = useShellStore();

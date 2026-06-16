@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Person } from "@/features/properties/model";
+import type { Person } from "@/features/properties";
 import { listCollectionPersons } from "../api";
 
 export function useCollectionPersons(spacePath: string) {

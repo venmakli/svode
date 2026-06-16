@@ -58,8 +58,8 @@ import {
 import type {
   CollectionSchema,
   PropertyType,
-} from "@/features/properties/model";
-import { normalizeSchema } from "@/features/properties/lib";
+} from "@/features/properties";
+import { normalizeSchema } from "@/features/properties";
 import { useCollectionPersons } from "../hooks";
 import { handleError } from "../lib/errors";
 import { viewType } from "../lib/utils";

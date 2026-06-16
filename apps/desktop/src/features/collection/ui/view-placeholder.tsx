@@ -15,7 +15,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import type { CollectionView, ViewType } from "@/features/collection/query";
-import type { CollectionSchema } from "@/features/properties/model";
+import type { CollectionSchema } from "@/features/properties";
 import type { Entry } from "@/features/entry";
 import { IncompleteState } from "./incomplete-state";
 import { titleFilter } from "../lib/utils";

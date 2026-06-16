@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { Separator } from "@/components/ui/separator";
-import { EntryIdentityHeader } from "@/features/editor/entry-identity-header";
-import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";
+import { EntryIdentityHeader } from "@/features/editor";
+import { PlateDocumentEditor } from "@/features/editor";
 import type { Entry, EntryCover } from "@/features/entry";
-import { PropertyPanel } from "@/features/properties/ui";
-import { normalizeSchema } from "@/features/properties/lib";
-import type { EntrySchemaResult } from "@/features/properties/model";
+import { PropertyPanel } from "@/features/properties";
+import { normalizeSchema } from "@/features/properties";
+import type { EntrySchemaResult } from "@/features/properties";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
 import { useEntrySelectionStore } from "@/features/entry";
 import { useSpaceStore } from "@/features/space";

@@ -12,12 +12,12 @@ import { listen } from "@/platform/native/events";
 import { Database } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
-import { EntryIdentityHeader } from "@/features/editor/entry-identity-header";
-import { TitleZone } from "@/features/editor/title-zone";
-import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";
-import { PropertyPanel } from "@/features/properties/ui";
-import { normalizeSchema } from "@/features/properties/lib";
-import type { EntrySchemaResult } from "@/features/properties/model";
+import { EntryIdentityHeader } from "@/features/editor";
+import { TitleZone } from "@/features/editor";
+import { PlateDocumentEditor } from "@/features/editor";
+import { PropertyPanel } from "@/features/properties";
+import { normalizeSchema } from "@/features/properties";
+import type { EntrySchemaResult } from "@/features/properties";
 import {
   detailPageHeaderClassName,
   detailPageToolbarClassName,
@@ -69,7 +69,7 @@ import {
   type TemplateKind,
 } from "../model";
 import type { CollectionView, ViewType } from "@/features/collection/query";
-import type { CollectionSchema } from "@/features/properties/model";
+import type { CollectionSchema } from "@/features/properties";
 import type { Entry, EntryCover } from "@/features/entry";
 import * as m from "@/paraglide/messages.js";
 

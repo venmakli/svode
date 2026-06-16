@@ -5,7 +5,7 @@ import {
   useSpaceStore,
   selectActiveSpacePath,
 } from "@/features/space";
-import { joinAbs } from "@/features/editor/doc-link-utils";
+import { joinAbs } from "@/features/editor";
 import {
   resolveAssetAbsPath,
   toWebviewAssetUrl,

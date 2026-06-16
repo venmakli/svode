@@ -1,13 +1,13 @@
 import { cn } from "@/shared/lib/utils";
-import { validatePropertyValue } from "@/features/properties/model";
-import { isEmptyValue, valueToString } from "@/features/properties/lib";
-import { PropertyControl, PropertyValue } from "@/features/properties/ui";
+import { validatePropertyValue } from "@/features/properties";
+import { isEmptyValue, valueToString } from "@/features/properties";
+import { PropertyControl, PropertyValue } from "@/features/properties";
 import type { Entry } from "@/features/entry";
 import type {
   Column,
   Person,
   RelationContext,
-} from "@/features/properties/model";
+} from "@/features/properties";
 
 export function CardPropertyFlow({
   entry,

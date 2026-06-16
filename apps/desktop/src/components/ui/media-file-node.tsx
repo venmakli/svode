@@ -16,7 +16,7 @@ import { useResolvedAssetUrl } from '@/hooks/use-resolved-asset-url';
 import { getErrorMessage } from '@/hooks/use-upload-file';
 import { useEntrySelectionStore } from '@/features/entry';
 import { useSpaceStore } from '@/features/space';
-import { joinAbs } from '@/features/editor/doc-link-utils';
+import { joinAbs } from '@/features/editor';
 
 export const FileElement = withHOC(
   ResizableProvider,

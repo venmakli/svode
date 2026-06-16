@@ -14,7 +14,7 @@ import { useFullscreen } from "./hooks/use-fullscreen";
 import { useShellStore } from "./model";
 import { cn } from "@/shared/lib/utils";
 import { CloudUploadButton } from "@/features/git";
-import { useCommandPaletteStore } from "@/features/search/store";
+import { useCommandPaletteStore } from "@/features/search";
 import { buildProjectTerminalTarget } from "@/features/terminal";
 import * as m from "@/paraglide/messages.js";
 import { MainBreadcrumbs } from "@/features/space";

@@ -5,9 +5,9 @@ import type {
   CollectionSchema,
   Column,
   PropertyType,
-} from "@/features/properties/model";
+} from "@/features/properties";
 import { normalizeEntryPath } from "@/features/collection/lib/utils";
-import { PROPERTY_TYPES } from "@/features/properties/lib";
+import { PROPERTY_TYPES } from "@/features/properties";
 import type { CollectionTableRow } from "./types";
 
 export function showNestedForView(view: CollectionView) {

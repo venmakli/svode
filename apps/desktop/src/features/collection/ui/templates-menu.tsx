@@ -36,7 +36,7 @@ import {
 } from "@/components/ui/button-group";
 import { cn } from "@/shared/lib/utils";
 import { MultiPanePopover } from "@/features/collection/query";
-import type { CollectionSchema } from "@/features/properties/model";
+import type { CollectionSchema } from "@/features/properties";
 import type { TemplateInfo, TemplateKind } from "../model";
 import { templateIsDefault } from "../model";
 import { handleError } from "../lib/errors";

@@ -9,7 +9,7 @@ import type {
   CollectionSchema,
   Column,
   Person,
-} from "@/features/properties/model";
+} from "@/features/properties";
 
 export type CalendarScope = "month" | "week" | "day" | "list";
 

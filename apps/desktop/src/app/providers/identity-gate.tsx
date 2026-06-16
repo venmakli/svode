@@ -1,7 +1,7 @@
 import { Outlet } from "@tanstack/react-router";
-import { IdentityDialog } from "@/features/identity/identity-dialog";
-import { useIdentityCheck } from "@/features/identity/use-identity-check";
-import { useIdentityStore } from "@/features/identity/identity-store";
+import { IdentityDialog } from "@/features/identity";
+import { useIdentityCheck } from "@/features/identity";
+import { useIdentityStore } from "@/features/identity";
 import { SettingsDialogs } from "./settings-dialogs";
 
 export function IdentityGate() {

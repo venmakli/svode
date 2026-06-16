@@ -52,7 +52,7 @@ import { cn } from "@/shared/lib/utils";
 import { useEditorStore } from "./model";
 import { useEntrySelectionStore } from "@/features/entry";
 import { useSpaceStore } from "@/features/space";
-import type { SearchItem } from "@/features/search/types";
+import type { SearchItem } from "@/features/search";
 import * as m from "@/paraglide/messages.js";
 import {
   absoluteDocumentPath,

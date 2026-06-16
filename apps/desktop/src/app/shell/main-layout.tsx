@@ -5,7 +5,7 @@ import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { useKeyboardShortcuts } from "./hooks/use-keyboard-shortcuts";
 import { WindowHeader } from "./window-header";
 import { useSpaceStore } from "@/features/space";
-import { CommandPalette } from "@/features/search/command-palette";
+import { CommandPalette } from "@/features/search";
 import { TerminalPanelHost } from "@/features/terminal";
 import {
   ActiveSpaceContent,

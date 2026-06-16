@@ -58,8 +58,8 @@ import {
 } from "lucide-react";
 import { useAppVersion } from "@/hooks/use-app-version";
 import { invalidateAppSettings } from "@/hooks/use-app-settings";
-import { useIdentityStore } from "@/features/identity/identity-store";
-import { isValidEmail, isValidName } from "@/features/identity/validation";
+import { useIdentityStore } from "@/features/identity";
+import { isValidEmail, isValidName } from "@/features/identity";
 import { McpIntegrationsSection } from "@/features/settings/mcp-section";
 import { getBuildCommit, useDogfoodUpdateCheck } from "@/features/updates";
 import type { AppSettings, AvailableAgent } from "@/types/space";

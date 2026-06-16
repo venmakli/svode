@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { listen } from "@/platform/native/events";
-import type { CollectionSchema } from "@/features/properties/model";
+import type { CollectionSchema } from "@/features/properties";
 import {
   nextStoredQueryState,
   readStoredViewQuery,

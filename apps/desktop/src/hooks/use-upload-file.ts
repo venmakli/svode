@@ -2,7 +2,7 @@ import * as React from "react";
 
 import { toast } from "sonner";
 
-import { joinAbs, makeRelativeDocUrl } from "@/features/editor/doc-link-utils";
+import { joinAbs, makeRelativeDocUrl } from "@/features/editor";
 import { uploadAsset, type UploadAssetDto } from "@/platform/upload/upload-api";
 import { useEntrySelectionStore } from "@/features/entry";
 import { useSpaceStore } from "@/features/space";

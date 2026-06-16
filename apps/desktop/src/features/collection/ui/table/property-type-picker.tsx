@@ -12,11 +12,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { PropertyType } from "@/features/properties/model";
+import type { PropertyType } from "@/features/properties";
 import {
   isSensitivePropertyType,
   PROPERTY_TYPES,
-} from "@/features/properties/lib";
+} from "@/features/properties";
 import { PROPERTY_TYPE_ICONS } from "./icons";
 import * as m from "@/paraglide/messages.js";
 

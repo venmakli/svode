@@ -8,7 +8,7 @@ import type {
   FanoutPreviewEntry,
   GitIdentity,
   RepoIdentityResult,
-} from "@/features/identity/types";
+} from "@/features/identity";
 
 interface Props {
   isRoot: boolean;

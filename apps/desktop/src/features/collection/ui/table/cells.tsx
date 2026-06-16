@@ -7,16 +7,16 @@ import { cn } from "@/shared/lib/utils";
 import {
   shouldClosePropertyEditorOnChange,
   validatePropertyValue,
-} from "@/features/properties/model";
-import { PropertyControl } from "@/features/properties/ui";
-import type { Column, Person } from "@/features/properties/model";
-import type { RelationContext } from "@/features/properties/model";
-import { valueToString } from "@/features/properties/lib";
+} from "@/features/properties";
+import { PropertyControl } from "@/features/properties";
+import type { Column, Person } from "@/features/properties";
+import type { RelationContext } from "@/features/properties";
+import { valueToString } from "@/features/properties";
 import {
   NumberPreview,
   PropertyValue,
   PropertyValueActions,
-} from "@/features/properties/ui";
+} from "@/features/properties";
 import type { CollectionTableRow } from "./types";
 import * as m from "@/paraglide/messages.js";
 

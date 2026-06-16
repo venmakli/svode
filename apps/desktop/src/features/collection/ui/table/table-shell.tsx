@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/shared/lib/utils";
 import type { Entry } from "@/features/entry";
-import type { CollectionSchema } from "@/features/properties/model";
+import type { CollectionSchema } from "@/features/properties";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
 import { PROPERTY_TYPE_ICONS, TITLE_ICON } from "./icons";
 import { defaultColumnWidth } from "./utils";

@@ -10,7 +10,7 @@ import type {
   Column,
   Person,
   PropertyOption,
-} from "@/features/properties/model";
+} from "@/features/properties";
 
 export interface CollectionInfo {
   path: string;

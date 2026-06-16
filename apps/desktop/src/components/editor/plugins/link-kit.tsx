@@ -2,8 +2,8 @@
 
 import { LinkPlugin } from '@platejs/link/react';
 
-import { DocLinkElement } from '@/features/editor/doc-link-element';
-import { DocLinkFloatingToolbar } from '@/features/editor/doc-link-toolbar';
+import { DocLinkElement } from '@/features/editor';
+import { DocLinkFloatingToolbar } from '@/features/editor';
 
 export const LinkKit = [
   LinkPlugin.configure({

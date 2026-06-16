@@ -45,13 +45,13 @@ import type {
   Person,
   PropertyOption,
   PropertyType,
-} from "@/features/properties/model";
-import { PropertyBadge } from "@/features/properties/ui";
+} from "@/features/properties";
+import { PropertyBadge } from "@/features/properties";
 import {
   initialsForPerson,
   normalizeSchema,
   personDisplayName,
-} from "@/features/properties/lib";
+} from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 import { MultiPanePopover } from "./multi-pane-popover";
 import {

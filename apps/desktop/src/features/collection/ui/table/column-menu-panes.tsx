@@ -23,11 +23,11 @@ import type {
   CollectionSchema,
   Column,
   PropertyType,
-} from "@/features/properties/model";
+} from "@/features/properties";
 import {
   isSensitiveColumn,
   isSensitivePropertyType,
-} from "@/features/properties/lib";
+} from "@/features/properties";
 import { SettingsRow, SettingsSection } from "../settings-row";
 import { PROPERTY_TYPE_ICONS } from "./icons";
 import {

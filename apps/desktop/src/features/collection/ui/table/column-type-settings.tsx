@@ -47,12 +47,12 @@ import type {
   PropertyOption,
   RelationTwoWayDiagnostics,
   StatusGroup,
-} from "@/features/properties/model";
+} from "@/features/properties";
 import {
   diagnoseTwoWayRelation,
   repairTwoWayRelation,
-} from "@/features/properties/api/relation-api";
-import { STATUS_GROUPS } from "@/features/properties/lib";
+} from "@/features/properties";
+import { STATUS_GROUPS } from "@/features/properties";
 import { SettingsRow, SettingsSection } from "../settings-row";
 import { ColorPicker } from "./color-picker";
 import * as m from "@/paraglide/messages.js";

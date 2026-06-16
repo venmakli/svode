@@ -9,7 +9,7 @@ import {
 import { cn } from "@/shared/lib/utils";
 import type { UseViewQueryResult, ViewType } from "@/features/collection/query";
 import type { CollectionView } from "@/features/collection/query";
-import type { CollectionSchema } from "@/features/properties/model";
+import type { CollectionSchema } from "@/features/properties";
 import { SearchControl } from "./search-control";
 import type { SettingsPane } from "../model";
 import type { TemplateInfo, TemplateKind } from "../model";

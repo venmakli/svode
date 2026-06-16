@@ -7,7 +7,7 @@ import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import { Reasoning } from "@/components/assistant-ui/reasoning";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
-import { PermissionCard } from "@/features/chat/permission-card";
+import { PermissionCard } from "@/features/chat";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/shared/lib/utils";
 import {
@@ -41,8 +41,8 @@ import { useChatStatusStore } from "@/features/chat";
 import {
   useSlashMenu,
   SlashMenuDropdown,
-} from "@/features/chat/composer-mentions";
-import { DocMentionChips } from "@/features/chat/doc-mention-chips";
+} from "@/features/chat";
+import { DocMentionChips } from "@/features/chat";
 
 export const Thread: FC = () => {
   return (

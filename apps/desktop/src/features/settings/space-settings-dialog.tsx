@@ -60,12 +60,12 @@ import {
 import { useEntrySelectionStore } from "@/features/entry";
 import { useSpaceStore } from "@/features/space";
 import { useChatStatusStore, type ModelOption } from "@/features/chat";
-import { useIdentityStore } from "@/features/identity/identity-store";
-import { isValidEmail, isValidName } from "@/features/identity/validation";
+import { useIdentityStore } from "@/features/identity";
+import { isValidEmail, isValidName } from "@/features/identity";
 import type {
   RepoIdentityResult,
   FanoutPreviewEntry,
-} from "@/features/identity/types";
+} from "@/features/identity";
 import { IdentitySection } from "./identity-section";
 import type {
   AgentConfig,

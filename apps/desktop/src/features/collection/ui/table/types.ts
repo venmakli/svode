@@ -5,7 +5,7 @@ import type {
   QuerySort,
   UseViewQueryResult,
 } from "@/features/collection/query";
-import type { CollectionSchema } from "@/features/properties/model";
+import type { CollectionSchema } from "@/features/properties";
 
 export interface CollectionTableRow {
   entry: Entry;

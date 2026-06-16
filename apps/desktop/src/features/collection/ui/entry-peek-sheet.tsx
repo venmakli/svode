@@ -18,12 +18,12 @@ import {
 } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/shared/lib/utils";
-import { EntryIdentityHeader } from "@/features/editor/entry-identity-header";
-import { PlateDocumentEditor } from "@/features/editor/plate/plate-editor";
+import { EntryIdentityHeader } from "@/features/editor";
+import { PlateDocumentEditor } from "@/features/editor";
 import type { Entry, EntryCover } from "@/features/entry";
-import { PropertyPanel } from "@/features/properties/ui";
-import type { EntrySchemaResult } from "@/features/properties/model";
-import { normalizeSchema } from "@/features/properties/lib";
+import { PropertyPanel } from "@/features/properties";
+import type { EntrySchemaResult } from "@/features/properties";
+import { normalizeSchema } from "@/features/properties";
 import { EntryDetailActions } from "./entry-detail-actions";
 import { useDebouncedEntryFieldUpdate } from "./entry-detail-fields";
 import { EntrySubpages } from "./entry-subpages";

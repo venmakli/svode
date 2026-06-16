@@ -13,7 +13,7 @@ import {
   User,
   type LucideIcon,
 } from "lucide-react";
-import type { PropertyType } from "@/features/properties/model";
+import type { PropertyType } from "@/features/properties";
 
 export const PROPERTY_TYPE_ICONS: Record<PropertyType, LucideIcon> = {
   text: Type,

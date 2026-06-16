@@ -16,7 +16,7 @@ import {
   SaveButton,
   SortEditor,
 } from "@/features/collection/query";
-import type { CollectionSchema } from "@/features/properties/model";
+import type { CollectionSchema } from "@/features/properties";
 import { SettingsRow } from "../settings-row";
 import * as m from "@/paraglide/messages.js";
 

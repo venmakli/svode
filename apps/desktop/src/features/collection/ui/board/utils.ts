@@ -3,8 +3,8 @@ import type {
   CollectionSchema,
   Column,
   Person,
-} from "@/features/properties/model";
-import { isEmptyValue, personDisplayName } from "@/features/properties/lib";
+} from "@/features/properties";
+import { isEmptyValue, personDisplayName } from "@/features/properties";
 import type { CollectionView } from "@/features/collection/query";
 import { normalizeEntryPath } from "@/features/collection/lib/utils";
 import { entryCollectionPath } from "../table/utils";

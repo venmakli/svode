@@ -42,8 +42,8 @@ import { useSpaceStore } from "../model";
 import { NavDocuments } from "./nav-documents";
 import { NavSpaces } from "./nav-spaces";
 import { CreateSpaceDialog } from "./create-space-dialog";
-import { useEffectiveIdentity } from "@/features/identity/use-effective-identity";
-import { avatarColorFromEmail } from "@/features/identity/avatar-colors";
+import { useEffectiveIdentity } from "@/features/identity";
+import { avatarColorFromEmail } from "@/features/identity";
 import * as m from "@/paraglide/messages.js";
 
 interface SpaceSidebarProps {

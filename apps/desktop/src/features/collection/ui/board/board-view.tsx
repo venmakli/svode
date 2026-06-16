@@ -29,8 +29,8 @@ import type {
   Column,
   CollectionSchema,
   PropertyType,
-} from "@/features/properties/model";
-import { normalizeSchema } from "@/features/properties/lib";
+} from "@/features/properties";
+import { normalizeSchema } from "@/features/properties";
 import { useSpaceStore } from "@/features/space";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import { useCollectionPersons } from "../../hooks";

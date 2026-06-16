@@ -1,8 +1,8 @@
 import type {
   CollectionSchema,
   PropertyType,
-} from "@/features/properties/model";
-import { normalizeSchema } from "@/features/properties/lib";
+} from "@/features/properties";
+import { normalizeSchema } from "@/features/properties";
 import type {
   CollectionView,
   FilterOp,

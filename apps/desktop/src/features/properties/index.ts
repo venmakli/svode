@@ -1,3 +1,4 @@
+export * from "./api/relation-api";
 export * from "./model/types";
 export * from "./model/validation";
 export * from "./lib/url";

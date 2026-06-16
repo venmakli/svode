@@ -7,7 +7,7 @@ import type {
   CollectionSchema,
   Column,
   ColorName,
-} from "@/features/properties/model";
+} from "@/features/properties";
 import { entryCollectionPath } from "../table/utils";
 
 const GALLERY_BODY_SYSTEM_FIELDS = new Set([

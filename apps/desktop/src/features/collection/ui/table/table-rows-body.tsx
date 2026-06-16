@@ -16,11 +16,11 @@ import type {
   CollectionSchema,
   Column,
   Person,
-} from "@/features/properties/model";
+} from "@/features/properties";
 import { SortableTableRow } from "./table-row";
 import type { CollectionTableRow } from "./types";
-import { PropertyValue } from "@/features/properties/ui";
-import { isEmptyValue } from "@/features/properties/lib";
+import { PropertyValue } from "@/features/properties";
+import { isEmptyValue } from "@/features/properties";
 import { nestedPreviewFields } from "./utils";
 
 export function TableRowsBody({

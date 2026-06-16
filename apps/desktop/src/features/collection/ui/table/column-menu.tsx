@@ -22,8 +22,8 @@ import type {
   CollectionSchema,
   Column,
   SchemaMutationWarning,
-} from "@/features/properties/model";
-import type { Person } from "@/features/properties/model";
+} from "@/features/properties";
+import type { Person } from "@/features/properties";
 import { FieldFilterPane, FieldSortPane } from "./column-query-pane";
 import {
   ColumnDangerActions,

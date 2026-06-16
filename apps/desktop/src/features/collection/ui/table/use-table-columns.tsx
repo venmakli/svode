@@ -9,8 +9,8 @@ import type {
   CollectionSchema,
   Column,
   Person,
-} from "@/features/properties/model";
-import { normalizeSchema } from "@/features/properties/lib";
+} from "@/features/properties";
+import { normalizeSchema } from "@/features/properties";
 import { ColumnMenuPopover } from "./column-menu";
 import { PropertyCell, TitleCell } from "./cells";
 import { PROPERTY_TYPE_ICONS, TITLE_ICON } from "./icons";

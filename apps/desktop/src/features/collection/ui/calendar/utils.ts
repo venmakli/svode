@@ -8,8 +8,8 @@ import type {
   CollectionSchema,
   Column,
   PropertyOption,
-} from "@/features/properties/model";
-import { isDateRangeValue, optionByName } from "@/features/properties/lib";
+} from "@/features/properties";
+import { isDateRangeValue, optionByName } from "@/features/properties";
 import { entryCollectionPath } from "../table/utils";
 import type {
   CalendarDateValue,

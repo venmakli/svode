@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { cn } from "@/shared/lib/utils";
 import type { Entry } from "@/features/entry";
-import type { CollectionSchema } from "@/features/properties/model";
+import type { CollectionSchema } from "@/features/properties";
 import { coverStyle, galleryCoverRatio, resolveGalleryCover } from "./utils";
 
 export function GalleryCover({

@@ -6,7 +6,7 @@ import {
   TableHeader,
   TableRow as ShadcnTableRow,
 } from "@/components/ui/table";
-import type { PropertyType } from "@/features/properties/model";
+import type { PropertyType } from "@/features/properties";
 import { PropertyTypePicker } from "./property-type-picker";
 import type { CollectionTableRow } from "./types";
 import * as m from "@/paraglide/messages.js";
