@@ -4,8 +4,8 @@ import { useEntrySelectionStore } from "@/features/entry";
 import {
   useSpaceStore,
   selectActiveSpacePath,
-} from "@/features/space";
-import { joinAbs } from "@/features/editor";
+} from "@/features/space/model";
+import { joinAbs } from "@/features/editor/doc-link-utils";
 import {
   resolveAssetAbsPath,
   toWebviewAssetUrl,

@@ -3,7 +3,7 @@
 import { MentionInputPlugin, MentionPlugin } from '@platejs/mention/react';
 
 import { MentionElement } from '@/components/ui/mention-node';
-import { DocLinkInputElement } from '@/features/editor';
+import { MentionInputElement } from '@/components/ui/mention-node';
 
 export const MentionKit = [
   MentionPlugin.configure({
@@ -11,5 +11,5 @@ export const MentionKit = [
       triggerPreviousCharPattern: /^$|^[\s"']$/,
     },
   }).withComponent(MentionElement),
-  MentionInputPlugin.withComponent(DocLinkInputElement),
+  MentionInputPlugin.withComponent(MentionInputElement),
 ];

@@ -15,8 +15,8 @@ import { resolveAssetAbsPath } from '@/platform/assets/assets-api';
 import { useResolvedAssetUrl } from '@/hooks/use-resolved-asset-url';
 import { getErrorMessage } from '@/hooks/use-upload-file';
 import { useEntrySelectionStore } from '@/features/entry';
-import { useSpaceStore } from '@/features/space';
-import { joinAbs } from '@/features/editor';
+import { useSpaceStore } from '@/features/space/model';
+import { joinAbs } from '@/features/editor/doc-link-utils';
 
 export const FileElement = withHOC(
   ResizableProvider,

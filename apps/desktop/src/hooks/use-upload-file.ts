@@ -2,10 +2,10 @@ import * as React from "react";
 
 import { toast } from "sonner";
 
-import { joinAbs, makeRelativeDocUrl } from "@/features/editor";
+import { joinAbs, makeRelativeDocUrl } from "@/features/editor/doc-link-utils";
 import { uploadAsset, type UploadAssetDto } from "@/platform/upload/upload-api";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space";
+import { useSpaceStore } from "@/features/space/model";
 
 /**
  * Shape returned by `useUploadFile` — matches the subset of Plate's

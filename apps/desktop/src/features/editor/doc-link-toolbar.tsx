@@ -51,7 +51,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/shared/lib/utils";
 import { useEditorStore } from "./model";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space";
+import { useSpaceStore } from "@/features/space/model";
 import type { SearchItem } from "@/features/search";
 import * as m from "@/paraglide/messages.js";
 import {

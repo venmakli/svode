@@ -1,10 +1,10 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
-import { useEditorStore } from "@/features/editor";
+import { useEditorStore } from "@/features/editor/model";
 import { useGitStore } from "../model";
 import type { SyncResult, GitStatus } from "../model";
-import type { SpaceConfig } from "@/features/space";
+import type { SpaceConfig } from "@/features/space/model";
 
 /**
  * Read the per-space `git.autoSync` setting (default: false).

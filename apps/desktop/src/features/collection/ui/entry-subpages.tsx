@@ -18,7 +18,7 @@ import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { FileText, Folder, GripVertical, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space";
+import { useSpaceStore } from "@/features/space/model";
 import type { Entry } from "@/features/entry";
 import { detailPageSectionClassName } from "@/shared/ui/page-layout";
 import type { TreeNode } from "@/features/entry";

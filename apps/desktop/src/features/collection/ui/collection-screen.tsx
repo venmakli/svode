@@ -23,7 +23,7 @@ import {
   detailPageToolbarClassName,
 } from "@/shared/ui/page-layout";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space";
+import { useSpaceStore } from "@/features/space/model";
 import { useViewQuery } from "@/features/collection/query";
 import { DeleteDialogs } from "./delete-dialogs";
 import { EntryDetailActions } from "./entry-detail-actions";

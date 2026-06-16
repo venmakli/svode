@@ -1,7 +1,7 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import type { SearchItem, SearchResponse } from "@/features/search";
 import type { TreeNode } from "@/features/entry";
-import type { SpaceInfo } from "@/features/space";
+import type { SpaceInfo } from "@/features/space/model";
 
 const DOC_SEARCH_LIMIT = 8;
 

@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { cn } from "@/shared/lib/utils";
 import { useEntrySelectionStore } from "@/features/entry";
 import { useEditorStore } from "./model";
-import { useSpaceStore } from "@/features/space";
+import { useSpaceStore } from "@/features/space/model";
 import { GhostCloneDialog } from "./ghost-clone-dialog";
 import * as m from "@/paraglide/messages.js";
 import {

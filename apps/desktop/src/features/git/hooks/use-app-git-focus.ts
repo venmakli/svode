@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { useGitStore } from "../model";
-import { useSpaceStore, selectActiveSpacePath } from "@/features/space";
+import { useSpaceStore, selectActiveSpacePath } from "@/features/space/model";
 import type { GitStatus } from "../model";
 import { syncOnOpen } from "../api/git-actions";
 

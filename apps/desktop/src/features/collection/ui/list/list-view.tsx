@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useSpaceStore } from "@/features/space";
+import { useSpaceStore } from "@/features/space/model";
 import { useStableViewQueryArgs } from "@/features/collection/query";
 import type { Entry } from "@/features/entry";
 import type { Column } from "@/features/properties";

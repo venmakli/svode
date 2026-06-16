@@ -19,9 +19,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useGitStore } from "../model";
-import { useSpaceStore, selectActiveSpacePath } from "@/features/space";
+import { useSpaceStore, selectActiveSpacePath } from "@/features/space/model";
 import type { GitStatus } from "../model";
-import type { SpaceConfig } from "@/features/space";
+import type { SpaceConfig } from "@/features/space/model";
 import * as m from "@/paraglide/messages.js";
 
 interface UnpushedCommit {

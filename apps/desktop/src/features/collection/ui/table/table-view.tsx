@@ -17,7 +17,7 @@ import {
 } from "@/features/collection/query";
 import type { Entry } from "@/features/entry";
 import { normalizeSchema } from "@/features/properties";
-import { useSpaceStore } from "@/features/space";
+import { useSpaceStore } from "@/features/space/model";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
 import type {
   CollectionSchema,

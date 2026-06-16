@@ -1,5 +1,7 @@
 'use client';
 
+import { LinkPlugin } from '@platejs/link/react';
+import { MentionInputPlugin, MentionPlugin } from '@platejs/mention/react';
 import { type Value, TrailingBlockPlugin } from 'platejs';
 import { type TPlateEditor, useEditorRef } from 'platejs/react';
 
@@ -31,22 +33,42 @@ import { FixedToolbarKit } from '@/components/editor/plugins/fixed-toolbar-kit';
 import { FloatingToolbarKit } from '@/components/editor/plugins/floating-toolbar-kit';
 import { FontKit } from '@/components/editor/plugins/font-kit';
 import { LineHeightKit } from '@/components/editor/plugins/line-height-kit';
-import { LinkKit } from '@/components/editor/plugins/link-kit';
 import { ListKit } from '@/components/editor/plugins/list-kit';
 import { MarkdownKit } from '@/components/editor/plugins/markdown-kit';
 import { MathKit } from '@/components/editor/plugins/math-kit';
 import { MediaKit } from '@/components/editor/plugins/media-kit';
-import { MentionKit } from '@/components/editor/plugins/mention-kit';
 import { SlashKit } from '@/components/editor/plugins/slash-kit';
 import { SuggestionKit } from '@/components/editor/plugins/suggestion-kit';
 import { TableKit } from '@/components/editor/plugins/table-kit';
 import { TocKit } from '@/components/editor/plugins/toc-kit';
 import { ToggleKit } from '@/components/editor/plugins/toggle-kit';
+import { MentionElement } from '@/components/ui/mention-node';
+import { ConflictPlugin } from '../conflict/conflict-plugin';
+import { DocLinkElement } from '../doc-link-element';
+import { DocLinkInputElement } from '../doc-link-input-element';
+import { DocLinkFloatingToolbar } from '../doc-link-toolbar';
+
+const ProductLinkKit = [
+  LinkPlugin.configure({
+    render: {
+      node: DocLinkElement,
+      afterEditable: () => <DocLinkFloatingToolbar />,
+    },
+  }),
+];
+
+const ProductMentionKit = [
+  MentionPlugin.configure({
+    options: {
+      triggerPreviousCharPattern: /^$|^[\s"']$/,
+    },
+  }).withComponent(MentionElement),
+  MentionInputPlugin.withComponent(DocLinkInputElement),
+];
 
 export const EditorKit = [
   ...(ENABLE_PLATE_AI ? [...CopilotKit, ...AIKit] : []),
 
-  // Elements
   ...BasicBlocksKit,
   ...CodeBlockKit,
   ...TableKit,
@@ -57,24 +79,20 @@ export const EditorKit = [
   ...(ENABLE_PLATE_ADVANCED_BLOCKS ? ColumnKit : []),
   ...(ENABLE_PLATE_ADVANCED_BLOCKS ? MathKit : []),
   ...DateKit,
-  ...LinkKit,
-  ...MentionKit,
+  ...ProductLinkKit,
+  ...ProductMentionKit,
 
-  // Marks
   ...BasicMarksKit,
   ...FontKit,
 
-  // Block Style
   ...ListKit,
   ...AlignKit,
   ...LineHeightKit,
 
-  // Collaboration
   ...(ENABLE_PLATE_REVIEW ? DiscussionKit : []),
   ...(ENABLE_PLATE_REVIEW ? CommentKit : []),
   ...(ENABLE_PLATE_REVIEW ? SuggestionKit : []),
 
-  // Editing
   ...SlashKit,
   ...AutoformatKit,
   ...CursorOverlayKit,
@@ -84,13 +102,12 @@ export const EditorKit = [
   ...ExitBreakKit,
   TrailingBlockPlugin,
 
-  // Parsers
+  ConflictPlugin,
+
   ...DocxKit,
   ...MarkdownKit,
 
-  // UI
   ...BlockPlaceholderKit,
-  // FixedToolbarKit is rendered manually in plate-editor.tsx for layout control
   ...FloatingToolbarKit,
 ];
 

@@ -13,7 +13,7 @@ import {
   InlineComboboxItem,
 } from "@/components/ui/inline-combobox";
 import { FileText } from "lucide-react";
-import { useSpaceStore } from "@/features/space";
+import { useSpaceStore } from "@/features/space/model";
 import { useEntrySelectionStore } from "@/features/entry";
 import type { SearchItem } from "@/features/search";
 import {

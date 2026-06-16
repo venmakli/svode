@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import type { PlateEditor } from "platejs/react";
 import { deserializeWithConflicts } from "./conflict/parse-conflicts";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space";
+import { useSpaceStore } from "@/features/space/model";
 import { useEditorStore } from "./model";
 import * as m from "@/paraglide/messages.js";
 

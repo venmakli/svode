@@ -36,7 +36,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useStableViewQueryArgs } from "@/features/collection/query";
 import type { Entry } from "@/features/entry";
 import type { Column } from "@/features/properties";
-import { useSpaceStore } from "@/features/space";
+import { useSpaceStore } from "@/features/space/model";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import {
   listCollectionInfos,

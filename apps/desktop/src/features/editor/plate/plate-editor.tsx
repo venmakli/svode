@@ -4,19 +4,19 @@ import { Plate, usePlateEditor } from "platejs/react";
 import { MarkdownPlugin } from "@platejs/markdown";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
-import { EditorKit } from "@/components/editor/editor-kit";
+import { EditorKit } from "./editor-kit";
 import { useFileWatcher } from "../use-file-watcher";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space";
+import { useSpaceStore } from "@/features/space/model";
 import { useEditorStore } from "../model";
 import { cn } from "@/shared/lib/utils";
 import {
   commitAllSpace,
   commitFileAndMaybeSync,
   syncSpace,
-} from "@/features/git";
-import { isTerminalKeyboardEvent } from "@/features/terminal";
-import { useGitStore } from "@/features/git";
+} from "@/features/git/api/git-actions";
+import { isTerminalKeyboardEvent } from "@/features/terminal/lib/is-terminal-keyboard-event";
+import { useGitStore } from "@/features/git/model";
 import {
   deserializeWithConflicts,
   hasUnresolvedConflicts,

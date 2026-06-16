@@ -13,7 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { joinAbs } from "@/features/editor";
+import { joinAbs } from "./doc-link-utils";
 import { cn } from "@/shared/lib/utils";
 import { pickMediaFiles } from "@/platform/filesystem/native-file-picker";
 import type { CoverColorName, EntryCover } from "@/features/entry";
