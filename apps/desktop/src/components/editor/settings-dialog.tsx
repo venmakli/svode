@@ -48,6 +48,8 @@ type Model = {
   value: string;
 };
 
+type ApiKeyService = 'aiGatewayApiKey';
+
 export const models: Model[] = [
   // OpenAI Models
   { label: 'GPT-3.5 Turbo', value: 'openai/gpt-3.5-turbo' },
@@ -219,9 +221,8 @@ export function SettingsDialog() {
   const editor = useEditorRef();
 
   const [tempModel, setTempModel] = React.useState(models[7]);
-  const [tempKeys, setTempKeys] = React.useState<Record<string, string>>({
+  const [tempKeys, setTempKeys] = React.useState<Record<ApiKeyService, string>>({
     aiGatewayApiKey: '',
-    uploadthing: '',
   });
   const [showKey, setShowKey] = React.useState<Record<string, boolean>>({});
   const [open, setOpen] = React.useState(false);
@@ -261,7 +262,7 @@ export function SettingsDialog() {
     setShowKey((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const renderApiKeyInput = (service: string, label: string) => (
+  const renderApiKeyInput = (service: ApiKeyService, label: string) => (
     <div className="group relative">
       <div className="flex items-center justify-between">
         <label
@@ -278,11 +279,7 @@ export function SettingsDialog() {
         >
           <a
             className="flex items-center"
-            href={
-              service === 'aiGatewayApiKey'
-                ? 'https://vercel.com/docs/ai-gateway'
-                : 'https://uploadthing.com/dashboard'
-            }
+            href="https://vercel.com/docs/ai-gateway"
             rel="noopener noreferrer"
             target="_blank"
           >
@@ -412,20 +409,6 @@ export function SettingsDialog() {
               </div>
             </div>
           </div>
-
-          {/* Upload Settings Group */}
-          {/* <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <div className="size-8 rounded-full bg-red-100 p-2 dark:bg-red-900">
-                <Upload className="size-4 text-red-600 dark:text-red-400" />
-              </div>
-              <h4 className="font-semibold">Upload</h4>
-            </div>
-
-            <div className="space-y-4">
-              {renderApiKeyInput('uploadthing', 'Uploadthing API key')}
-            </div>
-          </div> */}
 
           <Button size="lg" className="w-full" type="submit">
             Save changes
