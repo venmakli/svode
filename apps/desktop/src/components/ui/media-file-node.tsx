@@ -1,72 +1,37 @@
-import * as React from 'react';
+import * as React from "react";
 
-import type { TFileElement } from 'platejs';
-import type { PlateElementProps } from 'platejs/react';
+import type { TFileElement } from "platejs";
+import type { PlateElementProps } from "platejs/react";
 
-import { useMediaState } from '@platejs/media/react';
-import { ResizableProvider } from '@platejs/resizable';
-import { openPath } from "@/platform/native/shell";
-import { FileUp } from 'lucide-react';
-import { PlateElement, useReadOnly, withHOC } from 'platejs/react';
-import { toast } from 'sonner';
+import { useMediaState } from "@platejs/media/react";
+import { ResizableProvider } from "@platejs/resizable";
+import { FileUp } from "lucide-react";
+import { PlateElement, useReadOnly, withHOC } from "platejs/react";
+import { toast } from "sonner";
 
-import { Caption, CaptionTextarea } from './caption';
-import { resolveAssetAbsPath } from '@/platform/assets/assets-api';
-import { useResolvedAssetUrl } from '@/features/editor/hooks/use-resolved-asset-url';
-import { getErrorMessage } from '@/features/editor/hooks/use-upload-file';
-import { useEntrySelectionStore } from '@/features/entry';
-import { useSpaceStore } from '@/features/space/model';
-import { joinAbs } from '@/features/editor/lib/doc-link-utils';
+import { Caption, CaptionTextarea } from "./caption";
+import { useMediaAdapter, useResolvedMediaUrl } from "./media-adapter";
 
 export const FileElement = withHOC(
   ResizableProvider,
   function FileElement(props: PlateElementProps<TFileElement>) {
     const readOnly = useReadOnly();
     const { name, unsafeUrl } = useMediaState();
-    const resolvedUrl = useResolvedAssetUrl(unsafeUrl);
+    const mediaAdapter = useMediaAdapter();
+    const resolvedUrl = useResolvedMediaUrl(unsafeUrl);
 
     const handleOpen = React.useCallback(
       async (e: React.MouseEvent) => {
-        e.preventDefault();
         if (!unsafeUrl) return;
-        // For workspace-relative assets, ask the backend to resolve the abs
-        // path through the same per-space resolver as the editor uses, then
-        // shell-open. External URLs (http(s)/data/blob/file/asset) launch via
-        // openPath directly.
-        if (/^(https?:|data:|blob:|asset:|file:)/i.test(unsafeUrl)) {
-          try {
-            await openPath(unsafeUrl);
-          } catch (err) {
-            toast.error(getErrorMessage(err));
-          }
-          return;
-        }
-        const projectPath = useSpaceStore.getState().activeRootPath;
-        const { activeDocument, activeDocumentSpaceId } =
-          useEntrySelectionStore.getState();
-        if (!projectPath || !activeDocument) return;
-        const { rootSpaces, spaces, activeRootId } = useSpaceStore.getState();
-        const owner =
-          !activeDocumentSpaceId || activeDocumentSpaceId === activeRootId
-            ? rootSpaces.find((r) => r.id === activeDocumentSpaceId)?.path ??
-              projectPath
-            : spaces.find((s) => s.id === activeDocumentSpaceId)?.path;
-        if (!owner) return;
-        const documentAbsPath = activeDocument.startsWith('/')
-          ? activeDocument
-          : joinAbs(owner, activeDocument);
+        e.preventDefault();
+
         try {
-          const abs = await resolveAssetAbsPath(
-            unsafeUrl,
-            projectPath,
-            documentAbsPath
-          );
-          await openPath(abs);
+          await mediaAdapter.openUrl(unsafeUrl);
         } catch (err) {
-          toast.error(getErrorMessage(err));
+          toast.error(mediaAdapter.getErrorMessage(err));
         }
       },
-      [unsafeUrl]
+      [mediaAdapter, unsafeUrl],
     );
 
     return (
@@ -75,7 +40,7 @@ export const FileElement = withHOC(
           className="group relative m-0 flex cursor-pointer items-center rounded px-0.5 py-[3px] hover:bg-muted"
           contentEditable={false}
           download={name}
-          href={resolvedUrl}
+          href={resolvedUrl ?? unsafeUrl}
           onClick={handleOpen}
           rel="noopener noreferrer"
           role="button"
@@ -97,5 +62,5 @@ export const FileElement = withHOC(
         {props.children}
       </PlateElement>
     );
-  }
+  },
 );

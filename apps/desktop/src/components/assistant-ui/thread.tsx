@@ -7,7 +7,6 @@ import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import { Reasoning } from "@/components/assistant-ui/reasoning";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
-import { PermissionCard } from "@/features/chat";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/shared/lib/utils";
 import {
@@ -37,12 +36,14 @@ import {
 } from "lucide-react";
 import { useRef, useState, useCallback, type FC } from "react";
 import { ModelSelector } from "@/components/assistant-ui/model-selector";
-import { useChatStatusStore } from "@/features/chat";
+// eslint-disable-next-line svode/import-boundaries -- Dormant assistant-ui thread still hosts Svode chat composer glue; remove when thread composition moves to features/chat.
 import {
-  useSlashMenu,
+  DocMentionChips,
+  PermissionCard,
   SlashMenuDropdown,
+  useChatStatusStore,
+  useSlashMenu,
 } from "@/features/chat";
-import { DocMentionChips } from "@/features/chat";
 
 export const Thread: FC = () => {
   return (
@@ -158,25 +159,22 @@ const Composer: FC = () => {
     slashMenu.handleInputChange(el.value, el.selectionStart);
   }, [slashMenu.handleInputChange]);
 
-  const setTextareaValue = useCallback(
-    (value: string, focusEnd = true) => {
-      const el = textareaRef.current;
-      if (!el) return;
-      const nativeSetter = Object.getOwnPropertyDescriptor(
-        HTMLTextAreaElement.prototype,
-        "value",
-      )?.set;
-      nativeSetter?.call(el, value);
-      if (focusEnd) {
-        el.setSelectionRange(value.length, value.length);
-      }
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.focus();
-      setInputValue(value);
-      setCursorPos(focusEnd ? value.length : el.selectionStart);
-    },
-    [],
-  );
+  const setTextareaValue = useCallback((value: string, focusEnd = true) => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const nativeSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value",
+    )?.set;
+    nativeSetter?.call(el, value);
+    if (focusEnd) {
+      el.setSelectionRange(value.length, value.length);
+    }
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.focus();
+    setInputValue(value);
+    setCursorPos(focusEnd ? value.length : el.selectionStart);
+  }, []);
 
   const applySlashSelection = useCallback(
     (item: Parameters<typeof slashMenu.handleSelect>[0]) => {
@@ -184,14 +182,18 @@ const Composer: FC = () => {
       const baseValue = slashMenu.handleSelect(item);
       const insertPos = baseValue.length - (inputValue.length - cursorPos);
       const newValue =
-        baseValue.slice(0, insertPos) +
-        item.title +
-        baseValue.slice(insertPos);
+        baseValue.slice(0, insertPos) + item.title + baseValue.slice(insertPos);
 
       addDocMention({ title: item.title, path: item.path, icon: item.icon });
       setTextareaValue(newValue);
     },
-    [slashMenu.handleSelect, addDocMention, setTextareaValue, inputValue, cursorPos],
+    [
+      slashMenu.handleSelect,
+      addDocMention,
+      setTextareaValue,
+      inputValue,
+      cursorPos,
+    ],
   );
 
   const handleChipRemove = useCallback(
@@ -230,7 +232,9 @@ const Composer: FC = () => {
                 if (slashMenu.isOpen && slashMenu.items.length > 0) {
                   const handled = slashMenu.handleKeyDown(e);
                   if (handled && (e.key === "Enter" || e.key === "Tab")) {
-                    applySlashSelection(slashMenu.items[slashMenu.selectedIndex]);
+                    applySlashSelection(
+                      slashMenu.items[slashMenu.selectedIndex],
+                    );
                   }
                 }
               }}

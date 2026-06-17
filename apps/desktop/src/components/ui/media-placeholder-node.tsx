@@ -1,22 +1,24 @@
-import * as React from 'react';
+import * as React from "react";
 
-import type { TPlaceholderElement } from 'platejs';
-import type { PlateElementProps } from 'platejs/react';
+import type { TPlaceholderElement } from "platejs";
+import type { PlateElementProps } from "platejs/react";
 
 import {
   PlaceholderPlugin,
   PlaceholderProvider,
   updateUploadHistory,
-} from '@platejs/media/react';
-import { AudioLines, FileUp, Film, ImageIcon, Loader2Icon } from 'lucide-react';
-import { KEYS } from 'platejs';
-import { PlateElement, useEditorPlugin, withHOC } from 'platejs/react';
-import { toast } from 'sonner';
+} from "@platejs/media/react";
+import { AudioLines, FileUp, Film, ImageIcon, Loader2Icon } from "lucide-react";
+import { KEYS } from "platejs";
+import { PlateElement, useEditorPlugin, withHOC } from "platejs/react";
+import { toast } from "sonner";
 
-import { cn } from '@/shared/lib/utils';
-import { type MediaKind } from '@/platform/upload/media-types';
-import { filesToFileList, pickMediaFiles } from '@/platform/filesystem/native-file-picker';
-import { useUploadFile } from '@/features/editor/hooks/use-upload-file';
+import { cn } from "@/shared/lib/utils";
+import {
+  type MediaKind,
+  useMediaAdapter,
+  useMediaUpload,
+} from "./media-adapter";
 
 const CONTENT: Record<
   string,
@@ -27,24 +29,24 @@ const CONTENT: Record<
   }
 > = {
   [KEYS.audio]: {
-    content: 'Add an audio file',
+    content: "Add an audio file",
     icon: <AudioLines />,
-    kind: 'audio',
+    kind: "audio",
   },
   [KEYS.file]: {
-    content: 'Add a file',
+    content: "Add a file",
     icon: <FileUp />,
-    kind: 'file',
+    kind: "file",
   },
   [KEYS.img]: {
-    content: 'Add an image',
+    content: "Add an image",
     icon: <ImageIcon />,
-    kind: 'image',
+    kind: "image",
   },
   [KEYS.video]: {
-    content: 'Add a video',
+    content: "Add a video",
     icon: <Film />,
-    kind: 'video',
+    kind: "video",
   },
 };
 
@@ -55,8 +57,9 @@ export const PlaceholderElement = withHOC(
 
     const { api } = useEditorPlugin(PlaceholderPlugin);
 
+    const mediaAdapter = useMediaAdapter();
     const { isUploading, progress, uploadedFile, uploadFile, uploadingFile } =
-      useUploadFile();
+      useMediaUpload();
 
     const loading = isUploading && uploadingFile;
 
@@ -68,7 +71,7 @@ export const PlaceholderElement = withHOC(
 
     const openFilePicker = React.useCallback(async () => {
       try {
-        const files = await pickMediaFiles(currentContent.kind);
+        const files = await mediaAdapter.pickFiles(currentContent.kind);
         if (files.length === 0) return;
 
         const [firstFile, ...restFiles] = files;
@@ -78,22 +81,20 @@ export const PlaceholderElement = withHOC(
         if (restFiles.length > 0) {
           editor
             .getTransforms(PlaceholderPlugin)
-            .insert.media(filesToFileList(restFiles));
+            .insert.media(mediaAdapter.filesToFileList(restFiles));
         }
       } catch (err) {
-        toast.error(
-          err instanceof Error ? err.message : 'Failed to open file dialog'
-        );
+        toast.error(mediaAdapter.getErrorMessage(err));
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [currentContent.kind, editor]);
+    }, [currentContent.kind, editor, mediaAdapter]);
 
     const replaceCurrentPlaceholder = React.useCallback(
       (file: File) => {
         void uploadFile(file);
         api.placeholder.addUploadingFile(element.id as string, file);
       },
-      [api.placeholder, element.id, uploadFile]
+      [api.placeholder, element.id, uploadFile],
     );
 
     React.useEffect(() => {
@@ -105,11 +106,11 @@ export const PlaceholderElement = withHOC(
         editor.tf.removeNodes({ at: path });
 
         const node = {
-          children: [{ text: '' }],
+          children: [{ text: "" }],
           initialHeight: imageRef.current?.height,
           initialWidth: imageRef.current?.width,
           isUpload: true,
-          name: element.mediaType === KEYS.file ? uploadedFile.name : '',
+          name: element.mediaType === KEYS.file ? uploadedFile.name : "",
           placeholderId: element.id as string,
           type: element.mediaType!,
           url: uploadedFile.url,
@@ -133,7 +134,7 @@ export const PlaceholderElement = withHOC(
 
       isReplaced.current = true;
       const currentFiles = api.placeholder.getUploadingFile(
-        element.id as string
+        element.id as string,
       );
 
       if (!currentFiles) return;
@@ -148,7 +149,7 @@ export const PlaceholderElement = withHOC(
         {(!loading || !isImage) && (
           <div
             className={cn(
-              'flex cursor-pointer select-none items-center rounded-sm bg-muted p-3 pr-9 hover:bg-primary/10'
+              "flex cursor-pointer select-none items-center rounded-sm bg-muted p-3 pr-9 hover:bg-primary/10",
             )}
             onClick={() => !loading && openFilePicker()}
             contentEditable={false}
@@ -186,7 +187,7 @@ export const PlaceholderElement = withHOC(
         {props.children}
       </PlateElement>
     );
-  }
+  },
 );
 
 export function ImageProgress({
@@ -216,7 +217,7 @@ export function ImageProgress({
   }
 
   return (
-    <div className={cn('relative', className)} contentEditable={false}>
+    <div className={cn("relative", className)} contentEditable={false}>
       <img
         ref={imageRef}
         className="h-auto w-full rounded-sm object-cover"
@@ -239,21 +240,21 @@ function formatBytes(
   bytes: number,
   opts: {
     decimals?: number;
-    sizeType?: 'accurate' | 'normal';
-  } = {}
+    sizeType?: "accurate" | "normal";
+  } = {},
 ) {
-  const { decimals = 0, sizeType = 'normal' } = opts;
+  const { decimals = 0, sizeType = "normal" } = opts;
 
-  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-  const accurateSizes = ['Bytes', 'KiB', 'MiB', 'GiB', 'TiB'];
+  const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
+  const accurateSizes = ["Bytes", "KiB", "MiB", "GiB", "TiB"];
 
-  if (bytes === 0) return '0 Byte';
+  if (bytes === 0) return "0 Byte";
 
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
 
   return `${(bytes / 1024 ** i).toFixed(decimals)} ${
-    sizeType === 'accurate'
-      ? (accurateSizes[i] ?? 'Bytest')
-      : (sizes[i] ?? 'Bytes')
+    sizeType === "accurate"
+      ? (accurateSizes[i] ?? "Bytest")
+      : (sizes[i] ?? "Bytes")
   }`;
 }

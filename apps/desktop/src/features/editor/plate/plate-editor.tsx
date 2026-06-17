@@ -26,6 +26,7 @@ import { FixedToolbar } from "@/components/ui/fixed-toolbar";
 import { FixedToolbarButtons } from "@/components/ui/fixed-toolbar-buttons";
 import { detailPageBodyClassName } from "@/shared/ui/page-layout";
 import { TocSidebar } from "../ui/toc-sidebar";
+import { EditorMediaAdapterProvider } from "../ui/editor-media-adapter-provider";
 import type { Entry, EntryMeta, WriteResult } from "@/features/entry";
 import * as m from "@/paraglide/messages.js";
 
@@ -571,42 +572,44 @@ export function PlateDocumentEditor({
   );
 
   return (
-    <Plate editor={editor} onChange={handleChange}>
-      <div
-        className={cn(
-          "flex w-full flex-col",
-          usePageScroll ? "min-h-0" : "h-full",
-        )}
-      >
-        {ENABLE_FIXED_FORMATTING_TOOLBAR ? (
-          <FixedToolbar>
-            <FixedToolbarButtons />
-          </FixedToolbar>
-        ) : null}
-
+    <EditorMediaAdapterProvider>
+      <Plate editor={editor} onChange={handleChange}>
         <div
-          ref={editorAnchorRef}
           className={cn(
-            "relative",
-            usePageScroll ? "overflow-visible" : "flex-1 overflow-hidden",
+            "flex w-full flex-col",
+            usePageScroll ? "min-h-0" : "h-full",
           )}
         >
-          <EditorContainer
+          {ENABLE_FIXED_FORMATTING_TOOLBAR ? (
+            <FixedToolbar>
+              <FixedToolbarButtons />
+            </FixedToolbar>
+          ) : null}
+
+          <div
+            ref={editorAnchorRef}
             className={cn(
-              usePageScroll
-                ? "h-auto overflow-visible overflow-y-visible"
-                : "h-full",
+              "relative",
+              usePageScroll ? "overflow-visible" : "flex-1 overflow-hidden",
             )}
           >
-            <Editor
-              variant={usePageScroll ? "none" : "default"}
-              className={cn(usePageScroll && detailPageBodyClassName)}
-              placeholder={m.editor_placeholder_body()}
-            />
-          </EditorContainer>
-          <TocSidebar anchorRef={editorAnchorRef} />
+            <EditorContainer
+              className={cn(
+                usePageScroll
+                  ? "h-auto overflow-visible overflow-y-visible"
+                  : "h-full",
+              )}
+            >
+              <Editor
+                variant={usePageScroll ? "none" : "default"}
+                className={cn(usePageScroll && detailPageBodyClassName)}
+                placeholder={m.editor_placeholder_body()}
+              />
+            </EditorContainer>
+            <TocSidebar anchorRef={editorAnchorRef} />
+          </div>
         </div>
-      </div>
-    </Plate>
+      </Plate>
+    </EditorMediaAdapterProvider>
   );
 }

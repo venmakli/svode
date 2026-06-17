@@ -28,18 +28,6 @@ const allowedFeatureSubpathExceptions = new Set([
   "@/features/space/model",
   "@/features/terminal/lib/is-terminal-keyboard-event",
 ]);
-const allowedComponentProductGlue = new Set([
-  "@/features/chat",
-  "@/features/editor/hooks/use-resolved-asset-url",
-  "@/features/editor/hooks/use-upload-file",
-  "@/features/editor/lib/doc-link-utils",
-  "@/features/entry",
-  "@/features/space/model",
-  "@/platform/assets/assets-api",
-  "@/platform/filesystem/native-file-picker",
-  "@/platform/native/shell",
-  "@/platform/upload/media-types",
-]);
 
 function srcRelativePath(filename) {
   const normalized = filename.replaceAll("\\", "/");
@@ -166,17 +154,14 @@ function createImportBoundaryRule() {
         if (
           ["features", "platform", "shared", "components"].includes(layer) &&
           source.startsWith("@/app/") &&
-          source !== appConfigException
+          !(source === appConfigException && layer !== "components")
         ) {
           report(node, "lowerApp");
           return;
         }
 
         if (layer === "components") {
-          if (
-            /^@\/(features|platform)\//.test(source) &&
-            !allowedComponentProductGlue.has(source)
-          ) {
+          if (/^@\/(features|platform)\//.test(source)) {
             report(node, "componentProductGlue");
           }
           return;

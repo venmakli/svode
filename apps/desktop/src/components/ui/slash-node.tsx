@@ -1,10 +1,10 @@
-'use client';
+"use client";
 
-import * as React from 'react';
+import * as React from "react";
 
-import type { PlateEditor, PlateElementProps } from 'platejs/react';
+import type { PlateEditor, PlateElementProps } from "platejs/react";
 
-import { AIChatPlugin } from '@platejs/ai/react';
+import { AIChatPlugin } from "@platejs/ai/react";
 import {
   AudioLines,
   CalendarIcon,
@@ -29,18 +29,20 @@ import {
   Square,
   Table,
   TableOfContentsIcon,
-} from 'lucide-react';
-import { type TComboboxInputElement, KEYS } from 'platejs';
-import { PlateElement } from 'platejs/react';
+} from "lucide-react";
+import { type TComboboxInputElement, KEYS } from "platejs";
+import { PlateElement } from "platejs/react";
 
+// eslint-disable-next-line svode/import-boundaries -- Read-only Plate feature flags stay in copied slash menu until editor-owned menu options replace direct config reads.
 import {
   ENABLE_PLATE_ADVANCED_BLOCKS,
   ENABLE_PLATE_AI,
-} from '@/app/config/feature-flags';
+} from "@/app/config/feature-flags";
 import {
   insertBlock,
   insertInlineElement,
-} from '@/components/editor/transforms';
+} from "@/components/editor/transforms";
+import { type MediaAdapter, useMediaAdapter } from "./media-adapter";
 
 import {
   InlineCombobox,
@@ -50,14 +52,18 @@ import {
   InlineComboboxGroupLabel,
   InlineComboboxInput,
   InlineComboboxItem,
-} from './inline-combobox';
+} from "./inline-combobox";
 
 type Group = {
   group: string;
   items: {
     icon: React.ReactNode;
     value: string;
-    onSelect: (editor: PlateEditor, value: string) => void;
+    onSelect: (
+      editor: PlateEditor,
+      value: string,
+      context: { mediaAdapter: MediaAdapter },
+    ) => void;
     className?: string;
     focusEditor?: boolean;
     keywords?: string[];
@@ -69,12 +75,12 @@ const groups: Group[] = [
   ...(ENABLE_PLATE_AI
     ? [
         {
-          group: 'AI',
+          group: "AI",
           items: [
             {
               focusEditor: false,
               icon: <SparklesIcon />,
-              value: 'AI',
+              value: "AI",
               onSelect: (editor: PlateEditor) => {
                 editor.getApi(AIChatPlugin).aiChat.show();
               },
@@ -84,145 +90,149 @@ const groups: Group[] = [
       ]
     : []),
   {
-    group: 'Basic blocks',
+    group: "Basic blocks",
     items: [
       {
         icon: <PilcrowIcon />,
-        keywords: ['paragraph'],
-        label: 'Text',
+        keywords: ["paragraph"],
+        label: "Text",
         value: KEYS.p,
       },
       {
         icon: <Heading1Icon />,
-        keywords: ['title', 'h1'],
-        label: 'Heading 1',
+        keywords: ["title", "h1"],
+        label: "Heading 1",
         value: KEYS.h1,
       },
       {
         icon: <Heading2Icon />,
-        keywords: ['subtitle', 'h2'],
-        label: 'Heading 2',
+        keywords: ["subtitle", "h2"],
+        label: "Heading 2",
         value: KEYS.h2,
       },
       {
         icon: <Heading3Icon />,
-        keywords: ['subtitle', 'h3'],
-        label: 'Heading 3',
+        keywords: ["subtitle", "h3"],
+        label: "Heading 3",
         value: KEYS.h3,
       },
       {
         icon: <ListIcon />,
-        keywords: ['unordered', 'ul', '-'],
-        label: 'Bulleted list',
+        keywords: ["unordered", "ul", "-"],
+        label: "Bulleted list",
         value: KEYS.ul,
       },
       {
         icon: <ListOrdered />,
-        keywords: ['ordered', 'ol', '1'],
-        label: 'Numbered list',
+        keywords: ["ordered", "ol", "1"],
+        label: "Numbered list",
         value: KEYS.ol,
       },
       {
         icon: <Square />,
-        keywords: ['checklist', 'task', 'checkbox', '[]'],
-        label: 'To-do list',
+        keywords: ["checklist", "task", "checkbox", "[]"],
+        label: "To-do list",
         value: KEYS.listTodo,
       },
       {
         icon: <ChevronRightIcon />,
-        keywords: ['collapsible', 'expandable'],
-        label: 'Toggle',
+        keywords: ["collapsible", "expandable"],
+        label: "Toggle",
         value: KEYS.toggle,
       },
       {
         icon: <Code2 />,
-        keywords: ['```'],
-        label: 'Code Block',
+        keywords: ["```"],
+        label: "Code Block",
         value: KEYS.codeBlock,
       },
       {
         icon: <Table />,
-        label: 'Table',
+        label: "Table",
         value: KEYS.table,
       },
       {
         icon: <Quote />,
-        keywords: ['citation', 'blockquote', 'quote', '>'],
-        label: 'Blockquote',
+        keywords: ["citation", "blockquote", "quote", ">"],
+        label: "Blockquote",
         value: KEYS.blockquote,
       },
       {
-        description: 'Insert a highlighted block.',
+        description: "Insert a highlighted block.",
         icon: <LightbulbIcon />,
-        keywords: ['note'],
-        label: 'Callout',
+        keywords: ["note"],
+        label: "Callout",
         value: KEYS.callout,
       },
     ].map((item) => ({
       ...item,
-      onSelect: (editor, value) => {
-        insertBlock(editor, value, { upsert: true });
+      onSelect: (editor, value, { mediaAdapter }) => {
+        insertBlock(editor, value, { mediaAdapter, upsert: true });
       },
     })),
   },
   ...(ENABLE_PLATE_ADVANCED_BLOCKS
     ? [
         {
-          group: 'Advanced blocks',
+          group: "Advanced blocks",
           items: [
             {
               icon: <TableOfContentsIcon />,
-              keywords: ['toc'],
-              label: 'Table of contents',
+              keywords: ["toc"],
+              label: "Table of contents",
               value: KEYS.toc,
             },
             {
               icon: <Columns3Icon />,
-              label: '3 columns',
-              value: 'action_three_columns',
+              label: "3 columns",
+              value: "action_three_columns",
             },
             {
               focusEditor: false,
               icon: <RadicalIcon />,
-              label: 'Equation',
+              label: "Equation",
               value: KEYS.equation,
             },
             {
               icon: <PenToolIcon />,
-              keywords: ['excalidraw'],
-              label: 'Excalidraw',
+              keywords: ["excalidraw"],
+              label: "Excalidraw",
               value: KEYS.excalidraw,
             },
             {
               icon: <Code2 />,
               keywords: [
-                'code-drawing',
-                'diagram',
-                'plantuml',
-                'graphviz',
-                'flowchart',
-                'mermaid',
+                "code-drawing",
+                "diagram",
+                "plantuml",
+                "graphviz",
+                "flowchart",
+                "mermaid",
               ],
-              label: 'Code Drawing',
+              label: "Code Drawing",
               value: KEYS.codeDrawing,
             },
           ].map((item) => ({
             ...item,
-            onSelect: (editor: PlateEditor, value: string) => {
-              insertBlock(editor, value, { upsert: true });
+            onSelect: (
+              editor: PlateEditor,
+              value: string,
+              { mediaAdapter }: { mediaAdapter: MediaAdapter },
+            ) => {
+              insertBlock(editor, value, { mediaAdapter, upsert: true });
             },
           })),
         },
       ]
     : []),
   {
-    group: 'Inline',
+    group: "Inline",
     items: [
       {
         focusEditor: true,
         icon: <CalendarIcon />,
-        keywords: ['time'],
-        label: 'Date',
+        keywords: ["time"],
+        label: "Date",
         value: KEYS.date,
       },
       ...(ENABLE_PLATE_ADVANCED_BLOCKS
@@ -230,7 +240,7 @@ const groups: Group[] = [
             {
               focusEditor: false,
               icon: <RadicalIcon />,
-              label: 'Inline Equation',
+              label: "Inline Equation",
               value: KEYS.inlineEquation,
             },
           ]
@@ -243,32 +253,32 @@ const groups: Group[] = [
     })),
   },
   {
-    group: 'Media',
+    group: "Media",
     items: [
       {
         icon: <ImageIcon />,
-        keywords: ['image', 'picture', 'photo', 'img'],
-        label: 'Image',
+        keywords: ["image", "picture", "photo", "img"],
+        label: "Image",
         value: KEYS.img,
       },
       {
         icon: <FileUp />,
-        keywords: ['file', 'attachment'],
-        label: 'File',
+        keywords: ["file", "attachment"],
+        label: "File",
         value: KEYS.file,
       },
       ...(ENABLE_PLATE_ADVANCED_BLOCKS
         ? [
             {
               icon: <Film />,
-              keywords: ['video', 'movie'],
-              label: 'Video',
+              keywords: ["video", "movie"],
+              label: "Video",
               value: KEYS.video,
             },
             {
               icon: <AudioLines />,
-              keywords: ['audio', 'sound', 'music'],
-              label: 'Audio',
+              keywords: ["audio", "sound", "music"],
+              label: "Audio",
               value: KEYS.audio,
             },
           ]
@@ -276,25 +286,25 @@ const groups: Group[] = [
     ].map((item) => ({
       ...item,
       focusEditor: false,
-      onSelect: (editor, value) => {
-        insertBlock(editor, value, { upsert: true });
+      onSelect: (editor, value, { mediaAdapter }) => {
+        insertBlock(editor, value, { mediaAdapter, upsert: true });
       },
     })),
   },
   {
-    group: 'Links',
+    group: "Links",
     items: [
       {
         focusEditor: false,
         icon: <FileTextIcon />,
-        keywords: ['document', 'link', 'документ', 'ссылка', 'doc'],
-        label: 'Document link',
-        value: 'doc-link',
+        keywords: ["document", "link", "документ", "ссылка", "doc"],
+        label: "Document link",
+        value: "doc-link",
         onSelect: (editor) => {
           editor.tf.insertNodes({
             type: KEYS.mentionInput,
-            trigger: '/doc',
-            children: [{ text: '' }],
+            trigger: "/doc",
+            children: [{ text: "" }],
           });
         },
       },
@@ -303,9 +313,10 @@ const groups: Group[] = [
 ];
 
 export function SlashInputElement(
-  props: PlateElementProps<TComboboxInputElement>
+  props: PlateElementProps<TComboboxInputElement>,
 ) {
   const { editor, element } = props;
+  const mediaAdapter = useMediaAdapter();
 
   return (
     <PlateElement {...props} as="span">
@@ -324,7 +335,7 @@ export function SlashInputElement(
                   <InlineComboboxItem
                     key={value}
                     value={value}
-                    onClick={() => onSelect(editor, value)}
+                    onClick={() => onSelect(editor, value, { mediaAdapter })}
                     label={label}
                     focusEditor={focusEditor}
                     group={group}
@@ -333,7 +344,7 @@ export function SlashInputElement(
                     <div className="mr-2 text-muted-foreground">{icon}</div>
                     {label ?? value}
                   </InlineComboboxItem>
-                )
+                ),
               )}
             </InlineComboboxGroup>
           ))}

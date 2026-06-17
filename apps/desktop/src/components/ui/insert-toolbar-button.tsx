@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
-import * as React from 'react';
+import * as React from "react";
 
-import type { DropdownMenuProps } from '@radix-ui/react-dropdown-menu';
+import type { DropdownMenuProps } from "@radix-ui/react-dropdown-menu";
 
 import {
   CalendarIcon,
@@ -27,23 +27,25 @@ import {
   SquareIcon,
   TableIcon,
   TableOfContentsIcon,
-} from 'lucide-react';
-import { KEYS } from 'platejs';
-import { type PlateEditor, useEditorRef } from 'platejs/react';
+} from "lucide-react";
+import { KEYS } from "platejs";
+import { type PlateEditor, useEditorRef } from "platejs/react";
 
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+} from "@/components/ui/dropdown-menu";
 import {
   insertBlock,
   insertInlineElement,
-} from '@/components/editor/transforms';
-import { ENABLE_PLATE_ADVANCED_BLOCKS } from '@/app/config/feature-flags';
+} from "@/components/editor/transforms";
+// eslint-disable-next-line svode/import-boundaries -- Read-only Plate feature flags stay in copied toolbar until editor-owned toolbar options replace direct config reads.
+import { ENABLE_PLATE_ADVANCED_BLOCKS } from "@/app/config/feature-flags";
 
-import { ToolbarButton, ToolbarMenuGroup } from './toolbar';
+import { type MediaAdapter, useMediaAdapter } from "./media-adapter";
+import { ToolbarButton, ToolbarMenuGroup } from "./toolbar";
 
 type Group = {
   group: string;
@@ -53,168 +55,176 @@ type Group = {
 type Item = {
   icon: React.ReactNode;
   value: string;
-  onSelect: (editor: PlateEditor, value: string) => void;
+  onSelect: (
+    editor: PlateEditor,
+    value: string,
+    context: { mediaAdapter: MediaAdapter },
+  ) => void;
   focusEditor?: boolean;
   label?: string;
 };
 
 const groups: Group[] = [
   {
-    group: 'Basic blocks',
+    group: "Basic blocks",
     items: [
       {
         icon: <PilcrowIcon />,
-        label: 'Paragraph',
+        label: "Paragraph",
         value: KEYS.p,
       },
       {
         icon: <Heading1Icon />,
-        label: 'Heading 1',
-        value: 'h1',
+        label: "Heading 1",
+        value: "h1",
       },
       {
         icon: <Heading2Icon />,
-        label: 'Heading 2',
-        value: 'h2',
+        label: "Heading 2",
+        value: "h2",
       },
       {
         icon: <Heading3Icon />,
-        label: 'Heading 3',
-        value: 'h3',
+        label: "Heading 3",
+        value: "h3",
       },
       {
         icon: <TableIcon />,
-        label: 'Table',
+        label: "Table",
         value: KEYS.table,
       },
       {
         icon: <FileCodeIcon />,
-        label: 'Code',
+        label: "Code",
         value: KEYS.codeBlock,
       },
       {
         icon: <QuoteIcon />,
-        label: 'Quote',
+        label: "Quote",
         value: KEYS.blockquote,
       },
       {
         icon: <MinusIcon />,
-        label: 'Divider',
+        label: "Divider",
         value: KEYS.hr,
       },
     ].map((item) => ({
       ...item,
-      onSelect: (editor, value) => {
-        insertBlock(editor, value);
+      onSelect: (editor, value, { mediaAdapter }) => {
+        insertBlock(editor, value, { mediaAdapter });
       },
     })),
   },
   {
-    group: 'Lists',
+    group: "Lists",
     items: [
       {
         icon: <ListIcon />,
-        label: 'Bulleted list',
+        label: "Bulleted list",
         value: KEYS.ul,
       },
       {
         icon: <ListOrderedIcon />,
-        label: 'Numbered list',
+        label: "Numbered list",
         value: KEYS.ol,
       },
       {
         icon: <SquareIcon />,
-        label: 'To-do list',
+        label: "To-do list",
         value: KEYS.listTodo,
       },
       {
         icon: <ChevronRightIcon />,
-        label: 'Toggle list',
+        label: "Toggle list",
         value: KEYS.toggle,
       },
     ].map((item) => ({
       ...item,
-      onSelect: (editor, value) => {
-        insertBlock(editor, value);
+      onSelect: (editor, value, { mediaAdapter }) => {
+        insertBlock(editor, value, { mediaAdapter });
       },
     })),
   },
   {
-    group: 'Media',
+    group: "Media",
     items: [
       {
         icon: <ImageIcon />,
-        label: 'Image',
+        label: "Image",
         value: KEYS.img,
       },
       ...(ENABLE_PLATE_ADVANCED_BLOCKS
         ? [
             {
               icon: <FilmIcon />,
-              label: 'Embed',
+              label: "Embed",
               value: KEYS.mediaEmbed,
             },
           ]
         : []),
     ].map((item) => ({
       ...item,
-      onSelect: (editor, value) => {
-        insertBlock(editor, value);
+      onSelect: (editor, value, { mediaAdapter }) => {
+        insertBlock(editor, value, { mediaAdapter });
       },
     })),
   },
   ...(ENABLE_PLATE_ADVANCED_BLOCKS
     ? [
         {
-          group: 'Advanced blocks',
+          group: "Advanced blocks",
           items: [
             {
               icon: <TableOfContentsIcon />,
-              label: 'Table of contents',
+              label: "Table of contents",
               value: KEYS.toc,
             },
             {
               icon: <Columns3Icon />,
-              label: '3 columns',
-              value: 'action_three_columns',
+              label: "3 columns",
+              value: "action_three_columns",
             },
             {
               focusEditor: false,
               icon: <RadicalIcon />,
-              label: 'Equation',
+              label: "Equation",
               value: KEYS.equation,
             },
             {
               icon: <PenToolIcon />,
-              label: 'Excalidraw',
+              label: "Excalidraw",
               value: KEYS.excalidraw,
             },
             {
               icon: <Code2 />,
-              label: 'Code Drawing',
+              label: "Code Drawing",
               value: KEYS.codeDrawing,
             },
           ].map((item) => ({
             ...item,
-            onSelect: (editor: PlateEditor, value: string) => {
-              insertBlock(editor, value);
+            onSelect: (
+              editor: PlateEditor,
+              value: string,
+              { mediaAdapter }: { mediaAdapter: MediaAdapter },
+            ) => {
+              insertBlock(editor, value, { mediaAdapter });
             },
           })),
         },
       ]
     : []),
   {
-    group: 'Inline',
+    group: "Inline",
     items: [
       {
         icon: <Link2Icon />,
-        label: 'Link',
+        label: "Link",
         value: KEYS.link,
       },
       {
         focusEditor: true,
         icon: <CalendarIcon />,
-        label: 'Date',
+        label: "Date",
         value: KEYS.date,
       },
       ...(ENABLE_PLATE_ADVANCED_BLOCKS
@@ -222,7 +232,7 @@ const groups: Group[] = [
             {
               focusEditor: false,
               icon: <RadicalIcon />,
-              label: 'Inline Equation',
+              label: "Inline Equation",
               value: KEYS.inlineEquation,
             },
           ]
@@ -238,6 +248,7 @@ const groups: Group[] = [
 
 export function InsertToolbarButton(props: DropdownMenuProps) {
   const editor = useEditorRef();
+  const mediaAdapter = useMediaAdapter();
   const [open, setOpen] = React.useState(false);
 
   return (
@@ -259,7 +270,7 @@ export function InsertToolbarButton(props: DropdownMenuProps) {
                 key={value}
                 className="min-w-[180px]"
                 onSelect={() => {
-                  onSelect(editor, value);
+                  onSelect(editor, value, { mediaAdapter });
                   editor.tf.focus();
                 }}
               >
