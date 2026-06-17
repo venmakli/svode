@@ -234,13 +234,17 @@ pub async fn open_project_folder(
     // If the folder was already a git repo but we just scaffolded .svode/
     // or README.md into it, commit the scaffold on top of HEAD.
     if had_git_before && (!svode_existed_before || !readme_existed_before) {
-        let commit_result = if readme_existed_before {
+        let commit_result = if !svode_existed_before && readme_existed_before {
             autocommit
                 .commit_scaffold(sp_path.to_path_buf(), sp_path.to_path_buf())
                 .await
-        } else {
+        } else if !svode_existed_before {
             autocommit
                 .commit_scaffold_with_readme(sp_path.to_path_buf(), sp_path.to_path_buf())
+                .await
+        } else {
+            autocommit
+                .commit_scope_readme(sp_path.to_path_buf(), sp_path.to_path_buf())
                 .await
         };
         if let Err(e) = commit_result {
@@ -372,7 +376,7 @@ pub async fn open_project(
     let readme_created = project::ensure_scope_readme(&project_path, &cfg.name)?;
     if readme_created && project_path.join(".git").exists() && !readme_existed_before {
         if let Err(e) = autocommit
-            .commit_scaffold_with_readme(project_path.clone(), project_path.clone())
+            .commit_scope_readme(project_path.clone(), project_path.clone())
             .await
         {
             tracing::warn!("commit README scaffold failed for project open: {e}");
@@ -620,13 +624,17 @@ pub async fn register_cloned_space(
         project::register_cloned_space(path, &folder_name, &fallback_name, &fallback_icon, repo)?;
 
     if !svode_existed_before || !readme_existed_before {
-        let commit_result = if readme_existed_before {
+        let commit_result = if !svode_existed_before && readme_existed_before {
             autocommit
                 .commit_scaffold(PathBuf::from(&parent_path), space_dir.clone())
                 .await
-        } else {
+        } else if !svode_existed_before {
             autocommit
                 .commit_scaffold_with_readme(PathBuf::from(&parent_path), space_dir.clone())
+                .await
+        } else {
+            autocommit
+                .commit_scope_readme(PathBuf::from(&parent_path), space_dir.clone())
                 .await
         };
         if let Err(e) = commit_result {
@@ -677,11 +685,15 @@ pub async fn project_clone(
 
     // If we just scaffolded .svode/ or README.md, commit it.
     if !svode_existed_before || !readme_existed_before {
-        let commit_result = if readme_existed_before {
+        let commit_result = if !svode_existed_before && readme_existed_before {
             autocommit.commit_scaffold(path.clone(), path.clone()).await
-        } else {
+        } else if !svode_existed_before {
             autocommit
                 .commit_scaffold_with_readme(path.clone(), path.clone())
+                .await
+        } else {
+            autocommit
+                .commit_scope_readme(path.clone(), path.clone())
                 .await
         };
         if let Err(e) = commit_result {
@@ -759,13 +771,17 @@ pub async fn ensure_space_scaffold(
     }
 
     if !svode_existed_before || !readme_existed_before {
-        let commit_result = if readme_existed_before {
+        let commit_result = if !svode_existed_before && readme_existed_before {
             autocommit
                 .commit_scaffold(PathBuf::from(project_path), path.to_path_buf())
                 .await
-        } else {
+        } else if !svode_existed_before {
             autocommit
                 .commit_scaffold_with_readme(PathBuf::from(project_path), path.to_path_buf())
+                .await
+        } else {
+            autocommit
+                .commit_scope_readme(PathBuf::from(project_path), path.to_path_buf())
                 .await
         };
         if let Err(e) = commit_result {
@@ -1002,13 +1018,17 @@ pub async fn clone_missing_space(
         crate::space::scaffold::scaffold_space(&space_dir, &space_ref.path, "", "")?;
     }
     if !svode_existed_before || !readme_existed_before {
-        let commit_result = if readme_existed_before {
+        let commit_result = if !svode_existed_before && readme_existed_before {
             autocommit
                 .commit_scaffold(parent.clone(), space_dir.clone())
                 .await
-        } else {
+        } else if !svode_existed_before {
             autocommit
                 .commit_scaffold_with_readme(parent.clone(), space_dir.clone())
+                .await
+        } else {
+            autocommit
+                .commit_scope_readme(parent.clone(), space_dir.clone())
                 .await
         };
         if let Err(e) = commit_result {

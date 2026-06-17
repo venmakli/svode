@@ -304,6 +304,21 @@ impl AutocommitService {
         do_commit_scaffold(&self.app, &project_path, &space_path, true).await
     }
 
+    /// Commit a newly-created scope home README without staging existing scaffold files.
+    pub async fn commit_scope_readme(
+        &self,
+        project_path: PathBuf,
+        space_path: PathBuf,
+    ) -> Result<(), AppError> {
+        self.commit_paths_now(
+            project_path,
+            space_path.clone(),
+            vec![space_path.join("README.md")],
+            "Scaffold README".to_string(),
+        )
+        .await
+    }
+
     /// Flush all pending timers on shutdown. Wrapped in a timeout so a hung
     /// network or lock doesn't prevent process exit.
     pub async fn flush_all(&self) {

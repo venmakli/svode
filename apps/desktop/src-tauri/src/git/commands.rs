@@ -136,12 +136,14 @@ pub async fn git_clone_space(
         }
         drop(_guard);
         if !svode_existed_before || !readme_existed_before {
-            let commit_result = if readme_existed_before {
+            let commit_result = if !svode_existed_before && readme_existed_before {
                 autocommit.commit_scaffold(project, target).await
-            } else {
+            } else if !svode_existed_before {
                 autocommit
                     .commit_scaffold_with_readme(project, target)
                     .await
+            } else {
+                autocommit.commit_scope_readme(project, target).await
             };
             if let Err(e) = commit_result {
                 tracing::warn!("commit_scaffold failed after submodule clone: {e}");
