@@ -2,9 +2,13 @@
   "name": "svode",
   "version": "0.0.1",
   "private": true,
+  "type": "module",
   "author": "Kamnev Ilya",
   "repository": "https://github.com/venmakli/svode",
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "dev": "bun run --cwd apps/desktop dev",
     "build": "bun run --cwd apps/desktop build",
