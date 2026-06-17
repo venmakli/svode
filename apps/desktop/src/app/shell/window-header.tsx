@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from "react";
 import { useMatches } from "@tanstack/react-router";
 import { PanelLeft, PanelRight } from "lucide-react";
 import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
@@ -19,27 +20,67 @@ import { MainBreadcrumbs } from "@/features/space";
 import { ProjectOpenersMenu } from "./project-openers-menu";
 import { ProjectSwitcher } from "./project-switcher";
 
-export function SidebarHeaderChrome() {
-  const { toggleSidebar } = useSidebar();
+function isMacPlatform() {
+  if (typeof navigator === "undefined") return false;
+  return (
+    navigator.platform.toLowerCase().includes("mac") ||
+    /macintosh|mac os x/i.test(navigator.userAgent)
+  );
+}
+
+export function ShellChrome() {
+  const { state, toggleSidebar } = useSidebar();
   const isFullscreen = useFullscreen();
+  const chromeRef = useRef<HTMLDivElement>(null);
+  const sidebarHidden = state === "collapsed";
+  const reserveTrafficLights = isMacPlatform() && !isFullscreen;
+
+  useLayoutEffect(() => {
+    const node = chromeRef.current;
+    const shell = node?.parentElement;
+    if (!node || !shell) return;
+
+    const updateWidth = () => {
+      shell.style.setProperty(
+        "--shell-chrome-width",
+        `${Math.ceil(node.getBoundingClientRect().width)}px`,
+      );
+    };
+
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(node);
+
+    return () => {
+      observer.disconnect();
+      shell.style.removeProperty("--shell-chrome-width");
+    };
+  }, []);
 
   return (
     <div
+      ref={chromeRef}
       data-tauri-drag-region
       className={cn(
-        "flex h-[44px] min-w-0 items-center gap-2",
-        isFullscreen ? "pl-0" : "pl-[72px]",
+        "absolute left-0 top-0 z-30 flex h-[44px] w-max max-w-[var(--sidebar-width)] min-w-0 items-center gap-1 bg-sidebar pr-2 transition-colors",
+        sidebarHidden && "bg-transparent",
+        reserveTrafficLights ? "pl-[72px]" : "pl-0",
       )}
     >
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant="ghost" size="icon-sm" onClick={toggleSidebar}>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className={cn(reserveTrafficLights && "ml-3")}
+            onClick={toggleSidebar}
+          >
             <PanelLeft />
           </Button>
         </TooltipTrigger>
         <TooltipContent side="bottom">Toggle sidebar (⌘\)</TooltipContent>
       </Tooltip>
-      <ProjectSwitcher />
+      <ProjectSwitcher className="w-fit min-w-0 max-w-full" />
     </div>
   );
 }
@@ -48,8 +89,7 @@ export function WindowHeader() {
   const activeDocument = useEntrySelectionStore((state) => state.activeDocument);
   const toggleChatPanel = useShellStore((state) => state.toggleChatPanel);
   const { activeRootId, activeRootName, activeRootPath } = useSpaceStore();
-  const { state, toggleSidebar } = useSidebar();
-  const isFullscreen = useFullscreen();
+  const { state } = useSidebar();
   const matches = useMatches();
 
   const chatToggleDisabled = !activeDocument;
@@ -66,25 +106,17 @@ export function WindowHeader() {
   return (
     <header
       data-tauri-drag-region
+      style={
+        sidebarHidden
+          ? { paddingLeft: "calc(var(--shell-chrome-width, 220px) - 1rem)" }
+          : undefined
+      }
       className={cn(
-        "flex h-[44px] shrink-0 items-center justify-between gap-2 border-b border-transparent pr-2",
-        sidebarHidden && !isFullscreen ? "pl-[80px]" : "pl-2",
+        "flex h-[44px] shrink-0 items-center justify-between gap-2 border-b border-transparent pr-2 transition-[padding-left] duration-200 ease-linear",
+        !sidebarHidden && "pl-2",
       )}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        {sidebarHidden && (
-          <div className="flex min-w-0 shrink-0 items-center gap-2">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon-sm" onClick={toggleSidebar}>
-                  <PanelLeft />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Toggle sidebar (⌘\)</TooltipContent>
-            </Tooltip>
-            <ProjectSwitcher />
-          </div>
-        )}
         {isSpaceRoute && <MainBreadcrumbs />}
       </div>
 

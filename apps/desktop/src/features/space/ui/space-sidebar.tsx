@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { ChevronsUpDown, Inbox, MessageSquare, Search } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -10,7 +9,6 @@ import {
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarSeparator,
 } from "@/components/ui/sidebar";
 import { useEffectiveIdentity } from "@/features/identity";
 import { avatarColorFromEmail } from "@/features/identity";
@@ -21,7 +19,6 @@ import * as m from "@/paraglide/messages.js";
 type MainSurface = "content" | "inbox" | "sessions";
 
 interface SpaceSidebarProps {
-  header: ReactNode;
   mainSurface: MainSurface;
   onActivateContent: () => void;
   onOpenInbox: () => void;
@@ -32,7 +29,6 @@ interface SpaceSidebarProps {
 }
 
 export function SpaceSidebar({
-  header,
   mainSurface,
   onActivateContent,
   onOpenInbox,
@@ -53,10 +49,8 @@ export function SpaceSidebar({
     .toUpperCase();
 
   return (
-    <Sidebar variant="sidebar" collapsible="offcanvas">
-      <SidebarHeader className="border-b border-sidebar-border py-0">
-        {header}
-      </SidebarHeader>
+    <Sidebar variant="sidebar" collapsible="offcanvas" className="!border-r-0">
+      <SidebarHeader className="h-[44px] shrink-0 py-0" />
 
       <SidebarContent>
         <TopLevelSidebarActions
@@ -72,7 +66,6 @@ export function SpaceSidebar({
       </SidebarContent>
 
       <SidebarFooter>
-        <SidebarSeparator />
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton

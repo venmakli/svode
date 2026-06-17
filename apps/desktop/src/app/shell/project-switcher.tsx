@@ -161,8 +161,8 @@ export function ProjectSwitcher({ className }: ProjectSwitcherProps) {
         <SidebarMenuItem>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <SidebarMenuButton className="w-fit px-1.5">
-                <span className="flex aspect-square size-5 items-center justify-center rounded-md bg-sidebar-primary text-xs text-sidebar-primary-foreground">
+              <SidebarMenuButton className="w-fit max-w-full px-1.5">
+                <span className="text-base leading-none">
                   {activeRootIcon || "\u{1F4C1}"}
                 </span>
                 <span className="truncate font-medium">

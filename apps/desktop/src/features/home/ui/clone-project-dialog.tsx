@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import * as m from "@/paraglide/messages.js";
+import { pathExists } from "@/platform/filesystem/path-api";
 import { openDialog } from "@/platform/native/dialog";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import {
   Dialog,
   DialogContent,
@@ -62,9 +62,7 @@ export function CloneProjectDialog({
 
     const timer = window.setTimeout(async () => {
       try {
-        const exists = await invoke<boolean>("path_exists", {
-          path: targetPath,
-        });
+        const exists = await pathExists(targetPath);
         if (!cancelled) setTargetExists(exists);
       } catch {
         if (!cancelled) setTargetExists(false);

@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import * as m from "@/paraglide/messages.js";
 import { openDialog } from "@/platform/native/dialog";
 import { listen } from "@/platform/native/events";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
+import { cloneProject } from "@/platform/space/space-api";
 import { toast } from "sonner";
 import { FolderPlus, FolderOpen, FolderGit2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -13,7 +13,6 @@ import { ProjectList } from "./project-list";
 import { EmptyState } from "./empty-state";
 import { CreateProjectDialog } from "./create-project-dialog";
 import { CloneProjectDialog } from "./clone-project-dialog";
-import type { SpaceInfo } from "@/features/space";
 import type { CloneProgress } from "@/features/git";
 
 function getErrorDescription(err: unknown): string | undefined {
@@ -184,10 +183,7 @@ export function HomePage() {
       );
 
       try {
-        const ws = await invoke<SpaceInfo>("project_clone", {
-          url,
-          targetPath,
-        });
+        const ws = await cloneProject(url, targetPath);
         setCloningProject(null);
         // Add to local store and open
         useSpaceStore.setState((s) => ({

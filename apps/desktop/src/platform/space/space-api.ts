@@ -123,6 +123,32 @@ export function cloneMissingSpace(
   return invokeCommand<void>("clone_missing_space", { projectPath, spaceId });
 }
 
+export interface CloneSpaceInput {
+  url: string;
+  targetPath: string;
+  projectPath: string;
+  gitType: SpaceGitTypeDto;
+}
+
+export function cloneSpace(input: CloneSpaceInput): Promise<void> {
+  return invokeCommand<void>("git_clone_space", { ...input });
+}
+
+export interface RegisterClonedSpaceInput {
+  parentPath: string;
+  folderName: string;
+  fallbackName: string;
+  fallbackIcon: string;
+  url: string;
+  gitType: SpaceGitTypeDto;
+}
+
+export function registerClonedSpace(
+  input: RegisterClonedSpaceInput,
+): Promise<void> {
+  return invokeCommand<void>("register_cloned_space", { ...input });
+}
+
 export function removeMissingSpace(
   projectPath: string,
   spaceId: string,

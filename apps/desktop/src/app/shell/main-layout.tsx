@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { useKeyboardShortcuts } from "./hooks/use-keyboard-shortcuts";
-import { SidebarHeaderChrome, WindowHeader } from "./window-header";
+import { ShellChrome, WindowHeader } from "./window-header";
 import { useSpaceStore } from "@/features/space";
 import { CommandPalette, useCommandPaletteStore } from "@/features/search";
 import { TerminalPanelHost } from "@/features/terminal";
@@ -44,6 +44,10 @@ export function MainLayout() {
   const bootstrapAttempted = useRef(false);
 
   useEffect(() => {
+    openContentSurface();
+  }, [openContentSurface]);
+
+  useEffect(() => {
     if (activeRootId || bootstrapAttempted.current) return;
     bootstrapAttempted.current = true;
 
@@ -66,9 +70,9 @@ export function MainLayout() {
 
   return (
     <TooltipProvider delayDuration={300}>
-      <SidebarProvider className="min-h-0 h-dvh overflow-hidden">
+      <SidebarProvider className="relative min-h-0 h-dvh overflow-hidden bg-sidebar">
+        <ShellChrome />
         <SpaceSidebar
-          header={<SidebarHeaderChrome />}
           mainSurface={mainSurface}
           onActivateContent={openContentSurface}
           onOpenInbox={openInboxSurface}
@@ -77,7 +81,7 @@ export function MainLayout() {
           onOpenAppSettings={openAppSettings}
           onOpenSpaceSettings={openSpaceSettings}
         />
-        <SidebarInset className="min-h-0 overflow-hidden">
+        <SidebarInset className="min-h-0 overflow-hidden md:peer-data-[state=expanded]:rounded-l-xl md:peer-data-[state=expanded]:border-l md:peer-data-[state=expanded]:border-sidebar-border">
           <WindowHeader />
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="min-h-0 flex-1 overflow-hidden">

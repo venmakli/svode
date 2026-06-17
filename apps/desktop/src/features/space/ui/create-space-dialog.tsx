@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import * as m from "@/paraglide/messages.js";
 import { toast } from "sonner";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
+import { pathExists } from "@/platform/filesystem/path-api";
 import { listen } from "@/platform/native/events";
 import { Info } from "lucide-react";
 import {
@@ -26,6 +26,7 @@ import {
 import { EmojiPicker } from "@/components/ui/emoji-picker";
 import { Progress } from "@/components/ui/progress";
 import { useSpaceStore } from "../model";
+import { cloneSpace, registerClonedSpace } from "@/platform/space/space-api";
 import type { SpaceGitType } from "../model";
 import type { CloneProgress } from "@/features/git";
 
@@ -164,9 +165,7 @@ export function CreateSpaceDialog({
     let cancelled = false;
     const timer = window.setTimeout(async () => {
       try {
-        const exists = await invoke<boolean>("path_exists", {
-          path: targetPath,
-        });
+        const exists = await pathExists(targetPath);
         if (!cancelled) setSlugCollision(exists);
       } catch {
         if (!cancelled) setSlugCollision(false);
@@ -258,13 +257,13 @@ export function CreateSpaceDialog({
     });
 
     try {
-      await invoke("git_clone_space", {
+      await cloneSpace({
         url: opts.url,
         targetPath: opts.targetPath,
         projectPath: opts.parentPath,
         gitType: opts.gitType,
       });
-      await invoke("register_cloned_space", {
+      await registerClonedSpace({
         parentPath: opts.parentPath,
         folderName: opts.folderName,
         fallbackName: opts.fallbackName,
