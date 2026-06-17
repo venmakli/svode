@@ -64,7 +64,7 @@ export function ShellChrome() {
       className={cn(
         "absolute left-0 top-0 z-30 flex h-[44px] w-max max-w-[var(--sidebar-width)] min-w-0 items-center gap-1 bg-sidebar pr-2 transition-colors",
         sidebarHidden && "bg-transparent",
-        reserveTrafficLights ? "pl-[72px]" : "pl-0",
+        reserveTrafficLights ? "pl-[72px]" : "pl-2",
       )}
     >
       <Tooltip>
