@@ -61,8 +61,7 @@ function buildSegments(
 export function MainBreadcrumbs() {
   const { activeDocument, activeDocumentSpaceId, openDocument } =
     useEntrySelectionStore();
-  const { rootSpaces, spaces, fileTrees, openSpace, activeRootId } =
-    useSpaceStore();
+  const { spaces, fileTrees, openSpace, activeRootId } = useSpaceStore();
 
   if (!activeDocument) {
     const selectedSpace =
@@ -85,9 +84,8 @@ export function MainBreadcrumbs() {
     );
   }
 
-  const allSpaces = [...rootSpaces, ...spaces];
   const activeWorkspace = activeDocumentSpaceId
-    ? allSpaces.find((w) => w.id === activeDocumentSpaceId)
+    ? spaces.find((w) => w.id === activeDocumentSpaceId)
     : null;
   const showWorkspaceName = activeDocumentSpaceId !== activeRootId;
   const workspaceName = activeWorkspace && showWorkspaceName
@@ -113,7 +111,7 @@ export function MainBreadcrumbs() {
               <BreadcrumbItem className="min-w-0">
                 <WorkspaceBreadcrumb
                   label={workspaceName}
-                  workspaces={allSpaces}
+                  workspaces={spaces}
                   onSwitch={openSpace}
                 />
               </BreadcrumbItem>
