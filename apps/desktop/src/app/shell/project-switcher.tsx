@@ -172,7 +172,7 @@ export function ProjectSwitcher({ className }: ProjectSwitcherProps) {
               </SidebarMenuButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent
-              className="w-64 rounded-lg"
+              className="w-max min-w-48 max-w-72 rounded-lg"
               align="start"
               side="bottom"
               sideOffset={4}
@@ -201,8 +201,8 @@ export function ProjectSwitcher({ className }: ProjectSwitcherProps) {
                   onClick={() => handleSwitchProject(project.id)}
                 >
                   <span>{project.icon}</span>
-                  <span className="flex-1 truncate">{project.name}</span>
-                  {project.id === activeRootId && <Check />}
+                  <span className="truncate pr-3">{project.name}</span>
+                  {project.id === activeRootId && <Check className="ml-auto" />}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
