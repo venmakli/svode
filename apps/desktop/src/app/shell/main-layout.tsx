@@ -3,9 +3,9 @@ import { useNavigate } from "@tanstack/react-router";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { useKeyboardShortcuts } from "./hooks/use-keyboard-shortcuts";
-import { WindowHeader } from "./window-header";
+import { SidebarHeaderChrome, WindowHeader } from "./window-header";
 import { useSpaceStore } from "@/features/space";
-import { CommandPalette } from "@/features/search";
+import { CommandPalette, useCommandPaletteStore } from "@/features/search";
 import { TerminalPanelHost } from "@/features/terminal";
 import {
   ActiveSpaceContent,
@@ -19,6 +19,7 @@ import {
   useGitAvailability,
 } from "@/features/git";
 import { useShellStore } from "./model";
+import { InboxSurface, SessionsSurface } from "./main-surfaces";
 
 export function MainLayout() {
   const navigate = useNavigate();
@@ -33,6 +34,13 @@ export function MainLayout() {
   const { available, recheck } = useGitAvailability();
   const openAppSettings = useShellStore((state) => state.openAppSettings);
   const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
+  const mainSurface = useShellStore((state) => state.mainSurface);
+  const openContentSurface = useShellStore((state) => state.openContentSurface);
+  const openInboxSurface = useShellStore((state) => state.openInboxSurface);
+  const openSessionsSurface = useShellStore(
+    (state) => state.openSessionsSurface,
+  );
+  const setCommandPaletteOpen = useCommandPaletteStore((state) => state.setOpen);
   const bootstrapAttempted = useRef(false);
 
   useEffect(() => {
@@ -59,15 +67,27 @@ export function MainLayout() {
   return (
     <TooltipProvider delayDuration={300}>
       <SidebarProvider className="min-h-0 h-dvh overflow-hidden">
-        <WindowHeader />
         <SpaceSidebar
+          header={<SidebarHeaderChrome />}
+          mainSurface={mainSurface}
+          onActivateContent={openContentSurface}
+          onOpenInbox={openInboxSurface}
+          onOpenSessions={openSessionsSurface}
+          onOpenSearch={() => setCommandPaletteOpen(true)}
           onOpenAppSettings={openAppSettings}
           onOpenSpaceSettings={openSpaceSettings}
         />
-        <SidebarInset className="pt-[44px] min-h-0 overflow-hidden">
-          <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        <SidebarInset className="min-h-0 overflow-hidden">
+          <WindowHeader />
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="min-h-0 flex-1 overflow-hidden">
-              <ActiveSpaceContent />
+              {mainSurface === "inbox" ? (
+                <InboxSurface />
+              ) : mainSurface === "sessions" ? (
+                <SessionsSurface />
+              ) : (
+                <ActiveSpaceContent />
+              )}
             </div>
             <TerminalPanelHost />
           </div>

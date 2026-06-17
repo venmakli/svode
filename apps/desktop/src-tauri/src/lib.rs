@@ -137,6 +137,7 @@ pub fn run() {
             commands::space::get_last_active_project,
             commands::space::open_project_folder,
             commands::space::list_spaces,
+            commands::space::reorder_spaces,
             commands::space::create_space,
             commands::space::delete_space,
             commands::space::register_cloned_space,

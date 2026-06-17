@@ -30,6 +30,13 @@ export function openProjectFolder(path: string): Promise<SpaceInfoDto> {
   return invokeCommand<SpaceInfoDto>("open_project_folder", { path });
 }
 
+export function cloneProject(
+  url: string,
+  targetPath: string,
+): Promise<SpaceInfoDto> {
+  return invokeCommand<SpaceInfoDto>("project_clone", { url, targetPath });
+}
+
 export function deleteProject(
   id: string,
   deleteFiles?: boolean,
@@ -43,6 +50,32 @@ export function getLastActiveProject(): Promise<string | null> {
 
 export function listSpaces(spacePath: string): Promise<SpaceInfoDto[]> {
   return invokeCommand<SpaceInfoDto[]>("list_spaces", { spacePath });
+}
+
+export function getSpaceConfig(spacePath: string): Promise<SpaceConfigDto> {
+  return invokeCommand<SpaceConfigDto>("get_space_config", { spacePath });
+}
+
+export function saveSpaceConfig(
+  spacePath: string,
+  configData: SpaceConfigDto,
+  projectPath?: string | null,
+): Promise<void> {
+  return invokeCommand<void>("save_space_config", {
+    spacePath,
+    configData,
+    projectPath,
+  });
+}
+
+export function reorderSpaces(
+  projectPath: string,
+  orderedSpaceIds: string[],
+): Promise<SpaceInfoDto[]> {
+  return invokeCommand<SpaceInfoDto[]>("reorder_spaces", {
+    projectPath,
+    orderedSpaceIds,
+  });
 }
 
 export function ensureSpaceScaffold(
@@ -81,6 +114,20 @@ export function deleteSpace(
     spaceId,
     deleteFiles,
   });
+}
+
+export function cloneMissingSpace(
+  projectPath: string,
+  spaceId: string,
+): Promise<void> {
+  return invokeCommand<void>("clone_missing_space", { projectPath, spaceId });
+}
+
+export function removeMissingSpace(
+  projectPath: string,
+  spaceId: string,
+): Promise<void> {
+  return invokeCommand<void>("remove_missing_space", { projectPath, spaceId });
 }
 
 export function watchSpace(space: string): Promise<void> {

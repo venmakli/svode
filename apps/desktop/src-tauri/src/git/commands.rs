@@ -125,15 +125,25 @@ pub async fn git_clone_space(
         let _guard = lock.lock().await;
         super::clone::submodule_add_with_progress(&cli, &app, &project, &url, &space_folder)
             .await?;
-        // Scaffold .svode/ if not present
+        // Scaffold .svode/ and README.md if not present
         let svode_dir = target.join(".svode");
         let svode_existed_before = svode_dir.exists();
-        if !svode_existed_before {
+        let readme_existed_before = target.join("README.md").exists();
+        if svode_existed_before {
+            crate::space::project::ensure_scope_readme(&target, &space_folder)?;
+        } else {
             crate::space::scaffold::scaffold_space(&target, &space_folder, "", "")?;
         }
         drop(_guard);
-        if !svode_existed_before {
-            if let Err(e) = autocommit.commit_scaffold(project, target).await {
+        if !svode_existed_before || !readme_existed_before {
+            let commit_result = if readme_existed_before {
+                autocommit.commit_scaffold(project, target).await
+            } else {
+                autocommit
+                    .commit_scaffold_with_readme(project, target)
+                    .await
+            };
+            if let Err(e) = commit_result {
                 tracing::warn!("commit_scaffold failed after submodule clone: {e}");
             }
         }

@@ -37,6 +37,7 @@ pub enum StructuralOp {
 #[derive(Debug, Clone, Copy)]
 pub enum SystemCommitKind {
     SpaceConfig,
+    ReorderSpaces,
     Gitignore,
     AgentInstructions,
     CliIntegration,
@@ -47,6 +48,7 @@ impl SystemCommitKind {
     fn message(self) -> &'static str {
         match self {
             SystemCommitKind::SpaceConfig => "Update space config",
+            SystemCommitKind::ReorderSpaces => "Reorder spaces",
             SystemCommitKind::Gitignore => "Update .gitignore",
             SystemCommitKind::AgentInstructions => "Update agent instructions",
             SystemCommitKind::CliIntegration => "Update CLI integration",
@@ -58,6 +60,7 @@ impl SystemCommitKind {
     fn paths(self) -> &'static [&'static str] {
         match self {
             SystemCommitKind::SpaceConfig => &[".svode/config.json"],
+            SystemCommitKind::ReorderSpaces => &[".svode/config.json"],
             SystemCommitKind::Gitignore => &[".gitignore"],
             SystemCommitKind::AgentInstructions => &[".svode/AGENTS.md"],
             SystemCommitKind::CliIntegration => &["CLAUDE.md", ".mcp.json", ".claude"],
@@ -289,7 +292,16 @@ impl AutocommitService {
         project_path: PathBuf,
         space_path: PathBuf,
     ) -> Result<(), AppError> {
-        do_commit_scaffold(&self.app, &project_path, &space_path).await
+        do_commit_scaffold(&self.app, &project_path, &space_path, false).await
+    }
+
+    /// Commit the scaffolded `.svode/` directory plus a newly-created README.
+    pub async fn commit_scaffold_with_readme(
+        &self,
+        project_path: PathBuf,
+        space_path: PathBuf,
+    ) -> Result<(), AppError> {
+        do_commit_scaffold(&self.app, &project_path, &space_path, true).await
     }
 
     /// Flush all pending timers on shutdown. Wrapped in a timeout so a hung
@@ -599,6 +611,7 @@ async fn do_commit_scaffold(
     app: &AppHandle,
     project_path: &Path,
     space_path: &Path,
+    include_readme: bool,
 ) -> Result<(), AppError> {
     if !space_path.exists() {
         return Ok(());
@@ -627,6 +640,16 @@ async fn do_commit_scaffold(
             };
             ops::add(&cli, project_path, ".gitignore").await?;
             ops::add(&cli, project_path, &rel).await?;
+            if include_readme {
+                let readme = if space_path == project_path {
+                    "README.md".to_string()
+                } else {
+                    format!("{}/README.md", space_folder)
+                };
+                if project_path.join(&readme).exists() {
+                    ops::add(&cli, project_path, &readme).await?;
+                }
+            }
             let created = ops::commit(&cli, project_path, message).await?;
             if created {
                 emit_committed(app, space_path, project_path);
@@ -638,6 +661,9 @@ async fn do_commit_scaffold(
             ops::ensure_svode_gitignore(space_path)?;
             ops::add(&cli, space_path, ".gitignore").await?;
             ops::add(&cli, space_path, ".svode").await?;
+            if include_readme && space_path.join("README.md").exists() {
+                ops::add(&cli, space_path, "README.md").await?;
+            }
             let created = ops::commit(&cli, space_path, message).await?;
             if created {
                 emit_committed(app, space_path, space_path);
@@ -649,6 +675,9 @@ async fn do_commit_scaffold(
             ops::ensure_svode_gitignore(space_path)?;
             ops::add(&cli, space_path, ".gitignore").await?;
             ops::add(&cli, space_path, ".svode").await?;
+            if include_readme && space_path.join("README.md").exists() {
+                ops::add(&cli, space_path, "README.md").await?;
+            }
             let created = ops::commit(&cli, space_path, message).await?;
             drop(_guard);
             if created {

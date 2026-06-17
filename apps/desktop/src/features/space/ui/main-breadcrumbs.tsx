@@ -61,15 +61,36 @@ function buildSegments(
 export function MainBreadcrumbs() {
   const { activeDocument, activeDocumentSpaceId, openDocument } =
     useEntrySelectionStore();
-  const { rootSpaces, spaces, fileTrees, openSpace } = useSpaceStore();
+  const { rootSpaces, spaces, fileTrees, openSpace, activeRootId } =
+    useSpaceStore();
 
-  if (!activeDocument) return null;
+  if (!activeDocument) {
+    const selectedSpace =
+      activeDocumentSpaceId && activeDocumentSpaceId !== activeRootId
+        ? spaces.find((space) => space.id === activeDocumentSpaceId)
+        : null;
+    if (!selectedSpace) return null;
+    return (
+      <div className="min-w-0 flex-1 px-2">
+        <Breadcrumb className="min-w-0">
+          <BreadcrumbList className="min-w-0 flex-nowrap overflow-hidden text-sm">
+            <BreadcrumbItem className="min-w-0">
+              <span className="block max-w-[220px] truncate">
+                {selectedSpace.icon} {selectedSpace.name}
+              </span>
+            </BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
+      </div>
+    );
+  }
 
   const allSpaces = [...rootSpaces, ...spaces];
   const activeWorkspace = activeDocumentSpaceId
     ? allSpaces.find((w) => w.id === activeDocumentSpaceId)
     : null;
-  const workspaceName = activeWorkspace
+  const showWorkspaceName = activeDocumentSpaceId !== activeRootId;
+  const workspaceName = activeWorkspace && showWorkspaceName
     ? `${activeWorkspace.icon} ${activeWorkspace.name}`
     : "";
 

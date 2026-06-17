@@ -31,6 +31,15 @@ export function createEntry(input: {
   return invokeCommand<EntryDto>("create_entry", { ...input });
 }
 
+export function createFolder(input: {
+  space: string;
+  parentPath: string | null;
+  name: string;
+  projectPath: string | null;
+}): Promise<string> {
+  return invokeCommand<string>("create_folder", { ...input });
+}
+
 export function readEntry(space: string, path: string): Promise<EntryDto> {
   return invokeCommand<EntryDto>("read_entry", { space, path });
 }

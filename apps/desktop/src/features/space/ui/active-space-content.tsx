@@ -3,6 +3,15 @@ import { useSpaceStore } from "../model";
 import { CollectionScreen, EntryDocumentScreen } from "@/features/collection";
 import type { TreeNode } from "@/features/entry";
 import { EmptyProjectState } from "./empty-project-state";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { FileText } from "lucide-react";
+import * as m from "@/paraglide/messages.js";
 
 function findNodeInTree(
   nodes: TreeNode[],
@@ -34,6 +43,12 @@ export function ActiveSpaceContent() {
   const activeSpace = documentSpaceId
     ? [...rootSpaces, ...spaces].find((space) => space.id === documentSpaceId)
     : null;
+  const selectedScopeHome =
+    !activeDocument && activeDocumentSpaceId
+      ? [...rootSpaces, ...spaces].find(
+          (space) => space.id === activeDocumentSpaceId,
+        )
+      : null;
   const hasChildren = spaces.length > 0;
   const rootTree = activeRootId ? (fileTrees[activeRootId] ?? []) : [];
   const hasDocuments = rootTree.length > 0;
@@ -69,6 +84,14 @@ export function ActiveSpaceContent() {
     );
 
   if (!activeDocument || isEmpty) {
+    if (selectedScopeHome) {
+      return (
+        <ScopeHomeFallback
+          name={selectedScopeHome.name}
+          icon={selectedScopeHome.icon}
+        />
+      );
+    }
     return (
       <div className="flex h-full flex-col overflow-hidden">
         <div className="flex-1 min-h-0 overflow-hidden">
@@ -90,5 +113,19 @@ export function ActiveSpaceContent() {
         {activeContent}
       </div>
     </div>
+  );
+}
+
+function ScopeHomeFallback({ name, icon }: { name: string; icon: string }) {
+  return (
+    <Empty className="h-full border-0">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          {icon ? <span>{icon}</span> : <FileText />}
+        </EmptyMedia>
+        <EmptyTitle>{m.scope_home_empty_title({ name })}</EmptyTitle>
+        <EmptyDescription>{m.scope_home_empty_description()}</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
   );
 }

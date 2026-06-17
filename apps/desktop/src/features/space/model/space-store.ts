@@ -23,8 +23,9 @@ import {
   listSpaces,
   openProject,
   openProjectFolder,
+  reorderSpaces as reorderSpacesNative,
 } from "@/platform/space/space-api";
-import type { TreeNode } from "@/features/entry";
+import { useEntrySelectionStore, type TreeNode } from "@/features/entry";
 import type { SpaceInfo, SpaceGitType } from "./types";
 
 interface SpaceState {
@@ -76,6 +77,7 @@ interface SpaceState {
     spaceId: string,
     deleteFiles?: boolean,
   ) => Promise<void>;
+  reorderSpaces: (orderedSpaceIds: string[]) => Promise<void>;
   clearActiveSpace: () => void;
 
   // Document/tree methods
@@ -143,6 +145,19 @@ function syncMcpContext(
   }).catch((err) => console.warn("mcp_set_active_context failed:", err));
 }
 
+function hasScopeReadme(nodes: TreeNode[]): boolean {
+  return nodes.some((node) => node.path.toLowerCase() === "readme.md");
+}
+
+function openScopeHomeSelection(spaceId: string, tree: TreeNode[]) {
+  const selection = useEntrySelectionStore.getState();
+  if (hasScopeReadme(tree)) {
+    selection.openDocument("README.md", spaceId);
+  } else {
+    selection.openScopeHome(spaceId);
+  }
+}
+
 export const useSpaceStore = create<SpaceState>((set, get) => ({
   rootSpaces: [],
   rootsLoaded: false,
@@ -204,6 +219,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
         console.warn("ensure_assets_scope failed:", err),
       );
       await get().refreshTree(id);
+      openScopeHomeSelection(id, get().fileTrees[id] ?? []);
       await get().loadExpandedPaths(id);
       await get().loadSpaces(ws.path);
       return true;
@@ -285,14 +301,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     try {
       const spaces = await listSpaces(rootPath);
       set({ spaces });
-
-      // Auto-select first ready space if none active
-      const readySpace = spaces.find((s) => s.status === "ready");
-      if (readySpace && !get().activeSpaceId) {
-        await get().openSpace(readySpace.id);
-      } else {
-        syncMcpContext(get());
-      }
+      syncMcpContext(get(), get().activeSpaceId);
     } catch (err) {
       console.error("Failed to load spaces:", err);
       set({ spaces: [] });
@@ -342,6 +351,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     });
     set((s) => ({ spaces: [...s.spaces, ws] }));
     await get().openSpace(ws.id);
+    openScopeHomeSelection(ws.id, get().fileTrees[ws.id] ?? []);
     toast.success(m.toast_space_created());
     return ws;
   },
@@ -357,6 +367,13 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       syncMcpContext(get(), null);
     }
     toast.success(m.toast_space_deleted());
+  },
+
+  reorderSpaces: async (orderedSpaceIds) => {
+    const { activeRootPath } = get();
+    if (!activeRootPath) return;
+    const spaces = await reorderSpacesNative(activeRootPath, orderedSpaceIds);
+    set({ spaces });
   },
 
   createEntry: async (spacePath: string, title: string) => {

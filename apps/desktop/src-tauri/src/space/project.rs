@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::error::AppError;
@@ -32,7 +33,10 @@ fn create_and_register(
     target: RegistrationTarget,
 ) -> Result<(String, SpaceConfig), AppError> {
     let cfg = match config::read_space_config(path) {
-        Ok(cfg) => cfg,
+        Ok(cfg) => {
+            scaffold::ensure_readme(path, &cfg.name)?;
+            cfg
+        }
         Err(_) => scaffold::scaffold_space(path, name, icon, description)?,
     };
 
@@ -55,6 +59,16 @@ fn create_and_register(
     }
 
     Ok((id, cfg))
+}
+
+/// Ensure an existing root project or child space has a scope home README.
+///
+/// Returns `true` only when README.md was created.
+pub fn ensure_scope_readme(path: &Path, fallback_title: &str) -> Result<bool, AppError> {
+    let title = config::read_space_config(path)
+        .map(|cfg| cfg.name)
+        .unwrap_or_else(|_| fallback_title.to_string());
+    scaffold::ensure_readme(path, &title)
 }
 
 /// Create a new root project: scaffold folder, register in spaces.json.
@@ -105,7 +119,10 @@ pub fn open_project_folder(
     // an unregistered folder: if `.svode/` is missing, recreate the scaffold.
     if let Some(existing) = reg.spaces.iter().find(|w| w.path == path_str) {
         let cfg = match config::read_space_config(path) {
-            Ok(cfg) => cfg,
+            Ok(cfg) => {
+                scaffold::ensure_readme(path, &cfg.name)?;
+                cfg
+            }
             Err(_) => scaffold::scaffold_space(path, &fallback_name, "", "")?,
         };
         return Ok((existing.id.clone(), cfg));
@@ -290,7 +307,10 @@ pub fn register_cloned_space(
     if let Some(spaces) = &parent_config.spaces {
         if let Some(existing) = spaces.iter().find(|s| s.path == folder_name) {
             let cfg = match config::read_space_config(&space_dir) {
-                Ok(cfg) => cfg,
+                Ok(cfg) => {
+                    scaffold::ensure_readme(&space_dir, &cfg.name)?;
+                    cfg
+                }
                 Err(_) => scaffold::scaffold_space(&space_dir, fallback_name, icon, "")?,
             };
             return Ok(SpaceInfo {
@@ -418,6 +438,74 @@ pub fn list_spaces(parent_path: &Path) -> Result<Vec<SpaceInfo>, AppError> {
     Ok(result)
 }
 
+/// Reorder child spaces in the root project's `.svode/config.json`.
+///
+/// The root project is not part of the input. The input must contain exactly
+/// the current child-space ids, with no duplicates, missing ids, or unknown ids.
+pub fn reorder_spaces(
+    parent_path: &Path,
+    ordered_space_ids: Vec<String>,
+) -> Result<Vec<SpaceInfo>, AppError> {
+    let mut parent_config = config::read_space_config(parent_path)?;
+    let current_spaces = parent_config.spaces.clone().unwrap_or_default();
+
+    if ordered_space_ids.len() != current_spaces.len() {
+        return Err(AppError::General(format!(
+            "space reorder expected {} ids, got {}",
+            current_spaces.len(),
+            ordered_space_ids.len()
+        )));
+    }
+
+    let mut seen = HashSet::with_capacity(ordered_space_ids.len());
+    for id in &ordered_space_ids {
+        if !seen.insert(id.clone()) {
+            return Err(AppError::General(format!(
+                "space reorder contains duplicate id: {id}"
+            )));
+        }
+    }
+
+    let current_ids: HashSet<String> = current_spaces
+        .iter()
+        .map(|space| space.id.clone())
+        .collect();
+    let ordered_ids: HashSet<String> = ordered_space_ids.iter().cloned().collect();
+
+    let missing: Vec<String> = current_ids.difference(&ordered_ids).cloned().collect();
+    if !missing.is_empty() {
+        return Err(AppError::General(format!(
+            "space reorder is missing ids: {}",
+            missing.join(", ")
+        )));
+    }
+
+    let unknown: Vec<String> = ordered_ids.difference(&current_ids).cloned().collect();
+    if !unknown.is_empty() {
+        return Err(AppError::General(format!(
+            "space reorder contains unknown ids: {}",
+            unknown.join(", ")
+        )));
+    }
+
+    let mut by_id: HashMap<String, SpaceRef> = current_spaces
+        .into_iter()
+        .map(|space| (space.id.clone(), space))
+        .collect();
+    let mut reordered = Vec::with_capacity(ordered_space_ids.len());
+    for id in ordered_space_ids {
+        let space_ref = by_id
+            .remove(&id)
+            .ok_or_else(|| AppError::General(format!("space reorder contains unknown id: {id}")))?;
+        reordered.push(space_ref);
+    }
+
+    parent_config.spaces = Some(reordered);
+    config::write_space_config(parent_path, &parent_config)?;
+
+    list_spaces(parent_path)
+}
+
 /// Update the repo URL for a space in the parent config.
 pub fn reconcile_space_url(
     parent_path: &Path,
@@ -448,7 +536,9 @@ pub fn remove_missing_space(parent_path: &Path, space_id: &str) -> Result<(), Ap
 
 #[cfg(test)]
 mod tests {
-    use super::{import_existing_submodule_spaces, open_project_folder, space_ref_status};
+    use super::{
+        import_existing_submodule_spaces, open_project_folder, reorder_spaces, space_ref_status,
+    };
     use crate::git::ops::SubmoduleConfig;
     use crate::space::registry;
     use crate::space::scaffold;
@@ -476,6 +566,7 @@ mod tests {
         assert_eq!(cfg.name, fallback_name);
         assert!(project_path.join(".svode/config.json").is_file());
         assert!(project_path.join(".svode/local.json").is_file());
+        assert!(project_path.join("README.md").is_file());
     }
 
     #[test]
@@ -508,6 +599,96 @@ mod tests {
         assert_eq!(spaces[0].path, "docs");
         assert_eq!(spaces[0].repo, None);
         assert!(!project_path.join("docs/.svode/config.json").exists());
+    }
+
+    #[test]
+    fn open_existing_registered_folder_preserves_readme_content() {
+        let config_dir = tempfile::tempdir().expect("config dir");
+        let project_dir = tempfile::tempdir().expect("project dir");
+        let project_path = project_dir.path();
+        scaffold::scaffold_space(project_path, "Root", "", "").expect("root scaffold");
+        std::fs::write(project_path.join("README.md"), "custom home").expect("readme");
+        registry::add_space(
+            config_dir.path(),
+            "registered-id",
+            &project_path.to_string_lossy(),
+        )
+        .expect("register project");
+
+        let (_id, _cfg) =
+            open_project_folder(config_dir.path(), project_path).expect("open project folder");
+
+        assert_eq!(
+            std::fs::read_to_string(project_path.join("README.md")).expect("read readme"),
+            "custom home"
+        );
+    }
+
+    #[test]
+    fn reorder_spaces_persists_saved_order() {
+        let project_dir = tempfile::tempdir().expect("project dir");
+        let project_path = project_dir.path();
+        scaffold::scaffold_space(project_path, "Root", "", "").expect("root scaffold");
+
+        let mut cfg = crate::space::config::read_space_config(project_path).expect("read config");
+        cfg.spaces = Some(vec![
+            SpaceRef {
+                id: "a".to_string(),
+                path: "alpha".to_string(),
+                repo: None,
+            },
+            SpaceRef {
+                id: "b".to_string(),
+                path: "beta".to_string(),
+                repo: Some("https://example.com/beta.git".to_string()),
+            },
+        ]);
+        crate::space::config::write_space_config(project_path, &cfg).expect("write config");
+
+        let spaces =
+            reorder_spaces(project_path, vec!["b".to_string(), "a".to_string()]).expect("reorder");
+        let cfg = crate::space::config::read_space_config(project_path).expect("read config");
+        let refs = cfg.spaces.expect("spaces");
+
+        assert_eq!(refs[0].id, "b");
+        assert_eq!(
+            refs[0].repo,
+            Some("https://example.com/beta.git".to_string())
+        );
+        assert_eq!(refs[1].id, "a");
+        assert_eq!(
+            spaces
+                .iter()
+                .map(|space| space.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["b", "a"]
+        );
+    }
+
+    #[test]
+    fn reorder_spaces_rejects_duplicate_missing_and_unknown_ids() {
+        let project_dir = tempfile::tempdir().expect("project dir");
+        let project_path = project_dir.path();
+        scaffold::scaffold_space(project_path, "Root", "", "").expect("root scaffold");
+
+        let mut cfg = crate::space::config::read_space_config(project_path).expect("read config");
+        cfg.spaces = Some(vec![
+            SpaceRef {
+                id: "a".to_string(),
+                path: "alpha".to_string(),
+                repo: None,
+            },
+            SpaceRef {
+                id: "b".to_string(),
+                path: "beta".to_string(),
+                repo: None,
+            },
+        ]);
+        crate::space::config::write_space_config(project_path, &cfg).expect("write config");
+
+        assert!(reorder_spaces(project_path, vec!["a".to_string(), "a".to_string()]).is_err());
+        assert!(reorder_spaces(project_path, vec!["a".to_string()]).is_err());
+        assert!(reorder_spaces(project_path, vec!["a".to_string(), "c".to_string()]).is_err());
     }
 
     #[test]

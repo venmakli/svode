@@ -639,7 +639,7 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
             {contextMenu}
           </div>
           <CollapsibleContent>
-            <SidebarMenuSub>
+            <SidebarMenuSub className="border-l-0">
               {node.children.map((child) => (
                 <FileTreeItem
                   key={child.path}

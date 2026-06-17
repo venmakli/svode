@@ -1,10 +1,29 @@
-import { useState, useRef, useEffect } from "react";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from "react";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import * as m from "@/paraglide/messages.js";
 import { toast } from "sonner";
 import {
   SidebarGroup,
-  SidebarGroupAction,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarMenu,
@@ -52,10 +71,17 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { createFolder } from "@/platform/entries/entries-api";
+import {
+  cloneMissingSpace,
+  getSpaceConfig,
+  removeMissingSpace,
+  saveSpaceConfig,
+} from "@/platform/space/space-api";
 import { useSpaceStore } from "../model";
 import { useEntrySelectionStore } from "@/features/entry";
 import type { TreeNode } from "@/features/entry";
-import type { LfsState, SpaceConfig, SpaceInfo } from "../model";
+import type { LfsState, SpaceInfo } from "../model";
 import { listen } from "@/platform/native/events";
 import type { CloneProgress } from "@/features/git";
 import {
@@ -71,24 +97,49 @@ import { GitIndicatorIcon, SpaceGitWatcher } from "@/features/git";
 import { useGitStore } from "@/features/git";
 import { Progress } from "@/components/ui/progress";
 import { commitAllSpace } from "@/features/git";
+import { cn } from "@/shared/lib/utils";
 
 interface NavSpacesProps {
+  onActivateContent: () => void;
   onOpenSpaceSettings: (spacePath: string) => void;
 }
 
-export function NavSpaces({ onOpenSpaceSettings }: NavSpacesProps) {
+type ScopeTarget = { id: string; path: string };
+
+function visibleScopeChildren(tree: TreeNode[]): TreeNode[] {
+  return tree.filter((node) => node.path.toLowerCase() !== "readme.md");
+}
+
+function hasScopeReadme(tree: TreeNode[]): boolean {
+  return tree.some((node) => node.path.toLowerCase() === "readme.md");
+}
+
+export function NavSpaces({
+  onActivateContent,
+  onOpenSpaceSettings,
+}: NavSpacesProps) {
   const {
+    activeRootId,
+    activeRootName,
+    activeRootIcon,
+    activeRootPath,
     spaces,
     activeSpaceId,
-    activeRootPath,
     fileTrees,
     openSpace,
+    clearActiveSpace,
     deleteSpace,
     createEntry,
     refreshTree,
     loadSpaces,
+    reorderSpaces,
   } = useSpaceStore();
-  const openDocument = useEntrySelectionStore((state) => state.openDocument);
+  const {
+    activeDocument,
+    activeDocumentSpaceId,
+    openDocument,
+    openScopeHome,
+  } = useEntrySelectionStore();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{
     id: string;
@@ -97,7 +148,13 @@ export function NavSpaces({ onOpenSpaceSettings }: NavSpacesProps) {
   const [deleteFiles, setDeleteFiles] = useState(false);
   const [editingSpaceId, setEditingSpaceId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [rootOpen, setRootOpen] = useState(true);
   const editRef = useRef<HTMLInputElement>(null);
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    }),
+  );
 
   useEffect(() => {
     if (editingSpaceId && editRef.current) {
@@ -106,9 +163,6 @@ export function NavSpaces({ onOpenSpaceSettings }: NavSpacesProps) {
     }
   }, [editingSpaceId]);
 
-  // Bridge `space:lfs_state_changed` (emitted by IndexState whenever the
-  // backend probes / pulls / fails an LFS-flavoured pool) into the spaces
-  // store so the sidebar decorators below stay live.
   useEffect(() => {
     if (!activeRootPath) return;
     let unlisten: (() => void) | null = null;
@@ -136,6 +190,40 @@ export function NavSpaces({ onOpenSpaceSettings }: NavSpacesProps) {
     };
   }, [activeRootPath]);
 
+  if (!activeRootId || !activeRootPath) return null;
+
+  const rootId = activeRootId;
+  const rootPath = activeRootPath;
+  const rootTree = fileTrees[rootId] ?? [];
+  const rootHomeActive =
+    activeDocumentSpaceId === rootId &&
+    (!activeDocument || activeDocument.toLowerCase() === "readme.md");
+  const childSpaceIds = spaces.map((space) => space.id);
+
+  function openHomeForScope(spaceId: string, tree: TreeNode[]) {
+    if (hasScopeReadme(tree)) {
+      openDocument("README.md", spaceId);
+    } else {
+      openScopeHome(spaceId);
+    }
+  }
+
+  function handleOpenRootHome() {
+    onActivateContent();
+    clearActiveSpace();
+    openHomeForScope(
+      rootId,
+      useSpaceStore.getState().fileTrees[rootId] ?? rootTree,
+    );
+  }
+
+  async function handleOpenSpaceHome(ws: SpaceInfo) {
+    onActivateContent();
+    await openSpace(ws.id);
+    const tree = useSpaceStore.getState().fileTrees[ws.id] ?? [];
+    openHomeForScope(ws.id, tree);
+  }
+
   async function handleRenameSpace() {
     const ws = spaces.find((w) => w.id === editingSpaceId);
     if (!ws || !editValue.trim() || editValue.trim() === ws.name) {
@@ -143,17 +231,15 @@ export function NavSpaces({ onOpenSpaceSettings }: NavSpacesProps) {
       return;
     }
     try {
-      const cfg = await invoke<SpaceConfig>("get_space_config", {
-        spacePath: ws.path,
-      });
-      await invoke("save_space_config", {
-        spacePath: ws.path,
-        configData: { ...cfg, name: editValue.trim() },
-        projectPath: activeRootPath,
-      });
+      const cfg = await getSpaceConfig(ws.path);
+      await saveSpaceConfig(
+        ws.path,
+        { ...cfg, name: editValue.trim() },
+        rootPath,
+      );
       useSpaceStore.setState({
         spaces: useSpaceStore.getState().spaces.map((w) =>
-          w.id === editingSpaceId ? { ...w, name: editValue.trim() } : w
+          w.id === editingSpaceId ? { ...w, name: editValue.trim() } : w,
         ),
       });
     } catch (err) {
@@ -163,11 +249,12 @@ export function NavSpaces({ onOpenSpaceSettings }: NavSpacesProps) {
     setEditingSpaceId(null);
   }
 
-  async function handleNewPage(ws: { id: string; path: string }) {
+  async function handleNewPage(scope: ScopeTarget) {
     try {
-      const entry = await createEntry(ws.path, "Untitled");
+      const entry = await createEntry(scope.path, "Untitled");
       if (entry) {
-        openDocument(entry.path, ws.id);
+        onActivateContent();
+        openDocument(entry.path, scope.id);
       }
     } catch (err) {
       console.error("Failed to create page:", err);
@@ -175,30 +262,31 @@ export function NavSpaces({ onOpenSpaceSettings }: NavSpacesProps) {
     }
   }
 
-  async function handleNewFolder(ws: { id: string; path: string }) {
+  async function handleNewFolder(scope: ScopeTarget) {
     try {
-      await invoke<string>("create_folder", {
-        space: ws.path,
+      await createFolder({
+        space: scope.path,
         parentPath: null,
         name: m.space_new_folder(),
-        projectPath: activeRootPath,
+        projectPath: rootPath,
       });
-      await refreshTree(ws.id);
+      await refreshTree(scope.id);
     } catch (err) {
       console.error("Failed to create folder:", err);
       toast.error(m.toast_error());
     }
   }
 
-  async function handleNewCollection(ws: { id: string; path: string }) {
+  async function handleNewCollection(scope: ScopeTarget) {
     try {
       const entry = await createCollection({
-        spacePath: ws.path,
+        spacePath: scope.path,
         title: m.editor_untitled(),
         projectPath: activeRootPath,
       });
-      await refreshTree(ws.id);
-      openDocument(entry.path, ws.id);
+      await refreshTree(scope.id);
+      onActivateContent();
+      openDocument(entry.path, scope.id);
     } catch (err) {
       console.error("Failed to create collection:", err);
       toast.error(m.toast_error());
@@ -206,9 +294,8 @@ export function NavSpaces({ onOpenSpaceSettings }: NavSpacesProps) {
   }
 
   async function handleDeleteSpace(spaceId: string) {
-    if (!activeRootPath) return;
     try {
-      await deleteSpace(activeRootPath, spaceId, deleteFiles);
+      await deleteSpace(rootPath, spaceId, deleteFiles);
     } catch (err) {
       console.error("Failed to delete space:", err);
       toast.error(m.toast_error());
@@ -218,7 +305,6 @@ export function NavSpaces({ onOpenSpaceSettings }: NavSpacesProps) {
   }
 
   async function handleCloneMissing(spaceId: string, spacePath: string) {
-    if (!activeRootPath) return;
     const git = useGitStore.getState();
     git.setCloning(spacePath, { phase: "Starting", percent: 0 });
 
@@ -231,78 +317,125 @@ export function NavSpaces({ onOpenSpaceSettings }: NavSpacesProps) {
     });
 
     try {
-      await invoke("clone_missing_space", { projectPath: activeRootPath, spaceId });
-      await loadSpaces(activeRootPath);
+      await cloneMissingSpace(rootPath, spaceId);
+      await loadSpaces(rootPath);
       git.setCloning(spacePath, null);
     } catch (err) {
       console.error("clone_missing_space failed:", err);
-      const message = typeof err === "string" ? err : (err as Error)?.message ?? "error";
-      git.setCloning(spacePath, { phase: m.git_clone_failed(), percent: 0, error: message });
+      const message =
+        typeof err === "string" ? err : ((err as Error)?.message ?? "error");
+      git.setCloning(spacePath, {
+        phase: m.git_clone_failed(),
+        percent: 0,
+        error: message,
+      });
       toast.error(m.git_clone_failed());
-      window.setTimeout(() => useGitStore.getState().setCloning(spacePath, null), 6000);
+      window.setTimeout(
+        () => useGitStore.getState().setCloning(spacePath, null),
+        6000,
+      );
     } finally {
       unlisten();
     }
   }
 
   async function handleRemoveBroken(spaceId: string) {
-    if (!activeRootPath) return;
     try {
-      await invoke("remove_missing_space", { projectPath: activeRootPath, spaceId });
-      await loadSpaces(activeRootPath);
+      await removeMissingSpace(rootPath, spaceId);
+      await loadSpaces(rootPath);
     } catch (err) {
       console.error("remove_missing_space failed:", err);
       toast.error(m.toast_error());
     }
   }
 
-  // Only show spaces section if there are spaces
-  if (spaces.length === 0 && !activeRootPath) return null;
+  async function handleSpaceDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = spaces.findIndex((space) => space.id === active.id);
+    const newIndex = spaces.findIndex((space) => space.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const nextSpaces = arrayMove(spaces, oldIndex, newIndex);
+    try {
+      await reorderSpaces(nextSpaces.map((space) => space.id));
+    } catch (err) {
+      console.error("Failed to reorder spaces:", err);
+      toast.error(m.toast_error());
+    }
+  }
 
   return (
     <>
-      {spaces.length > 0 && (
-        <SidebarGroup>
-          <SidebarGroupLabel>{m.sidebar_spaces()}</SidebarGroupLabel>
-          <SidebarGroupAction
-            title={m.space_create()}
-            onClick={() => setCreateDialogOpen(true)}
-          >
-            <Plus />
-            <span className="sr-only">{m.space_create()}</span>
-          </SidebarGroupAction>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {spaces.map((ws) => {
-                const tree = fileTrees[ws.id] ?? [];
-                const isActive = ws.id === activeSpaceId;
-                return (
-                  <SpaceRow
-                    key={ws.id}
-                    ws={ws}
-                    isActive={isActive}
-                    tree={tree}
-                    editingSpaceId={editingSpaceId}
-                    editValue={editValue}
-                    setEditValue={setEditValue}
-                    setEditingSpaceId={setEditingSpaceId}
-                    handleRenameSpace={handleRenameSpace}
-                    handleNewPage={handleNewPage}
-                    handleNewFolder={handleNewFolder}
-                    handleNewCollection={handleNewCollection}
-                    openSpaceSettings={onOpenSpaceSettings}
-                    openSpace={openSpace}
-                    setDeleteTarget={setDeleteTarget}
-                    handleCloneMissing={handleCloneMissing}
-                    handleRemoveBroken={handleRemoveBroken}
-                    editRef={editRef}
-                  />
-                );
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      )}
+      <SidebarGroup>
+        <SidebarGroupLabel>{m.sidebar_content()}</SidebarGroupLabel>
+        <SidebarGroupContent>
+          <SidebarMenu>
+            <RootScopeRow
+              active={rootHomeActive}
+              icon={activeRootIcon}
+              name={activeRootName}
+              open={rootOpen}
+              tree={visibleScopeChildren(rootTree)}
+              onOpenChange={setRootOpen}
+              onOpenHome={handleOpenRootHome}
+              onNewPage={() =>
+                handleNewPage({ id: rootId, path: rootPath })
+              }
+              onNewFolder={() =>
+                handleNewFolder({ id: rootId, path: rootPath })
+              }
+              onNewCollection={() =>
+                handleNewCollection({ id: rootId, path: rootPath })
+              }
+              onAddSpace={() => setCreateDialogOpen(true)}
+              onProjectSettings={() => onOpenSpaceSettings(rootPath)}
+              spaceId={rootId}
+              rootPath={rootPath}
+            />
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleSpaceDragEnd}
+            >
+              <SortableContext
+                items={childSpaceIds}
+                strategy={verticalListSortingStrategy}
+              >
+                {spaces.map((ws) => {
+                  const tree = fileTrees[ws.id] ?? [];
+                  const isActive =
+                    activeDocumentSpaceId === ws.id &&
+                    (!activeDocument ||
+                      activeDocument.toLowerCase() === "readme.md");
+                  return (
+                    <SpaceRow
+                      key={ws.id}
+                      ws={ws}
+                      isActive={isActive}
+                      tree={visibleScopeChildren(tree)}
+                      editingSpaceId={editingSpaceId}
+                      editValue={editValue}
+                      setEditValue={setEditValue}
+                      setEditingSpaceId={setEditingSpaceId}
+                      handleRenameSpace={handleRenameSpace}
+                      handleNewPage={handleNewPage}
+                      handleNewFolder={handleNewFolder}
+                      handleNewCollection={handleNewCollection}
+                      openSpaceSettings={onOpenSpaceSettings}
+                      openScopeHome={handleOpenSpaceHome}
+                      onActivateContent={onActivateContent}
+                      setDeleteTarget={setDeleteTarget}
+                      handleCloneMissing={handleCloneMissing}
+                      handleRemoveBroken={handleRemoveBroken}
+                      editRef={editRef}
+                    />
+                  );
+                })}
+              </SortableContext>
+            </DndContext>
+          </SidebarMenu>
+        </SidebarGroupContent>
+      </SidebarGroup>
 
       <CreateSpaceDialog
         open={createDialogOpen}
@@ -311,7 +444,12 @@ export function NavSpaces({ onOpenSpaceSettings }: NavSpacesProps) {
 
       <AlertDialog
         open={!!deleteTarget}
-        onOpenChange={(open) => { if (!open) { setDeleteTarget(null); setDeleteFiles(false); } }}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null);
+            setDeleteFiles(false);
+          }
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -320,7 +458,7 @@ export function NavSpaces({ onOpenSpaceSettings }: NavSpacesProps) {
               {m.space_delete_description()}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <label className="flex items-center gap-2 py-2 cursor-pointer">
+          <label className="flex cursor-pointer items-center gap-2 py-2">
             <Checkbox
               checked={deleteFiles}
               onCheckedChange={(checked) => setDeleteFiles(checked === true)}
@@ -346,6 +484,101 @@ export function NavSpaces({ onOpenSpaceSettings }: NavSpacesProps) {
   );
 }
 
+interface RootScopeRowProps {
+  active: boolean;
+  icon: string | null;
+  name: string | null;
+  open: boolean;
+  tree: TreeNode[];
+  onOpenChange: (open: boolean) => void;
+  onOpenHome: () => void;
+  onNewPage: () => void;
+  onNewFolder: () => void;
+  onNewCollection: () => void;
+  onAddSpace: () => void;
+  onProjectSettings: () => void;
+  spaceId: string;
+  rootPath: string;
+}
+
+function RootScopeRow({
+  active,
+  icon,
+  name,
+  open,
+  tree,
+  onOpenChange,
+  onOpenHome,
+  onNewPage,
+  onNewFolder,
+  onNewCollection,
+  onAddSpace,
+  onProjectSettings,
+  spaceId,
+  rootPath,
+}: RootScopeRowProps) {
+  return (
+    <Collapsible asChild open={open} onOpenChange={onOpenChange}>
+      <SidebarMenuItem>
+        <SidebarMenuButton isActive={active} onClick={onOpenHome}>
+          <span>{icon || "\u{1F4C1}"}</span>
+          <span className="flex-1 truncate">{name || "Project"}</span>
+          <span className="ml-auto flex items-center gap-1">
+            <GitIndicatorIcon spacePath={rootPath} />
+          </span>
+        </SidebarMenuButton>
+        <CollapsibleTrigger asChild>
+          <SidebarMenuAction
+            className="left-2 bg-sidebar-accent text-sidebar-accent-foreground data-[state=open]:rotate-90"
+            showOnHover
+          >
+            <ChevronRight />
+          </SidebarMenuAction>
+        </CollapsibleTrigger>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <SidebarMenuAction showOnHover>
+              <Ellipsis />
+            </SidebarMenuAction>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" side="bottom">
+            <DropdownMenuItem onClick={onNewPage}>
+              <FilePlus />
+              {m.space_new_page()}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onNewFolder}>
+              <FolderPlus />
+              {m.space_new_folder()}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onNewCollection}>
+              <Database />
+              {m.collection_new()}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onAddSpace}>
+              <Plus />
+              {m.sidebar_add_space()}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onProjectSettings}>
+              <Settings />
+              {m.sidebar_project_settings()}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <CollapsibleContent>
+          <SortableFileTree spaceId={spaceId} tree={tree}>
+            <SidebarMenuSub className="ml-4 border-l-0 pl-2">
+              {tree.map((node) => (
+                <FileTreeItem key={node.path} node={node} spaceId={spaceId} />
+              ))}
+            </SidebarMenuSub>
+          </SortableFileTree>
+        </CollapsibleContent>
+      </SidebarMenuItem>
+    </Collapsible>
+  );
+}
+
 interface SpaceRowProps {
   ws: SpaceInfo;
   isActive: boolean;
@@ -355,15 +588,16 @@ interface SpaceRowProps {
   setEditValue: (v: string) => void;
   setEditingSpaceId: (id: string | null) => void;
   handleRenameSpace: () => void;
-  handleNewPage: (ws: { id: string; path: string }) => void;
-  handleNewFolder: (ws: { id: string; path: string }) => void;
-  handleNewCollection: (ws: { id: string; path: string }) => void;
+  handleNewPage: (scope: ScopeTarget) => void;
+  handleNewFolder: (scope: ScopeTarget) => void;
+  handleNewCollection: (scope: ScopeTarget) => void;
   openSpaceSettings: (path: string) => void;
-  openSpace: (id: string) => void;
+  openScopeHome: (ws: SpaceInfo) => void;
+  onActivateContent: () => void;
   setDeleteTarget: (t: { id: string; name: string }) => void;
   handleCloneMissing: (spaceId: string, spacePath: string) => void;
   handleRemoveBroken: (spaceId: string) => void;
-  editRef: React.RefObject<HTMLInputElement | null>;
+  editRef: RefObject<HTMLInputElement | null>;
 }
 
 function SpaceRow({
@@ -379,7 +613,7 @@ function SpaceRow({
   handleNewFolder,
   handleNewCollection,
   openSpaceSettings,
-  openSpace,
+  openScopeHome,
   setDeleteTarget,
   handleCloneMissing,
   handleRemoveBroken,
@@ -390,43 +624,73 @@ function SpaceRow({
     (s) =>
       !!(s.statuses[ws.path]?.hasStaged || s.statuses[ws.path]?.hasUnstaged),
   );
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: ws.id });
+  const sortableStyle: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+  const sortableClassName = cn(
+    "cursor-grab active:cursor-grabbing",
+    isDragging && "opacity-60",
+  );
+  const scope = { id: ws.id, path: ws.path };
 
-  // Ghost-state: missing or broken
   if (ws.status === "missing" || ws.status === "broken") {
     return (
-      <SidebarMenuItem>
+      <SidebarMenuItem
+        ref={setNodeRef}
+        style={sortableStyle}
+        className={sortableClassName}
+        {...attributes}
+        {...listeners}
+      >
         <SidebarMenuButton disabled className="opacity-50">
           <span>{ws.icon || "\u{1F4C2}"}</span>
-          <span className="flex-1 truncate text-muted-foreground">{ws.name}</span>
+          <span className="flex-1 truncate text-muted-foreground">
+            {ws.name}
+          </span>
         </SidebarMenuButton>
         {cloning && (
           <div className="px-2 pb-1">
             <Progress value={cloning.percent} className="h-1" />
-            <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
-              {cloning.error ? cloning.error : `${cloning.phase} ${cloning.percent}%`}
+            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+              {cloning.error
+                ? cloning.error
+                : `${cloning.phase} ${cloning.percent}%`}
             </p>
           </div>
         )}
         {ws.status === "missing" && !cloning && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <SidebarMenuAction onClick={() => handleCloneMissing(ws.id, ws.path)}>
-                <FolderDown className="h-4 w-4" />
+              <SidebarMenuAction
+                onClick={() => handleCloneMissing(ws.id, ws.path)}
+              >
+                <FolderDown />
               </SidebarMenuAction>
             </TooltipTrigger>
-            <TooltipContent side="right">{m.space_clone_missing()}</TooltipContent>
+            <TooltipContent side="right">
+              {m.space_clone_missing()}
+            </TooltipContent>
           </Tooltip>
         )}
         {ws.status === "missing" && cloning && (
           <SidebarMenuAction disabled>
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <Loader2 className="animate-spin" />
           </SidebarMenuAction>
         )}
         {ws.status === "broken" && (
           <Tooltip>
             <TooltipTrigger asChild>
               <SidebarMenuAction onClick={() => handleRemoveBroken(ws.id)}>
-                <X className="h-4 w-4" />
+                <X />
               </SidebarMenuAction>
             </TooltipTrigger>
             <TooltipContent side="right">{m.space_remove_broken()}</TooltipContent>
@@ -437,14 +701,20 @@ function SpaceRow({
   }
 
   return (
-    <Collapsible defaultOpen={isActive}>
-      <SpaceGitWatcher spacePath={ws.path} />
-      <SidebarMenuItem>
+    <Collapsible asChild defaultOpen={isActive}>
+      <SidebarMenuItem
+        ref={setNodeRef}
+        style={sortableStyle}
+        className={sortableClassName}
+        {...attributes}
+        {...listeners}
+      >
+        <SpaceGitWatcher spacePath={ws.path} />
         <SidebarMenuButton
           isActive={isActive}
           disabled={!!cloning}
           onClick={() => {
-            if (editingSpaceId !== ws.id) openSpace(ws.id);
+            if (editingSpaceId !== ws.id) openScopeHome(ws);
           }}
           onDoubleClick={() => {
             setEditingSpaceId(ws.id);
@@ -455,7 +725,7 @@ function SpaceRow({
           {editingSpaceId === ws.id ? (
             <input
               ref={editRef}
-              className="truncate bg-transparent outline-none text-sm w-full border-b border-primary"
+              className="w-full truncate border-b border-primary bg-transparent text-sm outline-none"
               value={editValue}
               onChange={(e) => setEditValue(e.target.value)}
               onBlur={handleRenameSpace}
@@ -478,15 +748,17 @@ function SpaceRow({
         {cloning && (
           <div className="px-2 pb-1">
             <Progress value={cloning.percent} className="h-1" />
-            <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
-              {cloning.error ? cloning.error : `${cloning.phase} ${cloning.percent}%`}
+            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+              {cloning.error
+                ? cloning.error
+                : `${cloning.phase} ${cloning.percent}%`}
             </p>
           </div>
         )}
         {!cloning && ws.lfsState === "pulling" && (
-          <div className="px-2 pb-1 flex items-center gap-1.5">
-            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-            <p className="text-[10px] text-muted-foreground truncate">
+          <div className="flex items-center gap-1.5 px-2 pb-1">
+            <Loader2 className="animate-spin text-muted-foreground" />
+            <p className="truncate text-[10px] text-muted-foreground">
               {m.storage_repair_lfs_pulling()}
             </p>
           </div>
@@ -506,30 +778,37 @@ function SpaceRow({
             </SidebarMenuAction>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" side="bottom">
-            <DropdownMenuItem onClick={() => handleNewPage(ws)}>
-              <FilePlus className="mr-2 h-4 w-4" />
+            <DropdownMenuItem onClick={() => handleNewPage(scope)}>
+              <FilePlus />
               {m.space_new_page()}
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handleNewFolder(ws)}>
-              <FolderPlus className="mr-2 h-4 w-4" />
+            <DropdownMenuItem onClick={() => handleNewFolder(scope)}>
+              <FolderPlus />
               {m.space_new_folder()}
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handleNewCollection(ws)}>
-              <Database className="mr-2 h-4 w-4" />
+            <DropdownMenuItem onClick={() => handleNewCollection(scope)}>
+              <Database />
               {m.collection_new()}
             </DropdownMenuItem>
             {dirty && (
               <>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => commitAllSpace(ws.path, useSpaceStore.getState().activeRootPath ?? undefined)}>
-                  <Save className="mr-2 h-4 w-4" />
+                <DropdownMenuItem
+                  onClick={() =>
+                    commitAllSpace(
+                      ws.path,
+                      useSpaceStore.getState().activeRootPath ?? undefined,
+                    )
+                  }
+                >
+                  <Save />
                   {m.git_save_all()}
                 </DropdownMenuItem>
               </>
             )}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => openSpaceSettings(ws.path)}>
-              <Settings className="mr-2 h-4 w-4" />
+              <Settings />
               {m.space_settings()}
             </DropdownMenuItem>
             <DropdownMenuItem
@@ -538,7 +817,7 @@ function SpaceRow({
                 setEditValue(ws.name);
               }}
             >
-              <Pencil className="mr-2 h-4 w-4" />
+              <Pencil />
               {m.space_rename()}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
@@ -546,14 +825,14 @@ function SpaceRow({
               className="text-destructive focus:text-destructive"
               onClick={() => setDeleteTarget({ id: ws.id, name: ws.name })}
             >
-              <Trash2 className="mr-2 h-4 w-4" />
+              <Trash2 />
               {m.space_delete()}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
         <CollapsibleContent>
           <SortableFileTree spaceId={ws.id} tree={tree}>
-            <SidebarMenuSub>
+            <SidebarMenuSub className="ml-4 border-l-0 pl-2">
               {tree.map((node) => (
                 <FileTreeItem key={node.path} node={node} spaceId={ws.id} />
               ))}
@@ -566,15 +845,12 @@ function SpaceRow({
 }
 
 function LfsIndicatorIcon({ lfsState }: { lfsState: LfsState }) {
-  // Only surface attention-worthy states. `ready` and `n/a` are the silent
-  // happy paths — `pulling` already has the inline spinner row beneath the
-  // space card, so this slot is reserved for `missing-creds`.
   if (lfsState !== "missing-creds") return null;
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <span className="inline-flex">
-          <CloudOff className="h-3.5 w-3.5 text-destructive" />
+          <CloudOff className="text-destructive" />
         </span>
       </TooltipTrigger>
       <TooltipContent side="right">

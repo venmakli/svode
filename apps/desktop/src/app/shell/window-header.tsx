@@ -1,5 +1,5 @@
-import { useNavigate, useMatches } from "@tanstack/react-router";
-import { Home, PanelLeft, PanelRight, Search } from "lucide-react";
+import { useMatches } from "@tanstack/react-router";
+import { PanelLeft, PanelRight } from "lucide-react";
 import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,21 +14,42 @@ import { useFullscreen } from "./hooks/use-fullscreen";
 import { useShellStore } from "./model";
 import { cn } from "@/shared/lib/utils";
 import { CloudUploadButton } from "@/features/git";
-import { useCommandPaletteStore } from "@/features/search";
 import { buildProjectTerminalTarget } from "@/features/terminal";
-import * as m from "@/paraglide/messages.js";
 import { MainBreadcrumbs } from "@/features/space";
 import { ProjectOpenersMenu } from "./project-openers-menu";
+import { ProjectSwitcher } from "./project-switcher";
+
+export function SidebarHeaderChrome() {
+  const { toggleSidebar } = useSidebar();
+  const isFullscreen = useFullscreen();
+
+  return (
+    <div
+      data-tauri-drag-region
+      className={cn(
+        "flex h-[44px] min-w-0 items-center gap-2",
+        isFullscreen ? "pl-0" : "pl-[72px]",
+      )}
+    >
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="ghost" size="icon-sm" onClick={toggleSidebar}>
+            <PanelLeft />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Toggle sidebar (⌘\)</TooltipContent>
+      </Tooltip>
+      <ProjectSwitcher />
+    </div>
+  );
+}
 
 export function WindowHeader() {
   const activeDocument = useEntrySelectionStore((state) => state.activeDocument);
   const toggleChatPanel = useShellStore((state) => state.toggleChatPanel);
-  const { activeRootId, activeRootName, activeRootPath, goHome } =
-    useSpaceStore();
-  const setCommandPaletteOpen = useCommandPaletteStore((s) => s.setOpen);
-  const { toggleSidebar } = useSidebar();
+  const { activeRootId, activeRootName, activeRootPath } = useSpaceStore();
+  const { state, toggleSidebar } = useSidebar();
   const isFullscreen = useFullscreen();
-  const navigate = useNavigate();
   const matches = useMatches();
 
   const chatToggleDisabled = !activeDocument;
@@ -40,66 +61,33 @@ export function WindowHeader() {
 
   // Check if we're on the /space route
   const isSpaceRoute = matches.some((match) => match.fullPath === "/space");
-
-  function handleGoHome() {
-    goHome();
-    navigate({ to: "/" });
-  }
+  const sidebarHidden = state === "collapsed";
 
   return (
     <header
       data-tauri-drag-region
       className={cn(
-        "fixed top-0 left-0 right-0 z-20 flex h-[44px] items-center justify-between gap-2 pr-2",
-        isFullscreen ? "pl-2" : "pl-[80px]",
+        "flex h-[44px] shrink-0 items-center justify-between gap-2 border-b border-transparent pr-2",
+        sidebarHidden && !isFullscreen ? "pl-[80px]" : "pl-2",
       )}
     >
-      {/* Left: sidebar toggle + home button */}
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        <div className="flex shrink-0 items-center">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-sm" onClick={toggleSidebar}>
-                <PanelLeft className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Toggle sidebar (⌘\)</TooltipContent>
-          </Tooltip>
-
-          {isSpaceRoute && (
+        {sidebarHidden && (
+          <div className="flex min-w-0 shrink-0 items-center gap-2">
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon-sm" onClick={handleGoHome}>
-                  <Home className="h-4 w-4" />
+                <Button variant="ghost" size="icon-sm" onClick={toggleSidebar}>
+                  <PanelLeft />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent side="bottom">
-                {m.nav_all_projects()} ({"\u2318\u21E7"}O)
-              </TooltipContent>
+              <TooltipContent side="bottom">Toggle sidebar (⌘\)</TooltipContent>
             </Tooltip>
-          )}
-
-          {isSpaceRoute && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => setCommandPaletteOpen(true)}
-                >
-                  <Search className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">
-                {m.search_tooltip()} ({"\u2318"}P)
-              </TooltipContent>
-            </Tooltip>
-          )}
-        </div>
+            <ProjectSwitcher />
+          </div>
+        )}
         {isSpaceRoute && <MainBreadcrumbs />}
       </div>
 
-      {/* Right: cloud upload + external openers + chat panel toggle */}
       <div className="flex shrink-0 items-center gap-1">
         {isSpaceRoute && <CloudUploadButton />}
         {isSpaceRoute && (
@@ -117,7 +105,7 @@ export function WindowHeader() {
                 onClick={toggleChatPanel}
                 disabled={chatToggleDisabled}
               >
-                <PanelRight className="h-4 w-4" />
+                <PanelRight />
               </Button>
             </TooltipTrigger>
             <TooltipContent side="bottom">Toggle chat panel (⌘R)</TooltipContent>
