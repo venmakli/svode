@@ -149,7 +149,7 @@ export function NavSpaces({
   const [deleteFiles, setDeleteFiles] = useState(false);
   const [editingSpaceId, setEditingSpaceId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
-  const [rootOpen, setRootOpen] = useState(true);
+  const [rootOpen, setRootOpen] = useState(false);
   const editRef = useRef<HTMLInputElement>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -163,6 +163,10 @@ export function NavSpaces({
       editRef.current.select();
     }
   }, [editingSpaceId]);
+
+  useEffect(() => {
+    setRootOpen(false);
+  }, [activeRootId]);
 
   useEffect(() => {
     if (!activeRootPath) return;
