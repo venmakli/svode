@@ -5,7 +5,6 @@ import {
   useRef,
   type MouseEvent,
   type Ref,
-  type RefObject,
 } from "react";
 import { NodeApi } from "platejs";
 import type { Heading } from "@platejs/toc";
@@ -13,8 +12,6 @@ import { useTocSideBarState, useTocSideBar } from "@platejs/toc/react";
 import { cn } from "@/shared/lib/utils";
 
 interface TocSidebarProps {
-  anchorOffset?: number;
-  anchorRef?: RefObject<HTMLElement | null>;
   topOffset?: number;
 }
 
@@ -61,65 +58,6 @@ function scrollElementToTop(
     behavior,
     top: elementRect.top - containerRect.top + container.scrollTop - topOffset,
   });
-}
-
-function useStickyAnchorTop(
-  anchorRef: RefObject<HTMLElement | null> | undefined,
-  minTop: number,
-  anchorOffset: number,
-) {
-  const [top, setTop] = useState(minTop);
-  const rafId = useRef<number | null>(null);
-
-  const update = useCallback(() => {
-    const anchorTop = anchorRef?.current?.getBoundingClientRect().top;
-    const nextTop =
-      anchorTop === undefined
-        ? minTop
-        : Math.max(minTop, anchorTop + anchorOffset);
-
-    setTop(Math.round(nextTop));
-  }, [anchorOffset, anchorRef, minTop]);
-
-  const scheduleUpdate = useCallback(() => {
-    if (rafId.current !== null) return;
-    rafId.current = requestAnimationFrame(() => {
-      rafId.current = null;
-      update();
-    });
-  }, [update]);
-
-  useEffect(() => {
-    scheduleUpdate();
-
-    window.addEventListener("resize", scheduleUpdate);
-    document.addEventListener("scroll", scheduleUpdate, {
-      capture: true,
-      passive: true,
-    });
-
-    const observer =
-      anchorRef?.current && typeof ResizeObserver !== "undefined"
-        ? new ResizeObserver(scheduleUpdate)
-        : null;
-
-    if (anchorRef?.current) {
-      observer?.observe(anchorRef.current);
-    }
-
-    return () => {
-      window.removeEventListener("resize", scheduleUpdate);
-      document.removeEventListener("scroll", scheduleUpdate, {
-        capture: true,
-      });
-      observer?.disconnect();
-      if (rafId.current !== null) {
-        cancelAnimationFrame(rafId.current);
-      }
-    };
-  }, [anchorRef, scheduleUpdate]);
-
-  return top;
 }
 
 /**
@@ -189,11 +127,7 @@ function useScrollActiveHeading(
   return activeId;
 }
 
-export function TocSidebar({
-  anchorOffset = 12,
-  anchorRef,
-  topOffset = 80,
-}: TocSidebarProps) {
+export function TocSidebar({ topOffset = 80 }: TocSidebarProps) {
   const state = useTocSideBarState({
     open: true,
     topOffset,
@@ -213,7 +147,6 @@ export function TocSidebar({
   const [isHovered, setIsHovered] = useState(false);
   const scrollActiveId = useScrollActiveHeading(headingList);
   const activeContentId = scrollActiveId || plateActiveId;
-  const stickyTop = useStickyAnchorTop(anchorRef, topOffset, anchorOffset);
 
   const handleHeadingClick = useCallback(
     (
@@ -235,64 +168,65 @@ export function TocSidebar({
   if (!headingList || headingList.length === 0) return null;
 
   return (
-    <nav
-      {...restNavProps}
-      ref={navRef as Ref<HTMLElement>}
-      className="fixed right-6 z-10 w-auto"
-      style={{ top: stickyTop }}
-      onMouseEnter={() => {
-        onNavMouseEnter();
-        setIsHovered(true);
-      }}
-      onMouseLeave={(e) => {
-        onNavMouseLeave(e);
-        setIsHovered(false);
-      }}
-    >
-      {/* Collapsed: bars */}
-      {!isHovered && (
-        <div className="flex flex-col gap-1 items-end pr-1">
-          {headingList.map((item) => (
-            <button
-              key={item.id}
-              className={cn(
-                "h-0.5 rounded-full transition-colors cursor-pointer",
-                item.id === activeContentId
-                  ? "bg-foreground"
-                  : "bg-muted-foreground/30",
-                item.depth === 1 && "w-6",
-                item.depth === 2 && "w-5",
-                item.depth >= 3 && "w-4",
-              )}
-              onClick={(e) => handleHeadingClick(e, item, "smooth")}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* Expanded: heading list */}
-      {isHovered && (
-        <div className="bg-background/95 backdrop-blur-sm border rounded-md py-2 px-3 shadow-md max-w-[200px]">
-          <div className="flex flex-col gap-0.5">
+    <div className="pointer-events-none absolute bottom-0 right-2 top-12 z-10 w-auto">
+      <nav
+        {...restNavProps}
+        ref={navRef as Ref<HTMLElement>}
+        className="pointer-events-auto sticky top-12 w-auto"
+        onMouseEnter={() => {
+          onNavMouseEnter();
+          setIsHovered(true);
+        }}
+        onMouseLeave={(e) => {
+          onNavMouseLeave(e);
+          setIsHovered(false);
+        }}
+      >
+        {/* Collapsed: bars */}
+        {!isHovered && (
+          <div className="flex flex-col gap-1 items-end pr-1">
             {headingList.map((item) => (
               <button
                 key={item.id}
                 className={cn(
-                  "text-left text-xs truncate py-0.5 hover:text-foreground transition-colors cursor-pointer",
+                  "h-0.5 rounded-full transition-colors cursor-pointer",
                   item.id === activeContentId
-                    ? "text-primary font-medium"
-                    : "text-muted-foreground",
-                  item.depth === 2 && "pl-3",
-                  item.depth >= 3 && "pl-6",
+                    ? "bg-foreground"
+                    : "bg-muted-foreground/30",
+                  item.depth === 1 && "w-6",
+                  item.depth === 2 && "w-5",
+                  item.depth >= 3 && "w-4",
                 )}
                 onClick={(e) => handleHeadingClick(e, item, "smooth")}
-              >
-                {item.title}
-              </button>
+              />
             ))}
           </div>
-        </div>
-      )}
-    </nav>
+        )}
+
+        {/* Expanded: heading list */}
+        {isHovered && (
+          <div className="bg-background/95 backdrop-blur-sm border rounded-md py-2 px-3 shadow-md max-w-[200px]">
+            <div className="flex flex-col gap-0.5">
+              {headingList.map((item) => (
+                <button
+                  key={item.id}
+                  className={cn(
+                    "text-left text-xs truncate py-0.5 hover:text-foreground transition-colors cursor-pointer",
+                    item.id === activeContentId
+                      ? "text-primary font-medium"
+                      : "text-muted-foreground",
+                    item.depth === 2 && "pl-3",
+                    item.depth >= 3 && "pl-6",
+                  )}
+                  onClick={(e) => handleHeadingClick(e, item, "smooth")}
+                >
+                  {item.title}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </nav>
+    </div>
   );
 }
