@@ -2,16 +2,20 @@ import { useCallback, useEffect, useRef } from "react";
 import { updateEntryField } from "@/platform/entries/entries-api";
 import type { Entry } from "../model/types";
 import {
+  enqueueEntryFieldSave,
   entryFieldSavePolicy,
   mergeSavedEntryField,
   patchEntryField,
+  rollbackEntryField,
   type EntryFieldSavePolicy,
 } from "../model/field-save";
 
 interface PendingFieldSave {
   timer: ReturnType<typeof setTimeout>;
   resolve: (entry: Entry | null) => void;
+  reject: (error: unknown) => void;
   version: number;
+  flush: () => Promise<Entry | null>;
 }
 
 export interface EntryFieldSaveContext {
@@ -44,13 +48,16 @@ export function useEntryFieldSave({
 }) {
   const pendingRef = useRef(new Map<string, PendingFieldSave>());
   const versionsRef = useRef(new Map<string, number>());
+  const mountedRef = useRef(true);
 
   useEffect(() => {
+    mountedRef.current = true;
     const pending = pendingRef.current;
     return () => {
+      mountedRef.current = false;
       for (const item of pending.values()) {
         clearTimeout(item.timer);
-        item.resolve(null);
+        void item.flush().then(item.resolve).catch(item.reject);
       }
       pending.clear();
     };
@@ -85,28 +92,42 @@ export function useEntryFieldSave({
         pendingRef.current.delete(key);
       }
 
-      const runSave = async () => {
+      const runSave = async ({
+        applyResult = true,
+        rollbackOnError = true,
+      }: {
+        applyResult?: boolean;
+        rollbackOnError?: boolean;
+      } = {}) => {
         try {
-          const updated = (await updateEntryField({
-            space: spacePath,
-            filePath: entry.path,
-            field,
-            value,
-            projectPath: projectPath ?? null,
-          })) as Entry;
+          const updated = (await enqueueEntryFieldSave(
+            `${spacePath}:${entry.path}`,
+            () =>
+              updateEntryField({
+                space: spacePath,
+                filePath: entry.path,
+                field,
+                value,
+                projectPath: projectPath ?? null,
+              }),
+          )) as Entry;
           if (versionsRef.current.get(key) !== version) return null;
           let appliedEntry: Entry | null = null;
-          applyEntryUpdate(entry.path, (current) =>
-            (appliedEntry = mergeSavedEntryField(current, field, updated)),
-          );
+          if (applyResult && mountedRef.current) {
+            applyEntryUpdate(entry.path, (current) =>
+              (appliedEntry = mergeSavedEntryField(current, field, updated)),
+            );
+          }
           const result = appliedEntry ?? updated;
           onSaved?.(result, context);
           return result;
         } catch (error) {
           if (versionsRef.current.get(key) === version) {
-            applyEntryUpdate(entry.path, (current) =>
-              mergeSavedEntryField(current, field, entry),
-            );
+            if (rollbackOnError && mountedRef.current) {
+              applyEntryUpdate(entry.path, (current) =>
+                rollbackEntryField(current, field, entry),
+              );
+            }
             onError?.(error, context);
           }
           throw error;
@@ -124,7 +145,13 @@ export function useEntryFieldSave({
           }
           void runSave().then(resolve).catch(reject);
         }, policy.delayMs ?? 0);
-        pendingRef.current.set(key, { timer, resolve, version });
+        pendingRef.current.set(key, {
+          timer,
+          resolve,
+          reject,
+          version,
+          flush: () => runSave({ applyResult: false, rollbackOnError: false }),
+        });
       });
     },
     [applyEntryUpdate, onError, onSaved, projectPath, spacePath],

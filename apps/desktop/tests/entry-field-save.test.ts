@@ -2,9 +2,11 @@ import { expect, test } from "bun:test";
 import type { Entry } from "../src/features/entry";
 import {
   ENTRY_FIELD_TEXT_SAVE_DELAY_MS,
+  enqueueEntryFieldSave,
   entryFieldSavePolicy,
   mergeSavedEntryField,
   patchEntryField,
+  rollbackEntryField,
 } from "../src/features/entry/model/field-save";
 import { propertyFieldSavePolicy } from "../src/features/properties/model/save-policy";
 
@@ -121,4 +123,65 @@ test("mergeSavedEntryField updates only the saved field", () => {
   expect(mergeSavedEntryField(current, "priority", saved).meta.extra).toEqual({
     status: "Todo",
   });
+});
+
+test("rollbackEntryField preserves newer metadata timestamp", () => {
+  const current = entry({
+    meta: {
+      ...entry().meta,
+      title: "Optimistic title",
+      icon: "I",
+      updated: "2026-06-18T00:00:03Z",
+      extra: {
+        status: "Done",
+      },
+    },
+  });
+  const previous = entry({
+    meta: {
+      ...entry().meta,
+      title: "Previous title",
+      icon: null,
+      updated: "2026-06-18T00:00:00Z",
+      extra: {
+        status: "Todo",
+      },
+    },
+  });
+
+  expect(rollbackEntryField(current, "title", previous).meta).toMatchObject({
+    title: "Previous title",
+    icon: "I",
+    updated: "2026-06-18T00:00:03Z",
+    extra: {
+      status: "Done",
+    },
+  });
+});
+
+test("enqueueEntryFieldSave serializes writes for the same entry", async () => {
+  const events: string[] = [];
+  let releaseFirst!: () => void;
+  const firstDone = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+
+  const first = enqueueEntryFieldSave("space:entry.md", async () => {
+    events.push("first:start");
+    await firstDone;
+    events.push("first:end");
+    return "first";
+  });
+  const second = enqueueEntryFieldSave("space:entry.md", async () => {
+    events.push("second:start");
+    return "second";
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(events).toEqual(["first:start"]);
+  releaseFirst();
+
+  await expect(first).resolves.toBe("first");
+  await expect(second).resolves.toBe("second");
+  expect(events).toEqual(["first:start", "first:end", "second:start"]);
 });
