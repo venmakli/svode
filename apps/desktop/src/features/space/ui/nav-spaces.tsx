@@ -636,9 +636,10 @@ function SpaceRow({
     transform: CSS.Transform.toString(transform),
     transition,
   };
-  const sortableClassName = cn(
-    "cursor-grab active:cursor-grabbing",
-    isDragging && "opacity-60",
+  const sortableClassName = cn(isDragging && "opacity-60");
+  const draggableRowClassName = cn(
+    "cursor-pointer active:cursor-grabbing",
+    isDragging && "cursor-grabbing",
   );
   const scope = { id: ws.id, path: ws.path };
 
@@ -713,6 +714,7 @@ function SpaceRow({
         <SidebarMenuButton
           isActive={isActive}
           disabled={!!cloning}
+          className={draggableRowClassName}
           onClick={() => {
             if (editingSpaceId !== ws.id) openScopeHome(ws);
           }}

@@ -1,4 +1,4 @@
-import { ChevronsUpDown, Inbox, MessageSquare, Search } from "lucide-react";
+import { BotMessageSquare, ChevronsUpDown, Inbox, Search } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Sidebar,
@@ -121,7 +121,7 @@ function TopLevelSidebarActions({
           isActive={mainSurface === "sessions"}
           onClick={onOpenSessions}
         >
-          <MessageSquare />
+          <BotMessageSquare />
           <span>{m.sidebar_sessions()}</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
