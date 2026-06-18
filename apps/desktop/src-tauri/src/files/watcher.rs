@@ -265,6 +265,8 @@ fn path_kind(path: &Path) -> TreePathKind {
         TreePathKind::Directory
     } else if path.is_file() {
         TreePathKind::File
+    } else if is_document_or_schema(path) {
+        TreePathKind::File
     } else {
         TreePathKind::Unknown
     }
@@ -377,5 +379,15 @@ mod tests {
 
         assert!(!should_emit_content_tree_event(&policy, &dropped));
         assert!(should_emit_content_tree_event(&policy, &kept));
+    }
+
+    #[test]
+    fn watcher_classifies_deleted_dot_markdown_as_file_path() {
+        let tmp = TempDir::new().unwrap();
+        let deleted_doc = tmp.path().join(".notes.md");
+        let policy = TreeIgnorePolicy::from_space_root(tmp.path());
+
+        assert_eq!(path_kind(&deleted_doc), TreePathKind::File);
+        assert!(should_emit_content_tree_event(&policy, &deleted_doc));
     }
 }
