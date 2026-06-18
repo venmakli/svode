@@ -42,8 +42,14 @@ export function EntryDocumentScreen({
 }: EntryDocumentScreenProps) {
   const openDocument = useEntrySelectionStore((state) => state.openDocument);
   const openScopeHome = useEntrySelectionStore((state) => state.openScopeHome);
-  const updateNodeMeta = useSpaceStore((state) => state.updateNodeMeta);
-  const refreshTree = useSpaceStore((state) => state.refreshTree);
+  const patchEntryTreeMeta = useSpaceStore((state) => state.patchEntryTreeMeta);
+  const reloadTreePathParent = useSpaceStore(
+    (state) => state.reloadTreePathParent,
+  );
+  const reloadTreePathParents = useSpaceStore(
+    (state) => state.reloadTreePathParents,
+  );
+  const removeTreePath = useSpaceStore((state) => state.removeTreePath);
   const documentTargetKey = getDocumentTargetKey(spacePath, documentPath);
   const [entry, setEntry] = useState<Entry | null>(null);
   const [loadedEntryKey, setLoadedEntryKey] = useState<string | null>(null);
@@ -58,7 +64,7 @@ export function EntryDocumentScreen({
     projectPath,
     setEntry,
     onSaved: (updated) => {
-      updateNodeMeta(
+      patchEntryTreeMeta(
         spaceId,
         updated.path,
         updated.meta.title,
@@ -145,7 +151,8 @@ export function EntryDocumentScreen({
       projectPath: projectPath ?? null,
     });
     setDeleteEntry(null);
-    await refreshTree(spaceId);
+    removeTreePath(spaceId, entryToDelete.path);
+    await reloadTreePathParent(spaceId, entryToDelete.path);
   }
 
   async function duplicateCurrentEntry(entryToDuplicate: Entry) {
@@ -154,7 +161,7 @@ export function EntryDocumentScreen({
       filePath: entryToDuplicate.path,
       projectPath: projectPath ?? null,
     });
-    await refreshTree(spaceId);
+    await reloadTreePathParent(spaceId, duplicated.path);
     openDocument(duplicated.path, spaceId);
   }
 
@@ -202,7 +209,8 @@ export function EntryDocumentScreen({
                   getDocumentTargetKey(spacePath, nextEntry.path),
                 );
                 openDocument(nextEntry.path, spaceId);
-                if (nested) void refreshTree(spaceId);
+                if (nested)
+                  void reloadTreePathParents(spaceId, [nextEntry.path]);
               }}
               onDuplicateEntry={(entryToDuplicate) =>
                 void duplicateCurrentEntry(entryToDuplicate).catch(handleError)

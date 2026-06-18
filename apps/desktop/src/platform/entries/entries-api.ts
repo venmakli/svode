@@ -58,6 +58,8 @@ export function validateLinks(input: {
 }
 
 export function listEntries(space: string): Promise<TreeNodeDto[]> {
+  // Full recursive tree fallback for repair/manual recovery. Normal UI paths
+  // load direct children through listTreeChildren.
   return invokeCommand<TreeNodeDto[]>("list_entries", { space });
 }
 

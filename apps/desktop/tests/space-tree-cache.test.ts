@@ -5,6 +5,10 @@ import {
   buildLoadedTree,
   flattenChildrenByParentPath,
 } from "../src/features/space/lib/tree-cache";
+import {
+  isSystemIgnoredTreePath,
+  treeRowParentPath,
+} from "../src/features/space/lib/tree-patches";
 
 function node(
   path: string,
@@ -61,4 +65,18 @@ test("readme metadata patch preserves known children from loaded parent cache", 
     title: "Docs",
     hasChildren: true,
   });
+});
+
+test("treeRowParentPath maps entry paths to sidebar row parents", () => {
+  expect(treeRowParentPath("note.md")).toBe("");
+  expect(treeRowParentPath("docs/note.md")).toBe("docs");
+  expect(treeRowParentPath("docs/README.md")).toBe("");
+  expect(treeRowParentPath("docs/guides/README.md")).toBe("docs");
+});
+
+test("system ignored tree paths are skipped by parent helpers", () => {
+  expect(isSystemIgnoredTreePath(".svode/config.json")).toBe(true);
+  expect(isSystemIgnoredTreePath("docs/.cache/item.md")).toBe(true);
+  expect(treeRowParentPath(".git/config")).toBeNull();
+  expect(treeRowParentPath(".notes.md")).toBe("");
 });

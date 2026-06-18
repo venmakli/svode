@@ -88,7 +88,7 @@ export function ListView({
   const rowRefs = useRef(new Map<string, HTMLElement>());
   const { persons, loadPersons } = useCollectionPersons(spacePath);
   const queryArgs = useStableViewQueryArgs(filters, sort);
-  const refreshTree = useSpaceStore((state) => state.refreshTree);
+  const reloadTreeParent = useSpaceStore((state) => state.reloadTreeParent);
   const sidebarSpaceId = useSpaceStore((state) => {
     const space =
       state.spaces.find((item) => item.path === spacePath) ??
@@ -239,7 +239,8 @@ export function ListView({
       setComposerOpen(false);
       setComposerValue("");
       setEntries((current) => [...current, created]);
-      if (sidebarSpaceId) await refreshTree(sidebarSpaceId);
+      if (sidebarSpaceId)
+        await reloadTreeParent(sidebarSpaceId, collectionPath);
       await loadEntries();
       focusRow(created.path);
     } catch (error) {
@@ -308,7 +309,7 @@ export function ListView({
         entries: nextSiblings,
         projectPath,
       });
-      if (sidebarSpaceId) await refreshTree(sidebarSpaceId);
+      if (sidebarSpaceId) await reloadTreeParent(sidebarSpaceId, parentPath);
       await loadEntries();
     } catch (error) {
       console.warn("Failed to reorder list entries:", error);

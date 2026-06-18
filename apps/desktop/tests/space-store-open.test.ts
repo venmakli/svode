@@ -73,6 +73,7 @@ const listTreeChildren = mock(
     parentPath === "docs" ? [newChildNode] : [readmeNode],
 );
 const getExpandedPaths = mock(async () => [] as string[]);
+const moveEntry = mock(async () => "README.md");
 
 mock.module("sonner", () => ({
   toast: {
@@ -91,7 +92,7 @@ mock.module("@/platform/entries/entries-api", () => ({
   getExpandedPaths,
   listEntries,
   listTreeChildren,
-  moveEntry: mock(async () => "README.md"),
+  moveEntry,
   saveExpandedPaths: mock(async () => undefined),
   saveTreeOrder: mock(async () => undefined),
 }));
@@ -211,4 +212,110 @@ test("dirty expanded parent reloads direct children without full tree refresh", 
     path: "docs",
     children: [newChildNode],
   });
+});
+
+test("reloadTreePathParents reloads only affected direct parents", async () => {
+  useSpaceStore.setState({
+    fileTrees: {
+      [childSpace.id]: [{ ...docsNode, children: [oldChildNode] }],
+    },
+    childrenByParentPath: {
+      [childSpace.id]: {
+        "": [docsNode],
+        docs: [oldChildNode],
+      },
+    },
+    treeCache: {
+      [childSpace.id]: { loadedAt: Date.now(), dirty: false },
+    },
+    treeParentCache: {
+      [childSpace.id]: {
+        "": { loadedAt: Date.now(), dirty: false },
+        docs: { loadedAt: Date.now(), dirty: false },
+      },
+    },
+    expandedPaths: { [childSpace.id]: ["docs"] },
+  });
+
+  await useSpaceStore
+    .getState()
+    .reloadTreePathParents(childSpace.id, ["docs/new.md"]);
+
+  expect(listEntries).not.toHaveBeenCalled();
+  expect(listTreeChildren).toHaveBeenCalledTimes(1);
+  expect(listTreeChildren).toHaveBeenCalledWith(childSpace.path, "docs");
+});
+
+test("reloadTreeParents treats null as root parent", async () => {
+  useSpaceStore.setState({
+    fileTrees: {
+      [childSpace.id]: [docsNode],
+    },
+    childrenByParentPath: {
+      [childSpace.id]: {
+        "": [docsNode],
+      },
+    },
+    treeCache: {
+      [childSpace.id]: { loadedAt: Date.now(), dirty: false },
+    },
+    treeParentCache: {
+      [childSpace.id]: {
+        "": { loadedAt: Date.now(), dirty: false },
+      },
+    },
+    expandedPaths: { [childSpace.id]: [] },
+  });
+
+  await useSpaceStore.getState().reloadTreeParents(childSpace.id, [null, ""]);
+
+  expect(listEntries).not.toHaveBeenCalled();
+  expect(listTreeChildren).toHaveBeenCalledTimes(1);
+  expect(listTreeChildren).toHaveBeenCalledWith(childSpace.path, null);
+});
+
+test("moveEntry reloads old and new direct parents without full tree refresh", async () => {
+  moveEntry.mockImplementationOnce(async () => "archive/old.md");
+  useSpaceStore.setState({
+    fileTrees: {
+      [childSpace.id]: [{ ...docsNode, children: [oldChildNode] }],
+    },
+    childrenByParentPath: {
+      [childSpace.id]: {
+        "": [docsNode],
+        docs: [oldChildNode],
+        archive: [],
+      },
+    },
+    treeCache: {
+      [childSpace.id]: { loadedAt: Date.now(), dirty: false },
+    },
+    treeParentCache: {
+      [childSpace.id]: {
+        "": { loadedAt: Date.now(), dirty: false },
+        docs: { loadedAt: Date.now(), dirty: false },
+        archive: { loadedAt: Date.now(), dirty: false },
+      },
+    },
+    expandedPaths: { [childSpace.id]: ["docs", "archive"] },
+  });
+
+  await useSpaceStore
+    .getState()
+    .moveEntry(childSpace.id, "docs/old.md", "archive");
+
+  expect(listEntries).not.toHaveBeenCalled();
+  expect(moveEntry).toHaveBeenCalledWith({
+    space: childSpace.path,
+    from: "docs/old.md",
+    toParent: "archive",
+    projectPath: rootSpace.path,
+  });
+  expect(listTreeChildren).toHaveBeenCalledTimes(2);
+  expect(listTreeChildren).toHaveBeenNthCalledWith(1, childSpace.path, "docs");
+  expect(listTreeChildren).toHaveBeenNthCalledWith(
+    2,
+    childSpace.path,
+    "archive",
+  );
 });

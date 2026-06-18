@@ -1,11 +1,7 @@
 import { useEffect, useRef } from "react";
 import { listen } from "@/platform/native/events";
 import { readEntry } from "@/platform/entries/entries-api";
-import {
-  reindexProject,
-  unwatchSpace,
-  watchSpace,
-} from "@/platform/space/space-api";
+import { reindexProject } from "@/platform/space/space-api";
 import { toast } from "sonner";
 import type { PlateEditor } from "platejs/react";
 import { deserializeWithConflicts } from "../conflict/parse-conflicts";
@@ -54,7 +50,6 @@ export function useFileWatcher({
   onEntryReloaded,
 }: UseFileWatcherOptions) {
   const { closeDocument } = useEntrySelectionStore();
-  const { refreshTree } = useSpaceStore();
   const { markAiModified, clearAiModified } = useEditorStore();
 
   const activeDocRef = useRef(activeDocument);
@@ -62,21 +57,6 @@ export function useFileWatcher({
   useEffect(() => {
     activeDocRef.current = activeDocument;
   }, [activeDocument]);
-
-  // Watch/unwatch space
-  useEffect(() => {
-    if (!spacePath) return;
-
-    watchSpace(spacePath).catch((err) =>
-      console.error("Failed to watch space:", err),
-    );
-
-    return () => {
-      unwatchSpace(spacePath).catch((err) =>
-        console.error("Failed to unwatch space:", err),
-      );
-    };
-  }, [spacePath]);
 
   // Listen to file events
   useEffect(() => {
@@ -91,7 +71,6 @@ export function useFileWatcher({
 
       if (isSchemaPath(changedPath)) {
         reindexProjectForSchemaChange();
-        refreshTree();
         return;
       }
 
@@ -138,7 +117,6 @@ export function useFileWatcher({
 
       if (isSchemaPath(deletedPath)) {
         reindexProjectForSchemaChange();
-        refreshTree();
         return;
       }
 
@@ -146,7 +124,6 @@ export function useFileWatcher({
         closeDocument();
         toast.error(m.editor_file_deleted());
       }
-      refreshTree();
     }).then((unlisten) => unlisteners.push(unlisten));
 
     // file:created
@@ -154,7 +131,6 @@ export function useFileWatcher({
       if (isSchemaPath(event.payload.path)) {
         reindexProjectForSchemaChange();
       }
-      refreshTree();
     }).then((unlisten) => unlisteners.push(unlisten));
 
     return () => {
@@ -165,7 +141,6 @@ export function useFileWatcher({
     spacePath,
     markAiModified,
     closeDocument,
-    refreshTree,
     ownNoncesRef,
     isDebouncePendingRef,
     isLoadingRef,

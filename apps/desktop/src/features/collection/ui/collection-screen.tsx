@@ -121,7 +121,13 @@ export function CollectionScreen({
   );
   const readmePath = readmePathFor(collectionPath);
   const { openDocument } = useEntrySelectionStore();
-  const { refreshTree, updateNodeMeta } = useSpaceStore();
+  const {
+    reloadTreeParent,
+    reloadTreePathParent,
+    reloadTreePathParents,
+    patchEntryTreeMeta,
+    removeTreePath,
+  } = useSpaceStore();
   const [schema, setSchema] = useState<CollectionSchema | null>(null);
   const [entry, setEntry] = useState<Entry | null>(null);
   const [parentSchema, setParentSchema] = useState<EntrySchemaResult | null>(
@@ -167,7 +173,7 @@ export function CollectionScreen({
     projectPath,
     setEntry,
     onSaved: (updated) => {
-      updateNodeMeta(
+      patchEntryTreeMeta(
         spaceId,
         readmePath,
         updated.meta.title,
@@ -334,7 +340,8 @@ export function CollectionScreen({
         path: readmePath,
       });
     }
-    await refreshTree(spaceId);
+    await reloadTreePathParent(spaceId, readmePath);
+    await reloadTreeParent(spaceId, collectionPath);
     openDocument(readmePath, spaceId);
     setEntry(nextEntry);
     return nextEntry;
@@ -519,7 +526,7 @@ export function CollectionScreen({
           projectPath,
         });
         setEntriesVersion((version) => version + 1);
-        await refreshTree(spaceId);
+        await reloadTreeParent(spaceId, collectionPath);
         if (openAfterCreate) {
           openDocument(created.path, spaceId);
         }
@@ -547,7 +554,7 @@ export function CollectionScreen({
       });
     }
     setEntriesVersion((version) => version + 1);
-    await refreshTree(spaceId);
+    await reloadTreeParent(spaceId, collectionPath);
     if (openAfterCreate) {
       openDocument(nextEntry.path, spaceId);
     }
@@ -593,7 +600,7 @@ export function CollectionScreen({
       projectPath,
     });
     setEntriesVersion((version) => version + 1);
-    await refreshTree(spaceId);
+    await reloadTreeParent(spaceId, collectionPath);
     openDocument(created.path, spaceId);
   }
 
@@ -705,7 +712,7 @@ export function CollectionScreen({
       projectPath: projectPath ?? null,
     });
     setEntriesVersion((version) => version + 1);
-    await refreshTree(spaceId);
+    await reloadTreeParent(spaceId, collectionPath);
     openDocument(duplicated.path, spaceId);
   }
 
@@ -717,7 +724,8 @@ export function CollectionScreen({
     });
     setDeleteEntry(null);
     setEntriesVersion((version) => version + 1);
-    await refreshTree(spaceId);
+    removeTreePath(spaceId, entryToDelete.path);
+    await reloadTreePathParent(spaceId, entryToDelete.path);
   }
 
   async function duplicateDetailEntry(entryToDuplicate: Entry) {
@@ -726,7 +734,7 @@ export function CollectionScreen({
       filePath: entryToDuplicate.path,
       projectPath: projectPath ?? null,
     });
-    await refreshTree(spaceId);
+    await reloadTreePathParent(spaceId, duplicated.path);
     openDocument(duplicated.path, spaceId);
   }
 
@@ -938,7 +946,7 @@ export function CollectionScreen({
         onConverted={(nextEntry, nested) => {
           setEntry(nextEntry);
           openDocument(nextEntry.path, spaceId);
-          if (nested) void refreshTree(spaceId);
+          if (nested) void reloadTreePathParents(spaceId, [nextEntry.path]);
         }}
         onDuplicateEntry={(entryToDuplicate) =>
           void duplicateDetailEntry(entryToDuplicate).catch(handleError)

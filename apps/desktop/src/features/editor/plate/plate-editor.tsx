@@ -81,7 +81,9 @@ export function PlateDocumentEditor({
   const { activeDocument, activeDocumentSpaceId, openDocument } =
     useEntrySelectionStore();
   const {
-    updateNodeMeta,
+    patchEntryTreeMeta,
+    reloadTreePathParents,
+    removeTreePath,
     rootSpaces,
     spaces: childWorkspaces,
     activeRootPath,
@@ -246,16 +248,36 @@ export function PlateDocumentEditor({
       }
       useEditorStore.getState().suppressPaths(paths);
 
-      const treeIds = new Set(
-        sources
-          .map((source) => source.spaceId ?? activeRootId)
-          .filter((id): id is string => Boolean(id)),
-      );
-      for (const id of treeIds) {
-        void useSpaceStore.getState().refreshTree(id);
+      const pathsByTreeId = new Map<string, string[]>();
+      for (const source of sources) {
+        const treeId = source.spaceId ?? activeRootId;
+        if (!treeId) continue;
+        pathsByTreeId.set(treeId, [
+          ...(pathsByTreeId.get(treeId) ?? []),
+          source.path,
+        ]);
+      }
+
+      const store = useSpaceStore.getState();
+      for (const [id, sourcePaths] of pathsByTreeId) {
+        void store.reloadTreePathParents(id, sourcePaths);
       }
     },
     [activeRootId, activeWsId],
+  );
+
+  const patchCurrentTreeMeta = useCallback(
+    (path: string) => {
+      if (!activeWsId) return;
+      patchEntryTreeMeta(
+        activeWsId,
+        path,
+        titleRef.current || m.editor_untitled(),
+        iconRef.current,
+        descriptionRef.current || null,
+      );
+    },
+    [activeWsId, patchEntryTreeMeta],
   );
 
   // Schedule a debounced auto-save of the active document. Resets the timer
@@ -285,6 +307,7 @@ export function PlateDocumentEditor({
           if (editor) {
             setCachedDocumentValueByKey(cacheKey, editor.children);
           }
+          patchCurrentTreeMeta(result.new_path ?? path);
         })
         .catch((err) => {
           console.error("Auto-save failed:", err);
@@ -296,7 +319,7 @@ export function PlateDocumentEditor({
           }, 500);
         });
     }, AUTOSAVE_DEBOUNCE_MS);
-  }, [performWrite, editor, spacePath]);
+  }, [performWrite, editor, spacePath, patchCurrentTreeMeta]);
 
   // `initialEntry` is a perf shortcut; require its source space so identical
   // paths like root/child `README.md` cannot cross-load between scopes.
@@ -528,11 +551,12 @@ export function PlateDocumentEditor({
     } else {
       // Slug unchanged, just update sidebar
       if (currentPathRef.current && activeWsId) {
-        updateNodeMeta(
+        patchEntryTreeMeta(
           activeWsId,
           currentPathRef.current,
           newTitle,
           iconRef.current,
+          descriptionRef.current || null,
         );
       }
     }
@@ -543,7 +567,7 @@ export function PlateDocumentEditor({
     clearPendingRename,
     clearUnsaved,
     setCurrentDocument,
-    updateNodeMeta,
+    patchEntryTreeMeta,
     activeWsId,
     spacePath,
   ]);
@@ -567,10 +591,15 @@ export function PlateDocumentEditor({
         setCachedDocumentValue(spacePath, result.new_path, editor.children);
         setCurrentDocument(result.new_path);
         if (activeWsId) {
-          useSpaceStore.getState().refreshTree(activeWsId);
+          removeTreePath(activeWsId, currentDocument);
+          void reloadTreePathParents(activeWsId, [
+            currentDocument,
+            result.new_path,
+          ]);
         }
       } else {
         setCachedDocumentValue(spacePath, currentDocument, editor.children);
+        patchCurrentTreeMeta(currentDocument);
       }
 
       // Backlinks files: invalidate cache so next open re-reads from disk,
@@ -612,6 +641,9 @@ export function PlateDocumentEditor({
     performWrite,
     clearUnsaved,
     handleModifiedSources,
+    patchCurrentTreeMeta,
+    reloadTreePathParents,
+    removeTreePath,
     setCurrentDocument,
   ]);
 
@@ -640,8 +672,14 @@ export function PlateDocumentEditor({
         setCachedDocumentValue(spacePath, result.new_path, editor.children);
         setCurrentDocument(result.new_path);
         if (activeWsId) {
-          useSpaceStore.getState().refreshTree(activeWsId);
+          removeTreePath(activeWsId, currentDocument);
+          void reloadTreePathParents(activeWsId, [
+            currentDocument,
+            result.new_path,
+          ]);
         }
+      } else {
+        patchCurrentTreeMeta(currentDocument);
       }
       // See handleSave: same backlinks suppress + cache-invalidate.
       handleModifiedSources(result);
@@ -660,6 +698,9 @@ export function PlateDocumentEditor({
     performWrite,
     clearUnsaved,
     handleModifiedSources,
+    patchCurrentTreeMeta,
+    reloadTreePathParents,
+    removeTreePath,
     setCurrentDocument,
   ]);
 

@@ -117,7 +117,9 @@ export function SortableFileTree({
   const {
     moveEntry,
     saveOrder,
-    refreshTree,
+    reloadTreeParent,
+    reloadTreeParents,
+    reloadTreePathParent,
     loadTreeChildren,
     toggleExpanded,
     expandedPaths,
@@ -399,8 +401,11 @@ export function SortableFileTree({
               }
               await saveOrder(spaceId, order);
             }
-            // Refresh tree after nest — structure changed on disk
-            await refreshTree(spaceId);
+            await reloadTreePathParent(spaceId, nestTarget);
+            await reloadTreeParent(
+              spaceId,
+              newNestPath.replace(/\/readme\.md$/i, ""),
+            );
           }
         }
 
@@ -430,7 +435,7 @@ export function SortableFileTree({
                 fromNode.name,
               );
               await saveOrder(spaceId, order);
-              await refreshTree(spaceId);
+              await reloadTreeParent(spaceId, toParent);
             }
           }
           return;
@@ -496,7 +501,8 @@ export function SortableFileTree({
                   .getState()
                   .openDocument(unnestPath, spaceId);
               }
-              await refreshTree(spaceId);
+              await reloadTreePathParent(spaceId, oldParentReadme);
+              await reloadTreePathParent(spaceId, unnestPath);
             } catch {
               // Unnest may fail if folder still has children (e.g. non-md files on disk)
             }
@@ -507,13 +513,23 @@ export function SortableFileTree({
         if (updatedTree) {
           const order = buildOrderMap(updatedTree);
           await saveOrder(spaceId, order);
+          await reloadTreeParents(spaceId, [fromParent, toParent]);
         }
       } catch (err) {
         console.error("Failed to move entry:", err);
         toast.error("Failed to move file");
       }
     },
-    [tree, spaceId, moveEntry, saveOrder, refreshTree, resetState],
+    [
+      tree,
+      spaceId,
+      moveEntry,
+      saveOrder,
+      reloadTreeParent,
+      reloadTreeParents,
+      reloadTreePathParent,
+      resetState,
+    ],
   );
 
   const handleDragCancel = useCallback(() => {

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -10,6 +11,7 @@ use crate::error::AppError;
 use crate::files::{
     BacklinkIndex, BacklinkInfo, Entry, FileWatcher, LinkValidation, ModifiedLinkSource, TreeNode,
     WriteNonceRegistry, WriteResult, entry, templates, tree,
+    tree_policy::{TreeIgnorePolicy, TreePathKind},
 };
 use crate::files::{TemplateInfo, TemplateKind};
 use crate::git::autocommit::{AutocommitService, StructuralOp};
@@ -74,6 +76,53 @@ fn entry_paths_with_order(space: &str, paths: impl IntoIterator<Item = PathBuf>)
     let mut out = vec![order_path(space)];
     out.extend(paths);
     out
+}
+
+fn collect_markdown_paths(
+    base: &Path,
+    root: &Path,
+    policy: &TreeIgnorePolicy,
+) -> Result<Vec<PathBuf>, AppError> {
+    let Ok(meta) = fs::symlink_metadata(root) else {
+        return Ok(Vec::new());
+    };
+    if meta.file_type().is_symlink() {
+        return Ok(Vec::new());
+    }
+
+    let rel_path = root.strip_prefix(base).unwrap_or(root);
+    let kind = if meta.is_dir() {
+        TreePathKind::Directory
+    } else if meta.is_file() {
+        TreePathKind::File
+    } else {
+        TreePathKind::Unknown
+    };
+    if policy.is_ignored_rel(rel_path, kind) {
+        return Ok(Vec::new());
+    }
+
+    if meta.is_file() {
+        return Ok(root
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+            .then(|| vec![root.to_path_buf()])
+            .unwrap_or_default());
+    }
+
+    let mut paths = Vec::new();
+    if !meta.is_dir() {
+        return Ok(paths);
+    }
+
+    for item in fs::read_dir(root)? {
+        let item = item?;
+        let path = item.path();
+        paths.extend(collect_markdown_paths(base, &path, policy)?);
+    }
+
+    Ok(paths)
 }
 
 fn schema_path(space: &str, collection_path: &str) -> PathBuf {
@@ -381,15 +430,14 @@ pub async fn create_entry(
     } else {
         entry::create(&space, parent_path.as_deref(), &title)?
     };
-    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
-        let project = Path::new(proj);
-        let abs_target = Path::new(&space).join(&created.path);
-        if let Err(e) = index::update::update_entry(&index_state, project, &abs_target).await {
-            tracing::warn!("index update_entry failed for {}: {e}", created.path);
-        }
-    } else {
-        reindex_space_dir(&index_state, &space).await;
-    }
+    update_index_entry_or_reindex(
+        &index_state,
+        project_path.as_deref(),
+        &space,
+        &created.path,
+        "create_entry",
+    )
+    .await;
     if properties::unique_id_schema_path_for_entry(&space, &created.path)?.is_some() {
         let mut paths = properties::unique_id_mutation_paths_for_entry(&space, &created.path)?;
         paths.push(order_path(&space));
@@ -454,16 +502,14 @@ pub async fn update_entry_field(
 ) -> Result<Entry, AppError> {
     let updated = entry::update_field(&space, &file_path, &field, value)?;
 
-    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
-        let project = Path::new(proj);
-        let abs_target = Path::new(&space).join(&file_path);
-        if let Err(e) = index::update::update_entry(&index_state, project, &abs_target).await {
-            tracing::warn!("index update_entry failed for {file_path}: {e}");
-        }
-        reindex_space_dir(&index_state, &space).await;
-    } else {
-        reindex_space_dir(&index_state, &space).await;
-    }
+    update_index_entry_or_reindex(
+        &index_state,
+        project_path.as_deref(),
+        &space,
+        &file_path,
+        "update_entry_field",
+    )
+    .await;
 
     Ok(updated)
 }
@@ -569,8 +615,149 @@ async fn reindex_space_dir(index_state: &IndexState, space: &str) {
         .key_for_space_dir(Path::new(space))
         .await
         .unwrap_or_else(|| IndexKey::Root(PathBuf::from(space)));
+    tracing::info!(
+        event = "index.reindex.repair",
+        space,
+        key = ?key,
+        "running full index repair reindex"
+    );
     if let Err(e) = index_state.run_full_reindex(&key).await {
         tracing::warn!("collection operation reindex failed for {:?}: {e}", key);
+    }
+}
+
+async fn update_index_entry_or_reindex(
+    index_state: &IndexState,
+    project_path: Option<&str>,
+    space: &str,
+    rel_path: &str,
+    fallback_context: &str,
+) {
+    let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
+        reindex_space_dir(index_state, space).await;
+        return;
+    };
+
+    let project = Path::new(proj);
+    let abs_target = Path::new(space).join(rel_path);
+    if let Err(e) = index::update::update_entry(index_state, project, &abs_target).await {
+        tracing::warn!("{fallback_context}: targeted index update failed for {rel_path}: {e}");
+        tracing::info!("{fallback_context}: running index.reindex.repair fallback");
+        reindex_space_dir(index_state, space).await;
+    } else {
+        tracing::debug!(
+            event = "index.update.targeted",
+            context = fallback_context,
+            operation = "update",
+            path = rel_path
+        );
+    }
+}
+
+async fn update_index_paths_or_reindex(
+    index_state: &IndexState,
+    project_path: Option<&str>,
+    space: &str,
+    abs_paths: Vec<PathBuf>,
+    fallback_context: &str,
+) {
+    let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
+        reindex_space_dir(index_state, space).await;
+        return;
+    };
+
+    let project = Path::new(proj);
+    let mut needs_reindex = false;
+    for abs_path in abs_paths {
+        if let Err(e) = index::update::update_entry(index_state, project, &abs_path).await {
+            tracing::warn!(
+                "{fallback_context}: targeted index update failed for {}: {e}",
+                abs_path.display()
+            );
+            needs_reindex = true;
+        } else {
+            tracing::debug!(
+                event = "index.update.targeted",
+                context = fallback_context,
+                operation = "update",
+                path = %abs_path.display()
+            );
+        }
+    }
+    if needs_reindex {
+        tracing::info!("{fallback_context}: running index.reindex.repair fallback");
+        reindex_space_dir(index_state, space).await;
+    }
+}
+
+async fn update_index_tree_or_reindex(
+    index_state: &IndexState,
+    project_path: Option<&str>,
+    space: &str,
+    rel_root: &str,
+    fallback_context: &str,
+) {
+    let space_root = Path::new(space);
+    let policy = TreeIgnorePolicy::from_space_root(space_root);
+    let abs_root = space_root.join(rel_root);
+    let paths = match collect_markdown_paths(space_root, &abs_root, &policy) {
+        Ok(paths) => paths,
+        Err(e) => {
+            tracing::warn!("{fallback_context}: collect markdown paths failed for {rel_root}: {e}");
+            tracing::info!("{fallback_context}: running index.reindex.repair fallback");
+            reindex_space_dir(index_state, space).await;
+            return;
+        }
+    };
+    update_index_paths_or_reindex(index_state, project_path, space, paths, fallback_context).await;
+}
+
+async fn replace_index_entries_or_reindex(
+    index_state: &IndexState,
+    project_path: Option<&str>,
+    space: &str,
+    deleted_rel_paths: &[String],
+    updated_rel_paths: &[String],
+    fallback_context: &str,
+) {
+    let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
+        reindex_space_dir(index_state, space).await;
+        return;
+    };
+
+    let project = Path::new(proj);
+    let mut needs_reindex = false;
+    for rel_path in deleted_rel_paths {
+        let abs_target = Path::new(space).join(rel_path);
+        if let Err(e) = index::update::delete_entry(index_state, project, &abs_target).await {
+            tracing::warn!("{fallback_context}: targeted index delete failed for {rel_path}: {e}");
+            needs_reindex = true;
+        } else {
+            tracing::debug!(
+                event = "index.update.targeted",
+                context = fallback_context,
+                operation = "delete",
+                path = rel_path
+            );
+        }
+    }
+    for rel_path in updated_rel_paths {
+        let abs_target = Path::new(space).join(rel_path);
+        if let Err(e) = index::update::update_entry(index_state, project, &abs_target).await {
+            tracing::warn!("{fallback_context}: targeted index update failed for {rel_path}: {e}");
+            needs_reindex = true;
+        } else {
+            tracing::debug!(
+                event = "index.update.targeted",
+                context = fallback_context,
+                operation = "update",
+                path = rel_path
+            );
+        }
+    }
+    if needs_reindex {
+        tracing::info!("{fallback_context}: running index.reindex.repair fallback");
+        reindex_space_dir(index_state, space).await;
     }
 }
 
@@ -672,15 +859,14 @@ pub async fn assign_unique_id(
 ) -> Result<Entry, AppError> {
     let paths = properties::unique_id_mutation_paths_for_entry(&space, &file_path)?;
     let entry = properties::assign_unique_id(&space, &file_path)?;
-    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
-        let project = Path::new(proj);
-        let abs_target = Path::new(&space).join(&entry.path);
-        if let Err(e) = index::update::update_entry(&index_state, project, &abs_target).await {
-            tracing::warn!("index update_entry failed for {}: {e}", entry.path);
-        }
-    } else {
-        reindex_space_dir(&index_state, &space).await;
-    }
+    update_index_entry_or_reindex(
+        &index_state,
+        project_path.as_deref(),
+        &space,
+        &entry.path,
+        "assign_unique_id",
+    )
+    .await;
     maybe_autocommit_schema(
         &autocommit,
         project_path.as_deref(),
@@ -1174,8 +1360,15 @@ pub async fn instantiate_template(
         force_folder,
         contextual_defaults,
     )?;
-    reindex_space_dir(&index_state, &space).await;
     let root = root_path_for_head(&instantiated.entry.path);
+    update_index_tree_or_reindex(
+        &index_state,
+        project_path.as_deref(),
+        &space,
+        root,
+        "instantiate_template",
+    )
+    .await;
     maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
@@ -1468,6 +1661,7 @@ pub async fn repair_two_way_relation(
         &strategy,
         reverse_column.as_deref(),
     )?;
+    tracing::info!("repair_two_way_relation: running full space reindex after relation repair");
     reindex_space_dir(&index_state, &space).await;
     let paths = changed_paths(snapshot)?;
     let message = if collection_has_sensitive_columns(&space, &collection_path) {
@@ -1657,17 +1851,21 @@ pub async fn write_entry(
             tracing::warn!("update file backlinks failed for {current}: {e}");
         }
 
-        if result.new_path.is_some() {
-            let abs_old = Path::new(&space).join(&path);
-            if let Err(e) = index::update::delete_entry(&index_state, project, &abs_old).await {
-                tracing::warn!("index delete stale path failed for {path}: {e}");
-            }
-        }
         let target = result.new_path.clone().unwrap_or_else(|| path.clone());
-        let abs_target = Path::new(&space).join(&target);
-        if let Err(e) = index::update::update_entry(&index_state, project, &abs_target).await {
-            tracing::warn!("index update_entry failed for {target}: {e}");
-        }
+        let deleted_paths = result
+            .new_path
+            .as_ref()
+            .map(|_| vec![path.clone()])
+            .unwrap_or_default();
+        replace_index_entries_or_reindex(
+            &index_state,
+            project_path.as_deref(),
+            &space,
+            &deleted_paths,
+            std::slice::from_ref(&target),
+            "write_entry",
+        )
+        .await;
     }
 
     // On ⌘S-path rename, schedule the structural commit so `git_commit_file`'s
@@ -1707,6 +1905,7 @@ pub async fn delete_entry(
     if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
         let source_space_id = space_id_for_dir(&index_state, &space).await;
+        let mut needs_reindex = false;
         for deleted_path in &deleted.deleted_paths {
             if let Err(e) = index_state
                 .remove_file_backlinks(project, source_space_id.as_deref(), deleted_path)
@@ -1717,9 +1916,20 @@ pub async fn delete_entry(
             let abs_old = Path::new(&space).join(deleted_path);
             if let Err(e) = index::update::delete_entry(&index_state, project, &abs_old).await {
                 tracing::warn!("index delete_entry failed for {deleted_path}: {e}");
+                needs_reindex = true;
+            } else {
+                tracing::debug!(
+                    event = "index.update.targeted",
+                    context = "delete_entry",
+                    operation = "delete",
+                    path = deleted_path
+                );
             }
         }
-        reindex_space_dir(&index_state, &space).await;
+        if needs_reindex {
+            tracing::info!("delete_entry: running index.reindex.repair fallback");
+            reindex_space_dir(&index_state, &space).await;
+        }
     } else {
         reindex_space_dir(&index_state, &space).await;
     }
@@ -2141,9 +2351,17 @@ pub async fn convert_entry_to_folder(
     ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
     let entry =
         entry::convert_entry_to_folder(Path::new(&space), &entry_id, Some(&backlink_index))?;
-    reindex_space_dir(&index_state, &space).await;
     let folder_root = root_path_for_head(&entry.path);
     let old_leaf = format!("{folder_root}.md");
+    replace_index_entries_or_reindex(
+        &index_state,
+        project_path.as_deref(),
+        &space,
+        &[old_leaf.clone()],
+        std::slice::from_ref(&entry.path),
+        "convert_entry_to_folder",
+    )
+    .await;
     maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
@@ -2171,12 +2389,20 @@ pub async fn convert_entry_to_leaf(
     let backlink_index = backlinks_for_space(&index_state, &space).await;
     ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
     let entry = entry::convert_entry_to_leaf(Path::new(&space), &entry_id, Some(&backlink_index))?;
-    reindex_space_dir(&index_state, &space).await;
     let old_readme = entry
         .path
         .strip_suffix(".md")
         .map(|root| format!("{root}/README.md"))
         .unwrap_or_else(|| entry.path.clone());
+    replace_index_entries_or_reindex(
+        &index_state,
+        project_path.as_deref(),
+        &space,
+        &[old_readme.clone()],
+        std::slice::from_ref(&entry.path),
+        "convert_entry_to_leaf",
+    )
+    .await;
     maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
@@ -2202,7 +2428,14 @@ pub async fn convert_entry_to_nested_collection(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
     let collection_path = entry::convert_entry_to_nested_collection(Path::new(&space), &entry_id)?;
-    reindex_space_dir(&index_state, &space).await;
+    update_index_tree_or_reindex(
+        &index_state,
+        project_path.as_deref(),
+        &space,
+        &collection_path,
+        "convert_entry_to_nested_collection",
+    )
+    .await;
     maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
@@ -2225,7 +2458,14 @@ pub async fn convert_bare_folder_to_collection(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
     let entry = entry::convert_bare_folder_to_collection(Path::new(&space), &folder_path)?;
-    reindex_space_dir(&index_state, &space).await;
+    update_index_tree_or_reindex(
+        &index_state,
+        project_path.as_deref(),
+        &space,
+        &folder_path,
+        "convert_bare_folder_to_collection",
+    )
+    .await;
     maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
@@ -2255,7 +2495,14 @@ pub async fn duplicate_entry(
 ) -> Result<Entry, AppError> {
     let old_name = entry_history_commit_name(&space, &file_path);
     let entry = entry::duplicate_entry(Path::new(&space), &file_path)?;
-    reindex_space_dir(&index_state, &space).await;
+    update_index_tree_or_reindex(
+        &index_state,
+        project_path.as_deref(),
+        &space,
+        root_path_for_head(&entry.path),
+        "duplicate_entry",
+    )
+    .await;
     let unique_id_paths =
         properties::unique_id_mutation_paths_for_entry_tree(Path::new(&space), &entry.path)?;
     if unique_id_paths.is_empty() {
@@ -2520,6 +2767,47 @@ fn levenshtein(a: &str, b: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::space::config::write_space_config;
+    use crate::space::types::{SpaceConfig, TreeSpaceConfig};
+    use tempfile::TempDir;
+
+    fn write_tree_config(tmp: &TempDir, exclude: Vec<&str>, include: Vec<&str>) {
+        write_space_config(
+            tmp.path(),
+            &SpaceConfig {
+                name: "Test".to_string(),
+                description: String::new(),
+                icon: "folder".to_string(),
+                spaces: None,
+                agent: None,
+                defaults: None,
+                git: None,
+                assets: None,
+                tree: Some(TreeSpaceConfig {
+                    exclude: exclude.into_iter().map(ToString::to_string).collect(),
+                    include: include.into_iter().map(ToString::to_string).collect(),
+                    show_ignored_placeholders: false,
+                }),
+            },
+        )
+        .expect("write config");
+    }
+
+    fn collect_markdown_rel_paths(tmp: &TempDir, root: &Path) -> Vec<String> {
+        let policy = TreeIgnorePolicy::from_space_root(tmp.path());
+        let mut rels = collect_markdown_paths(tmp.path(), root, &policy)
+            .expect("collect markdown paths")
+            .into_iter()
+            .map(|path| {
+                path.strip_prefix(tmp.path())
+                    .expect("relative path")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect::<Vec<_>>();
+        rels.sort();
+        rels
+    }
 
     #[test]
     fn parses_git_rename_suggestion_z_with_spaces_and_cyrillic() {
@@ -2531,5 +2819,34 @@ mod tests {
         let parsed = parse_git_rename_suggestion_z(output, "docs/старое имя.md").unwrap();
 
         assert_eq!(parsed, ("docs/new name.md".to_string(), 1710000000));
+    }
+
+    #[test]
+    fn targeted_markdown_collection_uses_tree_ignore_policy() {
+        let tmp = TempDir::new().unwrap();
+        write_tree_config(&tmp, vec!["node_modules"], vec![]);
+        std::fs::create_dir_all(tmp.path().join("docs").join(".cache")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("node_modules").join("pkg")).unwrap();
+        std::fs::write(tmp.path().join("docs").join("keep.md"), "keep").unwrap();
+        std::fs::write(tmp.path().join("docs").join(".notes.md"), "notes").unwrap();
+        std::fs::write(
+            tmp.path().join("docs").join(".cache").join("hidden.md"),
+            "hidden",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path()
+                .join("node_modules")
+                .join("pkg")
+                .join("README.md"),
+            "ignored",
+        )
+        .unwrap();
+
+        assert_eq!(
+            collect_markdown_rel_paths(&tmp, &tmp.path().join("docs")),
+            vec!["docs/.notes.md".to_string(), "docs/keep.md".to_string()]
+        );
+        assert!(collect_markdown_rel_paths(&tmp, &tmp.path().join("node_modules")).is_empty());
     }
 }

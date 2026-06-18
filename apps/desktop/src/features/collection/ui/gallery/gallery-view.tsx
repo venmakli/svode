@@ -98,7 +98,7 @@ export function GalleryView({
   const cardRefs = useRef(new Map<string, HTMLElement>());
   const { persons, loadPersons } = useCollectionPersons(spacePath);
   const queryArgs = useStableViewQueryArgs(filters, sort);
-  const refreshTree = useSpaceStore((state) => state.refreshTree);
+  const reloadTreeParent = useSpaceStore((state) => state.reloadTreeParent);
   const sidebarSpaceId = useSpaceStore((state) => {
     const space =
       state.spaces.find((item) => item.path === spacePath) ??
@@ -237,7 +237,8 @@ export function GalleryView({
       setDraftOpen(false);
       setDraftValue("");
       setEntries((current) => [...current, created]);
-      if (sidebarSpaceId) await refreshTree(sidebarSpaceId);
+      if (sidebarSpaceId)
+        await reloadTreeParent(sidebarSpaceId, collectionPath);
       await loadEntries();
       focusCard(created.path);
     } catch (error) {
@@ -309,7 +310,8 @@ export function GalleryView({
         entries: nextEntries,
         projectPath,
       });
-      if (sidebarSpaceId) await refreshTree(sidebarSpaceId);
+      if (sidebarSpaceId)
+        await reloadTreeParent(sidebarSpaceId, collectionPath);
       await loadEntries();
     } catch (error) {
       console.warn("Failed to reorder gallery entries:", error);

@@ -140,7 +140,7 @@ export function NavSpaces({
     clearActiveSpace,
     deleteSpace,
     createEntry,
-    refreshTree,
+    reloadTreeParent,
     ensureTreeLoaded,
     loadTreeChildren,
     loadSpaces,
@@ -294,7 +294,7 @@ export function NavSpaces({
         name: m.space_new_folder(),
         projectPath: rootPath,
       });
-      await refreshTree(scope.id);
+      await reloadTreeParent(scope.id, null);
     } catch (err) {
       console.error("Failed to create folder:", err);
       toast.error(m.toast_error());
@@ -308,7 +308,7 @@ export function NavSpaces({
         title: m.editor_untitled(),
         projectPath: activeRootPath,
       });
-      await refreshTree(scope.id);
+      await reloadTreeParent(scope.id, null);
       onActivateContent();
       openDocument(entry.path, scope.id);
     } catch (err) {

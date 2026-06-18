@@ -100,7 +100,7 @@ export function BoardView({
       state.rootSpaces.find((item) => item.path === spacePath);
     return space?.id ?? null;
   });
-  const refreshTree = useSpaceStore((state) => state.refreshTree);
+  const reloadTreeParent = useSpaceStore((state) => state.reloadTreeParent);
   const groupBy = query.merged.groupBy;
   const groupColumn = useMemo(
     () => schema.columns.find((column) => column.name === groupBy) ?? null,
@@ -347,7 +347,8 @@ export function BoardView({
           nextOrderTopLevel,
           projectPath,
         );
-        if (sidebarSpaceId) await refreshTree(sidebarSpaceId);
+        if (sidebarSpaceId)
+          await reloadTreeParent(sidebarSpaceId, collectionPath);
       }
       await loadEntries();
     } catch (error) {

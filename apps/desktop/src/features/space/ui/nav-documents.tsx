@@ -28,7 +28,7 @@ export function NavDocuments() {
     activeRootPath,
     fileTrees,
     createEntry,
-    refreshTree,
+    reloadTreeParent,
     loadTreeChildren,
   } = useSpaceStore();
   const { openDocument } = useEntrySelectionStore();
@@ -59,7 +59,7 @@ export function NavDocuments() {
         name: m.space_new_folder(),
         projectPath: activeRootPath,
       });
-      await refreshTree(activeRootId);
+      await reloadTreeParent(activeRootId, null);
     } catch (err) {
       console.error("Failed to create folder:", err);
       toast.error(m.toast_error());
@@ -74,7 +74,7 @@ export function NavDocuments() {
         title: m.editor_untitled(),
         projectPath: activeRootPath,
       });
-      await refreshTree(activeRootId);
+      await reloadTreeParent(activeRootId, null);
       openDocument(entry.path, activeRootId);
     } catch (err) {
       console.error("Failed to create collection:", err);

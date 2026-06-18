@@ -158,3 +158,108 @@ pub async fn reindex_after_pull(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index::search::search_fts;
+    use tempfile::TempDir;
+
+    async fn indexed_pool(state: &IndexState, space: &Path) -> SqlitePool {
+        state
+            .get_or_create(&IndexKey::Root(space.to_path_buf()))
+            .await
+            .expect("index pool")
+    }
+
+    #[tokio::test]
+    async fn targeted_update_refreshes_fts_content() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let state = IndexState::new();
+        let file = space.join("note.md");
+
+        std::fs::write(&file, "alpha searchable body").unwrap();
+        update_entry(&state, space, &file).await.unwrap();
+
+        let pool = indexed_pool(&state, space).await;
+        let alpha_rows = search_fts(&pool, "alpha", None, None, 10).await.unwrap();
+        assert_eq!(alpha_rows.len(), 1);
+        assert_eq!(alpha_rows[0].path, "note.md");
+
+        std::fs::write(&file, "beta searchable body").unwrap();
+        update_entry(&state, space, &file).await.unwrap();
+
+        let alpha_rows = search_fts(&pool, "alpha", None, None, 10).await.unwrap();
+        let beta_rows = search_fts(&pool, "beta", None, None, 10).await.unwrap();
+        assert!(alpha_rows.is_empty());
+        assert_eq!(beta_rows.len(), 1);
+        assert_eq!(beta_rows[0].path, "note.md");
+    }
+
+    #[tokio::test]
+    async fn targeted_delete_removes_entry_and_fts_row() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let state = IndexState::new();
+        let file = space.join("obsolete.md");
+
+        std::fs::write(&file, "stale searchable body").unwrap();
+        update_entry(&state, space, &file).await.unwrap();
+
+        let pool = indexed_pool(&state, space).await;
+        let stale_rows = search_fts(&pool, "stale", None, None, 10).await.unwrap();
+        assert_eq!(stale_rows.len(), 1);
+
+        std::fs::remove_file(&file).unwrap();
+        delete_entry(&state, space, &file).await.unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entries WHERE file_path = ?")
+            .bind("obsolete.md")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let stale_rows = search_fts(&pool, "stale", None, None, 10).await.unwrap();
+        assert_eq!(count, 0);
+        assert!(stale_rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn targeted_update_recomputes_collection_membership() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let state = IndexState::new();
+        let collection_dir = space.join("tasks");
+        std::fs::create_dir_all(&collection_dir).unwrap();
+        let file = collection_dir.join("item.md");
+
+        std::fs::write(&file, "task body").unwrap();
+        update_entry(&state, space, &file).await.unwrap();
+
+        let pool = indexed_pool(&state, space).await;
+        let before: (Option<String>, i64) = sqlx::query_as(
+            "SELECT collection_root_path, in_collection FROM entries WHERE file_path = ?",
+        )
+        .bind("tasks/item.md")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(before, (None, 0));
+
+        std::fs::write(
+            collection_dir.join("schema.yaml"),
+            "columns: []\nviews: []\n",
+        )
+        .unwrap();
+        update_entry(&state, space, &file).await.unwrap();
+
+        let after: (Option<String>, i64) = sqlx::query_as(
+            "SELECT collection_root_path, in_collection FROM entries WHERE file_path = ?",
+        )
+        .bind("tasks/item.md")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(after, (Some("tasks".to_string()), 1));
+    }
+}

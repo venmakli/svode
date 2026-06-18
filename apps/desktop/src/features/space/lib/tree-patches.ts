@@ -30,6 +30,32 @@ export function isReadmePath(path: string): boolean {
   return basename(path).toLowerCase() === "readme.md";
 }
 
+const SYSTEM_TREE_EXCLUDES = new Set([
+  ".git",
+  ".svode",
+  ".assets",
+  ".templates",
+]);
+
+export function isSystemIgnoredTreePath(path: string | null | undefined) {
+  const normalized = normalizeTreePath(path);
+  if (!normalized) return false;
+  const segments = normalized.split("/").filter(Boolean);
+  return segments.some((segment, index) => {
+    if (SYSTEM_TREE_EXCLUDES.has(segment)) return true;
+    if (!segment.startsWith(".")) return false;
+    const isLast = index === segments.length - 1;
+    return !isLast || !segment.toLowerCase().endsWith(".md");
+  });
+}
+
+export function treeRowParentPath(path: string | null | undefined) {
+  const normalized = normalizeTreePath(path);
+  if (!normalized || isSystemIgnoredTreePath(normalized)) return null;
+  const rowPath = isReadmePath(normalized) ? dirname(normalized) : normalized;
+  return dirname(rowPath);
+}
+
 function isReadmeNodePath(path: string): boolean {
   return /(^|\/)readme\.md$/i.test(normalizeTreePath(path));
 }

@@ -59,7 +59,6 @@ export function EntryDetailActions({
   onSetTemplateDefault,
   onDuplicateTemplate,
 }: EntryDetailActionsProps) {
-  const refreshTree = useSpaceStore((state) => state.refreshTree);
   const [state, setState] = useState<{
     path: string;
     detail: EntryDetailState;
@@ -89,6 +88,10 @@ export function EntryDetailActions({
   }, [entry.path, spacePath]);
 
   const form = currentState?.form ?? inferEntryDetailState(entry.path).form;
+  const reloadTreeParent = useSpaceStore((state) => state.reloadTreeParent);
+  const reloadTreePathParents = useSpaceStore(
+    (state) => state.reloadTreePathParents,
+  );
   const leafDisabledReason = useMemo(() => {
     if (!currentState || form !== "folder") return null;
     const blocked =
@@ -100,8 +103,8 @@ export function EntryDetailActions({
     });
   }, [currentState, form]);
 
-  async function refreshDetail(path: string) {
-    await refreshTree(spaceId);
+  async function refreshDetail(path: string, changedPaths: string[] = [path]) {
+    await reloadTreePathParents(spaceId, changedPaths);
     const [nextEntry, nextState] = await Promise.all([
       invoke<Entry>("read_entry", { space: spacePath, path }),
       invoke<EntryDetailState>("get_entry_detail_state", {
@@ -130,7 +133,8 @@ export function EntryDetailActions({
       contextualDefaults: null,
       projectPath: projectPath ?? null,
     });
-    await refreshTree(spaceId);
+    await reloadTreePathParents(spaceId, [entry.path, folderEntry.path]);
+    await reloadTreeParent(spaceId, parentPath);
     setState({
       path: folderEntry.path,
       detail: { form: "folder", subpageCount: 0, otherFileCount: 0 },
@@ -145,7 +149,7 @@ export function EntryDetailActions({
       entryId: entry.meta.id,
       projectPath: projectPath ?? null,
     });
-    await refreshTree(spaceId);
+    await reloadTreePathParents(spaceId, [entry.path, next.path]);
     setState({
       path: next.path,
       detail: { form: "leaf", subpageCount: 0, otherFileCount: 0 },
@@ -159,7 +163,7 @@ export function EntryDetailActions({
       entryId: entry.meta.id,
       projectPath: projectPath ?? null,
     });
-    const next = await refreshDetail(entry.path);
+    const next = await refreshDetail(entry.path, [entry.path]);
     onConverted?.(next, true);
   }
 

@@ -93,7 +93,7 @@ export function TableView({
       state.rootSpaces.find((item) => item.path === spacePath);
     return space?.id ?? null;
   });
-  const refreshTree = useSpaceStore((state) => state.refreshTree);
+  const reloadTreeParent = useSpaceStore((state) => state.reloadTreeParent);
   const showNested = showNestedForView(view);
   const density =
     view.density === "compact" || view.density === "spacious"
@@ -417,7 +417,7 @@ export function TableView({
       return [...fullOrder, ...children];
     });
     if (sidebarSpaceId) {
-      await refreshTree(sidebarSpaceId);
+      await reloadTreeParent(sidebarSpaceId, collectionPath);
     }
   }
 

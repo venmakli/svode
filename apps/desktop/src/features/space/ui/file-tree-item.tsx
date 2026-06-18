@@ -97,7 +97,11 @@ export function FileTreeItem({
     expandedPaths,
     treeParentLoading,
     toggleExpanded,
-    refreshTree,
+    reloadTreeParent,
+    reloadTreeParents,
+    reloadTreePathParent,
+    patchEntryTreeMeta,
+    removeTreePath,
     spaces,
     rootSpaces,
     activeSpaceId,
@@ -208,16 +212,14 @@ export function FileTreeItem({
           for (const f of modifiedFiles) editor.markStale(f);
           editor.suppressPaths(modifiedFiles);
         }
+        removeTreePath(spaceId, node.path);
+        await reloadTreeParents(spaceId, [parent]);
       } else {
         // Title-edit only: file rename + backlinks are deferred to ⌘S (unified with editor-title-edit).
-        const entry = await invoke<{
-          meta: {
-            id: string;
-            icon: string | null;
-            extra: Record<string, unknown>;
-          };
-          body: string;
-        }>("read_entry", { space: space.path, path: node.path });
+        const entry = await invoke<Entry>("read_entry", {
+          space: space.path,
+          path: node.path,
+        });
         const result = await invoke<{ new_path: string | null }>(
           "write_entry",
           {
@@ -239,8 +241,14 @@ export function FileTreeItem({
             .getState()
             .requestRename(node.path, newName, result.new_path);
         }
+        patchEntryTreeMeta(
+          spaceId,
+          result.new_path ?? node.path,
+          newName,
+          entry.meta.icon,
+          entry.meta.description ?? null,
+        );
       }
-      await refreshTree(spaceId);
     } catch (err) {
       console.error("Failed to rename:", err);
       toast.error(m.toast_error());
@@ -312,7 +320,11 @@ export function FileTreeItem({
         title: String(m.editor_untitled()),
         projectPath: activeRootPath,
       });
-      await refreshTree(spaceId);
+      if (parentNodePath !== node.path) {
+        removeTreePath(spaceId, node.path);
+        await reloadTreePathParent(spaceId, node.path);
+      }
+      await reloadTreeParent(spaceId, parentPath);
       // Expand the parent so the new child is visible
       if (!expandedPaths[spaceId]?.includes(parentNodePath)) {
         toggleExpanded(spaceId, parentNodePath);
@@ -344,7 +356,8 @@ export function FileTreeItem({
           projectPath: activeRootPath,
         });
       }
-      await refreshTree(spaceId);
+      await reloadTreePathParent(spaceId, node.path);
+      await reloadTreeParent(spaceId, node.path);
       openDocument(readmePath, spaceId);
     } catch (err) {
       console.error("Failed to make document:", err);
@@ -361,7 +374,8 @@ export function FileTreeItem({
           folderPath: node.path,
           projectPath: activeRootPath,
         });
-        await refreshTree(spaceId);
+        await reloadTreePathParent(spaceId, node.path);
+        await reloadTreeParent(spaceId, node.path);
         openDocument(entry.path, spaceId);
         return;
       }
@@ -383,7 +397,11 @@ export function FileTreeItem({
         entryId: readmeEntry.meta.id,
         projectPath: activeRootPath,
       });
-      await refreshTree(spaceId);
+      await reloadTreePathParent(spaceId, node.path);
+      await reloadTreeParent(
+        spaceId,
+        readmeEntry.path.replace(/\/readme\.md$/i, ""),
+      );
       openDocument(readmeEntry.path, spaceId);
     } catch (err) {
       console.error("Failed to make collection:", err);
@@ -418,7 +436,11 @@ export function FileTreeItem({
         name: m.space_new_folder(),
         projectPath: activeRootPath,
       });
-      await refreshTree(spaceId);
+      if (parentNodePath !== node.path) {
+        removeTreePath(spaceId, node.path);
+        await reloadTreePathParent(spaceId, node.path);
+      }
+      await reloadTreeParent(spaceId, parentPath);
       if (!expandedPaths[spaceId]?.includes(parentNodePath)) {
         toggleExpanded(spaceId, parentNodePath);
       }
@@ -452,7 +474,8 @@ export function FileTreeItem({
         path: node.path,
         projectPath: activeRootPath,
       });
-      await refreshTree(spaceId);
+      removeTreePath(spaceId, node.path);
+      await reloadTreePathParent(spaceId, node.path);
     } catch (err) {
       console.error("Failed to delete entry:", err);
       toast.error(m.toast_error());

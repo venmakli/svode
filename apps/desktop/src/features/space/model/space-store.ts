@@ -30,8 +30,11 @@ import { useEntrySelectionStore, type TreeNode } from "@/features/entry";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 import {
   applyReadmeMeta as applyReadmeMetaPatch,
+  isReadmePath,
+  isSystemIgnoredTreePath,
   removeReadmeMeta as removeReadmeMetaPatch,
   removeTreePath as removeTreePathPatch,
+  treeRowParentPath,
   updateTreeFolderSchema,
   updateTreeNodeMeta,
   upsertTreeNode as upsertTreeNodePatch,
@@ -117,6 +120,8 @@ interface SpaceState {
   // Document/tree methods
   createEntry: (spacePath: string, title: string) => Promise<EntryDto | null>;
   createPage: (spacePath: string, title: string) => Promise<EntryDto | null>;
+  // Full recursive repair fallback only. Ordinary UI mutations should use
+  // parent-level reload/patch helpers below.
   refreshTree: (
     spaceId?: string,
     options?: RefreshTreeOptions,
@@ -127,6 +132,23 @@ interface SpaceState {
     parentPath?: string | null,
     options?: LoadTreeChildrenOptions,
   ) => Promise<void>;
+  reloadTreeParent: (
+    spaceId: string,
+    parentPath?: string | null,
+  ) => Promise<void>;
+  reloadTreeParents: (
+    spaceId: string,
+    parentPaths: Array<string | null | undefined>,
+  ) => Promise<void>;
+  reloadTreePathParent: (spaceId: string, path: string) => Promise<void>;
+  reloadTreePathParents: (spaceId: string, paths: string[]) => Promise<void>;
+  patchEntryTreeMeta: (
+    spaceId: string,
+    path: string,
+    title: string,
+    icon: string | null,
+    description?: string | null,
+  ) => void;
   updateNodeMeta: (
     spaceId: string,
     path: string,
@@ -229,6 +251,26 @@ function withoutRecordKey<T>(record: Record<string, T>, key: string) {
 }
 
 const TREE_CACHE_TTL_MS = 2 * 60 * 1000;
+const EXPANDED_TREE_LOAD_CONCURRENCY = 4;
+
+async function runLimited<T>(
+  items: T[],
+  limit: number,
+  task: (item: T) => Promise<void>,
+) {
+  const queue = [...items];
+  const workers = Array.from(
+    { length: Math.min(limit, queue.length) },
+    async () => {
+      while (queue.length > 0) {
+        const item = queue.shift();
+        if (item === undefined) return;
+        await task(item);
+      }
+    },
+  );
+  await Promise.all(workers);
+}
 
 function shouldValidateTree(state: SpaceState, spaceId: string): boolean {
   if (
@@ -575,7 +617,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
         (w) => w.path === spacePath,
       );
       if (ws) {
-        await get().refreshTree(ws.id);
+        await get().reloadTreeParent(ws.id, ROOT_TREE_PARENT);
       }
       toast.success(m.toast_page_created());
       return entry;
@@ -589,6 +631,8 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   createPage: async (spacePath: string, title: string) =>
     get().createEntry(spacePath, title),
 
+  // Full recursive repair fallback for manual/debug recovery paths. Do not
+  // call from ordinary create/rename/delete/reorder flows.
   refreshTree: async (spaceId?: string, options?: RefreshTreeOptions) => {
     const id = spaceId ?? get().activeSpaceId ?? get().activeRootId;
     if (!id) return;
@@ -643,7 +687,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
           ? { treeRefreshing: withoutRecordKey(s.treeRefreshing, id) }
           : { treeLoading: withoutRecordKey(s.treeLoading, id) },
       );
-      logTiming("tree.refresh", startedAt, {
+      logTiming("tree.refresh.repair", startedAt, {
         spaceId: id,
         status,
         nodeCount,
@@ -652,19 +696,34 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   },
 
   ensureTreeLoaded: async (spaceId: string) => {
+    const initialSpacePath = findSpacePath(get(), spaceId);
+    if (!initialSpacePath) return;
+
     if (!hasRecordKey(get().expandedPaths, spaceId)) {
       await get().loadExpandedPaths(spaceId);
     }
+
+    if (findSpacePath(get(), spaceId) !== initialSpacePath) return;
 
     if (shouldValidateTreeParent(get(), spaceId, ROOT_TREE_PARENT)) {
       await get().loadTreeChildren(spaceId, ROOT_TREE_PARENT);
     }
 
+    if (findSpacePath(get(), spaceId) !== initialSpacePath) return;
+
     const expanded = get().expandedPaths[spaceId] ?? [];
-    await Promise.all(
-      expanded
-        .filter((path) => shouldValidateTreeParent(get(), spaceId, path))
-        .map((path) => get().loadTreeChildren(spaceId, path)),
+    const parentsToLoad = expanded.filter(
+      (path) =>
+        !isSystemIgnoredTreePath(path) &&
+        shouldValidateTreeParent(get(), spaceId, path),
+    );
+    await runLimited(
+      parentsToLoad,
+      EXPANDED_TREE_LOAD_CONCURRENCY,
+      async (path) => {
+        if (findSpacePath(get(), spaceId) !== initialSpacePath) return;
+        await get().loadTreeChildren(spaceId, path);
+      },
     );
   },
 
@@ -764,12 +823,52 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
           },
         };
       });
-      logTiming("tree.refresh", startedAt, {
+      logTiming("tree.children", startedAt, {
         spaceId,
         parentScope: parentKey ? "child" : "root",
         status,
         nodeCount,
       });
+    }
+  },
+
+  reloadTreeParent: async (spaceId, parentPath) => {
+    const parentKey = treeParentKey(parentPath);
+    get().markTreeParentDirty(spaceId, parentKey);
+    await get().loadTreeChildren(spaceId, parentKey, { force: true });
+  },
+
+  reloadTreeParents: async (spaceId, parentPaths) => {
+    const seen = new Set<string>();
+    for (const parentPath of parentPaths) {
+      if (parentPath === undefined) continue;
+      const parentKey = treeParentKey(parentPath);
+      if (seen.has(parentKey)) continue;
+      seen.add(parentKey);
+      await get().reloadTreeParent(spaceId, parentKey);
+    }
+  },
+
+  reloadTreePathParent: async (spaceId, path) => {
+    const parentPath = treeRowParentPath(path);
+    if (parentPath === null) return;
+    await get().reloadTreeParent(spaceId, parentPath);
+  },
+
+  reloadTreePathParents: async (spaceId, paths) => {
+    await get().reloadTreeParents(
+      spaceId,
+      paths
+        .map((path) => treeRowParentPath(path))
+        .filter((path): path is string => path !== null),
+    );
+  },
+
+  patchEntryTreeMeta: (spaceId, path, title, icon, description) => {
+    if (isReadmePath(path)) {
+      get().applyReadmeMeta(spaceId, path, title, icon, description);
+    } else {
+      get().updateNodeMeta(spaceId, path, title, icon, description);
     }
   },
 
@@ -1126,13 +1225,16 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   moveEntry: async (spaceId: string, from: string, toParent: string) => {
     const spacePath = findSpacePath(get(), spaceId);
     if (!spacePath) throw new Error("Space not found");
+    const oldParent = treeRowParentPath(from);
     const newPath = await moveEntryNative({
       space: spacePath,
       from,
       toParent,
       projectPath: get().activeRootPath,
     });
-    await get().refreshTree(spaceId);
+    const newParent = treeRowParentPath(newPath);
+    get().removeTreePath(spaceId, from);
+    await get().reloadTreeParents(spaceId, [oldParent, newParent, toParent]);
     return newPath;
   },
 
