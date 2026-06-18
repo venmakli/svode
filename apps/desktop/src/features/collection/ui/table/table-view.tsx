@@ -15,8 +15,9 @@ import {
   useStableViewQueryArgs,
   type CollectionView,
 } from "@/features/collection/query";
-import type { Entry } from "@/features/entry";
+import { useEntryFieldSave, type Entry } from "@/features/entry";
 import { normalizeSchema } from "@/features/properties";
+import { propertyFieldSavePolicy } from "@/features/properties";
 import { useSpaceStore } from "@/features/space/model";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
 import type {
@@ -271,38 +272,38 @@ export function TableView({
     });
   }, [createAsFolder, createFocusSignal]);
 
-  const commitField = useCallback(
-    async (entry: Entry, column: Column, value: unknown) => {
+  const applyEntryUpdate = useCallback(
+    (entryPath: string, update: (entry: Entry) => Entry) => {
       setEntries((current) =>
-        current.map((item) =>
-          item.path === entry.path
-            ? {
-                ...item,
-                meta: {
-                  ...item.meta,
-                  extra: { ...item.meta.extra, [column.name]: value },
-                },
-              }
-            : item,
-        ),
+        current.map((item) => (item.path === entryPath ? update(item) : item)),
       );
+    },
+    [],
+  );
+  const saveEntryField = useEntryFieldSave({
+    spacePath,
+    projectPath,
+    applyEntryUpdate,
+  });
+
+  const commitField = useCallback(
+    async (
+      entry: Entry,
+      column: Column,
+      value: unknown,
+      options?: { flush?: boolean },
+    ) => {
       try {
-        const updated = await invoke<Entry>("update_entry_field", {
-          space: spacePath,
-          filePath: entry.path,
-          field: column.name,
-          value,
-          projectPath: projectPath ?? null,
+        await saveEntryField(entry, column.name, value, {
+          policy: propertyFieldSavePolicy(column),
+          flush: options?.flush,
         });
-        setEntries((current) =>
-          current.map((item) => (item.path === entry.path ? updated : item)),
-        );
       } catch (saveError) {
         console.warn("Failed to update table field:", saveError);
         void loadEntries();
       }
     },
-    [loadEntries, projectPath, spacePath],
+    [loadEntries, saveEntryField],
   );
 
   const updateViewPatch = useCallback(

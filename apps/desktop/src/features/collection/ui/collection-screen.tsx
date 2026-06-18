@@ -17,17 +17,20 @@ import { TitleZone } from "@/features/editor";
 import { PlateDocumentEditor } from "@/features/editor";
 import { PropertyPanel } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
-import type { EntrySchemaResult } from "@/features/properties";
+import {
+  propertyFieldSavePolicy,
+  type EntrySchemaResult,
+} from "@/features/properties";
 import {
   detailPageHeaderClassName,
   detailPageToolbarClassName,
 } from "@/shared/ui/page-layout";
+import { isEntryTreeMetaField, useEntryFieldSave } from "@/features/entry";
 import { useEntrySelectionStore } from "@/features/entry";
 import { useSpaceStore } from "@/features/space/model";
 import { useViewQuery } from "@/features/collection/query";
 import { DeleteDialogs } from "./delete-dialogs";
 import { EntryDetailActions } from "./entry-detail-actions";
-import { useDebouncedEntryFieldUpdate } from "./entry-detail-fields";
 import { EntrySystemFields } from "./entry-system-fields";
 import { DocumentSettings } from "./document-settings-popover";
 import { EntryPeekSheet, type EntryPeekTarget } from "./entry-peek-sheet";
@@ -168,18 +171,28 @@ export function CollectionScreen({
     asFolder: false,
   });
   const initializedCollectionRef = useRef<string | null>(null);
-  const updateReadmeField = useDebouncedEntryFieldUpdate({
+  const applyReadmeEntryUpdate = useCallback(
+    (entryPath: string, update: (entry: Entry) => Entry) => {
+      setEntry((current) =>
+        current && current.path === entryPath ? update(current) : current,
+      );
+    },
+    [],
+  );
+  const updateReadmeField = useEntryFieldSave({
     spacePath,
     projectPath,
-    setEntry,
-    onSaved: (updated) => {
-      patchEntryTreeMeta(
-        spaceId,
-        readmePath,
-        updated.meta.title,
-        updated.meta.icon,
-        updated.meta.description ?? null,
-      );
+    applyEntryUpdate: applyReadmeEntryUpdate,
+    onSaved: (updated, context) => {
+      if (isEntryTreeMetaField(context.field)) {
+        patchEntryTreeMeta(
+          spaceId,
+          readmePath,
+          updated.meta.title,
+          updated.meta.icon,
+          updated.meta.description ?? null,
+        );
+      }
     },
   });
 
@@ -354,14 +367,7 @@ export function CollectionScreen({
     if (!hasReadme) {
       const created = await createReadmeForIdentity();
       if (!created) return;
-      const updated = await invoke<Entry>("update_entry_field", {
-        space: spacePath,
-        filePath: readmePath,
-        field,
-        value,
-        projectPath: projectPath ?? null,
-      });
-      setEntry(updated);
+      await updateReadmeField(created, field, value, { flush: true });
       return;
     }
     if (!entry) return;
@@ -370,19 +376,8 @@ export function CollectionScreen({
 
   async function updateCover(nextCover: EntryCover | null) {
     if (!hasReadme) return;
-    setEntry((current) =>
-      current
-        ? { ...current, meta: { ...current.meta, cover: nextCover } }
-        : current,
-    );
-    const updated = await invoke<Entry>("update_entry_field", {
-      space: spacePath,
-      filePath: readmePath,
-      field: "cover",
-      value: nextCover,
-      projectPath: projectPath ?? null,
-    });
-    setEntry(updated);
+    if (!entry) return;
+    await updateReadmeField(entry, "cover", nextCover);
   }
 
   async function addView(type: ViewType = "table") {
@@ -1024,14 +1019,12 @@ export function CollectionScreen({
               values={entry.meta.extra ?? {}}
               mode="full"
               onValueChange={async (field, value) => {
-                const updated = await invoke<Entry>("update_entry_field", {
-                  space: spacePath,
-                  filePath: readmePath,
-                  field,
-                  value,
-                  projectPath: projectPath ?? null,
+                const column = propertiesSchema.schema.columns.find(
+                  (item) => item.name === field,
+                );
+                await updateReadmeField(entry, field, value, {
+                  policy: column ? propertyFieldSavePolicy(column) : undefined,
                 });
-                setEntry(updated);
               }}
             />
           </div>

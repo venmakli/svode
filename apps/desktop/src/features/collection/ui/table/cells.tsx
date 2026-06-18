@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Database, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -157,9 +157,6 @@ function DebouncedTextEditor({
   const [draft, setDraft] = useState(valueToString(value));
   const [initial] = useState(() => valueToString(value));
   const cancelled = useRef(false);
-  const changed = draft !== initial;
-
-  useDebouncedCommit(changed ? draft || null : undefined, onDraftCommit);
 
   return (
     <Input
@@ -167,7 +164,11 @@ function DebouncedTextEditor({
       value={draft}
       aria-invalid={invalid || undefined}
       className="h-7"
-      onChange={(event) => setDraft(event.target.value)}
+      onChange={(event) => {
+        const next = event.target.value;
+        setDraft(next);
+        if (next !== initial) onDraftCommit(next || null);
+      }}
       onBlur={() => {
         if (!cancelled.current) onFinalCommit(draft || null);
       }}
@@ -205,10 +206,7 @@ function DebouncedNumberEditor({
   const numeric = Number(draft);
   const parsed =
     draft.trim() === "" ? null : Number.isFinite(numeric) ? numeric : undefined;
-  const changed = draft !== initial;
   const display = column.display ?? "number";
-
-  useDebouncedCommit(changed ? parsed : undefined, onDraftCommit);
 
   return (
     <div className="flex w-full flex-col gap-1">
@@ -218,7 +216,22 @@ function DebouncedNumberEditor({
         value={draft}
         aria-invalid={invalid || parsed === undefined || undefined}
         className="h-7"
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => {
+          const next = event.target.value;
+          setDraft(next);
+          const nextNumber = Number(next);
+          const nextParsed =
+            next.trim() === ""
+              ? null
+              : Number.isFinite(nextNumber)
+                ? nextNumber
+                : undefined;
+          if (next !== initial) {
+            onDraftCommit(
+              nextParsed !== undefined ? nextParsed : parseNumberDraft(initial),
+            );
+          }
+        }}
         onBlur={() => {
           if (!cancelled.current && parsed !== undefined) onFinalCommit(parsed);
         }}
@@ -237,17 +250,6 @@ function DebouncedNumberEditor({
       ) : null}
     </div>
   );
-}
-
-function useDebouncedCommit(
-  value: unknown,
-  onCommit: (value: unknown) => void,
-) {
-  useEffect(() => {
-    if (value === undefined) return undefined;
-    const timer = window.setTimeout(() => onCommit(value), 500);
-    return () => window.clearTimeout(timer);
-  }, [onCommit, value]);
 }
 
 function parseNumberDraft(value: string) {

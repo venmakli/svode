@@ -73,7 +73,12 @@ export function useTableColumns({
   onOpenNestedCollection: (entry: Entry) => void;
   onOpenFullPage: (entry: Entry) => void;
   onRequestPersons: (allTime: boolean) => Promise<Person[]>;
-  onCommitField: (entry: Entry, column: Column, value: unknown) => void;
+  onCommitField: (
+    entry: Entry,
+    column: Column,
+    value: unknown,
+    options?: { flush?: boolean },
+  ) => void;
 }) {
   return useMemo<ColumnDef<CollectionTableRow>[]>(
     () =>
@@ -211,7 +216,9 @@ export function useTableColumns({
                 onCancel={() => setEditing(null)}
                 onCommit={(value, options) => {
                   if (options?.close !== false) setEditing(null);
-                  onCommitField(row.original.entry, property, value);
+                  onCommitField(row.original.entry, property, value, {
+                    flush: options?.close === true,
+                  });
                 }}
               />
             ) : (

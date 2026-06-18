@@ -60,25 +60,3 @@ export function addCollectionDateColumn({
     projectPath: projectPath ?? null,
   });
 }
-
-export function updateCollectionEntryField({
-  spacePath,
-  filePath,
-  field,
-  value,
-  projectPath,
-}: {
-  spacePath: string;
-  filePath: string;
-  field: string;
-  value: unknown;
-  projectPath?: string | null;
-}) {
-  return invoke<Entry>("update_entry_field", {
-    space: spacePath,
-    filePath,
-    field,
-    value,
-    projectPath: projectPath ?? null,
-  });
-}

@@ -34,15 +34,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useStableViewQueryArgs } from "@/features/collection/query";
-import type { Entry } from "@/features/entry";
-import type { Column } from "@/features/properties";
+import { useEntryFieldSave, type Entry } from "@/features/entry";
+import { propertyFieldSavePolicy, type Column } from "@/features/properties";
 import { useSpaceStore } from "@/features/space/model";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import {
   listCollectionInfos,
   queryCollectionEntries,
   saveCollectionTreeOrder,
-  updateCollectionEntryField,
 } from "../../api";
 import { useCollectionPersons } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
@@ -192,37 +191,32 @@ export function GalleryView({
     });
   }, [createAsFolder, createFocusSignal]);
 
+  const applyEntryUpdate = useCallback(
+    (entryPath: string, update: (entry: Entry) => Entry) => {
+      setEntries((current) =>
+        current.map((item) => (item.path === entryPath ? update(item) : item)),
+      );
+    },
+    [],
+  );
+  const saveEntryField = useEntryFieldSave({
+    spacePath,
+    projectPath,
+    applyEntryUpdate,
+  });
+
   const commitField = useCallback(
     async (entry: Entry, column: Column, value: unknown) => {
-      const applyValue = (item: Entry) => {
-        const extra = { ...item.meta.extra };
-        if (isClearedPropertyValue(value)) delete extra[column.name];
-        else extra[column.name] = value;
-        return { ...item, meta: { ...item.meta, extra } };
-      };
-
-      setEntries((current) =>
-        current.map((item) =>
-          item.path === entry.path ? applyValue(item) : item,
-        ),
-      );
       try {
-        const updated = await updateCollectionEntryField({
-          spacePath,
-          filePath: entry.path,
-          field: column.name,
-          value,
-          projectPath,
+        await saveEntryField(entry, column.name, value, {
+          policy: propertyFieldSavePolicy(column),
         });
-        setEntries((current) =>
-          current.map((item) => (item.path === entry.path ? updated : item)),
-        );
       } catch (error) {
         console.warn("Failed to update gallery field:", error);
         void loadEntries();
       }
     },
-    [loadEntries, projectPath, spacePath],
+    [loadEntries, saveEntryField],
   );
 
   async function createDraft() {
@@ -543,14 +537,5 @@ function GallerySkeleton({ cardWidth }: { cardWidth: number }) {
         ))}
       </div>
     </div>
-  );
-}
-
-function isClearedPropertyValue(value: unknown) {
-  return (
-    value === null ||
-    value === undefined ||
-    value === "" ||
-    (Array.isArray(value) && value.length === 0)
   );
 }

@@ -49,6 +49,16 @@ export function readEntry(space: string, path: string): Promise<EntryDto> {
   return invokeCommand<EntryDto>("read_entry", { space, path });
 }
 
+export function updateEntryField(input: {
+  space: string;
+  filePath: string;
+  field: string;
+  value: unknown;
+  projectPath: string | null;
+}): Promise<EntryDto> {
+  return invokeCommand<EntryDto>("update_entry_field", { ...input });
+}
+
 export function validateLinks(input: {
   space: string;
   path: string;

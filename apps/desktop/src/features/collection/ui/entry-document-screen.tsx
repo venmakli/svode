@@ -4,10 +4,18 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EntryIdentityHeader } from "@/features/editor";
 import { PlateDocumentEditor } from "@/features/editor";
-import type { Entry, EntryCover } from "@/features/entry";
+import {
+  isEntryTreeMetaField,
+  useEntryFieldSave,
+  type Entry,
+  type EntryCover,
+} from "@/features/entry";
 import { PropertyPanel } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
-import type { EntrySchemaResult } from "@/features/properties";
+import {
+  propertyFieldSavePolicy,
+  type EntrySchemaResult,
+} from "@/features/properties";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
 import { useEntrySelectionStore } from "@/features/entry";
 import { useSpaceStore } from "@/features/space/model";
@@ -18,7 +26,6 @@ import {
   EntryDetailActions,
   type EntryDetailState,
 } from "./entry-detail-actions";
-import { useDebouncedEntryFieldUpdate } from "./entry-detail-fields";
 import { EntrySubpages } from "./entry-subpages";
 import { EntrySystemFields } from "./entry-system-fields";
 import { handleError } from "../lib/errors";
@@ -59,18 +66,28 @@ export function EntryDocumentScreen({
   const [detailState, setDetailState] = useState<EntryDetailState | null>(null);
   const [deleteEntry, setDeleteEntry] = useState<Entry | null>(null);
   const reloadSeqRef = useRef(0);
-  const updateField = useDebouncedEntryFieldUpdate({
+  const applyEntryUpdate = useCallback(
+    (entryPath: string, update: (entry: Entry) => Entry) => {
+      setEntry((current) =>
+        current && current.path === entryPath ? update(current) : current,
+      );
+    },
+    [],
+  );
+  const updateField = useEntryFieldSave({
     spacePath,
     projectPath,
-    setEntry,
-    onSaved: (updated) => {
-      patchEntryTreeMeta(
-        spaceId,
-        updated.path,
-        updated.meta.title,
-        updated.meta.icon,
-        updated.meta.description ?? null,
-      );
+    applyEntryUpdate,
+    onSaved: (updated, context) => {
+      if (isEntryTreeMetaField(context.field)) {
+        patchEntryTreeMeta(
+          spaceId,
+          updated.path,
+          updated.meta.title,
+          updated.meta.icon,
+          updated.meta.description ?? null,
+        );
+      }
     },
   });
 
@@ -232,7 +249,12 @@ export function EntryDocumentScreen({
               mode="full"
               onSchemaChange={setSchemaResult}
               onValueChange={async (field, value) => {
-                await updateField(currentEntry, field, value);
+                const column = schemaResult.schema.columns.find(
+                  (item) => item.name === field,
+                );
+                await updateField(currentEntry, field, value, {
+                  policy: column ? propertyFieldSavePolicy(column) : undefined,
+                });
               }}
             />
           </div>

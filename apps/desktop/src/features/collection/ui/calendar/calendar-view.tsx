@@ -16,6 +16,7 @@ import { addCollectionDateColumn } from "@/features/collection/api";
 import { useCollectionPersons } from "@/features/collection/hooks";
 import type { Entry } from "@/features/entry";
 import { normalizeSchema } from "@/features/properties";
+import { propertyFieldSavePolicy } from "@/features/properties";
 import type { Column } from "@/features/properties";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
 import { getLocale } from "@/paraglide/runtime.js";
@@ -228,7 +229,9 @@ export function CalendarView({
       persons,
       onRequestPersons: loadPersons,
       onUpdateField: (entry: Entry, column: Column, value: unknown) => {
-        void updateField(entry, column.name, value);
+        void updateField(entry, column.name, value, {
+          policy: propertyFieldSavePolicy(column),
+        });
       },
     }),
     [loadPersons, persons, projectPath, spacePath, updateField],
@@ -292,11 +295,14 @@ export function CalendarView({
       | CalendarEventInput["extendedProps"]["model"]
       | undefined;
     const nextValue = valueFromEventDrop(info);
-    if (!model || !nextValue) {
+    if (!model || !nextValue || !dateColumn) {
       info.revert();
       return;
     }
-    void updateField(model.entry, model.dateField, nextValue, info.revert);
+    void updateField(model.entry, model.dateField, nextValue, {
+      revert: info.revert,
+      policy: propertyFieldSavePolicy(dateColumn),
+    });
   }
 
   function handleEventResize(info: EventResizeDoneArg) {
@@ -308,11 +314,14 @@ export function CalendarView({
       | CalendarEventInput["extendedProps"]["model"]
       | undefined;
     const nextValue = valueFromEventResize(info);
-    if (!model || !nextValue) {
+    if (!model || !nextValue || !dateColumn) {
       info.revert();
       return;
     }
-    void updateField(model.entry, model.dateField, nextValue, info.revert);
+    void updateField(model.entry, model.dateField, nextValue, {
+      revert: info.revert,
+      policy: propertyFieldSavePolicy(dateColumn),
+    });
   }
 
   async function handleCreate(title: string, draft: CalendarCreateDraft) {

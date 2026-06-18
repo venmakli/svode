@@ -23,7 +23,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import type { Entry } from "@/features/entry";
+import { useEntryFieldSave, type Entry } from "@/features/entry";
 import { useStableViewQueryArgs } from "@/features/collection/query";
 import type {
   Column,
@@ -31,6 +31,7 @@ import type {
   PropertyType,
 } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
+import { propertyFieldSavePolicy } from "@/features/properties";
 import { useSpaceStore } from "@/features/space/model";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import { useCollectionPersons } from "../../hooks";
@@ -225,6 +226,23 @@ export function BoardView({
     setDraftAsFolder(createAsFolder);
   }, [createAsFolder, createFocusSignal, renderedColumns]);
 
+  const applyEntryUpdate = useCallback(
+    (entryPath: string, update: (entry: Entry) => Entry) => {
+      setEntries((current) =>
+        current.map((item) => (item.path === entryPath ? update(item) : item)),
+      );
+      setManualOrderEntries((current) =>
+        current.map((item) => (item.path === entryPath ? update(item) : item)),
+      );
+    },
+    [],
+  );
+  const saveEntryField = useEntryFieldSave({
+    spacePath,
+    projectPath,
+    applyEntryUpdate,
+  });
+
   function handleDragStart(event: DragStartEvent) {
     setActivePath(String(event.active.id));
   }
@@ -332,12 +350,9 @@ export function BoardView({
 
     try {
       if (crossColumn) {
-        await invoke<Entry>("update_entry_field", {
-          space: spacePath,
-          filePath: activeEntryPath,
-          field: groupColumn.name,
-          value: targetValue,
-          projectPath: projectPath ?? null,
+        await saveEntryField(activeEntry, groupColumn.name, targetValue, {
+          policy: propertyFieldSavePolicy(groupColumn),
+          flush: true,
         });
       }
       if (positional) {
@@ -355,13 +370,15 @@ export function BoardView({
       console.warn("Failed to move board card:", error);
       if (crossColumn) {
         try {
-          await invoke<Entry>("update_entry_field", {
-            space: spacePath,
-            filePath: activeEntryPath,
-            field: groupColumn.name,
-            value: groupValueForKey(sourceGroupKey),
-            projectPath: projectPath ?? null,
-          });
+          await saveEntryField(
+            activeEntry,
+            groupColumn.name,
+            groupValueForKey(sourceGroupKey),
+            {
+              policy: propertyFieldSavePolicy(groupColumn),
+              flush: true,
+            },
+          );
         } catch (rollbackError) {
           console.warn("Failed to rollback board card move:", rollbackError);
         }
@@ -392,42 +409,16 @@ export function BoardView({
 
   const commitField = useCallback(
     async (entry: Entry, column: Column, value: unknown) => {
-      const applyValue = (item: Entry) => {
-        const extra = { ...item.meta.extra };
-        if (isClearedPropertyValue(value)) delete extra[column.name];
-        else extra[column.name] = value;
-        return { ...item, meta: { ...item.meta, extra } };
-      };
-      setEntries((current) =>
-        current.map((item) =>
-          item.path === entry.path ? applyValue(item) : item,
-        ),
-      );
-      setManualOrderEntries((current) =>
-        current.map((item) =>
-          item.path === entry.path ? applyValue(item) : item,
-        ),
-      );
       try {
-        const updated = await invoke<Entry>("update_entry_field", {
-          space: spacePath,
-          filePath: entry.path,
-          field: column.name,
-          value,
-          projectPath: projectPath ?? null,
+        await saveEntryField(entry, column.name, value, {
+          policy: propertyFieldSavePolicy(column),
         });
-        setEntries((current) =>
-          current.map((item) => (item.path === entry.path ? updated : item)),
-        );
-        setManualOrderEntries((current) =>
-          current.map((item) => (item.path === entry.path ? updated : item)),
-        );
       } catch (error) {
         console.warn("Failed to update board field:", error);
         void loadEntries();
       }
     },
-    [loadEntries, projectPath, spacePath],
+    [loadEntries, saveEntryField],
   );
 
   async function addGroupColumn(type: PropertyType = "status") {
@@ -678,13 +669,4 @@ function dropPlacement(event: DragEndEvent): "before" | "after" {
   const activeCenter = activeRect.top + activeRect.height / 2;
   const overCenter = overRect.top + overRect.height / 2;
   return activeCenter > overCenter ? "after" : "before";
-}
-
-function isClearedPropertyValue(value: unknown) {
-  return (
-    value === null ||
-    value === undefined ||
-    value === "" ||
-    (Array.isArray(value) && value.length === 0)
-  );
 }

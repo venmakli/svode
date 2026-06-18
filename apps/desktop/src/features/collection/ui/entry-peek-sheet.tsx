@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -20,12 +21,20 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/shared/lib/utils";
 import { EntryIdentityHeader } from "@/features/editor";
 import { PlateDocumentEditor } from "@/features/editor";
-import type { Entry, EntryCover } from "@/features/entry";
+import {
+  isEntryTreeMetaField,
+  useEntryFieldSave,
+  type Entry,
+  type EntryCover,
+} from "@/features/entry";
 import { PropertyPanel } from "@/features/properties";
-import type { EntrySchemaResult } from "@/features/properties";
+import {
+  propertyFieldSavePolicy,
+  type EntrySchemaResult,
+} from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
+import { useSpaceStore } from "@/features/space/model";
 import { EntryDetailActions } from "./entry-detail-actions";
-import { useDebouncedEntryFieldUpdate } from "./entry-detail-fields";
 import { EntrySubpages } from "./entry-subpages";
 import { EntrySystemFields } from "./entry-system-fields";
 import { handleError } from "../lib/errors";
@@ -233,10 +242,30 @@ function StandardEntryPeek({
   onEntryChange: Dispatch<SetStateAction<Entry | null>>;
   onSchemaChange: (result: EntrySchemaResult | null) => void;
 }) {
-  const updateField = useDebouncedEntryFieldUpdate({
+  const patchEntryTreeMeta = useSpaceStore((state) => state.patchEntryTreeMeta);
+  const applyEntryUpdate = useCallback(
+    (entryPath: string, update: (entry: Entry) => Entry) => {
+      onEntryChange((current) =>
+        current && current.path === entryPath ? update(current) : current,
+      );
+    },
+    [onEntryChange],
+  );
+  const updateField = useEntryFieldSave({
     spacePath,
     projectPath,
-    setEntry: onEntryChange,
+    applyEntryUpdate,
+    onSaved: (updated, context) => {
+      if (isEntryTreeMetaField(context.field)) {
+        patchEntryTreeMeta(
+          spaceId,
+          updated.path,
+          updated.meta.title,
+          updated.meta.icon,
+          updated.meta.description ?? null,
+        );
+      }
+    },
   });
 
   async function updateCover(cover: EntryCover | null) {
@@ -292,7 +321,12 @@ function StandardEntryPeek({
               mode="peek"
               onSchemaChange={onSchemaChange}
               onValueChange={async (field, value) => {
-                await updateField(entry, field, value);
+                const column = schemaResult.schema.columns.find(
+                  (item) => item.name === field,
+                );
+                await updateField(entry, field, value, {
+                  policy: column ? propertyFieldSavePolicy(column) : undefined,
+                });
               }}
             />
           </div>

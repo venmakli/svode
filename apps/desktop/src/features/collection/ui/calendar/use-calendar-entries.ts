@@ -3,15 +3,17 @@ import { toast } from "sonner";
 import {
   listCollectionInfos,
   queryCalendarEntries,
-  updateCollectionEntryField,
 } from "@/features/collection/api";
 import {
   useStableViewQueryArgs,
   type QueryFilter,
   type QuerySort,
 } from "@/features/collection/query";
-import type { Entry } from "@/features/entry";
-import { updateEntryDateValue } from "./utils";
+import {
+  useEntryFieldSave,
+  type Entry,
+  type EntryFieldSavePolicy,
+} from "@/features/entry";
 import * as m from "@/paraglide/messages.js";
 
 export function useCalendarEntries({
@@ -63,39 +65,40 @@ export function useCalendarEntries({
     void loadEntries();
   }, [loadEntries, refreshToken]);
 
+  const applyEntryUpdate = useCallback(
+    (entryPath: string, update: (entry: Entry) => Entry) => {
+      setEntries((current) =>
+        current.map((item) => (item.path === entryPath ? update(item) : item)),
+      );
+    },
+    [],
+  );
+  const saveEntryField = useEntryFieldSave({
+    spacePath,
+    projectPath,
+    applyEntryUpdate,
+  });
+
   const updateField = useCallback(
     async (
       entry: Entry,
       field: string,
       value: unknown,
-      revert?: () => void,
+      options?: { revert?: () => void; policy?: EntryFieldSavePolicy },
     ) => {
-      setEntries((current) =>
-        current.map((item) =>
-          item.path === entry.path
-            ? updateEntryDateValue(item, field, value)
-            : item,
-        ),
-      );
       try {
-        const updated = await updateCollectionEntryField({
-          spacePath,
-          filePath: entry.path,
-          field,
-          value,
-          projectPath,
+        await saveEntryField(entry, field, value, {
+          policy: options?.policy,
+          flush: true,
         });
-        setEntries((current) =>
-          current.map((item) => (item.path === entry.path ? updated : item)),
-        );
       } catch (error) {
         console.warn("Failed to update calendar field:", error);
-        revert?.();
+        options?.revert?.();
         toast.error(m.calendar_move_error());
         void loadEntries();
       }
     },
-    [loadEntries, projectPath, spacePath],
+    [loadEntries, saveEntryField],
   );
 
   return {
