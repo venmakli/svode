@@ -27,6 +27,14 @@ import {
 } from "@/platform/space/space-api";
 import { useEntrySelectionStore, type TreeNode } from "@/features/entry";
 import { logTiming, nowMs } from "@/shared/lib/performance";
+import {
+  applyReadmeMeta as applyReadmeMetaPatch,
+  removeReadmeMeta as removeReadmeMetaPatch,
+  removeTreePath as removeTreePathPatch,
+  updateTreeFolderSchema,
+  updateTreeNodeMeta,
+  upsertTreeNode as upsertTreeNodePatch,
+} from "../lib/tree-patches";
 import type { SpaceInfo, SpaceGitType } from "./types";
 
 type RefreshTreeOptions = { continuePending?: boolean };
@@ -89,7 +97,10 @@ interface SpaceState {
   // Document/tree methods
   createEntry: (spacePath: string, title: string) => Promise<EntryDto | null>;
   createPage: (spacePath: string, title: string) => Promise<EntryDto | null>;
-  refreshTree: (spaceId?: string, options?: RefreshTreeOptions) => Promise<void>;
+  refreshTree: (
+    spaceId?: string,
+    options?: RefreshTreeOptions,
+  ) => Promise<void>;
   ensureTreeLoaded: (spaceId: string) => Promise<void>;
   updateNodeMeta: (
     spaceId: string,
@@ -98,6 +109,22 @@ interface SpaceState {
     icon: string | null,
     description?: string | null,
   ) => void;
+  upsertTreeNode: (spaceId: string, parentPath: string, node: TreeNode) => void;
+  removeTreePath: (spaceId: string, path: string) => void;
+  applyReadmeMeta: (
+    spaceId: string,
+    readmePath: string,
+    title: string,
+    icon: string | null,
+    description?: string | null,
+  ) => void;
+  removeReadmeMeta: (spaceId: string, readmePath: string) => void;
+  updateNodeSchema: (
+    spaceId: string,
+    folderPath: string,
+    hasSchema: boolean,
+  ) => void;
+  markTreeDirty: (spaceId: string) => void;
   goHome: () => void;
   loadExpandedPaths: (spaceId: string) => Promise<void>;
   toggleExpanded: (spaceId: string, path: string) => void;
@@ -571,23 +598,105 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     const tree = trees[spaceId];
     if (!tree) return;
 
-    const update = (nodes: TreeNode[]): TreeNode[] =>
-      nodes.map((node) => {
-        if (node.path === path) {
-          return {
-            ...node,
-            title,
-            icon,
-            ...(description !== undefined ? { description } : {}),
-          };
-        }
-        if (node.children.length > 0) {
-          return { ...node, children: update(node.children) };
-        }
-        return node;
-      });
+    const next = updateTreeNodeMeta(tree, path, { title, icon, description });
+    if (next === tree) return;
+    set({ fileTrees: { ...trees, [spaceId]: next } });
+  },
 
-    set({ fileTrees: { ...trees, [spaceId]: update(tree) } });
+  upsertTreeNode: (spaceId, parentPath, node) => {
+    const trees = get().fileTrees;
+    const tree = trees[spaceId];
+    if (!tree) return;
+
+    const next = upsertTreeNodePatch(tree, parentPath, node);
+    if (next === tree) return;
+    set((s) => ({
+      fileTrees: { ...s.fileTrees, [spaceId]: next },
+      treeCache: {
+        ...s.treeCache,
+        [spaceId]: { loadedAt: Date.now(), dirty: false },
+      },
+    }));
+  },
+
+  removeTreePath: (spaceId, path) => {
+    const trees = get().fileTrees;
+    const tree = trees[spaceId];
+    if (!tree) return;
+
+    const next = removeTreePathPatch(tree, path);
+    if (next === tree) return;
+    set((s) => ({
+      fileTrees: { ...s.fileTrees, [spaceId]: next },
+      treeCache: {
+        ...s.treeCache,
+        [spaceId]: { loadedAt: Date.now(), dirty: false },
+      },
+    }));
+  },
+
+  applyReadmeMeta: (spaceId, readmePath, title, icon, description) => {
+    const trees = get().fileTrees;
+    const tree = trees[spaceId];
+    if (!tree) return;
+
+    const next = applyReadmeMetaPatch(tree, readmePath, {
+      title,
+      icon,
+      description,
+    });
+    if (next === tree) return;
+    set((s) => ({
+      fileTrees: { ...s.fileTrees, [spaceId]: next },
+      treeCache: {
+        ...s.treeCache,
+        [spaceId]: { loadedAt: Date.now(), dirty: false },
+      },
+    }));
+  },
+
+  removeReadmeMeta: (spaceId, readmePath) => {
+    const trees = get().fileTrees;
+    const tree = trees[spaceId];
+    if (!tree) return;
+
+    const next = removeReadmeMetaPatch(tree, readmePath);
+    if (next === tree) return;
+    set((s) => ({
+      fileTrees: { ...s.fileTrees, [spaceId]: next },
+      treeCache: {
+        ...s.treeCache,
+        [spaceId]: { loadedAt: Date.now(), dirty: false },
+      },
+    }));
+  },
+
+  updateNodeSchema: (spaceId, folderPath, hasSchema) => {
+    const trees = get().fileTrees;
+    const tree = trees[spaceId];
+    if (!tree) return;
+
+    const next = updateTreeFolderSchema(tree, folderPath, hasSchema);
+    if (next === tree) return;
+    set((s) => ({
+      fileTrees: { ...s.fileTrees, [spaceId]: next },
+      treeCache: {
+        ...s.treeCache,
+        [spaceId]: { loadedAt: Date.now(), dirty: false },
+      },
+    }));
+  },
+
+  markTreeDirty: (spaceId) => {
+    set((s) => ({
+      treeCache: {
+        ...s.treeCache,
+        [spaceId]: {
+          loadedAt: s.treeCache[spaceId]?.loadedAt ?? 0,
+          dirty: true,
+        },
+      },
+    }));
   },
 
   goHome: () => {

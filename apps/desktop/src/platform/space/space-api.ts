@@ -1,9 +1,21 @@
 import { invokeCommand } from "@/platform/native/invoke";
+import {
+  listen,
+  type EventCallback,
+  type UnlistenFn,
+} from "@/platform/native/events";
 import type {
+  SpaceDirtyEventDto,
+  SpaceFileEventDto,
   SpaceConfigDto,
   SpaceGitTypeDto,
   SpaceInfoDto,
 } from "./space-types";
+
+export type SpaceFileEventName =
+  | "file:created"
+  | "file:changed"
+  | "file:deleted";
 
 export function listProjects(): Promise<SpaceInfoDto[]> {
   return invokeCommand<SpaceInfoDto[]>("list_projects");
@@ -162,6 +174,19 @@ export function watchSpace(space: string): Promise<void> {
 
 export function unwatchSpace(space: string): Promise<void> {
   return invokeCommand<void>("unwatch_space", { space });
+}
+
+export function listenSpaceFileEvent(
+  eventName: SpaceFileEventName,
+  handler: EventCallback<SpaceFileEventDto>,
+): Promise<UnlistenFn> {
+  return listen<SpaceFileEventDto>(eventName, handler);
+}
+
+export function listenSpaceDirty(
+  handler: EventCallback<SpaceDirtyEventDto>,
+): Promise<UnlistenFn> {
+  return listen<SpaceDirtyEventDto>("space:dirty", handler);
 }
 
 export function reindexProject(projectPath: string): Promise<void> {

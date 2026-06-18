@@ -72,3 +72,25 @@ export interface TreeNodeDto {
   has_schema: boolean;
   children: TreeNodeDto[];
 }
+
+export type SpaceFileEventKindDto =
+  | "document"
+  | "schema"
+  | "folder"
+  | "unknown";
+
+export interface SpaceFileEventDto {
+  space?: string;
+  path: string;
+  kind?: SpaceFileEventKindDto;
+  isDir?: boolean;
+  parentPath?: string | null;
+  affectsTree?: boolean;
+  affectsMetadata?: boolean;
+  writeNonce?: string;
+}
+
+export interface SpaceDirtyEventDto {
+  space: string;
+  affectsTree?: boolean;
+}
