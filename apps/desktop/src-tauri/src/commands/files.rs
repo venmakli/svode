@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 
 use serde::Serialize;
 use tauri::{AppHandle, State};
@@ -28,6 +29,21 @@ fn basename(path: &str) -> String {
 
 fn abs_entry_path(space: &str, rel_path: &str) -> PathBuf {
     Path::new(space).join(rel_path)
+}
+
+fn path_name(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("<unknown>")
+        .to_string()
+}
+
+fn count_tree_nodes(nodes: &[TreeNode]) -> usize {
+    nodes
+        .iter()
+        .map(|node| 1 + count_tree_nodes(&node.children))
+        .sum()
 }
 
 fn order_path(space: &str) -> PathBuf {
@@ -258,7 +274,31 @@ async fn backlinks_for_space(state: &IndexState, space: &str) -> Arc<BacklinkInd
 
 #[tauri::command]
 pub fn list_entries(space: String) -> Result<Vec<TreeNode>, AppError> {
-    tree::build_tree(&space)
+    let started = Instant::now();
+    let space_name = path_name(&space);
+    let result = tree::build_tree(&space);
+    let duration_ms = started.elapsed().as_millis() as u64;
+
+    match &result {
+        Ok(nodes) => tracing::info!(
+            target: "svode::perf",
+            event = "list_entries",
+            space = %space_name,
+            node_count = count_tree_nodes(nodes),
+            duration_ms,
+            "list_entries completed"
+        ),
+        Err(error) => tracing::info!(
+            target: "svode::perf",
+            event = "list_entries",
+            space = %space_name,
+            duration_ms,
+            error_kind = error.kind(),
+            "list_entries failed"
+        ),
+    }
+
+    result
 }
 
 #[tauri::command]

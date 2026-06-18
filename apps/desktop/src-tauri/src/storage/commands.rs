@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -337,36 +338,74 @@ pub async fn resolve_asset_url(
     asset_path: String,
     index_state: State<'_, IndexState>,
 ) -> Result<String, AppError> {
-    let project = PathBuf::from(&project_path);
-    let doc_abs = PathBuf::from(&document_abs_path);
-    let doc_parent = doc_abs
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| doc_abs.clone());
-    let raw_target = doc_parent.join(&asset_path);
+    let started = Instant::now();
+    let project_name = Path::new(&project_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("<unknown>")
+        .to_string();
+    let asset_extension = Path::new(&asset_path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("<none>")
+        .to_ascii_lowercase();
 
-    let abs = normalize_abs_path(&raw_target).ok_or_else(|| {
-        AppError::Storage(format!("asset path traverses out of root: {asset_path}"))
-    })?;
-    if !abs.starts_with(&project) {
-        return Err(AppError::Storage("asset out of project".into()));
+    let result = async {
+        let project = PathBuf::from(&project_path);
+        let doc_abs = PathBuf::from(&document_abs_path);
+        let doc_parent = doc_abs
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| doc_abs.clone());
+        let raw_target = doc_parent.join(&asset_path);
+
+        let abs = normalize_abs_path(&raw_target).ok_or_else(|| {
+            AppError::Storage(format!("asset path traverses out of root: {asset_path}"))
+        })?;
+        if !abs.starts_with(&project) {
+            return Err(AppError::Storage("asset out of project".into()));
+        }
+
+        // Routes through the resolver to validate ghost/missing/broken spaces.
+        let (key, _rel) = index_state.resolve(&project, &abs).await?;
+        let target_dir = index_state.dir_for_key(&key).await?;
+
+        // Whitelist the pool's `.assets/` directory in the webview's asset
+        // protocol scope so `convertFileSrc(absPath)` can load it. The call is
+        // idempotent — Tauri's allow_directory is set-add.
+        if let Err(e) = app
+            .asset_protocol_scope()
+            .allow_directory(target_dir.join(".assets"), true)
+        {
+            tracing::warn!("allow_directory failed for assets scope: {e}");
+        }
+
+        Ok(abs.to_string_lossy().to_string())
+    }
+    .await;
+    let duration_ms = started.elapsed().as_millis() as u64;
+
+    match &result {
+        Ok(_) => tracing::info!(
+            target: "svode::perf",
+            event = "asset.resolve",
+            project = %project_name,
+            asset_extension = %asset_extension,
+            duration_ms,
+            "asset.resolve completed"
+        ),
+        Err(error) => tracing::info!(
+            target: "svode::perf",
+            event = "asset.resolve",
+            project = %project_name,
+            asset_extension = %asset_extension,
+            duration_ms,
+            error_kind = error.kind(),
+            "asset.resolve failed"
+        ),
     }
 
-    // Routes through the resolver to validate ghost/missing/broken spaces.
-    let (key, _rel) = index_state.resolve(&project, &abs).await?;
-    let target_dir = index_state.dir_for_key(&key).await?;
-
-    // Whitelist the pool's `.assets/` directory in the webview's asset
-    // protocol scope so `convertFileSrc(absPath)` can load it. The call is
-    // idempotent — Tauri's allow_directory is set-add.
-    if let Err(e) = app
-        .asset_protocol_scope()
-        .allow_directory(target_dir.join(".assets"), true)
-    {
-        tracing::warn!("allow_directory failed for assets scope: {e}");
-    }
-
-    Ok(abs.to_string_lossy().to_string())
+    result
 }
 
 /// Normalize a path by collapsing `.` and `..` components without touching

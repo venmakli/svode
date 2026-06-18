@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
+use std::time::Instant;
 
 use crate::error::AppError;
 use crate::files::frontmatter;
@@ -61,6 +62,20 @@ fn read_frontmatter_meta(abs_path: &Path) -> (String, Option<String>, Option<Str
 
 fn repo_path_string(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
+}
+
+fn path_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("<unknown>")
+        .to_string()
+}
+
+fn count_tree_nodes(nodes: &[TreeNode]) -> usize {
+    nodes
+        .iter()
+        .map(|node| 1 + count_tree_nodes(&node.children))
+        .sum()
 }
 
 /// Read order.json from space .svode directory.
@@ -131,13 +146,48 @@ fn child_folder_names(space: &Path) -> HashSet<String> {
 
 /// Build a file tree from a space directory.
 pub fn build_tree(space: &str) -> Result<Vec<TreeNode>, AppError> {
+    let started = Instant::now();
     let root = Path::new(space);
+    let space_name = path_name(root);
     if !root.is_dir() {
-        return Err(AppError::FileNotFound(space.to_string()));
+        let error = AppError::FileNotFound(space.to_string());
+        tracing::info!(
+            target: "svode::perf",
+            event = "tree.build_tree",
+            space = %space_name,
+            duration_ms = started.elapsed().as_millis() as u64,
+            error_kind = error.kind(),
+            "tree::build_tree failed"
+        );
+        return Err(error);
     }
-    let order = read_order(root);
-    let skip_dirs = child_folder_names(root);
-    read_dir_recursive(root, root, &order, &skip_dirs)
+    let result = (|| {
+        let order = read_order(root);
+        let skip_dirs = child_folder_names(root);
+        read_dir_recursive(root, root, &order, &skip_dirs)
+    })();
+    let duration_ms = started.elapsed().as_millis() as u64;
+
+    match &result {
+        Ok(nodes) => tracing::info!(
+            target: "svode::perf",
+            event = "tree.build_tree",
+            space = %space_name,
+            node_count = count_tree_nodes(nodes),
+            duration_ms,
+            "tree::build_tree completed"
+        ),
+        Err(error) => tracing::info!(
+            target: "svode::perf",
+            event = "tree.build_tree",
+            space = %space_name,
+            duration_ms,
+            error_kind = error.kind(),
+            "tree::build_tree failed"
+        ),
+    }
+
+    result
 }
 
 fn read_dir_recursive(

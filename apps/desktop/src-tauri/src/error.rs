@@ -78,6 +78,38 @@ pub enum AppError {
     General(String),
 }
 
+impl AppError {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            AppError::Io(_) => "io",
+            AppError::Serde(_) => "serde",
+            AppError::FileNotFound(_) => "file_not_found",
+            AppError::FileAlreadyExists(_) => "file_already_exists",
+            AppError::FrontmatterParse(_) => "frontmatter_parse",
+            AppError::Watcher(_) => "watcher",
+            AppError::SpaceNotFound(_) => "space_not_found",
+            AppError::PathNotAccessible(_) => "path_not_accessible",
+            AppError::ProjectAlreadyExists(_) => "project_already_exists",
+            AppError::AgentCliNotFound(_) => "agent_cli_not_found",
+            AppError::AgentSpawnFailed(_) => "agent_spawn_failed",
+            AppError::GitNotFound => "git_not_found",
+            AppError::GitCommandFailed(_) => "git_command_failed",
+            AppError::GitConflict(_) => "git_conflict",
+            AppError::GitAuthRequired(_) => "git_auth_required",
+            AppError::GitNoRemote => "git_no_remote",
+            AppError::GitRemoteNotEmpty => "git_remote_not_empty",
+            AppError::InvalidUrl(_) => "invalid_url",
+            AppError::Index(_) => "index",
+            AppError::Db(_) => "db",
+            AppError::Storage(_) => "storage",
+            AppError::StrategyInherited => "strategy_inherited",
+            AppError::IdentityMissing => "identity_missing",
+            AppError::IdentityInvalid(_) => "identity_invalid",
+            AppError::General(_) => "general",
+        }
+    }
+}
+
 impl Serialize for AppError {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

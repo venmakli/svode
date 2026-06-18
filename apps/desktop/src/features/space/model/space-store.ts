@@ -26,6 +26,7 @@ import {
   reorderSpaces as reorderSpacesNative,
 } from "@/platform/space/space-api";
 import { useEntrySelectionStore, type TreeNode } from "@/features/entry";
+import { logTiming, nowMs } from "@/shared/lib/performance";
 import type { SpaceInfo, SpaceGitType } from "./types";
 
 interface SpaceState {
@@ -161,6 +162,13 @@ function openScopeHomeSelection(spaceId: string, tree: TreeNode[]) {
 
 function hasRecordKey<T>(record: Record<string, T>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+function countTreeNodes(nodes: TreeNode[]): number {
+  return nodes.reduce(
+    (count, node) => count + 1 + countTreeNodes(node.children),
+    0,
+  );
 }
 
 export const useSpaceStore = create<SpaceState>((set, get) => ({
@@ -316,28 +324,43 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   },
 
   openSpace: async (id: string) => {
+    const startedAt = nowMs();
     const space = get().spaces.find((w) => w.id === id);
-    if (space?.status && space.status !== "ready") return;
-    const activeRootPath = get().activeRootPath;
-    const treeWasLoaded = hasRecordKey(get().fileTrees, id);
-    if (space?.path && activeRootPath) {
-      try {
-        await ensureSpaceScaffold(activeRootPath, space.path);
-        if (treeWasLoaded) {
-          await get().refreshTree(id);
-        }
-      } catch (err) {
-        console.warn("ensure_space_scaffold failed:", err);
+    let treeWasLoaded = false;
+
+    try {
+      if (space?.status && space.status !== "ready") {
+        return;
       }
+
+      const activeRootPath = get().activeRootPath;
+      treeWasLoaded = hasRecordKey(get().fileTrees, id);
+      if (space?.path && activeRootPath) {
+        try {
+          await ensureSpaceScaffold(activeRootPath, space.path);
+          if (treeWasLoaded) {
+            await get().refreshTree(id);
+          }
+        } catch (err) {
+          console.warn("ensure_space_scaffold failed:", err);
+        }
+      }
+      set({ activeSpaceId: id });
+      syncMcpContext(get(), id);
+      if (space?.path) {
+        ensureAssetsScope(space.path).catch((err) =>
+          console.warn("ensure_assets_scope failed:", err),
+        );
+      }
+      await get().ensureTreeLoaded(id);
+    } finally {
+      logTiming("space.open", startedAt, {
+        spaceId: id,
+        cachedTree: treeWasLoaded,
+        ready: !(space?.status && space.status !== "ready"),
+        treeLoaded: hasRecordKey(get().fileTrees, id),
+      });
     }
-    set({ activeSpaceId: id });
-    syncMcpContext(get(), id);
-    if (space?.path) {
-      ensureAssetsScope(space.path).catch((err) =>
-        console.warn("ensure_assets_scope failed:", err),
-      );
-    }
-    await get().ensureTreeLoaded(id);
   },
 
   clearActiveSpace: () => {
@@ -415,16 +438,27 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     const spacePath = findSpacePath(get(), id);
     if (!spacePath) return;
 
+    const startedAt = nowMs();
+    let status: "ok" | "error" = "ok";
+    let nodeCount = 0;
     try {
       const tree = await listEntries(spacePath);
+      nodeCount = countTreeNodes(tree);
       set((s) => ({
         fileTrees: { ...s.fileTrees, [id]: tree },
       }));
     } catch (err) {
+      status = "error";
       console.error("Failed to load file tree:", err);
       set((s) => ({
         fileTrees: { ...s.fileTrees, [id]: [] },
       }));
+    } finally {
+      logTiming("tree.refresh", startedAt, {
+        spaceId: id,
+        status,
+        nodeCount,
+      });
     }
   },
 

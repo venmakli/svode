@@ -35,6 +35,7 @@ import {
   type FlattenedItem,
   type Projection,
 } from "../lib/tree-dnd-utilities";
+import { logTiming, nowMs } from "@/shared/lib/performance";
 
 // --- Context for sharing DnD state with FileTreeItem ---
 
@@ -111,6 +112,7 @@ export function SortableFileTree({
   tree,
   children,
 }: SortableFileTreeProps) {
+  const renderStartedAt = nowMs();
   const { moveEntry, saveOrder, refreshTree, toggleExpanded, expandedPaths } =
     useSpaceStore();
 
@@ -168,6 +170,14 @@ export function SortableFileTree({
   );
 
   const sortableIds = useMemo(() => flatItems.map((i) => i.path), [flatItems]);
+
+  useEffect(() => {
+    logTiming("tree.render", renderStartedAt, {
+      spaceId,
+      rootNodes: tree.length,
+      visibleNodes: flatItems.length,
+    });
+  });
 
   // Compute projection using refs (always fresh values)
   const computeProjection = useCallback(() => {

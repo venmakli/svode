@@ -25,6 +25,7 @@ import { Editor, EditorContainer } from "@/components/ui/editor";
 import { FixedToolbar } from "@/components/ui/fixed-toolbar";
 import { FixedToolbarButtons } from "@/components/ui/fixed-toolbar-buttons";
 import { detailPageBodyClassName } from "@/shared/ui/page-layout";
+import { logTiming, nowMs } from "@/shared/lib/performance";
 import { TocSidebar } from "../ui/toc-sidebar";
 import { EditorMediaAdapterProvider } from "../ui/editor-media-adapter-provider";
 import type { Entry, EntryMeta, WriteResult } from "@/features/entry";
@@ -286,6 +287,8 @@ export function PlateDocumentEditor({
   useEffect(() => {
     if (!editor || !currentDocument || !spacePath) return;
 
+    const startedAt = nowMs();
+
     // Cache current editor state before switching. Cancel any debounce for
     // the previous doc — any in-memory edits not yet written are discarded
     // at switch time (v1 — acceptable loss ≤1s of edits).
@@ -322,8 +325,10 @@ export function PlateDocumentEditor({
     const wasExternallyModified =
       editorState.aiModified[currentDocument] ||
       editorState.staleCache[currentDocument];
+    const cachedBody = cached && !wasExternallyModified ? cached : null;
 
-    if (cached && !wasExternallyModified) {
+    if (cachedBody) {
+      let status: "ok" | "error" = "ok";
       invoke<Entry>("read_entry", {
         space: spacePath,
         path: currentDocument,
@@ -333,17 +338,24 @@ export function PlateDocumentEditor({
           setTitle(entry.meta.title);
           setIcon(entry.meta.icon);
           setDescription(entry.meta.description ?? "");
-          editor.tf.setValue(cached);
+          editor.tf.setValue(cachedBody);
           clearUnsaved(currentDocument);
         })
         .catch((err) => {
+          status = "error";
           console.error("Failed to load document meta:", err);
           toast.error(m.editor_error_load());
         })
         .finally(() => {
           isLoadingRef.current = false;
+          logTiming("doc.open.editor", startedAt, {
+            spaceId: currentDocumentSpaceId ?? null,
+            cachedBody: true,
+            status,
+          });
         });
     } else {
+      let status: "ok" | "error" = "ok";
       docCacheRef.current.delete(currentCacheKey);
       useEditorStore.getState().clearStale(currentDocument);
       invoke<Entry>("read_entry", {
@@ -360,16 +372,23 @@ export function PlateDocumentEditor({
           clearUnsaved(currentDocument);
         })
         .catch((err) => {
+          status = "error";
           console.error("Failed to load document:", err);
           toast.error(m.editor_error_load());
         })
         .finally(() => {
           isLoadingRef.current = false;
+          logTiming("doc.open.editor", startedAt, {
+            spaceId: currentDocumentSpaceId ?? null,
+            cachedBody: false,
+            status,
+          });
         });
     }
   }, [
     editor,
     currentDocument,
+    currentDocumentSpaceId,
     spacePath,
     projectPath,
     cancelDebounce,

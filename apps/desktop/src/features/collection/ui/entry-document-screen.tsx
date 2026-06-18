@@ -10,6 +10,7 @@ import type { EntrySchemaResult } from "@/features/properties";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
 import { useEntrySelectionStore } from "@/features/entry";
 import { useSpaceStore } from "@/features/space/model";
+import { logTiming, nowMs } from "@/shared/lib/performance";
 import { DeleteDialogs } from "./delete-dialogs";
 import {
   EntryDetailActions,
@@ -58,28 +59,40 @@ export function EntryDocumentScreen({
   });
 
   const reload = useCallback(async () => {
-    const [nextEntry, nextSchemaResult, nextDetailState] = await Promise.all([
-      invoke<Entry>("read_entry", { space: spacePath, path: documentPath }),
-      invoke<EntrySchemaResult | null>("get_entry_schema", {
-        space: spacePath,
-        filePath: documentPath,
-      }).catch(() => null),
-      invoke<EntryDetailState>("get_entry_detail_state", {
-        space: spacePath,
-        path: documentPath,
-      }).catch(() => null),
-    ]);
-    setEntry(nextEntry);
-    setSchemaResult(
-      nextSchemaResult
-        ? {
-            ...nextSchemaResult,
-            schema: normalizeSchema(nextSchemaResult.schema),
-          }
-        : null,
-    );
-    setDetailState(nextDetailState);
-  }, [documentPath, spacePath]);
+    const startedAt = nowMs();
+    let status: "ok" | "error" = "ok";
+    try {
+      const [nextEntry, nextSchemaResult, nextDetailState] = await Promise.all([
+        invoke<Entry>("read_entry", { space: spacePath, path: documentPath }),
+        invoke<EntrySchemaResult | null>("get_entry_schema", {
+          space: spacePath,
+          filePath: documentPath,
+        }).catch(() => null),
+        invoke<EntryDetailState>("get_entry_detail_state", {
+          space: spacePath,
+          path: documentPath,
+        }).catch(() => null),
+      ]);
+      setEntry(nextEntry);
+      setSchemaResult(
+        nextSchemaResult
+          ? {
+              ...nextSchemaResult,
+              schema: normalizeSchema(nextSchemaResult.schema),
+            }
+          : null,
+      );
+      setDetailState(nextDetailState);
+    } catch (error) {
+      status = "error";
+      throw error;
+    } finally {
+      logTiming("doc.open.detail", startedAt, {
+        spaceId,
+        status,
+      });
+    }
+  }, [documentPath, spaceId, spacePath]);
 
   useEffect(() => {
     let cancelled = false;
