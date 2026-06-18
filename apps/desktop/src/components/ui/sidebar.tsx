@@ -27,7 +27,7 @@ const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
 const SIDEBAR_WIDTH = "17.5rem"
 const SIDEBAR_WIDTH_MOBILE = "18rem"
 const SIDEBAR_WIDTH_ICON = "3rem"
-const SIDEBAR_KEYBOARD_SHORTCUT = "\\"
+const SIDEBAR_KEYBOARD_SHORTCUT = "b"
 
 type SidebarContextProps = {
   state: "expanded" | "collapsed"
@@ -94,8 +94,11 @@ function SidebarProvider({
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (
-        event.key === SIDEBAR_KEYBOARD_SHORTCUT &&
-        (event.metaKey || event.ctrlKey)
+        event.key.toLowerCase() === SIDEBAR_KEYBOARD_SHORTCUT &&
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        !event.shiftKey &&
+        !isEditableShortcutTarget(event.target)
       ) {
         event.preventDefault()
         toggleSidebar()
@@ -143,6 +146,23 @@ function SidebarProvider({
         {children}
       </div>
     </SidebarContext.Provider>
+  )
+}
+
+function isEditableShortcutTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false
+  if (target.isContentEditable) return true
+  return Boolean(
+    target.closest(
+      [
+        "input",
+        "textarea",
+        "select",
+        '[contenteditable="true"]',
+        '[role="textbox"]',
+        "[data-slate-editor]",
+      ].join(",")
+    )
   )
 }
 

@@ -33,7 +33,9 @@ export function ShellChrome() {
   const isFullscreen = useFullscreen();
   const chromeRef = useRef<HTMLDivElement>(null);
   const sidebarHidden = state === "collapsed";
-  const reserveTrafficLights = isMacPlatform() && !isFullscreen;
+  const isMac = isMacPlatform();
+  const reserveTrafficLights = isMac && !isFullscreen;
+  const sidebarShortcutLabel = isMac ? "⌘B" : "Ctrl+B";
 
   useLayoutEffect(() => {
     const node = chromeRef.current;
@@ -78,7 +80,9 @@ export function ShellChrome() {
             <PanelLeft />
           </Button>
         </TooltipTrigger>
-        <TooltipContent side="bottom">Toggle sidebar (⌘\)</TooltipContent>
+        <TooltipContent side="bottom">
+          Toggle sidebar ({sidebarShortcutLabel})
+        </TooltipContent>
       </Tooltip>
       <ProjectSwitcher className="w-fit min-w-0 max-w-full" />
     </div>
