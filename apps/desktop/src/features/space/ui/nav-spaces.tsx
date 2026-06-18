@@ -93,11 +93,16 @@ import { CreateSpaceDialog } from "./create-space-dialog";
 import { createCollection } from "@/features/collection";
 import { SortableFileTree } from "./sortable-file-tree";
 import { FileTreeItem } from "./file-tree-item";
-import { GitIndicatorIcon, SpaceGitWatcher } from "@/features/git";
+import {
+  GitIndicatorIcon,
+  selectIndicator,
+  SpaceGitWatcher,
+} from "@/features/git";
 import { useGitStore } from "@/features/git";
 import { Progress } from "@/components/ui/progress";
 import { commitAllSpace } from "@/features/git";
 import { cn } from "@/shared/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface NavSpacesProps {
   onActivateContent: () => void;
@@ -114,6 +119,10 @@ function hasScopeReadme(tree: TreeNode[]): boolean {
   return tree.some((node) => node.path.toLowerCase() === "readme.md");
 }
 
+function hasRecordKey<T>(record: Record<string, T>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
 export function NavSpaces({
   onActivateContent,
   onOpenSpaceSettings,
@@ -124,8 +133,9 @@ export function NavSpaces({
     activeRootIcon,
     activeRootPath,
     spaces,
-    activeSpaceId,
     fileTrees,
+    treeLoading,
+    treeRefreshing,
     openSpace,
     clearActiveSpace,
     deleteSpace,
@@ -205,8 +215,10 @@ export function NavSpaces({
     (!activeDocument || activeDocument.toLowerCase() === "readme.md");
   const childSpaceIds = spaces.map((space) => space.id);
 
-  function openHomeForScope(spaceId: string, tree: TreeNode[]) {
-    if (hasScopeReadme(tree)) {
+  function openHomeForScope(spaceId: string, tree: TreeNode[] | null) {
+    if (!tree) {
+      openDocument("README.md", spaceId);
+    } else if (hasScopeReadme(tree)) {
       openDocument("README.md", spaceId);
     } else {
       openScopeHome(spaceId);
@@ -224,9 +236,12 @@ export function NavSpaces({
 
   async function handleOpenSpaceHome(ws: SpaceInfo) {
     onActivateContent();
-    await openSpace(ws.id);
-    const tree = useSpaceStore.getState().fileTrees[ws.id] ?? [];
+    const state = useSpaceStore.getState();
+    const tree = hasRecordKey(state.fileTrees, ws.id)
+      ? state.fileTrees[ws.id]
+      : null;
     openHomeForScope(ws.id, tree);
+    void openSpace(ws.id);
   }
 
   async function handleRenameSpace() {
@@ -396,6 +411,9 @@ export function NavSpaces({
               onProjectSettings={() => onOpenSpaceSettings(rootPath)}
               spaceId={rootId}
               rootPath={rootPath}
+              loading={treeLoading[rootId] ?? false}
+              refreshing={treeRefreshing[rootId] ?? false}
+              treeLoaded={hasRecordKey(fileTrees, rootId)}
             />
             <DndContext
               sensors={sensors}
@@ -408,6 +426,7 @@ export function NavSpaces({
               >
                 {spaces.map((ws) => {
                   const tree = fileTrees[ws.id] ?? [];
+                  const treeLoaded = hasRecordKey(fileTrees, ws.id);
                   const isActive =
                     activeDocumentSpaceId === ws.id &&
                     (!activeDocument ||
@@ -434,6 +453,9 @@ export function NavSpaces({
                       handleRemoveBroken={handleRemoveBroken}
                       ensureTreeLoaded={ensureTreeLoaded}
                       editRef={editRef}
+                      loading={treeLoading[ws.id] ?? false}
+                      refreshing={treeRefreshing[ws.id] ?? false}
+                      treeLoaded={treeLoaded}
                     />
                   );
                 })}
@@ -505,6 +527,9 @@ interface RootScopeRowProps {
   onProjectSettings: () => void;
   spaceId: string;
   rootPath: string;
+  loading: boolean;
+  refreshing: boolean;
+  treeLoaded: boolean;
 }
 
 function RootScopeRow({
@@ -522,6 +547,9 @@ function RootScopeRow({
   onProjectSettings,
   spaceId,
   rootPath,
+  loading,
+  refreshing,
+  treeLoaded,
 }: RootScopeRowProps) {
   return (
     <Collapsible asChild open={open} onOpenChange={onOpenChange}>
@@ -530,7 +558,10 @@ function RootScopeRow({
           <span>{icon || "\u{1F4C1}"}</span>
           <span className="flex-1 truncate">{name || "Project"}</span>
           <span className="ml-auto flex items-center gap-1">
-            <GitIndicatorIcon spacePath={rootPath} />
+            <TreeActivityIndicator
+              spacePath={rootPath}
+              loading={loading || refreshing}
+            />
           </span>
         </SidebarMenuButton>
         <CollapsibleTrigger asChild>
@@ -572,13 +603,21 @@ function RootScopeRow({
           </DropdownMenuContent>
         </DropdownMenu>
         <CollapsibleContent>
-          <SortableFileTree spaceId={spaceId} tree={tree}>
-            <SidebarMenuSub className="ml-4 border-l-0 pl-2">
-              {tree.map((node) => (
-                <FileTreeItem key={node.path} node={node} spaceId={spaceId} />
-              ))}
-            </SidebarMenuSub>
-          </SortableFileTree>
+          {loading && !treeLoaded ? (
+            <TreeLoadingRows />
+          ) : (
+            <SortableFileTree spaceId={spaceId} tree={tree}>
+              <SidebarMenuSub className="ml-4 border-l-0 pl-2">
+                {tree.map((node) => (
+                  <FileTreeItem
+                    key={node.path}
+                    node={node}
+                    spaceId={spaceId}
+                  />
+                ))}
+              </SidebarMenuSub>
+            </SortableFileTree>
+          )}
         </CollapsibleContent>
       </SidebarMenuItem>
     </Collapsible>
@@ -605,6 +644,9 @@ interface SpaceRowProps {
   handleRemoveBroken: (spaceId: string) => void;
   ensureTreeLoaded: (spaceId: string) => Promise<void>;
   editRef: RefObject<HTMLInputElement | null>;
+  loading: boolean;
+  refreshing: boolean;
+  treeLoaded: boolean;
 }
 
 function SpaceRow({
@@ -626,6 +668,9 @@ function SpaceRow({
   handleRemoveBroken,
   ensureTreeLoaded,
   editRef,
+  loading,
+  refreshing,
+  treeLoaded,
 }: SpaceRowProps) {
   const cloning = useGitStore((s) => s.cloning[ws.path]);
   const dirty = useGitStore(
@@ -758,7 +803,10 @@ function SpaceRow({
           )}
           <span className="ml-auto flex items-center gap-1">
             <LfsIndicatorIcon lfsState={ws.lfsState} />
-            <GitIndicatorIcon spacePath={ws.path} />
+            <TreeActivityIndicator
+              spacePath={ws.path}
+              loading={loading || refreshing}
+            />
           </span>
         </SidebarMenuButton>
         {cloning && (
@@ -847,16 +895,64 @@ function SpaceRow({
           </DropdownMenuContent>
         </DropdownMenu>
         <CollapsibleContent>
-          <SortableFileTree spaceId={ws.id} tree={tree}>
-            <SidebarMenuSub className="ml-4 border-l-0 pl-2">
-              {tree.map((node) => (
-                <FileTreeItem key={node.path} node={node} spaceId={ws.id} />
-              ))}
-            </SidebarMenuSub>
-          </SortableFileTree>
+          {loading && !treeLoaded ? (
+            <TreeLoadingRows />
+          ) : (
+            <SortableFileTree spaceId={ws.id} tree={tree}>
+              <SidebarMenuSub className="ml-4 border-l-0 pl-2">
+                {tree.map((node) => (
+                  <FileTreeItem key={node.path} node={node} spaceId={ws.id} />
+                ))}
+              </SidebarMenuSub>
+            </SortableFileTree>
+          )}
         </CollapsibleContent>
       </SidebarMenuItem>
     </Collapsible>
+  );
+}
+
+function TreeActivityIndicator({
+  spacePath,
+  loading,
+}: {
+  spacePath: string;
+  loading: boolean;
+}) {
+  const gitIndicator = useGitStore((state) => selectIndicator(state, spacePath));
+
+  if (!loading && gitIndicator === "clean") return null;
+
+  return (
+    <span className="inline-flex size-4 shrink-0 items-center justify-center">
+      {loading ? (
+        <Loader2 className="!size-3 animate-spin text-muted-foreground" />
+      ) : (
+        <GitIndicatorIcon spacePath={spacePath} />
+      )}
+    </span>
+  );
+}
+
+function TreeLoadingRows() {
+  return (
+    <SidebarMenuSub className="ml-4 border-l-0 pl-2">
+      {[0, 1, 2].map((index) => (
+        <SidebarMenuItem key={index}>
+          <div className="flex h-7 items-center gap-2 rounded-md px-2">
+            <Skeleton className="size-4" />
+            <Skeleton
+              className={cn(
+                "h-3",
+                index === 0 && "w-24",
+                index === 1 && "w-32",
+                index === 2 && "w-20",
+              )}
+            />
+          </div>
+        </SidebarMenuItem>
+      ))}
+    </SidebarMenuSub>
   );
 }
 

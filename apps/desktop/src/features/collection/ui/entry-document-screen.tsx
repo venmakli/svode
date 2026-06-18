@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import { EntryIdentityHeader } from "@/features/editor";
 import { PlateDocumentEditor } from "@/features/editor";
 import type { Entry, EntryCover } from "@/features/entry";
@@ -35,6 +36,7 @@ export function EntryDocumentScreen({
   spaceId,
 }: EntryDocumentScreenProps) {
   const openDocument = useEntrySelectionStore((state) => state.openDocument);
+  const openScopeHome = useEntrySelectionStore((state) => state.openScopeHome);
   const updateNodeMeta = useSpaceStore((state) => state.updateNodeMeta);
   const refreshTree = useSpaceStore((state) => state.refreshTree);
   const [entry, setEntry] = useState<Entry | null>(null);
@@ -85,6 +87,13 @@ export function EntryDocumentScreen({
       setDetailState(nextDetailState);
     } catch (error) {
       status = "error";
+      if (
+        documentPath.toLowerCase() === "readme.md" &&
+        isFileNotFoundError(error, documentPath)
+      ) {
+        openScopeHome(spaceId);
+        return;
+      }
       throw error;
     } finally {
       logTiming("doc.open.detail", startedAt, {
@@ -92,7 +101,7 @@ export function EntryDocumentScreen({
         status,
       });
     }
-  }, [documentPath, spaceId, spacePath]);
+  }, [documentPath, openScopeHome, spaceId, spacePath]);
 
   useEffect(() => {
     let cancelled = false;
@@ -130,7 +139,7 @@ export function EntryDocumentScreen({
   }
 
   if (!entry) {
-    return <div className="min-h-full" />;
+    return <EntryDocumentLoadingState />;
   }
 
   const showSubpages = detailState?.form === "folder";
@@ -230,6 +239,42 @@ export function EntryDocumentScreen({
           void deleteCurrentEntry(entryToDelete).catch(handleError)
         }
       />
+    </div>
+  );
+}
+
+function isFileNotFoundError(error: unknown, path: string) {
+  const message =
+    typeof error === "string"
+      ? error
+      : error instanceof Error
+        ? error.message
+        : "";
+  return (
+    message.toLowerCase().includes("file not found") &&
+    message.toLowerCase().includes(path.toLowerCase())
+  );
+}
+
+function EntryDocumentLoadingState() {
+  return (
+    <div className="flex min-h-full flex-col">
+      <div className={detailPageHeaderClassName}>
+        <div className="flex max-w-5xl flex-col gap-4">
+          <Skeleton className="h-8 w-72 max-w-full" />
+          <Skeleton className="h-4 w-96 max-w-full" />
+          <div className="flex gap-2">
+            <Skeleton className="h-6 w-20" />
+            <Skeleton className="h-6 w-24" />
+          </div>
+        </div>
+      </div>
+      <Separator />
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-3 px-6 py-8">
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-11/12" />
+        <Skeleton className="h-4 w-4/5" />
+      </div>
     </div>
   );
 }
