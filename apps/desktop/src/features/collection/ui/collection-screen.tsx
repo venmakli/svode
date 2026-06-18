@@ -1131,6 +1131,7 @@ export function CollectionScreen({
               projectPath={projectPath}
               bodyOnlyMeta={entry?.meta ?? null}
               initialEntry={entry}
+              initialEntrySpacePath={spacePath}
               onDocumentPathChange={(path) => {
                 setEntry((current) =>
                   current ? { ...current, path } : current,

@@ -30,6 +30,10 @@ interface EntryDocumentScreenProps {
   spaceId: string;
 }
 
+function getDocumentTargetKey(spacePath: string, documentPath: string) {
+  return `${spacePath}\0${documentPath}`;
+}
+
 export function EntryDocumentScreen({
   spacePath,
   projectPath,
@@ -40,7 +44,9 @@ export function EntryDocumentScreen({
   const openScopeHome = useEntrySelectionStore((state) => state.openScopeHome);
   const updateNodeMeta = useSpaceStore((state) => state.updateNodeMeta);
   const refreshTree = useSpaceStore((state) => state.refreshTree);
+  const documentTargetKey = getDocumentTargetKey(spacePath, documentPath);
   const [entry, setEntry] = useState<Entry | null>(null);
+  const [loadedEntryKey, setLoadedEntryKey] = useState<string | null>(null);
   const [schemaResult, setSchemaResult] = useState<EntrySchemaResult | null>(
     null,
   );
@@ -65,9 +71,11 @@ export function EntryDocumentScreen({
   const reload = useCallback(async () => {
     const sequence = reloadSeqRef.current + 1;
     reloadSeqRef.current = sequence;
+    const targetKey = documentTargetKey;
     const startedAt = nowMs();
     let status: "ok" | "error" = "ok";
     setEntry(null);
+    setLoadedEntryKey(null);
     setSchemaResult(null);
     setDetailState(null);
     try {
@@ -84,6 +92,7 @@ export function EntryDocumentScreen({
       ]);
       if (sequence !== reloadSeqRef.current) return;
       setEntry(nextEntry);
+      setLoadedEntryKey(targetKey);
       setSchemaResult(
         nextSchemaResult
           ? {
@@ -110,7 +119,7 @@ export function EntryDocumentScreen({
         status,
       });
     }
-  }, [documentPath, openScopeHome, spaceId, spacePath]);
+  }, [documentPath, documentTargetKey, openScopeHome, spaceId, spacePath]);
 
   useEffect(() => {
     let cancelled = false;
@@ -122,9 +131,11 @@ export function EntryDocumentScreen({
     };
   }, [reload]);
 
+  const currentEntry = loadedEntryKey === documentTargetKey ? entry : null;
+
   async function updateCover(cover: EntryCover | null) {
-    if (!entry) return;
-    await updateField(entry, "cover", cover);
+    if (!currentEntry) return;
+    await updateField(currentEntry, "cover", cover);
   }
 
   async function deleteCurrentEntry(entryToDelete: Entry) {
@@ -147,7 +158,7 @@ export function EntryDocumentScreen({
     openDocument(duplicated.path, spaceId);
   }
 
-  if (!entry) {
+  if (!currentEntry) {
     return <EntryDocumentLoadingState />;
   }
 
@@ -157,34 +168,39 @@ export function EntryDocumentScreen({
     <div className="flex min-h-full flex-col">
       <div className={detailPageHeaderClassName}>
         <EntryIdentityHeader
-          title={entry.meta.title}
-          icon={entry.meta.icon}
-          description={entry.meta.description ?? ""}
-          cover={entry.meta.cover ?? null}
+          title={currentEntry.meta.title}
+          icon={currentEntry.meta.icon}
+          description={currentEntry.meta.description ?? ""}
+          cover={currentEntry.meta.cover ?? null}
           projectPath={projectPath ?? null}
           spacePath={spacePath}
-          documentPath={entry.path}
+          documentPath={currentEntry.path}
           onTitleChange={(value) =>
-            void updateField(entry, "title", value).catch(handleError)
+            void updateField(currentEntry, "title", value).catch(handleError)
           }
           onIconChange={(value) =>
-            void updateField(entry, "icon", value).catch(handleError)
+            void updateField(currentEntry, "icon", value).catch(handleError)
           }
           onDescriptionChange={(value) =>
-            void updateField(entry, "description", value).catch(handleError)
+            void updateField(currentEntry, "description", value).catch(
+              handleError,
+            )
           }
           onCoverChange={(cover) => void updateCover(cover).catch(handleError)}
           onBodyFocus={() => undefined}
-          metadata={<EntrySystemFields meta={entry.meta} />}
+          metadata={<EntrySystemFields meta={currentEntry.meta} />}
           coverSize="compact"
           actions={
             <EntryDetailActions
-              entry={entry}
+              entry={currentEntry}
               spacePath={spacePath}
               projectPath={projectPath}
               spaceId={spaceId}
               onConverted={(nextEntry, nested) => {
                 setEntry(nextEntry);
+                setLoadedEntryKey(
+                  getDocumentTargetKey(spacePath, nextEntry.path),
+                );
                 openDocument(nextEntry.path, spaceId);
                 if (nested) void refreshTree(spaceId);
               }}
@@ -201,14 +217,14 @@ export function EntryDocumentScreen({
               spacePath={spacePath}
               projectPath={projectPath}
               spaceId={spaceId}
-              filePath={entry.path}
-              metaId={entry.meta.id}
+              filePath={currentEntry.path}
+              metaId={currentEntry.meta.id}
               schemaResult={schemaResult}
-              values={entry.meta.extra ?? {}}
+              values={currentEntry.meta.extra ?? {}}
               mode="full"
               onSchemaChange={setSchemaResult}
               onValueChange={async (field, value) => {
-                await updateField(entry, field, value);
+                await updateField(currentEntry, field, value);
               }}
             />
           </div>
@@ -218,14 +234,16 @@ export function EntryDocumentScreen({
       <PlateDocumentEditor
         bodyOnly
         pageScroll
-        documentPath={entry.path}
+        documentPath={currentEntry.path}
         documentSpaceId={spaceId}
         spacePath={spacePath}
         projectPath={projectPath}
-        bodyOnlyMeta={entry.meta}
-        initialEntry={entry}
+        bodyOnlyMeta={currentEntry.meta}
+        initialEntry={currentEntry}
+        initialEntrySpacePath={spacePath}
         onDocumentPathChange={(path) => {
           setEntry((current) => (current ? { ...current, path } : current));
+          setLoadedEntryKey(getDocumentTargetKey(spacePath, path));
           openDocument(path, spaceId);
         }}
       />
@@ -234,7 +252,7 @@ export function EntryDocumentScreen({
           spacePath={spacePath}
           projectPath={projectPath}
           spaceId={spaceId}
-          documentPath={entry.path}
+          documentPath={currentEntry.path}
         />
       ) : null}
       <DeleteDialogs

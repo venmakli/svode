@@ -18,7 +18,7 @@ import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { FileText, Folder, GripVertical, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space/model";
+import { useSpaceStore } from "@/features/space";
 import type { Entry } from "@/features/entry";
 import { detailPageSectionClassName } from "@/shared/ui/page-layout";
 import type { TreeNode } from "@/features/entry";
@@ -41,12 +41,15 @@ export function EntrySubpages({
   documentPath,
 }: EntrySubpagesProps) {
   const openDocument = useEntrySelectionStore((state) => state.openDocument);
-  const refreshTree = useSpaceStore((state) => state.refreshTree);
+  const loadTreeChildren = useSpaceStore((state) => state.loadTreeChildren);
   const [subpages, setSubpages] = useState<TreeNode[]>([]);
   const [loading, setLoading] = useState(false);
   const folderPath = useMemo(
     () => folderPathForReadme(documentPath),
     [documentPath],
+  );
+  const cachedSubpages = useSpaceStore((state) =>
+    folderPath ? state.childrenByParentPath[spaceId]?.[folderPath] : undefined,
   );
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -59,19 +62,23 @@ export function EntrySubpages({
     }
     setLoading(true);
     try {
-      const tree = await invoke<TreeNode[]>("list_entries", {
-        space: spacePath,
-      });
-      const node = findNode(tree, documentPath, folderPath);
-      setSubpages(node?.children ?? []);
+      await loadTreeChildren(spaceId, folderPath);
+      setSubpages(
+        useSpaceStore.getState().childrenByParentPath[spaceId]?.[folderPath] ??
+          [],
+      );
     } finally {
       setLoading(false);
     }
-  }, [documentPath, folderPath, spacePath]);
+  }, [folderPath, loadTreeChildren, spaceId]);
 
   useEffect(() => {
     void load().catch(handleError);
   }, [load]);
+
+  useEffect(() => {
+    if (cachedSubpages) setSubpages(cachedSubpages);
+  }, [cachedSubpages]);
 
   if (folderPath === null) return null;
 
@@ -83,8 +90,7 @@ export function EntrySubpages({
       contextualDefaults: null,
       projectPath: projectPath ?? null,
     });
-    await refreshTree(spaceId);
-    await load();
+    await loadTreeChildren(spaceId, folderPath, { force: true });
     openDocument(created.path, spaceId);
   }
 
@@ -111,7 +117,7 @@ export function EntrySubpages({
         },
         projectPath: projectPath ?? null,
       });
-      await refreshTree(spaceId);
+      await loadTreeChildren(spaceId, folderPath, { force: true });
     } catch (error) {
       setSubpages(subpages);
       throw error;
@@ -214,23 +220,6 @@ function folderPathForReadme(path: string) {
   const normalized = normalizeEntryPath(path);
   if (!normalized.toLowerCase().endsWith("/readme.md")) return null;
   return normalized.replace(/\/readme\.md$/i, "");
-}
-
-function findNode(
-  nodes: TreeNode[],
-  documentPath: string,
-  folderPath: string,
-): TreeNode | null {
-  const normalizedDocumentPath = normalizeEntryPath(documentPath);
-  for (const node of nodes) {
-    const nodePath = normalizeEntryPath(node.path);
-    const nodeFolder = nodePath.replace(/\/readme\.md$/i, "");
-    if (nodePath === normalizedDocumentPath || nodeFolder === folderPath)
-      return node;
-    const found = findNode(node.children, documentPath, folderPath);
-    if (found) return found;
-  }
-  return null;
 }
 
 function orderNameForNode(node: TreeNode) {

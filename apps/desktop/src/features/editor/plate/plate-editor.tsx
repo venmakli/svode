@@ -62,6 +62,7 @@ interface PlateDocumentEditorProps {
   projectPath?: string | null;
   bodyOnlyMeta?: EntryMeta | null;
   initialEntry?: Entry | null;
+  initialEntrySpacePath?: string | null;
   onDocumentPathChange?: (path: string) => void;
 }
 
@@ -74,6 +75,7 @@ export function PlateDocumentEditor({
   projectPath: projectPathProp = null,
   bodyOnlyMeta = null,
   initialEntry = null,
+  initialEntrySpacePath = null,
   onDocumentPathChange,
 }: PlateDocumentEditorProps) {
   const { activeDocument, activeDocumentSpaceId, openDocument } =
@@ -118,6 +120,7 @@ export function PlateDocumentEditor({
   const currentPathRef = useRef<string | null>(null);
   const currentCacheKeyRef = useRef<string | null>(null);
   const initialEntryRef = useRef<Entry | null>(initialEntry);
+  const initialEntrySpacePathRef = useRef<string | null>(initialEntrySpacePath);
   const bodyOnlyMetaRef = useRef<EntryMeta | null>(bodyOnlyMeta);
   const loadSeqRef = useRef(0);
   const titleRef = useRef("");
@@ -149,7 +152,9 @@ export function PlateDocumentEditor({
 
   useEffect(() => {
     initialEntryRef.current = initialEntry;
-  }, [initialEntry]);
+    initialEntrySpacePathRef.current = initialEntrySpacePath;
+    bodyOnlyMetaRef.current = bodyOnlyMeta;
+  }, [bodyOnlyMeta, initialEntry, initialEntrySpacePath]);
 
   // Keep refs in sync with state for stable callback access
   useEffect(() => {
@@ -293,8 +298,14 @@ export function PlateDocumentEditor({
     }, AUTOSAVE_DEBOUNCE_MS);
   }, [performWrite, editor, spacePath]);
 
+  // `initialEntry` is a perf shortcut; require its source space so identical
+  // paths like root/child `README.md` cannot cross-load between scopes.
+  const initialEntryMatchesCurrentDocument =
+    Boolean(initialEntry && initialEntry.path === currentDocument) &&
+    Boolean(spacePath) &&
+    initialEntrySpacePath === spacePath;
   const initialEntryLoadKey =
-    initialEntry?.path === currentDocument && spacePath
+    initialEntryMatchesCurrentDocument && initialEntry
       ? `${spacePath}\0${initialEntry.path}\0${initialEntry.body.length}`
       : null;
 
@@ -321,7 +332,11 @@ export function PlateDocumentEditor({
     currentCacheKeyRef.current = currentCacheKey;
     isLoadingRef.current = true;
     setBrokenLinks(new Set());
-    setLoadedDocumentKey(null);
+    queueMicrotask(() => {
+      if (sequence === loadSeqRef.current) {
+        setLoadedDocumentKey(null);
+      }
+    });
 
     // Use cached Plate value if available and file wasn't modified externally
     // (visual aiModified flag) or invalidated by a prior backlinks update (staleCache).
@@ -331,14 +346,25 @@ export function PlateDocumentEditor({
       editorState.aiModified[currentDocument] ||
       editorState.staleCache[currentDocument];
     const cachedBody = cached && !wasExternallyModified ? cached : null;
+    const initialEntrySpacePathForDocument = initialEntrySpacePathRef.current;
     const initialForDocument =
-      initialEntryRef.current?.path === currentDocument
+      initialEntryRef.current?.path === currentDocument &&
+      initialEntrySpacePathForDocument === spacePath
         ? initialEntryRef.current
         : null;
+    const bodyOnlyMetaForDocument =
+      initialEntrySpacePathForDocument === spacePath
+        ? bodyOnlyMetaRef.current
+        : null;
     const metaForCachedBody =
-      initialForDocument?.meta ?? bodyOnlyMetaRef.current;
+      initialForDocument?.meta ?? bodyOnlyMetaForDocument;
 
-    setDocumentLoading(!cachedBody);
+    const nextDocumentLoading = !cachedBody;
+    queueMicrotask(() => {
+      if (sequence === loadSeqRef.current) {
+        setDocumentLoading(nextDocumentLoading);
+      }
+    });
 
     const applyMeta = (entryMeta: EntryMeta) => {
       setMeta(entryMeta);
@@ -462,6 +488,9 @@ export function PlateDocumentEditor({
   useEffect(() => {
     bodyOnlyMetaRef.current = bodyOnlyMeta;
     if (!bodyOnly || !bodyOnlyMeta) return;
+    if (initialEntrySpacePath !== spacePath) {
+      return;
+    }
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
@@ -473,7 +502,7 @@ export function PlateDocumentEditor({
     return () => {
       cancelled = true;
     };
-  }, [bodyOnly, bodyOnlyMeta]);
+  }, [bodyOnly, bodyOnlyMeta, initialEntrySpacePath, spacePath]);
 
   // Cancel debounce on unmount
   useEffect(() => cancelDebounce, [cancelDebounce]);
