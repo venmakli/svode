@@ -1,5 +1,6 @@
 import { arrayMove } from "@dnd-kit/sortable";
 import type { TreeNode } from "@/features/entry";
+import { treeNodeHasChildren, treeParentKeyForNode } from "./tree-cache";
 
 // SidebarMenuSub CSS: ml-2 (8px) + pl-2 (8px) = 16px per nesting level
 export const INDENT_WIDTH = 16;
@@ -34,7 +35,7 @@ export function flattenTree(
   const result: FlattenedItem[] = [];
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
-    const hasChildren = node.children.length > 0;
+    const hasChildren = treeNodeHasChildren(node);
     result.push({
       path: node.path,
       name: node.name,
@@ -45,9 +46,8 @@ export function flattenTree(
       index: i,
       hasChildren,
     });
-    if (hasChildren) {
-      // Folder path: strip /readme.md suffix
-      const folderPath = node.path.replace(/\/readme\.md$/i, "");
+    if (node.children.length > 0) {
+      const folderPath = treeParentKeyForNode(node) ?? node.path;
       result.push(...flattenTree(node.children, folderPath, depth + 1));
     }
   }
@@ -153,7 +153,11 @@ export function getProjection(
   // Determine type:
   // - If depth === previousItem.depth + 1: nesting as child of previous item
   // - Otherwise: sibling placement (before/after)
-  if (previousItem && depth === previousItem.depth + 1 && previousItem.hasChildren) {
+  if (
+    previousItem &&
+    depth === previousItem.depth + 1 &&
+    previousItem.hasChildren
+  ) {
     // If the over item is already a child of this folder, it's a reorder ("before"), not nesting
     const folderPath = previousItem.path.replace(/\/readme\.md$/i, "");
     const originalOverItem = flatItems.find((i) => i.path === overId);
@@ -164,9 +168,18 @@ export function getProjection(
   }
 
   // Nesting into a simple file — will need auto-nest (file → folder conversion)
-  if (previousItem && depth === previousItem.depth + 1 && !previousItem.hasChildren) {
+  if (
+    previousItem &&
+    depth === previousItem.depth + 1 &&
+    !previousItem.hasChildren
+  ) {
     const prevFolderPath = previousItem.path.replace(/\.md$/i, "");
-    return { depth, parentPath: prevFolderPath, type: "child", overPath: previousItem.path };
+    return {
+      depth,
+      parentPath: prevFolderPath,
+      type: "child",
+      overPath: previousItem.path,
+    };
   }
 
   const type = activeIndex < overIndex ? "after" : "before";

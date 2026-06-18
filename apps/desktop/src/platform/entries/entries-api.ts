@@ -48,6 +48,29 @@ export function listEntries(space: string): Promise<TreeNodeDto[]> {
   return invokeCommand<TreeNodeDto[]>("list_entries", { space });
 }
 
+type DirectTreeNodeDto = Omit<TreeNodeDto, "children"> & {
+  children?: TreeNodeDto[];
+};
+
+function normalizeTreeNode(node: DirectTreeNodeDto): TreeNodeDto {
+  return {
+    ...node,
+    hasChildren: node.hasChildren ?? node.has_children,
+    children: (node.children ?? []).map(normalizeTreeNode),
+  };
+}
+
+export async function listTreeChildren(
+  space: string,
+  parentPath: string | null,
+): Promise<TreeNodeDto[]> {
+  const nodes = await invokeCommand<DirectTreeNodeDto[]>("list_tree_children", {
+    space,
+    parentPath,
+  });
+  return nodes.map(normalizeTreeNode);
+}
+
 export function getExpandedPaths(space: string): Promise<string[]> {
   return invokeCommand<string[]>("get_expanded_paths", { space });
 }

@@ -39,7 +39,9 @@ export function folderPathForNode(node: TreeNode): string | null {
   if (!path) return null;
   if (!path.endsWith(".md")) return path;
   if (isReadmeNodePath(path)) return dirname(path);
-  if (node.children.length > 0 || node.has_schema) return dirname(path);
+  if (node.children.length > 0 || node.hasChildren || node.has_schema) {
+    return dirname(path);
+  }
   return null;
 }
 
@@ -88,6 +90,7 @@ function mergeIncomingNode(existing: TreeNode, incoming: TreeNode): TreeNode {
   return {
     ...base,
     has_schema: existing.has_schema || incoming.has_schema,
+    hasChildren: existing.hasChildren || incoming.hasChildren,
     children:
       existing.children.length > 0 ? existing.children : incoming.children,
   };

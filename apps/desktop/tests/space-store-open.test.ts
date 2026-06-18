@@ -12,6 +12,37 @@ const readmeNode: TreeNode = {
   children: [],
 };
 
+const docsNode: TreeNode = {
+  name: "docs",
+  path: "docs",
+  title: "docs",
+  icon: null,
+  has_changes: false,
+  has_schema: false,
+  hasChildren: true,
+  children: [],
+};
+
+const oldChildNode: TreeNode = {
+  name: "old.md",
+  path: "docs/old.md",
+  title: "old",
+  icon: null,
+  has_changes: false,
+  has_schema: false,
+  children: [],
+};
+
+const newChildNode: TreeNode = {
+  name: "new.md",
+  path: "docs/new.md",
+  title: "new",
+  icon: null,
+  has_changes: false,
+  has_schema: false,
+  children: [],
+};
+
 const rootSpace: SpaceInfo = {
   id: "root",
   name: "Project",
@@ -37,6 +68,10 @@ const childSpace: SpaceInfo = {
 };
 
 const listEntries = mock(async () => [readmeNode]);
+const listTreeChildren = mock(
+  async (_space: string, parentPath: string | null) =>
+    parentPath === "docs" ? [newChildNode] : [readmeNode],
+);
 const getExpandedPaths = mock(async () => [] as string[]);
 
 mock.module("sonner", () => ({
@@ -55,6 +90,7 @@ mock.module("@/platform/entries/entries-api", () => ({
   createEntry: mock(async () => null),
   getExpandedPaths,
   listEntries,
+  listTreeChildren,
   moveEntry: mock(async () => "README.md"),
   saveExpandedPaths: mock(async () => undefined),
   saveTreeOrder: mock(async () => undefined),
@@ -80,9 +116,8 @@ mock.module("@/platform/space/space-api", () => ({
   reorderSpaces: mock(async () => [childSpace]),
 }));
 
-const { useSpaceStore } = await import(
-  "../src/features/space/model/space-store"
-);
+const { useSpaceStore } =
+  await import("../src/features/space/model/space-store");
 
 async function flushBackgroundTasks() {
   await Promise.resolve();
@@ -102,8 +137,11 @@ beforeEach(() => {
     spaces: [childSpace],
     activeSpaceId: null,
     fileTrees: {},
+    childrenByParentPath: {},
     treeCache: {},
+    treeParentCache: {},
     treeLoading: {},
+    treeParentLoading: {},
     treeRefreshing: {},
     expandedPaths: {},
     isLoadingRoots: false,
@@ -125,7 +163,7 @@ test("cached openSpace return does not force a tree refresh", async () => {
   await flushBackgroundTasks();
 
   expect(useSpaceStore.getState().activeSpaceId).toBe(childSpace.id);
-  expect(listEntries).not.toHaveBeenCalled();
+  expect(listTreeChildren).not.toHaveBeenCalled();
 });
 
 test("missing tree loads in the background after active scope changes", async () => {
@@ -135,8 +173,42 @@ test("missing tree loads in the background after active scope changes", async ()
 
   await flushBackgroundTasks();
 
-  expect(listEntries).toHaveBeenCalledTimes(1);
+  expect(listTreeChildren).toHaveBeenCalledTimes(1);
   expect(useSpaceStore.getState().fileTrees[childSpace.id]).toEqual([
     readmeNode,
   ]);
+});
+
+test("dirty expanded parent reloads direct children without full tree refresh", async () => {
+  useSpaceStore.setState({
+    fileTrees: {
+      [childSpace.id]: [{ ...docsNode, children: [oldChildNode] }],
+    },
+    childrenByParentPath: {
+      [childSpace.id]: {
+        "": [docsNode],
+        docs: [oldChildNode],
+      },
+    },
+    treeCache: {
+      [childSpace.id]: { loadedAt: Date.now(), dirty: false },
+    },
+    treeParentCache: {
+      [childSpace.id]: {
+        "": { loadedAt: Date.now(), dirty: false },
+        docs: { loadedAt: Date.now(), dirty: true },
+      },
+    },
+    expandedPaths: { [childSpace.id]: ["docs"] },
+  });
+
+  await useSpaceStore.getState().ensureTreeLoaded(childSpace.id);
+
+  expect(listEntries).not.toHaveBeenCalled();
+  expect(listTreeChildren).toHaveBeenCalledTimes(1);
+  expect(listTreeChildren).toHaveBeenCalledWith(childSpace.path, "docs");
+  expect(useSpaceStore.getState().fileTrees[childSpace.id]?.[0]).toMatchObject({
+    path: "docs",
+    children: [newChildNode],
+  });
 });

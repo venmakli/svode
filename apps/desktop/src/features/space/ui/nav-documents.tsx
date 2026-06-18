@@ -29,6 +29,7 @@ export function NavDocuments() {
     fileTrees,
     createEntry,
     refreshTree,
+    loadTreeChildren,
   } = useSpaceStore();
   const { openDocument } = useEntrySelectionStore();
 
@@ -114,6 +115,7 @@ export function NavDocuments() {
                   key={node.path}
                   node={node}
                   spaceId={activeRootId}
+                  loadTreeChildren={loadTreeChildren}
                 />
               ))}
             </SidebarMenuSub>

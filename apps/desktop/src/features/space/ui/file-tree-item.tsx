@@ -1,4 +1,11 @@
-import { useContext, useState, useRef, useEffect, type KeyboardEvent, type ReactElement } from "react";
+import {
+  useContext,
+  useState,
+  useRef,
+  useEffect,
+  type KeyboardEvent,
+  type ReactElement,
+} from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
@@ -34,7 +41,20 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { ChevronRight, Database, Ellipsis, FileText, FilePlus, FolderOpen, FolderPlus, GripVertical, FileSymlink, Pencil, Trash2 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  ChevronRight,
+  Database,
+  Ellipsis,
+  FileText,
+  FilePlus,
+  FolderOpen,
+  FolderPlus,
+  GripVertical,
+  FileSymlink,
+  Pencil,
+  Trash2,
+} from "lucide-react";
 import { useEntrySelectionStore } from "@/features/entry";
 import { useEditorStore } from "@/features/editor";
 import { useSpaceStore } from "../model";
@@ -42,12 +62,17 @@ import type { Entry, TreeNode } from "@/features/entry";
 import { TreeDndContext } from "./sortable-file-tree";
 import { TreeDropIndicator } from "./tree-drop-indicator";
 import { isDescendantOf } from "../lib/tree-dnd-utilities";
+import { treeNodeHasChildren, treeParentKeyForNode } from "../lib/tree-cache";
 import { FileGitIndicatorIcon } from "@/features/git";
 import { selectFileIndicator, useGitStore } from "@/features/git";
 
 interface FileTreeItemProps {
   node: TreeNode;
   spaceId: string;
+  loadTreeChildren: (
+    spaceId: string,
+    parentPath?: string | null,
+  ) => Promise<void>;
 }
 
 interface BacklinkInfo {
@@ -61,20 +86,40 @@ function isBareFolder(node: TreeNode): boolean {
   return !node.path.endsWith(".md");
 }
 
-export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
+export function FileTreeItem({
+  node,
+  spaceId,
+  loadTreeChildren,
+}: FileTreeItemProps) {
   const { openDocument, activeDocument } = useEntrySelectionStore();
   const { unsavedChanges, aiModified } = useEditorStore();
-  const { expandedPaths, toggleExpanded, refreshTree, spaces, rootSpaces, activeSpaceId, activeRootId, activeRootPath } =
-    useSpaceStore();
+  const {
+    expandedPaths,
+    treeParentLoading,
+    toggleExpanded,
+    refreshTree,
+    spaces,
+    rootSpaces,
+    activeSpaceId,
+    activeRootId,
+    activeRootPath,
+  } = useSpaceStore();
 
   const bareFolder = isBareFolder(node);
+  const knownChildren = treeNodeHasChildren(node);
+  const expandable = bareFolder || knownChildren;
+  const childParentKey = treeParentKeyForNode(node);
+  const childLoading = childParentKey
+    ? (treeParentLoading[spaceId]?.[childParentKey] ?? false)
+    : false;
   const isActive = !bareFolder && activeDocument === node.path;
   const isUnsaved = !!unsavedChanges[node.path];
   const isAiModified = !!aiModified[node.path];
   // Conflict always wins — if the file has merge markers, we must show ⚠
   // even if the user is mid-edit locally.
-  const spaceForGit = spaces.find((w) => w.id === spaceId)
-    ?? rootSpaces.find((w) => w.id === spaceId);
+  const spaceForGit =
+    spaces.find((w) => w.id === spaceId) ??
+    rootSpaces.find((w) => w.id === spaceId);
   const fileGitState = useGitStore((s) =>
     spaceForGit ? selectFileIndicator(s, spaceForGit.path, node.path) : "clean",
   );
@@ -83,20 +128,21 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
 
   const expanded = expandedPaths[spaceId]?.includes(node.path) ?? false;
 
-  const { activeId, activeFolderPath, overId, projection, flatItemsMap } = useContext(TreeDndContext);
+  const { activeId, activeFolderPath, overId, projection, flatItemsMap } =
+    useContext(TreeDndContext);
 
   // Disable sortable for children of the currently dragged folder
-  const isChildOfDragged = !!activeFolderPath && isDescendantOf(node.path, activeFolderPath);
+  const isChildOfDragged =
+    !!activeFolderPath && isDescendantOf(node.path, activeFolderPath);
 
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    isDragging,
-  } = useSortable({ id: node.path, disabled: isChildOfDragged });
+  const { attributes, listeners, setNodeRef, isDragging } = useSortable({
+    id: node.path,
+    disabled: isChildOfDragged,
+  });
   const isOver = activeId !== null && overId === node.path;
   // Use projection.overPath as source of truth for nest highlight target
-  const isProjectionTarget = activeId !== null && projection?.overPath === node.path;
+  const isProjectionTarget =
+    activeId !== null && projection?.overPath === node.path;
   const myDepth = flatItemsMap.get(node.path)?.depth ?? 0;
 
   const style = {
@@ -164,22 +210,34 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
         }
       } else {
         // Title-edit only: file rename + backlinks are deferred to ⌘S (unified with editor-title-edit).
-        const entry = await invoke<{ meta: { id: string; icon: string | null; extra: Record<string, unknown> }; body: string }>(
-          "read_entry",
-          { space: space.path, path: node.path },
+        const entry = await invoke<{
+          meta: {
+            id: string;
+            icon: string | null;
+            extra: Record<string, unknown>;
+          };
+          body: string;
+        }>("read_entry", { space: space.path, path: node.path });
+        const result = await invoke<{ new_path: string | null }>(
+          "write_entry",
+          {
+            space: space.path,
+            path: node.path,
+            content: entry.body,
+            title: newName,
+            icon: entry.meta.icon,
+            extra:
+              entry.meta.extra && Object.keys(entry.meta.extra).length > 0
+                ? entry.meta.extra
+                : null,
+            existingId: entry.meta.id ?? null,
+            skipRename: true,
+          },
         );
-        const result = await invoke<{ new_path: string | null }>("write_entry", {
-          space: space.path,
-          path: node.path,
-          content: entry.body,
-          title: newName,
-          icon: entry.meta.icon,
-          extra: entry.meta.extra && Object.keys(entry.meta.extra).length > 0 ? entry.meta.extra : null,
-          existingId: entry.meta.id ?? null,
-          skipRename: true,
-        });
         if (activeDocument === node.path) {
-          useEditorStore.getState().requestRename(node.path, newName, result.new_path);
+          useEditorStore
+            .getState()
+            .requestRename(node.path, newName, result.new_path);
         }
       }
       await refreshTree(spaceId);
@@ -211,6 +269,7 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
       return;
     }
     if (bareFolder) {
+      if (!expanded) void loadTreeChildren(spaceId, node.path);
       toggleExpanded(spaceId, node.path);
       return;
     }
@@ -232,9 +291,9 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
         // Bare folder — already a directory, just use the path
         parentPath = node.path;
         parentNodePath = node.path;
-      } else if (node.children.length > 0) {
+      } else if (childParentKey && (knownChildren || node.has_schema)) {
         // Document folder — parent is the folder path
-        parentPath = node.path.replace(/\/readme\.md$/i, "");
+        parentPath = childParentKey;
         parentNodePath = node.path;
       } else {
         // Simple file — nest it first, then create child
@@ -340,8 +399,8 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
       if (bareFolder) {
         parentPath = node.path;
         parentNodePath = node.path;
-      } else if (node.children.length > 0) {
-        parentPath = node.path.replace(/\/readme\.md$/i, "");
+      } else if (childParentKey && (knownChildren || node.has_schema)) {
+        parentPath = childParentKey;
         parentNodePath = node.path;
       } else {
         // Simple file — nest it first, then create folder inside
@@ -425,10 +484,7 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
     </span>
   ) : space ? (
     <span className="ml-auto shrink-0 flex items-center">
-      <FileGitIndicatorIcon
-        spacePath={space.path}
-        filePath={node.path}
-      />
+      <FileGitIndicatorIcon spacePath={space.path} filePath={node.path} />
     </span>
   ) : null;
 
@@ -510,7 +566,9 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
       <TreeDropIndicator type={projection.type} relativeDepth={relativeDepth} />
     ) : null;
 
-  const nestHighlight = isNestTarget ? "bg-sidebar-accent ring-1 ring-sidebar-primary/30 rounded-md" : "";
+  const nestHighlight = isNestTarget
+    ? "bg-sidebar-accent ring-1 ring-sidebar-primary/30 rounded-md"
+    : "";
 
   const deleteConfirmDialog = (
     <AlertDialog
@@ -525,12 +583,13 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
           <AlertDialogDescription>
             {node.has_schema
               ? m.file_delete_collection_description()
-              : node.children.length > 0
+              : knownChildren
                 ? m.file_delete_tree_description()
                 : m.file_delete_description()}
             {deleteDialog.backlinks.length > 0 && (
               <>
-                <br /><br />
+                <br />
+                <br />
                 {m.file_delete_has_backlinks()}
                 <ul className="mt-2 list-disc pl-5">
                   {deleteDialog.backlinks.map((bl) => (
@@ -564,7 +623,10 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
     return (
       <Tooltip>
         <TooltipTrigger asChild>{element}</TooltipTrigger>
-        <TooltipContent side="right" className="flex flex-col items-start gap-0.5">
+        <TooltipContent
+          side="right"
+          className="flex flex-col items-start gap-0.5"
+        >
           <span>{node.title}</span>
           <span className="text-xs text-muted-foreground">
             {node.description}
@@ -574,8 +636,8 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
     );
   }
 
-  // Leaf node (simple file or empty bare folder with no children)
-  if (node.children.length === 0 && !bareFolder) {
+  // Leaf node (simple file without known children)
+  if (!expandable) {
     return (
       <>
         <SidebarMenuSubItem ref={setNodeRef} style={style} className="relative">
@@ -609,7 +671,10 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
         {dropIndicator}
         <Collapsible
           open={expanded}
-          onOpenChange={() => toggleExpanded(spaceId, node.path)}
+          onOpenChange={(open) => {
+            if (open) void loadTreeChildren(spaceId, node.path);
+            toggleExpanded(spaceId, node.path);
+          }}
           className="group/collapsible"
         >
           <div className="flex items-center group/tree-item">
@@ -640,18 +705,38 @@ export function FileTreeItem({ node, spaceId }: FileTreeItemProps) {
           </div>
           <CollapsibleContent>
             <SidebarMenuSub className="border-l-0">
-              {node.children.map((child) => (
-                <FileTreeItem
-                  key={child.path}
-                  node={child}
-                  spaceId={spaceId}
-                />
-              ))}
+              {childLoading && node.children.length === 0 ? (
+                <TreeChildLoadingRows />
+              ) : (
+                node.children.map((child) => (
+                  <FileTreeItem
+                    key={child.path}
+                    node={child}
+                    spaceId={spaceId}
+                    loadTreeChildren={loadTreeChildren}
+                  />
+                ))
+              )}
             </SidebarMenuSub>
           </CollapsibleContent>
         </Collapsible>
       </SidebarMenuSubItem>
       {deleteConfirmDialog}
+    </>
+  );
+}
+
+function TreeChildLoadingRows() {
+  return (
+    <>
+      {[0, 1].map((index) => (
+        <SidebarMenuSubItem key={index}>
+          <div className="flex h-7 items-center gap-2 rounded-md px-2">
+            <Skeleton className="size-4" />
+            <Skeleton className={index === 0 ? "h-3 w-24" : "h-3 w-20"} />
+          </div>
+        </SidebarMenuSubItem>
+      ))}
     </>
   );
 }

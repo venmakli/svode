@@ -65,6 +65,7 @@ function isSameSpace(payload: { space?: string }, spacePath: string): boolean {
 function entryToTreeNode(
   entryPath: string,
   entry: Awaited<ReturnType<typeof readEntry>>,
+  parentPath?: string | null,
 ): TreeNode {
   return {
     name: basename(entryPath),
@@ -74,6 +75,9 @@ function entryToTreeNode(
     description: entry.meta.description,
     has_changes: false,
     has_schema: false,
+    parent: parentPath ?? dirname(entryPath),
+    kind: "document",
+    hasChildren: false,
     children: [],
   };
 }
@@ -90,10 +94,10 @@ export function useSpaceFileWatch() {
     const queue: QueuedSpaceFileEvent[] = [];
     const unlisteners: Array<() => void> = [];
 
-    const repairTree = () => {
+    const repairTree = (parentPath?: string | null) => {
       const store = useSpaceStore.getState();
-      store.markTreeDirty(watchSpaceId);
-      void store.refreshTree(watchSpaceId);
+      store.markTreeParentDirty(watchSpaceId, parentPath);
+      void store.loadTreeChildren(watchSpaceId, parentPath, { force: true });
     };
 
     const handleCreated = async (payload: SpaceFileEventDto) => {
@@ -105,20 +109,20 @@ export function useSpaceFileWatch() {
         return;
       }
       if (kind === "folder") {
-        store.upsertTreeNode(
-          watchSpaceId,
-          parentPathForTreeEvent(path, payload.parentPath),
-          {
-            name: basename(path),
-            path,
-            title: basename(path),
-            icon: null,
-            description: null,
-            has_changes: false,
-            has_schema: false,
-            children: [],
-          },
-        );
+        const parentPath = parentPathForTreeEvent(path, payload.parentPath);
+        store.upsertTreeNode(watchSpaceId, parentPath, {
+          name: basename(path),
+          path,
+          title: basename(path),
+          icon: null,
+          description: null,
+          has_changes: false,
+          has_schema: false,
+          parent: parentPath,
+          kind: "folder",
+          hasChildren: false,
+          children: [],
+        });
         return;
       }
       if (kind !== "document") return;
@@ -126,7 +130,11 @@ export function useSpaceFileWatch() {
       const entry = await readEntry(watchSpacePath, path);
       if (isReadmePath(path)) {
         if (!dirname(path)) {
-          store.upsertTreeNode(watchSpaceId, "", entryToTreeNode(path, entry));
+          store.upsertTreeNode(
+            watchSpaceId,
+            "",
+            entryToTreeNode(path, entry, ""),
+          );
           return;
         }
         store.applyReadmeMeta(
@@ -141,7 +149,11 @@ export function useSpaceFileWatch() {
       store.upsertTreeNode(
         watchSpaceId,
         parentPathForTreeEvent(path, payload.parentPath),
-        entryToTreeNode(path, entry),
+        entryToTreeNode(
+          path,
+          entry,
+          parentPathForTreeEvent(path, payload.parentPath),
+        ),
       );
     };
 
@@ -154,7 +166,7 @@ export function useSpaceFileWatch() {
         return;
       }
       if (kind === "folder") {
-        repairTree();
+        repairTree(parentPathForTreeEvent(path, payload.parentPath));
         return;
       }
       if (kind !== "document") return;
@@ -211,7 +223,7 @@ export function useSpaceFileWatch() {
           }
           try {
             if (inferEventKind(payload) === "unknown") {
-              repairTree();
+              repairTree(payload.parentPath);
               continue;
             }
             if (eventName === "file:created") {
@@ -223,7 +235,7 @@ export function useSpaceFileWatch() {
             }
           } catch (error) {
             console.warn("Failed to apply space tree event:", error);
-            repairTree();
+            repairTree(payload.parentPath);
           }
         }
       })();

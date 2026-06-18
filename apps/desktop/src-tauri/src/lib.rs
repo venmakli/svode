@@ -58,6 +58,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::greet::greet,
             commands::files::list_entries,
+            commands::files::list_tree_children,
             commands::files::get_entry_detail_state,
             commands::files::create_entry,
             commands::files::create_folder,

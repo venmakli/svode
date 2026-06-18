@@ -70,6 +70,10 @@ export interface TreeNodeDto {
   description?: string | null;
   has_changes: boolean;
   has_schema: boolean;
+  parent?: string | null;
+  kind?: "document" | "folder" | "collection";
+  hasChildren?: boolean;
+  has_children?: boolean;
   children: TreeNodeDto[];
 }
 

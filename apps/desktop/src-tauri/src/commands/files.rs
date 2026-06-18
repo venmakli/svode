@@ -302,6 +302,50 @@ pub fn list_entries(space: String) -> Result<Vec<TreeNode>, AppError> {
 }
 
 #[tauri::command]
+pub fn list_tree_children(
+    space: String,
+    parent_path: Option<String>,
+) -> Result<Vec<tree::TreeChildNode>, AppError> {
+    let started = Instant::now();
+    let space_name = path_name(&space);
+    let parent_scope = if parent_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .is_some()
+    {
+        "child"
+    } else {
+        "root"
+    };
+    let result = tree::list_tree_children(&space, parent_path.as_deref());
+    let duration_ms = started.elapsed().as_millis() as u64;
+
+    match &result {
+        Ok(nodes) => tracing::info!(
+            target: "svode::perf",
+            event = "list_tree_children",
+            space = %space_name,
+            parent_scope,
+            node_count = nodes.len(),
+            duration_ms,
+            "list_tree_children completed"
+        ),
+        Err(error) => tracing::info!(
+            target: "svode::perf",
+            event = "list_tree_children",
+            space = %space_name,
+            parent_scope,
+            duration_ms,
+            error_kind = error.kind(),
+            "list_tree_children failed"
+        ),
+    }
+
+    result
+}
+
+#[tauri::command]
 pub fn get_entry_detail_state(
     space: String,
     path: String,

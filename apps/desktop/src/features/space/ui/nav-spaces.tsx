@@ -142,15 +142,12 @@ export function NavSpaces({
     createEntry,
     refreshTree,
     ensureTreeLoaded,
+    loadTreeChildren,
     loadSpaces,
     reorderSpaces,
   } = useSpaceStore();
-  const {
-    activeDocument,
-    activeDocumentSpaceId,
-    openDocument,
-    openScopeHome,
-  } = useEntrySelectionStore();
+  const { activeDocument, activeDocumentSpaceId, openDocument, openScopeHome } =
+    useEntrySelectionStore();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{
     id: string;
@@ -234,6 +231,11 @@ export function NavSpaces({
     );
   }
 
+  function handleRootOpenChange(open: boolean) {
+    setRootOpen(open);
+    if (open) void ensureTreeLoaded(rootId);
+  }
+
   async function handleOpenSpaceHome(ws: SpaceInfo) {
     onActivateContent();
     const state = useSpaceStore.getState();
@@ -258,9 +260,11 @@ export function NavSpaces({
         rootPath,
       );
       useSpaceStore.setState({
-        spaces: useSpaceStore.getState().spaces.map((w) =>
-          w.id === editingSpaceId ? { ...w, name: editValue.trim() } : w,
-        ),
+        spaces: useSpaceStore
+          .getState()
+          .spaces.map((w) =>
+            w.id === editingSpaceId ? { ...w, name: editValue.trim() } : w,
+          ),
       });
     } catch (err) {
       console.error("Failed to rename space:", err);
@@ -396,11 +400,9 @@ export function NavSpaces({
               name={activeRootName}
               open={rootOpen}
               tree={visibleScopeChildren(rootTree)}
-              onOpenChange={setRootOpen}
+              onOpenChange={handleRootOpenChange}
               onOpenHome={handleOpenRootHome}
-              onNewPage={() =>
-                handleNewPage({ id: rootId, path: rootPath })
-              }
+              onNewPage={() => handleNewPage({ id: rootId, path: rootPath })}
               onNewFolder={() =>
                 handleNewFolder({ id: rootId, path: rootPath })
               }
@@ -414,6 +416,7 @@ export function NavSpaces({
               loading={treeLoading[rootId] ?? false}
               refreshing={treeRefreshing[rootId] ?? false}
               treeLoaded={hasRecordKey(fileTrees, rootId)}
+              loadTreeChildren={loadTreeChildren}
             />
             <DndContext
               sensors={sensors}
@@ -452,6 +455,7 @@ export function NavSpaces({
                       handleCloneMissing={handleCloneMissing}
                       handleRemoveBroken={handleRemoveBroken}
                       ensureTreeLoaded={ensureTreeLoaded}
+                      loadTreeChildren={loadTreeChildren}
                       editRef={editRef}
                       loading={treeLoading[ws.id] ?? false}
                       refreshing={treeRefreshing[ws.id] ?? false}
@@ -499,9 +503,7 @@ export function NavSpaces({
             <AlertDialogCancel>{m.project_cancel()}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() =>
-                deleteTarget && handleDeleteSpace(deleteTarget.id)
-              }
+              onClick={() => deleteTarget && handleDeleteSpace(deleteTarget.id)}
             >
               {m.space_delete()}
             </AlertDialogAction>
@@ -530,6 +532,10 @@ interface RootScopeRowProps {
   loading: boolean;
   refreshing: boolean;
   treeLoaded: boolean;
+  loadTreeChildren: (
+    spaceId: string,
+    parentPath?: string | null,
+  ) => Promise<void>;
 }
 
 function RootScopeRow({
@@ -550,6 +556,7 @@ function RootScopeRow({
   loading,
   refreshing,
   treeLoaded,
+  loadTreeChildren,
 }: RootScopeRowProps) {
   return (
     <Collapsible asChild open={open} onOpenChange={onOpenChange}>
@@ -613,6 +620,7 @@ function RootScopeRow({
                     key={node.path}
                     node={node}
                     spaceId={spaceId}
+                    loadTreeChildren={loadTreeChildren}
                   />
                 ))}
               </SidebarMenuSub>
@@ -643,6 +651,10 @@ interface SpaceRowProps {
   handleCloneMissing: (spaceId: string, spacePath: string) => void;
   handleRemoveBroken: (spaceId: string) => void;
   ensureTreeLoaded: (spaceId: string) => Promise<void>;
+  loadTreeChildren: (
+    spaceId: string,
+    parentPath?: string | null,
+  ) => Promise<void>;
   editRef: RefObject<HTMLInputElement | null>;
   loading: boolean;
   refreshing: boolean;
@@ -667,6 +679,7 @@ function SpaceRow({
   handleCloneMissing,
   handleRemoveBroken,
   ensureTreeLoaded,
+  loadTreeChildren,
   editRef,
   loading,
   refreshing,
@@ -747,7 +760,9 @@ function SpaceRow({
                 <X />
               </SidebarMenuAction>
             </TooltipTrigger>
-            <TooltipContent side="right">{m.space_remove_broken()}</TooltipContent>
+            <TooltipContent side="right">
+              {m.space_remove_broken()}
+            </TooltipContent>
           </Tooltip>
         )}
       </SidebarMenuItem>
@@ -901,7 +916,12 @@ function SpaceRow({
             <SortableFileTree spaceId={ws.id} tree={tree}>
               <SidebarMenuSub className="ml-4 border-l-0 pl-2">
                 {tree.map((node) => (
-                  <FileTreeItem key={node.path} node={node} spaceId={ws.id} />
+                  <FileTreeItem
+                    key={node.path}
+                    node={node}
+                    spaceId={ws.id}
+                    loadTreeChildren={loadTreeChildren}
+                  />
                 ))}
               </SidebarMenuSub>
             </SortableFileTree>
@@ -919,7 +939,9 @@ function TreeActivityIndicator({
   spacePath: string;
   loading: boolean;
 }) {
-  const gitIndicator = useGitStore((state) => selectIndicator(state, spacePath));
+  const gitIndicator = useGitStore((state) =>
+    selectIndicator(state, spacePath),
+  );
 
   if (!loading && gitIndicator === "clean") return null;
 

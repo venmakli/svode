@@ -1,13 +1,17 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::time::Instant;
 
 use crate::error::AppError;
 use crate::files::frontmatter;
 use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
+use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::config::read_space_config;
+
+const MAX_FRONTMATTER_HEAD_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TreeNode {
@@ -21,6 +25,33 @@ pub struct TreeNode {
     pub children: Vec<TreeNode>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum TreeChildKind {
+    Document,
+    Folder,
+    Collection,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TreeChildNode {
+    pub name: String,
+    pub path: String,
+    pub title: String,
+    pub icon: Option<String>,
+    pub description: Option<String>,
+    pub has_changes: bool,
+    pub has_schema: bool,
+    pub parent: Option<String>,
+    #[serde(rename = "hasChildren")]
+    pub has_children: bool,
+    pub kind: TreeChildKind,
+}
+
+fn is_readme_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case("readme.md")
+}
+
 /// Find a readme.md file inside a directory (case-insensitive).
 /// Returns the absolute path if found.
 fn find_readme(base: &Path, dir: &Path, policy: &TreeIgnorePolicy) -> Option<std::path::PathBuf> {
@@ -30,7 +61,7 @@ fn find_readme(base: &Path, dir: &Path, policy: &TreeIgnorePolicy) -> Option<std
         .find_map(|e| {
             let name = e.file_name();
             let path = e.path();
-            if !name.to_string_lossy().eq_ignore_ascii_case("readme.md") || !path.is_file() {
+            if !is_readme_name(&name.to_string_lossy()) || !path.is_file() {
                 return None;
             }
             let rel = path.strip_prefix(base).unwrap_or(&path);
@@ -58,6 +89,62 @@ fn read_frontmatter_meta(abs_path: &Path) -> (String, Option<String>, Option<Str
         Ok((meta, _)) => (meta.title, meta.icon, meta.description),
         Err(_) => (fallback, None, None),
     }
+}
+
+/// Lazy tree metadata reader: stop at frontmatter instead of loading markdown body.
+fn read_frontmatter_meta_head(abs_path: &Path) -> (String, Option<String>, Option<String>) {
+    let fallback = abs_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    let Ok(file) = fs::File::open(abs_path) else {
+        return (fallback, None, None);
+    };
+    let mut reader = BufReader::new(file);
+    let mut head = String::new();
+    let mut started = false;
+
+    loop {
+        let mut line = String::new();
+        let Ok(bytes) = reader.read_line(&mut line) else {
+            return (fallback, None, None);
+        };
+        if bytes == 0 {
+            break;
+        }
+
+        if !started {
+            if line.trim().is_empty() {
+                head.push_str(&line);
+                continue;
+            }
+            if line.trim_end() != "---" {
+                return (fallback, None, None);
+            }
+            if head.len() + line.len() > MAX_FRONTMATTER_HEAD_BYTES {
+                return (fallback, None, None);
+            }
+            started = true;
+            head.push_str(&line);
+            continue;
+        }
+
+        let is_closing = line.trim_end() == "---";
+        if head.len() + line.len() > MAX_FRONTMATTER_HEAD_BYTES {
+            return (fallback, None, None);
+        }
+        head.push_str(&line);
+        if is_closing {
+            match frontmatter::parse(&head) {
+                Ok((meta, _)) => return (meta.title, meta.icon, meta.description),
+                Err(_) => return (fallback, None, None),
+            }
+        }
+    }
+
+    (fallback, None, None)
 }
 
 fn repo_path_string(path: &Path) -> String {
@@ -189,6 +276,252 @@ pub fn build_tree(space: &str) -> Result<Vec<TreeNode>, AppError> {
     }
 
     result
+}
+
+pub fn list_tree_children(
+    space: &str,
+    parent_path: Option<&str>,
+) -> Result<Vec<TreeChildNode>, AppError> {
+    let root = Path::new(space);
+    if !root.is_dir() {
+        return Err(AppError::FileNotFound(space.to_string()));
+    }
+
+    let parent_rel = normalize_tree_parent_path(parent_path)?;
+    let dir = if parent_rel == "." {
+        root.to_path_buf()
+    } else {
+        root.join(&parent_rel)
+    };
+    if !dir.is_dir() {
+        return Err(AppError::FileNotFound(parent_rel));
+    }
+
+    let policy = TreeIgnorePolicy::from_space_root(root);
+    if parent_rel != "." && policy.is_ignored_rel(Path::new(&parent_rel), TreePathKind::Directory) {
+        return Err(AppError::FileNotFound(parent_rel));
+    }
+
+    let order = read_order(root);
+    let skip_dirs = child_folder_names(root);
+    read_dir_direct(root, &dir, &parent_rel, &order, &skip_dirs, &policy)
+}
+
+fn normalize_tree_parent_path(parent_path: Option<&str>) -> Result<String, AppError> {
+    let Some(raw) = parent_path.map(str::trim).filter(|path| !path.is_empty()) else {
+        return Ok(".".to_string());
+    };
+    let normalized = normalize_repo_relative(raw, RootMode::Allow)?;
+    if normalized == "." {
+        return Ok(normalized);
+    }
+
+    let path = Path::new(&normalized);
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(is_readme_name)
+    {
+        let parent = path.parent().unwrap_or_else(|| Path::new(""));
+        let parent = repo_path_string(parent);
+        if parent.is_empty() {
+            return Ok(".".to_string());
+        }
+        return Ok(parent);
+    }
+
+    Ok(normalized)
+}
+
+fn read_dir_direct(
+    base: &Path,
+    dir: &Path,
+    parent_rel: &str,
+    order: &HashMap<String, Vec<String>>,
+    skip_dirs: &HashSet<String>,
+    policy: &TreeIgnorePolicy,
+) -> Result<Vec<TreeChildNode>, AppError> {
+    let mut nodes: Vec<TreeChildNode> = Vec::new();
+    let entries: Vec<fs::DirEntry> = fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
+    let order_key = if parent_rel == "." { "." } else { parent_rel };
+    let parent = if parent_rel == "." {
+        None
+    } else {
+        Some(parent_rel.to_string())
+    };
+
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let abs_path = entry.path();
+
+        let Ok(meta) = fs::symlink_metadata(&abs_path) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+
+        let rel_path = abs_path.strip_prefix(base).unwrap_or(&abs_path);
+        let rel_path = repo_path_string(rel_path);
+        let path_kind = if meta.is_dir() {
+            TreePathKind::Directory
+        } else if meta.is_file() {
+            TreePathKind::File
+        } else {
+            TreePathKind::Unknown
+        };
+
+        if policy.is_ignored_rel(Path::new(&rel_path), path_kind) {
+            continue;
+        }
+
+        if meta.is_dir() {
+            if skip_dirs.contains(&rel_path) {
+                continue;
+            }
+
+            let schema_path = abs_path.join("schema.yaml");
+            let schema_rel = schema_path.strip_prefix(base).unwrap_or(&schema_path);
+            let has_schema =
+                schema_path.is_file() && !policy.is_ignored_rel(schema_rel, TreePathKind::File);
+            let readme = find_readme(base, &abs_path, policy);
+            let (title, icon, description) = if let Some(ref readme_path) = readme {
+                let (title, icon, description) = read_frontmatter_meta_head(readme_path);
+                if icon.is_none() && title.eq_ignore_ascii_case("readme") {
+                    (name.clone(), None, None)
+                } else {
+                    (title, icon, description)
+                }
+            } else {
+                (name.clone(), None, None)
+            };
+            let node_path = if let Some(ref readme_path) = readme {
+                let readme_name = readme_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                format!("{rel_path}/{readme_name}")
+            } else {
+                rel_path.clone()
+            };
+
+            nodes.push(TreeChildNode {
+                name,
+                path: node_path,
+                title,
+                icon,
+                description,
+                has_changes: false,
+                has_schema,
+                parent: parent.clone(),
+                has_children: has_visible_direct_children(base, &abs_path, skip_dirs, policy)?,
+                kind: if has_schema {
+                    TreeChildKind::Collection
+                } else {
+                    TreeChildKind::Folder
+                },
+            });
+        } else if meta.is_file() && name.ends_with(".md") && !is_readme_name(&name) {
+            let (title, icon, description) = read_frontmatter_meta_head(&abs_path);
+            nodes.push(TreeChildNode {
+                name,
+                path: rel_path,
+                title,
+                icon,
+                description,
+                has_changes: false,
+                has_schema: false,
+                parent: parent.clone(),
+                has_children: false,
+                kind: TreeChildKind::Document,
+            });
+        } else if meta.is_file() && parent_rel == "." && is_readme_name(&name) {
+            let (title, icon, description) = read_frontmatter_meta_head(&abs_path);
+            nodes.push(TreeChildNode {
+                name,
+                path: rel_path,
+                title,
+                icon,
+                description,
+                has_changes: false,
+                has_schema: false,
+                parent: parent.clone(),
+                has_children: false,
+                kind: TreeChildKind::Document,
+            });
+        }
+    }
+
+    apply_child_order(&mut nodes, order.get(order_key));
+    Ok(nodes)
+}
+
+fn has_visible_direct_children(
+    base: &Path,
+    dir: &Path,
+    skip_dirs: &HashSet<String>,
+    policy: &TreeIgnorePolicy,
+) -> Result<bool, AppError> {
+    for entry in fs::read_dir(dir)?.filter_map(|e| e.ok()) {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let abs_path = entry.path();
+
+        let Ok(meta) = fs::symlink_metadata(&abs_path) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+
+        let rel_path = abs_path.strip_prefix(base).unwrap_or(&abs_path);
+        let rel_path = repo_path_string(rel_path);
+        let kind = if meta.is_dir() {
+            TreePathKind::Directory
+        } else if meta.is_file() {
+            TreePathKind::File
+        } else {
+            TreePathKind::Unknown
+        };
+
+        if policy.is_ignored_rel(Path::new(&rel_path), kind) {
+            continue;
+        }
+
+        if meta.is_dir() {
+            if !skip_dirs.contains(&rel_path) {
+                return Ok(true);
+            }
+        } else if meta.is_file() && name.ends_with(".md") && !is_readme_name(&name) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn apply_child_order(nodes: &mut Vec<TreeChildNode>, order_list: Option<&Vec<String>>) {
+    let Some(ordered) = order_list else {
+        nodes.sort_by_key(|node| node.name.to_lowercase());
+        return;
+    };
+
+    let positions: HashMap<&str, usize> = ordered
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (name.as_str(), index))
+        .collect();
+
+    nodes.sort_by(|a, b| {
+        match (
+            positions.get(a.name.as_str()),
+            positions.get(b.name.as_str()),
+        ) {
+            (Some(left), Some(right)) => left.cmp(right),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        }
+    });
 }
 
 fn read_dir_recursive(
@@ -338,6 +671,134 @@ mod tests {
 
     fn child_names(nodes: &[TreeNode]) -> Vec<String> {
         nodes.iter().map(|node| node.name.clone()).collect()
+    }
+
+    fn child_names_direct(nodes: &[TreeChildNode]) -> Vec<String> {
+        nodes.iter().map(|node| node.name.clone()).collect()
+    }
+
+    fn write_doc(path: &Path, title: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(
+            path,
+            format!(
+                "---\nid: test\ntitle: {title}\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n---\nBody that lazy tree listing should not need.\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn list_tree_children_root_returns_direct_children_only() {
+        let tmp = TempDir::new().unwrap();
+        write_doc(&tmp.path().join("a.md"), "A");
+        write_doc(&tmp.path().join("folder").join("b.md"), "B");
+        write_doc(&tmp.path().join("folder").join("nested").join("c.md"), "C");
+
+        let nodes = list_tree_children(tmp.path().to_str().unwrap(), None).expect("children");
+
+        assert_eq!(
+            child_names_direct(&nodes),
+            vec!["a.md".to_string(), "folder".to_string()]
+        );
+        assert!(!child_names_direct(&nodes).contains(&"b.md".to_string()));
+        let folder = nodes.iter().find(|node| node.name == "folder").unwrap();
+        assert_eq!(folder.parent, None);
+        assert_eq!(folder.kind, TreeChildKind::Folder);
+        assert!(folder.has_children);
+    }
+
+    #[test]
+    fn list_tree_children_folder_parent_returns_direct_children_only() {
+        let tmp = TempDir::new().unwrap();
+        write_doc(&tmp.path().join("docs").join("a.md"), "A");
+        write_doc(&tmp.path().join("docs").join("nested").join("b.md"), "B");
+        write_doc(
+            &tmp.path()
+                .join("docs")
+                .join("nested")
+                .join("deep")
+                .join("c.md"),
+            "C",
+        );
+
+        let nodes =
+            list_tree_children(tmp.path().to_str().unwrap(), Some("docs")).expect("children");
+
+        assert_eq!(
+            child_names_direct(&nodes),
+            vec!["a.md".to_string(), "nested".to_string()]
+        );
+        assert!(!child_names_direct(&nodes).contains(&"b.md".to_string()));
+        assert!(
+            nodes
+                .iter()
+                .all(|node| node.parent.as_deref() == Some("docs"))
+        );
+        assert!(
+            nodes
+                .iter()
+                .find(|node| node.name == "nested")
+                .unwrap()
+                .has_children
+        );
+    }
+
+    #[test]
+    fn list_tree_children_uses_readme_as_folder_metadata_without_duplicate_child() {
+        let tmp = TempDir::new().unwrap();
+        write_doc(&tmp.path().join("docs").join("README.md"), "Docs Home");
+        write_doc(&tmp.path().join("docs").join("child.md"), "Child");
+
+        let root_nodes = list_tree_children(tmp.path().to_str().unwrap(), None).expect("root");
+        let docs = root_nodes
+            .iter()
+            .find(|node| node.name == "docs")
+            .expect("docs");
+
+        assert_eq!(docs.path, "docs/README.md");
+        assert_eq!(docs.title, "Docs Home");
+        assert!(docs.has_children);
+
+        let children = list_tree_children(tmp.path().to_str().unwrap(), Some("docs/README.md"))
+            .expect("docs children");
+
+        assert_eq!(child_names_direct(&children), vec!["child.md".to_string()]);
+        assert!(!child_names_direct(&children).contains(&"README.md".to_string()));
+    }
+
+    #[test]
+    fn list_tree_children_ignores_user_heavy_dir_and_does_not_count_it_as_children() {
+        let tmp = TempDir::new().unwrap();
+        write_tree_config(&tmp, vec!["node_modules"], vec![]);
+        write_doc(
+            &tmp.path()
+                .join("node_modules")
+                .join("pkg")
+                .join("README.md"),
+            "Package",
+        );
+        write_doc(&tmp.path().join("docs").join("README.md"), "Docs");
+        write_doc(
+            &tmp.path()
+                .join("docs")
+                .join("node_modules")
+                .join("pkg")
+                .join("README.md"),
+            "Nested Package",
+        );
+
+        let nodes = list_tree_children(tmp.path().to_str().unwrap(), None).expect("root");
+
+        assert_eq!(child_names_direct(&nodes), vec!["docs".to_string()]);
+        let docs = nodes.iter().find(|node| node.name == "docs").unwrap();
+        assert!(!docs.has_children);
+
+        let docs_children =
+            list_tree_children(tmp.path().to_str().unwrap(), Some("docs")).expect("docs");
+        assert!(docs_children.is_empty());
     }
 
     #[test]

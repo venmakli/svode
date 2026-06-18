@@ -35,6 +35,7 @@ import {
   type FlattenedItem,
   type Projection,
 } from "../lib/tree-dnd-utilities";
+import { treeNodeHasChildren } from "../lib/tree-cache";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 
 // --- Context for sharing DnD state with FileTreeItem ---
@@ -113,8 +114,14 @@ export function SortableFileTree({
   children,
 }: SortableFileTreeProps) {
   const renderStartedAt = nowMs();
-  const { moveEntry, saveOrder, refreshTree, toggleExpanded, expandedPaths } =
-    useSpaceStore();
+  const {
+    moveEntry,
+    saveOrder,
+    refreshTree,
+    loadTreeChildren,
+    toggleExpanded,
+    expandedPaths,
+  } = useSpaceStore();
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -282,16 +289,24 @@ export function SortableFileTree({
         const overNode = findNode(tree, newOverId);
         if (
           overNode &&
-          overNode.children.length > 0 &&
+          treeNodeHasChildren(overNode) &&
           !expandedSet.has(newOverId)
         ) {
           autoExpandTimer.current = setTimeout(() => {
+            void loadTreeChildren(spaceId, newOverId);
             toggleExpanded(spaceId, newOverId);
           }, 500);
         }
       }
     },
-    [tree, spaceId, toggleExpanded, expandedSet, computeProjection],
+    [
+      tree,
+      spaceId,
+      loadTreeChildren,
+      toggleExpanded,
+      expandedSet,
+      computeProjection,
+    ],
   );
 
   const resetState = useCallback(() => {
@@ -328,19 +343,17 @@ export function SortableFileTree({
       if (!fromNode) return;
 
       // Guard: prevent dropping a folder into its own descendants
-      const fromFolderPath =
-        fromNode.children.length > 0
-          ? fromPath.replace(/\/readme\.md$/i, "")
-          : fromPath;
+      const fromFolderPath = treeNodeHasChildren(fromNode)
+        ? fromPath.replace(/\/readme\.md$/i, "")
+        : fromPath;
       if (isDescendantOf(currentProjection.parentPath, fromFolderPath)) {
         return;
       }
 
       // For folder documents (path = "folder/readme.md"), tree parent is parent of folder, not folder itself
-      const fromParent =
-        fromNode.children.length > 0
-          ? getParentDir(fromPath.replace(/\/readme\.md$/i, ""))
-          : getParentDir(fromPath);
+      const fromParent = treeNodeHasChildren(fromNode)
+        ? getParentDir(fromPath.replace(/\/readme\.md$/i, ""))
+        : getParentDir(fromPath);
       const toParent = currentProjection.parentPath;
 
       try {
@@ -356,7 +369,7 @@ export function SortableFileTree({
             targetNode && !targetNode.path.endsWith(".md");
           if (
             targetNode &&
-            targetNode.children.length === 0 &&
+            !treeNodeHasChildren(targetNode) &&
             !targetIsBareFolder
           ) {
             const nestTarget = currentProjection.overPath;
@@ -437,7 +450,7 @@ export function SortableFileTree({
         // For document folders, move the folder itself, not just readme.md
         // Bare folders (path without .md) are already folder paths
         const isBareFolder = !fromPath.endsWith(".md");
-        const isDocFolder = !isBareFolder && fromNode.children.length > 0;
+        const isDocFolder = !isBareFolder && treeNodeHasChildren(fromNode);
         const movePath = isDocFolder
           ? fromPath.replace(/\/readme\.md$/i, "")
           : fromPath;
@@ -511,7 +524,7 @@ export function SortableFileTree({
 
   // If dragging a folder, compute its folder path for disabling children
   const activeFolderPath = useMemo(() => {
-    if (!activeId || !activeNode || activeNode.children.length === 0)
+    if (!activeId || !activeNode || !treeNodeHasChildren(activeNode))
       return null;
     return activeId.replace(/\/readme\.md$/i, "");
   }, [activeId, activeNode]);
