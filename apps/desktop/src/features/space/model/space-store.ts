@@ -84,6 +84,7 @@ interface SpaceState {
   createEntry: (spacePath: string, title: string) => Promise<EntryDto | null>;
   createPage: (spacePath: string, title: string) => Promise<EntryDto | null>;
   refreshTree: (spaceId?: string) => Promise<void>;
+  ensureTreeLoaded: (spaceId: string) => Promise<void>;
   updateNodeMeta: (
     spaceId: string,
     path: string,
@@ -156,6 +157,10 @@ function openScopeHomeSelection(spaceId: string, tree: TreeNode[]) {
   } else {
     selection.openScopeHome(spaceId);
   }
+}
+
+function hasRecordKey<T>(record: Record<string, T>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
 }
 
 export const useSpaceStore = create<SpaceState>((set, get) => ({
@@ -314,9 +319,13 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     const space = get().spaces.find((w) => w.id === id);
     if (space?.status && space.status !== "ready") return;
     const activeRootPath = get().activeRootPath;
+    const treeWasLoaded = hasRecordKey(get().fileTrees, id);
     if (space?.path && activeRootPath) {
       try {
         await ensureSpaceScaffold(activeRootPath, space.path);
+        if (treeWasLoaded) {
+          await get().refreshTree(id);
+        }
       } catch (err) {
         console.warn("ensure_space_scaffold failed:", err);
       }
@@ -328,12 +337,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
         console.warn("ensure_assets_scope failed:", err),
       );
     }
-    if (!get().fileTrees[id]) {
-      await get().refreshTree(id);
-    }
-    if (!get().expandedPaths[id]) {
-      await get().loadExpandedPaths(id);
-    }
+    await get().ensureTreeLoaded(id);
   },
 
   clearActiveSpace: () => {
@@ -422,6 +426,21 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
         fileTrees: { ...s.fileTrees, [id]: [] },
       }));
     }
+  },
+
+  ensureTreeLoaded: async (spaceId: string) => {
+    const state = get();
+    const tasks: Promise<void>[] = [];
+
+    if (!hasRecordKey(state.fileTrees, spaceId)) {
+      tasks.push(get().refreshTree(spaceId));
+    }
+
+    if (!hasRecordKey(state.expandedPaths, spaceId)) {
+      tasks.push(get().loadExpandedPaths(spaceId));
+    }
+
+    await Promise.all(tasks);
   },
 
   updateNodeMeta: (

@@ -32,6 +32,27 @@ import * as m from "@/paraglide/messages.js";
 
 const AUTOSAVE_DEBOUNCE_MS = 1000;
 const ENABLE_FIXED_FORMATTING_TOOLBAR = false;
+const DOCUMENT_CACHE_SEPARATOR = "\0";
+
+function getDocumentCacheKey(spacePath: string, path: string): string {
+  return `${spacePath}${DOCUMENT_CACHE_SEPARATOR}${path}`;
+}
+
+function deleteCachedPath(
+  cache: Map<string, Descendant[]>,
+  path: string,
+  spacePath?: string | null,
+) {
+  if (spacePath) {
+    cache.delete(getDocumentCacheKey(spacePath, path));
+    return;
+  }
+
+  const pathSuffix = `${DOCUMENT_CACHE_SEPARATOR}${path}`;
+  for (const key of cache.keys()) {
+    if (key.endsWith(pathSuffix)) cache.delete(key);
+  }
+}
 
 interface PlateDocumentEditorProps {
   bodyOnly: true;
@@ -94,6 +115,7 @@ export function PlateDocumentEditor({
 
   const isLoadingRef = useRef(false);
   const currentPathRef = useRef<string | null>(null);
+  const currentCacheKeyRef = useRef<string | null>(null);
   const titleRef = useRef("");
   const iconRef = useRef<string | null>(null);
   const descriptionRef = useRef("");
@@ -204,7 +226,7 @@ export function PlateDocumentEditor({
 
       const paths = sources.map((source) => source.path);
       for (const path of paths) {
-        docCacheRef.current.delete(path);
+        deleteCachedPath(docCacheRef.current, path);
       }
       useEditorStore.getState().suppressPaths(paths);
 
@@ -240,11 +262,12 @@ export function PlateDocumentEditor({
     debounceTimerRef.current = setTimeout(() => {
       debounceTimerRef.current = null;
       const path = currentPathRef.current;
+      const cacheKey = currentCacheKeyRef.current;
       void performWrite(true)
         .then((result) => {
-          if (!result || !path) return;
+          if (!result || !path || !cacheKey) return;
           if (editor) {
-            docCacheRef.current.set(path, editor.children);
+            docCacheRef.current.set(cacheKey, editor.children);
           }
         })
         .catch((err) => {
@@ -266,13 +289,16 @@ export function PlateDocumentEditor({
     // Cache current editor state before switching. Cancel any debounce for
     // the previous doc — any in-memory edits not yet written are discarded
     // at switch time (v1 — acceptable loss ≤1s of edits).
+    const currentCacheKey = getDocumentCacheKey(spacePath, currentDocument);
     const prevPath = currentPathRef.current;
-    if (prevPath && prevPath !== currentDocument) {
-      docCacheRef.current.set(prevPath, editor.children);
+    const prevCacheKey = currentCacheKeyRef.current;
+    if (prevPath && prevCacheKey && prevCacheKey !== currentCacheKey) {
+      docCacheRef.current.set(prevCacheKey, editor.children);
     }
     cancelDebounce();
 
     currentPathRef.current = currentDocument;
+    currentCacheKeyRef.current = currentCacheKey;
     isLoadingRef.current = true;
 
     // Validate links in background
@@ -291,7 +317,7 @@ export function PlateDocumentEditor({
 
     // Use cached Plate value if available and file wasn't modified externally
     // (visual aiModified flag) or invalidated by a prior backlinks update (staleCache).
-    const cached = docCacheRef.current.get(currentDocument);
+    const cached = docCacheRef.current.get(currentCacheKey);
     const editorState = useEditorStore.getState();
     const wasExternallyModified =
       editorState.aiModified[currentDocument] ||
@@ -318,7 +344,7 @@ export function PlateDocumentEditor({
           isLoadingRef.current = false;
         });
     } else {
-      docCacheRef.current.delete(currentDocument);
+      docCacheRef.current.delete(currentCacheKey);
       useEditorStore.getState().clearStale(currentDocument);
       invoke<Entry>("read_entry", {
         space: spacePath,
@@ -381,8 +407,15 @@ export function PlateDocumentEditor({
 
     if (newPath) {
       // File was renamed on disk — cache editor content for new path and switch
-      docCacheRef.current.set(newPath, editor.children);
-      docCacheRef.current.delete(pendingRename.path);
+      if (spacePath) {
+        docCacheRef.current.set(
+          getDocumentCacheKey(spacePath, newPath),
+          editor.children,
+        );
+        docCacheRef.current.delete(
+          getDocumentCacheKey(spacePath, pendingRename.path),
+        );
+      }
       clearUnsaved(pendingRename.path);
       setCurrentDocument(newPath);
     } else {
@@ -405,6 +438,7 @@ export function PlateDocumentEditor({
     setCurrentDocument,
     updateNodeMeta,
     activeWsId,
+    spacePath,
   ]);
 
   // ⌘S — cancel debounce, materialize (rename + backlinks + structural
@@ -422,14 +456,22 @@ export function PlateDocumentEditor({
       clearUnsaved(currentDocument);
 
       if (result.new_path) {
-        docCacheRef.current.delete(currentDocument);
-        docCacheRef.current.set(result.new_path, editor.children);
+        docCacheRef.current.delete(
+          getDocumentCacheKey(spacePath, currentDocument),
+        );
+        docCacheRef.current.set(
+          getDocumentCacheKey(spacePath, result.new_path),
+          editor.children,
+        );
         setCurrentDocument(result.new_path);
         if (activeWsId) {
           useSpaceStore.getState().refreshTree(activeWsId);
         }
       } else {
-        docCacheRef.current.set(currentDocument, editor.children);
+        docCacheRef.current.set(
+          getDocumentCacheKey(spacePath, currentDocument),
+          editor.children,
+        );
       }
 
       // Backlinks files: invalidate cache so next open re-reads from disk,
@@ -495,8 +537,13 @@ export function PlateDocumentEditor({
       if (!result) return;
       clearUnsaved(currentDocument);
       if (result.new_path) {
-        docCacheRef.current.delete(currentDocument);
-        docCacheRef.current.set(result.new_path, editor.children);
+        docCacheRef.current.delete(
+          getDocumentCacheKey(spacePath, currentDocument),
+        );
+        docCacheRef.current.set(
+          getDocumentCacheKey(spacePath, result.new_path),
+          editor.children,
+        );
         setCurrentDocument(result.new_path);
         if (activeWsId) {
           useSpaceStore.getState().refreshTree(activeWsId);

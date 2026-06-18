@@ -131,6 +131,7 @@ export function NavSpaces({
     deleteSpace,
     createEntry,
     refreshTree,
+    ensureTreeLoaded,
     loadSpaces,
     reorderSpaces,
   } = useSpaceStore();
@@ -427,6 +428,7 @@ export function NavSpaces({
                       setDeleteTarget={setDeleteTarget}
                       handleCloneMissing={handleCloneMissing}
                       handleRemoveBroken={handleRemoveBroken}
+                      ensureTreeLoaded={ensureTreeLoaded}
                       editRef={editRef}
                     />
                   );
@@ -597,6 +599,7 @@ interface SpaceRowProps {
   setDeleteTarget: (t: { id: string; name: string }) => void;
   handleCloneMissing: (spaceId: string, spacePath: string) => void;
   handleRemoveBroken: (spaceId: string) => void;
+  ensureTreeLoaded: (spaceId: string) => Promise<void>;
   editRef: RefObject<HTMLInputElement | null>;
 }
 
@@ -617,6 +620,7 @@ function SpaceRow({
   setDeleteTarget,
   handleCloneMissing,
   handleRemoveBroken,
+  ensureTreeLoaded,
   editRef,
 }: SpaceRowProps) {
   const cloning = useGitStore((s) => s.cloning[ws.path]);
@@ -702,7 +706,13 @@ function SpaceRow({
   }
 
   return (
-    <Collapsible asChild defaultOpen={isActive}>
+    <Collapsible
+      asChild
+      defaultOpen={isActive}
+      onOpenChange={(open) => {
+        if (open) void ensureTreeLoaded(ws.id);
+      }}
+    >
       <SidebarMenuItem
         ref={setNodeRef}
         style={sortableStyle}
