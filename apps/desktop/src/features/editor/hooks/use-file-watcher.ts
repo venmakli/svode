@@ -12,6 +12,7 @@ import { deserializeWithConflicts } from "../conflict/parse-conflicts";
 import { useEntrySelectionStore } from "@/features/entry";
 import { useSpaceStore } from "@/features/space/model";
 import { useEditorStore } from "../model";
+import { setCachedDocumentValue } from "../model/plate-document-cache";
 import * as m from "@/paraglide/messages.js";
 
 interface FileEvent {
@@ -28,6 +29,7 @@ interface UseFileWatcherOptions {
   /** True while a debounce-auto-save is pending for the active document — local-wins. */
   isDebouncePendingRef: React.RefObject<boolean>;
   isLoadingRef: React.RefObject<boolean>;
+  onEntryReloaded?: (entry: Awaited<ReturnType<typeof readEntry>>) => void;
 }
 
 function isSchemaPath(path: string) {
@@ -49,6 +51,7 @@ export function useFileWatcher({
   ownNoncesRef,
   isDebouncePendingRef,
   isLoadingRef,
+  onEntryReloaded,
 }: UseFileWatcherOptions) {
   const { closeDocument } = useEntrySelectionStore();
   const { refreshTree } = useSpaceStore();
@@ -69,8 +72,8 @@ export function useFileWatcher({
     );
 
     return () => {
-      unwatchSpace(spacePath).catch(
-        (err) => console.error("Failed to unwatch space:", err),
+      unwatchSpace(spacePath).catch((err) =>
+        console.error("Failed to unwatch space:", err),
       );
     };
   }, [spacePath]);
@@ -113,13 +116,16 @@ export function useFileWatcher({
         readEntry(spacePath, changedPath)
           .then((entry) => {
             isLoadingRef.current = true;
-            const value = deserializeWithConflicts(editor, entry.body);
-            editor.tf.setValue(value as never);
-            isLoadingRef.current = false;
+            try {
+              const value = deserializeWithConflicts(editor, entry.body);
+              editor.tf.setValue(value as never);
+              setCachedDocumentValue(spacePath, changedPath, value);
+              onEntryReloaded?.(entry);
+            } finally {
+              isLoadingRef.current = false;
+            }
           })
-          .catch((err) =>
-            console.error("Failed to reload document:", err),
-          );
+          .catch((err) => console.error("Failed to reload document:", err));
       } else {
         // Document not currently open — mark as AI modified
         markAiModified(changedPath);
@@ -154,7 +160,17 @@ export function useFileWatcher({
     return () => {
       unlisteners.forEach((fn) => fn());
     };
-  }, [editor, spacePath, markAiModified, closeDocument, refreshTree, ownNoncesRef, isDebouncePendingRef, isLoadingRef]);
+  }, [
+    editor,
+    spacePath,
+    markAiModified,
+    closeDocument,
+    refreshTree,
+    ownNoncesRef,
+    isDebouncePendingRef,
+    isLoadingRef,
+    onEntryReloaded,
+  ]);
 
   // Clear AI modified flag when opening a document
   useEffect(() => {

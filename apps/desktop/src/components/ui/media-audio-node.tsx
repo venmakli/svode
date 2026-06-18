@@ -7,6 +7,8 @@ import { useMediaState } from "@platejs/media/react";
 import { ResizableProvider } from "@platejs/resizable";
 import { PlateElement, withHOC } from "platejs/react";
 
+import { useNearViewport } from "@/shared/hooks/use-near-viewport";
+
 import { Caption, CaptionTextarea } from "./caption";
 import { useResolvedMediaUrl } from "./media-adapter";
 
@@ -14,7 +16,10 @@ export const AudioElement = withHOC(
   ResizableProvider,
   function AudioElement(props: PlateElementProps<TAudioElement>) {
     const { align = "center", readOnly, unsafeUrl } = useMediaState();
-    const resolvedUrl = useResolvedMediaUrl(unsafeUrl);
+    const [frameRef, shouldResolve] = useNearViewport<HTMLDivElement>();
+    const resolvedUrl = useResolvedMediaUrl(
+      shouldResolve ? unsafeUrl : undefined,
+    );
 
     return (
       <PlateElement {...props} className="mb-1">
@@ -22,8 +27,13 @@ export const AudioElement = withHOC(
           className="group relative cursor-default"
           contentEditable={false}
         >
-          <div className="h-16">
-            <audio className="size-full" src={resolvedUrl} controls />
+          <div ref={frameRef} className="h-16">
+            <audio
+              className="size-full"
+              src={resolvedUrl}
+              preload="none"
+              controls
+            />
           </div>
 
           <Caption style={{ width: "100%" }} align={align}>

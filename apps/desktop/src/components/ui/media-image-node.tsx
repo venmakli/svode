@@ -9,10 +9,12 @@ import { ResizableProvider, useResizableValue } from "@platejs/resizable";
 import { PlateElement, withHOC } from "platejs/react";
 
 import { cn } from "@/shared/lib/utils";
+import { useNearViewport } from "@/shared/hooks/use-near-viewport";
 
 import { Caption, CaptionTextarea } from "./caption";
 import { useResolvedMediaUrl } from "./media-adapter";
 import { MediaToolbar } from "./media-toolbar";
+import { Skeleton } from "./skeleton";
 import {
   mediaResizeHandleVariants,
   Resizable,
@@ -30,11 +32,19 @@ export const ImageElement = withHOC(
       unsafeUrl,
     } = useMediaState();
     const width = useResizableValue("width");
-    const resolvedUrl = useResolvedMediaUrl(unsafeUrl);
+    const [frameRef, shouldResolve] = useNearViewport<HTMLDivElement>();
+    const resolvedUrl = useResolvedMediaUrl(
+      shouldResolve ? unsafeUrl : undefined,
+    );
+    const [imageReady, setImageReady] = React.useState(false);
 
     const { isDragging, handleRef } = useDraggable({
       element: props.element,
     });
+
+    React.useEffect(() => {
+      setImageReady(false);
+    }, [resolvedUrl]);
 
     return (
       <MediaToolbar plugin={ImagePlugin}>
@@ -51,20 +61,32 @@ export const ImageElement = withHOC(
                 className={mediaResizeHandleVariants({ direction: "left" })}
                 options={{ direction: "left" }}
               />
-              <Image
-                ref={handleRef}
-                className={cn(
-                  "block w-full max-w-full cursor-pointer object-cover px-0",
-                  "rounded-sm",
-                  focused && selected && "ring-2 ring-ring ring-offset-2",
-                  isDragging && "opacity-50",
+              <div ref={frameRef} className="relative min-h-40 w-full">
+                {(!resolvedUrl || !imageReady) && (
+                  <Skeleton className="absolute inset-0 h-full w-full rounded-sm" />
                 )}
-                alt={props.attributes.alt as string | undefined}
-                setProps={({ src, ...rest }) => ({
-                  ...rest,
-                  src: resolvedUrl ?? src,
-                })}
-              />
+                {resolvedUrl ? (
+                  <Image
+                    ref={handleRef}
+                    className={cn(
+                      "block w-full max-w-full cursor-pointer object-cover px-0",
+                      "rounded-sm",
+                      focused && selected && "ring-2 ring-ring ring-offset-2",
+                      isDragging && "opacity-50",
+                      !imageReady && "opacity-0",
+                    )}
+                    alt={props.attributes.alt as string | undefined}
+                    setProps={({ ...rest }) => ({
+                      ...rest,
+                      decoding: "async",
+                      loading: "lazy",
+                      onError: () => setImageReady(true),
+                      onLoad: () => setImageReady(true),
+                      src: resolvedUrl,
+                    })}
+                  />
+                ) : null}
+              </div>
               <ResizeHandle
                 className={mediaResizeHandleVariants({
                   direction: "right",

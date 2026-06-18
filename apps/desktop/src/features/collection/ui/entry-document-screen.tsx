@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -12,6 +12,7 @@ import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
 import { useEntrySelectionStore } from "@/features/entry";
 import { useSpaceStore } from "@/features/space/model";
 import { logTiming, nowMs } from "@/shared/lib/performance";
+import { readEntry } from "@/platform/entries/entries-api";
 import { DeleteDialogs } from "./delete-dialogs";
 import {
   EntryDetailActions,
@@ -45,6 +46,7 @@ export function EntryDocumentScreen({
   );
   const [detailState, setDetailState] = useState<EntryDetailState | null>(null);
   const [deleteEntry, setDeleteEntry] = useState<Entry | null>(null);
+  const reloadSeqRef = useRef(0);
   const updateField = useDebouncedEntryFieldUpdate({
     spacePath,
     projectPath,
@@ -61,11 +63,16 @@ export function EntryDocumentScreen({
   });
 
   const reload = useCallback(async () => {
+    const sequence = reloadSeqRef.current + 1;
+    reloadSeqRef.current = sequence;
     const startedAt = nowMs();
     let status: "ok" | "error" = "ok";
+    setEntry(null);
+    setSchemaResult(null);
+    setDetailState(null);
     try {
       const [nextEntry, nextSchemaResult, nextDetailState] = await Promise.all([
-        invoke<Entry>("read_entry", { space: spacePath, path: documentPath }),
+        readEntry(spacePath, documentPath) as Promise<Entry>,
         invoke<EntrySchemaResult | null>("get_entry_schema", {
           space: spacePath,
           filePath: documentPath,
@@ -75,6 +82,7 @@ export function EntryDocumentScreen({
           path: documentPath,
         }).catch(() => null),
       ]);
+      if (sequence !== reloadSeqRef.current) return;
       setEntry(nextEntry);
       setSchemaResult(
         nextSchemaResult
@@ -86,6 +94,7 @@ export function EntryDocumentScreen({
       );
       setDetailState(nextDetailState);
     } catch (error) {
+      if (sequence !== reloadSeqRef.current) return;
       status = "error";
       if (
         documentPath.toLowerCase() === "readme.md" &&
@@ -214,6 +223,7 @@ export function EntryDocumentScreen({
         spacePath={spacePath}
         projectPath={projectPath}
         bodyOnlyMeta={entry.meta}
+        initialEntry={entry}
         onDocumentPathChange={(path) => {
           setEntry((current) => (current ? { ...current, path } : current));
           openDocument(path, spaceId);

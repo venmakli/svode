@@ -24,35 +24,33 @@ import {
 import { Editor, EditorContainer } from "@/components/ui/editor";
 import { FixedToolbar } from "@/components/ui/fixed-toolbar";
 import { FixedToolbarButtons } from "@/components/ui/fixed-toolbar-buttons";
+import { Skeleton } from "@/components/ui/skeleton";
 import { detailPageBodyClassName } from "@/shared/ui/page-layout";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 import { TocSidebar } from "../ui/toc-sidebar";
 import { EditorMediaAdapterProvider } from "../ui/editor-media-adapter-provider";
 import type { Entry, EntryMeta, WriteResult } from "@/features/entry";
+import { readEntry, validateLinks } from "@/platform/entries/entries-api";
+import {
+  deleteCachedDocumentValue,
+  getCachedDocumentValue,
+  getDocumentCacheKey,
+  setCachedDocumentValue,
+  setCachedDocumentValueByKey,
+} from "../model/plate-document-cache";
 import * as m from "@/paraglide/messages.js";
 
 const AUTOSAVE_DEBOUNCE_MS = 1000;
 const ENABLE_FIXED_FORMATTING_TOOLBAR = false;
-const DOCUMENT_CACHE_SEPARATOR = "\0";
 
-function getDocumentCacheKey(spacePath: string, path: string): string {
-  return `${spacePath}${DOCUMENT_CACHE_SEPARATOR}${path}`;
-}
-
-function deleteCachedPath(
-  cache: Map<string, Descendant[]>,
-  path: string,
-  spacePath?: string | null,
-) {
-  if (spacePath) {
-    cache.delete(getDocumentCacheKey(spacePath, path));
-    return;
+function waitForNextFrame(): Promise<void> {
+  if (typeof window === "undefined") {
+    return Promise.resolve();
   }
 
-  const pathSuffix = `${DOCUMENT_CACHE_SEPARATOR}${path}`;
-  for (const key of cache.keys()) {
-    if (key.endsWith(pathSuffix)) cache.delete(key);
-  }
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
 }
 
 interface PlateDocumentEditorProps {
@@ -63,6 +61,7 @@ interface PlateDocumentEditorProps {
   spacePath?: string | null;
   projectPath?: string | null;
   bodyOnlyMeta?: EntryMeta | null;
+  initialEntry?: Entry | null;
   onDocumentPathChange?: (path: string) => void;
 }
 
@@ -74,6 +73,7 @@ export function PlateDocumentEditor({
   spacePath: spacePathProp = null,
   projectPath: projectPathProp = null,
   bodyOnlyMeta = null,
+  initialEntry = null,
   onDocumentPathChange,
 }: PlateDocumentEditorProps) {
   const { activeDocument, activeDocumentSpaceId, openDocument } =
@@ -117,12 +117,14 @@ export function PlateDocumentEditor({
   const isLoadingRef = useRef(false);
   const currentPathRef = useRef<string | null>(null);
   const currentCacheKeyRef = useRef<string | null>(null);
+  const initialEntryRef = useRef<Entry | null>(initialEntry);
+  const bodyOnlyMetaRef = useRef<EntryMeta | null>(bodyOnlyMeta);
+  const loadSeqRef = useRef(0);
   const titleRef = useRef("");
   const iconRef = useRef<string | null>(null);
   const descriptionRef = useRef("");
   const extraRef = useRef<Record<string, unknown> | null>(null);
   const metaIdRef = useRef<string | null>(null);
-  const docCacheRef = useRef(new Map<string, Descendant[]>());
 
   // Debounce auto-save refs
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -140,6 +142,14 @@ export function PlateDocumentEditor({
   const [title, setTitle] = useState("");
   const [icon, setIcon] = useState<string | null>(null);
   const [description, setDescription] = useState("");
+  const [documentLoading, setDocumentLoading] = useState(false);
+  const [loadedDocumentKey, setLoadedDocumentKey] = useState<string | null>(
+    null,
+  );
+
+  useEffect(() => {
+    initialEntryRef.current = initialEntry;
+  }, [initialEntry]);
 
   // Keep refs in sync with state for stable callback access
   useEffect(() => {
@@ -227,7 +237,7 @@ export function PlateDocumentEditor({
 
       const paths = sources.map((source) => source.path);
       for (const path of paths) {
-        deleteCachedPath(docCacheRef.current, path);
+        deleteCachedDocumentValue(path);
       }
       useEditorStore.getState().suppressPaths(paths);
 
@@ -268,7 +278,7 @@ export function PlateDocumentEditor({
         .then((result) => {
           if (!result || !path || !cacheKey) return;
           if (editor) {
-            docCacheRef.current.set(cacheKey, editor.children);
+            setCachedDocumentValueByKey(cacheKey, editor.children);
           }
         })
         .catch((err) => {
@@ -283,10 +293,17 @@ export function PlateDocumentEditor({
     }, AUTOSAVE_DEBOUNCE_MS);
   }, [performWrite, editor, spacePath]);
 
+  const initialEntryLoadKey =
+    initialEntry?.path === currentDocument && spacePath
+      ? `${spacePath}\0${initialEntry.path}\0${initialEntry.body.length}`
+      : null;
+
   // Load document when the target document changes
   useEffect(() => {
     if (!editor || !currentDocument || !spacePath) return;
 
+    const sequence = loadSeqRef.current + 1;
+    loadSeqRef.current = sequence;
     const startedAt = nowMs();
 
     // Cache current editor state before switching. Cancel any debounce for
@@ -296,107 +313,154 @@ export function PlateDocumentEditor({
     const prevPath = currentPathRef.current;
     const prevCacheKey = currentCacheKeyRef.current;
     if (prevPath && prevCacheKey && prevCacheKey !== currentCacheKey) {
-      docCacheRef.current.set(prevCacheKey, editor.children);
+      setCachedDocumentValueByKey(prevCacheKey, editor.children);
     }
     cancelDebounce();
 
     currentPathRef.current = currentDocument;
     currentCacheKeyRef.current = currentCacheKey;
     isLoadingRef.current = true;
-
-    // Validate links in background
-    invoke<{ url: string; exists: boolean }[]>("validate_links", {
-      space: spacePath,
-      path: currentDocument,
-      projectPath: projectPath ?? null,
-    })
-      .then((results) => {
-        const broken = new Set(
-          results.filter((r) => !r.exists).map((r) => r.url),
-        );
-        setBrokenLinks(broken);
-      })
-      .catch(() => setBrokenLinks(new Set()));
+    setBrokenLinks(new Set());
+    setLoadedDocumentKey(null);
 
     // Use cached Plate value if available and file wasn't modified externally
     // (visual aiModified flag) or invalidated by a prior backlinks update (staleCache).
-    const cached = docCacheRef.current.get(currentCacheKey);
+    const cached = getCachedDocumentValue(spacePath, currentDocument);
     const editorState = useEditorStore.getState();
     const wasExternallyModified =
       editorState.aiModified[currentDocument] ||
       editorState.staleCache[currentDocument];
     const cachedBody = cached && !wasExternallyModified ? cached : null;
+    const initialForDocument =
+      initialEntryRef.current?.path === currentDocument
+        ? initialEntryRef.current
+        : null;
+    const metaForCachedBody =
+      initialForDocument?.meta ?? bodyOnlyMetaRef.current;
+
+    setDocumentLoading(!cachedBody);
+
+    const applyMeta = (entryMeta: EntryMeta) => {
+      setMeta(entryMeta);
+      setTitle(entryMeta.title);
+      setIcon(entryMeta.icon);
+      setDescription(entryMeta.description ?? "");
+    };
+
+    const finish = (
+      status: "ok" | "error",
+      usedCachedBody: boolean,
+      source: "cache" | "cache-meta-read" | "initial-entry" | "read-entry",
+    ) => {
+      if (sequence !== loadSeqRef.current) return;
+      isLoadingRef.current = false;
+      setDocumentLoading(false);
+      if (status === "ok") setLoadedDocumentKey(currentCacheKey);
+      logTiming("doc.open.editor", startedAt, {
+        spaceId: currentDocumentSpaceId ?? null,
+        cachedBody: usedCachedBody,
+        source,
+        status,
+      });
+    };
 
     if (cachedBody) {
-      let status: "ok" | "error" = "ok";
-      invoke<Entry>("read_entry", {
-        space: spacePath,
-        path: currentDocument,
-      })
-        .then((entry) => {
-          setMeta(entry.meta);
-          setTitle(entry.meta.title);
-          setIcon(entry.meta.icon);
-          setDescription(entry.meta.description ?? "");
+      void (async () => {
+        try {
+          const entryMeta =
+            metaForCachedBody ??
+            ((await readEntry(spacePath, currentDocument)).meta as EntryMeta);
+          if (sequence !== loadSeqRef.current) return;
+          applyMeta(entryMeta);
           editor.tf.setValue(cachedBody);
           clearUnsaved(currentDocument);
-        })
-        .catch((err) => {
-          status = "error";
+          finish("ok", true, metaForCachedBody ? "cache" : "cache-meta-read");
+        } catch (err) {
+          if (sequence !== loadSeqRef.current) return;
           console.error("Failed to load document meta:", err);
           toast.error(m.editor_error_load());
-        })
-        .finally(() => {
-          isLoadingRef.current = false;
-          logTiming("doc.open.editor", startedAt, {
-            spaceId: currentDocumentSpaceId ?? null,
-            cachedBody: true,
-            status,
-          });
-        });
+          finish(
+            "error",
+            true,
+            metaForCachedBody ? "cache" : "cache-meta-read",
+          );
+        }
+      })();
     } else {
-      let status: "ok" | "error" = "ok";
-      docCacheRef.current.delete(currentCacheKey);
+      deleteCachedDocumentValue(currentDocument, spacePath);
       useEditorStore.getState().clearStale(currentDocument);
-      invoke<Entry>("read_entry", {
-        space: spacePath,
-        path: currentDocument,
-      })
-        .then((entry) => {
-          setMeta(entry.meta);
-          setTitle(entry.meta.title);
-          setIcon(entry.meta.icon);
-          setDescription(entry.meta.description ?? "");
+      void (async () => {
+        const source = initialForDocument ? "initial-entry" : "read-entry";
+        try {
+          await waitForNextFrame();
+          const entry =
+            initialForDocument ?? (await readEntry(spacePath, currentDocument));
+          if (sequence !== loadSeqRef.current) return;
+          applyMeta(entry.meta as EntryMeta);
           const value = deserializeWithConflicts(editor, entry.body);
           editor.tf.setValue(value);
+          setCachedDocumentValue(spacePath, currentDocument, value);
           clearUnsaved(currentDocument);
-        })
-        .catch((err) => {
-          status = "error";
+          finish("ok", false, source);
+        } catch (err) {
+          if (sequence !== loadSeqRef.current) return;
           console.error("Failed to load document:", err);
           toast.error(m.editor_error_load());
-        })
-        .finally(() => {
-          isLoadingRef.current = false;
-          logTiming("doc.open.editor", startedAt, {
-            spaceId: currentDocumentSpaceId ?? null,
-            cachedBody: false,
-            status,
-          });
-        });
+          finish("error", false, source);
+        }
+      })();
     }
   }, [
     editor,
     currentDocument,
     currentDocumentSpaceId,
     spacePath,
-    projectPath,
+    initialEntryLoadKey,
     cancelDebounce,
     clearUnsaved,
     setBrokenLinks,
   ]);
 
   useEffect(() => {
+    if (!loadedDocumentKey || !editor || !currentDocument || !spacePath) return;
+    if (loadedDocumentKey !== getDocumentCacheKey(spacePath, currentDocument)) {
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      validateLinks({
+        space: spacePath,
+        path: currentDocument,
+        projectPath: projectPath ?? null,
+      })
+        .then((results) => {
+          if (cancelled) return;
+          const broken = new Set(
+            results.filter((r) => !r.exists).map((r) => r.url),
+          );
+          setBrokenLinks(broken);
+        })
+        .catch(() => {
+          if (!cancelled) setBrokenLinks(new Set());
+        });
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    loadedDocumentKey,
+    editor,
+    currentDocument,
+    spacePath,
+    projectPath,
+    setBrokenLinks,
+  ]);
+
+  useEffect(() => {
+    bodyOnlyMetaRef.current = bodyOnlyMeta;
     if (!bodyOnly || !bodyOnlyMeta) return;
     let cancelled = false;
     queueMicrotask(() => {
@@ -427,13 +491,8 @@ export function PlateDocumentEditor({
     if (newPath) {
       // File was renamed on disk — cache editor content for new path and switch
       if (spacePath) {
-        docCacheRef.current.set(
-          getDocumentCacheKey(spacePath, newPath),
-          editor.children,
-        );
-        docCacheRef.current.delete(
-          getDocumentCacheKey(spacePath, pendingRename.path),
-        );
+        setCachedDocumentValue(spacePath, newPath, editor.children);
+        deleteCachedDocumentValue(pendingRename.path, spacePath);
       }
       clearUnsaved(pendingRename.path);
       setCurrentDocument(newPath);
@@ -475,22 +534,14 @@ export function PlateDocumentEditor({
       clearUnsaved(currentDocument);
 
       if (result.new_path) {
-        docCacheRef.current.delete(
-          getDocumentCacheKey(spacePath, currentDocument),
-        );
-        docCacheRef.current.set(
-          getDocumentCacheKey(spacePath, result.new_path),
-          editor.children,
-        );
+        deleteCachedDocumentValue(currentDocument, spacePath);
+        setCachedDocumentValue(spacePath, result.new_path, editor.children);
         setCurrentDocument(result.new_path);
         if (activeWsId) {
           useSpaceStore.getState().refreshTree(activeWsId);
         }
       } else {
-        docCacheRef.current.set(
-          getDocumentCacheKey(spacePath, currentDocument),
-          editor.children,
-        );
+        setCachedDocumentValue(spacePath, currentDocument, editor.children);
       }
 
       // Backlinks files: invalidate cache so next open re-reads from disk,
@@ -556,13 +607,8 @@ export function PlateDocumentEditor({
       if (!result) return;
       clearUnsaved(currentDocument);
       if (result.new_path) {
-        docCacheRef.current.delete(
-          getDocumentCacheKey(spacePath, currentDocument),
-        );
-        docCacheRef.current.set(
-          getDocumentCacheKey(spacePath, result.new_path),
-          editor.children,
-        );
+        deleteCachedDocumentValue(currentDocument, spacePath);
+        setCachedDocumentValue(spacePath, result.new_path, editor.children);
         setCurrentDocument(result.new_path);
         if (activeWsId) {
           useSpaceStore.getState().refreshTree(activeWsId);
@@ -610,6 +656,27 @@ export function PlateDocumentEditor({
     return () => window.removeEventListener("keydown", handler);
   }, [handleSave, handleSaveAll]);
 
+  const handleWatcherEntryReloaded = useCallback(
+    (entry: Awaited<ReturnType<typeof readEntry>>) => {
+      const nextMeta = entry.meta as EntryMeta;
+      setMeta(nextMeta);
+      setTitle(nextMeta.title);
+      setIcon(nextMeta.icon);
+      setDescription(nextMeta.description ?? "");
+
+      const cacheKey = currentCacheKeyRef.current;
+      if (cacheKey) {
+        setLoadedDocumentKey(null);
+        window.setTimeout(() => {
+          if (currentCacheKeyRef.current === cacheKey) {
+            setLoadedDocumentKey(cacheKey);
+          }
+        }, 0);
+      }
+    },
+    [],
+  );
+
   useFileWatcher({
     editor,
     spacePath,
@@ -617,6 +684,7 @@ export function PlateDocumentEditor({
     ownNoncesRef,
     isDebouncePendingRef,
     isLoadingRef,
+    onEntryReloaded: handleWatcherEntryReloaded,
   });
 
   // onChange — mark unsaved + schedule auto-save on actual content changes
@@ -658,11 +726,15 @@ export function PlateDocumentEditor({
             )}
           >
             <TocSidebar />
+            {documentLoading ? (
+              <EditorBodyLoadingState pageScroll={usePageScroll} />
+            ) : null}
             <EditorContainer
               className={cn(
                 usePageScroll
                   ? "h-auto overflow-visible overflow-y-visible"
                   : "h-full",
+                documentLoading && "hidden",
               )}
             >
               <Editor
@@ -675,5 +747,21 @@ export function PlateDocumentEditor({
         </div>
       </Plate>
     </EditorMediaAdapterProvider>
+  );
+}
+
+function EditorBodyLoadingState({ pageScroll }: { pageScroll: boolean }) {
+  return (
+    <div
+      className={cn(
+        "mx-auto flex w-full max-w-5xl flex-col gap-3 px-6 py-8",
+        !pageScroll && "h-full",
+      )}
+    >
+      <Skeleton className="h-4 w-full" />
+      <Skeleton className="h-4 w-11/12" />
+      <Skeleton className="h-4 w-4/5" />
+      <Skeleton className="mt-4 h-40 w-full" />
+    </div>
   );
 }

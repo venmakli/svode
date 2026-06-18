@@ -307,6 +307,7 @@ function StandardEntryPeek({
         spacePath={spacePath}
         projectPath={projectPath}
         bodyOnlyMeta={entry.meta}
+        initialEntry={entry}
         onDocumentPathChange={(path) => {
           onEntryChange((current) =>
             current ? { ...current, path } : current,

@@ -22,6 +22,11 @@ export interface EntryDto {
   path: string;
 }
 
+export interface LinkValidationResultDto {
+  url: string;
+  exists: boolean;
+}
+
 export function createEntry(input: {
   space: string;
   parentPath: string | null;
@@ -42,6 +47,14 @@ export function createFolder(input: {
 
 export function readEntry(space: string, path: string): Promise<EntryDto> {
   return invokeCommand<EntryDto>("read_entry", { space, path });
+}
+
+export function validateLinks(input: {
+  space: string;
+  path: string;
+  projectPath: string | null;
+}): Promise<LinkValidationResultDto[]> {
+  return invokeCommand<LinkValidationResultDto[]>("validate_links", input);
 }
 
 export function listEntries(space: string): Promise<TreeNodeDto[]> {

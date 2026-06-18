@@ -12,9 +12,11 @@ import { ResizableProvider, useResizableValue } from "@platejs/resizable";
 import { PlateElement, useEditorMounted, withHOC } from "platejs/react";
 
 import { cn } from "@/shared/lib/utils";
+import { useNearViewport } from "@/shared/hooks/use-near-viewport";
 
 import { Caption, CaptionTextarea } from "./caption";
 import { useResolvedMediaUrl } from "./media-adapter";
+import { Skeleton } from "./skeleton";
 import {
   mediaResizeHandleVariants,
   Resizable,
@@ -36,7 +38,10 @@ export const VideoElement = withHOC(
     } = useMediaState({
       urlParsers: [parseTwitterUrl, parseVideoUrl],
     });
-    const resolvedUrl = useResolvedMediaUrl(unsafeUrl);
+    const [frameRef, shouldResolve] = useNearViewport<HTMLDivElement>();
+    const resolvedUrl = useResolvedMediaUrl(
+      shouldResolve ? unsafeUrl : undefined,
+    );
     const width = useResizableValue("width");
 
     const isEditorMounted = useEditorMounted();
@@ -97,13 +102,19 @@ export const VideoElement = withHOC(
               )}
 
               {isUpload && isEditorMounted && (
-                <div ref={handleRef}>
-                  <ReactPlayer
-                    height="100%"
-                    src={resolvedUrl}
-                    width="100%"
-                    controls
-                  />
+                <div ref={frameRef}>
+                  {resolvedUrl ? (
+                    <div ref={handleRef}>
+                      <ReactPlayer
+                        height="100%"
+                        src={resolvedUrl}
+                        width="100%"
+                        controls
+                      />
+                    </div>
+                  ) : (
+                    <Skeleton className="aspect-video rounded-sm" />
+                  )}
                 </div>
               )}
             </div>

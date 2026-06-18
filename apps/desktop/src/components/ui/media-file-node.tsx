@@ -9,6 +9,8 @@ import { FileUp } from "lucide-react";
 import { PlateElement, useReadOnly, withHOC } from "platejs/react";
 import { toast } from "sonner";
 
+import { useNearViewport } from "@/shared/hooks/use-near-viewport";
+
 import { Caption, CaptionTextarea } from "./caption";
 import { useMediaAdapter, useResolvedMediaUrl } from "./media-adapter";
 
@@ -18,7 +20,10 @@ export const FileElement = withHOC(
     const readOnly = useReadOnly();
     const { name, unsafeUrl } = useMediaState();
     const mediaAdapter = useMediaAdapter();
-    const resolvedUrl = useResolvedMediaUrl(unsafeUrl);
+    const [linkRef, shouldResolve] = useNearViewport<HTMLAnchorElement>();
+    const resolvedUrl = useResolvedMediaUrl(
+      shouldResolve ? unsafeUrl : undefined,
+    );
 
     const handleOpen = React.useCallback(
       async (e: React.MouseEvent) => {
@@ -37,6 +42,7 @@ export const FileElement = withHOC(
     return (
       <PlateElement className="my-px rounded-sm" {...props}>
         <a
+          ref={linkRef}
           className="group relative m-0 flex cursor-pointer items-center rounded px-0.5 py-[3px] hover:bg-muted"
           contentEditable={false}
           download={name}

@@ -9,10 +9,46 @@ import {
 } from "@/platform/assets/assets-api";
 
 const EXTERNAL = /^(https?:|data:|blob:|asset:|file:)/i;
+const resolvedAssetUrlCache = new Map<string, string>();
+const pendingAssetUrlResolutions = new Map<string, Promise<string>>();
 
 interface ActiveContext {
   projectPath: string;
   documentAbsPath: string;
+}
+
+function assetCacheKey(
+  url: string,
+  projectPath: string,
+  documentAbsPath: string,
+) {
+  return `${projectPath}\0${documentAbsPath}\0${url}`;
+}
+
+function resolveCachedAssetUrl(
+  url: string,
+  projectPath: string,
+  documentAbsPath: string,
+): Promise<string> {
+  const key = assetCacheKey(url, projectPath, documentAbsPath);
+  const cached = resolvedAssetUrlCache.get(key);
+  if (cached) return Promise.resolve(cached);
+
+  const pending = pendingAssetUrlResolutions.get(key);
+  if (pending) return pending;
+
+  const promise = resolveAssetAbsPath(url, projectPath, documentAbsPath)
+    .then((abs) => {
+      const webviewUrl = toWebviewAssetUrl(abs);
+      resolvedAssetUrlCache.set(key, webviewUrl);
+      return webviewUrl;
+    })
+    .finally(() => {
+      pendingAssetUrlResolutions.delete(key);
+    });
+
+  pendingAssetUrlResolutions.set(key, promise);
+  return promise;
 }
 
 function useActiveContext(): ActiveContext | null {
@@ -58,6 +94,8 @@ export function useResolvedAssetUrl(
   url: string | undefined,
 ): string | undefined {
   const context = useActiveContext();
+  const projectPath = context?.projectPath ?? null;
+  const documentAbsPath = context?.documentAbsPath ?? null;
   const spacePathFallback = useSpaceStore(selectActiveSpacePath);
   const [resolved, setResolved] = useState<string | undefined>(undefined);
 
@@ -80,7 +118,7 @@ export function useResolvedAssetUrl(
         cancelled = true;
       };
     }
-    if (!context) {
+    if (!projectPath || !documentAbsPath) {
       // No active document yet — fall back to the workspace-relative join so
       // standalone previews (e.g. media preview dialog before the editor is
       // fully mounted) still render.
@@ -105,9 +143,9 @@ export function useResolvedAssetUrl(
       }
     }
     let cancelled = false;
-    resolveAssetAbsPath(url, context.projectPath, context.documentAbsPath)
-      .then((abs) => {
-        if (!cancelled) setResolved(toWebviewAssetUrl(abs));
+    resolveCachedAssetUrl(url, projectPath, documentAbsPath)
+      .then((webviewUrl) => {
+        if (!cancelled) setResolved(webviewUrl);
       })
       .catch((err) => {
         console.warn("resolve_asset_url failed:", err);
@@ -116,13 +154,7 @@ export function useResolvedAssetUrl(
     return () => {
       cancelled = true;
     };
-  }, [
-    url,
-    context?.projectPath,
-    context?.documentAbsPath,
-    spacePathFallback,
-    context,
-  ]);
+  }, [url, projectPath, documentAbsPath, spacePathFallback]);
 
   return resolved;
 }
