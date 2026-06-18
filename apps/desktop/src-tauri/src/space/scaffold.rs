@@ -62,6 +62,7 @@ pub fn scaffold_space(
         defaults: None,
         git: None,
         assets: None,
+        tree: None,
     };
     write_space_config(path, &sp_config)?;
 

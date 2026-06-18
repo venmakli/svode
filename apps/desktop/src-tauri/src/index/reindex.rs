@@ -6,6 +6,7 @@ use std::time::SystemTime;
 
 use crate::error::AppError;
 use crate::files::frontmatter;
+use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
 use crate::index::normalize_rel_root_result;
 use crate::repo_path::{RootMode, repo_relative_from_base};
 
@@ -15,9 +16,8 @@ fn format_system_time(time: SystemTime) -> String {
     dt.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
-/// Walk a directory, collecting paths of `.md` files while skipping hidden
-/// directories (those with names starting with `.`) such as `.svode`,
-/// `.assets`, and `.git`.
+/// Walk a directory, collecting paths of `.md` files while applying the same
+/// layered content-tree ignore policy as the sidebar tree.
 ///
 /// `skip_top_level` lists folder names directly under `base` to skip — used
 /// to keep the root walker out of child-space directories (each space owns
@@ -26,6 +26,7 @@ fn collect_md_files(
     base: &Path,
     dir: &Path,
     skip_top_level: &[String],
+    policy: &TreeIgnorePolicy,
     out: &mut Vec<PathBuf>,
 ) -> Result<(), AppError> {
     let entries = match fs::read_dir(dir) {
@@ -40,26 +41,35 @@ fn collect_md_files(
 
     for entry in entries.filter_map(|e| e.ok()) {
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') {
-            continue;
-        }
+        let path = entry.path();
 
         if at_base && skip_top_level.iter().any(|s| s == &name) {
             continue;
         }
 
-        let path = entry.path();
-
         // Skip symlinks to avoid cycles and CLI-generated infra.
-        if let Ok(meta) = fs::symlink_metadata(&path) {
-            if meta.file_type().is_symlink() {
-                continue;
-            }
+        let Ok(meta) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() {
+            continue;
         }
 
-        if path.is_dir() {
-            collect_md_files(base, &path, skip_top_level, out)?;
-        } else if name.ends_with(".md") {
+        let rel_path = path.strip_prefix(base).unwrap_or(&path);
+        let kind = if meta.is_dir() {
+            TreePathKind::Directory
+        } else if meta.is_file() {
+            TreePathKind::File
+        } else {
+            TreePathKind::Unknown
+        };
+        if policy.is_ignored_rel(rel_path, kind) {
+            continue;
+        }
+
+        if meta.is_dir() {
+            collect_md_files(base, &path, skip_top_level, policy, out)?;
+        } else if meta.is_file() && name.ends_with(".md") {
             out.push(path);
         }
     }
@@ -94,6 +104,94 @@ fn collect_asset_files(assets_dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), 
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::space::config::write_space_config;
+    use crate::space::types::{SpaceConfig, TreeSpaceConfig};
+    use tempfile::TempDir;
+
+    fn write_tree_config(tmp: &TempDir, exclude: Vec<&str>, include: Vec<&str>) {
+        write_space_config(
+            tmp.path(),
+            &SpaceConfig {
+                name: "Test".to_string(),
+                description: String::new(),
+                icon: "folder".to_string(),
+                spaces: None,
+                agent: None,
+                defaults: None,
+                git: None,
+                assets: None,
+                tree: Some(TreeSpaceConfig {
+                    exclude: exclude.into_iter().map(ToString::to_string).collect(),
+                    include: include.into_iter().map(ToString::to_string).collect(),
+                    show_ignored_placeholders: false,
+                }),
+            },
+        )
+        .expect("write config");
+    }
+
+    fn collect_rel_paths(tmp: &TempDir) -> Vec<String> {
+        let policy = TreeIgnorePolicy::from_space_root(tmp.path());
+        let mut files = Vec::new();
+        collect_md_files(tmp.path(), tmp.path(), &[], &policy, &mut files).expect("collect files");
+        let mut rels = files
+            .iter()
+            .map(|path| {
+                path.strip_prefix(tmp.path())
+                    .expect("relative")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect::<Vec<_>>();
+        rels.sort();
+        rels
+    }
+
+    #[test]
+    fn reindex_markdown_walk_applies_tree_excludes() {
+        let tmp = TempDir::new().unwrap();
+        write_tree_config(&tmp, vec!["node_modules"], vec![]);
+        std::fs::create_dir_all(tmp.path().join("node_modules").join("pkg")).unwrap();
+        std::fs::write(
+            tmp.path()
+                .join("node_modules")
+                .join("pkg")
+                .join("README.md"),
+            "ignored",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("visible.md"), "visible").unwrap();
+
+        assert_eq!(collect_rel_paths(&tmp), vec!["visible.md".to_string()]);
+    }
+
+    #[test]
+    fn reindex_markdown_walk_descends_to_user_included_paths() {
+        let tmp = TempDir::new().unwrap();
+        write_tree_config(&tmp, vec!["docs"], vec!["docs/guides/keep.md"]);
+        std::fs::create_dir_all(tmp.path().join("docs").join("guides")).unwrap();
+        std::fs::write(tmp.path().join("docs").join("drop.md"), "drop").unwrap();
+        std::fs::write(
+            tmp.path().join("docs").join("guides").join("drop.md"),
+            "drop",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("docs").join("guides").join("keep.md"),
+            "keep",
+        )
+        .unwrap();
+
+        assert_eq!(
+            collect_rel_paths(&tmp),
+            vec!["docs/guides/keep.md".to_string()]
+        );
+    }
 }
 
 /// Information extracted from a markdown file ready to be upserted.
@@ -404,7 +502,8 @@ pub async fn full_reindex(
 
     // ── Phase 1: filesystem walk + parse, no locks held ──────────────────
     let mut md_files: Vec<PathBuf> = Vec::new();
-    collect_md_files(space_dir, space_dir, skip_top_level, &mut md_files)?;
+    let policy = TreeIgnorePolicy::from_space_root(space_dir);
+    collect_md_files(space_dir, space_dir, skip_top_level, &policy, &mut md_files)?;
 
     let assets_dir = space_dir.join(".assets");
     let mut asset_files: Vec<PathBuf> = Vec::new();

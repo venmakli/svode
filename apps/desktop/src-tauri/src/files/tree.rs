@@ -6,6 +6,7 @@ use std::time::Instant;
 
 use crate::error::AppError;
 use crate::files::frontmatter;
+use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
 use crate::space::config::read_space_config;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,24 +21,23 @@ pub struct TreeNode {
     pub children: Vec<TreeNode>,
 }
 
-/// Check if a directory entry should be skipped.
-fn is_hidden(name: &str) -> bool {
-    name.starts_with('.')
-}
-
 /// Find a readme.md file inside a directory (case-insensitive).
 /// Returns the absolute path if found.
-fn find_readme(dir: &Path) -> Option<std::path::PathBuf> {
+fn find_readme(base: &Path, dir: &Path, policy: &TreeIgnorePolicy) -> Option<std::path::PathBuf> {
     fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok())
         .find_map(|e| {
             let name = e.file_name();
-            if name.to_string_lossy().eq_ignore_ascii_case("readme.md") && e.path().is_file() {
-                Some(e.path())
-            } else {
-                None
+            let path = e.path();
+            if !name.to_string_lossy().eq_ignore_ascii_case("readme.md") || !path.is_file() {
+                return None;
             }
+            let rel = path.strip_prefix(base).unwrap_or(&path);
+            if policy.is_ignored_rel(rel, TreePathKind::File) {
+                return None;
+            }
+            Some(path)
         })
 }
 
@@ -164,7 +164,8 @@ pub fn build_tree(space: &str) -> Result<Vec<TreeNode>, AppError> {
     let result = (|| {
         let order = read_order(root);
         let skip_dirs = child_folder_names(root);
-        read_dir_recursive(root, root, &order, &skip_dirs)
+        let policy = TreeIgnorePolicy::from_space_root(root);
+        read_dir_recursive(root, root, &order, &skip_dirs, &policy)
     })();
     let duration_ms = started.elapsed().as_millis() as u64;
 
@@ -195,6 +196,7 @@ fn read_dir_recursive(
     dir: &Path,
     order: &HashMap<String, Vec<String>>,
     skip_dirs: &HashSet<String>,
+    policy: &TreeIgnorePolicy,
 ) -> Result<Vec<TreeNode>, AppError> {
     let mut nodes: Vec<TreeNode> = Vec::new();
     let entries: Vec<fs::DirEntry> = fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
@@ -209,30 +211,41 @@ fn read_dir_recursive(
     for entry in entries {
         let name = entry.file_name().to_string_lossy().to_string();
 
-        if is_hidden(&name) {
-            continue;
-        }
-
         let abs_path = entry.path();
 
         // Skip symlinks (CLI-generated infrastructure files)
-        if let Ok(meta) = fs::symlink_metadata(&abs_path) {
-            if meta.file_type().is_symlink() {
-                continue;
-            }
+        let Ok(meta) = fs::symlink_metadata(&abs_path) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() {
+            continue;
         }
 
         let rel_path = abs_path.strip_prefix(base).unwrap_or(&abs_path);
         let rel_path = repo_path_string(rel_path);
+        let kind = if meta.is_dir() {
+            TreePathKind::Directory
+        } else if meta.is_file() {
+            TreePathKind::File
+        } else {
+            TreePathKind::Unknown
+        };
 
-        if abs_path.is_dir() {
+        if policy.is_ignored_rel(Path::new(&rel_path), kind) {
+            continue;
+        }
+
+        if meta.is_dir() {
             // Skip child space folders (registered in parent config)
             if skip_dirs.contains(&rel_path) {
                 continue;
             }
 
-            let has_schema = abs_path.join("schema.yaml").is_file();
-            let readme = find_readme(&abs_path);
+            let schema_path = abs_path.join("schema.yaml");
+            let schema_rel = schema_path.strip_prefix(base).unwrap_or(&schema_path);
+            let has_schema =
+                schema_path.is_file() && !policy.is_ignored_rel(schema_rel, TreePathKind::File);
+            let readme = find_readme(base, &abs_path, policy);
 
             let (title, icon, description) = if let Some(ref rp) = readme {
                 let (t, i, d) = read_frontmatter_meta(rp);
@@ -256,10 +269,11 @@ fn read_dir_recursive(
             };
 
             // Recurse and filter out readme.md from children
-            let children: Vec<TreeNode> = read_dir_recursive(base, &abs_path, order, skip_dirs)?
-                .into_iter()
-                .filter(|node| node.name.to_lowercase() != "readme.md")
-                .collect();
+            let children: Vec<TreeNode> =
+                read_dir_recursive(base, &abs_path, order, skip_dirs, policy)?
+                    .into_iter()
+                    .filter(|node| node.name.to_lowercase() != "readme.md")
+                    .collect();
 
             nodes.push(TreeNode {
                 name,
@@ -271,7 +285,7 @@ fn read_dir_recursive(
                 has_schema,
                 children,
             });
-        } else if name.ends_with(".md") {
+        } else if meta.is_file() && name.ends_with(".md") {
             let (title, icon, description) = read_frontmatter_meta(&abs_path);
             nodes.push(TreeNode {
                 name,
@@ -296,7 +310,35 @@ fn read_dir_recursive(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::space::config::write_space_config;
+    use crate::space::types::{SpaceConfig, TreeSpaceConfig};
     use tempfile::TempDir;
+
+    fn write_tree_config(tmp: &TempDir, exclude: Vec<&str>, include: Vec<&str>) {
+        write_space_config(
+            tmp.path(),
+            &SpaceConfig {
+                name: "Test".to_string(),
+                description: String::new(),
+                icon: "folder".to_string(),
+                spaces: None,
+                agent: None,
+                defaults: None,
+                git: None,
+                assets: None,
+                tree: Some(TreeSpaceConfig {
+                    exclude: exclude.into_iter().map(ToString::to_string).collect(),
+                    include: include.into_iter().map(ToString::to_string).collect(),
+                    show_ignored_placeholders: false,
+                }),
+            },
+        )
+        .expect("write config");
+    }
+
+    fn child_names(nodes: &[TreeNode]) -> Vec<String> {
+        nodes.iter().map(|node| node.name.clone()).collect()
+    }
 
     #[test]
     fn read_order_normalizes_windows_directory_keys() {
@@ -317,5 +359,100 @@ mod tests {
             order.get("operations/board").unwrap(),
             &vec!["task.md".to_string()]
         );
+    }
+
+    #[test]
+    fn build_tree_applies_system_excludes() {
+        let tmp = TempDir::new().unwrap();
+        for dirname in [".git", ".svode", ".assets", ".templates", ".cache"] {
+            fs::create_dir_all(tmp.path().join(dirname)).unwrap();
+            fs::write(tmp.path().join(dirname).join("README.md"), "hidden").unwrap();
+        }
+        fs::write(tmp.path().join("visible.md"), "visible").unwrap();
+
+        let nodes = build_tree(tmp.path().to_str().unwrap()).expect("build tree");
+
+        assert_eq!(child_names(&nodes), vec!["visible.md".to_string()]);
+    }
+
+    #[test]
+    fn build_tree_lets_user_include_override_user_exclude() {
+        let tmp = TempDir::new().unwrap();
+        write_tree_config(&tmp, vec!["docs/*.md"], vec!["docs/keep.md"]);
+        fs::create_dir_all(tmp.path().join("docs")).unwrap();
+        fs::write(tmp.path().join("docs").join("drop.md"), "drop").unwrap();
+        fs::write(tmp.path().join("docs").join("keep.md"), "keep").unwrap();
+
+        let nodes = build_tree(tmp.path().to_str().unwrap()).expect("build tree");
+        let docs = nodes.iter().find(|node| node.name == "docs").expect("docs");
+
+        assert_eq!(child_names(&docs.children), vec!["keep.md".to_string()]);
+    }
+
+    #[test]
+    fn build_tree_descends_to_user_included_paths_inside_excluded_parent() {
+        let tmp = TempDir::new().unwrap();
+        write_tree_config(&tmp, vec!["docs"], vec!["docs/guides/keep.md"]);
+        fs::create_dir_all(tmp.path().join("docs").join("guides")).unwrap();
+        fs::write(tmp.path().join("docs").join("drop.md"), "drop").unwrap();
+        fs::write(
+            tmp.path().join("docs").join("guides").join("drop.md"),
+            "drop",
+        )
+        .unwrap();
+        fs::write(
+            tmp.path().join("docs").join("guides").join("keep.md"),
+            "keep",
+        )
+        .unwrap();
+
+        let nodes = build_tree(tmp.path().to_str().unwrap()).expect("build tree");
+        let docs = nodes.iter().find(|node| node.name == "docs").expect("docs");
+        let guides = docs
+            .children
+            .iter()
+            .find(|node| node.name == "guides")
+            .expect("guides");
+
+        assert_eq!(child_names(&docs.children), vec!["guides".to_string()]);
+        assert_eq!(child_names(&guides.children), vec!["keep.md".to_string()]);
+    }
+
+    #[test]
+    fn build_tree_does_not_descend_into_ignored_dirs() {
+        let tmp = TempDir::new().unwrap();
+        write_tree_config(&tmp, vec!["node_modules"], vec![]);
+        fs::create_dir_all(tmp.path().join("node_modules").join("pkg")).unwrap();
+        fs::write(
+            tmp.path()
+                .join("node_modules")
+                .join("pkg")
+                .join("README.md"),
+            "pkg",
+        )
+        .unwrap();
+        fs::write(tmp.path().join("visible.md"), "visible").unwrap();
+
+        let nodes = build_tree(tmp.path().to_str().unwrap()).expect("build tree");
+
+        assert_eq!(child_names(&nodes), vec!["visible.md".to_string()]);
+    }
+
+    #[test]
+    fn build_tree_matches_direct_relative_exclude_paths() {
+        let tmp = TempDir::new().unwrap();
+        write_tree_config(&tmp, vec!["src/generated"], vec![]);
+        fs::create_dir_all(tmp.path().join("src").join("generated")).unwrap();
+        fs::write(
+            tmp.path().join("src").join("generated").join("client.md"),
+            "generated",
+        )
+        .unwrap();
+        fs::write(tmp.path().join("src").join("manual.md"), "manual").unwrap();
+
+        let nodes = build_tree(tmp.path().to_str().unwrap()).expect("build tree");
+        let src = nodes.iter().find(|node| node.name == "src").expect("src");
+
+        assert_eq!(child_names(&src.children), vec!["manual.md".to_string()]);
     }
 }

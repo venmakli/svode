@@ -4,6 +4,7 @@ pub mod frontmatter;
 pub mod nonce;
 pub mod templates;
 pub mod tree;
+pub mod tree_policy;
 pub mod watcher;
 
 pub use backlinks::{BacklinkIndex, BacklinkInfo, LinkValidation, ModifiedLinkSource};

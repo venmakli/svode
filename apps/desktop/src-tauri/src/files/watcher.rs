@@ -8,6 +8,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::error::AppError;
 use crate::files::WriteNonceRegistry;
+use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
 use crate::index::{IndexKey, IndexState};
 use crate::repo_path::{RootMode, repo_relative_from_base};
 
@@ -164,23 +165,25 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
     let mut any_dirty = false;
     let mut any_assets_changed = false;
     let space_root = Path::new(space);
+    let policy = TreeIgnorePolicy::from_space_root(space_root);
     for event in events {
         for path in &event.paths {
-            if should_ignore(path) {
-                continue;
-            }
-            // Any non-ignored file change → space is dirty.
-            // Includes non-.md assets (frontend uses this to refresh git status).
-            any_dirty = true;
             // Detect `.assets/`-scoped changes so we can emit a targeted
             // event for the storage reactor to re-scan the assets table.
             if is_under_assets(path, space_root) {
                 any_assets_changed = true;
+                any_dirty = true;
+            }
+
+            // Any non-ignored file change → space is dirty.
+            // Includes non-.md assets (frontend uses this to refresh git status).
+            if !policy.is_ignored_abs(path, path_kind(path)) {
+                any_dirty = true;
             }
             // Per-file file:* events are emitted for document entries and
             // collection schemas. Schema changes are derived-state inputs only;
             // they do not trigger autocommit from the watcher.
-            if !is_document_or_schema(path) {
+            if !should_emit_content_tree_event(&policy, path) {
                 continue;
             }
             seen.insert(path.clone(), &event.kind);
@@ -257,27 +260,18 @@ fn sync_index_for_watched_path(space_root: &Path, path: &Path, app: &AppHandle) 
     });
 }
 
-/// Check if a path should be ignored by the watcher.
-///
-/// We skip anything inside a dotted directory (`.git`, `.svode`, …) with one
-/// exception: `.assets/` is allowed through so we can re-index uploads and
-/// detect LFS pointer changes after a sync.
-fn should_ignore(path: &Path) -> bool {
-    let mut first_dot_seen = false;
-    for component in path.components() {
-        if let std::path::Component::Normal(name) = component {
-            let name_str = name.to_string_lossy();
-            if name_str.starts_with('.') {
-                if !first_dot_seen && name_str == ".assets" {
-                    first_dot_seen = true;
-                    continue;
-                }
-                return true;
-            }
-            first_dot_seen = false;
-        }
+fn path_kind(path: &Path) -> TreePathKind {
+    if path.is_dir() {
+        TreePathKind::Directory
+    } else if path.is_file() {
+        TreePathKind::File
+    } else {
+        TreePathKind::Unknown
     }
-    false
+}
+
+fn should_emit_content_tree_event(policy: &TreeIgnorePolicy, path: &Path) -> bool {
+    !policy.is_ignored_abs(path, path_kind(path)) && is_document_or_schema(path)
 }
 
 /// True iff `path` is inside the watched space's `.assets/` directory.
@@ -309,4 +303,79 @@ fn is_schema_path(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name == "schema.yaml")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::space::config::write_space_config;
+    use crate::space::types::{SpaceConfig, TreeSpaceConfig};
+    use tempfile::TempDir;
+
+    fn write_tree_config(tmp: &TempDir, exclude: Vec<&str>, include: Vec<&str>) {
+        write_space_config(
+            tmp.path(),
+            &SpaceConfig {
+                name: "Test".to_string(),
+                description: String::new(),
+                icon: "folder".to_string(),
+                spaces: None,
+                agent: None,
+                defaults: None,
+                git: None,
+                assets: None,
+                tree: Some(TreeSpaceConfig {
+                    exclude: exclude.into_iter().map(ToString::to_string).collect(),
+                    include: include.into_iter().map(ToString::to_string).collect(),
+                    show_ignored_placeholders: false,
+                }),
+            },
+        )
+        .expect("write config");
+    }
+
+    #[test]
+    fn watcher_keeps_assets_targeted_but_out_of_content_tree_events() {
+        let tmp = TempDir::new().unwrap();
+        let assets = tmp.path().join(".assets");
+        std::fs::create_dir_all(&assets).unwrap();
+        let asset_doc = assets.join("image.md");
+        std::fs::write(&asset_doc, "asset metadata").unwrap();
+        let policy = TreeIgnorePolicy::from_space_root(tmp.path());
+
+        assert!(is_under_assets(&asset_doc, tmp.path()));
+        assert!(!should_emit_content_tree_event(&policy, &asset_doc));
+    }
+
+    #[test]
+    fn watcher_filters_user_excluded_document_paths() {
+        let tmp = TempDir::new().unwrap();
+        write_tree_config(&tmp, vec!["node_modules"], vec![]);
+        let ignored_dir = tmp.path().join("node_modules").join("pkg");
+        std::fs::create_dir_all(&ignored_dir).unwrap();
+        let ignored_doc = ignored_dir.join("README.md");
+        std::fs::write(&ignored_doc, "ignored").unwrap();
+        let visible_doc = tmp.path().join("visible.md");
+        std::fs::write(&visible_doc, "visible").unwrap();
+        let policy = TreeIgnorePolicy::from_space_root(tmp.path());
+
+        assert!(!should_emit_content_tree_event(&policy, &ignored_doc));
+        assert!(should_emit_content_tree_event(&policy, &visible_doc));
+    }
+
+    #[test]
+    fn watcher_allows_user_included_document_paths() {
+        let tmp = TempDir::new().unwrap();
+        write_tree_config(&tmp, vec!["docs/*.md"], vec!["docs/keep.md"]);
+        let docs = tmp.path().join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        let dropped = docs.join("drop.md");
+        let kept = docs.join("keep.md");
+        std::fs::write(&dropped, "drop").unwrap();
+        std::fs::write(&kept, "keep").unwrap();
+        let policy = TreeIgnorePolicy::from_space_root(tmp.path());
+
+        assert!(!should_emit_content_tree_event(&policy, &dropped));
+        assert!(should_emit_content_tree_event(&policy, &kept));
+    }
 }

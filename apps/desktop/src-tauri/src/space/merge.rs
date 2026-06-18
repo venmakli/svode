@@ -35,5 +35,6 @@ pub fn merge_with_defaults(child: &SpaceConfig, defaults: &SpaceDefaults) -> Spa
         defaults: child.defaults.clone(),
         git: child.git.clone(),
         assets: child.assets.clone(),
+        tree: child.tree.clone(),
     }
 }

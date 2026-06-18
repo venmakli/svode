@@ -104,6 +104,19 @@ pub struct SpaceConfig {
     pub git: Option<GitSpaceConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assets: Option<AssetsSpaceConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<TreeSpaceConfig>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TreeSpaceConfig {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include: Vec<String>,
+    #[serde(default)]
+    pub show_ignored_placeholders: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -220,4 +233,37 @@ pub struct SpaceInfo {
     pub status: SpaceStatus,
     #[serde(default)]
     pub lfs_state: LfsState,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn space_config_accepts_optional_tree_config_shape() {
+        let config: SpaceConfig = serde_json::from_str(
+            r#"{
+                "name": "Docs",
+                "tree": {
+                    "exclude": ["node_modules", "src/generated"],
+                    "include": ["docs/**/*.md"],
+                    "showIgnoredPlaceholders": true
+                }
+            }"#,
+        )
+        .expect("deserialize config");
+
+        let tree = config.tree.expect("tree config");
+        assert_eq!(tree.exclude, vec!["node_modules", "src/generated"]);
+        assert_eq!(tree.include, vec!["docs/**/*.md"]);
+        assert!(tree.show_ignored_placeholders);
+    }
+
+    #[test]
+    fn space_config_deserializes_without_tree_config() {
+        let config: SpaceConfig =
+            serde_json::from_str(r#"{"name":"Docs"}"#).expect("deserialize config");
+
+        assert!(config.tree.is_none());
+    }
 }
