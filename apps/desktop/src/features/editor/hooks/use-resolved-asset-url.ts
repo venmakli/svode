@@ -1,4 +1,11 @@
-import { useEffect, useState } from "react";
+import {
+  createElement,
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { useEntrySelectionStore } from "@/features/entry";
 import { useSpaceStore, selectActiveSpacePath } from "@/features/space/model";
@@ -12,9 +19,28 @@ const EXTERNAL = /^(https?:|data:|blob:|asset:|file:)/i;
 const resolvedAssetUrlCache = new Map<string, string>();
 const pendingAssetUrlResolutions = new Map<string, Promise<string>>();
 
+export interface EditorAssetResolveContext {
+  documentPath: string | null;
+  projectPath: string | null;
+  spacePath: string | null;
+}
+
 interface ActiveContext {
   projectPath: string;
   documentAbsPath: string;
+}
+
+const EditorAssetResolveContext =
+  createContext<EditorAssetResolveContext | null>(null);
+
+export function EditorAssetResolveProvider({
+  children,
+  value,
+}: {
+  children: ReactNode;
+  value: EditorAssetResolveContext;
+}) {
+  return createElement(EditorAssetResolveContext.Provider, { value }, children);
 }
 
 function assetCacheKey(
@@ -51,7 +77,23 @@ function resolveCachedAssetUrl(
   return promise;
 }
 
+export function resolveEditorAssetContext(
+  context: EditorAssetResolveContext | null | undefined,
+): ActiveContext | null {
+  if (!context?.projectPath || !context.documentPath || !context.spacePath) {
+    return null;
+  }
+
+  return {
+    projectPath: context.projectPath,
+    documentAbsPath: context.documentPath.startsWith("/")
+      ? context.documentPath
+      : joinAbs(context.spacePath, context.documentPath),
+  };
+}
+
 function useActiveContext(): ActiveContext | null {
+  const explicitContext = useContext(EditorAssetResolveContext);
   const projectPath = useSpaceStore((s) => s.activeRootPath);
   const activeDocument = useEntrySelectionStore((s) => s.activeDocument);
   const activeDocumentSpaceId = useEntrySelectionStore(
@@ -60,6 +102,9 @@ function useActiveContext(): ActiveContext | null {
   const activeRootId = useSpaceStore((s) => s.activeRootId);
   const rootSpaces = useSpaceStore((s) => s.rootSpaces);
   const spaces = useSpaceStore((s) => s.spaces);
+
+  const resolvedExplicitContext = resolveEditorAssetContext(explicitContext);
+  if (resolvedExplicitContext) return resolvedExplicitContext;
 
   if (!projectPath || !activeDocument) return null;
 

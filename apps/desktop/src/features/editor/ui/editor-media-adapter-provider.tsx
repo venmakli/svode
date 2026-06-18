@@ -13,22 +13,40 @@ import {
 } from "@/platform/filesystem/native-file-picker";
 import { openPath } from "@/platform/native/shell";
 
-import { useResolvedAssetUrl } from "../hooks/use-resolved-asset-url";
+import {
+  EditorAssetResolveProvider,
+  type EditorAssetResolveContext,
+  resolveEditorAssetContext,
+  useResolvedAssetUrl,
+} from "../hooks/use-resolved-asset-url";
 import { getErrorMessage, useUploadFile } from "../hooks/use-upload-file";
 import { joinAbs } from "../lib/doc-link-utils";
 
 const EXTERNAL = /^(https?:|data:|blob:|asset:|file:)/i;
 
-async function openEditorMediaUrl(url: string) {
+async function openEditorMediaUrl(
+  url: string,
+  context: EditorAssetResolveContext,
+) {
   if (EXTERNAL.test(url)) {
     await openPath(url);
+    return;
+  }
+
+  const explicitContext = resolveEditorAssetContext(context);
+  if (explicitContext) {
+    const abs = await resolveAssetAbsPath(
+      url,
+      explicitContext.projectPath,
+      explicitContext.documentAbsPath,
+    );
+    await openPath(abs);
     return;
   }
 
   const projectPath = useSpaceStore.getState().activeRootPath;
   const { activeDocument, activeDocumentSpaceId } =
     useEntrySelectionStore.getState();
-
   if (!projectPath || !activeDocument) return;
 
   const { rootSpaces, spaces, activeRootId } = useSpaceStore.getState();
@@ -50,7 +68,12 @@ async function openEditorMediaUrl(url: string) {
 const editorMediaAdapter: MediaAdapter = {
   filesToFileList,
   getErrorMessage,
-  openUrl: openEditorMediaUrl,
+  openUrl: (url) =>
+    openEditorMediaUrl(url, {
+      documentPath: null,
+      projectPath: null,
+      spacePath: null,
+    }),
   pickFiles: (kind) => pickMediaFiles(kind),
   useResolvedUrl: useResolvedAssetUrl,
   useUploadFile,
@@ -58,12 +81,34 @@ const editorMediaAdapter: MediaAdapter = {
 
 export function EditorMediaAdapterProvider({
   children,
+  documentPath,
+  projectPath,
+  spacePath,
 }: {
   children: React.ReactNode;
+  documentPath: string | null;
+  projectPath: string | null;
+  spacePath: string | null;
 }) {
+  const context = React.useMemo<EditorAssetResolveContext>(
+    () => ({
+      documentPath,
+      projectPath,
+      spacePath,
+    }),
+    [documentPath, projectPath, spacePath],
+  );
+  const adapter = React.useMemo<MediaAdapter>(
+    () => ({
+      ...editorMediaAdapter,
+      openUrl: (url) => openEditorMediaUrl(url, context),
+    }),
+    [context],
+  );
+
   return (
-    <MediaAdapterProvider adapter={editorMediaAdapter}>
-      {children}
-    </MediaAdapterProvider>
+    <EditorAssetResolveProvider value={context}>
+      <MediaAdapterProvider adapter={adapter}>{children}</MediaAdapterProvider>
+    </EditorAssetResolveProvider>
   );
 }

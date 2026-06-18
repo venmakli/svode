@@ -705,7 +705,11 @@ export function PlateDocumentEditor({
   );
 
   return (
-    <EditorMediaAdapterProvider>
+    <EditorMediaAdapterProvider
+      documentPath={currentDocument}
+      projectPath={projectPath ?? null}
+      spacePath={spacePath || null}
+    >
       <Plate editor={editor} onChange={handleChange}>
         <div
           className={cn(
