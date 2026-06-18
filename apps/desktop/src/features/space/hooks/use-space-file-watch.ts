@@ -153,6 +153,10 @@ export function useSpaceFileWatch() {
         store.updateNodeSchema(watchSpaceId, folderPathForSchema(path), true);
         return;
       }
+      if (kind === "folder") {
+        repairTree();
+        return;
+      }
       if (kind !== "document") return;
 
       const entry = await readEntry(watchSpacePath, path);

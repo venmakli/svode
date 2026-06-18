@@ -129,3 +129,25 @@ test("updateTreeFolderSchema patches collection marker on folder node", () => {
 
   expect(next[0]?.has_schema).toBe(true);
 });
+
+test("updateTreeFolderSchema inserts a collection folder when schema arrives first", () => {
+  const next = updateTreeFolderSchema([], "docs", true);
+
+  expect(next[0]).toMatchObject({
+    name: "docs",
+    path: "docs",
+    title: "docs",
+    has_schema: true,
+  });
+});
+
+test("upsertTreeNode preserves an earlier schema marker", () => {
+  const tree = updateTreeFolderSchema([], "docs", true);
+  const next = upsertTreeNode(tree, "", node("docs"));
+
+  expect(next).toHaveLength(1);
+  expect(next[0]).toMatchObject({
+    path: "docs",
+    has_schema: true,
+  });
+});

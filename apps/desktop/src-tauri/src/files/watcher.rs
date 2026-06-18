@@ -167,6 +167,7 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
     let mut seen: HashMap<PathBuf, EventKind> = HashMap::new();
     let mut any_dirty = false;
     let mut any_assets_changed = false;
+    let mut any_tree_changed = false;
     let space_root = Path::new(space);
     let policy = TreeIgnorePolicy::from_space_root(space_root);
     for event in events {
@@ -186,9 +187,13 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
             // Per-file file:* events are emitted for document entries and
             // collection schemas. Schema changes are derived-state inputs only;
             // they do not trigger autocommit from the watcher.
-            if classify_content_tree_event(space_root, &policy, path, &event.kind).is_none() {
+            let Some(classification) =
+                classify_content_tree_event(space_root, &policy, path, &event.kind)
+            else {
                 continue;
-            }
+            };
+            any_tree_changed =
+                any_tree_changed || classification.affects_tree || classification.affects_metadata;
             seen.entry(path.clone())
                 .and_modify(|current| *current = merge_event_kind(*current, event.kind))
                 .or_insert(event.kind);
@@ -196,7 +201,10 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
     }
 
     if any_dirty {
-        let _ = app.emit("space:dirty", serde_json::json!({ "space": space }));
+        let _ = app.emit(
+            "space:dirty",
+            serde_json::json!({ "space": space, "affectsTree": any_tree_changed }),
+        );
     }
     if any_assets_changed {
         let _ = app.emit(

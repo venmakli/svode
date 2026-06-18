@@ -81,11 +81,12 @@ function sameNodeIdentity(left: TreeNode, right: TreeNode): boolean {
 }
 
 function mergeIncomingNode(existing: TreeNode, incoming: TreeNode): TreeNode {
-  if (normalizeTreePath(existing.path) === normalizeTreePath(incoming.path)) {
-    return incoming;
-  }
+  const existingIsReadme = isReadmeNodePath(existing.path);
+  const incomingIsReadme = isReadmeNodePath(incoming.path);
+  const base = existingIsReadme && !incomingIsReadme ? existing : incoming;
+
   return {
-    ...existing,
+    ...base,
     has_schema: existing.has_schema || incoming.has_schema,
     children:
       existing.children.length > 0 ? existing.children : incoming.children,
@@ -249,9 +250,21 @@ export function updateTreeFolderSchema(
   hasSchema: boolean,
 ): TreeNode[] {
   const normalized = normalizeTreePath(folderPath);
-  return replaceChild(
+  const next = replaceChild(
     nodes,
     (node) => folderPathForNode(node) === normalized,
     (node) => ({ ...node, has_schema: hasSchema }),
   );
+  if (next !== nodes || !hasSchema || !normalized) return next;
+
+  return insertIntoParent(nodes, dirname(normalized), {
+    name: basename(normalized),
+    path: normalized,
+    title: basename(normalized),
+    icon: null,
+    description: null,
+    has_changes: false,
+    has_schema: true,
+    children: [],
+  });
 }
