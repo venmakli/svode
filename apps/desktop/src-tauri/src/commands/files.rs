@@ -3239,4 +3239,88 @@ mod tests {
         );
         assert!(collect_markdown_rel_paths(&tmp, &tmp.path().join("node_modules")).is_empty());
     }
+
+    #[test]
+    fn rebase_legacy_source_after_move_updates_content_and_source_identity() {
+        let tmp = TempDir::new().unwrap();
+        let index = BacklinkIndex::new();
+        std::fs::write(tmp.path().join("Source.md"), "See [Target](Target.md).\n").unwrap();
+        std::fs::write(tmp.path().join("Target.md"), "Target\n").unwrap();
+        index.build(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(tmp.path().join("Moved")).unwrap();
+        std::fs::rename(
+            tmp.path().join("Source.md"),
+            tmp.path().join("Moved").join("Source.md"),
+        )
+        .unwrap();
+
+        let changed = rebase_legacy_source_after_move(
+            tmp.path().to_str().unwrap(),
+            &index,
+            "Source.md",
+            "Moved/Source.md",
+        )
+        .unwrap();
+
+        assert!(changed);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("Moved").join("Source.md")).unwrap(),
+            "See [Target](../Target.md).\n"
+        );
+        let backlinks = index.get_backlinks("Target.md");
+        assert_eq!(backlinks.len(), 1);
+        assert_eq!(backlinks[0].source_path, "Moved/Source.md");
+        assert!(
+            index
+                .get_backlinks("Target.md")
+                .iter()
+                .all(|item| item.source_path != "Source.md")
+        );
+    }
+
+    #[test]
+    fn rebase_legacy_source_tree_after_move_preserves_internal_moved_targets() {
+        let tmp = TempDir::new().unwrap();
+        let index = BacklinkIndex::new();
+        std::fs::create_dir_all(tmp.path().join("Folder")).unwrap();
+        std::fs::write(
+            tmp.path().join("Folder").join("Source.md"),
+            "See [Sibling](Sibling.md) and [Outside](../Outside.md).\n",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("Folder").join("Sibling.md"), "Sibling\n").unwrap();
+        std::fs::write(tmp.path().join("Outside.md"), "Outside\n").unwrap();
+        index.build(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(tmp.path().join("Archive")).unwrap();
+        std::fs::rename(
+            tmp.path().join("Folder"),
+            tmp.path().join("Archive").join("Folder"),
+        )
+        .unwrap();
+
+        rebase_legacy_source_tree_after_move(
+            tmp.path().to_str().unwrap(),
+            &index,
+            "Folder",
+            "Archive/Folder",
+        );
+
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("Archive").join("Folder").join("Source.md"))
+                .unwrap(),
+            "See [Sibling](Sibling.md) and [Outside](../../Outside.md).\n"
+        );
+        let moved_internal_backlinks = index.get_backlinks("Archive/Folder/Sibling.md");
+        assert_eq!(moved_internal_backlinks.len(), 1);
+        assert_eq!(
+            moved_internal_backlinks[0].source_path,
+            "Archive/Folder/Source.md"
+        );
+        let outside_backlinks = index.get_backlinks("Outside.md");
+        assert_eq!(outside_backlinks.len(), 1);
+        assert_eq!(outside_backlinks[0].source_path, "Archive/Folder/Source.md");
+        assert!(index.get_backlinks("Folder/Sibling.md").is_empty());
+    }
 }
