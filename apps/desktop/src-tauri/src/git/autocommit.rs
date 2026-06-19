@@ -23,7 +23,7 @@ enum CommitIntent {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StructuralOp {
     Create(String),
     Delete(String),
@@ -85,8 +85,13 @@ struct CommittedPayload {
     repo_path: String,
 }
 
-struct PendingBatch {
+struct PendingItem {
+    op: Option<StructuralOp>,
     paths: Vec<PathBuf>,
+}
+
+struct PendingBatch {
+    items: Vec<PendingItem>,
 }
 
 pub struct AutocommitService {
@@ -135,15 +140,20 @@ impl AutocommitService {
         let mut map = self.pending.lock().unwrap();
         let entry = map
             .entry(space_path.clone())
-            .or_insert_with(|| PendingBatch { paths: Vec::new() });
-        let _ = op;
-        entry.paths.extend(paths.into_iter().map(|path| {
-            if path.is_absolute() {
-                path
-            } else {
-                space_path.join(path)
-            }
-        }));
+            .or_insert_with(|| PendingBatch { items: Vec::new() });
+        entry.items.push(PendingItem {
+            op,
+            paths: paths
+                .into_iter()
+                .map(|path| {
+                    if path.is_absolute() {
+                        path
+                    } else {
+                        space_path.join(path)
+                    }
+                })
+                .collect(),
+        });
     }
 
     /// Drain pending content/schema paths for one space so an explicit manual
@@ -163,13 +173,49 @@ impl AutocommitService {
             return Vec::new();
         };
 
-        let mut unique = Vec::new();
-        for path in batch.paths {
-            if !unique.iter().any(|existing: &PathBuf| existing == &path) {
-                unique.push(path);
-            }
+        dedupe_paths(batch.items.into_iter().flat_map(|item| item.paths))
+    }
+
+    /// Drain only pending paths that belong to the explicit single-file save.
+    /// A pending item is related when it touches the saved file path directly,
+    /// or when it has the same structural operation as another touched item
+    /// (for example backlink source rewrites produced by the same rename).
+    pub fn take_related_pending_paths_for_space(
+        &self,
+        _project_path: &Path,
+        space_path: &Path,
+        anchor_paths: &[PathBuf],
+    ) -> Vec<PathBuf> {
+        if anchor_paths.is_empty() {
+            return Vec::new();
         }
-        unique
+
+        let mut map = self.pending.lock().unwrap();
+        let Some(batch) = map.get_mut(space_path) else {
+            return Vec::new();
+        };
+
+        let matching_ops: Vec<Option<StructuralOp>> = batch
+            .items
+            .iter()
+            .filter(|item| pending_item_touches(item, anchor_paths))
+            .map(|item| item.op.clone())
+            .collect();
+
+        if matching_ops.is_empty() {
+            return Vec::new();
+        }
+
+        let items = std::mem::take(&mut batch.items);
+        let (drained, kept) = split_related_pending_items(items, anchor_paths, &matching_ops);
+
+        if kept.is_empty() {
+            map.remove(space_path);
+        } else if let Some(batch) = map.get_mut(space_path) {
+            batch.items = kept;
+        }
+
+        dedupe_paths(drained)
     }
 
     /// Drop pending content/schema bookkeeping for one space before a manual
@@ -177,7 +223,44 @@ impl AutocommitService {
     pub fn drop_pending_paths_for_space(&self, project_path: &Path, space_path: &Path) {
         let _ = self.take_pending_paths_for_space(project_path, space_path);
     }
+}
 
+fn pending_item_touches(item: &PendingItem, anchor_paths: &[PathBuf]) -> bool {
+    item.paths
+        .iter()
+        .any(|path| anchor_paths.iter().any(|anchor| path == anchor))
+}
+
+fn split_related_pending_items(
+    items: Vec<PendingItem>,
+    anchor_paths: &[PathBuf],
+    matching_ops: &[Option<StructuralOp>],
+) -> (Vec<PathBuf>, Vec<PendingItem>) {
+    let mut kept = Vec::new();
+    let mut drained = Vec::new();
+    for item in items {
+        let related_by_path = pending_item_touches(&item, anchor_paths);
+        let related_by_op = item.op.is_some() && matching_ops.iter().any(|op| *op == item.op);
+        if related_by_path || related_by_op {
+            drained.extend(item.paths);
+        } else {
+            kept.push(item);
+        }
+    }
+    (drained, kept)
+}
+
+fn dedupe_paths(paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
+    let mut unique = Vec::new();
+    for path in paths {
+        if !unique.iter().any(|existing: &PathBuf| existing == &path) {
+            unique.push(path);
+        }
+    }
+    unique
+}
+
+impl AutocommitService {
     /// Commit a system-level change (config / AI settings / CLI integration)
     /// immediately. Runs inline with the caller so any subsequent IPC call
     /// sees the commit already landed.
@@ -198,12 +281,7 @@ impl AutocommitService {
         let git_state = self.app.state::<GitState>();
         let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
         let git_type = ops::detect_space_git_type(&cli, &project_path, &space_path).await?;
-        let target_repo: PathBuf = match git_type {
-            SpaceGitType::Inline => project_path.clone(),
-            SpaceGitType::Independent | SpaceGitType::Submodule => space_path.clone(),
-        };
-
-        if !background_commit_allowed(&target_repo, CommitIntent::SystemConfig) {
+        if !background_commit_allowed(&space_path, CommitIntent::SystemConfig) {
             return Ok(());
         }
 
@@ -284,12 +362,7 @@ impl AutocommitService {
         let git_state = self.app.state::<GitState>();
         let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
         let git_type = ops::detect_space_git_type(&cli, &project_path, &space_path).await?;
-        let target_repo: PathBuf = match git_type {
-            SpaceGitType::Inline => project_path.clone(),
-            SpaceGitType::Independent | SpaceGitType::Submodule => space_path.clone(),
-        };
-
-        if !background_commit_allowed(&target_repo, CommitIntent::StructuralLifecycle) {
+        if !background_commit_allowed(&space_path, CommitIntent::StructuralLifecycle) {
             return Ok(());
         }
 
@@ -370,7 +443,7 @@ async fn do_commit_paths(
             emit_committed(app, space_path, project_path);
         }
 
-        if is_auto_sync_enabled(repo) {
+        if is_auto_sync_enabled(space_path) {
             let cli_sync = cli.clone();
             let sync_target = repo.to_path_buf();
             tauri::async_runtime::spawn(async move {
@@ -472,11 +545,7 @@ async fn do_commit_system(
     };
 
     if created {
-        let config_repo: PathBuf = match git_type {
-            SpaceGitType::Inline => project_path.to_path_buf(),
-            SpaceGitType::Independent | SpaceGitType::Submodule => space_path.to_path_buf(),
-        };
-        if is_auto_sync_enabled(&config_repo) {
+        if is_auto_sync_enabled(space_path) {
             let cli_sync = cli.clone();
             let sync_target = target_repo.clone();
             tauri::async_runtime::spawn(async move {
@@ -526,11 +595,6 @@ async fn do_commit_scaffold(
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
     let message = "Scaffold .svode";
-    let target_repo = match git_type {
-        SpaceGitType::Inline => project_path,
-        SpaceGitType::Independent | SpaceGitType::Submodule => space_path,
-    };
-
     match git_type {
         SpaceGitType::Inline => {
             let lock = git_state.get_lock(project_path).await;
@@ -542,7 +606,7 @@ async fn do_commit_scaffold(
                 ops::ensure_inline_gitignore(project_path)?;
                 format!("{}/.svode", space_folder)
             };
-            if !background_commit_allowed(target_repo, CommitIntent::StructuralLifecycle) {
+            if !background_commit_allowed(space_path, CommitIntent::StructuralLifecycle) {
                 return Ok(());
             }
             ops::add(&cli, project_path, ".gitignore").await?;
@@ -566,7 +630,7 @@ async fn do_commit_scaffold(
             let lock = git_state.get_lock(space_path).await;
             let _guard = lock.lock().await;
             ops::ensure_svode_gitignore(space_path)?;
-            if !background_commit_allowed(target_repo, CommitIntent::StructuralLifecycle) {
+            if !background_commit_allowed(space_path, CommitIntent::StructuralLifecycle) {
                 return Ok(());
             }
             ops::add(&cli, space_path, ".gitignore").await?;
@@ -583,7 +647,7 @@ async fn do_commit_scaffold(
             let lock = git_state.get_lock(space_path).await;
             let _guard = lock.lock().await;
             ops::ensure_svode_gitignore(space_path)?;
-            if !background_commit_allowed(target_repo, CommitIntent::StructuralLifecycle) {
+            if !background_commit_allowed(space_path, CommitIntent::StructuralLifecycle) {
                 return Ok(());
             }
             ops::add(&cli, space_path, ".gitignore").await?;
@@ -995,9 +1059,120 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::space::config::write_space_config;
+    use crate::space::types::{GitSpaceConfig, SpaceConfig};
 
     fn s(x: &str) -> String {
         x.to_string()
+    }
+
+    fn write_git_config(path: &Path, git: GitSpaceConfig) {
+        write_space_config(
+            path,
+            &SpaceConfig {
+                name: "Space".to_string(),
+                description: String::new(),
+                icon: "folder".to_string(),
+                spaces: None,
+                agent: None,
+                defaults: None,
+                git: Some(git),
+                assets: None,
+                tree: None,
+            },
+        )
+        .expect("write space config");
+    }
+
+    #[test]
+    fn background_policy_reads_operation_space_config() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let project = temp.path().join("project");
+        let inline_space = project.join("docs");
+
+        write_git_config(
+            &project,
+            GitSpaceConfig {
+                auto_sync: Some(false),
+                auto_commit_structural: Some(false),
+                auto_commit_system: Some(false),
+            },
+        );
+        write_git_config(
+            &inline_space,
+            GitSpaceConfig {
+                auto_sync: Some(true),
+                auto_commit_structural: Some(true),
+                auto_commit_system: Some(true),
+            },
+        );
+
+        assert!(!is_auto_sync_enabled(&project));
+        assert!(is_auto_sync_enabled(&inline_space));
+        assert!(!background_commit_allowed(
+            &project,
+            CommitIntent::StructuralLifecycle
+        ));
+        assert!(background_commit_allowed(
+            &inline_space,
+            CommitIntent::StructuralLifecycle
+        ));
+        assert!(!background_commit_allowed(
+            &project,
+            CommitIntent::SystemConfig
+        ));
+        assert!(background_commit_allowed(
+            &inline_space,
+            CommitIntent::SystemConfig
+        ));
+    }
+
+    #[test]
+    fn single_file_save_drains_only_related_pending_paths() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let project = temp.path().join("project");
+        let space = project.join("docs");
+
+        let unrelated = space.join("other.md");
+        let old_path = space.join("old.md");
+        let active = space.join("new.md");
+        let backlink_source = space.join("source.md");
+        let rename_op = StructuralOp::Rename {
+            old: "old.md".to_string(),
+            new: "new.md".to_string(),
+        };
+
+        let items = vec![
+            PendingItem {
+                op: Some(StructuralOp::Create("other.md".to_string())),
+                paths: vec![unrelated.clone()],
+            },
+            PendingItem {
+                op: Some(rename_op.clone()),
+                paths: vec![old_path.clone(), active.clone()],
+            },
+            PendingItem {
+                op: Some(rename_op),
+                paths: vec![backlink_source.clone()],
+            },
+        ];
+        let anchors = vec![active.clone()];
+        let matching_ops: Vec<Option<StructuralOp>> = items
+            .iter()
+            .filter(|item| pending_item_touches(item, &anchors))
+            .map(|item| item.op.clone())
+            .collect();
+        let (drained, kept) = split_related_pending_items(items, &anchors, &matching_ops);
+
+        assert!(drained.contains(&old_path));
+        assert!(drained.contains(&active));
+        assert!(drained.contains(&backlink_source));
+        assert!(!drained.contains(&unrelated));
+
+        assert_eq!(
+            dedupe_paths(kept.into_iter().flat_map(|item| item.paths)),
+            vec![unrelated]
+        );
     }
 
     #[test]

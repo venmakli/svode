@@ -311,7 +311,9 @@ pub async fn git_commit_file(
             return super::ops::status(cli, &path).await;
         }
         let (_, target_repo) = super::ops::resolve_target_repo(cli, &project, &path).await?;
-        let pending_paths = autocommit.take_pending_paths_for_space(&project, &path);
+        let active_path = path.join(&file_path);
+        let pending_paths =
+            autocommit.take_related_pending_paths_for_space(&project, &path, &[active_path]);
         let lock = state.get_lock(&target_repo).await;
         let _guard = lock.lock().await;
         stage_pending_paths(cli, &target_repo, &pending_paths).await;
