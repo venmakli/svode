@@ -18,6 +18,7 @@ use crate::index::{IndexKey, IndexState, search};
 use crate::properties::{
     self, CollectionSchema, Column, DocumentConfig, Filter, PropertyType, Sort, View,
 };
+use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::{config as space_config, project};
 
 const DEFAULT_LIMIT: i64 = 50;
@@ -558,10 +559,19 @@ async fn read_document(
     app: &AppHandle,
     args: PathArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
-    let (_, space) = resolve_space(app, args.space_id.clone()).await?;
+    let (context, space) = resolve_space(app, args.space_id.clone()).await?;
     let path = validate_document_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
-    let entry = entry::read(&space, &path)?;
+    let mut entry = entry::read(&space, &path)?;
+    apply_indexed_entry_dates(
+        app,
+        &context,
+        args.space_id.as_deref(),
+        &space,
+        &path,
+        &mut entry,
+    )
+    .await;
     Ok(ToolCallResult::ok(
         format!("Read document {path}."),
         json!({ "document": entry }),
@@ -1163,6 +1173,33 @@ async fn pool_for_space(
             Ok(state.get_or_create(&fallback).await?)
         }
     }
+}
+
+async fn apply_indexed_entry_dates(
+    app: &AppHandle,
+    context: &ActiveProjectContext,
+    space_id: Option<&str>,
+    space: &str,
+    path: &str,
+    entry: &mut entry::Entry,
+) {
+    let Ok(normalized) = normalize_repo_relative(path, RootMode::Reject) else {
+        return;
+    };
+    let Ok(pool) = pool_for_space(app, context, space_id, space).await else {
+        return;
+    };
+    let Ok(Some((created, updated))) = sqlx::query_as::<_, (String, String)>(
+        "SELECT created, updated FROM entries WHERE file_path = ?",
+    )
+    .bind(normalized)
+    .fetch_optional(&pool)
+    .await
+    else {
+        return;
+    };
+    entry.meta.created = created;
+    entry.meta.updated = updated;
 }
 
 fn index_key_for_context(context: &ActiveProjectContext, space_id: Option<&str>) -> IndexKey {

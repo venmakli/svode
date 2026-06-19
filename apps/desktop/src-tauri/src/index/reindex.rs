@@ -7,6 +7,7 @@ use std::time::SystemTime;
 use crate::error::AppError;
 use crate::files::frontmatter;
 use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
+use crate::git::dates::{EntryDateOverride, derive_date_overrides};
 use crate::index::normalize_rel_root_result;
 use crate::repo_path::{RootMode, repo_relative_from_base};
 
@@ -162,7 +163,7 @@ mod tests {
         )
         .unwrap();
 
-        let entry = build_entry(tmp.path(), &file).expect("build entry");
+        let entry = build_entry_with_dates(tmp.path(), &file, None).expect("build entry");
         let fields: serde_json::Value =
             serde_json::from_str(&entry.fields_json).expect("fields json");
 
@@ -182,7 +183,7 @@ mod tests {
         let raw = "---\ntitle: [broken\n---\nBody\n";
         std::fs::write(&file, raw).unwrap();
 
-        let entry = build_entry(tmp.path(), &file).expect("build entry");
+        let entry = build_entry_with_dates(tmp.path(), &file, None).expect("build entry");
 
         assert_eq!(entry.rel_path, "broken.md");
         assert_eq!(entry.title, "Broken");
@@ -249,15 +250,26 @@ pub(crate) struct IndexedEntry {
     pub body_preview: String,
 }
 
-/// Build an `IndexedEntry` from an absolute file path. Parses frontmatter,
-/// falling back to synthesized values if absent or invalid.
-pub(crate) fn build_entry(space_dir: &Path, abs_path: &Path) -> Result<IndexedEntry, AppError> {
+/// Build an `IndexedEntry` using precomputed runtime date overrides when
+/// available. The filesystem remains the fallback for untracked, dirty, or
+/// unavailable Git history cases.
+pub(crate) fn build_entry_with_dates(
+    space_dir: &Path,
+    abs_path: &Path,
+    date_override: Option<&EntryDateOverride>,
+) -> Result<IndexedEntry, AppError> {
     let rel_path = repo_relative_from_base(space_dir, abs_path, RootMode::Reject)?;
 
     let raw = fs::read_to_string(abs_path)?;
 
-    let created = file_created_iso(abs_path);
-    let updated = file_modified_iso(abs_path);
+    let fs_created = file_created_iso(abs_path);
+    let fs_updated = file_modified_iso(abs_path);
+    let created = date_override
+        .and_then(|dates| dates.created.clone())
+        .unwrap_or(fs_created);
+    let updated = date_override
+        .and_then(|dates| dates.updated.clone())
+        .unwrap_or(fs_updated);
     let (title, icon, description, cover_json, fields_json, body_preview) =
         match frontmatter::parse_status(&raw) {
             frontmatter::ParseStatus::Valid { meta, body } => {
@@ -527,6 +539,11 @@ pub async fn full_reindex(
     let mut md_files: Vec<PathBuf> = Vec::new();
     let policy = TreeIgnorePolicy::from_space_root(space_dir);
     collect_md_files(space_dir, space_dir, skip_top_level, &policy, &mut md_files)?;
+    let md_rel_paths = md_files
+        .iter()
+        .filter_map(|path| repo_relative_from_base(space_dir, path, RootMode::Reject).ok())
+        .collect::<Vec<_>>();
+    let entry_date_overrides = derive_date_overrides(space_dir, &md_rel_paths).await;
 
     let assets_dir = space_dir.join(".assets");
     let mut asset_files: Vec<PathBuf> = Vec::new();
@@ -537,7 +554,11 @@ pub async fn full_reindex(
     let mut entries: Vec<IndexedEntry> = Vec::with_capacity(md_files.len());
     let mut entries_skipped = 0usize;
     for path in &md_files {
-        match build_entry(space_dir, path) {
+        let rel_path = repo_relative_from_base(space_dir, path, RootMode::Reject).ok();
+        let date_overrides = rel_path
+            .as_ref()
+            .and_then(|rel_path| entry_date_overrides.get(rel_path));
+        match build_entry_with_dates(space_dir, path, date_overrides) {
             Ok(entry) => entries.push(entry),
             Err(e) => {
                 entries_skipped += 1;

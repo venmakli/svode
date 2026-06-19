@@ -2,8 +2,9 @@ use sqlx::SqlitePool;
 use std::path::Path;
 
 use crate::error::AppError;
+use crate::git::dates::derive_date_overrides;
 use crate::index::normalize_rel_result;
-use crate::index::reindex::{build_entry, full_reindex, upsert_entry};
+use crate::index::reindex::{build_entry_with_dates, full_reindex, upsert_entry};
 use crate::index::{IndexKey, IndexState};
 
 /// Verify that an absolute path resolves inside the space root, guarding
@@ -68,7 +69,8 @@ pub async fn update_entry(
         return delete_entry_path(&pool, &normalized).await;
     }
 
-    let entry = build_entry(&dir, &abs)?;
+    let date_overrides = derive_date_overrides(&dir, std::slice::from_ref(&normalized)).await;
+    let entry = build_entry_with_dates(&dir, &abs, date_overrides.get(&normalized))?;
     upsert_entry(&pool, &entry).await?;
     Ok(())
 }
@@ -120,6 +122,21 @@ pub async fn reindex_after_pull(
         return full_reindex(&pool, &dir, &skip).await;
     }
 
+    let changed_md_paths = changed_files
+        .iter()
+        .filter_map(|rel| {
+            let normalized = normalize_rel_result(rel).ok()?;
+            let abs = dir.join(&normalized);
+            let is_md = abs
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("md"))
+                .unwrap_or(false);
+            (abs.exists() && is_md).then_some(normalized)
+        })
+        .collect::<Vec<_>>();
+    let date_overrides = derive_date_overrides(&dir, &changed_md_paths).await;
+
     for rel in changed_files {
         let normalized = normalize_rel_result(&rel)?;
         let abs = dir.join(&normalized);
@@ -145,7 +162,7 @@ pub async fn reindex_after_pull(
             continue;
         }
 
-        match build_entry(&dir, &abs) {
+        match build_entry_with_dates(&dir, &abs, date_overrides.get(&normalized)) {
             Ok(entry) => {
                 if let Err(e) = upsert_entry(&pool, &entry).await {
                     tracing::warn!("failed to upsert index row for {normalized}: {e}");

@@ -65,6 +65,31 @@ fn root_path_for_head(path: &str) -> &str {
     path
 }
 
+async fn indexed_entry_dates(
+    index_state: &IndexState,
+    space: &str,
+    path: &str,
+) -> Option<(String, String)> {
+    let normalized = normalize_repo_relative(path, RootMode::Reject).ok()?;
+    let key = index_state.key_for_space_dir(Path::new(space)).await?;
+    let pool = index_state.get_or_create(&key).await.ok()?;
+    sqlx::query_as::<_, (String, String)>(
+        "SELECT created, updated FROM entries WHERE file_path = ?",
+    )
+    .bind(normalized)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten()
+}
+
+fn apply_indexed_dates(entry: &mut Entry, dates: Option<(String, String)>) {
+    if let Some((created, updated)) = dates {
+        entry.meta.created = created;
+        entry.meta.updated = updated;
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChangeSchemaTypeResult {
@@ -676,8 +701,15 @@ pub fn create_folder(
 }
 
 #[tauri::command]
-pub fn read_entry(space: String, path: String) -> Result<Entry, AppError> {
-    entry::read(&space, &path)
+pub async fn read_entry(
+    space: String,
+    path: String,
+    index_state: State<'_, IndexState>,
+) -> Result<Entry, AppError> {
+    let mut entry = entry::read(&space, &path)?;
+    let dates = indexed_entry_dates(&index_state, &space, &path).await;
+    apply_indexed_dates(&mut entry, dates);
+    Ok(entry)
 }
 
 #[tauri::command]

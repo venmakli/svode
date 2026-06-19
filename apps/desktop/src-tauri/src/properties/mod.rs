@@ -5689,6 +5689,8 @@ fn detach_current_two_way_relation(
 struct EntryQueryRow {
     file_path: String,
     title: String,
+    created: String,
+    updated: String,
 }
 
 async fn query_entry_rows(
@@ -5702,7 +5704,7 @@ async fn query_entry_rows(
 ) -> Result<Vec<EntryQueryRow>, AppError> {
     let collection = collection_root_for_sql(collection_path);
     let mut query = QueryBuilder::<Sqlite>::new(
-        "SELECT file_path, title FROM entries WHERE collection_root_path = ",
+        "SELECT file_path, title, created, updated FROM entries WHERE collection_root_path = ",
     );
     query.push_bind(collection);
     query.push(" AND in_collection = 1 AND is_entry_head = 1");
@@ -5737,6 +5739,8 @@ async fn query_entry_rows(
         .map(|row| EntryQueryRow {
             file_path: row.get("file_path"),
             title: row.get("title"),
+            created: row.get("created"),
+            updated: row.get("updated"),
         })
         .collect())
 }
@@ -6300,7 +6304,9 @@ fn entries_from_rows(
         if !include_nested && entry_parent_dir(&row.file_path) != collection {
             continue;
         }
-        let entry = entry::read(space, &row.file_path)?;
+        let mut entry = entry::read(space, &row.file_path)?;
+        entry.meta.created = row.created.clone();
+        entry.meta.updated = row.updated.clone();
         entries.push((row, entry));
     }
     if manual_order {
