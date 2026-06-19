@@ -688,5 +688,6 @@
   "collection_new": "New collection",
   "collection_make": "Make collection",
   "collection_title_prompt": "Collection title",
-  "collection_untitled": "Untitled collection"
+  "collection_untitled": "Untitled collection",
+  "editor_frontmatter_malformed_warning": "Frontmatter YAML is malformed. The document opened as markdown content; metadata edits are disabled until the YAML is repaired."
 }

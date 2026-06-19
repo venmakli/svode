@@ -544,7 +544,7 @@ export function CollectionScreen({
     if (asFolder) {
       nextEntry = await invoke<Entry>("convert_entry_to_folder", {
         space: spacePath,
-        entryId: created.meta.id,
+        filePath: created.path,
         projectPath: projectPath ?? null,
       });
     }
@@ -906,7 +906,7 @@ export function CollectionScreen({
   const hasHeaderProperties = Boolean(
     propertiesSchema &&
     propertiesSchema.schema.columns.length > 0 &&
-    entry?.meta.id,
+    entry,
   );
 
   if (loading) {
@@ -1014,7 +1014,6 @@ export function CollectionScreen({
               projectPath={projectPath}
               spaceId={spaceId}
               filePath={readmePath}
-              metaId={entry.meta.id}
               schemaResult={propertiesSchema}
               values={entry.meta.extra ?? {}}
               mode="full"

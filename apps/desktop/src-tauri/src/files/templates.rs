@@ -58,7 +58,6 @@ struct TemplateSource {
 
 struct MarkdownDoc {
     path: PathBuf,
-    old_id: String,
     meta: EntryMeta,
     body: String,
 }
@@ -120,8 +119,6 @@ pub fn create(
 
     let base_slug = entry::slugify(title);
     let slug = unique_template_slug(&templates_abs, &base_slug);
-    let now = now_rfc3339();
-
     let (head_abs, head_rel) = match kind {
         TemplateKind::Leaf => {
             let rel = template_head_rel(collection_path, &slug, TemplateKind::Leaf);
@@ -135,16 +132,7 @@ pub fn create(
         }
     };
 
-    let mut meta = EntryMeta {
-        id: ulid::Ulid::new().to_string().to_lowercase(),
-        title: title.to_string(),
-        icon: None,
-        description: None,
-        cover: None,
-        created: now.clone(),
-        updated: now,
-        extra: HashMap::new(),
-    };
+    let mut meta = EntryMeta::new_persisted(title.to_string());
     properties::apply_schema_defaults_for_path(space, &head_rel, &mut meta)?;
     fs::write(&head_abs, frontmatter::serialize(&meta, ""))?;
 
@@ -467,7 +455,14 @@ fn template_info_from_head(
 fn read_template_head(head: &Path, slug: &str) -> Result<(String, Option<String>), AppError> {
     let raw = fs::read_to_string(head)?;
     match frontmatter::try_parse(&raw) {
-        Ok(Some((meta, _))) => Ok((meta.title, meta.icon)),
+        Ok(Some((meta, _))) => {
+            let title = if meta.frontmatter_keys.title {
+                meta.title
+            } else {
+                humanize_slug(slug)
+            };
+            Ok((title, meta.icon))
+        }
         Ok(None) => Ok((humanize_slug(slug), None)),
         Err(_) => Err(AppError::FrontmatterParse(format!(
             "invalid template frontmatter: {}",
@@ -521,29 +516,21 @@ fn rewrite_markdown_identities(
     title_suffix: Option<&str>,
 ) -> Result<(), AppError> {
     let mut docs = Vec::new();
-    let mut id_map = HashMap::new();
     for path in files {
         let doc = read_markdown_doc(path)?;
-        let new_id = ulid::Ulid::new().to_string().to_lowercase();
-        id_map.insert(doc.old_id.clone(), new_id);
         docs.push(doc);
     }
 
-    let now = now_rfc3339();
     for doc in &mut docs {
         let is_root = root_head.is_some_and(|head| same_path(head, &doc.path));
-        if let Some(new_id) = id_map.get(&doc.old_id) {
-            doc.meta.id = new_id.clone();
-        }
-        doc.meta.created = now.clone();
-        doc.meta.updated = now.clone();
-        replace_ids_in_meta(&mut doc.meta, &id_map);
 
         if is_root {
             if let Some(title) = root_title {
                 doc.meta.title = title.to_string();
+                doc.meta.mark_title_present();
             } else if let Some(suffix) = title_suffix {
                 doc.meta.title.push_str(suffix);
+                doc.meta.mark_title_present();
             }
             if let Some((space, rel_path)) = root_schema_path {
                 properties::apply_schema_defaults_for_path(space, rel_path, &mut doc.meta)?;
@@ -569,60 +556,18 @@ fn read_markdown_doc(path: &Path) -> Result<MarkdownDoc, AppError> {
     let (meta, body) = match frontmatter::try_parse(&raw)? {
         Some((meta, body)) => (meta, body),
         None => {
-            let now = now_rfc3339();
             let stem = path
                 .file_stem()
                 .and_then(|stem| stem.to_str())
                 .unwrap_or("untitled");
-            (
-                EntryMeta {
-                    id: ulid::Ulid::new().to_string().to_lowercase(),
-                    title: humanize_slug(stem),
-                    icon: None,
-                    description: None,
-                    cover: None,
-                    created: now.clone(),
-                    updated: now,
-                    extra: HashMap::new(),
-                },
-                raw,
-            )
+            (EntryMeta::new_persisted(humanize_slug(stem)), raw)
         }
     };
-    let old_id = meta.id.clone();
     Ok(MarkdownDoc {
         path: path.to_path_buf(),
-        old_id,
         meta,
         body,
     })
-}
-
-fn replace_ids_in_meta(meta: &mut EntryMeta, id_map: &HashMap<String, String>) {
-    for value in meta.extra.values_mut() {
-        replace_ids_in_value(value, id_map);
-    }
-}
-
-fn replace_ids_in_value(value: &mut Value, id_map: &HashMap<String, String>) {
-    match value {
-        Value::String(current) => {
-            if let Some(next) = id_map.get(current) {
-                *current = next.clone();
-            }
-        }
-        Value::Sequence(items) => {
-            for item in items {
-                replace_ids_in_value(item, id_map);
-            }
-        }
-        Value::Mapping(mapping) => {
-            for item in mapping.values_mut() {
-                replace_ids_in_value(item, id_map);
-            }
-        }
-        _ => {}
-    }
 }
 
 fn validate_contextual_defaults(
@@ -630,16 +575,7 @@ fn validate_contextual_defaults(
     head_rel: &str,
     contextual_defaults: &HashMap<String, Value>,
 ) -> Result<(), AppError> {
-    let mut meta = EntryMeta {
-        id: ulid::Ulid::new().to_string().to_lowercase(),
-        title: String::new(),
-        icon: None,
-        description: None,
-        cover: None,
-        created: String::new(),
-        updated: String::new(),
-        extra: HashMap::new(),
-    };
+    let mut meta = EntryMeta::new_persisted("");
     properties::apply_contextual_defaults_for_path_strict(
         space,
         head_rel,
@@ -806,10 +742,6 @@ fn humanize_slug(slug: &str) -> String {
         first.make_ascii_uppercase();
     }
     chars.into_iter().collect()
-}
-
-fn now_rfc3339() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 fn same_path(a: &Path, b: &Path) -> bool {

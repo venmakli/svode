@@ -216,34 +216,21 @@ export function FileTreeItem({
         await reloadTreeParents(spaceId, [parent]);
       } else {
         // Title-edit only: file rename + backlinks are deferred to ⌘S (unified with editor-title-edit).
-        const entry = await invoke<Entry>("read_entry", {
+        const entry = await invoke<Entry>("update_entry_field", {
           space: space.path,
-          path: node.path,
+          filePath: node.path,
+          field: "title",
+          value: newName,
+          projectPath: activeRootPath,
         });
-        const result = await invoke<{ new_path: string | null }>(
-          "write_entry",
-          {
-            space: space.path,
-            path: node.path,
-            content: entry.body,
-            title: newName,
-            icon: entry.meta.icon,
-            extra:
-              entry.meta.extra && Object.keys(entry.meta.extra).length > 0
-                ? entry.meta.extra
-                : null,
-            existingId: entry.meta.id ?? null,
-            skipRename: true,
-          },
-        );
         if (activeDocument === node.path) {
           useEditorStore
             .getState()
-            .requestRename(node.path, newName, result.new_path);
+            .requestRename(node.path, newName, null);
         }
         patchEntryTreeMeta(
           spaceId,
-          result.new_path ?? node.path,
+          node.path,
           newName,
           entry.meta.icon,
           entry.meta.description ?? null,
@@ -388,13 +375,13 @@ export function FileTreeItem({
       if (!node.path.toLowerCase().endsWith("/readme.md")) {
         readmeEntry = await invoke<Entry>("convert_entry_to_folder", {
           space: space.path,
-          entryId: entry.meta.id,
+          filePath: entry.path,
           projectPath: activeRootPath,
         });
       }
       await invoke<string>("convert_entry_to_nested_collection", {
         space: space.path,
-        entryId: readmeEntry.meta.id,
+        filePath: readmeEntry.path,
         projectPath: activeRootPath,
       });
       await reloadTreePathParent(spaceId, node.path);

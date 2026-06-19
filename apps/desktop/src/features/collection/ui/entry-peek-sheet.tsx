@@ -315,7 +315,6 @@ function StandardEntryPeek({
               projectPath={projectPath}
               spaceId={spaceId}
               filePath={entry.path}
-              metaId={entry.meta.id}
               schemaResult={schemaResult}
               values={entry.meta.extra ?? {}}
               mode="peek"

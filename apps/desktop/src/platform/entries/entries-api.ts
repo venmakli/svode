@@ -6,7 +6,6 @@ export type EntryCoverDto =
   | { type: "image"; path: string; position?: number | null };
 
 export interface EntryMetaDto {
-  id: string;
   title: string;
   icon: string | null;
   description?: string | null;
@@ -16,10 +15,16 @@ export interface EntryMetaDto {
   extra: Record<string, unknown>;
 }
 
+export interface EntryWarningDto {
+  kind: string;
+  message: string;
+}
+
 export interface EntryDto {
   meta: EntryMetaDto;
   body: string;
   path: string;
+  warnings?: EntryWarningDto[];
 }
 
 export interface LinkValidationResultDto {

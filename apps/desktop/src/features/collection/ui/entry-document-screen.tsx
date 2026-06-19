@@ -243,7 +243,6 @@ export function EntryDocumentScreen({
               projectPath={projectPath}
               spaceId={spaceId}
               filePath={currentEntry.path}
-              metaId={currentEntry.meta.id}
               schemaResult={schemaResult}
               values={currentEntry.meta.extra ?? {}}
               mode="full"

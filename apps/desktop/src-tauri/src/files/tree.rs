@@ -86,7 +86,7 @@ fn read_frontmatter_meta(abs_path: &Path) -> (String, Option<String>, Option<Str
     };
 
     match frontmatter::parse(&content) {
-        Ok((meta, _)) => (meta.title, meta.icon, meta.description),
+        Ok((meta, _)) => title_or_fallback(meta, fallback),
         Err(_) => (fallback, None, None),
     }
 }
@@ -138,7 +138,7 @@ fn read_frontmatter_meta_head(abs_path: &Path) -> (String, Option<String>, Optio
         head.push_str(&line);
         if is_closing {
             match frontmatter::parse(&head) {
-                Ok((meta, _)) => return (meta.title, meta.icon, meta.description),
+                Ok((meta, _)) => return title_or_fallback(meta, fallback),
                 Err(_) => return (fallback, None, None),
             }
         }
@@ -156,6 +156,18 @@ fn path_name(path: &Path) -> String {
         .and_then(|name| name.to_str())
         .unwrap_or("<unknown>")
         .to_string()
+}
+
+fn title_or_fallback(
+    meta: crate::files::EntryMeta,
+    fallback: String,
+) -> (String, Option<String>, Option<String>) {
+    let title = if meta.frontmatter_keys.title {
+        meta.title
+    } else {
+        fallback
+    };
+    (title, meta.icon, meta.description)
 }
 
 fn count_tree_nodes(nodes: &[TreeNode]) -> usize {

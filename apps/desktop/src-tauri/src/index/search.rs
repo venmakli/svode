@@ -90,7 +90,7 @@ pub async fn search_by_title(
     let rows = sqlx::query(
         r#"
         SELECT
-            id,
+            file_path AS id,
             file_path AS path,
             COALESCE(title, '') AS title,
             'page' AS type,
@@ -208,7 +208,7 @@ async fn unique_id_rows(
     let rows = sqlx::query(
         r#"
         SELECT
-            id,
+            file_path AS id,
             file_path AS path,
             COALESCE(title, '') AS title,
             'page' AS type,
@@ -271,7 +271,7 @@ pub async fn search_fts(
     let mut sql = String::from(
         r#"
         SELECT
-            e.id,
+            e.file_path AS id,
             e.file_path AS path,
             COALESCE(e.title, '') AS title,
             'page' AS type,
@@ -316,7 +316,7 @@ pub async fn recent(pool: &SqlitePool, limit: i64) -> Result<Vec<SearchResult>, 
     let rows = sqlx::query(
         r#"
         SELECT
-            id,
+            file_path AS id,
             file_path AS path,
             COALESCE(title, '') AS title,
             'page' AS type,
@@ -366,8 +366,7 @@ mod tests {
         sqlx::query(
             r#"
             CREATE TABLE entries (
-                id TEXT NOT NULL,
-                file_path TEXT NOT NULL,
+                file_path TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
                 updated TEXT NOT NULL,
                 collection_root_path TEXT,
@@ -382,8 +381,8 @@ mod tests {
         sqlx::query(
             r#"
             INSERT INTO entries (
-                id, file_path, title, updated, collection_root_path, in_collection, fields
-            ) VALUES ('1', 'tasks/a.md', 'A', '2026-01-01', 'tasks', 1, '{"Key":24}')
+                file_path, title, updated, collection_root_path, in_collection, fields
+            ) VALUES ('tasks/a.md', 'A', '2026-01-01', 'tasks', 1, '{"Key":24}')
             "#,
         )
         .execute(&pool)
@@ -403,8 +402,7 @@ mod tests {
         sqlx::query(
             r#"
             CREATE TABLE entries (
-                id TEXT NOT NULL,
-                file_path TEXT NOT NULL,
+                file_path TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
                 description TEXT,
                 body_preview TEXT,
@@ -435,10 +433,10 @@ mod tests {
         sqlx::query(
             r#"
             INSERT INTO entries (
-                rowid, id, file_path, title, description, body_preview,
+                rowid, file_path, title, description, body_preview,
                 updated, collection_root_path, in_collection, fields
             ) VALUES (
-                1, '1', 'contacts/ivan.md', 'Customer record', '',
+                1, 'contacts/ivan.md', 'Customer record', '',
                 'Regular note body', '2026-01-01', 'contacts', 1,
                 '{"Phone":"+15550001234","Email":"person@example.com"}'
             )

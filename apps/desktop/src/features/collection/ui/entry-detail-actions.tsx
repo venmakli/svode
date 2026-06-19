@@ -119,7 +119,7 @@ export function EntryDetailActions({
   async function nestPage() {
     const folderEntry = await invoke<Entry>("convert_entry_to_folder", {
       space: spacePath,
-      entryId: entry.meta.id,
+      filePath: entry.path,
       projectPath: projectPath ?? null,
     });
     const parentPath = normalizeEntryPath(folderEntry.path).replace(
@@ -146,7 +146,7 @@ export function EntryDetailActions({
     if (leafDisabledReason) return;
     const next = await invoke<Entry>("convert_entry_to_leaf", {
       space: spacePath,
-      entryId: entry.meta.id,
+      filePath: entry.path,
       projectPath: projectPath ?? null,
     });
     await reloadTreePathParents(spaceId, [entry.path, next.path]);
@@ -160,7 +160,7 @@ export function EntryDetailActions({
   async function convertToNestedCollection() {
     await invoke("convert_entry_to_nested_collection", {
       space: spacePath,
-      entryId: entry.meta.id,
+      filePath: entry.path,
       projectPath: projectPath ?? null,
     });
     const next = await refreshDetail(entry.path, [entry.path]);

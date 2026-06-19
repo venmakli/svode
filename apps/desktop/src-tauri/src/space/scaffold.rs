@@ -18,21 +18,11 @@ pub fn ensure_readme(path: &Path, title: &str) -> Result<bool, AppError> {
     }
 
     std::fs::create_dir_all(path)?;
-    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    let meta = EntryMeta {
-        id: ulid::Ulid::new().to_string().to_lowercase(),
-        title: if title.trim().is_empty() {
-            "Home".to_string()
-        } else {
-            title.to_string()
-        },
-        icon: None,
-        description: None,
-        cover: None,
-        created: now.clone(),
-        updated: now,
-        extra: std::collections::HashMap::new(),
-    };
+    let meta = EntryMeta::new_persisted(if title.trim().is_empty() {
+        "Home".to_string()
+    } else {
+        title.to_string()
+    });
     std::fs::write(readme_path, frontmatter::serialize(&meta, ""))?;
     Ok(true)
 }

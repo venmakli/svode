@@ -15,7 +15,6 @@ export type EntryCover =
   | { type: "image"; path: string; position?: number | null };
 
 export interface EntryMeta {
-  id: string;
   title: string;
   icon: string | null;
   description?: string | null;
@@ -25,10 +24,16 @@ export interface EntryMeta {
   extra: Record<string, unknown>;
 }
 
+export interface EntryWarning {
+  kind: string;
+  message: string;
+}
+
 export interface Entry {
   meta: EntryMeta;
   body: string;
   path: string;
+  warnings?: EntryWarning[];
 }
 
 export interface WriteResult {

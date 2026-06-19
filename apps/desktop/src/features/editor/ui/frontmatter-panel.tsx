@@ -99,11 +99,6 @@ export function FrontmatterPanel({
           </p>
           <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-sm items-center">
             {/* System fields — read-only */}
-            <span className="text-muted-foreground">id</span>
-            <span className="text-muted-foreground font-mono text-xs truncate">
-              {meta.id}
-            </span>
-
             <span className="text-muted-foreground">created</span>
             <span className="text-muted-foreground">
               {formatDate(meta.created)}
@@ -121,7 +116,6 @@ export function FrontmatterPanel({
                 spacePath={spacePath}
                 projectPath={projectPath}
                 filePath={filePath}
-                metaId={meta.id}
                 schemaResult={schemaResult}
                 values={meta.extra ?? {}}
                 onValueChange={onPropertyChange}

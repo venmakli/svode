@@ -428,8 +428,28 @@ fn write_metadata_frontmatter(
     description: Option<Option<String>>,
     cover: Option<Option<entry::Cover>>,
 ) -> Result<entry::Entry, McpBusinessError> {
-    let current = entry::read(space, path)?;
-    let mut meta = current.meta;
+    let abs = Path::new(space).join(path);
+    let raw = fs::read_to_string(&abs)?;
+    let (mut meta, body) = match crate::files::frontmatter::parse_status(&raw) {
+        crate::files::frontmatter::ParseStatus::Valid { meta, body } => (meta, body),
+        crate::files::frontmatter::ParseStatus::Missing { body } => {
+            let fallback = Path::new(path)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(entry::title_from_stem)
+                .unwrap_or_else(|| "Untitled".to_string());
+            (
+                entry::EntryMeta::synthesized(fallback, String::new(), String::new()),
+                body,
+            )
+        }
+        crate::files::frontmatter::ParseStatus::Malformed { message, .. } => {
+            return Err(McpBusinessError::new(
+                "MALFORMED_FRONTMATTER",
+                format!("cannot update metadata while frontmatter is malformed: {message}"),
+            ));
+        }
+    };
     if let Some(title) = title {
         let title = title.trim();
         if title.is_empty() {
@@ -439,24 +459,30 @@ fn write_metadata_frontmatter(
             ));
         }
         meta.title = title.to_string();
+        meta.mark_title_present();
     }
     if let Some(icon) = icon {
         meta.icon = icon;
+        if meta.icon.is_some() {
+            meta.mark_icon_present();
+        }
     }
     if let Some(description) = description {
         meta.description = description.and_then(|value| {
             let trimmed = value.trim().to_string();
             (!trimmed.is_empty()).then_some(trimmed)
         });
+        if meta.description.is_some() {
+            meta.mark_description_present();
+        }
     }
     if let Some(cover) = cover {
         meta.cover = cover;
+        if meta.cover.is_some() {
+            meta.mark_cover_present();
+        }
     }
-    meta.updated = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    fs::write(
-        Path::new(space).join(path),
-        crate::files::frontmatter::serialize(&meta, &current.body),
-    )?;
+    fs::write(abs, crate::files::frontmatter::serialize(&meta, &body))?;
     entry::read(space, path).map_err(Into::into)
 }
 
@@ -592,19 +618,21 @@ async fn create_document(
             .unwrap_or("Untitled")
             .replace(['-', '_'], " ")
     });
-    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    let meta = entry::EntryMeta {
-        id: ulid::Ulid::new().to_string().to_lowercase(),
-        title,
-        icon: args.icon,
-        description: args
-            .description
-            .and_then(|value| (!value.trim().is_empty()).then_some(value)),
-        cover: args.cover,
-        created: now.clone(),
-        updated: now,
-        extra: HashMap::new(),
-    };
+    let mut meta = entry::EntryMeta::new_persisted(title);
+    meta.icon = args.icon;
+    if meta.icon.is_some() {
+        meta.mark_icon_present();
+    }
+    meta.description = args
+        .description
+        .and_then(|value| (!value.trim().is_empty()).then_some(value));
+    if meta.description.is_some() {
+        meta.mark_description_present();
+    }
+    meta.cover = args.cover;
+    if meta.cover.is_some() {
+        meta.mark_cover_present();
+    }
     fs::write(
         &abs,
         crate::files::frontmatter::serialize(&meta, args.content.as_deref().unwrap_or("")),
@@ -668,23 +696,25 @@ async fn create_collection(
 
     let schema = schema_for_create_collection(&args);
     properties::write_collection_schema(&space, &collection_path, &schema)?;
-    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    let meta = entry::EntryMeta {
-        id: ulid::Ulid::new().to_string().to_lowercase(),
-        title: if args.title.trim().is_empty() {
-            fallback_collection_title(&collection_path)
-        } else {
-            args.title
-        },
-        icon: args.icon,
-        description: args
-            .description
-            .and_then(|value| (!value.trim().is_empty()).then_some(value)),
-        cover: args.cover,
-        created: now.clone(),
-        updated: now,
-        extra: HashMap::new(),
-    };
+    let mut meta = entry::EntryMeta::new_persisted(if args.title.trim().is_empty() {
+        fallback_collection_title(&collection_path)
+    } else {
+        args.title
+    });
+    meta.icon = args.icon;
+    if meta.icon.is_some() {
+        meta.mark_icon_present();
+    }
+    meta.description = args
+        .description
+        .and_then(|value| (!value.trim().is_empty()).then_some(value));
+    if meta.description.is_some() {
+        meta.mark_description_present();
+    }
+    meta.cover = args.cover;
+    if meta.cover.is_some() {
+        meta.mark_cover_present();
+    }
     if let Some(parent) = readme_abs.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -720,9 +750,8 @@ async fn convert_to_collection(
         let readme_rel = collection_readme_path(&raw_path);
         let readme_abs = Path::new(&space).join(&readme_rel);
         if readme_abs.exists() {
-            let entry = entry::read(&space, &readme_rel)?;
             collection_path =
-                entry::convert_entry_to_nested_collection(Path::new(&space), &entry.meta.id)?;
+                entry::convert_entry_to_nested_collection(Path::new(&space), &readme_rel)?;
             changed_paths.push(schema_path_rel(&collection_path));
             entry_result = entry::read(&space, &readme_rel)?;
         } else {
@@ -733,15 +762,14 @@ async fn convert_to_collection(
         }
     } else {
         let path = validate_document_path(&raw_path)?;
-        let entry = entry::read(&space, &path)?;
-        let folder_entry = entry::convert_entry_to_folder(Path::new(&space), &entry.meta.id, None)?;
+        let folder_entry = entry::convert_entry_to_folder(Path::new(&space), &path, None)?;
         let converted_collection_path = Path::new(&folder_entry.path)
             .parent()
             .map(|parent| parent.to_string_lossy().replace('\\', "/"))
             .ok_or_else(|| {
                 McpBusinessError::new("INVALID_PATH", "converted entry has no folder path")
             })?;
-        entry::convert_entry_to_nested_collection(Path::new(&space), &folder_entry.meta.id)?;
+        entry::convert_entry_to_nested_collection(Path::new(&space), &folder_entry.path)?;
         collection_path = converted_collection_path;
         changed_paths.push(path);
         changed_paths.push(collection_readme_path(&collection_path));
@@ -944,17 +972,8 @@ async fn update_entry_body(
     let (_, space) = resolve_space(app, args.space_id).await?;
     let path = validate_document_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
-    let current = entry::read(&space, &path)?;
     let result = entry::write(
-        &space,
-        &path,
-        &args.body,
-        Some(&current.meta.title),
-        current.meta.icon.as_deref(),
-        Some(current.meta.extra),
-        Some(&current.meta.id),
-        None,
-        true,
+        &space, &path, &args.body, None, None, None, None, None, true,
     )?;
     Ok(ToolCallResult::ok(
         format!("Updated body for {path}."),

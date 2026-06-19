@@ -688,5 +688,6 @@
   "collection_new": "Новая коллекция",
   "collection_make": "Сделать коллекцией",
   "collection_title_prompt": "Название коллекции",
-  "collection_untitled": "Новая коллекция"
+  "collection_untitled": "Новая коллекция",
+  "editor_frontmatter_malformed_warning": "YAML frontmatter повреждён. Документ открыт как markdown-содержимое; metadata-правки недоступны, пока YAML не исправлен."
 }

@@ -78,9 +78,17 @@ pub struct DeleteResult {
     pub cascade_touched: Vec<PathBuf>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub(crate) struct FrontmatterKeys {
+    pub title: bool,
+    pub icon: bool,
+    pub description: bool,
+    pub cover: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct EntryMeta {
-    pub id: String,
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
@@ -93,6 +101,79 @@ pub struct EntryMeta {
     /// User-defined custom fields from frontmatter YAML.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yml::Value>,
+    #[serde(skip)]
+    pub(crate) frontmatter_keys: FrontmatterKeys,
+}
+
+impl EntryMeta {
+    pub(crate) fn new_persisted(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            icon: None,
+            description: None,
+            cover: None,
+            created: String::new(),
+            updated: String::new(),
+            extra: HashMap::new(),
+            frontmatter_keys: FrontmatterKeys {
+                title: true,
+                ..FrontmatterKeys::default()
+            },
+        }
+    }
+
+    pub(crate) fn synthesized(
+        title: impl Into<String>,
+        created: impl Into<String>,
+        updated: impl Into<String>,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            icon: None,
+            description: None,
+            cover: None,
+            created: created.into(),
+            updated: updated.into(),
+            extra: HashMap::new(),
+            frontmatter_keys: FrontmatterKeys::default(),
+        }
+    }
+
+    pub(crate) fn from_frontmatter(
+        title: String,
+        icon: Option<String>,
+        description: Option<String>,
+        cover: Option<Cover>,
+        extra: HashMap<String, serde_yml::Value>,
+        frontmatter_keys: FrontmatterKeys,
+    ) -> Self {
+        Self {
+            title,
+            icon,
+            description,
+            cover,
+            created: String::new(),
+            updated: String::new(),
+            extra,
+            frontmatter_keys,
+        }
+    }
+
+    pub(crate) fn mark_title_present(&mut self) {
+        self.frontmatter_keys.title = true;
+    }
+
+    pub(crate) fn mark_icon_present(&mut self) {
+        self.frontmatter_keys.icon = true;
+    }
+
+    pub(crate) fn mark_description_present(&mut self) {
+        self.frontmatter_keys.description = true;
+    }
+
+    pub(crate) fn mark_cover_present(&mut self) {
+        self.frontmatter_keys.cover = true;
+    }
 }
 
 impl Serialize for EntryMeta {
@@ -100,8 +181,7 @@ impl Serialize for EntryMeta {
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("EntryMeta", 8)?;
-        state.serialize_field("id", &self.id)?;
+        let mut state = serializer.serialize_struct("EntryMeta", 7)?;
         state.serialize_field("title", &self.title)?;
         state.serialize_field("icon", &self.icon)?;
         state.serialize_field("description", &self.description)?;
@@ -114,11 +194,29 @@ impl Serialize for EntryMeta {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryWarning {
+    pub kind: String,
+    pub message: String,
+}
+
+impl EntryWarning {
+    fn malformed_frontmatter(message: String) -> Self {
+        Self {
+            kind: "malformed_frontmatter".to_string(),
+            message,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entry {
     pub meta: EntryMeta,
     pub body: String,
     /// Relative path from space root.
     pub path: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<EntryWarning>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -261,31 +359,48 @@ fn system_time_to_rfc3339(st: std::io::Result<std::time::SystemTime>) -> String 
         .unwrap_or_else(now_rfc3339)
 }
 
-fn meta_for_file_without_frontmatter(abs_path: &Path, path: &str) -> Result<EntryMeta, AppError> {
+fn derived_file_dates(abs_path: &Path) -> Result<(String, String), AppError> {
     let fs_meta = fs::metadata(abs_path)?;
-    let created = system_time_to_rfc3339(fs_meta.created());
-    let updated = system_time_to_rfc3339(fs_meta.modified());
+    Ok((
+        system_time_to_rfc3339(fs_meta.created()),
+        system_time_to_rfc3339(fs_meta.modified()),
+    ))
+}
 
+fn fallback_title_for_path(path: &str) -> String {
     let stem = Path::new(path)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("untitled");
-    let title = title_from_stem(stem);
+    title_from_stem(stem)
+}
 
-    Ok(EntryMeta {
-        id: ulid::Ulid::new().to_string().to_lowercase(),
-        title,
-        icon: None,
-        description: None,
-        cover: None,
+fn meta_for_file_without_frontmatter(abs_path: &Path, path: &str) -> Result<EntryMeta, AppError> {
+    let (created, updated) = derived_file_dates(abs_path)?;
+
+    Ok(EntryMeta::synthesized(
+        fallback_title_for_path(path),
         created,
         updated,
-        extra: HashMap::new(),
-    })
+    ))
+}
+
+fn apply_runtime_metadata(
+    meta: &mut EntryMeta,
+    abs_path: &Path,
+    path: &str,
+) -> Result<(), AppError> {
+    if !meta.frontmatter_keys.title {
+        meta.title = fallback_title_for_path(path);
+    }
+    let (created, updated) = derived_file_dates(abs_path)?;
+    meta.created = created;
+    meta.updated = updated;
+    Ok(())
 }
 
 /// Generate a title from a filename stem: "my-notes" → "My notes".
-fn title_from_stem(stem: &str) -> String {
+pub(crate) fn title_from_stem(stem: &str) -> String {
     let s = stem.replace('-', " ").replace('_', " ");
     let mut chars = s.chars();
     match chars.next() {
@@ -452,31 +567,31 @@ where
     }
 }
 
-fn find_entry_path_by_id(space: &Path, entry_id: &str) -> Result<String, AppError> {
-    let mut files = Vec::new();
-    collect_entry_md_files(space, &mut files)?;
-    for file in files {
-        let raw = fs::read_to_string(&file)?;
-        let Some((meta, _)) = frontmatter::try_parse(&raw)? else {
-            continue;
-        };
-        if meta.id == entry_id {
-            return Ok(rel_from_abs(space, &file));
-        }
+fn normalize_entry_path_arg(space: &Path, path: &str) -> Result<String, AppError> {
+    let rel = path.trim_matches('/').replace('\\', "/");
+    if rel.is_empty() {
+        return Err(AppError::FileNotFound(path.to_string()));
     }
-    Err(AppError::FileNotFound(entry_id.to_string()))
+    if !space.join(&rel).exists() {
+        return Err(AppError::FileNotFound(rel));
+    }
+    Ok(rel)
 }
 
-fn refresh_markdown_identity(path: &Path, title_suffix: Option<&str>) -> Result<(), AppError> {
+fn refresh_markdown_copy_metadata(path: &Path, title_suffix: Option<&str>) -> Result<(), AppError> {
     let raw = fs::read_to_string(path)?;
-    let Some((mut meta, body)) = frontmatter::try_parse(&raw)? else {
-        return Ok(());
+    let (mut meta, body) = match frontmatter::try_parse(&raw)? {
+        Some((meta, body)) => (meta, body),
+        None => {
+            let stem = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("untitled");
+            (EntryMeta::new_persisted(title_from_stem(stem)), raw)
+        }
     };
-    meta.id = ulid::Ulid::new().to_string().to_lowercase();
-    let now = now_rfc3339();
-    meta.created = now.clone();
-    meta.updated = now;
     if let Some(suffix) = title_suffix {
+        meta.mark_title_present();
         meta.title.push_str(suffix);
     }
     fs::write(path, frontmatter::serialize(&meta, &body))?;
@@ -495,7 +610,6 @@ pub fn create_with_contextual_defaults(
     title: &str,
     contextual_defaults: Option<HashMap<String, serde_yml::Value>>,
 ) -> Result<Entry, AppError> {
-    let id = ulid::Ulid::new().to_string().to_lowercase();
     let slug = slugify(title);
 
     // Find a non-colliding filename: slug.md, slug-1.md, slug-2.md, ...
@@ -530,18 +644,7 @@ pub fn create_with_contextual_defaults(
         fs::create_dir_all(parent_dir)?;
     }
 
-    let now = now_rfc3339();
-    let meta = EntryMeta {
-        id,
-        title: title.to_string(),
-        icon: None,
-        description: None,
-        cover: None,
-        created: now.clone(),
-        updated: now,
-        extra: HashMap::new(),
-    };
-    let mut meta = meta;
+    let mut meta = EntryMeta::new_persisted(title.to_string());
     crate::properties::apply_schema_defaults_for_path(space, &rel_path, &mut meta)?;
     if let Some(contextual_defaults) = contextual_defaults.as_ref() {
         crate::properties::apply_contextual_defaults_for_path(
@@ -562,6 +665,7 @@ pub fn create_with_contextual_defaults(
         fs::write(&abs_path, &content)?;
         Ok(())
     })?;
+    apply_runtime_metadata(&mut meta, &abs_path, &rel_path)?;
 
     // Append to order.json so the new file appears at the end
     let filename = Path::new(&rel_path)
@@ -576,6 +680,7 @@ pub fn create_with_contextual_defaults(
         meta,
         body: body.to_string(),
         path: rel_path,
+        warnings: Vec::new(),
     })
 }
 
@@ -625,30 +730,41 @@ pub fn read(space: &str, path: &str) -> Result<Entry, AppError> {
 
     let content = fs::read_to_string(&abs_path)?;
 
-    match frontmatter::try_parse(&content)? {
-        Some((meta, body)) => Ok(Entry {
-            meta,
-            body,
-            path: path.to_string(),
-        }),
-        None => {
-            // No frontmatter — generate meta in memory, don't touch the file
-            let meta = meta_for_file_without_frontmatter(&abs_path, path)?;
-
+    match frontmatter::parse_status(&content) {
+        frontmatter::ParseStatus::Valid { mut meta, body } => {
+            apply_runtime_metadata(&mut meta, &abs_path, path)?;
             Ok(Entry {
                 meta,
-                body: content,
+                body,
                 path: path.to_string(),
+                warnings: Vec::new(),
+            })
+        }
+        frontmatter::ParseStatus::Missing { body } => {
+            let meta = meta_for_file_without_frontmatter(&abs_path, path)?;
+            Ok(Entry {
+                meta,
+                body,
+                path: path.to_string(),
+                warnings: Vec::new(),
+            })
+        }
+        frontmatter::ParseStatus::Malformed { message, body } => {
+            let meta = meta_for_file_without_frontmatter(&abs_path, path)?;
+            Ok(Entry {
+                meta,
+                body,
+                path: path.to_string(),
+                warnings: vec![EntryWarning::malformed_frontmatter(message)],
             })
         }
     }
 }
 
-/// Write content to an entry, updating the `updated` field in frontmatter.
-/// Optionally update title, icon, and custom fields if provided.
-/// If title changes, the file may be renamed based on the new slug.
-/// `existing_id` is used when saving a file that had no frontmatter — preserves
-/// the id generated during `read()`.
+/// Write body content and, when explicitly requested, metadata.
+/// Body-only writes preserve existing frontmatter bytes and never materialize
+/// runtime fallback metadata. If title changes, the file may be renamed based
+/// on the new slug.
 /// Returns WriteResult with new_path if a rename occurred.
 pub fn write(
     space: &str,
@@ -657,7 +773,7 @@ pub fn write(
     title: Option<&str>,
     icon: Option<&str>,
     extra: Option<HashMap<String, serde_yml::Value>>,
-    existing_id: Option<&str>,
+    _existing_id: Option<&str>,
     backlink_index: Option<&BacklinkIndex>,
     skip_rename: bool,
 ) -> Result<WriteResult, AppError> {
@@ -674,77 +790,21 @@ pub fn write(
 
     // Read existing frontmatter to preserve metadata
     let existing = fs::read_to_string(&abs_path)?;
-    let parsed_existing = frontmatter::try_parse(&existing)?;
-    let had_frontmatter = parsed_existing.is_some();
-    let meta_needs_write = had_frontmatter || title.is_some() || icon.is_some() || extra.is_some();
-
-    let mut meta = if meta_needs_write {
-        match parsed_existing.clone() {
-            Some((meta, _)) => meta,
-            None => {
-                // First metadata change on a file without frontmatter — generate meta
-                let fs_meta = fs::metadata(&abs_path)?;
-                let created = system_time_to_rfc3339(fs_meta.created());
-                let id = existing_id
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| ulid::Ulid::new().to_string().to_lowercase());
-                EntryMeta {
-                    id,
-                    title: title_from_stem(
-                        Path::new(path)
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("untitled"),
-                    ),
-                    icon: None,
-                    description: None,
-                    cover: None,
-                    created,
-                    updated: String::new(),
-                    extra: HashMap::new(),
-                }
-            }
+    let parsed_existing = frontmatter::parse_status(&existing);
+    let fallback_meta = || meta_for_file_without_frontmatter(&abs_path, path);
+    let title_changes_fallback = |t: &str| t != fallback_title_for_path(path);
+    let extra_changes_empty = |incoming: &HashMap<String, serde_yml::Value>| !incoming.is_empty();
+    let materialized_title = match &parsed_existing {
+        frontmatter::ParseStatus::Valid { meta, .. } => {
+            title.or_else(|| meta.frontmatter_keys.title.then_some(meta.title.as_str()))
         }
-    } else {
-        // Body-only save on a file without frontmatter — write content as-is,
-        // skipping the write entirely if nothing changed (avoids spurious commits).
-        if existing == content {
-            return Ok(WriteResult {
-                new_path: None,
-                modified_files: Vec::new(),
-                modified_sources: Vec::new(),
-                write_nonce,
-            });
+        frontmatter::ParseStatus::Missing { .. } | frontmatter::ParseStatus::Malformed { .. } => {
+            title
         }
-        fs::write(&abs_path, content)?;
-        return Ok(WriteResult {
-            new_path: None,
-            modified_files: Vec::new(),
-            modified_sources: Vec::new(),
-            write_nonce,
-        });
-    };
-
-    // Update title and icon if provided
-    if let Some(t) = title {
-        meta.title = t.to_string();
     }
-    if let Some(i) = icon {
-        meta.icon = Some(i.to_string());
-    }
-
-    // Update custom fields if provided
-    if let Some(e) = extra {
-        meta.extra = e;
-    }
-
-    // On ⌘S, a rename may be pending even when body/meta match on-disk state —
-    // auto-save debounce (`skip_rename=true`) already persisted the new title
-    // to frontmatter, so `old_meta.title == meta.title` does not imply the
-    // filename matches the slug. Compute rename-needed up-front to keep the
-    // no-op short-circuit from swallowing the ⌘S materialize.
+    .map(str::to_string);
     let rename_needed = !skip_rename
-        && title.is_some_and(|t| {
+        && materialized_title.as_deref().is_some_and(|t| {
             let new_slug = slugify(t);
             let current_stem = Path::new(path)
                 .file_stem()
@@ -757,19 +817,85 @@ pub fn write(
             new_slug != current_stem || is_readme
         });
 
-    // Skip the write entirely if neither body nor meta (ignoring `updated`)
-    // changed AND no rename is pending. Otherwise every Cmd+S would bump
-    // `updated` and create an empty commit even though the user typed nothing.
-    if let Some((ref old_meta, ref old_body)) = parsed_existing {
+    let metadata_requested = match &parsed_existing {
+        frontmatter::ParseStatus::Valid { meta, .. } => {
+            rename_needed
+                || title.is_some_and(|t| meta.title != t)
+                || icon.is_some_and(|i| meta.icon.as_deref() != Some(i))
+                || extra
+                    .as_ref()
+                    .is_some_and(|incoming| incoming != &meta.extra)
+        }
+        frontmatter::ParseStatus::Missing { .. } => {
+            rename_needed
+                || title.is_some_and(title_changes_fallback)
+                || icon.is_some()
+                || extra.as_ref().is_some_and(extra_changes_empty)
+        }
+        frontmatter::ParseStatus::Malformed { .. } => {
+            title.is_some_and(title_changes_fallback)
+                || icon.is_some()
+                || extra.as_ref().is_some_and(extra_changes_empty)
+        }
+    };
+
+    if !metadata_requested {
+        let full_content = match parsed_existing {
+            frontmatter::ParseStatus::Valid { .. } => {
+                frontmatter::replace_body_preserving_frontmatter(&existing, content)?
+            }
+            frontmatter::ParseStatus::Missing { .. }
+            | frontmatter::ParseStatus::Malformed { .. } => content.to_string(),
+        };
+        if existing != full_content {
+            fs::write(&abs_path, full_content)?;
+        }
+        return Ok(WriteResult {
+            new_path: None,
+            modified_files: Vec::new(),
+            modified_sources: Vec::new(),
+            write_nonce,
+        });
+    }
+
+    let (mut meta, old_body) = match parsed_existing {
+        frontmatter::ParseStatus::Valid { meta, body } => (meta, Some(body)),
+        frontmatter::ParseStatus::Missing { .. } => (fallback_meta()?, None),
+        frontmatter::ParseStatus::Malformed { message, .. } => {
+            return Err(AppError::FrontmatterParse(format!(
+                "cannot update metadata while frontmatter is malformed: {message}"
+            )));
+        }
+    };
+
+    // Update title and icon if provided
+    if let Some(t) = title {
+        meta.title = t.to_string();
+        meta.mark_title_present();
+    }
+    if let Some(i) = icon {
+        meta.icon = Some(i.to_string());
+        meta.mark_icon_present();
+    }
+
+    // Update custom fields if provided
+    if let Some(e) = extra {
+        meta.extra = e;
+    }
+
+    // Skip the write entirely if neither body nor persisted meta changed AND no
+    // rename is pending.
+    if let frontmatter::ParseStatus::Valid { meta: old_meta, .. } =
+        frontmatter::parse_status(&existing)
+    {
         if !rename_needed
-            && old_body == content
-            && old_meta.id == meta.id
+            && old_body.as_deref() == Some(content)
             && old_meta.title == meta.title
             && old_meta.icon == meta.icon
             && old_meta.description == meta.description
             && old_meta.cover == meta.cover
-            && old_meta.created == meta.created
             && old_meta.extra == meta.extra
+            && old_meta.frontmatter_keys == meta.frontmatter_keys
         {
             return Ok(WriteResult {
                 new_path: None,
@@ -779,9 +905,6 @@ pub fn write(
             });
         }
     }
-
-    // Update the timestamp only once we know something actually changed.
-    meta.updated = now_rfc3339();
 
     let full_content = frontmatter::serialize(&meta, content);
     fs::write(&abs_path, full_content)?;
@@ -806,7 +929,7 @@ pub fn write(
     // debounce already persisted the new title to frontmatter before ⌘S.
     let mut new_path: Option<String> = None;
 
-    if let Some(t) = title {
+    if let Some(t) = materialized_title.as_deref() {
         let new_slug = slugify(t);
         let current_stem = Path::new(path)
             .file_stem()
@@ -1086,9 +1209,10 @@ pub(crate) fn apply_entry_field_update(
     value: serde_json::Value,
 ) -> Result<(), AppError> {
     match field {
-        "id" | "created" | "updated" => Err(invalid_entry_field(format!("{field} is read-only"))),
+        "created" | "updated" => Err(invalid_entry_field(format!("{field} is read-only"))),
         "title" => {
             meta.title = expect_string(value, "title")?;
+            meta.mark_title_present();
             Ok(())
         }
         "icon" => {
@@ -1096,6 +1220,9 @@ pub(crate) fn apply_entry_field_update(
                 serde_json::Value::Null => None,
                 v => Some(expect_string(v, "icon")?),
             };
+            if meta.icon.is_some() {
+                meta.mark_icon_present();
+            }
             Ok(())
         }
         "description" => {
@@ -1111,6 +1238,9 @@ pub(crate) fn apply_entry_field_update(
                 }
                 _ => return Err(invalid_entry_field("description must be a string or null")),
             };
+            if meta.description.is_some() {
+                meta.mark_description_present();
+            }
             Ok(())
         }
         "cover" => {
@@ -1118,6 +1248,9 @@ pub(crate) fn apply_entry_field_update(
                 serde_json::Value::Null => None,
                 v => Some(cover_from_json(v)?),
             };
+            if meta.cover.is_some() {
+                meta.mark_cover_present();
+            }
             Ok(())
         }
         custom => {
@@ -1141,7 +1274,7 @@ pub fn update_field(
 ) -> Result<Entry, AppError> {
     let is_custom = !matches!(
         field,
-        "id" | "created" | "updated" | "title" | "icon" | "description" | "cover"
+        "created" | "updated" | "title" | "icon" | "description" | "cover"
     );
     if is_custom {
         crate::properties::ensure_entry_field_writable(space, path, field)?;
@@ -1161,9 +1294,16 @@ pub fn update_field(
     }
 
     let content = fs::read_to_string(&abs_path)?;
-    let (mut meta, body) = match frontmatter::try_parse(&content)? {
-        Some((meta, body)) => (meta, body),
-        None => (meta_for_file_without_frontmatter(&abs_path, path)?, content),
+    let (mut meta, body) = match frontmatter::parse_status(&content) {
+        frontmatter::ParseStatus::Valid { meta, body } => (meta, body),
+        frontmatter::ParseStatus::Missing { body } => {
+            (meta_for_file_without_frontmatter(&abs_path, path)?, body)
+        }
+        frontmatter::ParseStatus::Malformed { message, .. } => {
+            return Err(AppError::FrontmatterParse(format!(
+                "cannot update metadata while frontmatter is malformed: {message}"
+            )));
+        }
     };
 
     if is_custom && !value.is_null() {
@@ -1178,15 +1318,15 @@ pub fn update_field(
     } else {
         apply_entry_field_update(&mut meta, field, value)?;
     }
-    meta.updated = now_rfc3339();
-
     let full_content = frontmatter::serialize(&meta, &body);
     fs::write(&abs_path, full_content)?;
+    apply_runtime_metadata(&mut meta, &abs_path, path)?;
 
     Ok(Entry {
         meta,
         body,
         path: path.to_string(),
+        warnings: Vec::new(),
     })
 }
 
@@ -1398,10 +1538,10 @@ pub fn unnest_entry(
 
 pub fn convert_entry_to_folder(
     space: &Path,
-    entry_id: &str,
+    entry_path: &str,
     backlink_index: Option<&BacklinkIndex>,
 ) -> Result<Entry, AppError> {
-    let path = find_entry_path_by_id(space, entry_id)?;
+    let path = normalize_entry_path_arg(space, entry_path)?;
     let abs_path = space.join(&path);
     if abs_path.is_dir()
         || path
@@ -1552,10 +1692,10 @@ fn dir_has_readme(dir: &Path) -> bool {
 
 pub fn convert_entry_to_leaf(
     space: &Path,
-    entry_id: &str,
+    entry_path: &str,
     backlink_index: Option<&BacklinkIndex>,
 ) -> Result<Entry, AppError> {
-    let path = find_entry_path_by_id(space, entry_id)?;
+    let path = normalize_entry_path_arg(space, entry_path)?;
     let readme_abs = space.join(&path);
     if !readme_abs
         .file_name()
@@ -1646,9 +1786,9 @@ pub fn convert_entry_to_leaf(
 
 pub fn convert_entry_to_nested_collection(
     space: &Path,
-    entry_id: &str,
+    entry_path: &str,
 ) -> Result<String, AppError> {
-    let path = find_entry_path_by_id(space, entry_id)?;
+    let path = normalize_entry_path_arg(space, entry_path)?;
     let readme_abs = space.join(&path);
     if !readme_abs
         .file_name()
@@ -1702,17 +1842,7 @@ pub fn convert_bare_folder_to_collection(
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("Collection");
-    let now = now_rfc3339();
-    let mut meta = EntryMeta {
-        id: ulid::Ulid::new().to_string().to_lowercase(),
-        title: humanize_slug(folder_name),
-        icon: None,
-        description: None,
-        cover: None,
-        created: now.clone(),
-        updated: now,
-        extra: HashMap::new(),
-    };
+    let mut meta = EntryMeta::new_persisted(humanize_slug(folder_name));
     crate::properties::apply_schema_defaults_for_path(
         &space.to_string_lossy(),
         &format!("{rel}/README.md"),
@@ -1779,18 +1909,18 @@ pub fn duplicate_entry(space: &Path, file_path: &str) -> Result<Entry, AppError>
         copy_dir_recursive(&root_source_abs, &dest_abs)?;
         let head = dest_abs.join("README.md");
         if head.exists() {
-            refresh_markdown_identity(&head, Some(" (copy)"))?;
+            refresh_markdown_copy_metadata(&head, Some(" (copy)"))?;
         }
         let mut files = Vec::new();
         collect_entry_md_files(&dest_abs, &mut files)?;
         for file in files {
             if file != head {
-                refresh_markdown_identity(&file, None)?;
+                refresh_markdown_copy_metadata(&file, None)?;
             }
         }
     } else {
         fs::copy(&root_source_abs, &dest_abs)?;
-        refresh_markdown_identity(&dest_abs, Some(" (copy)"))?;
+        refresh_markdown_copy_metadata(&dest_abs, Some(" (copy)"))?;
     }
 
     crate::properties::rewrite_internal_relation_refs_for_copy(
@@ -2068,16 +2198,10 @@ mod tests {
     }
 
     fn test_meta() -> EntryMeta {
-        EntryMeta {
-            id: "01abc".into(),
-            title: "Title".into(),
-            icon: None,
-            description: None,
-            cover: None,
-            created: "2026-03-17T00:00:00Z".into(),
-            updated: "2026-03-17T00:00:00Z".into(),
-            extra: HashMap::new(),
-        }
+        let mut meta = EntryMeta::new_persisted("Title");
+        meta.created = "2026-03-17T00:00:00Z".into();
+        meta.updated = "2026-03-17T00:00:00Z".into();
+        meta
     }
 
     #[test]
@@ -2163,6 +2287,20 @@ mod tests {
         // Third → -2
         let e3 = create(ws, None, "Test Doc").unwrap();
         assert_eq!(e3.path, "test-doc-2.md");
+    }
+
+    #[test]
+    fn test_create_does_not_write_legacy_system_keys() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().to_str().unwrap();
+
+        let entry = create(ws, None, "Clean Doc").unwrap();
+        let raw = fs::read_to_string(resolve(ws, &entry.path)).unwrap();
+
+        assert!(raw.contains("\ntitle: Clean Doc\n"));
+        assert!(!raw.contains("\nid:"));
+        assert!(!raw.contains("\ncreated:"));
+        assert!(!raw.contains("\nupdated:"));
     }
 
     #[test]
@@ -2290,5 +2428,109 @@ mod tests {
 
         assert_eq!(result.new_path, None);
         assert!(resolve(ws, "keep-same.md").exists());
+    }
+
+    #[test]
+    fn test_write_body_only_preserves_malformed_frontmatter_as_content() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().to_str().unwrap();
+        let raw = "---\ntitle: [broken\n---\nBody\n";
+        fs::write(resolve(ws, "broken.md"), raw).unwrap();
+
+        let entry = read(ws, "broken.md").unwrap();
+        assert_eq!(entry.body, raw);
+        assert_eq!(
+            entry.warnings.first().map(|warning| warning.kind.as_str()),
+            Some("malformed_frontmatter")
+        );
+        write(
+            ws,
+            "broken.md",
+            &(entry.body + "More\n"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            true,
+        )
+        .unwrap();
+
+        let updated = fs::read_to_string(resolve(ws, "broken.md")).unwrap();
+        assert_eq!(updated, "---\ntitle: [broken\n---\nBody\nMore\n");
+    }
+
+    #[test]
+    fn test_update_field_treats_id_as_custom_property() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().to_str().unwrap();
+        let entry = create(ws, None, "Imported").unwrap();
+
+        let updated = update_field(
+            ws,
+            &entry.path,
+            "id",
+            serde_json::Value::String("obsidian-id".into()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            updated
+                .meta
+                .extra
+                .get("id")
+                .and_then(serde_yml::Value::as_str),
+            Some("obsidian-id")
+        );
+        let raw = fs::read_to_string(resolve(ws, &entry.path)).unwrap();
+        assert!(raw.contains("\nid: obsidian-id\n"));
+    }
+
+    #[test]
+    fn test_convert_entry_to_folder_accepts_path_without_legacy_id() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        fs::write(ws.join("note.md"), "---\ntitle: Note\n---\nBody\n").unwrap();
+
+        let converted = convert_entry_to_folder(ws, "note.md", None).unwrap();
+
+        assert_eq!(converted.path, "note/README.md");
+        assert!(ws.join("note").join("README.md").is_file());
+        assert!(!ws.join("note.md").exists());
+    }
+
+    #[test]
+    fn test_write_materializes_rename_from_persisted_title_without_metadata_args() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().to_str().unwrap();
+        fs::write(
+            resolve(ws, "old-title.md"),
+            "---\ntitle: Old title\n---\nBody\n",
+        )
+        .unwrap();
+        update_field(
+            ws,
+            "old-title.md",
+            "title",
+            serde_json::Value::String("New title".into()),
+        )
+        .unwrap();
+
+        let result = write(
+            ws,
+            "old-title.md",
+            "Body\n",
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(result.new_path.as_deref(), Some("new-title.md"));
+        assert!(resolve(ws, "new-title.md").is_file());
+        assert!(!resolve(ws, "old-title.md").exists());
     }
 }

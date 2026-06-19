@@ -56,7 +56,6 @@ interface PropertyPanelProps {
   projectPath?: string | null;
   spaceId?: string | null;
   filePath: string;
-  metaId: string;
   schemaResult: EntrySchemaResult;
   values: Record<string, unknown>;
   mode?: "peek" | "full";
@@ -79,7 +78,6 @@ export function PropertyPanel({
   projectPath,
   spaceId,
   filePath,
-  metaId,
   schemaResult,
   values,
   mode = "peek",
@@ -335,7 +333,7 @@ export function PropertyPanel({
                 size="icon-xs"
                 onClick={() =>
                   void schemaInvoke("promote_orphan", {
-                    entryId: metaId,
+                    filePath,
                     field,
                   }).catch(handleSchemaError)
                 }

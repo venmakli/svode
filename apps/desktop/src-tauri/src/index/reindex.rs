@@ -153,6 +153,44 @@ mod tests {
     }
 
     #[test]
+    fn build_entry_indexes_legacy_keys_as_fields() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("note.md");
+        std::fs::write(
+            &file,
+            "---\ntitle: Note\nid: imported\ncreated: yaml-created\nupdated: yaml-updated\n---\nBody\n",
+        )
+        .unwrap();
+
+        let entry = build_entry(tmp.path(), &file).expect("build entry");
+        let fields: serde_json::Value =
+            serde_json::from_str(&entry.fields_json).expect("fields json");
+
+        assert_eq!(entry.rel_path, "note.md");
+        assert_eq!(entry.title, "Note");
+        assert_eq!(fields["id"], "imported");
+        assert_eq!(fields["created"], "yaml-created");
+        assert_eq!(fields["updated"], "yaml-updated");
+        assert_ne!(entry.created, "yaml-created");
+        assert_ne!(entry.updated, "yaml-updated");
+    }
+
+    #[test]
+    fn build_entry_indexes_malformed_frontmatter_as_plain_markdown() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("broken.md");
+        let raw = "---\ntitle: [broken\n---\nBody\n";
+        std::fs::write(&file, raw).unwrap();
+
+        let entry = build_entry(tmp.path(), &file).expect("build entry");
+
+        assert_eq!(entry.rel_path, "broken.md");
+        assert_eq!(entry.title, "Broken");
+        assert_eq!(entry.fields_json, "{}");
+        assert_eq!(entry.body_preview, raw);
+    }
+
+    #[test]
     fn reindex_markdown_walk_applies_tree_excludes() {
         let tmp = TempDir::new().unwrap();
         write_tree_config(&tmp, vec!["node_modules"], vec![]);
@@ -196,7 +234,6 @@ mod tests {
 
 /// Information extracted from a markdown file ready to be upserted.
 pub(crate) struct IndexedEntry {
-    pub id: String,
     pub rel_path: String,
     pub parent_path: String,
     pub title: String,
@@ -219,9 +256,11 @@ pub(crate) fn build_entry(space_dir: &Path, abs_path: &Path) -> Result<IndexedEn
 
     let raw = fs::read_to_string(abs_path)?;
 
-    let (id, title, icon, description, cover_json, created, updated, fields_json, body_preview) =
-        match frontmatter::try_parse(&raw) {
-            Ok(Some((meta, body))) => {
+    let created = file_created_iso(abs_path);
+    let updated = file_modified_iso(abs_path);
+    let (title, icon, description, cover_json, fields_json, body_preview) =
+        match frontmatter::parse_status(&raw) {
+            frontmatter::ParseStatus::Valid { meta, body } => {
                 let fields_json = serialize_fields(&meta, &rel_path);
                 let cover_json = meta.cover.as_ref().and_then(|cover| {
                     serde_json::to_string(cover)
@@ -233,49 +272,28 @@ pub(crate) fn build_entry(space_dir: &Path, abs_path: &Path) -> Result<IndexedEn
                         })
                         .ok()
                 });
-                let updated = if meta.updated.is_empty() {
-                    file_modified_iso(abs_path)
+                let title = if meta.frontmatter_keys.title {
+                    meta.title
                 } else {
-                    meta.updated.clone()
-                };
-                let created = if meta.created.is_empty() {
-                    file_created_iso(abs_path)
-                } else {
-                    meta.created.clone()
+                    title_for_path(abs_path)
                 };
                 (
-                    meta.id,
-                    meta.title,
+                    title,
                     meta.icon,
                     meta.description,
                     cover_json,
-                    created,
-                    updated,
                     fields_json,
                     body,
                 )
             }
-            _ => {
-                let id = ulid::Ulid::new().to_string().to_lowercase();
-                let title = abs_path
-                    .file_stem()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                let created = file_created_iso(abs_path);
-                let updated = file_modified_iso(abs_path);
-                (
-                    id,
-                    title,
-                    None,
-                    None,
-                    None,
-                    created,
-                    updated,
-                    "{}".to_string(),
-                    raw,
-                )
-            }
+            _ => (
+                title_for_path(abs_path),
+                None,
+                None,
+                None,
+                "{}".to_string(),
+                raw,
+            ),
         };
 
     let collection_root_path = match crate::properties::resolve_collection_schema_result(
@@ -292,7 +310,6 @@ pub(crate) fn build_entry(space_dir: &Path, abs_path: &Path) -> Result<IndexedEn
     let in_collection = collection_root_path.is_some();
 
     Ok(IndexedEntry {
-        id,
         parent_path: parent_path_for(&rel_path)?,
         rel_path,
         title,
@@ -322,6 +339,14 @@ fn parent_path_for(rel_path: &str) -> Result<String, AppError> {
         .map(|p| normalize_rel_root_result(&p.to_string_lossy()))
         .transpose()?;
     Ok(parent.unwrap_or_else(|| ".".to_string()))
+}
+
+fn title_for_path(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("untitled");
+    crate::files::entry::title_from_stem(stem)
 }
 
 /// Serialize custom frontmatter fields as JSON for the `fields` column.
@@ -376,12 +401,11 @@ where
     sqlx::query(
         r#"
         INSERT INTO entries (
-            id, file_path, parent_path, title, icon, description, cover, created, updated,
+            file_path, parent_path, title, icon, description, cover, created, updated,
             collection_root_path, in_collection, is_entry_head, fields, body_preview
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(file_path) DO UPDATE SET
-            id = excluded.id,
             parent_path = excluded.parent_path,
             title = excluded.title,
             icon = excluded.icon,
@@ -396,7 +420,6 @@ where
             body_preview = excluded.body_preview
         "#,
     )
-    .bind(&entry.id)
     .bind(&entry.rel_path)
     .bind(&entry.parent_path)
     .bind(&entry.title)
@@ -490,9 +513,9 @@ fn build_asset(space_dir: &Path, abs_path: &Path) -> Result<IndexedAsset, AppErr
 ///   so the SQLite write lock is held only for a short, pure-SQL window.
 /// - SQL-level errors (DELETE/INSERT failures) abort the tx and leave the
 ///   previous index intact.
-/// - Per-file build failures (bad frontmatter, unreadable file) are logged and
-///   skipped *without* aborting the tx — those entries are absent from the
-///   resulting index. Skipped count is reported in the final log line.
+/// - Per-file build failures (unreadable file, invalid repo path) are logged
+///   and skipped *without* aborting the tx. Malformed frontmatter is indexed as
+///   plain markdown with synthesized runtime metadata.
 pub async fn full_reindex(
     pool: &SqlitePool,
     space_dir: &Path,

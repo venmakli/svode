@@ -53,6 +53,14 @@ function waitForNextFrame(): Promise<void> {
   });
 }
 
+function showEntryWarnings(entry: { warnings?: { kind: string }[] }) {
+  if (
+    entry.warnings?.some((warning) => warning.kind === "malformed_frontmatter")
+  ) {
+    toast.warning(m.editor_frontmatter_malformed_warning());
+  }
+}
+
 interface PlateDocumentEditorProps {
   bodyOnly: true;
   pageScroll?: boolean;
@@ -128,8 +136,6 @@ export function PlateDocumentEditor({
   const titleRef = useRef("");
   const iconRef = useRef<string | null>(null);
   const descriptionRef = useRef("");
-  const extraRef = useRef<Record<string, unknown> | null>(null);
-  const metaIdRef = useRef<string | null>(null);
 
   // Debounce auto-save refs
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -143,7 +149,7 @@ export function PlateDocumentEditor({
   const isDebouncePendingRef = useRef(false);
   const ownNoncesRef = useRef<Set<string>>(new Set());
 
-  const [meta, setMeta] = useState<EntryMeta | null>(null);
+  const [, setMeta] = useState<EntryMeta | null>(null);
   const [title, setTitle] = useState("");
   const [icon, setIcon] = useState<string | null>(null);
   const [description, setDescription] = useState("");
@@ -168,10 +174,6 @@ export function PlateDocumentEditor({
   useEffect(() => {
     descriptionRef.current = description;
   }, [description]);
-  useEffect(() => {
-    extraRef.current = meta?.extra ?? null;
-    metaIdRef.current = meta?.id ?? null;
-  }, [meta]);
 
   const editor = usePlateEditor({
     plugins: EditorKit,
@@ -214,10 +216,6 @@ export function PlateDocumentEditor({
         space: spacePath,
         path,
         content: markdown,
-        title: titleRef.current || m.editor_untitled(),
-        icon: iconRef.current,
-        extra: extraRef.current,
-        existingId: metaIdRef.current,
         skipRename,
         projectPath: projectPath ?? null,
       });
@@ -418,9 +416,14 @@ export function PlateDocumentEditor({
         try {
           const entryMeta =
             metaForCachedBody ??
-            ((await readEntry(spacePath, currentDocument)).meta as EntryMeta);
+            ((await readEntry(spacePath, currentDocument)) as Entry);
           if (sequence !== loadSeqRef.current) return;
-          applyMeta(entryMeta);
+          if ("meta" in entryMeta) {
+            showEntryWarnings(entryMeta);
+            applyMeta(entryMeta.meta as EntryMeta);
+          } else {
+            applyMeta(entryMeta);
+          }
           editor.tf.setValue(cachedBody);
           clearUnsaved(currentDocument);
           finish("ok", true, metaForCachedBody ? "cache" : "cache-meta-read");
@@ -445,6 +448,7 @@ export function PlateDocumentEditor({
           const entry =
             initialForDocument ?? (await readEntry(spacePath, currentDocument));
           if (sequence !== loadSeqRef.current) return;
+          showEntryWarnings(entry);
           applyMeta(entry.meta as EntryMeta);
           const value = deserializeWithConflicts(editor, entry.body);
           editor.tf.setValue(value);
@@ -729,6 +733,7 @@ export function PlateDocumentEditor({
   const handleWatcherEntryReloaded = useCallback(
     (entry: Awaited<ReturnType<typeof readEntry>>) => {
       const nextMeta = entry.meta as EntryMeta;
+      showEntryWarnings(entry);
       setMeta(nextMeta);
       setTitle(nextMeta.title);
       setIcon(nextMeta.icon);

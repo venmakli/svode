@@ -16,7 +16,6 @@ use crate::repo_path::{RootMode, normalize_repo_relative};
 
 const SCHEMA_FILE: &str = "schema.yaml";
 const RESERVED_FIELDS: &[&str] = &[
-    "id",
     "title",
     "icon",
     "description",
@@ -2600,6 +2599,7 @@ pub fn update_relation_entry_field(
             meta,
             body,
             path: source_path.clone(),
+            warnings: Vec::new(),
         }))
     })
 }
@@ -3208,15 +3208,32 @@ pub fn apply_schema_defaults_to_entry_tree(space: &Path, rel_path: &str) -> Resu
 
 fn apply_schema_defaults_to_file(space: &Path, rel_path: &str) -> Result<(), AppError> {
     let space_str = space.to_string_lossy();
-    let entry = entry::read(&space_str, rel_path)?;
-    let mut meta = entry.meta;
+    let abs = space.join(rel_path);
+    let raw = fs::read_to_string(&abs)?;
+    let (mut meta, body) = match frontmatter::parse_status(&raw) {
+        frontmatter::ParseStatus::Valid { meta, body } => (meta, body),
+        frontmatter::ParseStatus::Missing { body } => {
+            let title = entry::title_from_stem(
+                Path::new(rel_path)
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or("untitled"),
+            );
+            (
+                EntryMeta::synthesized(title, String::new(), String::new()),
+                body,
+            )
+        }
+        frontmatter::ParseStatus::Malformed { message, .. } => {
+            return Err(AppError::FrontmatterParse(format!(
+                "cannot apply schema defaults while frontmatter is malformed: {message}"
+            )));
+        }
+    };
     let changed_defaults = apply_schema_defaults_for_path(&space_str, rel_path, &mut meta)?;
     let changed_unique_id = assign_unique_id_to_meta_for_path(&space_str, rel_path, &mut meta)?;
     if changed_defaults || changed_unique_id {
-        fs::write(
-            space.join(rel_path),
-            frontmatter::serialize(&meta, &entry.body),
-        )?;
+        fs::write(abs, frontmatter::serialize(&meta, &body))?;
     }
     Ok(())
 }
@@ -3317,8 +3334,25 @@ fn assign_unique_id_to_file(space: &str, file_path: &str, force: bool) -> Result
     let rel = normalize_rel_path(file_path);
     let abs = Path::new(space).join(&rel);
     let raw = fs::read_to_string(&abs)?;
-    let Some((mut meta, body)) = frontmatter::try_parse(&raw)? else {
-        return Ok(false);
+    let (mut meta, body) = match frontmatter::parse_status(&raw) {
+        frontmatter::ParseStatus::Valid { meta, body } => (meta, body),
+        frontmatter::ParseStatus::Missing { body } => {
+            let title = entry::title_from_stem(
+                Path::new(&rel)
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or("untitled"),
+            );
+            (
+                EntryMeta::synthesized(title, String::new(), String::new()),
+                body,
+            )
+        }
+        frontmatter::ParseStatus::Malformed { message, .. } => {
+            return Err(AppError::FrontmatterParse(format!(
+                "cannot assign unique_id while frontmatter is malformed: {message}"
+            )));
+        }
     };
     let changed = if force {
         force_assign_unique_id_to_meta(space, &rel, &mut meta)?
@@ -3409,8 +3443,26 @@ fn materialize_unique_id_column(
 
     for file in files {
         let raw = fs::read_to_string(&file)?;
-        let Some((mut meta, body)) = frontmatter::try_parse(&raw)? else {
-            continue;
+        let rel = copy_rel_from_abs(Path::new(space), &file);
+        let (mut meta, body) = match frontmatter::parse_status(&raw) {
+            frontmatter::ParseStatus::Valid { meta, body } => (meta, body),
+            frontmatter::ParseStatus::Missing { body } => {
+                let title = entry::title_from_stem(
+                    Path::new(&rel)
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .unwrap_or("untitled"),
+                );
+                (
+                    EntryMeta::synthesized(title, String::new(), String::new()),
+                    body,
+                )
+            }
+            frontmatter::ParseStatus::Malformed { message, .. } => {
+                return Err(AppError::FrontmatterParse(format!(
+                    "cannot assign unique_id while frontmatter is malformed: {message}"
+                )));
+            }
         };
         let existing = meta.extra.get(column_name).and_then(unique_id_value);
         let keep = existing.is_some_and(|value| used.insert(value));
@@ -4200,16 +4252,21 @@ pub fn update_option(
 pub fn promote_orphan(
     space: &str,
     collection_path: &str,
-    entry_id: &str,
+    file_path: &str,
     field: &str,
 ) -> Result<CollectionSchema, AppError> {
+    if matches!(field, "created" | "updated") {
+        return Err(schema_error(format!(
+            "orphan field '{field}' conflicts with derived system metadata; rename it before promoting or delete it"
+        )));
+    }
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     with_rollback(vec![schema_path], || {
         let mut schema = read_schema_or_default(space, collection_path)?;
         if schema.columns.iter().any(|column| column.name == field) {
             return Err(schema_error(format!("column '{field}' already exists")));
         }
-        let value = find_entry_extra_by_id(space, collection_path, entry_id, field)?
+        let value = find_entry_extra_by_path(space, collection_path, file_path, field)?
             .ok_or_else(|| schema_error(format!("orphan field '{field}' not found")))?;
         schema.columns.push(infer_column(field, &value));
         write_schema(space, collection_path, &schema)?;
@@ -7214,20 +7271,23 @@ where
     }
 }
 
-fn find_entry_extra_by_id(
+fn find_entry_extra_by_path(
     space: &str,
     collection_path: &str,
-    entry_id: &str,
+    file_path: &str,
     field: &str,
 ) -> Result<Option<Value>, AppError> {
+    let target = normalize_rel_path(file_path);
     for file in collection_markdown_files(space, collection_path)? {
+        let rel = copy_rel_from_abs(Path::new(space), &file);
+        if rel != target {
+            continue;
+        }
         let raw = fs::read_to_string(&file)?;
         let Some((meta, _)) = frontmatter::try_parse(&raw)? else {
             continue;
         };
-        if meta.id == entry_id {
-            return Ok(meta.extra.get(field).cloned());
-        }
+        return Ok(meta.extra.get(field).cloned());
     }
     Ok(None)
 }

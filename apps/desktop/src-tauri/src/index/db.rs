@@ -17,7 +17,10 @@ use crate::error::AppError;
 ///
 /// Bumped to 4 in stage-4 Phase 1: entries use the page metadata schema
 /// with description/cover system fields and collection placeholder columns.
-const SCHEMA_VERSION: i64 = 4;
+///
+/// Bumped to 5 in stage-6 Phase 12: entries are keyed by file_path; legacy
+/// YAML id is indexed only as a custom field.
+const SCHEMA_VERSION: i64 = 5;
 
 /// Create a connection pool for a space's index database.
 /// Ensures the parent directory exists and enables WAL mode.
@@ -80,8 +83,7 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
     let ddl = [
         r#"
         CREATE TABLE IF NOT EXISTS entries (
-            id                   TEXT PRIMARY KEY,
-            file_path            TEXT NOT NULL UNIQUE,
+            file_path            TEXT PRIMARY KEY,
             parent_path          TEXT NOT NULL,
             title                TEXT NOT NULL,
             icon                 TEXT,

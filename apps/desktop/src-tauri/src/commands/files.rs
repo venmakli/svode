@@ -1120,13 +1120,13 @@ pub async fn update_option(
 pub async fn promote_orphan(
     space: String,
     collection_path: String,
-    entry_id: String,
+    file_path: String,
     field: String,
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
-    let schema = properties::promote_orphan(&space, &collection_path, &entry_id, &field)?;
+    let schema = properties::promote_orphan(&space, &collection_path, &file_path, &field)?;
     let message = schema_commit_message(
         &schema,
         format!("Add column \"{field}\""),
@@ -2342,7 +2342,7 @@ pub async fn unnest_entry(
 #[tauri::command]
 pub async fn convert_entry_to_folder(
     space: String,
-    entry_id: String,
+    file_path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
@@ -2350,7 +2350,7 @@ pub async fn convert_entry_to_folder(
     let backlink_index = backlinks_for_space(&index_state, &space).await;
     ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
     let entry =
-        entry::convert_entry_to_folder(Path::new(&space), &entry_id, Some(&backlink_index))?;
+        entry::convert_entry_to_folder(Path::new(&space), &file_path, Some(&backlink_index))?;
     let folder_root = root_path_for_head(&entry.path);
     let old_leaf = format!("{folder_root}.md");
     replace_index_entries_or_reindex(
@@ -2381,14 +2381,14 @@ pub async fn convert_entry_to_folder(
 #[tauri::command]
 pub async fn convert_entry_to_leaf(
     space: String,
-    entry_id: String,
+    file_path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
     let backlink_index = backlinks_for_space(&index_state, &space).await;
     ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
-    let entry = entry::convert_entry_to_leaf(Path::new(&space), &entry_id, Some(&backlink_index))?;
+    let entry = entry::convert_entry_to_leaf(Path::new(&space), &file_path, Some(&backlink_index))?;
     let old_readme = entry
         .path
         .strip_suffix(".md")
@@ -2422,12 +2422,12 @@ pub async fn convert_entry_to_leaf(
 #[tauri::command]
 pub async fn convert_entry_to_nested_collection(
     space: String,
-    entry_id: String,
+    file_path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
-    let collection_path = entry::convert_entry_to_nested_collection(Path::new(&space), &entry_id)?;
+    let collection_path = entry::convert_entry_to_nested_collection(Path::new(&space), &file_path)?;
     update_index_tree_or_reindex(
         &index_state,
         project_path.as_deref(),
