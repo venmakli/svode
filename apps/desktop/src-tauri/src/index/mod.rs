@@ -16,7 +16,8 @@ use crate::error::AppError;
 use crate::files::BacklinkIndex;
 use crate::files::backlinks::{
     LinkSource, ModifiedLinkSource, collect_md_files, dedupe_modified_sources,
-    is_external_or_anchor_url, link_stem, markdown_url_path, replace_link_urls_between,
+    is_external_or_anchor_url, link_stem, markdown_url_path, rebase_source_links_between,
+    replace_link_urls_between,
 };
 use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_path};
 use crate::space::types::{SpaceConfig, SpaceStatus};
@@ -801,6 +802,35 @@ impl IndexState {
         Ok(dedupe_modified_sources(all))
     }
 
+    pub async fn rebase_source_links_project(
+        &self,
+        project: &Path,
+        source_space_id: Option<&str>,
+        old_path: &str,
+        new_path: &str,
+    ) -> Result<Option<ModifiedLinkSource>, AppError> {
+        let source_dir = self.space_path_of(project, source_space_id).await?;
+        let old_abs = source_dir.join(old_path);
+        let new_abs = source_dir.join(new_path);
+        if !new_abs.exists() {
+            return Ok(None);
+        }
+
+        let content = std::fs::read_to_string(&new_abs)?;
+        let updated = rebase_source_links_between(&content, &old_abs, &new_abs);
+        if updated == content {
+            return Ok(None);
+        }
+
+        std::fs::write(&new_abs, updated)?;
+        self.update_file_backlinks(project, source_space_id, new_path)
+            .await?;
+        Ok(Some(ModifiedLinkSource {
+            space_id: source_space_id.map(ToString::to_string),
+            path: normalize_rel(new_path),
+        }))
+    }
+
     /// Get (or create) the per-key reindex serialization lock.
     pub async fn reindex_lock(&self, key: &IndexKey) -> Arc<Mutex<()>> {
         let mut locks = self.reindex_locks.lock().await;
@@ -1207,5 +1237,52 @@ impl IndexState {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn rebase_source_links_project_rewrites_content_and_backlink_source() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path();
+        fs::create_dir_all(project.join(".svode")).unwrap();
+        fs::write(project.join("A.md"), "See [B](B.md).\n").unwrap();
+        fs::write(project.join("B.md"), "Target.\n").unwrap();
+
+        let state = IndexState::new();
+        state
+            .update_file_backlinks(project, None, "A.md")
+            .await
+            .unwrap();
+        let root_key = IndexKey::Root(project.to_path_buf());
+        let target_index = state.backlinks_for(&root_key).await;
+        assert_eq!(target_index.get_backlinks("B.md")[0].source_path, "A.md");
+
+        fs::create_dir_all(project.join("Folder")).unwrap();
+        fs::rename(project.join("A.md"), project.join("Folder").join("A.md")).unwrap();
+        state
+            .remove_file_backlinks(project, None, "A.md")
+            .await
+            .unwrap();
+
+        let modified = state
+            .rebase_source_links_project(project, None, "A.md", "Folder/A.md")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(modified.path, "Folder/A.md");
+        assert_eq!(
+            fs::read_to_string(project.join("Folder").join("A.md")).unwrap(),
+            "See [B](../B.md).\n"
+        );
+        let backlinks = target_index.get_backlinks("B.md");
+        assert_eq!(backlinks.len(), 1);
+        assert_eq!(backlinks[0].source_path, "Folder/A.md");
     }
 }

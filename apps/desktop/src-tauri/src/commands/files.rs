@@ -309,6 +309,203 @@ async fn ensure_backlinks_before_structural(state: &IndexState, project_path: Op
     }
 }
 
+fn same_parent(left: &str, right: &str) -> bool {
+    Path::new(left).parent().unwrap_or(Path::new(""))
+        == Path::new(right).parent().unwrap_or(Path::new(""))
+}
+
+fn normalize_rel_lossy(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn moved_child_old_path(new_child: &str, old_root: &str, new_root: &str) -> String {
+    if new_child == new_root {
+        return old_root.to_string();
+    }
+    let prefix = format!("{}/", new_root.trim_end_matches('/'));
+    match new_child.strip_prefix(&prefix) {
+        Some(rest) if old_root.is_empty() => rest.to_string(),
+        Some(rest) => format!("{}/{}", old_root.trim_end_matches('/'), rest),
+        None => old_root.to_string(),
+    }
+}
+
+async fn rebase_project_source_after_move(
+    index_state: &IndexState,
+    project_path: Option<&str>,
+    space: &str,
+    source_space_id: Option<&str>,
+    old_path: &str,
+    new_path: &str,
+    fallback_context: &str,
+) -> Vec<ModifiedLinkSource> {
+    let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
+        return Vec::new();
+    };
+    match index_state
+        .rebase_source_links_project(Path::new(proj), source_space_id, old_path, new_path)
+        .await
+    {
+        Ok(Some(item)) => {
+            update_index_entry_or_reindex(
+                index_state,
+                project_path,
+                space,
+                new_path,
+                fallback_context,
+            )
+            .await;
+            vec![item]
+        }
+        Ok(None) => Vec::new(),
+        Err(e) => {
+            tracing::warn!("{fallback_context}: source link rebase failed for {new_path}: {e}");
+            Vec::new()
+        }
+    }
+}
+
+async fn rebase_project_source_tree_after_move(
+    index_state: &IndexState,
+    project_path: Option<&str>,
+    space: &str,
+    source_space_id: Option<&str>,
+    old_root: &str,
+    new_root: &str,
+    fallback_context: &str,
+) -> Vec<ModifiedLinkSource> {
+    let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
+        return Vec::new();
+    };
+    let space_root = Path::new(space);
+    let policy = TreeIgnorePolicy::from_space_root(space_root);
+    let new_abs = space_root.join(new_root);
+    let files = match collect_markdown_paths(space_root, &new_abs, &policy) {
+        Ok(files) => files,
+        Err(e) => {
+            tracing::warn!("{fallback_context}: collect moved markdown sources failed: {e}");
+            return Vec::new();
+        }
+    };
+
+    let project = Path::new(proj);
+    let mut modified = Vec::new();
+    let old_root_abs = space_root.join(old_root);
+    let new_root_abs = space_root.join(new_root);
+    for file in files {
+        let new_rel = normalize_rel_lossy(file.strip_prefix(space_root).unwrap_or(&file));
+        let old_rel = moved_child_old_path(&new_rel, old_root, new_root);
+        if let Err(e) = index_state
+            .remove_file_backlinks(project, source_space_id, &old_rel)
+            .await
+        {
+            tracing::warn!("{fallback_context}: remove old source backlinks failed: {e}");
+        }
+        let old_abs = space_root.join(&old_rel);
+        let new_abs = space_root.join(&new_rel);
+        match fs::read_to_string(&new_abs) {
+            Ok(content) => {
+                let updated = crate::files::backlinks::rebase_source_links_between_moved_tree(
+                    &content,
+                    &old_abs,
+                    &new_abs,
+                    &old_root_abs,
+                    &new_root_abs,
+                );
+                if updated != content {
+                    if let Err(e) = fs::write(&new_abs, updated) {
+                        tracing::warn!(
+                            "{fallback_context}: write moved source rebase failed for {new_rel}: {e}"
+                        );
+                    } else {
+                        update_index_entry_or_reindex(
+                            index_state,
+                            project_path,
+                            space,
+                            &new_rel,
+                            fallback_context,
+                        )
+                        .await;
+                        modified.push(ModifiedLinkSource {
+                            space_id: source_space_id.map(ToString::to_string),
+                            path: new_rel.clone(),
+                        });
+                    }
+                }
+            }
+            Err(e) => tracing::warn!(
+                "{fallback_context}: read moved source for rebase failed for {new_rel}: {e}"
+            ),
+        }
+        if let Err(e) = index_state
+            .update_file_backlinks(project, source_space_id, &new_rel)
+            .await
+        {
+            tracing::warn!("{fallback_context}: update moved source backlinks failed: {e}");
+        }
+    }
+    modified
+}
+
+fn rebase_legacy_source_after_move(
+    space: &str,
+    backlink_index: &BacklinkIndex,
+    old_path: &str,
+    new_path: &str,
+) -> Result<bool, AppError> {
+    let space_path = Path::new(space);
+    let abs = space_path.join(new_path);
+    if !abs.exists() {
+        return Ok(false);
+    }
+    let content = fs::read_to_string(&abs)?;
+    let updated = crate::files::backlinks::rebase_source_links(&content, old_path, new_path);
+    backlink_index.remove_file(old_path);
+    if updated == content {
+        let _ = backlink_index.update_file(space_path, new_path);
+        return Ok(false);
+    }
+    fs::write(&abs, updated)?;
+    let _ = backlink_index.update_file(space_path, new_path);
+    Ok(true)
+}
+
+fn rebase_legacy_source_tree_after_move(
+    space: &str,
+    backlink_index: &BacklinkIndex,
+    old_root: &str,
+    new_root: &str,
+) {
+    let space_root = Path::new(space);
+    let policy = TreeIgnorePolicy::from_space_root(space_root);
+    let Ok(files) = collect_markdown_paths(space_root, &space_root.join(new_root), &policy) else {
+        return;
+    };
+    let old_root_abs = space_root.join(old_root);
+    let new_root_abs = space_root.join(new_root);
+    for file in files {
+        let new_rel = normalize_rel_lossy(file.strip_prefix(space_root).unwrap_or(&file));
+        let old_rel = moved_child_old_path(&new_rel, old_root, new_root);
+        let old_abs = space_root.join(&old_rel);
+        let new_abs = space_root.join(&new_rel);
+        backlink_index.remove_file(&old_rel);
+        let Ok(content) = fs::read_to_string(&new_abs) else {
+            continue;
+        };
+        let updated = crate::files::backlinks::rebase_source_links_between_moved_tree(
+            &content,
+            &old_abs,
+            &new_abs,
+            &old_root_abs,
+            &new_root_abs,
+        );
+        if updated != content {
+            let _ = fs::write(&new_abs, updated);
+        }
+        let _ = backlink_index.update_file(space_root, &new_rel);
+    }
+}
+
 /// Resolve the runtime backlink index that owns `space`. Falls back to a
 /// `Root`-keyed index treating `space` as its own project — covers calls
 /// that arrive before the project's `open_project` cache populates (e.g.
@@ -1961,7 +2158,7 @@ pub async fn rename_entry(
     let modified = if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
         let target_space_id = space_id_for_dir(&index_state, &space).await;
-        let cross = if was_dir {
+        let mut modified_sources = if was_dir {
             index_state
                 .update_links_on_folder_rename_project(
                     project,
@@ -1985,22 +2182,42 @@ pub async fn rename_entry(
             tracing::warn!("cross-space rename backlink rewrite failed: {e}");
             Vec::new()
         });
+        let rebased = if was_dir {
+            rebase_project_source_tree_after_move(
+                &index_state,
+                project_path.as_deref(),
+                &space,
+                target_space_id.as_deref(),
+                &from,
+                &to,
+                "rename_entry",
+            )
+            .await
+        } else if !same_parent(&from, &to) {
+            rebase_project_source_after_move(
+                &index_state,
+                project_path.as_deref(),
+                &space,
+                target_space_id.as_deref(),
+                &from,
+                &to,
+                "rename_entry",
+            )
+            .await
+        } else {
+            Vec::new()
+        };
+        modified_sources.extend(rebased);
+        let modified_sources = crate::files::backlinks::dedupe_modified_sources(modified_sources);
         schedule_modified_source_spaces(
             &index_state,
             &autocommit,
             project_path.as_deref(),
-            &cross,
+            &modified_sources,
             entry_rename_op(&space, &from, &to),
         )
         .await;
-        let key = index_state
-            .key_for_project_space_id(project, target_space_id.as_deref())
-            .await?;
-        if was_dir {
-            if let Err(e) = index_state.rebuild_source_backlinks(&key).await {
-                tracing::warn!("rebuild backlinks after folder rename failed: {e}");
-            }
-        } else {
+        if !was_dir {
             let _ = index_state
                 .remove_file_backlinks(project, target_space_id.as_deref(), &from)
                 .await;
@@ -2008,11 +2225,21 @@ pub async fn rename_entry(
                 .update_file_backlinks(project, target_space_id.as_deref(), &to)
                 .await;
         }
-        cross.iter().map(|m| m.path.clone()).collect()
+        modified_sources.iter().map(|m| m.path.clone()).collect()
     } else {
         let modified = backlink_index
             .update_links_on_rename(Path::new(&space), &from, &to, None)
             .unwrap_or_default();
+        let mut modified = modified;
+        if was_dir {
+            rebase_legacy_source_tree_after_move(&space, &backlink_index, &from, &to);
+        } else if !same_parent(&from, &to) {
+            if rebase_legacy_source_after_move(&space, &backlink_index, &from, &to).unwrap_or(false)
+                && !modified.contains(&to)
+            {
+                modified.push(to.clone());
+            }
+        }
         let _ = backlink_index.update_file(Path::new(&space), &to);
         modified
     };
@@ -2055,7 +2282,7 @@ pub async fn move_entry(
     if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
         let target_space_id = space_id_for_dir(&index_state, &space).await;
-        let cross = if was_dir {
+        let mut modified_sources = if was_dir {
             index_state
                 .update_links_on_folder_rename_project(
                     project,
@@ -2079,20 +2306,40 @@ pub async fn move_entry(
             tracing::warn!("cross-space move backlink rewrite failed: {e}");
             Vec::new()
         });
+        let rebased = if was_dir {
+            rebase_project_source_tree_after_move(
+                &index_state,
+                project_path.as_deref(),
+                &space,
+                target_space_id.as_deref(),
+                &from,
+                &new_path,
+                "move_entry",
+            )
+            .await
+        } else {
+            rebase_project_source_after_move(
+                &index_state,
+                project_path.as_deref(),
+                &space,
+                target_space_id.as_deref(),
+                &from,
+                &new_path,
+                "move_entry",
+            )
+            .await
+        };
+        modified_sources.extend(rebased);
+        let modified_sources = crate::files::backlinks::dedupe_modified_sources(modified_sources);
         schedule_modified_source_spaces(
             &index_state,
             &autocommit,
             project_path.as_deref(),
-            &cross,
+            &modified_sources,
             StructuralOp::Move(entry_commit_name(&space, &new_path)),
         )
         .await;
-        let key = index_state
-            .key_for_project_space_id(project, target_space_id.as_deref())
-            .await?;
-        if was_dir {
-            let _ = index_state.rebuild_source_backlinks(&key).await;
-        } else {
+        if !was_dir {
             let _ = index_state
                 .remove_file_backlinks(project, target_space_id.as_deref(), &from)
                 .await;
@@ -2100,6 +2347,10 @@ pub async fn move_entry(
                 .update_file_backlinks(project, target_space_id.as_deref(), &new_path)
                 .await;
         }
+    } else if was_dir {
+        rebase_legacy_source_tree_after_move(&space, &backlink_index, &from, &new_path);
+    } else {
+        let _ = rebase_legacy_source_after_move(&space, &backlink_index, &from, &new_path);
     }
     let mut unique_id_paths =
         properties::unique_id_mutation_paths_for_entry_tree(Path::new(&space), &new_path)?;
@@ -2229,7 +2480,7 @@ pub async fn nest_entry(
     if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
         let target_space_id = space_id_for_dir(&index_state, &space).await;
-        let cross = index_state
+        let mut modified_sources = index_state
             .update_links_on_rename_project(
                 project,
                 target_space_id.as_deref(),
@@ -2242,11 +2493,24 @@ pub async fn nest_entry(
                 tracing::warn!("cross-space nest backlink rewrite failed: {e}");
                 Vec::new()
             });
+        modified_sources.extend(
+            rebase_project_source_after_move(
+                &index_state,
+                project_path.as_deref(),
+                &space,
+                target_space_id.as_deref(),
+                &path,
+                &new_path,
+                "nest_entry",
+            )
+            .await,
+        );
+        let modified_sources = crate::files::backlinks::dedupe_modified_sources(modified_sources);
         schedule_modified_source_spaces(
             &index_state,
             &autocommit,
             project_path.as_deref(),
-            &cross,
+            &modified_sources,
             StructuralOp::Move(entry_commit_name(&space, &new_path)),
         )
         .await;
@@ -2256,6 +2520,8 @@ pub async fn nest_entry(
         let _ = index_state
             .update_file_backlinks(project, target_space_id.as_deref(), &new_path)
             .await;
+    } else {
+        let _ = rebase_legacy_source_after_move(&space, &backlink_index, &path, &new_path);
     }
     maybe_autocommit_structural_paths(
         &autocommit,
@@ -2295,7 +2561,7 @@ pub async fn unnest_entry(
     if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
         let target_space_id = space_id_for_dir(&index_state, &space).await;
-        let cross = index_state
+        let mut modified_sources = index_state
             .update_links_on_rename_project(
                 project,
                 target_space_id.as_deref(),
@@ -2308,11 +2574,24 @@ pub async fn unnest_entry(
                 tracing::warn!("cross-space unnest backlink rewrite failed: {e}");
                 Vec::new()
             });
+        modified_sources.extend(
+            rebase_project_source_after_move(
+                &index_state,
+                project_path.as_deref(),
+                &space,
+                target_space_id.as_deref(),
+                &path,
+                &new_path,
+                "unnest_entry",
+            )
+            .await,
+        );
+        let modified_sources = crate::files::backlinks::dedupe_modified_sources(modified_sources);
         schedule_modified_source_spaces(
             &index_state,
             &autocommit,
             project_path.as_deref(),
-            &cross,
+            &modified_sources,
             StructuralOp::Move(entry_commit_name(&space, &new_path)),
         )
         .await;
@@ -2322,6 +2601,8 @@ pub async fn unnest_entry(
         let _ = index_state
             .update_file_backlinks(project, target_space_id.as_deref(), &new_path)
             .await;
+    } else {
+        let _ = rebase_legacy_source_after_move(&space, &backlink_index, &path, &new_path);
     }
     maybe_autocommit_structural_paths(
         &autocommit,
@@ -2349,10 +2630,64 @@ pub async fn convert_entry_to_folder(
 ) -> Result<Entry, AppError> {
     let backlink_index = backlinks_for_space(&index_state, &space).await;
     ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
-    let entry =
-        entry::convert_entry_to_folder(Path::new(&space), &file_path, Some(&backlink_index))?;
+    let project_aware = project_path.as_deref().filter(|p| !p.is_empty()).is_some();
+    let entry = entry::convert_entry_to_folder(
+        Path::new(&space),
+        &file_path,
+        if project_aware {
+            None
+        } else {
+            Some(&backlink_index)
+        },
+    )?;
     let folder_root = root_path_for_head(&entry.path);
     let old_leaf = format!("{folder_root}.md");
+    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+        let project = Path::new(proj);
+        let target_space_id = space_id_for_dir(&index_state, &space).await;
+        let mut modified_sources = index_state
+            .update_links_on_rename_project(
+                project,
+                target_space_id.as_deref(),
+                &old_leaf,
+                &entry.path,
+                None,
+            )
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("cross-space convert-to-folder backlink rewrite failed: {e}");
+                Vec::new()
+            });
+        modified_sources.extend(
+            rebase_project_source_after_move(
+                &index_state,
+                project_path.as_deref(),
+                &space,
+                target_space_id.as_deref(),
+                &old_leaf,
+                &entry.path,
+                "convert_entry_to_folder",
+            )
+            .await,
+        );
+        let modified_sources = crate::files::backlinks::dedupe_modified_sources(modified_sources);
+        schedule_modified_source_spaces(
+            &index_state,
+            &autocommit,
+            project_path.as_deref(),
+            &modified_sources,
+            StructuralOp::ConvertToFolder(entry_history_commit_name(&space, &entry.path)),
+        )
+        .await;
+        let _ = index_state
+            .remove_file_backlinks(project, target_space_id.as_deref(), &old_leaf)
+            .await;
+        let _ = index_state
+            .update_file_backlinks(project, target_space_id.as_deref(), &entry.path)
+            .await;
+    } else {
+        let _ = rebase_legacy_source_after_move(&space, &backlink_index, &old_leaf, &entry.path);
+    }
     replace_index_entries_or_reindex(
         &index_state,
         project_path.as_deref(),
@@ -2388,12 +2723,67 @@ pub async fn convert_entry_to_leaf(
 ) -> Result<Entry, AppError> {
     let backlink_index = backlinks_for_space(&index_state, &space).await;
     ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
-    let entry = entry::convert_entry_to_leaf(Path::new(&space), &file_path, Some(&backlink_index))?;
+    let project_aware = project_path.as_deref().filter(|p| !p.is_empty()).is_some();
+    let entry = entry::convert_entry_to_leaf(
+        Path::new(&space),
+        &file_path,
+        if project_aware {
+            None
+        } else {
+            Some(&backlink_index)
+        },
+    )?;
     let old_readme = entry
         .path
         .strip_suffix(".md")
         .map(|root| format!("{root}/README.md"))
         .unwrap_or_else(|| entry.path.clone());
+    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+        let project = Path::new(proj);
+        let target_space_id = space_id_for_dir(&index_state, &space).await;
+        let mut modified_sources = index_state
+            .update_links_on_rename_project(
+                project,
+                target_space_id.as_deref(),
+                &old_readme,
+                &entry.path,
+                None,
+            )
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("cross-space convert-to-leaf backlink rewrite failed: {e}");
+                Vec::new()
+            });
+        modified_sources.extend(
+            rebase_project_source_after_move(
+                &index_state,
+                project_path.as_deref(),
+                &space,
+                target_space_id.as_deref(),
+                &old_readme,
+                &entry.path,
+                "convert_entry_to_leaf",
+            )
+            .await,
+        );
+        let modified_sources = crate::files::backlinks::dedupe_modified_sources(modified_sources);
+        schedule_modified_source_spaces(
+            &index_state,
+            &autocommit,
+            project_path.as_deref(),
+            &modified_sources,
+            StructuralOp::ConvertToLeaf(entry_history_commit_name(&space, &entry.path)),
+        )
+        .await;
+        let _ = index_state
+            .remove_file_backlinks(project, target_space_id.as_deref(), &old_readme)
+            .await;
+        let _ = index_state
+            .update_file_backlinks(project, target_space_id.as_deref(), &entry.path)
+            .await;
+    } else {
+        let _ = rebase_legacy_source_after_move(&space, &backlink_index, &old_readme, &entry.path);
+    }
     replace_index_entries_or_reindex(
         &index_state,
         project_path.as_deref(),

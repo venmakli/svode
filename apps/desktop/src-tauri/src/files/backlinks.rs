@@ -1,21 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::Mutex;
 
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 use crate::files::entry::slugify;
-
-/// Regex matching `[text](url.md)` or `[text](url.md#anchor)`.
-static MD_LINK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[(?:[^\[\]]|\\\[|\\\])*\]\(([^)]+\.md(?:#[^)]*)?)\)").unwrap());
-
-/// Regex matching any `[text](url)` markdown link.
-static ANY_LINK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[(?:[^\[\]]|\\\[|\\\])*\]\(([^)]+)\)").unwrap());
+use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
 
 /// Byte span of a markdown link `[text](url)` in the source content.
 #[derive(Debug, Clone, Serialize)]
@@ -50,40 +42,244 @@ pub struct ModifiedLinkSource {
     pub path: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinkDestinationStyle {
+    Plain,
+    Angle,
+}
+
+/// Parsed ordinary inline Markdown link. Spans are byte offsets into the
+/// original content. Reference-style links and images are intentionally absent.
+#[derive(Debug, Clone)]
+struct MarkdownLink {
+    full_start: usize,
+    full_end: usize,
+    label_start: usize,
+    label_end: usize,
+    destination_outer_start: usize,
+    destination_outer_end: usize,
+    path: String,
+    anchor: String,
+    style: LinkDestinationStyle,
+}
+
 /// Parse standard markdown links `[text](./path.md)` from content.
 /// Returns vec of (normalized_target_path, LinkSpan).
 /// Only matches relative .md paths (not http, mailto, #anchors).
 pub fn parse_markdown_links(content: &str) -> Vec<(String, LinkSpan)> {
-    let mut results = Vec::new();
+    parse_markdown_link_nodes(content)
+        .into_iter()
+        .map(|link| {
+            (
+                link.path,
+                LinkSpan {
+                    byte_start: link.full_start,
+                    byte_end: link.full_end,
+                },
+            )
+        })
+        .collect()
+}
 
-    for cap in MD_LINK_RE.captures_iter(content) {
-        let full_match = cap.get(0).unwrap();
-        let url = cap.get(1).unwrap().as_str();
+fn parse_markdown_link_nodes(content: &str) -> Vec<MarkdownLink> {
+    let bytes = content.as_bytes();
+    let mut links = Vec::new();
+    let mut cursor = 0usize;
 
-        // Skip absolute URLs, mailto, anchors-only
-        if url.starts_with("http://")
-            || url.starts_with("https://")
-            || url.starts_with("mailto:")
-            || url.starts_with('#')
-        {
+    while let Some(open_rel) = content[cursor..].find('[') {
+        let open = cursor + open_rel;
+        if open > 0 && bytes[open - 1] == b'!' {
+            cursor = open + 1;
             continue;
         }
 
-        // Strip anchor fragment for path normalization
-        let path_part = url.split('#').next().unwrap_or(url);
+        let Some(label_close) = find_unescaped_byte(content, open + 1, b']') else {
+            break;
+        };
+        let paren_open = label_close + 1;
+        if bytes.get(paren_open) != Some(&b'(') {
+            cursor = label_close + 1;
+            continue;
+        }
 
-        let normalized = normalize_link_path_preserve_parent(path_part);
+        let dest_start = paren_open + 1;
+        let (style, destination_outer_start, destination_outer_end, destination) =
+            if bytes.get(dest_start) == Some(&b'<') {
+                let inner_start = dest_start + 1;
+                let Some(angle_close) = find_unescaped_byte(content, inner_start, b'>') else {
+                    cursor = dest_start;
+                    continue;
+                };
+                let Some(paren_close) = find_unescaped_byte(content, angle_close + 1, b')') else {
+                    cursor = angle_close + 1;
+                    continue;
+                };
+                (
+                    LinkDestinationStyle::Angle,
+                    dest_start,
+                    angle_close + 1,
+                    &content[inner_start..angle_close],
+                )
+                    .with_full_end(paren_close + 1)
+            } else {
+                let Some(paren_close) = find_unescaped_byte(content, dest_start, b')') else {
+                    cursor = dest_start;
+                    continue;
+                };
+                let Some(destination_end) =
+                    plain_destination_end(&content[dest_start..paren_close])
+                else {
+                    cursor = paren_close + 1;
+                    continue;
+                };
+                (
+                    LinkDestinationStyle::Plain,
+                    dest_start,
+                    dest_start + destination_end,
+                    &content[dest_start..dest_start + destination_end],
+                )
+                    .with_full_end(paren_close + 1)
+            };
 
-        results.push((
-            normalized,
-            LinkSpan {
-                byte_start: full_match.start(),
-                byte_end: full_match.end(),
-            },
-        ));
+        let full_end = destination.full_end;
+        let destination = destination.value;
+        if let Some((path, anchor)) = parse_internal_markdown_destination(destination) {
+            links.push(MarkdownLink {
+                full_start: open,
+                full_end,
+                label_start: open + 1,
+                label_end: label_close,
+                destination_outer_start,
+                destination_outer_end,
+                path,
+                anchor,
+                style,
+            });
+        }
+        cursor = full_end;
     }
 
-    results
+    links
+}
+
+struct ParsedDestination<'a> {
+    value: &'a str,
+    full_end: usize,
+}
+
+trait DestinationWithFullEnd<'a> {
+    fn with_full_end(
+        self,
+        full_end: usize,
+    ) -> (LinkDestinationStyle, usize, usize, ParsedDestination<'a>);
+}
+
+impl<'a> DestinationWithFullEnd<'a> for (LinkDestinationStyle, usize, usize, &'a str) {
+    fn with_full_end(
+        self,
+        full_end: usize,
+    ) -> (LinkDestinationStyle, usize, usize, ParsedDestination<'a>) {
+        (
+            self.0,
+            self.1,
+            self.2,
+            ParsedDestination {
+                value: self.3,
+                full_end,
+            },
+        )
+    }
+}
+
+fn find_unescaped_byte(content: &str, start: usize, needle: u8) -> Option<usize> {
+    let bytes = content.as_bytes();
+    let mut idx = start;
+    while idx < bytes.len() {
+        if bytes[idx] == needle && !is_escaped(bytes, idx) {
+            return Some(idx);
+        }
+        idx += 1;
+    }
+    None
+}
+
+fn is_escaped(bytes: &[u8], idx: usize) -> bool {
+    let mut count = 0usize;
+    let mut cursor = idx;
+    while cursor > 0 && bytes[cursor - 1] == b'\\' {
+        count += 1;
+        cursor -= 1;
+    }
+    count % 2 == 1
+}
+
+fn plain_destination_end(destination_with_suffix: &str) -> Option<usize> {
+    let trimmed_end = destination_with_suffix.trim_end().len();
+    let candidate = &destination_with_suffix[..trimmed_end];
+    if candidate.is_empty() {
+        return None;
+    }
+
+    let mut search_start = 0usize;
+    let lower = candidate.to_ascii_lowercase();
+    let mut best = None;
+    while let Some(offset) = lower[search_start..].find(".md") {
+        let md_end = search_start + offset + ".md".len();
+        let mut end = md_end;
+        if candidate[end..].starts_with('#') {
+            let anchor_start = end + 1;
+            let mut anchor_end = candidate.len();
+            for (idx, ch) in candidate[anchor_start..].char_indices() {
+                if ch.is_whitespace() {
+                    anchor_end = anchor_start + idx;
+                    break;
+                }
+            }
+            end = if anchor_end == anchor_start {
+                md_end
+            } else {
+                anchor_end
+            };
+            if end == md_end {
+                end = md_end;
+            }
+        }
+        if end == candidate.len()
+            || candidate[end..]
+                .chars()
+                .next()
+                .is_some_and(char::is_whitespace)
+        {
+            best = Some(end);
+        }
+        search_start = md_end;
+    }
+
+    best.or(Some(trimmed_end))
+}
+
+fn parse_internal_markdown_destination(destination: &str) -> Option<(String, String)> {
+    let unescaped;
+    let destination = if destination.contains("\\<") || destination.contains("\\>") {
+        unescaped = destination.replace("\\<", "<").replace("\\>", ">");
+        unescaped.as_str()
+    } else {
+        destination
+    };
+    if is_external_or_anchor_url(destination) {
+        return None;
+    }
+    let (path_part, anchor) = match destination.find('#') {
+        Some(pos) => (&destination[..pos], &destination[pos..]),
+        None => (destination, ""),
+    };
+    if path_part.is_empty() || !path_part.to_ascii_lowercase().ends_with(".md") {
+        return None;
+    }
+    Some((
+        normalize_link_path_preserve_parent(path_part),
+        anchor.to_string(),
+    ))
 }
 
 /// Normalize a relative link path for target-key lookup. Escaping parents are
@@ -397,12 +593,8 @@ impl BacklinkIndex {
 
             let content = fs::read_to_string(&abs_source)?;
 
-            // Compute relative path from source's directory to old and new targets
-            let source_dir = Path::new(source_path).parent().unwrap_or(Path::new(""));
-            let old_rel = make_relative_link(source_dir, old_path);
-            let new_rel = make_relative_link(source_dir, new_path);
-
-            let updated = replace_link_urls(&content, &old_rel, &new_rel, text_replace);
+            let updated =
+                replace_target_links(&content, source_path, old_path, new_path, text_replace);
 
             if updated != content {
                 fs::write(&abs_source, &updated)?;
@@ -475,61 +667,96 @@ impl BacklinkIndex {
     }
 }
 
-/// Replace markdown link URLs from old_rel to new_rel in content. When
+/// Replace links that resolve to `old_path` from this source location. When
 /// `text_replace` is Some((old_stem, new_text)), link text is also replaced
 /// with new_text for links whose text slugifies to old_stem (i.e. the text was
 /// derived from the target's previous title). Custom texts like `[click here]`
 /// stay intact.
-fn replace_link_urls(
+fn replace_target_links(
     content: &str,
-    old_rel: &str,
-    new_rel: &str,
+    source_rel_path: &str,
+    old_path: &str,
+    new_path: &str,
     text_replace: Option<(&str, &str)>,
 ) -> String {
-    let old_with_dot = format!("./{old_rel}");
+    let old_norm = normalize_link_path(old_path);
+    rewrite_links(content, |link| {
+        if resolve_relative_to(source_rel_path, &link.path) != old_norm {
+            return None;
+        }
+        let source_dir = Path::new(source_rel_path).parent().unwrap_or(Path::new(""));
+        let new_rel = make_relative_link(source_dir, new_path);
+        Some((
+            serialize_destination(&new_rel, &link.anchor, link.style),
+            replacement_label(content, link, text_replace),
+        ))
+    })
+}
+
+fn replacement_label(
+    content: &str,
+    link: &MarkdownLink,
+    text_replace: Option<(&str, &str)>,
+) -> Option<String> {
+    let text = &content[link.label_start..link.label_end];
+    text_replace
+        .filter(|(old_stem, _)| !old_stem.is_empty() && slugify(text) == *old_stem)
+        .map(|(_, new_text)| new_text.to_string())
+}
+
+fn rewrite_links<F>(content: &str, mut replacement: F) -> String
+where
+    F: FnMut(&MarkdownLink) -> Option<(String, Option<String>)>,
+{
+    let links = parse_markdown_link_nodes(content);
+    if links.is_empty() {
+        return content.to_string();
+    }
 
     let mut result = String::with_capacity(content.len());
-    let mut last_end = 0;
+    let mut last_end = 0usize;
+    let mut changed = false;
 
-    for cap in ANY_LINK_RE.captures_iter(content) {
-        let full_match = cap.get(0).unwrap();
-        let url_match = cap.get(1).unwrap();
-        let url = url_match.as_str();
-
-        let (path_part, anchor) = match url.find('#') {
-            Some(pos) => (&url[..pos], &url[pos..]),
-            None => (url, ""),
-        };
-
-        let matches = path_part == old_rel || path_part == old_with_dot;
-
-        if !matches {
-            result.push_str(&content[last_end..full_match.end()]);
-            last_end = full_match.end();
-            continue;
+    for link in links {
+        result.push_str(&content[last_end..link.full_start]);
+        if let Some((new_destination, new_label)) = replacement(&link) {
+            changed = true;
+            result.push_str(&content[link.full_start..link.label_start]);
+            if let Some(label) = new_label {
+                result.push_str(&label);
+            } else {
+                result.push_str(&content[link.label_start..link.label_end]);
+            }
+            result.push_str(&content[link.label_end..link.destination_outer_start]);
+            result.push_str(&new_destination);
+            result.push_str(&content[link.destination_outer_end..link.full_end]);
+        } else {
+            result.push_str(&content[link.full_start..link.full_end]);
         }
-
-        // `[text](url)` — text lives between `[` and `](`.
-        let text_start = full_match.start() + 1;
-        let text_end = url_match.start() - 2;
-        let text = &content[text_start..text_end];
-
-        let new_text = text_replace
-            .filter(|(old_stem, _)| !old_stem.is_empty() && slugify(text) == *old_stem)
-            .map(|(_, nt)| nt);
-
-        result.push_str(&content[last_end..full_match.start()]);
-        result.push('[');
-        result.push_str(new_text.unwrap_or(text));
-        result.push_str("](");
-        result.push_str(new_rel);
-        result.push_str(anchor);
-        result.push(')');
-        last_end = full_match.end();
+        last_end = link.full_end;
     }
 
     result.push_str(&content[last_end..]);
-    result
+    if changed { result } else { content.to_string() }
+}
+
+fn serialize_destination(path: &str, anchor: &str, style: LinkDestinationStyle) -> String {
+    let destination = format!("{path}{anchor}");
+    if matches!(style, LinkDestinationStyle::Angle) || requires_angle_destination(&destination) {
+        format!("<{}>", escape_angle_destination(&destination))
+    } else {
+        destination
+    }
+}
+
+fn requires_angle_destination(destination: &str) -> bool {
+    destination
+        .chars()
+        .any(|ch| ch.is_whitespace() || matches!(ch, '<' | '>' | '(' | ')' | '[' | ']'))
+}
+
+fn escape_angle_destination(destination: &str) -> String {
+    destination.replace('<', "\\<").replace('>', "\\>")
 }
 
 /// Extract the "name-like" stem from a link target path. For `readme.md`
@@ -666,17 +893,31 @@ pub fn validate_links(
 
 /// Return true for URLs that are outside Svode's local markdown-link domain.
 pub fn is_external_or_anchor_url(url: &str) -> bool {
-    url.starts_with("http://")
-        || url.starts_with("https://")
-        || url.starts_with("mailto:")
-        || url.starts_with('#')
+    let url = unwrap_angle_destination(url.trim());
+    url.starts_with('#') || url.starts_with("//") || has_url_scheme(url)
+}
+
+fn has_url_scheme(url: &str) -> bool {
+    let Some((scheme, _)) = url.split_once(':') else {
+        return false;
+    };
+    let mut chars = scheme.chars();
+    chars.next().is_some_and(|ch| ch.is_ascii_alphabetic())
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
 }
 
 /// Strip the fragment from a markdown URL and normalize separators while
 /// preserving leading `..` for the resolver.
 pub fn markdown_url_path(url: &str) -> String {
+    let url = unwrap_angle_destination(url.trim());
     let path_part = url.split('#').next().unwrap_or(url);
     normalize_link_path_preserve_parent(path_part)
+}
+
+fn unwrap_angle_destination(url: &str) -> &str {
+    url.strip_prefix('<')
+        .and_then(|inner| inner.strip_suffix('>'))
+        .unwrap_or(url)
 }
 
 /// Make a relative markdown URL from a source document absolute path to a
@@ -733,7 +974,8 @@ fn collect_md_files_filtered(
     skip_top_level: &[String],
 ) -> Result<Vec<PathBuf>, AppError> {
     let mut files = Vec::new();
-    collect_md_files_recursive(dir, dir, skip_top_level, &mut files)?;
+    let policy = TreeIgnorePolicy::from_space_root(dir);
+    collect_md_files_recursive(dir, dir, skip_top_level, &policy, &mut files)?;
     Ok(files)
 }
 
@@ -751,13 +993,116 @@ pub fn replace_link_urls_between(
     text_replace: Option<(&str, &str)>,
 ) -> String {
     let source_dir = source_doc_abs.parent().unwrap_or(Path::new(""));
-    let old_rel = make_relative_path(source_dir, old_target_abs);
-    let new_rel = make_relative_path(source_dir, new_target_abs);
-    replace_link_urls(content, &old_rel, &new_rel, text_replace)
+    let Some(old_abs) = normalize_path(old_target_abs) else {
+        return content.to_string();
+    };
+    rewrite_links(content, |link| {
+        let Some(target_abs) = normalize_path(&source_dir.join(&link.path)) else {
+            return None;
+        };
+        if target_abs != old_abs {
+            return None;
+        }
+        let new_rel = make_relative_path(source_dir, new_target_abs);
+        Some((
+            serialize_destination(&new_rel, &link.anchor, link.style),
+            replacement_label(content, link, text_replace),
+        ))
+    })
 }
 
 pub fn link_stem(path: &str) -> String {
     link_stem_of(path)
+}
+
+/// Rebase outgoing links after the source document moves inside the same
+/// space root. Broken links are mechanically preserved by resolving their old
+/// intended target from the previous source location.
+pub fn rebase_source_links(
+    content: &str,
+    old_source_rel_path: &str,
+    new_source_rel_path: &str,
+) -> String {
+    rewrite_links(content, |link| {
+        let target = resolve_relative_to(old_source_rel_path, &link.path);
+        let new_source_dir = Path::new(new_source_rel_path)
+            .parent()
+            .unwrap_or(Path::new(""));
+        let new_rel = make_relative_link(new_source_dir, &target);
+        let destination = serialize_destination(&new_rel, &link.anchor, link.style);
+        Some((destination, None))
+    })
+}
+
+/// Rebase outgoing links after a source document moves, using absolute source
+/// paths. This preserves cross-space relative links in project-aware flows.
+pub fn rebase_source_links_between(
+    content: &str,
+    old_source_abs: &Path,
+    new_source_abs: &Path,
+) -> String {
+    rebase_source_links_between_with_target_map(content, old_source_abs, new_source_abs, None)
+}
+
+/// Rebase outgoing links after a source document moves as part of a moved
+/// subtree. Links whose old target was inside the moved subtree follow that
+/// subtree to its new location; links to outside documents keep their old
+/// absolute target.
+pub fn rebase_source_links_between_moved_tree(
+    content: &str,
+    old_source_abs: &Path,
+    new_source_abs: &Path,
+    old_root_abs: &Path,
+    new_root_abs: &Path,
+) -> String {
+    rebase_source_links_between_with_target_map(
+        content,
+        old_source_abs,
+        new_source_abs,
+        Some((old_root_abs, new_root_abs)),
+    )
+}
+
+fn rebase_source_links_between_with_target_map(
+    content: &str,
+    old_source_abs: &Path,
+    new_source_abs: &Path,
+    moved_root: Option<(&Path, &Path)>,
+) -> String {
+    let old_source_dir = old_source_abs.parent().unwrap_or(Path::new(""));
+    let new_source_dir = new_source_abs.parent().unwrap_or(Path::new(""));
+    let moved_root = moved_root.and_then(|(old_root, new_root)| {
+        Some((normalize_path(old_root)?, normalize_path(new_root)?))
+    });
+    rewrite_links(content, |link| {
+        let mut target_abs = normalize_path(&old_source_dir.join(&link.path))?;
+        if let Some((old_root, new_root)) = &moved_root {
+            if let Ok(rest) = target_abs.strip_prefix(old_root) {
+                target_abs = new_root.join(rest);
+            }
+        }
+        let new_rel = make_relative_path(new_source_dir, &target_abs);
+        let destination = serialize_destination(&new_rel, &link.anchor, link.style);
+        Some((destination, None))
+    })
+}
+
+fn normalize_path(path: &Path) -> Option<PathBuf> {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(p) => out.push(p.as_os_str()),
+            Component::RootDir => out.push(std::path::MAIN_SEPARATOR.to_string()),
+            Component::CurDir => {}
+            Component::Normal(s) => out.push(s),
+            Component::ParentDir => {
+                if !out.pop() {
+                    return None;
+                }
+            }
+        }
+    }
+    Some(out)
 }
 
 /// Deduplicate modified sources while preserving discovery order.
@@ -776,9 +1121,13 @@ fn collect_md_files_recursive(
     base: &Path,
     dir: &Path,
     skip_top_level: &[String],
+    policy: &TreeIgnorePolicy,
     files: &mut Vec<PathBuf>,
 ) -> Result<(), AppError> {
-    if !dir.is_dir() {
+    let Ok(meta) = fs::symlink_metadata(dir) else {
+        return Ok(());
+    };
+    if meta.file_type().is_symlink() || !meta.is_dir() {
         return Ok(());
     }
 
@@ -787,15 +1136,6 @@ fn collect_md_files_recursive(
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-
-        // Skip hidden directories
-        if path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.starts_with('.'))
-        {
-            continue;
-        }
 
         if at_base {
             let name = path
@@ -807,9 +1147,28 @@ fn collect_md_files_recursive(
             }
         }
 
-        if path.is_dir() {
-            collect_md_files_recursive(base, &path, skip_top_level, files)?;
-        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
+        let Ok(meta) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+
+        let rel_path = path.strip_prefix(base).unwrap_or(&path);
+        let kind = if meta.is_dir() {
+            TreePathKind::Directory
+        } else if meta.is_file() {
+            TreePathKind::File
+        } else {
+            TreePathKind::Unknown
+        };
+        if policy.is_ignored_rel(rel_path, kind) {
+            continue;
+        }
+
+        if meta.is_dir() {
+            collect_md_files_recursive(base, &path, skip_top_level, policy, files)?;
+        } else if meta.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
             files.push(path);
         }
     }
@@ -837,6 +1196,40 @@ mod tests {
         let links = parse_markdown_links(content);
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].0, "doc.md");
+    }
+
+    #[test]
+    fn test_parse_markdown_links_angle_whitespace_anchor_cyrillic() {
+        let content = "See [section](<Новая папка/Документ.md#heading>) for details.";
+        let links = parse_markdown_links(content);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].0, "Новая папка/Документ.md");
+    }
+
+    #[test]
+    fn test_parse_markdown_links_plain_title_suffix() {
+        let content =
+            r#"See [doc](docs/doc.md "Readable title") and [spaced](Новая папка/doc.md)."#;
+        let links = parse_markdown_links(content);
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].0, "docs/doc.md");
+        assert_eq!(links[1].0, "Новая папка/doc.md");
+    }
+
+    #[test]
+    fn test_parse_markdown_links_unescapes_angle_delimiters() {
+        let content = r"See [doc](<docs/a\>b.md>).";
+        let links = parse_markdown_links(content);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].0, "docs/a>b.md");
+    }
+
+    #[test]
+    fn test_parse_markdown_links_escaped_label_brackets() {
+        let content = r"See [escaped \[label\]](docs/guide.md).";
+        let links = parse_markdown_links(content);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].0, "docs/guide.md");
     }
 
     #[test]
@@ -869,6 +1262,22 @@ mod tests {
         let links = parse_markdown_links(content);
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].0, "notes.md");
+    }
+
+    #[test]
+    fn test_parse_markdown_links_skip_images_external_reference_style() {
+        let content = "\
+![image](photo.md)
+[external](mailto:test@example.com)
+[anchor](#local)
+[ref][target]
+[local](target.md)
+
+[target]: ignored.md
+";
+        let links = parse_markdown_links(content);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].0, "target.md");
     }
 
     #[test]
@@ -983,6 +1392,113 @@ mod tests {
         // Index should now have entries for renamed-b.md
         assert_eq!(index.get_backlinks("renamed-b.md").len(), 1);
         assert_eq!(index.get_backlinks("b.md").len(), 0);
+    }
+
+    #[test]
+    fn test_update_links_on_rename_uses_angle_for_whitespace() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+
+        fs::write(ws.join("a.md"), "See [B](b.md).\n").unwrap();
+        fs::write(ws.join("b.md"), "Content.\n").unwrap();
+
+        let index = BacklinkIndex::new();
+        index.build(ws).unwrap();
+
+        let modified = index
+            .update_links_on_rename(ws, "b.md", "Новая папка/b.md", None)
+            .unwrap();
+        assert_eq!(modified, vec!["a.md"]);
+        assert_eq!(
+            fs::read_to_string(ws.join("a.md")).unwrap(),
+            "See [B](<Новая папка/b.md>).\n"
+        );
+    }
+
+    #[test]
+    fn test_update_links_on_rename_preserves_angle_and_anchor() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+
+        fs::write(ws.join("a.md"), "See [B](<b.md#heading>).\n").unwrap();
+        fs::write(ws.join("b.md"), "Content.\n").unwrap();
+
+        let index = BacklinkIndex::new();
+        index.build(ws).unwrap();
+
+        index
+            .update_links_on_rename(ws, "b.md", "folder/b.md", None)
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(ws.join("a.md")).unwrap(),
+            "See [B](<folder/b.md#heading>).\n"
+        );
+    }
+
+    #[test]
+    fn test_rebase_source_links_root_to_folder() {
+        let content = "See [B](B.md) and [C](C.md#heading).\n";
+        let updated = rebase_source_links(content, "A.md", "Folder/A.md");
+        assert_eq!(updated, "See [B](../B.md) and [C](../C.md#heading).\n");
+    }
+
+    #[test]
+    fn test_rebase_source_links_leaf_folder_conversion_round_trip() {
+        let folder = rebase_source_links("See [B](B.md).\n", "A.md", "A/README.md");
+        assert_eq!(folder, "See [B](../B.md).\n");
+
+        let leaf = rebase_source_links(&folder, "A/README.md", "A.md");
+        assert_eq!(leaf, "See [B](B.md).\n");
+    }
+
+    #[test]
+    fn test_rebase_source_links_preserves_broken_intended_target() {
+        let updated = rebase_source_links("See [Missing](Missing.md).\n", "A.md", "Folder/A.md");
+        assert_eq!(updated, "See [Missing](../Missing.md).\n");
+    }
+
+    #[test]
+    fn test_rebase_source_links_moved_tree_preserves_internal_targets() {
+        let old_source = Path::new("/space/Folder/A.md");
+        let new_source = Path::new("/space/Archive/Folder/A.md");
+        let old_root = Path::new("/space/Folder");
+        let new_root = Path::new("/space/Archive/Folder");
+        let content = "See [Sibling](Sibling.md) and [Outside](../Outside.md).\n";
+
+        let updated = rebase_source_links_between_moved_tree(
+            content, old_source, new_source, old_root, new_root,
+        );
+
+        assert_eq!(
+            updated,
+            "See [Sibling](Sibling.md) and [Outside](../../Outside.md).\n"
+        );
+    }
+
+    #[test]
+    fn test_collect_md_files_uses_tree_ignore_policy() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        fs::create_dir_all(ws.join(".svode")).unwrap();
+        fs::create_dir_all(ws.join(".assets")).unwrap();
+        fs::write(ws.join("keep.md"), "keep").unwrap();
+        fs::write(ws.join(".notes.md"), "notes").unwrap();
+        fs::write(ws.join(".svode").join("hidden.md"), "hidden").unwrap();
+        fs::write(ws.join(".assets").join("asset.md"), "asset").unwrap();
+
+        let mut rels = collect_md_files(ws, &[])
+            .unwrap()
+            .into_iter()
+            .map(|path| {
+                path.strip_prefix(ws)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect::<Vec<_>>();
+        rels.sort();
+
+        assert_eq!(rels, vec![".notes.md".to_string(), "keep.md".to_string()]);
     }
 
     #[test]
