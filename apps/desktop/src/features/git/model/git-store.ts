@@ -116,6 +116,18 @@ export type FileChangeIndicator =
   | { kind: "conflict" }
   | { kind: "error"; message: string };
 
+const CLEAN_FILE_INDICATOR: FileChangeIndicator = { kind: "clean" };
+const GIT_DIRTY_FILE_INDICATOR: FileChangeIndicator = {
+  kind: "dirty",
+  reason: "git_dirty",
+};
+const PENDING_WRITE_FILE_INDICATOR: FileChangeIndicator = {
+  kind: "dirty",
+  reason: "pending_write",
+};
+const SYNCING_FILE_INDICATOR: FileChangeIndicator = { kind: "syncing" };
+const CONFLICT_FILE_INDICATOR: FileChangeIndicator = { kind: "conflict" };
+
 export function selectIndicator(
   state: GitState,
   spacePath: string,
@@ -149,9 +161,9 @@ export function selectFileChangeIndicator(
 ): FileChangeIndicator {
   const status = state.statuses[spacePath];
   const file = status?.files.find((f) => f.path === filePath);
-  if (file?.state === "conflict") return { kind: "conflict" };
-  if (file) return { kind: "dirty", reason: "git_dirty" };
-  if (pendingWrite) return { kind: "dirty", reason: "pending_write" };
-  if (state.syncing[spacePath]) return { kind: "syncing" };
-  return { kind: "clean" };
+  if (file?.state === "conflict") return CONFLICT_FILE_INDICATOR;
+  if (file) return GIT_DIRTY_FILE_INDICATOR;
+  if (pendingWrite) return PENDING_WRITE_FILE_INDICATOR;
+  if (state.syncing[spacePath]) return SYNCING_FILE_INDICATOR;
+  return CLEAN_FILE_INDICATOR;
 }
