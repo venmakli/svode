@@ -1,4 +1,5 @@
 export * from "./api/relation-api";
+export * from "./api/schema-api";
 export * from "./model/types";
 export * from "./model/validation";
 export * from "./model/save-policy";

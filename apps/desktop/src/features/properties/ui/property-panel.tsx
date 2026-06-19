@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,7 +14,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { Entry } from "@/features/entry";
 import { cn } from "@/shared/lib/utils";
 import {
   AlertTriangle,
@@ -25,7 +23,6 @@ import {
   Trash2,
 } from "lucide-react";
 import type {
-  ChangeSchemaTypeResult,
   Column,
   EntrySchemaResult,
   Person,
@@ -37,6 +34,21 @@ import {
   shouldClosePropertyEditorOnChange,
   validatePropertyValue,
 } from "../model/validation";
+import {
+  addOption,
+  addSchemaColumn,
+  assignEntryUniqueId,
+  changeSchemaType,
+  clearFieldValues,
+  clearOptionValues,
+  deleteOption,
+  deleteSchemaColumn,
+  getEntrySchema,
+  listPropertyPersons,
+  promoteOrphan,
+  renameOption,
+  renameSchemaColumn,
+} from "../api/schema-api";
 import { PropertyControl } from "./property-control";
 import { PropertyValue } from "./property-value";
 import {
@@ -120,10 +132,7 @@ export function PropertyPanel({
   const loadPersons = useCallback(
     async (allTime = false) => {
       if (!spacePath) return [];
-      const list = await invoke<Person[]>("list_persons", {
-        spacePath,
-        allTime,
-      });
+      const list = await listPropertyPersons(spacePath, allTime);
       setPersons(list);
       return list;
     },
@@ -139,10 +148,7 @@ export function PropertyPanel({
   }, [hasActor, loadPersons]);
 
   const refreshSchema = useCallback(async () => {
-    const result = await invoke<EntrySchemaResult | null>("get_entry_schema", {
-      space: spacePath,
-      filePath,
-    });
+    const result = await getEntrySchema({ spacePath, filePath });
     if (result) {
       setSchema(normalizeSchema(result.schema));
       setCollectionRootPath(
@@ -153,24 +159,20 @@ export function PropertyPanel({
     return result;
   }, [filePath, onSchemaChange, spacePath]);
 
-  const schemaInvoke = useCallback(
-    async (command: string, args: Record<string, unknown>) => {
-      await invoke(command, {
-        space: spacePath,
-        collectionPath: collectionRootPath,
-        projectPath: projectPath ?? null,
-        ...args,
-      });
-      await refreshSchema();
-    },
-    [collectionRootPath, projectPath, refreshSchema, spacePath],
+  const schemaMutationContext = useMemo(
+    () => ({
+      spacePath,
+      collectionPath: collectionRootPath,
+      projectPath,
+    }),
+    [collectionRootPath, projectPath, spacePath],
   );
 
   const assignUniqueId = useCallback(async () => {
-    const entry = await invoke<Entry>("assign_unique_id", {
-      space: spacePath,
+    const entry = await assignEntryUniqueId({
+      spacePath,
       filePath,
-      projectPath: projectPath ?? null,
+      projectPath,
     });
     setPanelValues(entry.meta.extra ?? {});
     await refreshSchema();
@@ -192,29 +194,32 @@ export function PropertyPanel({
 
   const clearOrphanValues = useCallback(
     async (field: string) => {
-      await schemaInvoke("clear_field_values", { field });
+      await clearFieldValues({ ...schemaMutationContext, field });
+      await refreshSchema();
       setPanelValues((current) => {
         const next = { ...current };
         delete next[field];
         return next;
       });
     },
-    [schemaInvoke],
+    [refreshSchema, schemaMutationContext],
   );
 
   const clearInvalidOptionValues = useCallback(
     async (column: Column, optionNames: string[]) => {
       if (optionNames.length === 0) return;
-      await schemaInvoke("clear_option_values", {
+      await clearOptionValues({
+        ...schemaMutationContext,
         columnName: column.name,
         optionNames,
       });
+      await refreshSchema();
       setPanelValues((current) => ({
         ...current,
         [column.name]: removeOptionValues(current[column.name], optionNames),
       }));
     },
-    [schemaInvoke],
+    [refreshSchema, schemaMutationContext],
   );
 
   return (
@@ -332,10 +337,13 @@ export function PropertyPanel({
                 variant="ghost"
                 size="icon-xs"
                 onClick={() =>
-                  void schemaInvoke("promote_orphan", {
+                  void promoteOrphan({
+                    ...schemaMutationContext,
                     filePath,
                     field,
-                  }).catch(handleSchemaError)
+                  })
+                    .then(refreshSchema)
+                    .catch(handleSchemaError)
                 }
               >
                 <RotateCcw />
@@ -379,9 +387,9 @@ export function PropertyPanel({
         onOpenChange={(open) => !open && setDialog(null)}
         collectionPath={collectionRootPath}
         onSubmit={async (column) => {
-          await schemaInvoke("add_schema_column", { column }).catch(
-            handleSchemaError,
-          );
+          await addSchemaColumn({ ...schemaMutationContext, column })
+            .then(refreshSchema)
+            .catch(handleSchemaError);
           setDialog(null);
         }}
       />
@@ -392,17 +400,14 @@ export function PropertyPanel({
         collectionPath={collectionRootPath}
         onSubmit={async (newType, conversionStrategy) => {
           if (dialog?.type !== "change-type") return;
-          const result = await invoke<ChangeSchemaTypeResult>(
-            "change_schema_type",
-            {
-              space: spacePath,
-              collectionPath: collectionRootPath,
-              projectPath: projectPath ?? null,
-              columnName: dialog.column.name,
-              newType,
-              conversionStrategy,
-            },
-          ).catch(handleSchemaError);
+          const result = await changeSchemaType({
+            spacePath,
+            collectionPath: collectionRootPath,
+            projectPath,
+            columnName: dialog.column.name,
+            newType,
+            conversionStrategy,
+          }).catch(handleSchemaError);
           if (!result) return;
           showSchemaMutationWarnings(result.warnings);
           await refreshSchema();
@@ -415,10 +420,13 @@ export function PropertyPanel({
         column={dialog?.type === "rename-column" ? dialog.column : null}
         onSubmit={async (newName) => {
           if (dialog?.type !== "rename-column") return;
-          await schemaInvoke("rename_schema_column", {
+          await renameSchemaColumn({
+            ...schemaMutationContext,
             oldName: dialog.column.name,
             newName,
-          }).catch(handleSchemaError);
+          })
+            .then(refreshSchema)
+            .catch(handleSchemaError);
           setDialog(null);
         }}
       />
@@ -428,10 +436,13 @@ export function PropertyPanel({
         column={dialog?.type === "delete-column" ? dialog.column : null}
         onSubmit={async (deleteValues) => {
           if (dialog?.type !== "delete-column") return;
-          await schemaInvoke("delete_schema_column", {
+          await deleteSchemaColumn({
+            ...schemaMutationContext,
             columnName: dialog.column.name,
             deleteValues,
-          }).catch(handleSchemaError);
+          })
+            .then(refreshSchema)
+            .catch(handleSchemaError);
           setDialog(null);
         }}
       />
@@ -441,10 +452,13 @@ export function PropertyPanel({
         column={dialog?.type === "add-option" ? dialog.column : null}
         onSubmit={async (option) => {
           if (dialog?.type !== "add-option") return;
-          await schemaInvoke("add_option", {
+          await addOption({
+            ...schemaMutationContext,
             columnName: dialog.column.name,
             option,
-          }).catch(handleSchemaError);
+          })
+            .then(refreshSchema)
+            .catch(handleSchemaError);
           setDialog(null);
         }}
       />
@@ -454,11 +468,14 @@ export function PropertyPanel({
         option={dialog?.type === "rename-option" ? dialog.option : null}
         onSubmit={async (newOptionName) => {
           if (dialog?.type !== "rename-option") return;
-          await schemaInvoke("rename_option", {
+          await renameOption({
+            ...schemaMutationContext,
             columnName: dialog.column.name,
             oldOptionName: dialog.option.name,
             newOptionName,
-          }).catch(handleSchemaError);
+          })
+            .then(refreshSchema)
+            .catch(handleSchemaError);
           setDialog(null);
         }}
       />
@@ -468,11 +485,14 @@ export function PropertyPanel({
         option={dialog?.type === "delete-option" ? dialog.option : null}
         onSubmit={async (deleteValues) => {
           if (dialog?.type !== "delete-option") return;
-          await schemaInvoke("delete_option", {
+          await deleteOption({
+            ...schemaMutationContext,
             columnName: dialog.column.name,
             optionName: dialog.option.name,
             deleteValues,
-          }).catch(handleSchemaError);
+          })
+            .then(refreshSchema)
+            .catch(handleSchemaError);
           setDialog(null);
         }}
       />
