@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { listen } from "@/platform/native/events";
 import { CloudUpload } from "lucide-react";
 import { toast } from "sonner";
@@ -20,23 +19,22 @@ import {
 } from "@/components/ui/tooltip";
 import { useGitStore } from "../model";
 import { useSpaceStore, selectActiveSpacePath } from "@/features/space/model";
-import type { GitStatus } from "../model";
-import type { SpaceConfig } from "@/features/space/model";
+import {
+  enableGitAutoSync,
+  getGitRemote,
+  getUnpushedCommits,
+  publishGit,
+} from "@/platform/git/git-api";
+import { getSpaceConfig } from "@/platform/space/space-api";
+import type { UnpushedCommitDto } from "@/platform/git/git-types";
 import * as m from "@/paraglide/messages.js";
-
-interface UnpushedCommit {
-  sha: string;
-  message: string;
-  author: string;
-  timestamp: string;
-}
 
 export function CloudUploadButton() {
   const spacePath = useSpaceStore(selectActiveSpacePath);
   const activeRootPath = useSpaceStore((s) => s.activeRootPath);
   const [visible, setVisible] = useState(false);
   const [open, setOpen] = useState(false);
-  const [commits, setCommits] = useState<UnpushedCommit[]>([]);
+  const [commits, setCommits] = useState<UnpushedCommitDto[]>([]);
   const [loading, setLoading] = useState(false);
   const [enableAutoSync, setEnableAutoSync] = useState(false);
   const [pushing, setPushing] = useState(false);
@@ -47,15 +45,15 @@ export function CloudUploadButton() {
       return;
     }
     try {
-      const cfg = await invoke<SpaceConfig>("get_space_config", { spacePath });
-      const remote = await invoke<string | null>("git_get_remote", { spacePath });
+      const cfg = await getSpaceConfig(spacePath);
+      const remote = await getGitRemote(spacePath);
       const hasRemote = !!remote && remote.trim().length > 0;
       const autoSync = cfg.git?.autoSync === true;
       if (!hasRemote || autoSync) {
         setVisible(false);
         return;
       }
-      const list = await invoke<UnpushedCommit[]>("git_unpushed_commits", { spacePath });
+      const list = await getUnpushedCommits(spacePath);
       setCommits(list);
       setVisible(list.length > 0);
     } catch {
@@ -68,8 +66,7 @@ export function CloudUploadButton() {
     recompute();
   }, [recompute]);
 
-  // Recompute on every autocommit (new commit may become unpushed) or on
-  // regular git status changes for the active space.
+  // Recompute on commit events; new commits may become unpushed.
   useEffect(() => {
     if (!spacePath) return;
     let unlistenCommit: (() => void) | null = null;
@@ -93,7 +90,7 @@ export function CloudUploadButton() {
     setOpen(true);
     setLoading(true);
     try {
-      const list = await invoke<UnpushedCommit[]>("git_unpushed_commits", { spacePath });
+      const list = await getUnpushedCommits(spacePath);
       setCommits(list);
     } catch (err) {
       console.error("git_unpushed_commits failed:", err);
@@ -107,11 +104,11 @@ export function CloudUploadButton() {
     if (!spacePath) return;
     setPushing(true);
     try {
-      const status = await invoke<GitStatus>("git_publish", { spacePath });
+      const status = await publishGit(spacePath);
       useGitStore.getState().applyStatus(spacePath, status);
 
       if (enableAutoSync) {
-        await invoke("git_enable_auto_sync", {
+        await enableGitAutoSync({
           spacePath,
           projectPath: activeRootPath,
         });

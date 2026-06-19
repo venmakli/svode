@@ -3,7 +3,7 @@ import { create } from "zustand";
 interface EditorState {
   /** Tracks unsaved user edits per file path */
   unsavedChanges: Record<string, boolean>;
-  /** Tracks files modified externally (AI/IDE) that user hasn't viewed — drives the blue dot */
+  /** Tracks external edits for editor reload/cache behavior. */
   aiModified: Record<string, boolean>;
   /** Cache-invalidation-only flag: forces Plate to re-read from disk on next open. No visual side effect. */
   staleCache: Record<string, boolean>;

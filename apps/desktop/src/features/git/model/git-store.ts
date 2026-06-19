@@ -33,62 +33,72 @@ interface GitState {
   ) => void;
 }
 
-export const useGitStore = create<GitState>((set) => ({
-  statuses: {},
-  syncing: {},
-  syncError: {},
-  cloning: {},
+export const useGitStore = create<GitState>((set) => {
+  const refreshVersions: Record<string, number> = {};
 
-  applyStatus: (spacePath, status) =>
-    set((s) => ({
-      statuses: { ...s.statuses, [spacePath]: status },
-    })),
+  return {
+    statuses: {},
+    syncing: {},
+    syncError: {},
+    cloning: {},
 
-  refreshStatus: async (spacePath) => {
-    try {
-      const status = await getGitStatus(spacePath);
+    applyStatus: (spacePath, status) => {
+      refreshVersions[spacePath] = (refreshVersions[spacePath] ?? 0) + 1;
       set((s) => ({
         statuses: { ...s.statuses, [spacePath]: status },
       }));
-    } catch (err) {
-      // Space may not have git initialized yet — leave previous status alone
-      console.debug("git_status failed for", spacePath, err);
-    }
-  },
+    },
 
-  clear: (spacePath) =>
-    set((s) => {
-      const { [spacePath]: _rmStatus, ...statuses } = s.statuses;
-      const { [spacePath]: _rmSync, ...syncing } = s.syncing;
-      const { [spacePath]: _rmError, ...syncError } = s.syncError;
-      const { [spacePath]: _rmClone, ...cloning } = s.cloning;
-      return { statuses, syncing, syncError, cloning };
-    }),
+    refreshStatus: async (spacePath) => {
+      const version = (refreshVersions[spacePath] ?? 0) + 1;
+      refreshVersions[spacePath] = version;
+      try {
+        const status = await getGitStatus(spacePath);
+        if (refreshVersions[spacePath] !== version) return;
+        set((s) => ({
+          statuses: { ...s.statuses, [spacePath]: status },
+        }));
+      } catch (err) {
+        // Space may not have git initialized yet — leave previous status alone
+        console.debug("git_status failed for", spacePath, err);
+      }
+    },
 
-  setSyncing: (spacePath, syncing) =>
-    set((s) => {
-      const next = { ...s.syncing };
-      if (syncing) next[spacePath] = true;
-      else delete next[spacePath];
-      return { syncing: next };
-    }),
+    clear: (spacePath) =>
+      set((s) => {
+        delete refreshVersions[spacePath];
+        const { [spacePath]: _rmStatus, ...statuses } = s.statuses;
+        const { [spacePath]: _rmSync, ...syncing } = s.syncing;
+        const { [spacePath]: _rmError, ...syncError } = s.syncError;
+        const { [spacePath]: _rmClone, ...cloning } = s.cloning;
+        return { statuses, syncing, syncError, cloning };
+      }),
 
-  setSyncError: (spacePath, error) =>
-    set((s) => {
-      const next = { ...s.syncError };
-      if (error) next[spacePath] = error;
-      else delete next[spacePath];
-      return { syncError: next };
-    }),
+    setSyncing: (spacePath, syncing) =>
+      set((s) => {
+        const next = { ...s.syncing };
+        if (syncing) next[spacePath] = true;
+        else delete next[spacePath];
+        return { syncing: next };
+      }),
 
-  setCloning: (spacePath, progress) =>
-    set((s) => {
-      const next = { ...s.cloning };
-      if (progress) next[spacePath] = progress;
-      else delete next[spacePath];
-      return { cloning: next };
-    }),
-}));
+    setSyncError: (spacePath, error) =>
+      set((s) => {
+        const next = { ...s.syncError };
+        if (error) next[spacePath] = error;
+        else delete next[spacePath];
+        return { syncError: next };
+      }),
+
+    setCloning: (spacePath, progress) =>
+      set((s) => {
+        const next = { ...s.cloning };
+        if (progress) next[spacePath] = progress;
+        else delete next[spacePath];
+        return { cloning: next };
+      }),
+  };
+});
 
 /** Convenience derived selectors. */
 export type GitIndicator =
@@ -98,6 +108,13 @@ export type GitIndicator =
   | "conflict"
   | "error"
   | "cloning";
+
+export type FileChangeIndicator =
+  | { kind: "clean" }
+  | { kind: "dirty"; reason: "git_dirty" | "pending_write" }
+  | { kind: "syncing" }
+  | { kind: "conflict" }
+  | { kind: "error"; message: string };
 
 export function selectIndicator(
   state: GitState,
@@ -120,11 +137,21 @@ export function selectFileIndicator(
   spacePath: string,
   filePath: string,
 ): "clean" | "dirty" | "conflict" | "syncing" {
+  const indicator = selectFileChangeIndicator(state, spacePath, filePath);
+  return indicator.kind === "error" ? "clean" : indicator.kind;
+}
+
+export function selectFileChangeIndicator(
+  state: GitState,
+  spacePath: string,
+  filePath: string,
+  pendingWrite = false,
+): FileChangeIndicator {
   const status = state.statuses[spacePath];
-  if (!status) return "clean";
-  const file = status.files.find((f) => f.path === filePath);
-  if (!file) return "clean";
-  if (file.state === "conflict") return "conflict";
-  if (state.syncing[spacePath]) return "syncing";
-  return "dirty";
+  const file = status?.files.find((f) => f.path === filePath);
+  if (file?.state === "conflict") return { kind: "conflict" };
+  if (file) return { kind: "dirty", reason: "git_dirty" };
+  if (pendingWrite) return { kind: "dirty", reason: "pending_write" };
+  if (state.syncing[spacePath]) return { kind: "syncing" };
+  return { kind: "clean" };
 }

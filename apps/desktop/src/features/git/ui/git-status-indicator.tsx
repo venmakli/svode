@@ -1,9 +1,10 @@
 import { RefreshCw, AlertTriangle, X } from "lucide-react";
 import {
-  selectFileIndicator,
+  selectFileChangeIndicator,
   selectIndicator,
   useGitStore,
   type GitIndicator,
+  type FileChangeIndicator,
 } from "../model";
 
 interface SpaceIndicatorProps {
@@ -22,23 +23,28 @@ export function GitIndicatorIcon({ spacePath }: SpaceIndicatorProps) {
 interface FileIndicatorProps {
   spacePath: string;
   filePath: string;
+  pendingWrite?: boolean;
 }
 
 export function FileGitIndicatorIcon({
   spacePath,
   filePath,
+  pendingWrite = false,
 }: FileIndicatorProps) {
-  const state = useGitStore((s) => selectFileIndicator(s, spacePath, filePath));
-  if (state === "clean") return null;
+  const state = useGitStore((s) =>
+    selectFileChangeIndicator(s, spacePath, filePath, pendingWrite),
+  );
+  if (state.kind === "clean") return null;
   return <IndicatorIcon state={state} />;
 }
 
 function IndicatorIcon({
   state,
 }: {
-  state: GitIndicator | "dirty" | "syncing" | "conflict";
+  state: GitIndicator | FileChangeIndicator;
 }) {
-  switch (state) {
+  const kind = typeof state === "string" ? state : state.kind;
+  switch (kind) {
     case "dirty":
       return (
         <span

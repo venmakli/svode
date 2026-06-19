@@ -1,19 +1,20 @@
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { useEditorStore } from "@/features/editor/model";
 import { useGitStore } from "../model";
-import type { SyncResult, GitStatus } from "../model";
-import type { SpaceConfig } from "@/features/space/model";
+import {
+  commitGitAll,
+  commitGitFile,
+  syncGit,
+} from "@/platform/git/git-api";
+import { getSpaceConfig } from "@/platform/space/space-api";
 
 /**
  * Read the per-space `git.autoSync` setting (default: false).
  */
-async function isAutoSyncEnabled(spacePath: string): Promise<boolean> {
+export async function isAutoSyncEnabled(spacePath: string): Promise<boolean> {
   try {
-    const cfg = await invoke<SpaceConfig>("get_space_config", {
-      spacePath,
-    });
+    const cfg = await getSpaceConfig(spacePath);
     return cfg.git?.autoSync === true;
   } catch {
     return false;
@@ -37,7 +38,7 @@ export async function syncSpace(spacePath: string): Promise<void> {
   git.setSyncing(spacePath, true);
   git.setSyncError(spacePath, null);
   try {
-    const result = await invoke<SyncResult>("git_sync", { spacePath });
+    const result = await syncGit(spacePath);
     switch (result.type) {
       case "Success":
         // Refresh status to clear any local indicators (file `↻`).
@@ -79,8 +80,8 @@ export async function commitFileAndMaybeSync(
   projectPath?: string,
 ): Promise<void> {
   try {
-    const status = await invoke<GitStatus>("git_commit_file", {
-      projectPath: projectPath ?? null,
+    const status = await commitGitFile({
+      projectPath,
       spacePath,
       filePath,
     });
@@ -111,8 +112,8 @@ export async function commitAllSpace(
     useGitStore.getState().statuses[spacePath]?.files.map((file) => file.path) ??
     [];
   try {
-    const status = await invoke<GitStatus>("git_commit_all", {
-      projectPath: projectPath ?? null,
+    const status = await commitGitAll({
+      projectPath,
       spacePath,
     });
     useGitStore.getState().applyStatus(spacePath, status);
@@ -140,7 +141,7 @@ export async function syncOnOpen(spacePath: string): Promise<void> {
   // re-evaluate the state rather than show the last failure forever.
   git.setSyncError(spacePath, null);
   try {
-    const result = await invoke<SyncResult>("git_sync", { spacePath });
+    const result = await syncGit(spacePath);
     if (result.type === "Success") {
       await git.refreshStatus(spacePath);
     }

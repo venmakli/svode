@@ -106,7 +106,7 @@ export function useFileWatcher({
           })
           .catch((err) => console.error("Failed to reload document:", err));
       } else {
-        // Document not currently open — mark as AI modified
+        // Document not currently open — mark cache stale until it is opened.
         markAiModified(changedPath);
       }
     }).then((unlisten) => unlisteners.push(unlisten));
@@ -147,7 +147,7 @@ export function useFileWatcher({
     onEntryReloaded,
   ]);
 
-  // Clear AI modified flag when opening a document
+  // Clear external-edit reload flag when opening a document.
   useEffect(() => {
     if (activeDocument) {
       clearAiModified(activeDocument);

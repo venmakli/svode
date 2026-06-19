@@ -158,7 +158,7 @@ pub async fn set_remote(cli: &GitCli, space_dir: &Path, url: &str) -> Result<(),
     Ok(())
 }
 
-/// Push current branch silently. Used for app-focus auto-push of unpushed commits.
+/// Push current branch silently. Used by explicit publish and policy-gated focus push.
 pub async fn push(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
     let out = cli.exec(space_dir, &["push"]).await?;
     if out.exit_code != 0 {

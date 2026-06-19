@@ -29,6 +29,8 @@ export interface SpaceConfig {
 
 export interface GitSpaceConfig {
   autoSync?: boolean;
+  autoCommitStructural?: boolean;
+  autoCommitSystem?: boolean;
 }
 
 export type AssetsStrategy = "local" | "in-git" | "lfs-remote" | "lfs-s3";

@@ -40,6 +40,47 @@ pub(crate) fn require_cli(state: &GitState) -> Result<GitCli, AppError> {
     state.cli.clone().ok_or(AppError::GitNotFound)
 }
 
+async fn stage_pending_paths(cli: &GitCli, repo: &Path, paths: &[PathBuf]) {
+    for abs_path in paths {
+        let rel = abs_path
+            .strip_prefix(repo)
+            .unwrap_or(abs_path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let _ = super::ops::add(cli, repo, &rel).await;
+    }
+}
+
+pub(crate) fn auto_commit_structural_enabled(space_path: &Path) -> bool {
+    crate::space::config::read_space_config(space_path)
+        .ok()
+        .and_then(|config| config.git)
+        .and_then(|git| git.auto_commit_structural)
+        .unwrap_or(false)
+}
+
+pub(crate) async fn init_repo_with_policy(cli: &GitCli, path: &Path) -> Result<(), AppError> {
+    let out = cli.exec(path, &["init"]).await?;
+    if out.exit_code != 0 {
+        return Err(AppError::GitCommandFailed(format!(
+            "git init failed: {}",
+            out.stderr
+        )));
+    }
+
+    cli.exec(path, &["config", "core.quotePath", "false"])
+        .await?;
+    super::ops::ensure_svode_gitignore(path)?;
+
+    if auto_commit_structural_enabled(path) {
+        super::ops::add_all(cli, path).await?;
+        let _ = super::ops::commit(cli, path, "Scaffold .svode").await?;
+    }
+
+    tracing::info!("Initialized git repo at {}", path.display());
+    Ok(())
+}
+
 pub struct GitState {
     pub(crate) cli: Option<GitCli>,
     locks: tokio::sync::Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
@@ -98,7 +139,7 @@ pub async fn git_init_space(
     let path = PathBuf::from(&space_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
-    super::ops::init(state.cli()?, &path).await
+    init_repo_with_policy(state.cli()?, &path).await
 }
 
 #[tauri::command]
@@ -261,18 +302,19 @@ pub async fn git_commit_file(
         // commit is isolated from user content.
         if file_path == ".svode/AGENTS.md" {
             autocommit
-                .commit_system_now(project, path.clone(), SystemCommitKind::AgentInstructions)
+                .commit_system_manual_now(
+                    project,
+                    path.clone(),
+                    SystemCommitKind::AgentInstructions,
+                )
                 .await?;
             return super::ops::status(cli, &path).await;
         }
-        // Drain pending structural batches for every space that targets this
-        // repo — otherwise `git add .` of the user commit sweeps sibling
-        // spaces' structural changes under the user message (happens for
-        // inline-collocated spaces sharing the root repo).
         let (_, target_repo) = super::ops::resolve_target_repo(cli, &project, &path).await?;
-        autocommit.flush_target_repo(&target_repo).await;
+        let pending_paths = autocommit.take_pending_paths_for_space(&project, &path);
         let lock = state.get_lock(&target_repo).await;
         let _guard = lock.lock().await;
+        stage_pending_paths(cli, &target_repo, &pending_paths).await;
         super::ops::commit_file_routed(cli, &project, &path, &file_path).await?;
         // Return status of the space itself
         super::ops::status(cli, &path).await
@@ -297,7 +339,7 @@ pub async fn git_commit_all(
     if let Some(proj_path) = project_path.filter(|p| !p.is_empty()) {
         let project = PathBuf::from(&proj_path);
         let (_, target_repo) = super::ops::resolve_target_repo(cli, &project, &path).await?;
-        autocommit.flush_target_repo(&target_repo).await;
+        autocommit.drop_pending_paths_for_space(&project, &path);
         let lock = state.get_lock(&target_repo).await;
         let _guard = lock.lock().await;
         super::ops::commit_all_routed(cli, &project, &path).await?;

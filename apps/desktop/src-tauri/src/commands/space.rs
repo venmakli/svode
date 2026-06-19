@@ -6,7 +6,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::error::AppError;
 use crate::git::autocommit::{AutocommitService, SystemCommitKind};
-use crate::git::commands::{GitState, require_cli};
+use crate::git::commands::{
+    GitState, auto_commit_structural_enabled, init_repo_with_policy, require_cli,
+};
 use crate::git::ops;
 use crate::index::IndexState;
 use crate::space::{config, project, registry, settings, symlinks, types::*};
@@ -165,13 +167,10 @@ pub async fn create_project(
         sp_path,
     )?;
 
-    // `ops::init` stages everything (including the fresh `.svode/`) and
-    // makes the initial `Scaffold .svode` commit — no follow-up commit
-    // needed here.
     if let Some(cli) = &git_state.cli {
         let lock = git_state.get_lock(sp_path).await;
         let _guard = lock.lock().await;
-        if let Err(e) = crate::git::ops::init(cli, sp_path).await {
+        if let Err(e) = init_repo_with_policy(cli, sp_path).await {
             tracing::warn!("git init failed for new project: {e}");
         }
     }
@@ -219,13 +218,11 @@ pub async fn open_project_folder(
         cfg = config::read_space_config(sp_path)?;
     }
 
-    // Auto git init if no .git/ exists. `ops::init` stages everything
-    // (including the fresh .svode/) under a `Scaffold .svode` commit.
     if !had_git_before {
         if let Some(cli) = &git_state.cli {
             let lock = git_state.get_lock(sp_path).await;
             let _guard = lock.lock().await;
-            if let Err(e) = crate::git::ops::init(cli, sp_path).await {
+            if let Err(e) = init_repo_with_policy(cli, sp_path).await {
                 tracing::warn!("git init failed for opened folder: {e}");
             }
         }
@@ -431,7 +428,6 @@ pub async fn reorder_spaces(
 pub async fn create_space(
     app: AppHandle,
     git_state: State<'_, GitState>,
-    autocommit: State<'_, Arc<AutocommitService>>,
     index_state: State<'_, IndexState>,
     parent_path: String,
     name: String,
@@ -455,15 +451,13 @@ pub async fn create_space(
     match git_type {
         SpaceGitType::Inline => {
             ops::ensure_inline_gitignore(parent)?;
-            // Drain pending structural batches in the root repo so they
-            // commit under their own per-space messages instead of being
-            // swept into `Add inline space ...` by `add_all`.
-            autocommit.flush_target_repo(parent).await;
-            if let Some(cli) = &git_state.cli {
-                let lock = git_state.get_lock(parent).await;
-                let _guard = lock.lock().await;
-                ops::add_all(cli, parent).await?;
-                let _ = ops::commit(cli, parent, &root_message).await?;
+            if auto_commit_structural_enabled(parent) {
+                if let Some(cli) = &git_state.cli {
+                    let lock = git_state.get_lock(parent).await;
+                    let _guard = lock.lock().await;
+                    ops::add_all(cli, parent).await?;
+                    let _ = ops::commit(cli, parent, &root_message).await?;
+                }
             }
         }
         SpaceGitType::Independent => {
@@ -471,9 +465,7 @@ pub async fn create_space(
             {
                 let lock = git_state.get_lock(&space_dir).await;
                 let _guard = lock.lock().await;
-                // ops::init scaffolds the initial commit as `Scaffold .svode`
-                // inside the child repo (auto-sync OFF — the repo has no remote).
-                ops::init(&cli, &space_dir).await?;
+                init_repo_with_policy(&cli, &space_dir).await?;
                 if let Err(e) =
                     crate::identity::scaffold_space_git_identity(&cli, &space_dir, parent).await
                 {
@@ -483,8 +475,7 @@ pub async fn create_space(
                 }
             }
             ops::add_independent_gitignore(parent, &folder_name)?;
-            autocommit.flush_target_repo(parent).await;
-            {
+            if auto_commit_structural_enabled(parent) {
                 let root_lock = git_state.get_lock(parent).await;
                 let _root_guard = root_lock.lock().await;
                 ops::add_all(&cli, parent).await?;
@@ -496,7 +487,9 @@ pub async fn create_space(
             {
                 let lock = git_state.get_lock(&space_dir).await;
                 let _guard = lock.lock().await;
-                // Scaffold commit in the child (auto-sync OFF).
+                // Git cannot add a submodule whose child repository has no
+                // checked-out commit. The root .gitmodules/gitlink commit
+                // below still follows `autoCommitStructural`.
                 ops::init(&cli, &space_dir).await?;
                 if let Err(e) =
                     crate::identity::scaffold_space_git_identity(&cli, &space_dir, parent).await
@@ -506,7 +499,6 @@ pub async fn create_space(
                     );
                 }
             }
-            autocommit.flush_target_repo(parent).await;
             {
                 let parent_lock = git_state.get_lock(parent).await;
                 let _parent_guard = parent_lock.lock().await;
@@ -519,8 +511,10 @@ pub async fn create_space(
                         out.stderr
                     )));
                 }
-                ops::add_all(&cli, parent).await?;
-                let _ = ops::commit(&cli, parent, &root_message).await?;
+                if auto_commit_structural_enabled(parent) {
+                    ops::add_all(&cli, parent).await?;
+                    let _ = ops::commit(&cli, parent, &root_message).await?;
+                }
             }
         }
     }
@@ -537,7 +531,6 @@ pub async fn create_space(
 pub async fn delete_space(
     app: AppHandle,
     git_state: State<'_, GitState>,
-    autocommit: State<'_, Arc<AutocommitService>>,
     index_state: State<'_, IndexState>,
     parent_path: String,
     space_id: String,
@@ -580,15 +573,13 @@ pub async fn delete_space(
     };
     let message = format!("Remove {} space {}", type_label, folder_name);
 
-    if let Some(cli) = &git_state.cli {
-        // Drain pending structural batches in the root repo so they commit
-        // under their own per-space messages instead of being swept into
-        // `Remove ... space ...` by `add_all`.
-        autocommit.flush_target_repo(parent).await;
-        let lock = git_state.get_lock(parent).await;
-        let _guard = lock.lock().await;
-        ops::add_all(cli, parent).await?;
-        let _ = ops::commit(cli, parent, &message).await?;
+    if auto_commit_structural_enabled(parent) {
+        if let Some(cli) = &git_state.cli {
+            let lock = git_state.get_lock(parent).await;
+            let _guard = lock.lock().await;
+            ops::add_all(cli, parent).await?;
+            let _ = ops::commit(cli, parent, &message).await?;
+        }
     }
 
     index_state.on_space_removed(parent, &space_id).await;

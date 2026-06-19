@@ -4,7 +4,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::async_runtime::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::commands::GitState;
@@ -12,10 +11,18 @@ use super::ops;
 use crate::AppError;
 use crate::space::types::SpaceGitType;
 
-const DEBOUNCE_MS: u64 = 500;
 const FLUSH_ALL_TIMEOUT_SECS: u64 = 10;
 const EVENT_COMMITTED: &str = "git:committed";
 
+#[derive(Debug, Clone, Copy)]
+enum CommitIntent {
+    ContentWorkspace,
+    StructuralLifecycle,
+    SystemConfig,
+    ManualExplicit,
+}
+
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum StructuralOp {
     Create(String),
@@ -79,12 +86,7 @@ struct CommittedPayload {
 }
 
 struct PendingBatch {
-    project_path: PathBuf,
-    git_type: Option<SpaceGitType>,
-    target_repo: Option<PathBuf>,
-    ops: Vec<StructuralOp>,
     paths: Vec<PathBuf>,
-    timer: Option<JoinHandle<()>>,
 }
 
 pub struct AutocommitService {
@@ -104,11 +106,13 @@ impl AutocommitService {
         }
     }
 
-    /// Schedule a path-scoped autocommit for a structural change.
+    /// Register path-scoped content/workspace changes for the next explicit
+    /// manual commit. Stage 6 keeps these dirty by default: no debounce timer
+    /// and no background commit are created from this path.
     ///
     /// The op is pushed into `pending` synchronously, before returning — this
-    /// way any `flush_*` invoked afterwards sees the effect immediately. The
-    /// debounce timer and target-repo resolution run in background tasks.
+    /// way any explicit manual commit invoked afterwards sees the effect
+    /// immediately.
     pub fn schedule_structural_paths(
         &self,
         project_path: PathBuf,
@@ -116,107 +120,62 @@ impl AutocommitService {
         op: StructuralOp,
         paths: Vec<PathBuf>,
     ) {
-        let needs_resolve = {
-            let mut map = self.pending.lock().unwrap();
-            let entry = map
-                .entry(space_path.clone())
-                .or_insert_with(|| PendingBatch {
-                    project_path: project_path.clone(),
-                    git_type: None,
-                    target_repo: None,
-                    ops: Vec::new(),
-                    paths: Vec::new(),
-                    timer: None,
-                });
-            // Project path is stable for a given space, keep defensively synced.
-            entry.project_path = project_path.clone();
-            entry.ops.push(op);
-            entry.paths.extend(paths);
-
-            if let Some(handle) = entry.timer.take() {
-                handle.abort();
-            }
-
-            let app_fire = self.app.clone();
-            let pending_fire = self.pending.clone();
-            let key_fire = space_path.clone();
-            let handle = tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(DEBOUNCE_MS)).await;
-                fire_batch(&app_fire, pending_fire, &key_fire).await;
-            });
-            entry.timer = Some(handle);
-
-            entry.target_repo.is_none()
-        };
-
-        if needs_resolve {
-            // Background resolution of target_repo — cache-only side-effect,
-            // `fire_batch` will resolve on its own if this hasn't landed yet.
-            let app = self.app.clone();
-            let pending = self.pending.clone();
-            let proj = project_path;
-            let sp = space_path;
-            tauri::async_runtime::spawn(async move {
-                if let Some((git_type, target_repo)) = resolve_target_repo(&app, &proj, &sp).await {
-                    let mut map = pending.lock().unwrap();
-                    if let Some(batch) = map.get_mut(&sp) {
-                        if batch.git_type.is_none() {
-                            batch.git_type = Some(git_type);
-                        }
-                        if batch.target_repo.is_none() {
-                            batch.target_repo = Some(target_repo);
-                        }
-                    }
-                }
-            });
+        if !background_commit_allowed(&space_path, CommitIntent::ContentWorkspace) {
+            self.record_pending_paths(project_path, space_path, Some(op), paths);
         }
     }
 
-    /// Drain all pending structural batches whose target repo equals `repo`,
-    /// each as its own commit keyed on its space_path. Called before any user
-    /// commit so structural attribution doesn't leak into the user message —
-    /// in particular for inline-collocated spaces that share the root repo.
-    pub async fn flush_target_repo(&self, repo: &Path) {
-        // Resolve any unresolved batches so we know their target repo.
-        let unresolved: Vec<(PathBuf, PathBuf)> = {
-            let map = self.pending.lock().unwrap();
-            map.iter()
-                .filter(|(_, b)| b.target_repo.is_none())
-                .map(|(sp, b)| (sp.clone(), b.project_path.clone()))
-                .collect()
-        };
-        for (sp, proj) in unresolved {
-            if let Some((git_type, target_repo)) = resolve_target_repo(&self.app, &proj, &sp).await
-            {
-                let mut map = self.pending.lock().unwrap();
-                if let Some(batch) = map.get_mut(&sp) {
-                    batch.git_type = Some(git_type);
-                    batch.target_repo = Some(target_repo);
-                }
+    fn record_pending_paths(
+        &self,
+        _project_path: PathBuf,
+        space_path: PathBuf,
+        op: Option<StructuralOp>,
+        paths: Vec<PathBuf>,
+    ) {
+        let mut map = self.pending.lock().unwrap();
+        let entry = map
+            .entry(space_path.clone())
+            .or_insert_with(|| PendingBatch { paths: Vec::new() });
+        let _ = op;
+        entry.paths.extend(paths.into_iter().map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                space_path.join(path)
             }
-        }
+        }));
+    }
 
-        // Collect matching keys and abort their debounce timers.
-        let keys: Vec<PathBuf> = {
+    /// Drain pending content/schema paths for one space so an explicit manual
+    /// commit can stage them together with the user's active file. This is
+    /// keyed by `space_path`, not target repo, to avoid draining sibling inline
+    /// spaces that share the same root repository.
+    pub fn take_pending_paths_for_space(
+        &self,
+        _project_path: &Path,
+        space_path: &Path,
+    ) -> Vec<PathBuf> {
+        let batch = {
             let mut map = self.pending.lock().unwrap();
-            let matching: Vec<PathBuf> = map
-                .iter()
-                .filter(|(_, b)| b.target_repo.as_deref() == Some(repo))
-                .map(|(sp, _)| sp.clone())
-                .collect();
-            for key in &matching {
-                if let Some(batch) = map.get_mut(key) {
-                    if let Some(h) = batch.timer.take() {
-                        h.abort();
-                    }
-                }
-            }
-            matching
+            map.remove(space_path)
+        };
+        let Some(batch) = batch else {
+            return Vec::new();
         };
 
-        for key in keys {
-            fire_batch(&self.app, self.pending.clone(), &key).await;
+        let mut unique = Vec::new();
+        for path in batch.paths {
+            if !unique.iter().any(|existing: &PathBuf| existing == &path) {
+                unique.push(path);
+            }
         }
+        unique
+    }
+
+    /// Drop pending content/schema bookkeeping for one space before a manual
+    /// Save All. The commit itself stages the whole routed space/repo.
+    pub fn drop_pending_paths_for_space(&self, project_path: &Path, space_path: &Path) {
+        let _ = self.take_pending_paths_for_space(project_path, space_path);
     }
 
     /// Commit a system-level change (config / AI settings / CLI integration)
@@ -244,9 +203,32 @@ impl AutocommitService {
             SpaceGitType::Independent | SpaceGitType::Submodule => space_path.clone(),
         };
 
-        // Drain pending structural of the same target repo first
-        // so our config add doesn't sweep their changes under our message.
-        self.flush_target_repo(&target_repo).await;
+        if !background_commit_allowed(&target_repo, CommitIntent::SystemConfig) {
+            return Ok(());
+        }
+
+        do_commit_system(&self.app, &project_path, &space_path, git_type, kind).await
+    }
+
+    /// Commit a system-level change from an explicit user save path. Manual
+    /// entrypoints are intentionally not gated by background autocommit flags.
+    pub async fn commit_system_manual_now(
+        &self,
+        project_path: PathBuf,
+        space_path: PathBuf,
+        kind: SystemCommitKind,
+    ) -> Result<(), AppError> {
+        if !space_path.exists() {
+            return Ok(());
+        }
+
+        let git_state = self.app.state::<GitState>();
+        let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
+        let git_type = ops::detect_space_git_type(&cli, &project_path, &space_path).await?;
+
+        if !background_commit_allowed(&space_path, CommitIntent::ManualExplicit) {
+            return Ok(());
+        }
 
         do_commit_system(&self.app, &project_path, &space_path, git_type, kind).await
     }
@@ -259,31 +241,16 @@ impl AutocommitService {
         project_path: PathBuf,
         space_path: PathBuf,
         paths: Vec<PathBuf>,
-        message: String,
+        _message: String,
     ) -> Result<(), AppError> {
         if paths.is_empty() || !space_path.exists() {
             return Ok(());
         }
 
-        let git_state = self.app.state::<GitState>();
-        let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
-        let git_type = ops::detect_space_git_type(&cli, &project_path, &space_path).await?;
-        let target_repo: PathBuf = match git_type {
-            SpaceGitType::Inline => project_path.clone(),
-            SpaceGitType::Independent | SpaceGitType::Submodule => space_path.clone(),
-        };
-
-        self.flush_target_repo(&target_repo).await;
-
-        do_commit_paths(
-            &self.app,
-            &project_path,
-            &space_path,
-            git_type,
-            paths,
-            &message,
-        )
-        .await
+        if !background_commit_allowed(&space_path, CommitIntent::ContentWorkspace) {
+            self.record_pending_paths(project_path, space_path, None, paths);
+        }
+        Ok(())
     }
 
     /// Commit the scaffolded `.svode/` directory.
@@ -310,11 +277,29 @@ impl AutocommitService {
         project_path: PathBuf,
         space_path: PathBuf,
     ) -> Result<(), AppError> {
-        self.commit_paths_now(
-            project_path,
-            space_path.clone(),
+        if !space_path.exists() {
+            return Ok(());
+        }
+
+        let git_state = self.app.state::<GitState>();
+        let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
+        let git_type = ops::detect_space_git_type(&cli, &project_path, &space_path).await?;
+        let target_repo: PathBuf = match git_type {
+            SpaceGitType::Inline => project_path.clone(),
+            SpaceGitType::Independent | SpaceGitType::Submodule => space_path.clone(),
+        };
+
+        if !background_commit_allowed(&target_repo, CommitIntent::StructuralLifecycle) {
+            return Ok(());
+        }
+
+        do_commit_paths(
+            &self.app,
+            &project_path,
+            &space_path,
+            git_type,
             vec![space_path.join("README.md")],
-            "Scaffold README".to_string(),
+            "Scaffold README",
         )
         .await
     }
@@ -328,15 +313,7 @@ impl AutocommitService {
                 map.keys().cloned().collect()
             };
             for key in keys {
-                {
-                    let mut map = self.pending.lock().unwrap();
-                    if let Some(batch) = map.get_mut(&key) {
-                        if let Some(h) = batch.timer.take() {
-                            h.abort();
-                        }
-                    }
-                }
-                fire_batch(&self.app, self.pending.clone(), &key).await;
+                let _ = self.take_pending_paths_for_space(Path::new(""), &key);
             }
         };
 
@@ -348,98 +325,6 @@ impl AutocommitService {
             );
         }
     }
-}
-
-/// Determine the commit target repo and git type for this (project, space).
-async fn resolve_target_repo(
-    app: &AppHandle,
-    project_path: &Path,
-    space_path: &Path,
-) -> Option<(SpaceGitType, PathBuf)> {
-    let git_state = app.state::<GitState>();
-    let cli = git_state.cli.clone()?;
-    match ops::resolve_target_repo(&cli, project_path, space_path).await {
-        Ok(pair) => Some(pair),
-        Err(e) => {
-            tracing::warn!(
-                "autocommit: resolve_target_repo failed for {}: {}",
-                space_path.display(),
-                e
-            );
-            None
-        }
-    }
-}
-
-/// Drain the pending batch for `space_path` and commit.
-async fn fire_batch(
-    app: &AppHandle,
-    pending: Arc<Mutex<HashMap<PathBuf, PendingBatch>>>,
-    space_path: &Path,
-) {
-    let batch_opt = {
-        let mut map = pending.lock().unwrap();
-        map.remove(space_path)
-    };
-    let Some(batch) = batch_opt else { return };
-    if batch.ops.is_empty() {
-        return;
-    }
-
-    if !space_path.exists() {
-        tracing::warn!(
-            "autocommit: space path missing, skipping commit: {}",
-            space_path.display()
-        );
-        return;
-    }
-
-    // Resolve lazily if the background resolve task hasn't landed yet.
-    let (git_type, target_repo) = match (batch.git_type, batch.target_repo.clone()) {
-        (Some(gt), Some(tr)) => (gt, tr),
-        _ => match resolve_target_repo(app, &batch.project_path, space_path).await {
-            Some(pair) => pair,
-            None => return,
-        },
-    };
-
-    let message = aggregate_message(&batch.ops);
-
-    if let Err(e) = run_autocommit(
-        app,
-        &batch.project_path,
-        space_path,
-        git_type,
-        &target_repo,
-        &message,
-        batch.paths,
-    )
-    .await
-    {
-        tracing::warn!("autocommit failed for {}: {}", space_path.display(), e);
-    }
-}
-
-/// Run a routed, path-scoped commit under the target repo's lock and emit event.
-async fn run_autocommit(
-    app: &AppHandle,
-    project_path: &Path,
-    space_path: &Path,
-    git_type: SpaceGitType,
-    _target_repo: &Path,
-    message: &str,
-    paths: Vec<PathBuf>,
-) -> Result<(), AppError> {
-    if paths.is_empty() {
-        tracing::warn!(
-            "autocommit: structural batch for {} has no touched paths, skipping",
-            space_path.display()
-        );
-        return Ok(());
-    }
-
-    do_commit_paths(app, project_path, space_path, git_type, paths, message).await?;
-    Ok(())
 }
 
 /// Stage the paths for a system-kind commit, relative to the space root, and
@@ -641,6 +526,10 @@ async fn do_commit_scaffold(
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
     let message = "Scaffold .svode";
+    let target_repo = match git_type {
+        SpaceGitType::Inline => project_path,
+        SpaceGitType::Independent | SpaceGitType::Submodule => space_path,
+    };
 
     match git_type {
         SpaceGitType::Inline => {
@@ -653,6 +542,9 @@ async fn do_commit_scaffold(
                 ops::ensure_inline_gitignore(project_path)?;
                 format!("{}/.svode", space_folder)
             };
+            if !background_commit_allowed(target_repo, CommitIntent::StructuralLifecycle) {
+                return Ok(());
+            }
             ops::add(&cli, project_path, ".gitignore").await?;
             ops::add(&cli, project_path, &rel).await?;
             if include_readme {
@@ -674,6 +566,9 @@ async fn do_commit_scaffold(
             let lock = git_state.get_lock(space_path).await;
             let _guard = lock.lock().await;
             ops::ensure_svode_gitignore(space_path)?;
+            if !background_commit_allowed(target_repo, CommitIntent::StructuralLifecycle) {
+                return Ok(());
+            }
             ops::add(&cli, space_path, ".gitignore").await?;
             ops::add(&cli, space_path, ".svode").await?;
             if include_readme && space_path.join("README.md").exists() {
@@ -688,6 +583,9 @@ async fn do_commit_scaffold(
             let lock = git_state.get_lock(space_path).await;
             let _guard = lock.lock().await;
             ops::ensure_svode_gitignore(space_path)?;
+            if !background_commit_allowed(target_repo, CommitIntent::StructuralLifecycle) {
+                return Ok(());
+            }
             ops::add(&cli, space_path, ".gitignore").await?;
             ops::add(&cli, space_path, ".svode").await?;
             if include_readme && space_path.join("README.md").exists() {
@@ -726,7 +624,25 @@ fn is_auto_sync_enabled(repo_path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn background_commit_allowed(config_path: &Path, intent: CommitIntent) -> bool {
+    match intent {
+        CommitIntent::ContentWorkspace => false,
+        CommitIntent::ManualExplicit => true,
+        CommitIntent::StructuralLifecycle => crate::space::config::read_space_config(config_path)
+            .ok()
+            .and_then(|c| c.git)
+            .and_then(|g| g.auto_commit_structural)
+            .unwrap_or(false),
+        CommitIntent::SystemConfig => crate::space::config::read_space_config(config_path)
+            .ok()
+            .and_then(|c| c.git)
+            .and_then(|g| g.auto_commit_system)
+            .unwrap_or(false),
+    }
+}
+
 /// Aggregate multiple structural ops into a single commit message.
+#[allow(dead_code)]
 fn aggregate_message(ops: &[StructuralOp]) -> String {
     if ops.is_empty() {
         return "Update space".to_string();

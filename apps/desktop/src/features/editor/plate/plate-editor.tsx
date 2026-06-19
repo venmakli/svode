@@ -360,7 +360,7 @@ export function PlateDocumentEditor({
     });
 
     // Use cached Plate value if available and file wasn't modified externally
-    // (visual aiModified flag) or invalidated by a prior backlinks update (staleCache).
+    // or invalidated by a prior backlinks update (staleCache).
     const cached = getCachedDocumentValue(spacePath, currentDocument);
     const editorState = useEditorStore.getState();
     const wasExternallyModified =
@@ -576,9 +576,8 @@ export function PlateDocumentEditor({
     spacePath,
   ]);
 
-  // ⌘S — cancel debounce, materialize (rename + backlinks + structural
-  // schedule on the backend), then commit. `flush_target_repo` inside
-  // git_commit_file drains the structural batch → Rename commit before user.
+  // ⌘S — cancel debounce, materialize rename/backlink writes, then stage
+  // directly related pending paths into this explicit save commit.
   const handleSave = useCallback(async () => {
     if (!editor || !currentDocument || !spacePath) return;
 
@@ -607,8 +606,7 @@ export function PlateDocumentEditor({
       }
 
       // Backlinks files: invalidate cache so next open re-reads from disk,
-      // and suppress the watcher so it doesn't re-mark them as aiModified
-      // (no spurious blue dot — the user initiated this rename).
+      // and suppress watcher reload handling for Svode-initiated rewrites.
       handleModifiedSources(result);
 
       // Auto-commit the saved file. During mid-merge, route through

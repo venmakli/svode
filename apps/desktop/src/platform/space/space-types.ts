@@ -18,6 +18,8 @@ export interface SpaceInfoDto {
 
 export interface GitSpaceConfigDto {
   autoSync?: boolean;
+  autoCommitStructural?: boolean;
+  autoCommitSystem?: boolean;
 }
 
 export type AssetsStrategyDto = "local" | "in-git" | "lfs-remote" | "lfs-s3";

@@ -64,7 +64,6 @@ import { TreeDropIndicator } from "./tree-drop-indicator";
 import { isDescendantOf } from "../lib/tree-dnd-utilities";
 import { treeNodeHasChildren, treeParentKeyForNode } from "../lib/tree-cache";
 import { FileGitIndicatorIcon } from "@/features/git";
-import { selectFileIndicator, useGitStore } from "@/features/git";
 
 interface FileTreeItemProps {
   node: TreeNode;
@@ -92,7 +91,7 @@ export function FileTreeItem({
   loadTreeChildren,
 }: FileTreeItemProps) {
   const { openDocument, activeDocument } = useEntrySelectionStore();
-  const { unsavedChanges, aiModified } = useEditorStore();
+  const { unsavedChanges } = useEditorStore();
   const {
     expandedPaths,
     treeParentLoading,
@@ -118,17 +117,9 @@ export function FileTreeItem({
     : false;
   const isActive = !bareFolder && activeDocument === node.path;
   const isUnsaved = !!unsavedChanges[node.path];
-  const isAiModified = !!aiModified[node.path];
-  // Conflict always wins — if the file has merge markers, we must show ⚠
-  // even if the user is mid-edit locally.
   const spaceForGit =
     spaces.find((w) => w.id === spaceId) ??
     rootSpaces.find((w) => w.id === spaceId);
-  const fileGitState = useGitStore((s) =>
-    spaceForGit ? selectFileIndicator(s, spaceForGit.path, node.path) : "clean",
-  );
-  const inConflict = fileGitState === "conflict";
-  const showDot = !inConflict && (isUnsaved || isAiModified);
 
   const expanded = expandedPaths[spaceId]?.includes(node.path) ?? false;
 
@@ -205,8 +196,7 @@ export function FileTreeItem({
           projectPath: activeRootPath,
         });
         // Backlinks files: invalidate Plate cache (markStale) + suppress
-        // watcher so it doesn't re-mark them as aiModified (no blue dot —
-        // the user just initiated this rename, no review needed).
+        // watcher reload handling for Svode-initiated rewrites.
         if (modifiedFiles.length > 0) {
           const editor = useEditorStore.getState();
           for (const f of modifiedFiles) editor.markStale(f);
@@ -479,22 +469,13 @@ export function FileTreeItem({
     <FileText className="h-4 w-4 shrink-0" />
   );
 
-  // Phase 4 model: disk = source of truth, "in-memory unsaved" no longer
-  // exists as a distinct state. Both unsaved (autosave pending or post-write
-  // pre-commit) and ai-modified render as the same grey dot the git
-  // indicator uses, so the bridge from `isUnsaved` (cleared on commit) to
-  // `fileGitState === "dirty"` (set after watcher refresh) is invisible —
-  // no more red↔grey flicker.
-  const dot = showDot ? (
-    <span
-      className={`ml-auto shrink-0 text-xs ${isAiModified ? "text-blue-500" : "text-muted-foreground"}`}
-      title={isAiModified ? "Modified externally" : "Uncommitted changes"}
-    >
-      ●
-    </span>
-  ) : space ? (
+  const dot = space ? (
     <span className="ml-auto shrink-0 flex items-center">
-      <FileGitIndicatorIcon spacePath={space.path} filePath={node.path} />
+      <FileGitIndicatorIcon
+        spacePath={space.path}
+        filePath={node.path}
+        pendingWrite={isUnsaved}
+      />
     </span>
   ) : null;
 

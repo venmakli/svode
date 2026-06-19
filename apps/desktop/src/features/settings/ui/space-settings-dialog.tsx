@@ -65,6 +65,7 @@ import type {
   FanoutPreviewEntry,
 } from "@/features/identity";
 import { IdentitySection } from "./identity-section";
+import { getGitRemote, getGitStatus } from "@/platform/git/git-api";
 import {
   checkSymlinkHealth,
   invokeSettingsCommand as invoke,
@@ -152,6 +153,8 @@ export function SpaceSettingsDialog({
   const [savedRemoteUrl, setSavedRemoteUrl] = useState("");
   const [branch, setBranch] = useState<string | null>(null);
   const [autoSync, setAutoSync] = useState(false);
+  const [autoCommitStructural, setAutoCommitStructural] = useState(false);
+  const [autoCommitSystem, setAutoCommitSystem] = useState(false);
   const [pendingRemote, setPendingRemote] = useState<string | null>(null);
 
   // Identity override
@@ -216,6 +219,8 @@ export function SpaceSettingsDialog({
         setSavedDefaultsPrompt(cfg.defaults.agent.systemPrompt ?? "");
       }
       setAutoSync(cfg.git?.autoSync === true);
+      setAutoCommitStructural(cfg.git?.autoCommitStructural === true);
+      setAutoCommitSystem(cfg.git?.autoCommitSystem === true);
       const strategy: AssetsStrategy = cfg.assets?.strategy ?? "local";
       setAssetsStrategy(strategy);
       setSavedAssetsStrategy(strategy);
@@ -324,9 +329,7 @@ export function SpaceSettingsDialog({
       setGitType(null);
     }
     try {
-      const remote = await invoke<string | null>("git_get_remote", {
-        spacePath,
-      });
+      const remote = await getGitRemote(spacePath);
       setRemoteUrl(remote ?? "");
       setSavedRemoteUrl(remote ?? "");
     } catch {
@@ -334,9 +337,7 @@ export function SpaceSettingsDialog({
       setSavedRemoteUrl("");
     }
     try {
-      const status = await invoke<{ branch: string }>("git_status", {
-        spacePath,
-      });
+      const status = await getGitStatus(spacePath);
       setBranch(status.branch && status.branch !== "HEAD" ? status.branch : null);
     } catch {
       setBranch(null);
@@ -530,6 +531,23 @@ export function SpaceSettingsDialog({
     }
   }
 
+  async function saveGitConfig(updates: NonNullable<SpaceConfig["git"]>) {
+    if (!spacePath) return false;
+    try {
+      const cfg = await invoke<SpaceConfig>("get_space_config", { spacePath });
+      await invoke("save_space_config", {
+        spacePath,
+        configData: { ...cfg, git: { ...cfg.git, ...updates } },
+        projectPath: activeRootPath,
+      });
+      return true;
+    } catch (err) {
+      console.error("Failed to save git config:", err);
+      toast.error(m.toast_error());
+      return false;
+    }
+  }
+
   function syncSpaceStore(updates: { name?: string; icon?: string; description?: string }) {
     if (isRoot) {
       useSpaceStore.setState({
@@ -697,7 +715,17 @@ export function SpaceSettingsDialog({
 
   async function handleAutoSyncChange(value: boolean) {
     setAutoSync(value);
-    await saveConfig({ git: { autoSync: value } });
+    await saveGitConfig({ autoSync: value });
+  }
+
+  async function handleAutoCommitStructuralChange(value: boolean) {
+    setAutoCommitStructural(value);
+    await saveGitConfig({ autoCommitStructural: value });
+  }
+
+  async function handleAutoCommitSystemChange(value: boolean) {
+    setAutoCommitSystem(value);
+    await saveGitConfig({ autoCommitSystem: value });
   }
 
   async function handleSaveIdentity() {
@@ -1215,6 +1243,47 @@ export function SpaceSettingsDialog({
                             </div>
                           </>
                         )}
+                        <Separator />
+                        <div className="space-y-3">
+                          <div className="space-y-1">
+                            <Label>{m.git_auto_commit_label()}</Label>
+                            <p className="text-xs text-muted-foreground">
+                              {m.git_auto_commit_manual_hint()}
+                            </p>
+                          </div>
+                          <label className="flex items-start gap-2 cursor-pointer">
+                            <Checkbox
+                              checked={autoCommitStructural}
+                              onCheckedChange={(checked) =>
+                                handleAutoCommitStructuralChange(
+                                  checked === true,
+                                )
+                              }
+                              className="mt-0.5"
+                            />
+                            <span className="text-sm">
+                              {m.git_auto_commit_structural_checkbox()}
+                              <span className="block text-xs text-muted-foreground">
+                                {m.git_auto_commit_structural_hint()}
+                              </span>
+                            </span>
+                          </label>
+                          <label className="flex items-start gap-2 cursor-pointer">
+                            <Checkbox
+                              checked={autoCommitSystem}
+                              onCheckedChange={(checked) =>
+                                handleAutoCommitSystemChange(checked === true)
+                              }
+                              className="mt-0.5"
+                            />
+                            <span className="text-sm">
+                              {m.git_auto_commit_system_checkbox()}
+                              <span className="block text-xs text-muted-foreground">
+                                {m.git_auto_commit_system_hint()}
+                              </span>
+                            </span>
+                          </label>
+                        </div>
                       </>
                     )}
                     {gitType !== "inline" && (

@@ -154,6 +154,14 @@ pub struct GitSpaceConfig {
     /// Whether ⌘S/⌘⇧S should auto-sync after committing. Default: false.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_sync: Option<bool>,
+    /// Whether repo/space lifecycle automation may create background commits.
+    /// Default: false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_commit_structural: Option<bool>,
+    /// Whether config/system automation may create background commits.
+    /// Default: false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_commit_system: Option<bool>,
 }
 
 fn default_icon() -> String {
@@ -265,5 +273,25 @@ mod tests {
             serde_json::from_str(r#"{"name":"Docs"}"#).expect("deserialize config");
 
         assert!(config.tree.is_none());
+    }
+
+    #[test]
+    fn git_config_accepts_split_autocommit_flags() {
+        let config: SpaceConfig = serde_json::from_str(
+            r#"{
+                "name": "Docs",
+                "git": {
+                    "autoSync": true,
+                    "autoCommitStructural": true,
+                    "autoCommitSystem": false
+                }
+            }"#,
+        )
+        .expect("deserialize config");
+
+        let git = config.git.expect("git config");
+        assert_eq!(git.auto_sync, Some(true));
+        assert_eq!(git.auto_commit_structural, Some(true));
+        assert_eq!(git.auto_commit_system, Some(false));
     }
 }

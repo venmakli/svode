@@ -22,6 +22,13 @@ export interface GitStatusDto {
   files: FileGitStatusDto[];
 }
 
+export interface UnpushedCommitDto {
+  sha: string;
+  message: string;
+  author: string;
+  timestamp: string;
+}
+
 export type SyncResultDto =
   | { type: "Success" }
   | { type: "Conflict"; files: string[] }
