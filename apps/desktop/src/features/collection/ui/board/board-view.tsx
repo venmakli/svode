@@ -32,7 +32,7 @@ import type {
 } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
 import { propertyFieldSavePolicy } from "@/features/properties";
-import { useSpace } from "@/features/space";
+import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import { useCollectionPersons } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
@@ -101,7 +101,7 @@ export function BoardView({
       state.rootSpaces.find((item) => item.path === spacePath);
     return space?.id ?? null;
   });
-  const reloadTreeParent = useSpace((state) => state.reloadTreeParent);
+  const reloadTreeParent = useSpaceTreeSync((state) => state.reloadTreeParent);
   const groupBy = query.merged.groupBy;
   const groupColumn = useMemo(
     () => schema.columns.find((column) => column.name === groupBy) ?? null,

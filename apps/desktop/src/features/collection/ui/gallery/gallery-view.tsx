@@ -36,7 +36,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useStableViewQueryArgs } from "@/features/collection/query";
 import { useEntryFieldSave, type Entry } from "@/features/entry";
 import { propertyFieldSavePolicy, type Column } from "@/features/properties";
-import { useSpace } from "@/features/space";
+import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import {
   listCollectionInfos,
@@ -97,7 +97,7 @@ export function GalleryView({
   const cardRefs = useRef(new Map<string, HTMLElement>());
   const { persons, loadPersons } = useCollectionPersons(spacePath);
   const queryArgs = useStableViewQueryArgs(filters, sort);
-  const reloadTreeParent = useSpace((state) => state.reloadTreeParent);
+  const reloadTreeParent = useSpaceTreeSync((state) => state.reloadTreeParent);
   const sidebarSpaceId = useSpace((state) => {
     const space =
       state.spaces.find((item) => item.path === spacePath) ??

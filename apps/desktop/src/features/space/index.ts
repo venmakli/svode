@@ -15,11 +15,14 @@ export type {
 } from "./model/types";
 export {
   getSpaceSnapshot,
+  getSpaceTreeSyncSnapshot,
   registerRootSpace,
   selectActiveSpaceId,
   selectActiveSpacePath,
   useSpace,
+  useSpaceTreeSync,
   type SpacePublicState,
+  type SpaceTreeSyncState,
 } from "./model/public-space";
 export { useSpaceActions } from "./hooks/use-space-actions";
 export { SpaceSidebar } from "./ui/space-sidebar";

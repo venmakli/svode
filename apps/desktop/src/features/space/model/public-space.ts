@@ -12,7 +12,6 @@ export type SpacePublicState = Pick<
   | "spaces"
   | "activeSpaceId"
   | "fileTrees"
-  | "childrenByParentPath"
   | "isLoadingRoots"
   | "explicitHome"
   | "loadRootSpaces"
@@ -26,6 +25,12 @@ export type SpacePublicState = Pick<
   | "clearActiveSpace"
   | "patchSpaceMetadata"
   | "goHome"
+>;
+
+export type SpaceTreeSyncState = Pick<
+  SpaceState,
+  | "fileTrees"
+  | "childrenByParentPath"
   | "loadTreeChildren"
   | "reloadTreeParent"
   | "reloadTreePathParent"
@@ -35,7 +40,43 @@ export type SpacePublicState = Pick<
 >;
 
 function selectPublicState(state: SpaceState): SpacePublicState {
-  return state;
+  return {
+    rootSpaces: state.rootSpaces,
+    rootsLoaded: state.rootsLoaded,
+    activeRootId: state.activeRootId,
+    activeRootName: state.activeRootName,
+    activeRootIcon: state.activeRootIcon,
+    activeRootPath: state.activeRootPath,
+    spaces: state.spaces,
+    activeSpaceId: state.activeSpaceId,
+    fileTrees: state.fileTrees,
+    isLoadingRoots: state.isLoadingRoots,
+    explicitHome: state.explicitHome,
+    loadRootSpaces: state.loadRootSpaces,
+    openRoot: state.openRoot,
+    openLastActiveRoot: state.openLastActiveRoot,
+    createRoot: state.createRoot,
+    openRootFolder: state.openRootFolder,
+    deleteRoot: state.deleteRoot,
+    loadSpaces: state.loadSpaces,
+    openSpace: state.openSpace,
+    clearActiveSpace: state.clearActiveSpace,
+    patchSpaceMetadata: state.patchSpaceMetadata,
+    goHome: state.goHome,
+  };
+}
+
+function selectTreeSyncState(state: SpaceState): SpaceTreeSyncState {
+  return {
+    fileTrees: state.fileTrees,
+    childrenByParentPath: state.childrenByParentPath,
+    loadTreeChildren: state.loadTreeChildren,
+    reloadTreeParent: state.reloadTreeParent,
+    reloadTreePathParent: state.reloadTreePathParent,
+    reloadTreePathParents: state.reloadTreePathParents,
+    patchEntryTreeMeta: state.patchEntryTreeMeta,
+    removeTreePath: state.removeTreePath,
+  };
 }
 
 export function useSpace(): SpacePublicState;
@@ -50,7 +91,24 @@ export function useSpace<T>(
 }
 
 export function getSpaceSnapshot(): SpacePublicState {
-  return useSpaceStore.getState();
+  return selectPublicState(useSpaceStore.getState());
+}
+
+export function useSpaceTreeSync(): SpaceTreeSyncState;
+export function useSpaceTreeSync<T>(
+  selector: (state: SpaceTreeSyncState) => T,
+): T;
+export function useSpaceTreeSync<T>(
+  selector?: (state: SpaceTreeSyncState) => T,
+): SpaceTreeSyncState | T {
+  if (selector) {
+    return useSpaceStore((state) => selector(selectTreeSyncState(state)));
+  }
+  return useSpaceStore(selectTreeSyncState);
+}
+
+export function getSpaceTreeSyncSnapshot(): SpaceTreeSyncState {
+  return selectTreeSyncState(useSpaceStore.getState());
 }
 
 export function registerRootSpace(space: SpaceInfo): void {

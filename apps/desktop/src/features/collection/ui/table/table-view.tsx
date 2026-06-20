@@ -18,7 +18,7 @@ import {
 import { useEntryFieldSave, type Entry } from "@/features/entry";
 import { normalizeSchema } from "@/features/properties";
 import { propertyFieldSavePolicy } from "@/features/properties";
-import { useSpace } from "@/features/space";
+import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
 import type {
   CollectionSchema,
@@ -94,7 +94,7 @@ export function TableView({
       state.rootSpaces.find((item) => item.path === spacePath);
     return space?.id ?? null;
   });
-  const reloadTreeParent = useSpace((state) => state.reloadTreeParent);
+  const reloadTreeParent = useSpaceTreeSync((state) => state.reloadTreeParent);
   const showNested = showNestedForView(view);
   const density =
     view.density === "compact" || view.density === "spacious"

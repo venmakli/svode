@@ -7,7 +7,11 @@ import { toast } from "sonner";
 import { EditorKit } from "./editor-kit";
 import { useFileWatcher } from "../hooks/use-file-watcher";
 import { useEntrySelectionStore } from "@/features/entry";
-import { getSpaceSnapshot, useSpace } from "@/features/space";
+import {
+  getSpaceTreeSyncSnapshot,
+  useSpace,
+  useSpaceTreeSync,
+} from "@/features/space";
 import { useEditorStore } from "../model";
 import { cn } from "@/shared/lib/utils";
 import {
@@ -88,15 +92,10 @@ export function PlateDocumentEditor({
 }: PlateDocumentEditorProps) {
   const { activeDocument, activeDocumentSpaceId, openDocument } =
     useEntrySelectionStore();
-  const {
-    patchEntryTreeMeta,
-    reloadTreePathParents,
-    removeTreePath,
-    rootSpaces,
-    spaces: childWorkspaces,
-    activeRootPath,
-    activeRootId,
-  } = useSpace();
+  const { rootSpaces, spaces: childWorkspaces, activeRootPath, activeRootId } =
+    useSpace();
+  const { patchEntryTreeMeta, reloadTreePathParents, removeTreePath } =
+    useSpaceTreeSync();
   const {
     markUnsaved,
     clearUnsaved,
@@ -256,7 +255,7 @@ export function PlateDocumentEditor({
         ]);
       }
 
-      const store = getSpaceSnapshot();
+      const store = getSpaceTreeSyncSnapshot();
       for (const [id, sourcePaths] of pathsByTreeId) {
         void store.reloadTreePathParents(id, sourcePaths);
       }

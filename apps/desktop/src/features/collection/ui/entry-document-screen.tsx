@@ -18,7 +18,7 @@ import {
 } from "@/features/properties";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpace } from "@/features/space";
+import { useSpaceTreeSync } from "@/features/space";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 import { readEntry } from "@/platform/entries/entries-api";
 import { DeleteDialogs } from "./delete-dialogs";
@@ -49,14 +49,16 @@ export function EntryDocumentScreen({
 }: EntryDocumentScreenProps) {
   const openDocument = useEntrySelectionStore((state) => state.openDocument);
   const openScopeHome = useEntrySelectionStore((state) => state.openScopeHome);
-  const patchEntryTreeMeta = useSpace((state) => state.patchEntryTreeMeta);
-  const reloadTreePathParent = useSpace(
+  const patchEntryTreeMeta = useSpaceTreeSync(
+    (state) => state.patchEntryTreeMeta,
+  );
+  const reloadTreePathParent = useSpaceTreeSync(
     (state) => state.reloadTreePathParent,
   );
-  const reloadTreePathParents = useSpace(
+  const reloadTreePathParents = useSpaceTreeSync(
     (state) => state.reloadTreePathParents,
   );
-  const removeTreePath = useSpace((state) => state.removeTreePath);
+  const removeTreePath = useSpaceTreeSync((state) => state.removeTreePath);
   const documentTargetKey = getDocumentTargetKey(spacePath, documentPath);
   const [entry, setEntry] = useState<Entry | null>(null);
   const [loadedEntryKey, setLoadedEntryKey] = useState<string | null>(null);

@@ -27,7 +27,7 @@ import {
 } from "@/shared/ui/page-layout";
 import { isEntryTreeMetaField, useEntryFieldSave } from "@/features/entry";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpace } from "@/features/space";
+import { useSpaceTreeSync } from "@/features/space";
 import { useViewQuery } from "@/features/collection/query";
 import { DeleteDialogs } from "./delete-dialogs";
 import { EntryDetailActions } from "./entry-detail-actions";
@@ -130,7 +130,7 @@ export function CollectionScreen({
     reloadTreePathParents,
     patchEntryTreeMeta,
     removeTreePath,
-  } = useSpace();
+  } = useSpaceTreeSync();
   const [schema, setSchema] = useState<CollectionSchema | null>(null);
   const [entry, setEntry] = useState<Entry | null>(null);
   const [parentSchema, setParentSchema] = useState<EntrySchemaResult | null>(

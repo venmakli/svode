@@ -18,7 +18,10 @@ import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { FileText, Folder, GripVertical, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEntrySelectionStore } from "@/features/entry";
-import { getSpaceSnapshot, useSpace } from "@/features/space";
+import {
+  getSpaceTreeSyncSnapshot,
+  useSpaceTreeSync,
+} from "@/features/space";
 import type { Entry } from "@/features/entry";
 import { detailPageSectionClassName } from "@/shared/ui/page-layout";
 import type { TreeNode } from "@/features/entry";
@@ -41,14 +44,14 @@ export function EntrySubpages({
   documentPath,
 }: EntrySubpagesProps) {
   const openDocument = useEntrySelectionStore((state) => state.openDocument);
-  const loadTreeChildren = useSpace((state) => state.loadTreeChildren);
+  const loadTreeChildren = useSpaceTreeSync((state) => state.loadTreeChildren);
   const [subpages, setSubpages] = useState<TreeNode[]>([]);
   const [loading, setLoading] = useState(false);
   const folderPath = useMemo(
     () => folderPathForReadme(documentPath),
     [documentPath],
   );
-  const cachedSubpages = useSpace((state) =>
+  const cachedSubpages = useSpaceTreeSync((state) =>
     folderPath ? state.childrenByParentPath[spaceId]?.[folderPath] : undefined,
   );
   const sensors = useSensors(
@@ -64,8 +67,9 @@ export function EntrySubpages({
     try {
       await loadTreeChildren(spaceId, folderPath);
       setSubpages(
-        getSpaceSnapshot().childrenByParentPath[spaceId]?.[folderPath] ??
-          [],
+        getSpaceTreeSyncSnapshot().childrenByParentPath[spaceId]?.[
+          folderPath
+        ] ?? [],
       );
     } finally {
       setLoading(false);
