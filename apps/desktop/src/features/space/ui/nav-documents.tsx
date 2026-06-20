@@ -1,4 +1,3 @@
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import * as m from "@/paraglide/messages.js";
 import { toast } from "sonner";
 import {
@@ -21,6 +20,7 @@ import { useEntrySelectionStore } from "@/features/entry";
 import { SortableFileTree } from "./sortable-file-tree";
 import { FileTreeItem } from "./file-tree-item";
 import { createCollection } from "@/features/collection";
+import { createTreeFolder } from "../api/tree-entry-actions";
 
 export function NavDocuments() {
   const {
@@ -53,8 +53,8 @@ export function NavDocuments() {
   async function handleNewFolder() {
     if (!activeRootId || !activeRootPath) return;
     try {
-      await invoke<string>("create_folder", {
-        space: activeRootPath,
+      await createTreeFolder({
+        spacePath: activeRootPath,
         parentPath: null,
         name: m.space_new_folder(),
         projectPath: activeRootPath,

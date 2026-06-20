@@ -71,7 +71,6 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { createFolder } from "@/platform/entries/entries-api";
 import {
   cloneMissingSpace,
   getSpaceConfig,
@@ -103,6 +102,7 @@ import { Progress } from "@/components/ui/progress";
 import { commitAllSpace } from "@/features/git";
 import { cn } from "@/shared/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
+import { createTreeFolder } from "../api/tree-entry-actions";
 
 interface NavSpacesProps {
   onActivateContent: () => void;
@@ -288,8 +288,8 @@ export function NavSpaces({
 
   async function handleNewFolder(scope: ScopeTarget) {
     try {
-      await createFolder({
-        space: scope.path,
+      await createTreeFolder({
+        spacePath: scope.path,
         parentPath: null,
         name: m.space_new_folder(),
         projectPath: rootPath,

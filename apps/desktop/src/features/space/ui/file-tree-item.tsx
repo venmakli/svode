@@ -7,7 +7,6 @@ import {
   type ReactElement,
 } from "react";
 import { useSortable } from "@dnd-kit/sortable";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import {
@@ -58,12 +57,25 @@ import {
 import { useEntrySelectionStore } from "@/features/entry";
 import { useEditorStore } from "@/features/editor";
 import { useSpaceStore } from "../model";
-import type { Entry, TreeNode } from "@/features/entry";
+import type { TreeNode } from "@/features/entry";
 import { TreeDndContext } from "./sortable-file-tree";
 import { TreeDropIndicator } from "./tree-drop-indicator";
 import { isDescendantOf } from "../lib/tree-dnd-utilities";
 import { treeNodeHasChildren, treeParentKeyForNode } from "../lib/tree-cache";
 import { FileGitIndicatorIcon } from "@/features/git";
+import {
+  convertTreeBareFolderToCollection,
+  convertTreeDocumentToCollection,
+  createTreeFolder,
+  createTreePage,
+  deleteTreeEntry,
+  getTreeEntryBacklinks,
+  makeBareFolderDocument,
+  renameTreeEntryPath,
+  resolveTreeChildTarget,
+  updateTreeEntryTitle,
+  type BacklinkInfo,
+} from "../api/tree-entry-actions";
 
 interface FileTreeItemProps {
   node: TreeNode;
@@ -72,12 +84,6 @@ interface FileTreeItemProps {
     spaceId: string,
     parentPath?: string | null,
   ) => Promise<void>;
-}
-
-interface BacklinkInfo {
-  sourceSpaceId: string | null;
-  sourcePath: string;
-  linkCount: number;
 }
 
 /** Bare folder = directory without readme.md (path doesn't end with .md) */
@@ -189,8 +195,8 @@ export function FileTreeItem({
           ? node.path.substring(0, node.path.lastIndexOf("/"))
           : "";
         const newPath = parent ? `${parent}/${newName}` : newName;
-        const modifiedFiles = await invoke<string[]>("rename_entry", {
-          space: space.path,
+        const modifiedFiles = await renameTreeEntryPath({
+          spacePath: space.path,
           from: node.path,
           to: newPath,
           projectPath: activeRootPath,
@@ -206,11 +212,10 @@ export function FileTreeItem({
         await reloadTreeParents(spaceId, [parent]);
       } else {
         // Title-edit only: file rename + backlinks are deferred to ⌘S (unified with editor-title-edit).
-        const entry = await invoke<Entry>("update_entry_field", {
-          space: space.path,
+        const entry = await updateTreeEntryTitle({
+          spacePath: space.path,
           filePath: node.path,
-          field: "title",
-          value: newName,
+          title: newName,
           projectPath: activeRootPath,
         });
         if (activeDocument === node.path) {
@@ -270,29 +275,13 @@ export function FileTreeItem({
   async function handleNewPage() {
     if (!space) return;
     try {
-      let parentPath: string;
-      let parentNodePath: string;
-      if (bareFolder) {
-        // Bare folder — already a directory, just use the path
-        parentPath = node.path;
-        parentNodePath = node.path;
-      } else if (childParentKey && (knownChildren || node.has_schema)) {
-        // Document folder — parent is the folder path
-        parentPath = childParentKey;
-        parentNodePath = node.path;
-      } else {
-        // Simple file — nest it first, then create child
-        const newPath = await invoke<string>("nest_entry", {
-          space: space.path,
-          path: node.path,
-          projectPath: activeRootPath,
-        });
-        parentPath = newPath.replace(/\/readme\.md$/i, "");
-        parentNodePath = newPath; // path changed after nest
-      }
-      // Create the sub-page
-      const entry = await invoke<{ path: string }>("create_entry", {
-        space: space.path,
+      const { parentPath, parentNodePath } = await resolveTreeChildTarget({
+        spacePath: space.path,
+        node,
+        projectPath: activeRootPath,
+      });
+      const entry = await createTreePage({
+        spacePath: space.path,
         parentPath,
         title: String(m.editor_untitled()),
         projectPath: activeRootPath,
@@ -317,22 +306,12 @@ export function FileTreeItem({
   async function handleMakeDocument() {
     if (!space || !bareFolder) return;
     try {
-      // Create a document inside the bare folder, then rename to readme.md
-      const entry = await invoke<{ path: string }>("create_entry", {
-        space: space.path,
-        parentPath: node.path,
+      const readmePath = await makeBareFolderDocument({
+        spacePath: space.path,
+        folderPath: node.path,
         title: node.title,
         projectPath: activeRootPath,
       });
-      const readmePath = `${node.path}/README.md`;
-      if (entry.path !== readmePath) {
-        await invoke("rename_entry", {
-          space: space.path,
-          from: entry.path,
-          to: readmePath,
-          projectPath: activeRootPath,
-        });
-      }
       await reloadTreePathParent(spaceId, node.path);
       await reloadTreeParent(spaceId, node.path);
       openDocument(readmePath, spaceId);
@@ -346,8 +325,8 @@ export function FileTreeItem({
     if (!space || node.has_schema) return;
     try {
       if (bareFolder) {
-        const entry = await invoke<Entry>("convert_bare_folder_to_collection", {
-          space: space.path,
+        const entry = await convertTreeBareFolderToCollection({
+          spacePath: space.path,
           folderPath: node.path,
           projectPath: activeRootPath,
         });
@@ -357,21 +336,9 @@ export function FileTreeItem({
         return;
       }
 
-      const entry = await invoke<Entry>("read_entry", {
-        space: space.path,
-        path: node.path,
-      });
-      let readmeEntry = entry;
-      if (!node.path.toLowerCase().endsWith("/readme.md")) {
-        readmeEntry = await invoke<Entry>("convert_entry_to_folder", {
-          space: space.path,
-          filePath: entry.path,
-          projectPath: activeRootPath,
-        });
-      }
-      await invoke<string>("convert_entry_to_nested_collection", {
-        space: space.path,
-        filePath: readmeEntry.path,
+      const readmeEntry = await convertTreeDocumentToCollection({
+        spacePath: space.path,
+        filePath: node.path,
         projectPath: activeRootPath,
       });
       await reloadTreePathParent(spaceId, node.path);
@@ -389,26 +356,13 @@ export function FileTreeItem({
   async function handleNewFolder() {
     if (!space) return;
     try {
-      let parentPath: string;
-      let parentNodePath: string;
-      if (bareFolder) {
-        parentPath = node.path;
-        parentNodePath = node.path;
-      } else if (childParentKey && (knownChildren || node.has_schema)) {
-        parentPath = childParentKey;
-        parentNodePath = node.path;
-      } else {
-        // Simple file — nest it first, then create folder inside
-        const newPath = await invoke<string>("nest_entry", {
-          space: space.path,
-          path: node.path,
-          projectPath: activeRootPath,
-        });
-        parentPath = newPath.replace(/\/readme\.md$/i, "");
-        parentNodePath = newPath;
-      }
-      await invoke<string>("create_folder", {
-        space: space.path,
+      const { parentPath, parentNodePath } = await resolveTreeChildTarget({
+        spacePath: space.path,
+        node,
+        projectPath: activeRootPath,
+      });
+      await createTreeFolder({
+        spacePath: space.path,
         parentPath,
         name: m.space_new_folder(),
         projectPath: activeRootPath,
@@ -430,8 +384,8 @@ export function FileTreeItem({
   async function handleDeleteRequest() {
     if (!space) return;
     try {
-      const backlinks = await invoke<BacklinkInfo[]>("get_backlinks", {
-        space: space.path,
+      const backlinks = await getTreeEntryBacklinks({
+        spacePath: space.path,
         targetPath: node.path,
         projectPath: activeRootPath ?? null,
       });
@@ -446,8 +400,8 @@ export function FileTreeItem({
     if (!space) return;
     setDeleteDialog({ open: false, backlinks: [] });
     try {
-      await invoke("delete_entry", {
-        space: space.path,
+      await deleteTreeEntry({
+        spacePath: space.path,
         path: node.path,
         projectPath: activeRootPath,
       });

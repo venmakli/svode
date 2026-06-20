@@ -32,6 +32,12 @@ export interface LinkValidationResultDto {
   exists: boolean;
 }
 
+export interface BacklinkInfoDto {
+  sourceSpaceId: string | null;
+  sourcePath: string;
+  linkCount: number;
+}
+
 export function createEntry(input: {
   space: string;
   parentPath: string | null;
@@ -50,6 +56,15 @@ export function createFolder(input: {
   return invokeCommand<string>("create_folder", { ...input });
 }
 
+export function renameEntry(input: {
+  space: string;
+  from: string;
+  to: string;
+  projectPath: string | null;
+}): Promise<string[]> {
+  return invokeCommand<string[]>("rename_entry", { ...input });
+}
+
 export function readEntry(space: string, path: string): Promise<EntryDto> {
   return invokeCommand<EntryDto>("read_entry", { space, path });
 }
@@ -62,6 +77,66 @@ export function updateEntryField(input: {
   projectPath: string | null;
 }): Promise<EntryDto> {
   return invokeCommand<EntryDto>("update_entry_field", { ...input });
+}
+
+export function deleteEntry(input: {
+  space: string;
+  path: string;
+  projectPath: string | null;
+}): Promise<void> {
+  return invokeCommand<void>("delete_entry", { ...input });
+}
+
+export function getBacklinks(input: {
+  space: string;
+  targetPath: string;
+  projectPath: string | null;
+}): Promise<BacklinkInfoDto[]> {
+  return invokeCommand<BacklinkInfoDto[]>("get_backlinks", { ...input });
+}
+
+export function nestEntry(input: {
+  space: string;
+  path: string;
+  projectPath: string | null;
+}): Promise<string> {
+  return invokeCommand<string>("nest_entry", { ...input });
+}
+
+export function unnestEntry(input: {
+  space: string;
+  path: string;
+  projectPath: string | null;
+}): Promise<string> {
+  return invokeCommand<string>("unnest_entry", { ...input });
+}
+
+export function convertBareFolderToCollection(input: {
+  space: string;
+  folderPath: string;
+  projectPath: string | null;
+}): Promise<EntryDto> {
+  return invokeCommand<EntryDto>("convert_bare_folder_to_collection", {
+    ...input,
+  });
+}
+
+export function convertEntryToFolder(input: {
+  space: string;
+  filePath: string;
+  projectPath: string | null;
+}): Promise<EntryDto> {
+  return invokeCommand<EntryDto>("convert_entry_to_folder", { ...input });
+}
+
+export function convertEntryToNestedCollection(input: {
+  space: string;
+  filePath: string;
+  projectPath: string | null;
+}): Promise<string> {
+  return invokeCommand<string>("convert_entry_to_nested_collection", {
+    ...input,
+  });
 }
 
 export function validateLinks(input: {

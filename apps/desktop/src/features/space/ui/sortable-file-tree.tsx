@@ -19,7 +19,6 @@ import {
   type DragMoveEvent,
 } from "@dnd-kit/core";
 import { SortableContext } from "@dnd-kit/sortable";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import { FileText } from "lucide-react";
 import { useSpaceStore } from "../model";
@@ -37,6 +36,7 @@ import {
 } from "../lib/tree-dnd-utilities";
 import { treeNodeHasChildren } from "../lib/tree-cache";
 import { logTiming, nowMs } from "@/shared/lib/performance";
+import { nestTreeEntry, unnestTreeEntry } from "../api/tree-entry-actions";
 
 // --- Context for sharing DnD state with FileTreeItem ---
 
@@ -378,8 +378,8 @@ export function SortableFileTree({
             const oldName = targetNode.name; // e.g. "doc2.md"
             // Suppress file watcher for structural change
             suppressPaths([nestTarget, fromPath]);
-            const newNestPath = await invoke<string>("nest_entry", {
-              space: space.path,
+            const newNestPath = await nestTreeEntry({
+              spacePath: space.path,
               path: nestTarget,
               projectPath: useSpaceStore.getState().activeRootPath,
             });
@@ -489,8 +489,8 @@ export function SortableFileTree({
               const currentActive =
                 useEntrySelectionStore.getState().activeDocument;
               useEditorStore.getState().suppressPaths([oldParentReadme]);
-              const unnestPath = await invoke<string>("unnest_entry", {
-                space: space.path,
+              const unnestPath = await unnestTreeEntry({
+                spacePath: space.path,
                 path: oldParentReadme,
                 projectPath: useSpaceStore.getState().activeRootPath,
               });
