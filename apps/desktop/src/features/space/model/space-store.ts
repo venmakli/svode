@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { TreeNode } from "@/features/entry";
 import { logTiming, nowMs } from "@/shared/lib/performance";
-import * as spaceNotifications from "../api/space-notifications";
+import * as spaceNotifications from "../effects/space-notifications";
 import {
   openScopeHomeSelection,
   openSpaceReadmeDocument,
