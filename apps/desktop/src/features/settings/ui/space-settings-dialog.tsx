@@ -55,7 +55,6 @@ import {
   RefreshCw,
   Settings,
 } from "lucide-react";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -77,27 +76,23 @@ import type {
 } from "@/features/identity";
 import { IdentitySection } from "./identity-section";
 import {
+  StorageSettingsSection,
+  StorageStrategyConfirmDialog,
+} from "./storage-section";
+import {
   checkSymlinkHealth,
-  checkS3Connection,
-  countAssets,
   countBrokenLinks,
-  applyAssetsStrategy,
   getGitSubmoduleUrl,
-  getLfsState,
   getProjectFanoutPreview,
   getRepoIdentity,
-  getSettingsGitAvailability,
   getSettingsGitRemote,
   getSettingsGitStatus,
   getSettingsSpaceConfig,
   getSpaceGitType,
-  hasS3Credentials,
   listAgentModels,
   listAvailableAgents,
   listenGitCommitted,
-  listenLfsStateChanged,
   readAgentsMd,
-  repairLfs,
   saveSettingsSpaceConfig,
   setGitRemote,
   saveProjectIdentity,
@@ -105,12 +100,8 @@ import {
   setupCliSymlinks,
   teardownCliSymlinks,
 } from "../api";
-import type {
-  AgentConfig,
-  AssetsStrategy,
-  LfsState,
-  SpaceConfig,
-} from "@/features/space";
+import type { AgentConfig, SpaceConfig } from "@/features/space";
+import { useSpaceStorageSettings } from "../hooks/use-space-storage-settings";
 import type { AvailableAgent, SymlinkHealthReport } from "../model";
 
 interface SpaceSettingsDialogProps {
@@ -213,42 +204,17 @@ export function SpaceSettingsDialog({
     {},
   );
 
-  // Storage section
-  const [assetsStrategy, setAssetsStrategy] = useState<AssetsStrategy>("local");
-  const [savedAssetsStrategy, setSavedAssetsStrategy] =
-    useState<AssetsStrategy>("local");
-  const [pendingStrategy, setPendingStrategy] = useState<AssetsStrategy | null>(
-    null,
-  );
-  const [pendingAssetCount, setPendingAssetCount] = useState<number>(0);
-  const [lfsAvailable, setLfsAvailable] = useState<boolean>(false);
-  const [lfsVersion, setLfsVersion] = useState<string | null>(null);
-  const [applyingStrategy, setApplyingStrategy] = useState(false);
-  const [strategyInFlight, setStrategyInFlight] =
-    useState<AssetsStrategy | null>(null);
-  // S3 form (only shown when the selected radio is lfs-s3). Credentials are
-  // never round-tripped from disk — once saved they live in the OS keychain
-  // and `hasSavedS3Credentials` just tells us whether to draw the "saved"
-  // hint vs. an empty input.
-  const [s3Endpoint, setS3Endpoint] = useState("");
-  const [s3Bucket, setS3Bucket] = useState("");
-  const [s3Region, setS3Region] = useState("");
-  const [s3AccessKey, setS3AccessKey] = useState("");
-  const [s3SecretKey, setS3SecretKey] = useState("");
-  const [hasSavedS3Credentials, setHasSavedS3Credentials] = useState(false);
-  const [s3TestState, setS3TestState] = useState<
-    "idle" | "testing" | "ok" | "fail"
-  >("idle");
-  const [s3TestError, setS3TestError] = useState<string | null>(null);
+  const storageSettings = useSpaceStorageSettings({
+    open,
+    spacePath,
+    projectPath,
+    currentSpaceId,
+    isRoot,
+    spaces,
+  });
+
   const [brokenLinksCount, setBrokenLinksCount] = useState<number | null>(null);
   const [linkHealthLoading, setLinkHealthLoading] = useState(false);
-  // LFS runtime state for this pool. `n/a` is the harmless default — the UI
-  // only surfaces banners/buttons for `missing-creds` and `pulling`.
-  const [lfsState, setLfsState] = useState<LfsState>("n/a");
-  const [lfsRepairInFlight, setLfsRepairInFlight] = useState(false);
-  // Inline spaces of the root project. Loaded on the root storage view so the
-  // user can see which spaces inherit the project-level strategy.
-  const [inlineSpaceNames, setInlineSpaceNames] = useState<string[]>([]);
 
   const loadConfig = useCallback(async () => {
     if (!spacePath) return;
@@ -272,78 +238,10 @@ export function SpaceSettingsDialog({
       setAutoSync(cfg.git?.autoSync === true);
       setAutoCommitStructural(cfg.git?.autoCommitStructural === true);
       setAutoCommitSystem(cfg.git?.autoCommitSystem === true);
-      const strategy: AssetsStrategy = cfg.assets?.strategy ?? "local";
-      setAssetsStrategy(strategy);
-      setSavedAssetsStrategy(strategy);
-      const s3 = cfg.assets?.s3;
-      setS3Endpoint(s3?.endpoint ?? "");
-      setS3Bucket(s3?.bucket ?? "");
-      setS3Region(s3?.region ?? "");
-      setS3AccessKey("");
-      setS3SecretKey("");
-      setS3TestState("idle");
-      setS3TestError(null);
-      try {
-        const present = await hasS3Credentials({
-          projectPath,
-          spaceId: currentSpaceId,
-        });
-        setHasSavedS3Credentials(present);
-      } catch {
-        setHasSavedS3Credentials(false);
-      }
     } catch (err) {
       console.error("Failed to load workspace config:", err);
     }
-  }, [spacePath, projectPath, currentSpaceId]);
-
-  const loadLfsState = useCallback(async () => {
-    if (!projectPath) return;
-    try {
-      const state = await getLfsState({
-        projectPath,
-        spaceId: currentSpaceId,
-      });
-      setLfsState(state);
-    } catch (err) {
-      console.warn("get_lfs_state failed:", err);
-      setLfsState("n/a");
-    }
-  }, [projectPath, currentSpaceId]);
-
-  const loadInlineSpaceNames = useCallback(async () => {
-    if (!isRoot || !projectPath || spaces.length === 0) {
-      setInlineSpaceNames([]);
-      return;
-    }
-    // Probe git type for every child space so we can list the ones that
-    // inherit the project's storage strategy. Independent / submodule spaces
-    // own their own strategy and shouldn't appear here.
-    const types = await Promise.all(
-      spaces.map(async (s) => {
-        try {
-          const t = await getSpaceGitType({ projectPath, spacePath: s.path });
-          return { space: s, type: t };
-        } catch {
-          return { space: s, type: null };
-        }
-      }),
-    );
-    setInlineSpaceNames(
-      types.filter((t) => t.type === "inline").map((t) => t.space.name),
-    );
-  }, [isRoot, projectPath, spaces]);
-
-  const loadLfsAvailability = useCallback(async () => {
-    try {
-      const avail = await getSettingsGitAvailability();
-      setLfsAvailable(avail.gitLfs);
-      setLfsVersion(avail.gitVersion);
-    } catch {
-      setLfsAvailable(false);
-      setLfsVersion(null);
-    }
-  }, []);
+  }, [spacePath]);
 
   const loadGitInfo = useCallback(async () => {
     if (!spacePath) return;
@@ -491,9 +389,6 @@ export function SpaceSettingsDialog({
         loadAgentsMd();
       }
       loadGitInfo();
-      loadLfsAvailability();
-      loadLfsState();
-      loadInlineSpaceNames();
       loadIdentity();
       loadFanoutPreview();
       setSection("general");
@@ -507,33 +402,9 @@ export function SpaceSettingsDialog({
     loadModels,
     loadAgentsMd,
     loadGitInfo,
-    loadLfsAvailability,
-    loadLfsState,
-    loadInlineSpaceNames,
     loadIdentity,
     loadFanoutPreview,
   ]);
-
-  // Subscribe to `space:lfs_state_changed` while the dialog is open so the
-  // banner / Repair button / progress indicator reflect background pulls.
-  useEffect(() => {
-    if (!open || !projectPath) return;
-    let unlisten: (() => void) | null = null;
-    let cancelled = false;
-    listenLfsStateChanged((event) => {
-      if (cancelled) return;
-      if (event.payload.projectPath !== projectPath) return;
-      if ((event.payload.spaceId ?? null) !== currentSpaceId) return;
-      setLfsState(event.payload.state);
-    }).then((u) => {
-      if (cancelled) u();
-      else unlisten = u;
-    });
-    return () => {
-      cancelled = true;
-      if (unlisten) unlisten();
-    };
-  }, [open, projectPath, currentSpaceId]);
 
   useEffect(() => {
     if (ENABLE_LEGACY_AGENT_INTEGRATION && open && enabledClis.length > 0) {
@@ -841,184 +712,6 @@ export function SpaceSettingsDialog({
       toast.error(m.toast_error());
     } finally {
       setSavingIdentity(false);
-    }
-  }
-
-  async function handleStrategySelect(next: AssetsStrategy) {
-    if (next === savedAssetsStrategy) return;
-    // LFS strategies require git-lfs
-    if ((next === "lfs-remote" || next === "lfs-s3") && !lfsAvailable) return;
-    // For lfs-s3 we don't apply on radio click — the user fills credentials
-    // first and the form's "Save" button drives the confirmation dialog. We
-    // still update the local radio so the form panel shows up.
-    if (next === "lfs-s3") {
-      setAssetsStrategy("lfs-s3");
-      return;
-    }
-    // Fetch the count of existing assets so the confirmation dialog can warn
-    // that they will NOT be migrated automatically (see strategy.rs — partial
-    // migration is documented in stage-3/PLAN.md).
-    let count = 0;
-    if (spacePath) {
-      try {
-        count = await countAssets({
-          projectPath,
-          spaceId: currentSpaceId,
-        });
-      } catch (err) {
-        console.warn("count_assets failed, continuing without warning:", err);
-      }
-    }
-    setPendingAssetCount(count);
-    setPendingStrategy(next);
-  }
-
-  function s3FormValid(): boolean {
-    if (!s3Endpoint.trim() || !s3Bucket.trim() || !s3Region.trim())
-      return false;
-    // Credentials are required either fresh-typed or already in the keychain.
-    if (!hasSavedS3Credentials && (!s3AccessKey.trim() || !s3SecretKey.trim()))
-      return false;
-    return true;
-  }
-
-  async function handleTestS3() {
-    if (!s3Endpoint.trim() || !s3Bucket.trim() || !s3Region.trim()) return;
-    if (!s3AccessKey.trim() || !s3SecretKey.trim()) {
-      // Connection test always uses fresh creds — we can't read them back
-      // from the keychain.
-      setS3TestState("fail");
-      setS3TestError(m.storage_s3_test_needs_keys());
-      return;
-    }
-    setS3TestState("testing");
-    setS3TestError(null);
-    try {
-      await checkS3Connection({
-        endpoint: s3Endpoint.trim(),
-        bucket: s3Bucket.trim(),
-        region: s3Region.trim(),
-        accessKey: s3AccessKey,
-        secretKey: s3SecretKey,
-      });
-      setS3TestState("ok");
-    } catch (err) {
-      const detail =
-        typeof err === "string"
-          ? err
-          : ((err as { message?: string })?.message ?? "");
-      setS3TestState("fail");
-      setS3TestError(detail || m.storage_s3_test_failed());
-    }
-  }
-
-  async function handleSaveS3() {
-    if (!s3FormValid()) return;
-    let count = 0;
-    if (spacePath) {
-      try {
-        count = await countAssets({
-          projectPath,
-          spaceId: currentSpaceId,
-        });
-      } catch (err) {
-        console.warn("count_assets failed, continuing without warning:", err);
-      }
-    }
-    setPendingAssetCount(count);
-    setPendingStrategy("lfs-s3");
-  }
-
-  async function handleRepairLfs() {
-    if (!projectPath || lfsRepairInFlight) return;
-    setLfsRepairInFlight(true);
-    try {
-      const next = await repairLfs({
-        projectPath,
-        spaceId: currentSpaceId,
-      });
-      setLfsState(next);
-    } catch (err) {
-      console.error("repair_lfs failed:", err);
-      toast.error(m.toast_error());
-    } finally {
-      setLfsRepairInFlight(false);
-    }
-  }
-
-  async function applyStrategy(next: AssetsStrategy) {
-    if (!spacePath) return;
-    setApplyingStrategy(true);
-    setStrategyInFlight(next);
-    try {
-      let s3Config: {
-        endpoint: string;
-        bucket: string;
-        region: string;
-      } | null = null;
-      let s3Credentials: { accessKey: string; secretKey: string } | null = null;
-      if (next === "lfs-s3") {
-        s3Config = {
-          endpoint: s3Endpoint.trim(),
-          bucket: s3Bucket.trim(),
-          region: s3Region.trim(),
-        };
-        if (s3AccessKey.trim() && s3SecretKey.trim()) {
-          s3Credentials = {
-            accessKey: s3AccessKey,
-            secretKey: s3SecretKey,
-          };
-        }
-      }
-      const result = await applyAssetsStrategy({
-        projectPath,
-        spaceId: currentSpaceId,
-        strategy: next,
-        s3Config,
-        s3Credentials,
-      });
-      setAssetsStrategy(next);
-      setSavedAssetsStrategy(next);
-      if (next === "lfs-s3") {
-        // After save, secrets live in keychain — clear the form fields and
-        // flip the "credentials saved" hint.
-        if (s3AccessKey.trim() && s3SecretKey.trim()) {
-          setHasSavedS3Credentials(true);
-          setS3AccessKey("");
-          setS3SecretKey("");
-        }
-      } else {
-        // Leaving lfs-s3 — drop the local "saved" hint, the keychain entry
-        // gets cleared backend-side.
-        setHasSavedS3Credentials(false);
-      }
-      if (result.warnings && result.warnings.length > 0) {
-        // Strategy applied, but LFS install/track/migrate produced errors —
-        // surface them instead of a misleading success toast.
-        toast.warning(
-          m.storage_apply_warnings({ count: String(result.warnings.length) }),
-          {
-            description: result.warnings.join("\n"),
-          },
-        );
-      } else {
-        toast.success(m.toast_settings_saved());
-      }
-    } catch (err) {
-      console.error("Failed to apply assets strategy:", err);
-      const detail =
-        typeof err === "string"
-          ? err
-          : ((err as { message?: string })?.message ?? "");
-      toast.error(detail || m.storage_apply_failed());
-      // Roll back to last known good.
-      setAssetsStrategy(savedAssetsStrategy);
-    } finally {
-      setApplyingStrategy(false);
-      setStrategyInFlight(null);
-      // Strategy may have moved between LFS / non-LFS — re-probe so the
-      // banner / Repair button reflect the new pool state.
-      loadLfsState();
     }
   }
 
@@ -1459,273 +1152,12 @@ export function SpaceSettingsDialog({
                 </div>
               )}
 
-              {section === "storage" && gitType === "inline" && (
-                <div className="space-y-3 max-w-md">
-                  <div>
-                    <Label className="text-sm font-medium">
-                      {m.storage_title()}
-                    </Label>
-                  </div>
-                  <div className="rounded-md border p-3 space-y-1">
-                    <p className="text-sm">
-                      {m.storage_inherited_from_project({
-                        name: activeRootName ?? "",
-                        strategy: savedAssetsStrategy,
-                      })}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {m.storage_inherited_hint()}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {section === "storage" && gitType !== "inline" && (
-                <div className="space-y-4 max-w-md">
-                  <div>
-                    <Label className="text-sm font-medium">
-                      {m.storage_title()}
-                    </Label>
-                  </div>
-                  <RadioGroup
-                    value={assetsStrategy}
-                    onValueChange={(v) =>
-                      handleStrategySelect(v as AssetsStrategy)
-                    }
-                    className="gap-3"
-                  >
-                    {[
-                      {
-                        value: "local" as const,
-                        title: m.storage_strategy_local_title(),
-                        desc: m.storage_strategy_local_desc(),
-                        needsLfs: false,
-                      },
-                      {
-                        value: "in-git" as const,
-                        title: m.storage_strategy_in_git_title(),
-                        desc: m.storage_strategy_in_git_desc(),
-                        needsLfs: false,
-                      },
-                      {
-                        value: "lfs-remote" as const,
-                        title: m.storage_strategy_lfs_remote_title(),
-                        desc: m.storage_strategy_lfs_remote_desc(),
-                        needsLfs: true,
-                      },
-                      {
-                        value: "lfs-s3" as const,
-                        title: m.storage_strategy_lfs_s3_title(),
-                        desc: m.storage_strategy_lfs_s3_desc(),
-                        needsLfs: true,
-                      },
-                    ].map((opt) => {
-                      const disabled =
-                        applyingStrategy || (opt.needsLfs && !lfsAvailable);
-                      return (
-                        <label
-                          key={opt.value}
-                          className={`flex items-start gap-3 rounded-md border p-3 ${
-                            disabled
-                              ? "opacity-60 cursor-not-allowed"
-                              : "cursor-pointer hover:bg-accent/50"
-                          } ${assetsStrategy === opt.value ? "border-primary" : ""}`}
-                        >
-                          {strategyInFlight === opt.value ? (
-                            <Loader2 className="mt-0.5 size-4 animate-spin text-muted-foreground" />
-                          ) : (
-                            <RadioGroupItem
-                              value={opt.value}
-                              id={`storage-${opt.value}`}
-                              disabled={disabled}
-                              className="mt-0.5"
-                            />
-                          )}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium">
-                                {opt.title}
-                              </span>
-                              {opt.needsLfs &&
-                                (lfsAvailable ? (
-                                  <Badge
-                                    variant="secondary"
-                                    className="text-xs font-normal"
-                                  >
-                                    <span className="text-green-600 mr-1">
-                                      &#10003;
-                                    </span>
-                                    {lfsVersion
-                                      ? `${m.storage_lfs_available()} (${lfsVersion})`
-                                      : m.storage_lfs_available()}
-                                  </Badge>
-                                ) : (
-                                  <Badge
-                                    variant="destructive"
-                                    className="text-xs font-normal"
-                                  >
-                                    <span className="mr-1">&#10005;</span>
-                                    {m.storage_lfs_missing()}
-                                  </Badge>
-                                ))}
-                            </div>
-                            <p className="mt-0.5 text-xs text-muted-foreground">
-                              {opt.desc}
-                            </p>
-                          </div>
-                        </label>
-                      );
-                    })}
-                  </RadioGroup>
-                  {!lfsAvailable && (
-                    <p className="text-xs text-muted-foreground">
-                      {m.storage_lfs_install_hint()}
-                    </p>
-                  )}
-                  {assetsStrategy === "lfs-s3" && (
-                    <div className="space-y-3 rounded-md border p-3">
-                      <div className="space-y-1">
-                        <Label htmlFor="s3-endpoint" className="text-xs">
-                          {m.storage_s3_endpoint()}
-                        </Label>
-                        <Input
-                          id="s3-endpoint"
-                          value={s3Endpoint}
-                          onChange={(e) => setS3Endpoint(e.target.value)}
-                          placeholder="https://s3.amazonaws.com"
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-1">
-                          <Label htmlFor="s3-bucket" className="text-xs">
-                            {m.storage_s3_bucket()}
-                          </Label>
-                          <Input
-                            id="s3-bucket"
-                            value={s3Bucket}
-                            onChange={(e) => setS3Bucket(e.target.value)}
-                            placeholder="my-assets"
-                            className="h-8 text-sm"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label htmlFor="s3-region" className="text-xs">
-                            {m.storage_s3_region()}
-                          </Label>
-                          <Input
-                            id="s3-region"
-                            value={s3Region}
-                            onChange={(e) => setS3Region(e.target.value)}
-                            placeholder="us-east-1"
-                            className="h-8 text-sm"
-                          />
-                        </div>
-                      </div>
-                      <div className="space-y-1">
-                        <Label htmlFor="s3-access" className="text-xs">
-                          {m.storage_s3_access_key()}
-                        </Label>
-                        <Input
-                          id="s3-access"
-                          value={s3AccessKey}
-                          onChange={(e) => setS3AccessKey(e.target.value)}
-                          placeholder={
-                            hasSavedS3Credentials
-                              ? m.storage_s3_creds_saved()
-                              : ""
-                          }
-                          className="h-8 text-sm font-mono"
-                          autoComplete="off"
-                          spellCheck={false}
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label htmlFor="s3-secret" className="text-xs">
-                          {m.storage_s3_secret_key()}
-                        </Label>
-                        <Input
-                          id="s3-secret"
-                          type="password"
-                          value={s3SecretKey}
-                          onChange={(e) => setS3SecretKey(e.target.value)}
-                          placeholder={
-                            hasSavedS3Credentials
-                              ? m.storage_s3_creds_saved()
-                              : ""
-                          }
-                          className="h-8 text-sm font-mono"
-                          autoComplete="off"
-                          spellCheck={false}
-                        />
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={handleTestS3}
-                          disabled={
-                            s3TestState === "testing" ||
-                            !s3Endpoint.trim() ||
-                            !s3Bucket.trim() ||
-                            !s3Region.trim()
-                          }
-                        >
-                          {s3TestState === "testing" && (
-                            <Loader2 className="mr-1 size-3 animate-spin" />
-                          )}
-                          {m.storage_s3_check()}
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={handleSaveS3}
-                          disabled={applyingStrategy || !s3FormValid()}
-                        >
-                          {applyingStrategy &&
-                            strategyInFlight === "lfs-s3" && (
-                              <Loader2 className="mr-1 size-3 animate-spin" />
-                            )}
-                          {m.storage_s3_save()}
-                        </Button>
-                        {s3TestState === "ok" && (
-                          <span className="text-xs text-green-600">
-                            {m.storage_s3_test_ok()}
-                          </span>
-                        )}
-                        {s3TestState === "fail" && (
-                          <span className="text-xs text-destructive">
-                            {s3TestError ?? m.storage_s3_test_failed()}
-                          </span>
-                        )}
-                      </div>
-                      {hasSavedS3Credentials && (
-                        <p className="text-xs text-muted-foreground">
-                          {m.storage_s3_creds_hint()}
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  {(savedAssetsStrategy === "lfs-s3" ||
-                    savedAssetsStrategy === "lfs-remote") && (
-                    <LfsStatePanel
-                      state={lfsState}
-                      strategy={savedAssetsStrategy}
-                      repairing={lfsRepairInFlight}
-                      onRepair={handleRepairLfs}
-                    />
-                  )}
-
-                  {isRoot && inlineSpaceNames.length > 0 && (
-                    <p className="text-xs text-muted-foreground">
-                      {m.storage_used_by_inline_spaces({
-                        names: inlineSpaceNames.join(", "),
-                      })}
-                    </p>
-                  )}
-                </div>
+              {section === "storage" && (
+                <StorageSettingsSection
+                  gitType={gitType}
+                  activeRootName={activeRootName}
+                  settings={storageSettings}
+                />
               )}
 
               {section === "health" && isRoot && (
@@ -1880,122 +1312,7 @@ export function SpaceSettingsDialog({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <AlertDialog
-        open={pendingStrategy !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setPendingStrategy(null);
-            setPendingAssetCount(0);
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{m.storage_confirm_title()}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {m.storage_confirm_description({
-                strategy: pendingStrategy ?? "",
-              })}
-              {pendingAssetCount > 0 && (
-                <span className="mt-2 block text-destructive">
-                  {m.storage_confirm_existing_assets({
-                    count: String(pendingAssetCount),
-                  })}
-                </span>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel
-              onClick={() => {
-                setPendingStrategy(null);
-                setPendingAssetCount(0);
-              }}
-            >
-              {m.project_cancel()}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={async () => {
-                const target = pendingStrategy;
-                setPendingStrategy(null);
-                setPendingAssetCount(0);
-                if (target) await applyStrategy(target);
-              }}
-            >
-              {m.storage_confirm_action()}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <StorageStrategyConfirmDialog settings={storageSettings} />
     </Dialog>
-  );
-}
-
-function LfsStatePanel({
-  state,
-  strategy,
-  repairing,
-  onRepair,
-}: {
-  state: LfsState;
-  strategy: "lfs-remote" | "lfs-s3";
-  repairing: boolean;
-  onRepair: () => void;
-}) {
-  if (state === "n/a") return null;
-  // Banner copy is strategy-specific (lfs-s3 references the form above, while
-  // lfs-remote leans on the system git credential helper).
-  const missingTitle =
-    strategy === "lfs-s3"
-      ? m.storage_lfs_banner_missing_s3_title()
-      : m.storage_lfs_banner_missing_remote_title();
-  const missingDesc =
-    strategy === "lfs-s3"
-      ? m.storage_lfs_banner_missing_s3_desc()
-      : m.storage_lfs_banner_missing_remote_desc();
-
-  if (state === "pulling") {
-    return (
-      <div className="rounded-md border border-primary/40 bg-primary/5 p-3 text-sm flex items-center gap-2">
-        <Loader2 className="size-4 animate-spin text-primary" />
-        <span>{m.storage_repair_lfs_pulling()}</span>
-      </div>
-    );
-  }
-  if (state === "missing-creds") {
-    return (
-      <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 space-y-2">
-        <p className="text-sm font-medium">{missingTitle}</p>
-        <p className="text-xs text-muted-foreground">{missingDesc}</p>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={onRepair}
-          disabled={repairing}
-        >
-          {repairing && <Loader2 className="mr-1 size-3 animate-spin" />}
-          {m.storage_lfs_retry()}
-        </Button>
-      </div>
-    );
-  }
-  // Ready — give the user a manual "re-pull binaries" affordance per Q8c.
-  return (
-    <div className="rounded-md border p-3 flex items-center justify-between gap-2">
-      <p className="text-xs text-muted-foreground">
-        {m.storage_lfs_banner_ready()}
-      </p>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        onClick={onRepair}
-        disabled={repairing}
-      >
-        {repairing && <Loader2 className="mr-1 size-3 animate-spin" />}
-        {m.storage_repair_lfs()}
-      </Button>
-    </div>
   );
 }
