@@ -1,5 +1,5 @@
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo, useRef } from "react";
 import { PanelBottomClose, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -9,23 +9,20 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/shared/lib/utils";
 import { useSpaceStore } from "@/features/space";
-import {
-  onTerminalError,
-  onTerminalExit,
-  onTerminalOutput,
-} from "@/features/terminal/api/terminal";
+import { useTerminalEventBridge } from "@/features/terminal/hooks/use-terminal-event-bridge";
 import { useTerminalStore } from "@/features/terminal/hooks/use-terminal-store";
 import {
   buildProjectTerminalTarget,
   buildSpaceTerminalTargets,
 } from "@/features/terminal/lib/targets";
-import { publishTerminalOutput } from "@/features/terminal/lib/output-bus";
 import { TerminalTargetMenu } from "./terminal-target-menu";
 import { TerminalTabStrip } from "./terminal-tab-strip";
 import { TerminalPane } from "./terminal-pane";
 import * as m from "@/paraglide/messages.js";
 
 export function TerminalPanelHost() {
+  useTerminalEventBridge();
+
   const hostRef = useRef<HTMLDivElement>(null);
   const panelOpen = useTerminalStore((state) => state.panelOpen);
   const panelRatio = useTerminalStore((state) => state.panelRatio);
@@ -33,8 +30,6 @@ export function TerminalPanelHost() {
   const tabs = useTerminalStore((state) => state.tabs);
   const activeTabId = useTerminalStore((state) => state.activeTabId);
   const closePanel = useTerminalStore((state) => state.closePanel);
-  const markExited = useTerminalStore((state) => state.markExited);
-  const markError = useTerminalStore((state) => state.markError);
   const { activeRootId, activeRootName, activeRootPath, spaces } =
     useSpaceStore();
 
@@ -51,37 +46,6 @@ export function TerminalPanelHost() {
     () => buildSpaceTerminalTargets(spaces),
     [spaces],
   );
-
-  useEffect(() => {
-    let cancelled = false;
-    let unlistenExit: (() => void) | null = null;
-    let unlistenError: (() => void) | null = null;
-    let unlistenOutput: (() => void) | null = null;
-
-    onTerminalOutput((event) => {
-      publishTerminalOutput(event.ptyId, event.data);
-    }).then((unlisten) => {
-      if (cancelled) unlisten();
-      else unlistenOutput = unlisten;
-    });
-    onTerminalExit((event) => markExited(event.ptyId)).then((unlisten) => {
-      if (cancelled) unlisten();
-      else unlistenExit = unlisten;
-    });
-    onTerminalError((event) => markError(event.ptyId, event.message)).then(
-      (unlisten) => {
-        if (cancelled) unlisten();
-        else unlistenError = unlisten;
-      },
-    );
-
-    return () => {
-      cancelled = true;
-      unlistenOutput?.();
-      unlistenExit?.();
-      unlistenError?.();
-    };
-  }, [markError, markExited]);
 
   function handleResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
     if (!panelOpen) return;

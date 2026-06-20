@@ -15,7 +15,7 @@ import {
   commitFileAndMaybeSync,
   syncSpace,
 } from "@/features/git/api/git-actions";
-import { isTerminalKeyboardEvent } from "@/features/terminal/lib/is-terminal-keyboard-event";
+import { isTerminalKeyboardEvent } from "@/features/terminal";
 import { useGitStore } from "@/features/git/model";
 import {
   deserializeWithConflicts,
