@@ -1,33 +1,13 @@
 import { create } from "zustand";
-import { toast } from "sonner";
-import * as m from "@/paraglide/messages.js";
-import {
-  createEntry as createEntryNative,
-  getExpandedPaths,
-  listEntries,
-  listTreeChildren,
-  moveEntry as moveEntryNative,
-  saveExpandedPaths,
-  saveTreeOrder,
-  type EntryDto,
-} from "@/platform/entries/entries-api";
-import { clearMcpActiveContext, setMcpActiveContext } from "@/platform/mcp";
-import {
-  createProject,
-  createSpace as createSpaceNative,
-  deleteProject,
-  deleteSpace as deleteSpaceNative,
-  ensureAssetsScope,
-  ensureSpaceScaffold,
-  getLastActiveProject,
-  listProjects,
-  listSpaces,
-  openProject,
-  openProjectFolder,
-  reorderSpaces as reorderSpacesNative,
-} from "@/platform/space/space-api";
-import { useEntrySelectionStore, type TreeNode } from "@/features/entry";
+import type { TreeNode } from "@/features/entry";
 import { logTiming, nowMs } from "@/shared/lib/performance";
+import * as spaceNotifications from "../api/space-notifications";
+import {
+  openScopeHomeSelection,
+  openSpaceReadmeDocument,
+} from "../api/space-selection-actions";
+import * as spaceActions from "../api/space-store-actions";
+import type { SpaceEntryDto } from "../api/space-store-actions";
 import {
   applyReadmeMeta as applyReadmeMetaPatch,
   isReadmePath,
@@ -122,8 +102,14 @@ export interface SpaceState {
   ) => void;
 
   // Document/tree methods
-  createEntry: (spacePath: string, title: string) => Promise<EntryDto | null>;
-  createPage: (spacePath: string, title: string) => Promise<EntryDto | null>;
+  createEntry: (
+    spacePath: string,
+    title: string,
+  ) => Promise<SpaceEntryDto | null>;
+  createPage: (
+    spacePath: string,
+    title: string,
+  ) => Promise<SpaceEntryDto | null>;
   // Full recursive repair fallback only. Ordinary UI mutations should use
   // parent-level reload/patch helpers below.
   refreshTree: (
@@ -219,29 +205,18 @@ function syncMcpContext(
   activeSpaceId = state.activeSpaceId,
 ) {
   if (!state.activeRootId || !state.activeRootPath || !state.activeRootName) {
-    clearMcpActiveContext().catch((err) =>
-      console.warn("mcp_clear_active_context failed:", err),
-    );
+    spaceActions
+      .clearActiveMcpContext()
+      .catch((err) => console.warn("mcp_clear_active_context failed:", err));
     return;
   }
 
-  setMcpActiveContext({
-    projectPath: state.activeRootPath,
-    activeSpaceId,
-  }).catch((err) => console.warn("mcp_set_active_context failed:", err));
-}
-
-function hasScopeReadme(nodes: TreeNode[]): boolean {
-  return nodes.some((node) => node.path.toLowerCase() === "readme.md");
-}
-
-function openScopeHomeSelection(spaceId: string, tree: TreeNode[]) {
-  const selection = useEntrySelectionStore.getState();
-  if (hasScopeReadme(tree)) {
-    selection.openDocument("README.md", spaceId);
-  } else {
-    selection.openScopeHome(spaceId);
-  }
+  spaceActions
+    .setActiveMcpContext({
+      projectPath: state.activeRootPath,
+      activeSpaceId,
+    })
+    .catch((err) => console.warn("mcp_set_active_context failed:", err));
 }
 
 function hasRecordKey<T>(record: Record<string, T>, key: string): boolean {
@@ -357,7 +332,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   loadRootSpaces: async () => {
     set({ isLoadingRoots: true });
     try {
-      const projects = await listProjects();
+      const projects = await spaceActions.listRootSpaces();
       set({ rootSpaces: projects, rootsLoaded: true });
       return projects;
     } catch (err) {
@@ -380,7 +355,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
         throw new Error("Project not found");
       }
 
-      const config = await openProject(id);
+      const config = await spaceActions.openRootProject(id);
       set({
         activeRootId: id,
         activeRootName: config.name,
@@ -402,9 +377,9 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       // Grant the webview access to this project's `.assets/` via the
       // Tauri asset protocol. Scope is per-app-session and the call is
       // idempotent — safe to repeat on every project open.
-      ensureAssetsScope(ws.path).catch((err) =>
-        console.warn("ensure_assets_scope failed:", err),
-      );
+      spaceActions
+        .ensureSpaceAssetsScope(ws.path)
+        .catch((err) => console.warn("ensure_assets_scope failed:", err));
       await get().loadTreeChildren(id, ROOT_TREE_PARENT);
       openScopeHomeSelection(id, get().fileTrees[id] ?? []);
       await get().loadExpandedPaths(id);
@@ -412,7 +387,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       return true;
     } catch (err) {
       console.error("Failed to open project:", err);
-      toast.error(m.toast_error());
+      spaceNotifications.notifySpaceError();
       return false;
     }
   },
@@ -428,19 +403,19 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   },
 
   createRoot: async (name, icon, description, path) => {
-    const ws = await createProject({
+    const ws = await spaceActions.createRootSpace({
       name,
       icon,
       description,
       path,
     });
     set((s) => ({ rootSpaces: [...s.rootSpaces, ws], rootsLoaded: true }));
-    toast.success(m.toast_project_created());
+    spaceNotifications.notifyProjectCreated();
     return ws;
   },
 
   openRootFolder: async (path: string) => {
-    const ws = await openProjectFolder(path);
+    const ws = await spaceActions.openRootFolderSpace(path);
     set((s) => {
       const exists = s.rootSpaces.some((w) => w.id === ws.id);
       return exists
@@ -451,7 +426,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   },
 
   deleteRoot: async (id, deleteFiles) => {
-    await deleteProject(id, deleteFiles);
+    await spaceActions.deleteRootSpace(id, deleteFiles);
     const { activeRootId } = get();
     set((s) => ({
       rootSpaces: s.rootSpaces.filter((w) => w.id !== id),
@@ -474,16 +449,16 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
         : {}),
     }));
     if (activeRootId === id) {
-      clearMcpActiveContext().catch((err) =>
-        console.warn("mcp_clear_active_context failed:", err),
-      );
+      spaceActions
+        .clearActiveMcpContext()
+        .catch((err) => console.warn("mcp_clear_active_context failed:", err));
     }
-    toast.success(m.toast_project_deleted());
+    spaceNotifications.notifyProjectDeleted();
   },
 
   getLastActiveRootId: async () => {
     try {
-      return await getLastActiveProject();
+      return await spaceActions.getLastActiveRootSpace();
     } catch {
       return null;
     }
@@ -492,7 +467,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   loadSpaces: async (rootPath: string) => {
     set({ isLoadingSpaces: true });
     try {
-      const spaces = await listSpaces(rootPath);
+      const spaces = await spaceActions.listChildSpaces(rootPath);
       set({ spaces });
       syncMcpContext(get(), get().activeSpaceId);
     } catch (err) {
@@ -537,7 +512,8 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     };
 
     if (space?.path && activeRootPath) {
-      ensureSpaceScaffold(activeRootPath, space.path)
+      spaceActions
+        .ensureChildSpaceScaffold(activeRootPath, space.path)
         .catch((err) => console.warn("ensure_space_scaffold failed:", err))
         .finally(validateTree);
     } else {
@@ -545,9 +521,9 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     }
 
     if (space?.path) {
-      ensureAssetsScope(space.path).catch((err) =>
-        console.warn("ensure_assets_scope failed:", err),
-      );
+      spaceActions
+        .ensureSpaceAssetsScope(space.path)
+        .catch((err) => console.warn("ensure_assets_scope failed:", err));
     }
 
     logTiming("space.open", startedAt, {
@@ -565,7 +541,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   },
 
   createSpace: async (parentPath, name, icon, folderName, gitType) => {
-    const ws = await createSpaceNative({
+    const ws = await spaceActions.createChildSpace({
       parentPath,
       name,
       icon,
@@ -574,13 +550,13 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     });
     set((s) => ({ spaces: [...s.spaces, ws] }));
     await get().openSpace(ws.id);
-    useEntrySelectionStore.getState().openDocument("README.md", ws.id);
-    toast.success(m.toast_space_created());
+    openSpaceReadmeDocument(ws.id);
+    spaceNotifications.notifySpaceCreated();
     return ws;
   },
 
   deleteSpace: async (parentPath, spaceId, deleteFiles) => {
-    await deleteSpaceNative(parentPath, spaceId, deleteFiles);
+    await spaceActions.deleteChildSpace(parentPath, spaceId, deleteFiles);
     const { activeSpaceId } = get();
     set((s) => ({
       spaces: s.spaces.filter((w) => w.id !== spaceId),
@@ -597,13 +573,16 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     if (activeSpaceId === spaceId) {
       syncMcpContext(get(), null);
     }
-    toast.success(m.toast_space_deleted());
+    spaceNotifications.notifySpaceDeleted();
   },
 
   reorderSpaces: async (orderedSpaceIds) => {
     const { activeRootPath } = get();
     if (!activeRootPath) return;
-    const spaces = await reorderSpacesNative(activeRootPath, orderedSpaceIds);
+    const spaces = await spaceActions.reorderChildSpaces(
+      activeRootPath,
+      orderedSpaceIds,
+    );
     set({ spaces });
   },
 
@@ -629,8 +608,8 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
 
   createEntry: async (spacePath: string, title: string) => {
     try {
-      const entry = await createEntryNative({
-        space: spacePath,
+      const entry = await spaceActions.createSpaceEntry({
+        spacePath,
         parentPath: null,
         title,
         projectPath: get().activeRootPath,
@@ -643,11 +622,11 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       if (ws) {
         await get().reloadTreeParent(ws.id, ROOT_TREE_PARENT);
       }
-      toast.success(m.toast_page_created());
+      spaceNotifications.notifyPageCreated();
       return entry;
     } catch (err) {
       console.error("Failed to create page:", err);
-      toast.error(m.toast_error());
+      spaceNotifications.notifySpaceError();
       return null;
     }
   },
@@ -675,7 +654,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     let nodeCount = 0;
     set((state) => treeActivityPatch(state, id, hadCachedTree, true));
     try {
-      const tree = await listEntries(spacePath);
+      const tree = await spaceActions.listSpaceTreeEntries(spacePath);
       nodeCount = countTreeNodes(tree);
       const loadedAt = Date.now();
       const childrenByParent = flattenChildrenByParentPath(tree);
@@ -784,7 +763,10 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     }));
 
     try {
-      const children = await listTreeChildren(spacePath, parentKey || null);
+      const children = await spaceActions.listSpaceTreeChildren(
+        spacePath,
+        parentKey || null,
+      );
       nodeCount = children.length;
       const loadedAt = Date.now();
       set((state) => {
@@ -1199,16 +1181,16 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       expandedPaths: {},
       explicitHome: true,
     });
-    clearMcpActiveContext().catch((err) =>
-      console.warn("mcp_clear_active_context failed:", err),
-    );
+    spaceActions
+      .clearActiveMcpContext()
+      .catch((err) => console.warn("mcp_clear_active_context failed:", err));
   },
 
   loadExpandedPaths: async (spaceId: string) => {
     const spacePath = findSpacePath(get(), spaceId);
     if (!spacePath) return;
     try {
-      const paths = await getExpandedPaths(spacePath);
+      const paths = await spaceActions.getSpaceExpandedPaths(spacePath);
       set((s) => ({
         expandedPaths: { ...s.expandedPaths, [spaceId]: paths },
         fileTrees: s.childrenByParentPath[spaceId]
@@ -1242,7 +1224,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     }));
     const spacePath = findSpacePath(get(), spaceId);
     if (spacePath) {
-      saveExpandedPaths(spacePath, next).catch(() => {});
+      spaceActions.saveSpaceExpandedPaths(spacePath, next).catch(() => {});
     }
   },
 
@@ -1250,8 +1232,8 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     const spacePath = findSpacePath(get(), spaceId);
     if (!spacePath) throw new Error("Space not found");
     const oldParent = treeRowParentPath(from);
-    const newPath = await moveEntryNative({
-      space: spacePath,
+    const newPath = await spaceActions.moveSpaceEntry({
+      spacePath,
       from,
       toParent,
       projectPath: get().activeRootPath,
@@ -1265,8 +1247,8 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   saveOrder: async (spaceId: string, order: Record<string, string[]>) => {
     const spacePath = findSpacePath(get(), spaceId);
     if (!spacePath) return;
-    await saveTreeOrder({
-      space: spacePath,
+    await spaceActions.saveSpaceTreeOrder({
+      spacePath,
       order,
       projectPath: get().activeRootPath,
     });

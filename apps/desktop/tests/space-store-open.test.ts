@@ -95,6 +95,7 @@ mock.module("@/platform/entries/entries-api", () => ({
   moveEntry,
   saveExpandedPaths: mock(async () => undefined),
   saveTreeOrder: mock(async () => undefined),
+  updateEntryField: mock(async () => null),
 }));
 
 mock.module("@/platform/space/space-api", () => ({

@@ -19,24 +19,20 @@ import {
   type DragMoveEvent,
 } from "@dnd-kit/core";
 import { SortableContext } from "@dnd-kit/sortable";
-import { toast } from "sonner";
 import { FileText } from "lucide-react";
 import { useSpaceStore } from "../model";
-import { useEntrySelectionStore } from "@/features/entry";
-import { useEditorStore } from "@/features/editor/model";
 import type { TreeNode } from "@/features/entry";
 import {
   flattenTree,
   removeCollapsedChildren,
   getProjection,
-  isDescendantOf,
-  getParentDir,
   type FlattenedItem,
   type Projection,
 } from "../lib/tree-dnd-utilities";
 import { treeNodeHasChildren } from "../lib/tree-cache";
+import { findTreeNode } from "../lib/tree-node-queries";
 import { logTiming, nowMs } from "@/shared/lib/performance";
-import { nestTreeEntry, unnestTreeEntry } from "../api/tree-entry-actions";
+import { useSortableFileTreeActions } from "../hooks/use-sortable-file-tree-actions";
 
 // --- Context for sharing DnD state with FileTreeItem ---
 
@@ -66,64 +62,13 @@ interface SortableFileTreeProps {
   children: React.ReactNode;
 }
 
-/**
- * Build order map from the current tree state.
- * Each directory key maps to its children names in order.
- */
-function buildOrderMap(
-  nodes: TreeNode[],
-  dirKey = ".",
-): Record<string, string[]> {
-  const order: Record<string, string[]> = {};
-  order[dirKey] = nodes.map((n) => n.name);
-  for (const node of nodes) {
-    if (node.children.length > 0) {
-      const nodeDir = node.path.replace(/\/readme\.md$/i, "");
-      const childOrder = buildOrderMap(node.children, nodeDir);
-      Object.assign(order, childOrder);
-    }
-  }
-  return order;
-}
-
-/** Find a node in the tree by path. */
-function findNode(nodes: TreeNode[], path: string): TreeNode | null {
-  for (const node of nodes) {
-    if (node.path === path) return node;
-    if (node.children.length > 0) {
-      const found = findNode(node.children, path);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-
-/** Find the parent tree node that directly contains a child with the given path. */
-function findParentOf(nodes: TreeNode[], childPath: string): TreeNode | null {
-  for (const node of nodes) {
-    if (node.children.some((c) => c.path === childPath)) return node;
-    const found = findParentOf(node.children, childPath);
-    if (found) return found;
-  }
-  return null;
-}
-
 export function SortableFileTree({
   spaceId,
   tree,
   children,
 }: SortableFileTreeProps) {
   const renderStartedAt = nowMs();
-  const {
-    moveEntry,
-    saveOrder,
-    reloadTreeParent,
-    reloadTreeParents,
-    reloadTreePathParent,
-    loadTreeChildren,
-    toggleExpanded,
-    expandedPaths,
-  } = useSpaceStore();
+  const { loadTreeChildren, toggleExpanded, expandedPaths } = useSpaceStore();
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -288,7 +233,7 @@ export function SortableFileTree({
         autoExpandTimer.current = null;
       }
       if (newOverId) {
-        const overNode = findNode(tree, newOverId);
+        const overNode = findTreeNode(tree, newOverId);
         if (
           overNode &&
           treeNodeHasChildren(overNode) &&
@@ -326,217 +271,24 @@ export function SortableFileTree({
     }
   }, [stopAutoScroll]);
 
+  const commitDragEnd = useSortableFileTreeActions({
+    spaceId,
+    tree,
+    resetState,
+  });
+
   const handleDragEnd = useCallback(
-    async (event: DragEndEvent) => {
-      const currentProjection = projectionRef.current;
-      resetState();
-
-      const { active, over } = event;
-      if (!over || active.id === over.id || !currentProjection) return;
-
-      const state = useSpaceStore.getState();
-      const space =
-        state.spaces.find((w) => w.id === spaceId) ??
-        state.rootSpaces.find((w) => w.id === spaceId);
-      if (!space) return;
-
-      const fromPath = active.id as string;
-      const fromNode = findNode(tree, fromPath);
-      if (!fromNode) return;
-
-      // Guard: prevent dropping a folder into its own descendants
-      const fromFolderPath = treeNodeHasChildren(fromNode)
-        ? fromPath.replace(/\/readme\.md$/i, "")
-        : fromPath;
-      if (isDescendantOf(currentProjection.parentPath, fromFolderPath)) {
-        return;
-      }
-
-      // For folder documents (path = "folder/readme.md"), tree parent is parent of folder, not folder itself
-      const fromParent = treeNodeHasChildren(fromNode)
-        ? getParentDir(fromPath.replace(/\/readme\.md$/i, ""))
-        : getParentDir(fromPath);
-      const toParent = currentProjection.parentPath;
-
-      try {
-        const { activeDocument, openDocument } =
-          useEntrySelectionStore.getState();
-        const { clearUnsaved, suppressPaths } = useEditorStore.getState();
-
-        // Auto-nest: if nesting into a non-folder file, convert it first
-        // Skip for bare folders (path doesn't end with .md) — they're already directories
-        if (currentProjection.type === "child") {
-          const targetNode = findNode(tree, currentProjection.overPath);
-          const targetIsBareFolder =
-            targetNode && !targetNode.path.endsWith(".md");
-          if (
-            targetNode &&
-            !treeNodeHasChildren(targetNode) &&
-            !targetIsBareFolder
-          ) {
-            const nestTarget = currentProjection.overPath;
-            const oldName = targetNode.name; // e.g. "doc2.md"
-            // Suppress file watcher for structural change
-            suppressPaths([nestTarget, fromPath]);
-            const newNestPath = await nestTreeEntry({
-              spacePath: space.path,
-              path: nestTarget,
-              projectPath: useSpaceStore.getState().activeRootPath,
-            });
-            suppressPaths([newNestPath]);
-            if (activeDocument === nestTarget) {
-              clearUnsaved(nestTarget);
-              openDocument(newNestPath, spaceId);
-            }
-            // Update order.json: rename "doc2.md" → "doc2" (file → folder)
-            const newName = oldName.replace(/\.md$/i, "");
-            if (newName !== oldName) {
-              const order = buildOrderMap(tree);
-              for (const siblings of Object.values(order)) {
-                const idx = siblings.indexOf(oldName);
-                if (idx !== -1) {
-                  siblings[idx] = newName;
-                  break;
-                }
-              }
-              await saveOrder(spaceId, order);
-            }
-            await reloadTreePathParent(spaceId, nestTarget);
-            await reloadTreeParent(
-              spaceId,
-              newNestPath.replace(/\/readme\.md$/i, ""),
-            );
-          }
-        }
-
-        // Use fresh tree from store (may have changed after nest_entry)
-        const currentTree = useSpaceStore.getState().fileTrees[spaceId] ?? tree;
-
-        if (fromParent === toParent) {
-          // Same parent — reorder
-          const overPath = currentProjection.overPath;
-          const overNode = findNode(currentTree, overPath);
-          if (!overNode) return;
-
-          const order = buildOrderMap(currentTree);
-          const dirKey = toParent || ".";
-          const siblings = order[dirKey];
-          if (siblings) {
-            const fromIdx = siblings.indexOf(fromNode.name);
-            const overIdx = siblings.indexOf(overNode.name);
-            if (fromIdx !== -1 && overIdx !== -1 && fromIdx !== overIdx) {
-              siblings.splice(fromIdx, 1);
-              const adjustedIdx = fromIdx < overIdx ? overIdx - 1 : overIdx;
-              siblings.splice(
-                currentProjection.type === "after"
-                  ? adjustedIdx + 1
-                  : adjustedIdx,
-                0,
-                fromNode.name,
-              );
-              await saveOrder(spaceId, order);
-              await reloadTreeParent(spaceId, toParent);
-            }
-          }
-          return;
-        }
-
-        // Different parent — move entry
-        // Use actual tree node path (preserves readme.md case from filesystem)
-        const oldParentTreeNode = fromParent
-          ? findParentOf(tree, fromPath)
-          : null;
-        const oldParentReadme = oldParentTreeNode?.path
-          .toLowerCase()
-          .endsWith("/readme.md")
-          ? oldParentTreeNode.path
-          : null;
-
-        // For document folders, move the folder itself, not just readme.md
-        // Bare folders (path without .md) are already folder paths
-        const isBareFolder = !fromPath.endsWith(".md");
-        const isDocFolder = !isBareFolder && treeNodeHasChildren(fromNode);
-        const movePath = isDocFolder
-          ? fromPath.replace(/\/readme\.md$/i, "")
-          : fromPath;
-
-        // If the moved file is the open document, update path
-        if (activeDocument === fromPath) {
-          clearUnsaved(fromPath);
-        }
-
-        // Suppress file watcher for structural move
-        suppressPaths([fromPath, movePath]);
-        const newPath = await moveEntry(spaceId, movePath, toParent);
-        if (newPath) suppressPaths([newPath]);
-
-        if (activeDocument === fromPath && newPath && !isBareFolder) {
-          // moveEntry returns folder path for doc folders, append readme filename (preserve case)
-          const readmeFilename = fromPath.split("/").pop() ?? "README.md";
-          const newDocPath = isDocFolder
-            ? `${newPath}/${readmeFilename}`
-            : newPath;
-          openDocument(newDocPath, spaceId);
-        }
-
-        // Auto-unnest: if the old parent folder now has no children
-        if (oldParentReadme) {
-          const freshTree =
-            useSpaceStore.getState().fileTrees[spaceId] ?? currentTree;
-          const oldParentNode = findNode(freshTree, oldParentReadme);
-          if (oldParentNode && oldParentNode.children.length <= 1) {
-            try {
-              const currentActive =
-                useEntrySelectionStore.getState().activeDocument;
-              useEditorStore.getState().suppressPaths([oldParentReadme]);
-              const unnestPath = await unnestTreeEntry({
-                spacePath: space.path,
-                path: oldParentReadme,
-                projectPath: useSpaceStore.getState().activeRootPath,
-              });
-              useEditorStore.getState().suppressPaths([unnestPath]);
-              if (currentActive === oldParentReadme) {
-                useEditorStore.getState().clearUnsaved(oldParentReadme);
-                useEntrySelectionStore
-                  .getState()
-                  .openDocument(unnestPath, spaceId);
-              }
-              await reloadTreePathParent(spaceId, oldParentReadme);
-              await reloadTreePathParent(spaceId, unnestPath);
-            } catch {
-              // Unnest may fail if folder still has children (e.g. non-md files on disk)
-            }
-          }
-        }
-
-        const updatedTree = useSpaceStore.getState().fileTrees[spaceId];
-        if (updatedTree) {
-          const order = buildOrderMap(updatedTree);
-          await saveOrder(spaceId, order);
-          await reloadTreeParents(spaceId, [fromParent, toParent]);
-        }
-      } catch (err) {
-        console.error("Failed to move entry:", err);
-        toast.error("Failed to move file");
-      }
+    (event: DragEndEvent) => {
+      void commitDragEnd(event, projectionRef.current);
     },
-    [
-      tree,
-      spaceId,
-      moveEntry,
-      saveOrder,
-      reloadTreeParent,
-      reloadTreeParents,
-      reloadTreePathParent,
-      resetState,
-    ],
+    [commitDragEnd],
   );
 
   const handleDragCancel = useCallback(() => {
     resetState();
   }, [resetState]);
 
-  const activeNode = activeId ? findNode(tree, activeId) : null;
+  const activeNode = activeId ? findTreeNode(tree, activeId) : null;
 
   // If dragging a folder, compute its folder path for disabling children
   const activeFolderPath = useMemo(() => {
@@ -601,5 +353,3 @@ export function SortableFileTree({
     </TreeDndContext.Provider>
   );
 }
-
-export { buildOrderMap };

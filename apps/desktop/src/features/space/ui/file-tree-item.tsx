@@ -1,13 +1,5 @@
-import {
-  useContext,
-  useState,
-  useRef,
-  useEffect,
-  type KeyboardEvent,
-  type ReactElement,
-} from "react";
+import { useContext, type ReactElement } from "react";
 import { useSortable } from "@dnd-kit/sortable";
-import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import {
   SidebarMenuSub,
@@ -54,28 +46,12 @@ import {
   Pencil,
   Trash2,
 } from "lucide-react";
-import { useEntrySelectionStore } from "@/features/entry";
-import { useEditorStore } from "@/features/editor/model";
-import { useSpaceStore } from "../model";
 import type { TreeNode } from "@/features/entry";
+import { FileGitIndicatorIcon } from "@/features/git";
+import { useFileTreeItemActions } from "../hooks/use-file-tree-item-actions";
 import { TreeDndContext } from "./sortable-file-tree";
 import { TreeDropIndicator } from "./tree-drop-indicator";
 import { isDescendantOf } from "../lib/tree-dnd-utilities";
-import { treeNodeHasChildren, treeParentKeyForNode } from "../lib/tree-cache";
-import { FileGitIndicatorIcon } from "@/features/git";
-import {
-  convertTreeBareFolderToCollection,
-  convertTreeDocumentToCollection,
-  createTreeFolder,
-  createTreePage,
-  deleteTreeEntry,
-  getTreeEntryBacklinks,
-  makeBareFolderDocument,
-  renameTreeEntryPath,
-  resolveTreeChildTarget,
-  updateTreeEntryTitle,
-  type BacklinkInfo,
-} from "../api/tree-entry-actions";
 
 interface FileTreeItemProps {
   node: TreeNode;
@@ -86,48 +62,39 @@ interface FileTreeItemProps {
   ) => Promise<void>;
 }
 
-/** Bare folder = directory without readme.md (path doesn't end with .md) */
-function isBareFolder(node: TreeNode): boolean {
-  return !node.path.endsWith(".md");
-}
-
 export function FileTreeItem({
   node,
   spaceId,
   loadTreeChildren,
 }: FileTreeItemProps) {
-  const { openDocument, activeDocument } = useEntrySelectionStore();
-  const { unsavedChanges } = useEditorStore();
   const {
-    expandedPaths,
-    treeParentLoading,
-    toggleExpanded,
-    reloadTreeParent,
-    reloadTreeParents,
-    reloadTreePathParent,
-    patchEntryTreeMeta,
-    removeTreePath,
-    spaces,
-    rootSpaces,
-    activeSpaceId,
-    activeRootId,
-    activeRootPath,
-  } = useSpaceStore();
-
-  const bareFolder = isBareFolder(node);
-  const knownChildren = treeNodeHasChildren(node);
-  const expandable = bareFolder || knownChildren;
-  const childParentKey = treeParentKeyForNode(node);
-  const childLoading = childParentKey
-    ? (treeParentLoading[spaceId]?.[childParentKey] ?? false)
-    : false;
-  const isActive = !bareFolder && activeDocument === node.path;
-  const isUnsaved = !!unsavedChanges[node.path];
-  const spaceForGit =
-    spaces.find((w) => w.id === spaceId) ??
-    rootSpaces.find((w) => w.id === spaceId);
-
-  const expanded = expandedPaths[spaceId]?.includes(node.path) ?? false;
+    bareFolder,
+    backlinkLabel,
+    childLoading,
+    closeDeleteDialog,
+    deleteDialog,
+    editRef,
+    editValue,
+    expandable,
+    expanded,
+    handleDeleteConfirm,
+    handleDeleteRequest,
+    handleDocumentClick,
+    handleMakeCollection,
+    handleMakeDocument,
+    handleNewFolder,
+    handleNewPage,
+    handleNodeOpenChange,
+    handleRenameKeyDown,
+    handleRenameSubmit,
+    handleStartRename,
+    isActive,
+    isEditing,
+    isUnsaved,
+    knownChildren,
+    setEditValue,
+    space,
+  } = useFileTreeItemActions({ node, spaceId, loadTreeChildren });
 
   const { activeId, activeFolderPath, overId, projection, flatItemsMap } =
     useContext(TreeDndContext);
@@ -149,269 +116,6 @@ export function FileTreeItem({
   const style = {
     opacity: isDragging ? 0.4 : undefined,
   };
-
-  const space = spaceForGit;
-
-  const [isEditing, setIsEditing] = useState(false);
-  const [editValue, setEditValue] = useState("");
-  const editRef = useRef<HTMLInputElement>(null);
-  const [deleteDialog, setDeleteDialog] = useState<{
-    open: boolean;
-    backlinks: BacklinkInfo[];
-  }>({ open: false, backlinks: [] });
-
-  function backlinkLabel(backlink: BacklinkInfo): string {
-    if (!backlink.sourceSpaceId) return backlink.sourcePath;
-    const sourceSpace = [...rootSpaces, ...spaces].find(
-      (item) => item.id === backlink.sourceSpaceId,
-    );
-    return sourceSpace
-      ? `${sourceSpace.name} · ${backlink.sourcePath}`
-      : backlink.sourcePath;
-  }
-
-  useEffect(() => {
-    if (isEditing && editRef.current) {
-      editRef.current.focus();
-      editRef.current.select();
-    }
-  }, [isEditing]);
-
-  function handleStartRename() {
-    setEditValue(node.title);
-    setIsEditing(true);
-  }
-
-  async function handleRenameSubmit() {
-    const newName = editValue.trim();
-    if (!space || !newName || newName === node.title) {
-      setIsEditing(false);
-      return;
-    }
-    try {
-      if (bareFolder) {
-        // Bare folder: rename directory on disk
-        const parent = node.path.includes("/")
-          ? node.path.substring(0, node.path.lastIndexOf("/"))
-          : "";
-        const newPath = parent ? `${parent}/${newName}` : newName;
-        const modifiedFiles = await renameTreeEntryPath({
-          spacePath: space.path,
-          from: node.path,
-          to: newPath,
-          projectPath: activeRootPath,
-        });
-        // Backlinks files: invalidate Plate cache (markStale) + suppress
-        // watcher reload handling for Svode-initiated rewrites.
-        if (modifiedFiles.length > 0) {
-          const editor = useEditorStore.getState();
-          for (const f of modifiedFiles) editor.markStale(f);
-          editor.suppressPaths(modifiedFiles);
-        }
-        removeTreePath(spaceId, node.path);
-        await reloadTreeParents(spaceId, [parent]);
-      } else {
-        // Title-edit only: file rename + backlinks are deferred to ⌘S (unified with editor-title-edit).
-        const entry = await updateTreeEntryTitle({
-          spacePath: space.path,
-          filePath: node.path,
-          title: newName,
-          projectPath: activeRootPath,
-        });
-        if (activeDocument === node.path) {
-          useEditorStore
-            .getState()
-            .requestRename(node.path, newName, null);
-        }
-        patchEntryTreeMeta(
-          spaceId,
-          node.path,
-          newName,
-          entry.meta.icon,
-          entry.meta.description ?? null,
-        );
-      }
-    } catch (err) {
-      console.error("Failed to rename:", err);
-      toast.error(m.toast_error());
-    }
-    setIsEditing(false);
-  }
-
-  function handleRenameKeyDown(e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      handleRenameSubmit();
-    } else if (e.key === "Escape") {
-      setIsEditing(false);
-    }
-  }
-
-  function handleDocumentClick() {
-    if (node.has_schema) {
-      const isRootWorkspace = spaceId === activeRootId;
-      if (isRootWorkspace && activeSpaceId) {
-        useSpaceStore.getState().clearActiveSpace();
-      } else if (!isRootWorkspace && activeSpaceId !== spaceId) {
-        useSpaceStore.getState().openSpace(spaceId);
-      }
-      openDocument(node.path, spaceId);
-      return;
-    }
-    if (bareFolder) {
-      if (!expanded) void loadTreeChildren(spaceId, node.path);
-      toggleExpanded(spaceId, node.path);
-      return;
-    }
-    const isRootWorkspace = spaceId === activeRootId;
-    if (isRootWorkspace && activeSpaceId) {
-      useSpaceStore.getState().clearActiveSpace();
-    } else if (!isRootWorkspace && activeSpaceId !== spaceId) {
-      useSpaceStore.getState().openSpace(spaceId);
-    }
-    openDocument(node.path, spaceId);
-  }
-
-  async function handleNewPage() {
-    if (!space) return;
-    try {
-      const { parentPath, parentNodePath } = await resolveTreeChildTarget({
-        spacePath: space.path,
-        node,
-        projectPath: activeRootPath,
-      });
-      const entry = await createTreePage({
-        spacePath: space.path,
-        parentPath,
-        title: String(m.editor_untitled()),
-        projectPath: activeRootPath,
-      });
-      if (parentNodePath !== node.path) {
-        removeTreePath(spaceId, node.path);
-        await reloadTreePathParent(spaceId, node.path);
-      }
-      await reloadTreeParent(spaceId, parentPath);
-      // Expand the parent so the new child is visible
-      if (!expandedPaths[spaceId]?.includes(parentNodePath)) {
-        toggleExpanded(spaceId, parentNodePath);
-      }
-      openDocument(entry.path, spaceId);
-      toast.success(m.toast_page_created());
-    } catch (err) {
-      console.error("Failed to create page:", err);
-      toast.error(m.toast_error());
-    }
-  }
-
-  async function handleMakeDocument() {
-    if (!space || !bareFolder) return;
-    try {
-      const readmePath = await makeBareFolderDocument({
-        spacePath: space.path,
-        folderPath: node.path,
-        title: node.title,
-        projectPath: activeRootPath,
-      });
-      await reloadTreePathParent(spaceId, node.path);
-      await reloadTreeParent(spaceId, node.path);
-      openDocument(readmePath, spaceId);
-    } catch (err) {
-      console.error("Failed to make document:", err);
-      toast.error(m.toast_error());
-    }
-  }
-
-  async function handleMakeCollection() {
-    if (!space || node.has_schema) return;
-    try {
-      if (bareFolder) {
-        const entry = await convertTreeBareFolderToCollection({
-          spacePath: space.path,
-          folderPath: node.path,
-          projectPath: activeRootPath,
-        });
-        await reloadTreePathParent(spaceId, node.path);
-        await reloadTreeParent(spaceId, node.path);
-        openDocument(entry.path, spaceId);
-        return;
-      }
-
-      const readmeEntry = await convertTreeDocumentToCollection({
-        spacePath: space.path,
-        filePath: node.path,
-        projectPath: activeRootPath,
-      });
-      await reloadTreePathParent(spaceId, node.path);
-      await reloadTreeParent(
-        spaceId,
-        readmeEntry.path.replace(/\/readme\.md$/i, ""),
-      );
-      openDocument(readmeEntry.path, spaceId);
-    } catch (err) {
-      console.error("Failed to make collection:", err);
-      toast.error(m.toast_error());
-    }
-  }
-
-  async function handleNewFolder() {
-    if (!space) return;
-    try {
-      const { parentPath, parentNodePath } = await resolveTreeChildTarget({
-        spacePath: space.path,
-        node,
-        projectPath: activeRootPath,
-      });
-      await createTreeFolder({
-        spacePath: space.path,
-        parentPath,
-        name: m.space_new_folder(),
-        projectPath: activeRootPath,
-      });
-      if (parentNodePath !== node.path) {
-        removeTreePath(spaceId, node.path);
-        await reloadTreePathParent(spaceId, node.path);
-      }
-      await reloadTreeParent(spaceId, parentPath);
-      if (!expandedPaths[spaceId]?.includes(parentNodePath)) {
-        toggleExpanded(spaceId, parentNodePath);
-      }
-    } catch (err) {
-      console.error("Failed to create folder:", err);
-      toast.error(m.toast_error());
-    }
-  }
-
-  async function handleDeleteRequest() {
-    if (!space) return;
-    try {
-      const backlinks = await getTreeEntryBacklinks({
-        spacePath: space.path,
-        targetPath: node.path,
-        projectPath: activeRootPath ?? null,
-      });
-      setDeleteDialog({ open: true, backlinks });
-    } catch {
-      // If backlinks check fails, show dialog anyway without backlinks
-      setDeleteDialog({ open: true, backlinks: [] });
-    }
-  }
-
-  async function handleDeleteConfirm() {
-    if (!space) return;
-    setDeleteDialog({ open: false, backlinks: [] });
-    try {
-      await deleteTreeEntry({
-        spacePath: space.path,
-        path: node.path,
-        projectPath: activeRootPath,
-      });
-      removeTreePath(spaceId, node.path);
-      await reloadTreePathParent(spaceId, node.path);
-    } catch (err) {
-      console.error("Failed to delete entry:", err);
-      toast.error(m.toast_error());
-    }
-  }
 
   const iconElement = node.icon ? (
     <span className="h-4 w-4 shrink-0 text-center leading-4">{node.icon}</span>
@@ -519,7 +223,7 @@ export function FileTreeItem({
     <AlertDialog
       open={deleteDialog.open}
       onOpenChange={(open) => {
-        if (!open) setDeleteDialog({ open: false, backlinks: [] });
+        if (!open) closeDeleteDialog();
       }}
     >
       <AlertDialogContent>
@@ -616,10 +320,7 @@ export function FileTreeItem({
         {dropIndicator}
         <Collapsible
           open={expanded}
-          onOpenChange={(open) => {
-            if (open) void loadTreeChildren(spaceId, node.path);
-            toggleExpanded(spaceId, node.path);
-          }}
+          onOpenChange={handleNodeOpenChange}
           className="group/collapsible"
         >
           <div className="flex items-center group/tree-item">
