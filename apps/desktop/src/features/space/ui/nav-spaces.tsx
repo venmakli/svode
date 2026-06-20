@@ -1,44 +1,15 @@
 import {
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type RefObject,
-} from "react";
-import {
   DndContext,
   PointerSensor,
   closestCenter,
   useSensor,
   useSensors,
-  type DragEndEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext,
-  arrayMove,
-  useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import * as m from "@/paraglide/messages.js";
-import { toast } from "sonner";
-import {
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarMenu,
-  SidebarMenuAction,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarMenuSub,
-} from "@/components/ui/sidebar";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -49,317 +20,76 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  ChevronRight,
-  CloudOff,
-  Database,
-  Ellipsis,
-  FilePlus,
-  FolderDown,
-  FolderPlus,
-  Loader2,
-  Plus,
-  Save,
-  Settings,
-  Pencil,
-  Trash2,
-  X,
-} from "lucide-react";
-import { useSpaceStore } from "../model";
-import { useEntrySelectionStore } from "@/features/entry";
-import type { TreeNode } from "@/features/entry";
-import type { LfsState, SpaceInfo } from "../model";
-import {
-  cloneMissingSpace,
-  listenSpaceCloneProgress,
-  removeMissingSpace,
-  renameSpace,
-} from "../api/space-actions";
-import { useSpaceLfsStateSync } from "../hooks/use-space-lfs-state-sync";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+} from "@/components/ui/sidebar";
+import { useSpaceSidebarActions } from "../hooks/use-space-sidebar-actions";
+import { hasRecordKey, visibleScopeChildren } from "../lib/nav-space-tree";
 import { CreateSpaceDialog } from "./create-space-dialog";
-import { createCollection } from "@/features/collection";
-import { SortableFileTree } from "./sortable-file-tree";
-import { FileTreeItem } from "./file-tree-item";
-import {
-  GitIndicatorIcon,
-  selectIndicator,
-  SpaceGitWatcher,
-} from "@/features/git";
-import { useGitStore } from "@/features/git";
-import { Progress } from "@/components/ui/progress";
-import { commitAllSpace } from "@/features/git";
-import { cn } from "@/shared/lib/utils";
-import { Skeleton } from "@/components/ui/skeleton";
-import { createTreeFolder } from "../api/tree-entry-actions";
+import { RootScopeRow } from "./root-scope-row";
+import { SpaceRow } from "./space-row";
 
 interface NavSpacesProps {
   onActivateContent: () => void;
   onOpenSpaceSettings: (spacePath: string) => void;
 }
 
-type ScopeTarget = { id: string; path: string };
-
-function visibleScopeChildren(tree: TreeNode[]): TreeNode[] {
-  return tree.filter((node) => node.path.toLowerCase() !== "readme.md");
-}
-
-function hasScopeReadme(tree: TreeNode[]): boolean {
-  return tree.some((node) => node.path.toLowerCase() === "readme.md");
-}
-
-function hasRecordKey<T>(record: Record<string, T>, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(record, key);
-}
-
 export function NavSpaces({
   onActivateContent,
   onOpenSpaceSettings,
 }: NavSpacesProps) {
-  const {
-    activeRootId,
-    activeRootName,
-    activeRootIcon,
-    activeRootPath,
-    spaces,
-    fileTrees,
-    treeLoading,
-    treeRefreshing,
-    openSpace,
-    clearActiveSpace,
-    deleteSpace,
-    createEntry,
-    reloadTreeParent,
-    ensureTreeLoaded,
-    loadTreeChildren,
-    loadSpaces,
-    reorderSpaces,
-  } = useSpaceStore();
-  const { activeDocument, activeDocumentSpaceId, openDocument, openScopeHome } =
-    useEntrySelectionStore();
-  const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<{
-    id: string;
-    name: string;
-  } | null>(null);
-  const [deleteFiles, setDeleteFiles] = useState(false);
-  const [editingSpaceId, setEditingSpaceId] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState("");
-  const [rootOpen, setRootOpen] = useState(false);
-  const editRef = useRef<HTMLInputElement>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 6 },
     }),
   );
-
-  useEffect(() => {
-    if (editingSpaceId && editRef.current) {
-      editRef.current.focus();
-      editRef.current.select();
-    }
-  }, [editingSpaceId]);
-
-  useEffect(() => {
-    setRootOpen(false);
-  }, [activeRootId]);
-
-  useSpaceLfsStateSync(activeRootPath);
+  const {
+    activeDocument,
+    activeDocumentSpaceId,
+    activeRootIcon,
+    activeRootId,
+    activeRootName,
+    activeRootPath,
+    createDialogOpen,
+    deleteFiles,
+    deleteTarget,
+    editRef,
+    editingSpaceId,
+    editValue,
+    ensureTreeLoaded,
+    fileTrees,
+    handleCloneMissing,
+    handleDeleteSpace,
+    handleNewCollection,
+    handleNewFolder,
+    handleNewPage,
+    handleOpenRootHome,
+    handleOpenSpaceHome,
+    handleRemoveBroken,
+    handleRenameSpace,
+    handleRootOpenChange,
+    handleSpaceDragEnd,
+    loadTreeChildren,
+    rootHomeActive,
+    rootOpen,
+    setCreateDialogOpen,
+    setDeleteFiles,
+    setDeleteTarget,
+    setEditingSpaceId,
+    setEditValue,
+    spaces,
+    treeLoading,
+    treeRefreshing,
+  } = useSpaceSidebarActions({ onActivateContent });
 
   if (!activeRootId || !activeRootPath) return null;
 
-  const rootId = activeRootId;
-  const rootPath = activeRootPath;
-  const rootTree = fileTrees[rootId] ?? [];
-  const rootHomeActive =
-    activeDocumentSpaceId === rootId &&
-    (!activeDocument || activeDocument.toLowerCase() === "readme.md");
+  const rootTree = fileTrees[activeRootId] ?? [];
   const childSpaceIds = spaces.map((space) => space.id);
-
-  function openHomeForScope(spaceId: string, tree: TreeNode[] | null) {
-    if (!tree) {
-      openDocument("README.md", spaceId);
-    } else if (hasScopeReadme(tree)) {
-      openDocument("README.md", spaceId);
-    } else {
-      openScopeHome(spaceId);
-    }
-  }
-
-  function handleOpenRootHome() {
-    onActivateContent();
-    clearActiveSpace();
-    openHomeForScope(
-      rootId,
-      useSpaceStore.getState().fileTrees[rootId] ?? rootTree,
-    );
-  }
-
-  function handleRootOpenChange(open: boolean) {
-    setRootOpen(open);
-    if (open) void ensureTreeLoaded(rootId);
-  }
-
-  async function handleOpenSpaceHome(ws: SpaceInfo) {
-    onActivateContent();
-    const state = useSpaceStore.getState();
-    const tree = hasRecordKey(state.fileTrees, ws.id)
-      ? state.fileTrees[ws.id]
-      : null;
-    openHomeForScope(ws.id, tree);
-    void openSpace(ws.id);
-  }
-
-  async function handleRenameSpace() {
-    const ws = spaces.find((w) => w.id === editingSpaceId);
-    if (!ws || !editValue.trim() || editValue.trim() === ws.name) {
-      setEditingSpaceId(null);
-      return;
-    }
-    try {
-      await renameSpace({
-        spacePath: ws.path,
-        name: editValue.trim(),
-        projectPath: rootPath,
-      });
-      useSpaceStore.setState({
-        spaces: useSpaceStore
-          .getState()
-          .spaces.map((w) =>
-            w.id === editingSpaceId ? { ...w, name: editValue.trim() } : w,
-          ),
-      });
-    } catch (err) {
-      console.error("Failed to rename space:", err);
-      toast.error(m.toast_error());
-    }
-    setEditingSpaceId(null);
-  }
-
-  async function handleNewPage(scope: ScopeTarget) {
-    try {
-      const entry = await createEntry(scope.path, "Untitled");
-      if (entry) {
-        onActivateContent();
-        openDocument(entry.path, scope.id);
-      }
-    } catch (err) {
-      console.error("Failed to create page:", err);
-      toast.error(m.toast_error());
-    }
-  }
-
-  async function handleNewFolder(scope: ScopeTarget) {
-    try {
-      await createTreeFolder({
-        spacePath: scope.path,
-        parentPath: null,
-        name: m.space_new_folder(),
-        projectPath: rootPath,
-      });
-      await reloadTreeParent(scope.id, null);
-    } catch (err) {
-      console.error("Failed to create folder:", err);
-      toast.error(m.toast_error());
-    }
-  }
-
-  async function handleNewCollection(scope: ScopeTarget) {
-    try {
-      const entry = await createCollection({
-        spacePath: scope.path,
-        title: m.editor_untitled(),
-        projectPath: activeRootPath,
-      });
-      await reloadTreeParent(scope.id, null);
-      onActivateContent();
-      openDocument(entry.path, scope.id);
-    } catch (err) {
-      console.error("Failed to create collection:", err);
-      toast.error(m.toast_error());
-    }
-  }
-
-  async function handleDeleteSpace(spaceId: string) {
-    try {
-      await deleteSpace(rootPath, spaceId, deleteFiles);
-    } catch (err) {
-      console.error("Failed to delete space:", err);
-      toast.error(m.toast_error());
-    }
-    setDeleteTarget(null);
-    setDeleteFiles(false);
-  }
-
-  async function handleCloneMissing(spaceId: string, spacePath: string) {
-    const git = useGitStore.getState();
-    git.setCloning(spacePath, { phase: "Starting", percent: 0 });
-
-    const unlisten = await listenSpaceCloneProgress((progress) => {
-      if (progress.spacePath !== spacePath) return;
-      useGitStore.getState().setCloning(spacePath, {
-        phase: progress.phase,
-        percent: progress.percent,
-      });
-    });
-
-    try {
-      await cloneMissingSpace({ projectPath: rootPath, spaceId });
-      await loadSpaces(rootPath);
-      git.setCloning(spacePath, null);
-    } catch (err) {
-      console.error("clone_missing_space failed:", err);
-      const message =
-        typeof err === "string" ? err : ((err as Error)?.message ?? "error");
-      git.setCloning(spacePath, {
-        phase: m.git_clone_failed(),
-        percent: 0,
-        error: message,
-      });
-      toast.error(m.git_clone_failed());
-      window.setTimeout(
-        () => useGitStore.getState().setCloning(spacePath, null),
-        6000,
-      );
-    } finally {
-      unlisten();
-    }
-  }
-
-  async function handleRemoveBroken(spaceId: string) {
-    try {
-      await removeMissingSpace({ projectPath: rootPath, spaceId });
-      await loadSpaces(rootPath);
-    } catch (err) {
-      console.error("remove_missing_space failed:", err);
-      toast.error(m.toast_error());
-    }
-  }
-
-  async function handleSpaceDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const oldIndex = spaces.findIndex((space) => space.id === active.id);
-    const newIndex = spaces.findIndex((space) => space.id === over.id);
-    if (oldIndex === -1 || newIndex === -1) return;
-    const nextSpaces = arrayMove(spaces, oldIndex, newIndex);
-    try {
-      await reorderSpaces(nextSpaces.map((space) => space.id));
-    } catch (err) {
-      console.error("Failed to reorder spaces:", err);
-      toast.error(m.toast_error());
-    }
-  }
 
   return (
     <>
@@ -375,20 +105,22 @@ export function NavSpaces({
               tree={visibleScopeChildren(rootTree)}
               onOpenChange={handleRootOpenChange}
               onOpenHome={handleOpenRootHome}
-              onNewPage={() => handleNewPage({ id: rootId, path: rootPath })}
+              onNewPage={() =>
+                handleNewPage({ id: activeRootId, path: activeRootPath })
+              }
               onNewFolder={() =>
-                handleNewFolder({ id: rootId, path: rootPath })
+                handleNewFolder({ id: activeRootId, path: activeRootPath })
               }
               onNewCollection={() =>
-                handleNewCollection({ id: rootId, path: rootPath })
+                handleNewCollection({ id: activeRootId, path: activeRootPath })
               }
               onAddSpace={() => setCreateDialogOpen(true)}
-              onProjectSettings={() => onOpenSpaceSettings(rootPath)}
-              spaceId={rootId}
-              rootPath={rootPath}
-              loading={treeLoading[rootId] ?? false}
-              refreshing={treeRefreshing[rootId] ?? false}
-              treeLoaded={hasRecordKey(fileTrees, rootId)}
+              onProjectSettings={() => onOpenSpaceSettings(activeRootPath)}
+              spaceId={activeRootId}
+              rootPath={activeRootPath}
+              loading={treeLoading[activeRootId] ?? false}
+              refreshing={treeRefreshing[activeRootId] ?? false}
+              treeLoaded={hasRecordKey(fileTrees, activeRootId)}
               loadTreeChildren={loadTreeChildren}
             />
             <DndContext
@@ -400,17 +132,17 @@ export function NavSpaces({
                 items={childSpaceIds}
                 strategy={verticalListSortingStrategy}
               >
-                {spaces.map((ws) => {
-                  const tree = fileTrees[ws.id] ?? [];
-                  const treeLoaded = hasRecordKey(fileTrees, ws.id);
+                {spaces.map((space) => {
+                  const tree = fileTrees[space.id] ?? [];
+                  const treeLoaded = hasRecordKey(fileTrees, space.id);
                   const isActive =
-                    activeDocumentSpaceId === ws.id &&
+                    activeDocumentSpaceId === space.id &&
                     (!activeDocument ||
                       activeDocument.toLowerCase() === "readme.md");
                   return (
                     <SpaceRow
-                      key={ws.id}
-                      ws={ws}
+                      key={space.id}
+                      ws={space}
                       isActive={isActive}
                       tree={visibleScopeChildren(tree)}
                       editingSpaceId={editingSpaceId}
@@ -423,15 +155,15 @@ export function NavSpaces({
                       handleNewCollection={handleNewCollection}
                       openSpaceSettings={onOpenSpaceSettings}
                       openScopeHome={handleOpenSpaceHome}
-                      onActivateContent={onActivateContent}
                       setDeleteTarget={setDeleteTarget}
                       handleCloneMissing={handleCloneMissing}
                       handleRemoveBroken={handleRemoveBroken}
                       ensureTreeLoaded={ensureTreeLoaded}
                       loadTreeChildren={loadTreeChildren}
                       editRef={editRef}
-                      loading={treeLoading[ws.id] ?? false}
-                      refreshing={treeRefreshing[ws.id] ?? false}
+                      rootPath={activeRootPath}
+                      loading={treeLoading[space.id] ?? false}
+                      refreshing={treeRefreshing[space.id] ?? false}
                       treeLoaded={treeLoaded}
                     />
                   );
@@ -484,485 +216,5 @@ export function NavSpaces({
         </AlertDialogContent>
       </AlertDialog>
     </>
-  );
-}
-
-interface RootScopeRowProps {
-  active: boolean;
-  icon: string | null;
-  name: string | null;
-  open: boolean;
-  tree: TreeNode[];
-  onOpenChange: (open: boolean) => void;
-  onOpenHome: () => void;
-  onNewPage: () => void;
-  onNewFolder: () => void;
-  onNewCollection: () => void;
-  onAddSpace: () => void;
-  onProjectSettings: () => void;
-  spaceId: string;
-  rootPath: string;
-  loading: boolean;
-  refreshing: boolean;
-  treeLoaded: boolean;
-  loadTreeChildren: (
-    spaceId: string,
-    parentPath?: string | null,
-  ) => Promise<void>;
-}
-
-function RootScopeRow({
-  active,
-  icon,
-  name,
-  open,
-  tree,
-  onOpenChange,
-  onOpenHome,
-  onNewPage,
-  onNewFolder,
-  onNewCollection,
-  onAddSpace,
-  onProjectSettings,
-  spaceId,
-  rootPath,
-  loading,
-  refreshing,
-  treeLoaded,
-  loadTreeChildren,
-}: RootScopeRowProps) {
-  return (
-    <Collapsible asChild open={open} onOpenChange={onOpenChange}>
-      <SidebarMenuItem>
-        <SidebarMenuButton isActive={active} onClick={onOpenHome}>
-          <span>{icon || "\u{1F4C1}"}</span>
-          <span className="flex-1 truncate">{name || "Project"}</span>
-          <span className="ml-auto flex items-center gap-1">
-            <TreeActivityIndicator
-              spacePath={rootPath}
-              loading={loading || refreshing}
-            />
-          </span>
-        </SidebarMenuButton>
-        <CollapsibleTrigger asChild>
-          <SidebarMenuAction
-            className="left-2 bg-sidebar-accent text-sidebar-accent-foreground data-[state=open]:rotate-90"
-            showOnHover
-          >
-            <ChevronRight />
-          </SidebarMenuAction>
-        </CollapsibleTrigger>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <SidebarMenuAction showOnHover>
-              <Ellipsis />
-            </SidebarMenuAction>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" side="bottom">
-            <DropdownMenuItem onClick={onNewPage}>
-              <FilePlus />
-              {m.space_new_page()}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onNewFolder}>
-              <FolderPlus />
-              {m.space_new_folder()}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onNewCollection}>
-              <Database />
-              {m.collection_new()}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={onAddSpace}>
-              <Plus />
-              {m.sidebar_add_space()}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onProjectSettings}>
-              <Settings />
-              {m.sidebar_project_settings()}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <CollapsibleContent>
-          {loading && !treeLoaded ? (
-            <TreeLoadingRows />
-          ) : (
-            <SortableFileTree spaceId={spaceId} tree={tree}>
-              <SidebarMenuSub className="ml-4 border-l-0 pl-2">
-                {tree.map((node) => (
-                  <FileTreeItem
-                    key={node.path}
-                    node={node}
-                    spaceId={spaceId}
-                    loadTreeChildren={loadTreeChildren}
-                  />
-                ))}
-              </SidebarMenuSub>
-            </SortableFileTree>
-          )}
-        </CollapsibleContent>
-      </SidebarMenuItem>
-    </Collapsible>
-  );
-}
-
-interface SpaceRowProps {
-  ws: SpaceInfo;
-  isActive: boolean;
-  tree: TreeNode[];
-  editingSpaceId: string | null;
-  editValue: string;
-  setEditValue: (v: string) => void;
-  setEditingSpaceId: (id: string | null) => void;
-  handleRenameSpace: () => void;
-  handleNewPage: (scope: ScopeTarget) => void;
-  handleNewFolder: (scope: ScopeTarget) => void;
-  handleNewCollection: (scope: ScopeTarget) => void;
-  openSpaceSettings: (path: string) => void;
-  openScopeHome: (ws: SpaceInfo) => void;
-  onActivateContent: () => void;
-  setDeleteTarget: (t: { id: string; name: string }) => void;
-  handleCloneMissing: (spaceId: string, spacePath: string) => void;
-  handleRemoveBroken: (spaceId: string) => void;
-  ensureTreeLoaded: (spaceId: string) => Promise<void>;
-  loadTreeChildren: (
-    spaceId: string,
-    parentPath?: string | null,
-  ) => Promise<void>;
-  editRef: RefObject<HTMLInputElement | null>;
-  loading: boolean;
-  refreshing: boolean;
-  treeLoaded: boolean;
-}
-
-function SpaceRow({
-  ws,
-  isActive,
-  tree,
-  editingSpaceId,
-  editValue,
-  setEditValue,
-  setEditingSpaceId,
-  handleRenameSpace,
-  handleNewPage,
-  handleNewFolder,
-  handleNewCollection,
-  openSpaceSettings,
-  openScopeHome,
-  setDeleteTarget,
-  handleCloneMissing,
-  handleRemoveBroken,
-  ensureTreeLoaded,
-  loadTreeChildren,
-  editRef,
-  loading,
-  refreshing,
-  treeLoaded,
-}: SpaceRowProps) {
-  const cloning = useGitStore((s) => s.cloning[ws.path]);
-  const dirty = useGitStore(
-    (s) =>
-      !!(s.statuses[ws.path]?.hasStaged || s.statuses[ws.path]?.hasUnstaged),
-  );
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: ws.id });
-  const sortableStyle: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
-  const sortableClassName = cn(isDragging && "opacity-60");
-  const draggableRowClassName = cn(
-    "cursor-pointer active:cursor-grabbing",
-    isDragging && "cursor-grabbing",
-  );
-  const scope = { id: ws.id, path: ws.path };
-
-  if (ws.status === "missing" || ws.status === "broken") {
-    return (
-      <SidebarMenuItem
-        ref={setNodeRef}
-        style={sortableStyle}
-        className={sortableClassName}
-        {...attributes}
-        {...listeners}
-      >
-        <SidebarMenuButton disabled className="opacity-50">
-          <span>{ws.icon || "\u{1F4C2}"}</span>
-          <span className="flex-1 truncate text-muted-foreground">
-            {ws.name}
-          </span>
-        </SidebarMenuButton>
-        {cloning && (
-          <div className="px-2 pb-1">
-            <Progress value={cloning.percent} className="h-1" />
-            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
-              {cloning.error
-                ? cloning.error
-                : `${cloning.phase} ${cloning.percent}%`}
-            </p>
-          </div>
-        )}
-        {ws.status === "missing" && !cloning && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <SidebarMenuAction
-                onClick={() => handleCloneMissing(ws.id, ws.path)}
-              >
-                <FolderDown />
-              </SidebarMenuAction>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              {m.space_clone_missing()}
-            </TooltipContent>
-          </Tooltip>
-        )}
-        {ws.status === "missing" && cloning && (
-          <SidebarMenuAction disabled>
-            <Loader2 className="animate-spin" />
-          </SidebarMenuAction>
-        )}
-        {ws.status === "broken" && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <SidebarMenuAction onClick={() => handleRemoveBroken(ws.id)}>
-                <X />
-              </SidebarMenuAction>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              {m.space_remove_broken()}
-            </TooltipContent>
-          </Tooltip>
-        )}
-      </SidebarMenuItem>
-    );
-  }
-
-  return (
-    <Collapsible
-      asChild
-      defaultOpen={isActive}
-      onOpenChange={(open) => {
-        if (open) void ensureTreeLoaded(ws.id);
-      }}
-    >
-      <SidebarMenuItem
-        ref={setNodeRef}
-        style={sortableStyle}
-        className={sortableClassName}
-        {...attributes}
-        {...listeners}
-      >
-        <SpaceGitWatcher spacePath={ws.path} />
-        <SidebarMenuButton
-          isActive={isActive}
-          disabled={!!cloning}
-          className={draggableRowClassName}
-          onClick={() => {
-            if (editingSpaceId !== ws.id) openScopeHome(ws);
-          }}
-          onDoubleClick={() => {
-            setEditingSpaceId(ws.id);
-            setEditValue(ws.name);
-          }}
-        >
-          <span>{ws.icon}</span>
-          {editingSpaceId === ws.id ? (
-            <input
-              ref={editRef}
-              className="w-full truncate border-b border-primary bg-transparent text-sm outline-none"
-              value={editValue}
-              onChange={(e) => setEditValue(e.target.value)}
-              onBlur={handleRenameSpace}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  handleRenameSpace();
-                } else if (e.key === "Escape") setEditingSpaceId(null);
-              }}
-              onClick={(e) => e.stopPropagation()}
-            />
-          ) : (
-            <span className="flex-1 truncate">{ws.name}</span>
-          )}
-          <span className="ml-auto flex items-center gap-1">
-            <LfsIndicatorIcon lfsState={ws.lfsState} />
-            <TreeActivityIndicator
-              spacePath={ws.path}
-              loading={loading || refreshing}
-            />
-          </span>
-        </SidebarMenuButton>
-        {cloning && (
-          <div className="px-2 pb-1">
-            <Progress value={cloning.percent} className="h-1" />
-            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
-              {cloning.error
-                ? cloning.error
-                : `${cloning.phase} ${cloning.percent}%`}
-            </p>
-          </div>
-        )}
-        {!cloning && ws.lfsState === "pulling" && (
-          <div className="flex items-center gap-1.5 px-2 pb-1">
-            <Loader2 className="animate-spin text-muted-foreground" />
-            <p className="truncate text-[10px] text-muted-foreground">
-              {m.storage_repair_lfs_pulling()}
-            </p>
-          </div>
-        )}
-        <CollapsibleTrigger asChild>
-          <SidebarMenuAction
-            className="left-2 bg-sidebar-accent text-sidebar-accent-foreground data-[state=open]:rotate-90"
-            showOnHover
-          >
-            <ChevronRight />
-          </SidebarMenuAction>
-        </CollapsibleTrigger>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <SidebarMenuAction showOnHover>
-              <Ellipsis />
-            </SidebarMenuAction>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" side="bottom">
-            <DropdownMenuItem onClick={() => handleNewPage(scope)}>
-              <FilePlus />
-              {m.space_new_page()}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handleNewFolder(scope)}>
-              <FolderPlus />
-              {m.space_new_folder()}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handleNewCollection(scope)}>
-              <Database />
-              {m.collection_new()}
-            </DropdownMenuItem>
-            {dirty && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={() =>
-                    commitAllSpace(
-                      ws.path,
-                      useSpaceStore.getState().activeRootPath ?? undefined,
-                    )
-                  }
-                >
-                  <Save />
-                  {m.git_save_all()}
-                </DropdownMenuItem>
-              </>
-            )}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => openSpaceSettings(ws.path)}>
-              <Settings />
-              {m.space_settings()}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => {
-                setEditingSpaceId(ws.id);
-                setEditValue(ws.name);
-              }}
-            >
-              <Pencil />
-              {m.space_rename()}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onClick={() => setDeleteTarget({ id: ws.id, name: ws.name })}
-            >
-              <Trash2 />
-              {m.space_delete()}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <CollapsibleContent>
-          {loading && !treeLoaded ? (
-            <TreeLoadingRows />
-          ) : (
-            <SortableFileTree spaceId={ws.id} tree={tree}>
-              <SidebarMenuSub className="ml-4 border-l-0 pl-2">
-                {tree.map((node) => (
-                  <FileTreeItem
-                    key={node.path}
-                    node={node}
-                    spaceId={ws.id}
-                    loadTreeChildren={loadTreeChildren}
-                  />
-                ))}
-              </SidebarMenuSub>
-            </SortableFileTree>
-          )}
-        </CollapsibleContent>
-      </SidebarMenuItem>
-    </Collapsible>
-  );
-}
-
-function TreeActivityIndicator({
-  spacePath,
-  loading,
-}: {
-  spacePath: string;
-  loading: boolean;
-}) {
-  const gitIndicator = useGitStore((state) =>
-    selectIndicator(state, spacePath),
-  );
-
-  if (!loading && gitIndicator === "clean") return null;
-
-  return (
-    <span className="inline-flex size-4 shrink-0 items-center justify-center">
-      {loading ? (
-        <Loader2 className="!size-3 animate-spin text-muted-foreground" />
-      ) : (
-        <GitIndicatorIcon spacePath={spacePath} />
-      )}
-    </span>
-  );
-}
-
-function TreeLoadingRows() {
-  return (
-    <SidebarMenuSub className="ml-4 border-l-0 pl-2">
-      {[0, 1, 2].map((index) => (
-        <SidebarMenuItem key={index}>
-          <div className="flex h-7 items-center gap-2 rounded-md px-2">
-            <Skeleton className="size-4" />
-            <Skeleton
-              className={cn(
-                "h-3",
-                index === 0 && "w-24",
-                index === 1 && "w-32",
-                index === 2 && "w-20",
-              )}
-            />
-          </div>
-        </SidebarMenuItem>
-      ))}
-    </SidebarMenuSub>
-  );
-}
-
-function LfsIndicatorIcon({ lfsState }: { lfsState: LfsState }) {
-  if (lfsState !== "missing-creds") return null;
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="inline-flex">
-          <CloudOff className="text-destructive" />
-        </span>
-      </TooltipTrigger>
-      <TooltipContent side="right">
-        {m.storage_lfs_banner_missing_remote_title()}
-      </TooltipContent>
-    </Tooltip>
   );
 }
