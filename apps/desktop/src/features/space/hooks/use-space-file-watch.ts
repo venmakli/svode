@@ -1,13 +1,14 @@
 import { useEffect } from "react";
-import { readEntry } from "@/platform/entries/entries-api";
 import {
-  listenSpaceDirty,
-  listenSpaceFileEvent,
-  unwatchSpace,
-  watchSpace,
+  listenWatchedSpaceDirty,
+  listenWatchedSpaceFileEvent,
+  readWatchedSpaceEntry,
+  unwatchSpaceFiles,
+  watchSpaceFiles,
   type SpaceFileEventName,
-} from "@/platform/space/space-api";
-import type { SpaceFileEventDto } from "@/platform/space/space-types";
+  type SpaceFileEventDto,
+  type WatchedSpaceEntry,
+} from "../api/space-watch-actions";
 import type { TreeNode } from "@/features/entry";
 import {
   basename,
@@ -64,7 +65,7 @@ function isSameSpace(payload: { space?: string }, spacePath: string): boolean {
 
 function entryToTreeNode(
   entryPath: string,
-  entry: Awaited<ReturnType<typeof readEntry>>,
+  entry: WatchedSpaceEntry,
   parentPath?: string | null,
 ): TreeNode {
   return {
@@ -127,7 +128,7 @@ export function useSpaceFileWatch() {
       }
       if (kind !== "document") return;
 
-      const entry = await readEntry(watchSpacePath, path);
+      const entry = await readWatchedSpaceEntry(watchSpacePath, path);
       if (isReadmePath(path)) {
         if (!dirname(path)) {
           store.upsertTreeNode(
@@ -171,7 +172,7 @@ export function useSpaceFileWatch() {
       }
       if (kind !== "document") return;
 
-      const entry = await readEntry(watchSpacePath, path);
+      const entry = await readWatchedSpaceEntry(watchSpacePath, path);
       if (isReadmePath(path) && dirname(path)) {
         store.applyReadmeMeta(
           watchSpaceId,
@@ -250,12 +251,12 @@ export function useSpaceFileWatch() {
       timer = setTimeout(flushQueue, FILE_EVENT_BATCH_MS);
     };
 
-    watchSpace(watchSpacePath).catch((error) =>
+    watchSpaceFiles(watchSpacePath).catch((error) =>
       console.error("Failed to watch space:", error),
     );
 
     for (const eventName of FILE_EVENT_NAMES) {
-      listenSpaceFileEvent(eventName, (event) =>
+      listenWatchedSpaceFileEvent(eventName, (event) =>
         enqueue(eventName, event.payload),
       ).then((unlisten) => {
         if (disposed) unlisten();
@@ -263,7 +264,7 @@ export function useSpaceFileWatch() {
       });
     }
 
-    listenSpaceDirty((event) => {
+    listenWatchedSpaceDirty((event) => {
       if (!isSameSpace(event.payload, watchSpacePath)) return;
       if (!event.payload.affectsTree) return;
       useSpaceStore.getState().markTreeDirty(watchSpaceId);
@@ -276,7 +277,7 @@ export function useSpaceFileWatch() {
       disposed = true;
       if (timer) clearTimeout(timer);
       for (const unlisten of unlisteners) unlisten();
-      unwatchSpace(watchSpacePath).catch((error) =>
+      unwatchSpaceFiles(watchSpacePath).catch((error) =>
         console.error("Failed to unwatch space:", error),
       );
     };

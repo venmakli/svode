@@ -8,7 +8,7 @@ import {
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { useEntrySelectionStore, type TreeNode } from "@/features/entry";
-import { useEditorStore } from "@/features/editor/model";
+import { useEditorStore } from "@/features/editor";
 import {
   convertTreeBareFolderToCollection,
   convertTreeDocumentToCollection,

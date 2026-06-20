@@ -1,0 +1,281 @@
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+} from "react";
+import { toast } from "sonner";
+import * as m from "@/paraglide/messages.js";
+import { useSpaceStore, type SpaceGitType } from "../model";
+import {
+  cloneAndRegisterSpace,
+  listenSpaceCloneProgress,
+  type SpaceCloneProgress,
+} from "../api/space-actions";
+import { useSpacePathCollision } from "./use-space-path-collision";
+
+type CreateSpaceTab = "create" | "clone";
+
+interface UseCreateSpaceDialogInput {
+  onOpenChange: (open: boolean) => void;
+}
+
+const CYRILLIC_MAP: Record<string, string> = {
+  а: "a",
+  б: "b",
+  в: "v",
+  г: "g",
+  д: "d",
+  е: "e",
+  ё: "yo",
+  ж: "zh",
+  з: "z",
+  и: "i",
+  й: "j",
+  к: "k",
+  л: "l",
+  м: "m",
+  н: "n",
+  о: "o",
+  п: "p",
+  р: "r",
+  с: "s",
+  т: "t",
+  у: "u",
+  ф: "f",
+  х: "kh",
+  ц: "ts",
+  ч: "ch",
+  ш: "sh",
+  щ: "shch",
+  ъ: "",
+  ы: "y",
+  ь: "",
+  э: "e",
+  ю: "yu",
+  я: "ya",
+};
+
+const URL_REGEX = /^(https?:\/\/)\S+|^[\w.-]+@[\w.-]+:\S+$/;
+
+function slugPreview(name: string): string {
+  const transliterated = name
+    .toLowerCase()
+    .split("")
+    .map((c) => CYRILLIC_MAP[c] ?? c)
+    .join("");
+  return transliterated
+    .replace(/[\s_]+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 60);
+}
+
+function folderFromUrl(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) return "";
+  const lastSegment = trimmed.split("/").pop() ?? "";
+  return lastSegment
+    .replace(/\.git$/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "");
+}
+
+function sanitizeFolder(value: string): string {
+  return value.replace(/[^a-z0-9-]/g, "").replace(/^[-.]/, "");
+}
+
+export function useCreateSpaceDialog({
+  onOpenChange,
+}: UseCreateSpaceDialogInput) {
+  const { activeRootPath, createSpace, loadSpaces } = useSpaceStore();
+
+  const [tab, setTab] = useState<CreateSpaceTab>("create");
+  const [name, setName] = useState("");
+  const [icon, setIcon] = useState("\u{1F4C2}");
+  const [url, setUrl] = useState("");
+  const [folder, setFolder] = useState("");
+  const [folderEdited, setFolderEdited] = useState(false);
+  const [gitType, setGitType] = useState<SpaceGitType>("inline");
+  const [cloneProgress, setCloneProgress] = useState<SpaceCloneProgress | null>(
+    null,
+  );
+
+  const resetForm = useCallback(() => {
+    setTab("create");
+    setName("");
+    setIcon("\u{1F4C2}");
+    setUrl("");
+    setFolder("");
+    setFolderEdited(false);
+    setGitType("inline");
+    setCloneProgress(null);
+  }, []);
+
+  const autoFolder = tab === "create" ? slugPreview(name) : folderFromUrl(url);
+  const effectiveFolder = folderEdited ? folder : autoFolder;
+  const targetPath =
+    activeRootPath && effectiveFolder
+      ? `${activeRootPath}/${effectiveFolder}`
+      : null;
+  const slugCollision = useSpacePathCollision(targetPath);
+  const projectFolderName = activeRootPath
+    ? (activeRootPath.split("/").pop() ?? "")
+    : "";
+  const trimmedUrl = url.trim();
+  const urlValid = tab === "create" || URL_REGEX.test(trimmedUrl);
+  const isCreateValid =
+    tab === "create" &&
+    name.trim() !== "" &&
+    effectiveFolder !== "" &&
+    !slugCollision;
+  const isCloneValid =
+    tab === "clone" &&
+    trimmedUrl !== "" &&
+    urlValid &&
+    effectiveFolder !== "" &&
+    !slugCollision;
+  const isValid = isCreateValid || isCloneValid;
+  const submitLabel =
+    tab === "clone" ? m.git_clone_action() : m.project_create();
+
+  useEffect(() => {
+    setFolderEdited(false);
+    setFolder("");
+    setGitType(tab === "create" ? "inline" : "independent");
+  }, [tab]);
+
+  const handleFolderChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const sanitized = sanitizeFolder(event.target.value);
+      setFolder(sanitized);
+      setFolderEdited(sanitized !== "");
+    },
+    [],
+  );
+
+  const runClone = useCallback(
+    async (opts: {
+      url: string;
+      targetPath: string;
+      parentPath: string;
+      folderName: string;
+      fallbackName: string;
+      fallbackIcon: string;
+      gitType: SpaceGitType;
+    }) => {
+      setCloneProgress({
+        spacePath: opts.targetPath,
+        phase: "Starting",
+        percent: 0,
+      });
+
+      const unlisten = await listenSpaceCloneProgress((progress) => {
+        if (progress.spacePath !== opts.targetPath) return;
+        setCloneProgress(progress);
+      });
+
+      try {
+        await cloneAndRegisterSpace(opts);
+        await loadSpaces(opts.parentPath);
+        onOpenChange(false);
+        resetForm();
+      } catch (err) {
+        console.error("git_clone_space failed:", err);
+        toast.error(m.git_clone_failed());
+        setCloneProgress(null);
+      } finally {
+        unlisten();
+      }
+    },
+    [loadSpaces, onOpenChange, resetForm],
+  );
+
+  const handleSubmit = useCallback(
+    async (event: FormEvent) => {
+      event.preventDefault();
+      if (!activeRootPath || !isValid) return;
+
+      if (tab === "create") {
+        try {
+          await createSpace(
+            activeRootPath,
+            name.trim(),
+            icon,
+            effectiveFolder,
+            gitType,
+          );
+          onOpenChange(false);
+          resetForm();
+        } catch (err) {
+          console.error("Failed to create space:", err);
+          toast.error(m.toast_error());
+        }
+        return;
+      }
+
+      if (!targetPath) return;
+      void runClone({
+        url: trimmedUrl,
+        targetPath,
+        parentPath: activeRootPath,
+        folderName: effectiveFolder,
+        fallbackName: effectiveFolder,
+        fallbackIcon: "\u{1F4C2}",
+        gitType,
+      });
+    },
+    [
+      activeRootPath,
+      createSpace,
+      effectiveFolder,
+      gitType,
+      icon,
+      isValid,
+      name,
+      onOpenChange,
+      resetForm,
+      runClone,
+      tab,
+      targetPath,
+      trimmedUrl,
+    ],
+  );
+
+  const handleOpenChange = useCallback(
+    (value: boolean) => {
+      if (!value) resetForm();
+      onOpenChange(value);
+    },
+    [onOpenChange, resetForm],
+  );
+
+  return {
+    autoFolder,
+    cloneProgress,
+    effectiveFolder,
+    folder,
+    folderEdited,
+    gitType,
+    handleFolderChange,
+    handleOpenChange,
+    handleSubmit,
+    icon,
+    isValid,
+    name,
+    projectFolderName,
+    setGitType,
+    setIcon,
+    setName,
+    setTab,
+    setUrl,
+    slugCollision,
+    submitLabel,
+    tab,
+    trimmedUrl,
+    url,
+    urlValid,
+  };
+}

@@ -1,6 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
 import * as m from "@/paraglide/messages.js";
-import { toast } from "sonner";
 import { Info } from "lucide-react";
 import {
   Dialog,
@@ -23,239 +21,44 @@ import {
 } from "@/components/ui/input-group";
 import { EmojiPicker } from "@/components/ui/emoji-picker";
 import { Progress } from "@/components/ui/progress";
-import { useSpaceStore } from "../model";
 import type { SpaceGitType } from "../model";
-import {
-  cloneAndRegisterSpace,
-  listenSpaceCloneProgress,
-  type SpaceCloneProgress,
-} from "../api/space-actions";
-import { useSpacePathCollision } from "../hooks/use-space-path-collision";
+import { useCreateSpaceDialog } from "../hooks/use-create-space-dialog";
 
 interface CreateSpaceDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-const CYRILLIC_MAP: Record<string, string> = {
-  а: "a",
-  б: "b",
-  в: "v",
-  г: "g",
-  д: "d",
-  е: "e",
-  ё: "yo",
-  ж: "zh",
-  з: "z",
-  и: "i",
-  й: "j",
-  к: "k",
-  л: "l",
-  м: "m",
-  н: "n",
-  о: "o",
-  п: "p",
-  р: "r",
-  с: "s",
-  т: "t",
-  у: "u",
-  ф: "f",
-  х: "kh",
-  ц: "ts",
-  ч: "ch",
-  ш: "sh",
-  щ: "shch",
-  ъ: "",
-  ы: "y",
-  ь: "",
-  э: "e",
-  ю: "yu",
-  я: "ya",
-};
-
-function slugPreview(name: string): string {
-  const transliterated = name
-    .toLowerCase()
-    .split("")
-    .map((c) => CYRILLIC_MAP[c] ?? c)
-    .join("");
-  return transliterated
-    .replace(/[\s_]+/g, "-")
-    .replace(/[^a-z0-9-]/g, "")
-    .replace(/-{2,}/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 60);
-}
-
-function folderFromUrl(url: string): string {
-  const trimmed = url.trim();
-  if (!trimmed) return "";
-  const lastSegment = trimmed.split("/").pop() ?? "";
-  return lastSegment
-    .replace(/\.git$/, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "");
-}
-
-const URL_REGEX = /^(https?:\/\/)\S+|^[\w.-]+@[\w.-]+:\S+$/;
-
-function sanitizeFolder(value: string): string {
-  return value.replace(/[^a-z0-9-]/g, "").replace(/^[-.]/, "");
-}
-
 export function CreateSpaceDialog({
   open: isOpen,
   onOpenChange,
 }: CreateSpaceDialogProps) {
-  const { activeRootPath, createSpace, loadSpaces } = useSpaceStore();
-
-  const [tab, setTab] = useState<"create" | "clone">("create");
-  const [name, setName] = useState("");
-  const [icon, setIcon] = useState("\u{1F4C2}");
-  const [url, setUrl] = useState("");
-  const [folder, setFolder] = useState("");
-  const [folderEdited, setFolderEdited] = useState(false);
-  const [gitType, setGitType] = useState<SpaceGitType>("inline");
-  const [cloneProgress, setCloneProgress] =
-    useState<SpaceCloneProgress | null>(null);
-
-  function resetForm() {
-    setTab("create");
-    setName("");
-    setIcon("\u{1F4C2}");
-    setUrl("");
-    setFolder("");
-    setFolderEdited(false);
-    setGitType("inline");
-    setCloneProgress(null);
-  }
-
-  // Auto-fill folder from name (create) or URL (clone) unless user edited it
-  const autoFolder = tab === "create" ? slugPreview(name) : folderFromUrl(url);
-
-  const effectiveFolder = folderEdited ? folder : autoFolder;
-  const targetPath =
-    activeRootPath && effectiveFolder
-      ? `${activeRootPath}/${effectiveFolder}`
-      : null;
-  const slugCollision = useSpacePathCollision(targetPath);
-
-  const projectFolderName = activeRootPath
-    ? (activeRootPath.split("/").pop() ?? "")
-    : "";
-
-  // Reset folderEdited when switching tabs
-  useEffect(() => {
-    setFolderEdited(false);
-    setFolder("");
-    if (tab === "create") {
-      setGitType("inline");
-    } else {
-      setGitType("independent");
-    }
-  }, [tab]);
-
-  const trimmedUrl = url.trim();
-  const urlValid = tab === "create" || URL_REGEX.test(trimmedUrl);
-
-  const isCreateValid =
-    tab === "create" &&
-    name.trim() !== "" &&
-    effectiveFolder !== "" &&
-    !slugCollision;
-  const isCloneValid =
-    tab === "clone" &&
-    trimmedUrl !== "" &&
-    urlValid &&
-    effectiveFolder !== "" &&
-    !slugCollision;
-  const isValid = isCreateValid || isCloneValid;
-
-  const handleFolderChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const sanitized = sanitizeFolder(e.target.value);
-      setFolder(sanitized);
-      setFolderEdited(sanitized !== "");
-    },
-    [],
-  );
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!activeRootPath || !isValid) return;
-
-    if (tab === "create") {
-      try {
-        await createSpace(
-          activeRootPath,
-          name.trim(),
-          icon,
-          effectiveFolder,
-          gitType,
-        );
-        onOpenChange(false);
-        resetForm();
-      } catch (err) {
-        console.error("Failed to create space:", err);
-        toast.error(m.toast_error());
-      }
-      return;
-    }
-
-    // Clone tab — keep dialog open, show progress
-    if (!targetPath) return;
-    void runClone({
-      url: trimmedUrl,
-      targetPath,
-      parentPath: activeRootPath,
-      folderName: effectiveFolder,
-      fallbackName: effectiveFolder,
-      fallbackIcon: "\u{1F4C2}",
-      gitType,
-    });
-  }
-
-  async function runClone(opts: {
-    url: string;
-    targetPath: string;
-    parentPath: string;
-    folderName: string;
-    fallbackName: string;
-    fallbackIcon: string;
-    gitType: SpaceGitType;
-  }) {
-    setCloneProgress({
-      spacePath: opts.targetPath,
-      phase: "Starting",
-      percent: 0,
-    });
-
-    const unlisten = await listenSpaceCloneProgress((progress) => {
-      if (progress.spacePath !== opts.targetPath) return;
-      setCloneProgress(progress);
-    });
-
-    try {
-      await cloneAndRegisterSpace(opts);
-      await loadSpaces(opts.parentPath);
-      onOpenChange(false);
-      resetForm();
-    } catch (err) {
-      console.error("git_clone_space failed:", err);
-      toast.error(m.git_clone_failed());
-      setCloneProgress(null);
-    } finally {
-      unlisten();
-    }
-  }
-
-  function handleOpenChange(value: boolean) {
-    if (!value) resetForm();
-    onOpenChange(value);
-  }
-
-  const submitLabel =
-    tab === "clone" ? m.git_clone_action() : m.project_create();
+  const {
+    autoFolder,
+    cloneProgress,
+    effectiveFolder,
+    folder,
+    folderEdited,
+    gitType,
+    handleFolderChange,
+    handleOpenChange,
+    handleSubmit,
+    icon,
+    isValid,
+    name,
+    projectFolderName,
+    setGitType,
+    setIcon,
+    setName,
+    setTab,
+    setUrl,
+    slugCollision,
+    submitLabel,
+    tab,
+    trimmedUrl,
+    url,
+    urlValid,
+  } = useCreateSpaceDialog({ onOpenChange });
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>

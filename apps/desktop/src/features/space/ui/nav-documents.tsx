@@ -1,5 +1,4 @@
 import * as m from "@/paraglide/messages.js";
-import { toast } from "sonner";
 import {
   SidebarGroup,
   SidebarGroupAction,
@@ -15,72 +14,22 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Database, FilePlus, FolderPlus, Plus } from "lucide-react";
-import { useSpaceStore } from "../model";
-import { useEntrySelectionStore } from "@/features/entry";
+import { useRootDocumentActions } from "../hooks/use-root-document-actions";
 import { SortableFileTree } from "./sortable-file-tree";
 import { FileTreeItem } from "./file-tree-item";
-import { createCollection } from "@/features/collection";
-import { createTreeFolder } from "../api/tree-entry-actions";
 
 export function NavDocuments() {
   const {
     activeRootId,
     activeRootPath,
-    fileTrees,
-    createEntry,
-    reloadTreeParent,
+    handleNewCollection,
+    handleNewFolder,
+    handleNewPage,
     loadTreeChildren,
-  } = useSpaceStore();
-  const { openDocument } = useEntrySelectionStore();
+    tree,
+  } = useRootDocumentActions();
 
   if (!activeRootId || !activeRootPath) return null;
-
-  const tree = fileTrees[activeRootId] ?? [];
-
-  async function handleNewPage() {
-    if (!activeRootPath) return;
-    try {
-      const entry = await createEntry(activeRootPath, "Untitled");
-      if (entry && activeRootId) {
-        openDocument(entry.path, activeRootId);
-      }
-    } catch (err) {
-      console.error("Failed to create page:", err);
-      toast.error(m.toast_error());
-    }
-  }
-
-  async function handleNewFolder() {
-    if (!activeRootId || !activeRootPath) return;
-    try {
-      await createTreeFolder({
-        spacePath: activeRootPath,
-        parentPath: null,
-        name: m.space_new_folder(),
-        projectPath: activeRootPath,
-      });
-      await reloadTreeParent(activeRootId, null);
-    } catch (err) {
-      console.error("Failed to create folder:", err);
-      toast.error(m.toast_error());
-    }
-  }
-
-  async function handleNewCollection() {
-    if (!activeRootId || !activeRootPath) return;
-    try {
-      const entry = await createCollection({
-        spacePath: activeRootPath,
-        title: m.editor_untitled(),
-        projectPath: activeRootPath,
-      });
-      await reloadTreeParent(activeRootId, null);
-      openDocument(entry.path, activeRootId);
-    } catch (err) {
-      console.error("Failed to create collection:", err);
-      toast.error(m.toast_error());
-    }
-  }
 
   return (
     <SidebarGroup>
