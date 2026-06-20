@@ -28,31 +28,11 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Separator } from "@/components/ui/separator";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
-import { EmojiPicker } from "@/components/ui/emoji-picker";
-import {
   Activity,
   Bot,
-  ExternalLink,
   FileText,
   GitBranch,
   HardDrive,
-  Loader2,
-  Pencil,
-  RefreshCw,
   Settings,
 } from "lucide-react";
 import {
@@ -74,7 +54,12 @@ import type {
   RepoIdentityResult,
   FanoutPreviewEntry,
 } from "@/features/identity";
-import { IdentitySection } from "./identity-section";
+import { SpaceAgentSection } from "./space-agent-section";
+import { SpaceDefaultsSection } from "./space-defaults-section";
+import { SpaceGeneralSection } from "./space-general-section";
+import { SpaceGitSection } from "./space-git-section";
+import { SpaceHealthSection } from "./space-health-section";
+import { SpaceInstructionsSection } from "./space-instructions-section";
 import {
   StorageSettingsSection,
   StorageStrategyConfirmDialog,
@@ -109,10 +94,6 @@ interface SpaceSettingsDialogProps {
   spacePath: string | null;
   onOpenChange: (open: boolean) => void;
 }
-
-const CLI_AUTH_COMMANDS: Record<string, string> = {
-  claude: "claude login",
-};
 
 type Section =
   | "general"
@@ -720,16 +701,6 @@ export function SpaceSettingsDialog({
     openDocument(".svode/AGENTS.md", activeRootId ?? undefined);
   }
 
-  function getCliStatus(
-    agent: AvailableAgent,
-  ): "authorized" | "unauthorized" | "not_found" {
-    if (agent.authStatus === "not_found") return "not_found";
-    if (agent.authStatus === "authorized") return "authorized";
-    return "unauthorized";
-  }
-
-  const agentsMdLines = agentsMdContent?.split("\n").length ?? 0;
-
   const navItems: {
     key: Section;
     label: string;
@@ -817,339 +788,67 @@ export function SpaceSettingsDialog({
             </header>
             <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
               {section === "general" && (
-                <div className="space-y-4 max-w-sm">
-                  <div className="space-y-2">
-                    <Label htmlFor="ws-settings-name">
-                      {m.space_name_label()}
-                    </Label>
-                    <div className="flex gap-2">
-                      <EmojiPicker
-                        value={icon}
-                        onChange={handleIconChange}
-                        size="sm"
-                      />
-                      <Input
-                        id="ws-settings-name"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        onBlur={handleNameBlur}
-                        placeholder={m.space_name_placeholder()}
-                        className="flex-1"
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="ws-settings-desc">
-                      {m.space_description_label()}
-                    </Label>
-                    <Textarea
-                      id="ws-settings-desc"
-                      value={description}
-                      onChange={(e) => setDescription(e.target.value)}
-                      onBlur={handleDescriptionBlur}
-                      placeholder={m.space_description_placeholder()}
-                      rows={3}
-                    />
-                  </div>
-                </div>
+                <SpaceGeneralSection
+                  icon={icon}
+                  name={name}
+                  description={description}
+                  onIconChange={handleIconChange}
+                  onNameChange={setName}
+                  onNameBlur={handleNameBlur}
+                  onDescriptionChange={setDescription}
+                  onDescriptionBlur={handleDescriptionBlur}
+                />
               )}
 
               {ENABLE_LEGACY_AGENT_INTEGRATION && section === "ai-agent" && (
-                <div className="space-y-6">
-                  <div className="space-y-2 max-w-sm">
-                    <Label>{m.settings_space_default_model()}</Label>
-                    <Select
-                      value={defaultModel}
-                      onValueChange={handleDefaultModelChange}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {availableModels.map((model) => (
-                          <SelectItem key={model.id} value={model.id}>
-                            <span>{model.name}</span>
-                            <span className="ml-2 text-muted-foreground">
-                              {model.description}
-                            </span>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      {m.settings_space_default_model_desc()}
-                    </p>
-                  </div>
-
-                  <Separator />
-
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <Label>{m.settings_space_cli_agents()}</Label>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleRefresh}
-                        disabled={refreshing}
-                      >
-                        <RefreshCw
-                          className={`mr-2 h-3 w-3 ${refreshing ? "animate-spin" : ""}`}
-                        />
-                        {m.settings_space_cli_refresh()}
-                      </Button>
-                    </div>
-                    {agents.map((agent) => {
-                      const status = getCliStatus(agent);
-                      const isEnabled = enabledClis.includes(agent.name);
-                      const canEnable = status === "authorized";
-                      return (
-                        <div
-                          key={agent.name}
-                          className="flex items-start gap-3 py-2"
-                        >
-                          <Checkbox
-                            checked={isEnabled}
-                            disabled={!canEnable}
-                            onCheckedChange={(checked) =>
-                              handleCliToggle(agent.name, checked === true)
-                            }
-                            className="mt-0.5"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <span className="text-sm font-medium capitalize">
-                              {agent.name === "claude"
-                                ? "Claude Code"
-                                : agent.name === "codex"
-                                  ? "Codex"
-                                  : agent.name}
-                            </span>
-                            <div className="mt-0.5">
-                              {status === "authorized" && (
-                                <Badge
-                                  variant="secondary"
-                                  className="text-xs font-normal"
-                                >
-                                  <span className="text-green-600 mr-1">
-                                    &#10003;
-                                  </span>
-                                  {m.settings_space_cli_found_auth({
-                                    version: agent.version || "unknown",
-                                  })}
-                                </Badge>
-                              )}
-                              {status === "unauthorized" && (
-                                <div className="space-y-1">
-                                  <Badge
-                                    variant="secondary"
-                                    className="text-xs font-normal"
-                                  >
-                                    <span className="text-yellow-600 mr-1">
-                                      &#9888;
-                                    </span>
-                                    {m.settings_space_cli_found_noauth({
-                                      version: agent.version || "unknown",
-                                    })}
-                                  </Badge>
-                                  {CLI_AUTH_COMMANDS[agent.name] && (
-                                    <p className="text-xs text-muted-foreground">
-                                      {m.settings_space_cli_noauth_hint({
-                                        command: CLI_AUTH_COMMANDS[agent.name],
-                                      })}
-                                    </p>
-                                  )}
-                                </div>
-                              )}
-                              {status === "not_found" && (
-                                <div className="flex items-center gap-2">
-                                  <Badge
-                                    variant="destructive"
-                                    className="text-xs font-normal"
-                                  >
-                                    <span className="mr-1">&#10005;</span>
-                                    {m.settings_space_cli_not_found()}
-                                  </Badge>
-                                  <a
-                                    href={agent.docsUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-xs text-primary hover:underline inline-flex items-center gap-1"
-                                  >
-                                    {m.settings_space_cli_install()}
-                                    <ExternalLink className="h-3 w-3" />
-                                  </a>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {healthReport && (
-                      <span className="text-xs text-muted-foreground">
-                        {healthReport.restored > 0
-                          ? m.settings_space_symlinks_restored({
-                              count: String(healthReport.restored),
-                            })
-                          : m.settings_space_symlinks_ok()}
-                      </span>
-                    )}
-                  </div>
-
-                  <Separator />
-
-                  <div className="space-y-2 max-w-sm">
-                    <Label>{m.settings_system_prompt()}</Label>
-                    <Textarea
-                      value={systemPrompt}
-                      onChange={(e) => setSystemPrompt(e.target.value)}
-                      onBlur={handleSystemPromptBlur}
-                      placeholder={m.settings_system_prompt_placeholder()}
-                      rows={4}
-                    />
-                  </div>
-                </div>
+                <SpaceAgentSection
+                  agents={agents}
+                  enabledClis={enabledClis}
+                  defaultModel={defaultModel}
+                  systemPrompt={systemPrompt}
+                  availableModels={availableModels}
+                  healthReport={healthReport}
+                  refreshing={refreshing}
+                  onDefaultModelChange={handleDefaultModelChange}
+                  onSystemPromptChange={setSystemPrompt}
+                  onSystemPromptBlur={handleSystemPromptBlur}
+                  onCliToggle={handleCliToggle}
+                  onRefresh={handleRefresh}
+                />
               )}
 
               {section === "git" && (
-                <div className="space-y-6 max-w-sm">
-                  {gitType === "inline" && (
-                    <p className="text-sm text-muted-foreground">
-                      {m.git_type_inline_note({ name: activeRootName ?? "" })}
-                    </p>
-                  )}
-                  {gitType === "submodule" && (
-                    <>
-                      <p className="text-sm text-muted-foreground">
-                        {m.git_type_submodule_note({
-                          name: activeRootName ?? "",
-                        })}
-                      </p>
-                      {submoduleUrl && (
-                        <div className="space-y-2">
-                          <Label>{m.git_remote_label()}</Label>
-                          <p className="text-sm text-muted-foreground break-all">
-                            {submoduleUrl}
-                          </p>
-                        </div>
-                      )}
-                    </>
-                  )}
-                  {(isRoot ||
-                    gitType === "independent" ||
-                    gitType === null) && (
-                    <>
-                      <div className="space-y-2">
-                        <Label htmlFor="ws-git-remote">
-                          {m.git_remote_label()}
-                        </Label>
-                        <Input
-                          id="ws-git-remote"
-                          value={remoteUrl}
-                          onChange={(e) => setRemoteUrl(e.target.value)}
-                          onBlur={handleRemoteBlur}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              (e.target as HTMLInputElement).blur();
-                            }
-                          }}
-                          placeholder={m.git_remote_placeholder()}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>{m.git_branch_label()}</Label>
-                        <p className="text-sm text-muted-foreground">
-                          {branch ?? "—"}
-                        </p>
-                      </div>
-                      {remoteUrl.trim() && (
-                        <>
-                          <Separator />
-                          <div className="space-y-2">
-                            <Label>{m.git_auto_sync_label()}</Label>
-                            <label className="flex items-start gap-2 cursor-pointer">
-                              <Checkbox
-                                checked={autoSync}
-                                onCheckedChange={(checked) =>
-                                  handleAutoSyncChange(checked === true)
-                                }
-                                className="mt-0.5"
-                              />
-                              <span className="text-sm">
-                                {m.git_auto_sync_checkbox()}
-                                <span className="block text-xs text-muted-foreground">
-                                  {m.git_auto_sync_hint()}
-                                </span>
-                              </span>
-                            </label>
-                          </div>
-                        </>
-                      )}
-                      <Separator />
-                      <div className="space-y-3">
-                        <div className="space-y-1">
-                          <Label>{m.git_auto_commit_label()}</Label>
-                          <p className="text-xs text-muted-foreground">
-                            {m.git_auto_commit_manual_hint()}
-                          </p>
-                        </div>
-                        <label className="flex items-start gap-2 cursor-pointer">
-                          <Checkbox
-                            checked={autoCommitStructural}
-                            onCheckedChange={(checked) =>
-                              handleAutoCommitStructuralChange(checked === true)
-                            }
-                            className="mt-0.5"
-                          />
-                          <span className="text-sm">
-                            {m.git_auto_commit_structural_checkbox()}
-                            <span className="block text-xs text-muted-foreground">
-                              {m.git_auto_commit_structural_hint()}
-                            </span>
-                          </span>
-                        </label>
-                        <label className="flex items-start gap-2 cursor-pointer">
-                          <Checkbox
-                            checked={autoCommitSystem}
-                            onCheckedChange={(checked) =>
-                              handleAutoCommitSystemChange(checked === true)
-                            }
-                            className="mt-0.5"
-                          />
-                          <span className="text-sm">
-                            {m.git_auto_commit_system_checkbox()}
-                            <span className="block text-xs text-muted-foreground">
-                              {m.git_auto_commit_system_hint()}
-                            </span>
-                          </span>
-                        </label>
-                      </div>
-                    </>
-                  )}
-                  {gitType !== "inline" && (
-                    <>
-                      <Separator />
-                      <IdentitySection
-                        isRoot={isRoot}
-                        repoIdentity={repoIdentity}
-                        identityName={identityName}
-                        identityEmail={identityEmail}
-                        setIdentityName={setIdentityName}
-                        setIdentityEmail={setIdentityEmail}
-                        identityFormError={identityFormError}
-                        savingIdentity={savingIdentity}
-                        onSave={handleSaveIdentity}
-                        fanoutEnabled={fanoutEnabled}
-                        setFanoutEnabled={setFanoutEnabled}
-                        fanoutPreview={fanoutPreview}
-                        fanoutSelected={fanoutSelected}
-                        setFanoutSelected={setFanoutSelected}
-                        plannedName={identityName.trim()}
-                        plannedEmail={identityEmail.trim()}
-                      />
-                    </>
-                  )}
-                </div>
+                <SpaceGitSection
+                  gitType={gitType}
+                  activeRootName={activeRootName}
+                  isRoot={isRoot}
+                  submoduleUrl={submoduleUrl}
+                  remoteUrl={remoteUrl}
+                  branch={branch}
+                  autoSync={autoSync}
+                  autoCommitStructural={autoCommitStructural}
+                  autoCommitSystem={autoCommitSystem}
+                  repoIdentity={repoIdentity}
+                  identityName={identityName}
+                  identityEmail={identityEmail}
+                  identityFormError={identityFormError}
+                  savingIdentity={savingIdentity}
+                  fanoutEnabled={fanoutEnabled}
+                  fanoutPreview={fanoutPreview}
+                  fanoutSelected={fanoutSelected}
+                  onRemoteChange={setRemoteUrl}
+                  onRemoteBlur={handleRemoteBlur}
+                  onAutoSyncChange={handleAutoSyncChange}
+                  onAutoCommitStructuralChange={
+                    handleAutoCommitStructuralChange
+                  }
+                  onAutoCommitSystemChange={handleAutoCommitSystemChange}
+                  onIdentityNameChange={setIdentityName}
+                  onIdentityEmailChange={setIdentityEmail}
+                  onSaveIdentity={handleSaveIdentity}
+                  onFanoutEnabledChange={setFanoutEnabled}
+                  onFanoutSelectedChange={setFanoutSelected}
+                />
               )}
 
               {section === "storage" && (
@@ -1161,115 +860,33 @@ export function SpaceSettingsDialog({
               )}
 
               {section === "health" && isRoot && (
-                <div className="space-y-4 max-w-md">
-                  <div className="space-y-1">
-                    <Label>{m.settings_health_broken_links()}</Label>
-                    <p className="text-sm text-muted-foreground">
-                      {m.settings_health_broken_links_desc()}
-                    </p>
-                  </div>
-                  <div className="flex items-center justify-between rounded-md border p-3">
-                    <span className="text-sm">
-                      {brokenLinksCount === null
-                        ? m.common_loading()
-                        : m.settings_health_broken_links_count({
-                            count: String(brokenLinksCount),
-                          })}
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={loadLinkHealth}
-                      disabled={linkHealthLoading}
-                    >
-                      {linkHealthLoading && (
-                        <Loader2 className="mr-1 size-3 animate-spin" />
-                      )}
-                      {m.settings_space_cli_refresh()}
-                    </Button>
-                  </div>
-                </div>
+                <SpaceHealthSection
+                  brokenLinksCount={brokenLinksCount}
+                  loading={linkHealthLoading}
+                  onRefresh={loadLinkHealth}
+                />
               )}
 
               {ENABLE_LEGACY_AGENT_INTEGRATION &&
                 section === "defaults" &&
                 hasSpaces && (
-                  <div className="space-y-6 max-w-sm">
-                    <p className="text-sm text-muted-foreground">
-                      {m.settings_defaults_description()}
-                    </p>
-                    <div className="space-y-2">
-                      <Label>{m.settings_space_default_model()}</Label>
-                      <Select
-                        value={defaultsModel}
-                        onValueChange={handleDefaultsModelChange}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="—" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {availableModels.map((model) => (
-                            <SelectItem key={model.id} value={model.id}>
-                              {model.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{m.settings_system_prompt()}</Label>
-                      <Textarea
-                        value={defaultsPrompt}
-                        onChange={(e) => setDefaultsPrompt(e.target.value)}
-                        onBlur={handleDefaultsPromptBlur}
-                        placeholder={m.settings_system_prompt_placeholder()}
-                        rows={3}
-                      />
-                    </div>
-                  </div>
+                  <SpaceDefaultsSection
+                    model={defaultsModel}
+                    prompt={defaultsPrompt}
+                    availableModels={availableModels}
+                    onModelChange={handleDefaultsModelChange}
+                    onPromptChange={setDefaultsPrompt}
+                    onPromptBlur={handleDefaultsPromptBlur}
+                  />
                 )}
 
               {ENABLE_LEGACY_AGENT_INTEGRATION &&
                 section === "instructions" && (
-                  <div className="space-y-4">
-                    {agentsMdContent !== null ? (
-                      <Card>
-                        <CardContent className="p-3">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs text-muted-foreground">
-                              {enabledClis.includes("claude")
-                                ? m.settings_space_agents_md_symlink({
-                                    target: "CLAUDE.md",
-                                  })
-                                : "AGENTS.md"}
-                            </span>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-muted-foreground">
-                                {m.settings_space_agents_md_lines({
-                                  count: String(agentsMdLines),
-                                })}
-                              </span>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={handleOpenAgentsMd}
-                              >
-                                <Pencil className="h-3 w-3 mr-1" />
-                                {m.settings_space_agents_md_open()}
-                              </Button>
-                            </div>
-                          </div>
-                          <pre className="text-xs font-mono bg-muted/50 rounded p-2 max-h-[200px] overflow-y-auto whitespace-pre-wrap">
-                            {agentsMdContent}
-                          </pre>
-                        </CardContent>
-                      </Card>
-                    ) : (
-                      <Button variant="outline" onClick={handleOpenAgentsMd}>
-                        {m.settings_space_agents_md_create()}
-                      </Button>
-                    )}
-                  </div>
+                  <SpaceInstructionsSection
+                    agentsMdContent={agentsMdContent}
+                    enabledClis={enabledClis}
+                    onOpenAgentsMd={handleOpenAgentsMd}
+                  />
                 )}
             </div>
           </main>
