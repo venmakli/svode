@@ -23,7 +23,7 @@ import { toast } from "sonner";
 import { FileText } from "lucide-react";
 import { useSpaceStore } from "../model";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useEditorStore } from "@/features/editor";
+import { useEditorStore } from "@/features/editor/model";
 import type { TreeNode } from "@/features/entry";
 import {
   flattenTree,

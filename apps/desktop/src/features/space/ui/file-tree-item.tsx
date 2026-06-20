@@ -55,7 +55,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useEditorStore } from "@/features/editor";
+import { useEditorStore } from "@/features/editor/model";
 import { useSpaceStore } from "../model";
 import type { TreeNode } from "@/features/entry";
 import { TreeDndContext } from "./sortable-file-tree";
