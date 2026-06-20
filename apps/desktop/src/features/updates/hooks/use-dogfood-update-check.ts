@@ -3,9 +3,9 @@ import { openPath } from "@/platform/native/shell";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { fetchDogfoodFeed } from "../api/dogfood-feed";
+import { getCurrentUpdatePlatform } from "../api/environment";
 import {
   type AvailableDogfoodUpdate,
-  getCurrentUpdatePlatform,
   selectDogfoodUpdate,
 } from "../model";
 
@@ -80,6 +80,7 @@ export function useDogfoodUpdateCheck({
             commit: currentBuildCommit,
           },
           platform,
+          Date.now(),
         );
         writeStorage(LAST_CHECK_KEY, String(Date.now()));
 

@@ -46,24 +46,6 @@ export interface CurrentBuildInfo {
   commit: string;
 }
 
-export function getCurrentUpdatePlatform(): UpdatePlatform {
-  const platform = navigator.platform.toLowerCase();
-  const userAgent = navigator.userAgent.toLowerCase();
-
-  if (platform.includes("mac") || userAgent.includes("mac os")) {
-    return "darwin";
-  }
-  if (platform.includes("win") || userAgent.includes("windows")) {
-    return "windows";
-  }
-  return "linux";
-}
-
-export function getBuildCommit(): string {
-  const env = (import.meta as { env?: Record<string, string | undefined> }).env;
-  return env?.VITE_SVODE_BUILD_COMMIT?.trim() ?? "";
-}
-
 export function compareVersions(a: string, b: string): number {
   const left = parseVersion(a);
   const right = parseVersion(b);
@@ -80,12 +62,13 @@ export function selectDogfoodUpdate(
   feed: DogfoodFeed,
   current: CurrentBuildInfo,
   platform: UpdatePlatform,
+  now: number,
 ): AvailableDogfoodUpdate | null {
   const candidates = feed.items
     .map((item) => {
       const platformUpdate = item.platforms?.[platform];
       if (!platformUpdate?.url) return null;
-      if (isExpired(item)) return null;
+      if (isExpired(item, now)) return null;
 
       if (item.kind === "stage-release") {
         if (compareVersions(item.version, current.version) <= 0) return null;
@@ -124,10 +107,10 @@ function parseVersion(version: string): number[] {
     .map((part) => (Number.isFinite(part) ? part : 0));
 }
 
-function isExpired(item: DogfoodFeedItem): boolean {
+function isExpired(item: DogfoodFeedItem, now: number): boolean {
   if (item.kind !== "ci-build" || !item.expiresAt) return false;
   const expiresAt = Date.parse(item.expiresAt);
-  return Number.isFinite(expiresAt) && expiresAt <= Date.now();
+  return Number.isFinite(expiresAt) && expiresAt <= now;
 }
 
 function dogfoodUpdateId(
