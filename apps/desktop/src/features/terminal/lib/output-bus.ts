@@ -2,8 +2,11 @@ type TerminalOutputHandler = (data: string) => void;
 
 const buffers = new Map<string, string[]>();
 const listeners = new Map<string, Set<TerminalOutputHandler>>();
+const discardedPtyIds = new Set<string>();
 
 export function publishTerminalOutput(ptyId: string, data: string): void {
+  if (discardedPtyIds.has(ptyId)) return;
+
   const ptyListeners = listeners.get(ptyId);
   if (!ptyListeners || ptyListeners.size === 0) {
     const pending = buffers.get(ptyId) ?? [];
@@ -19,6 +22,8 @@ export function subscribeTerminalOutput(
   ptyId: string,
   handler: TerminalOutputHandler,
 ): () => void {
+  if (discardedPtyIds.has(ptyId)) return () => {};
+
   const ptyListeners = listeners.get(ptyId) ?? new Set<TerminalOutputHandler>();
   ptyListeners.add(handler);
   listeners.set(ptyId, ptyListeners);
@@ -42,4 +47,5 @@ export function subscribeTerminalOutput(
 export function clearTerminalOutput(ptyId: string): void {
   buffers.delete(ptyId);
   listeners.delete(ptyId);
+  discardedPtyIds.add(ptyId);
 }

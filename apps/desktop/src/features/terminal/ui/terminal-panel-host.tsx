@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/shared/lib/utils";
 import { useTerminalEventBridge } from "@/features/terminal/hooks/use-terminal-event-bridge";
+import { useTerminalRootLifecycle } from "@/features/terminal/hooks/use-terminal-root-lifecycle";
 import { useTerminalStore } from "@/features/terminal/hooks/use-terminal-store";
 import { useTerminalTargets } from "@/features/terminal/hooks/use-terminal-targets";
 import { TerminalTargetMenu } from "./terminal-target-menu";
@@ -18,6 +19,7 @@ import * as m from "@/paraglide/messages.js";
 
 export function TerminalPanelHost() {
   useTerminalEventBridge();
+  useTerminalRootLifecycle();
 
   const hostRef = useRef<HTMLDivElement>(null);
   const panelOpen = useTerminalStore((state) => state.panelOpen);

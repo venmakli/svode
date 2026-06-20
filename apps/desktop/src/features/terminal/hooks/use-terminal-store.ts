@@ -23,6 +23,7 @@ interface TerminalState {
   setPanelRatio: (ratio: number) => void;
   createTab: (target: TerminalTarget) => Promise<void>;
   closeTab: (tabId: string) => Promise<void>;
+  closeAllTabs: () => void;
   setActiveTab: (tabId: string) => void;
   markExited: (ptyId: string) => void;
   markError: (ptyId: string, message: string) => void;
@@ -49,6 +50,13 @@ function nextActiveTabId(
   return (
     remaining[Math.min(index, remaining.length - 1)]?.id ?? remaining[0].id
   );
+}
+
+function disposeTerminalSession(ptyId: string, label: string): void {
+  clearTerminalOutput(ptyId);
+  killTerminal(ptyId).catch((error) => {
+    console.warn(`Failed to kill ${label}:`, error);
+  });
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
@@ -102,9 +110,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         DEFAULT_ROWS,
       );
       if (!get().tabs.some((item) => item.id === tabId)) {
-        killTerminal(session.ptyId).catch((error) => {
-          console.warn("Failed to kill orphaned terminal session:", error);
-        });
+        disposeTerminalSession(session.ptyId, "orphaned terminal session");
         return;
       }
       set((state) => ({
@@ -141,10 +147,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     if (!tab) return;
 
     if (tab.ptyId) {
-      killTerminal(tab.ptyId).catch((error) => {
-        console.warn("Failed to kill terminal session:", error);
-      });
-      clearTerminalOutput(tab.ptyId);
+      disposeTerminalSession(tab.ptyId, "terminal session");
     }
 
     const nextActive =
@@ -154,6 +157,18 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       activeTabId: nextActive,
       panelOpen: nextActive ? state.panelOpen : false,
     }));
+  },
+
+  closeAllTabs: () => {
+    const tabs = get().tabs;
+    if (tabs.length === 0) return;
+
+    set({ tabs: [], activeTabId: null, panelOpen: false });
+    tabs.forEach((tab) => {
+      if (tab.ptyId) {
+        disposeTerminalSession(tab.ptyId, "terminal session");
+      }
+    });
   },
 
   setActiveTab: (tabId) => {

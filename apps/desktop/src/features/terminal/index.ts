@@ -5,4 +5,4 @@ export {
   buildProjectTerminalTarget,
   buildSpaceTerminalTargets,
 } from "./lib/targets";
-export type { TerminalTab, TerminalTarget } from "./model/types";
+export type { TerminalTarget } from "./model/types";
