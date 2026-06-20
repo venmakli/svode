@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { toast } from "sonner";
-import { useSpaceStore } from "@/features/space";
+import { getSpaceSnapshot, useSpace } from "@/features/space";
 import { useEntrySelectionStore } from "@/features/entry";
 import { useCommandPaletteStore } from "../model";
 import { joinAbs } from "../lib/utils";
@@ -12,10 +12,10 @@ import * as m from "@/paraglide/messages.js";
 // ready → open, anything else → toast. The `missing` ghost-clone modal and
 // `ready+missing-file` toast land with Phase 7 §Q8 (cross-space links).
 export function useSelectResult() {
-  const spaces = useSpaceStore((s) => s.spaces);
-  const activeRootId = useSpaceStore((s) => s.activeRootId);
-  const openSpace = useSpaceStore((s) => s.openSpace);
-  const clearActiveSpace = useSpaceStore((s) => s.clearActiveSpace);
+  const spaces = useSpace((s) => s.spaces);
+  const activeRootId = useSpace((s) => s.activeRootId);
+  const openSpace = useSpace((s) => s.openSpace);
+  const clearActiveSpace = useSpace((s) => s.clearActiveSpace);
   const openDocument = useEntrySelectionStore((s) => s.openDocument);
   const setOpen = useCommandPaletteStore((s) => s.setOpen);
 
@@ -31,7 +31,7 @@ export function useSelectResult() {
 
       if (item.spaceId === null) {
         clearActiveSpace();
-      } else if (item.spaceId !== useSpaceStore.getState().activeSpaceId) {
+      } else if (item.spaceId !== getSpaceSnapshot().activeSpaceId) {
         void openSpace(item.spaceId);
       }
 

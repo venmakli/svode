@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { cn } from "@/shared/lib/utils";
 import { useEntrySelectionStore } from "@/features/entry";
 import { useEditorStore } from "../model";
-import { useSpaceStore } from "@/features/space";
+import { useSpace } from "@/features/space";
 import { GhostCloneDialog } from "./ghost-clone-dialog";
 import * as m from "@/paraglide/messages.js";
 import {
@@ -42,14 +42,14 @@ export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
   const { openDocument } = useEntrySelectionStore();
   const activeDocument = useEntrySelectionStore((s) => s.activeDocument);
   const activeDocumentSpaceId = useEntrySelectionStore((s) => s.activeDocumentSpaceId);
-  const activeRootId = useSpaceStore((s) => s.activeRootId);
-  const activeRootPath = useSpaceStore((s) => s.activeRootPath);
-  const rootSpaces = useSpaceStore((s) => s.rootSpaces);
-  const spaces = useSpaceStore((s) => s.spaces);
-  const activeSpaceId = useSpaceStore((s) => s.activeSpaceId);
-  const openSpace = useSpaceStore((s) => s.openSpace);
-  const clearActiveSpace = useSpaceStore((s) => s.clearActiveSpace);
-  const loadSpaces = useSpaceStore((s) => s.loadSpaces);
+  const activeRootId = useSpace((s) => s.activeRootId);
+  const activeRootPath = useSpace((s) => s.activeRootPath);
+  const rootSpaces = useSpace((s) => s.rootSpaces);
+  const spaces = useSpace((s) => s.spaces);
+  const activeSpaceId = useSpace((s) => s.activeSpaceId);
+  const openSpace = useSpace((s) => s.openSpace);
+  const clearActiveSpace = useSpace((s) => s.clearActiveSpace);
+  const loadSpaces = useSpace((s) => s.loadSpaces);
   const brokenLinks = useEditorStore((s) => s.brokenLinks);
   const [cloneTarget, setCloneTarget] =
     React.useState<LinkResolveResult | null>(null);

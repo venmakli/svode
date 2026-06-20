@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useSpaceStore } from "@/features/space";
+import { useSpace } from "@/features/space";
 import { getSettingsSpaceConfig } from "../api";
 import type { SaveSpaceConfig } from "./use-space-settings-config-actions";
 
@@ -14,7 +14,7 @@ export function useSpaceSettingsGeneral({
   spacePath,
   saveConfig,
 }: UseSpaceSettingsGeneralOptions) {
-  const patchSpaceMetadata = useSpaceStore((state) => state.patchSpaceMetadata);
+  const patchSpaceMetadata = useSpace((state) => state.patchSpaceMetadata);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [icon, setIcon] = useState("");

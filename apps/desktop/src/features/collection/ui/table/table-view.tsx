@@ -18,7 +18,7 @@ import {
 import { useEntryFieldSave, type Entry } from "@/features/entry";
 import { normalizeSchema } from "@/features/properties";
 import { propertyFieldSavePolicy } from "@/features/properties";
-import { useSpaceStore } from "@/features/space";
+import { useSpace } from "@/features/space";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
 import type {
   CollectionSchema,
@@ -88,13 +88,13 @@ export function TableView({
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerAsFolder, setComposerAsFolder] = useState(false);
   const [composerValue, setComposerValue] = useState("");
-  const sidebarSpaceId = useSpaceStore((state) => {
+  const sidebarSpaceId = useSpace((state) => {
     const space =
       state.spaces.find((item) => item.path === spacePath) ??
       state.rootSpaces.find((item) => item.path === spacePath);
     return space?.id ?? null;
   });
-  const reloadTreeParent = useSpaceStore((state) => state.reloadTreeParent);
+  const reloadTreeParent = useSpace((state) => state.reloadTreeParent);
   const showNested = showNestedForView(view);
   const density =
     view.density === "compact" || view.density === "spacious"

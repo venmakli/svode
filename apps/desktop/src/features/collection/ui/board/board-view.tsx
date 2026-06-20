@@ -32,7 +32,7 @@ import type {
 } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
 import { propertyFieldSavePolicy } from "@/features/properties";
-import { useSpaceStore } from "@/features/space";
+import { useSpace } from "@/features/space";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import { useCollectionPersons } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
@@ -95,13 +95,13 @@ export function BoardView({
   const lastActiveGroup = useRef<string | null>(null);
   const { persons, loadPersons } = useCollectionPersons(spacePath);
   const queryArgs = useStableViewQueryArgs(filters, sort);
-  const sidebarSpaceId = useSpaceStore((state) => {
+  const sidebarSpaceId = useSpace((state) => {
     const space =
       state.spaces.find((item) => item.path === spacePath) ??
       state.rootSpaces.find((item) => item.path === spacePath);
     return space?.id ?? null;
   });
-  const reloadTreeParent = useSpaceStore((state) => state.reloadTreeParent);
+  const reloadTreeParent = useSpace((state) => state.reloadTreeParent);
   const groupBy = query.merged.groupBy;
   const groupColumn = useMemo(
     () => schema.columns.find((column) => column.name === groupBy) ?? null,

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
-import { useSpaceStore, selectActiveSpacePath } from "@/features/space";
+import { useSpace, selectActiveSpacePath } from "@/features/space";
 import { useIdentityStore } from "../model";
 import type { GitIdentity, RepoIdentityResult } from "../model";
 
@@ -17,7 +17,7 @@ interface EffectiveIdentity {
  * global identity from the store.
  */
 export function useEffectiveIdentity(): EffectiveIdentity {
-  const spacePath = useSpaceStore(selectActiveSpacePath);
+  const spacePath = useSpace(selectActiveSpacePath);
   const global = useIdentityStore((s) => s.global);
   const refreshVersion = useIdentityStore((s) => s.refreshVersion);
   const [identity, setIdentity] = useState<GitIdentity | null>(global);

@@ -18,7 +18,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useSpaceStore } from "@/features/space";
+import { useSpace } from "@/features/space";
 import type { Entry } from "@/features/entry";
 import { normalizeEntryPath } from "../lib/utils";
 import { handleError } from "../lib/errors";
@@ -88,8 +88,8 @@ export function EntryDetailActions({
   }, [entry.path, spacePath]);
 
   const form = currentState?.form ?? inferEntryDetailState(entry.path).form;
-  const reloadTreeParent = useSpaceStore((state) => state.reloadTreeParent);
-  const reloadTreePathParents = useSpaceStore(
+  const reloadTreeParent = useSpace((state) => state.reloadTreeParent);
+  const reloadTreePathParents = useSpace(
     (state) => state.reloadTreePathParents,
   );
   const leafDisabledReason = useMemo(() => {

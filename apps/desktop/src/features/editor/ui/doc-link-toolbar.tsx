@@ -50,7 +50,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/shared/lib/utils";
 import { useEditorStore } from "../model";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space";
+import { useSpace } from "@/features/space";
 import type { SearchItem } from "@/features/search";
 import * as m from "@/paraglide/messages.js";
 import {
@@ -236,11 +236,11 @@ function DocLinkTargetPicker() {
   const activeDocumentSpaceId = useEntrySelectionStore(
     (s) => s.activeDocumentSpaceId,
   );
-  const activeRootPath = useSpaceStore((s) => s.activeRootPath);
-  const activeRootId = useSpaceStore((s) => s.activeRootId);
-  const rootSpaces = useSpaceStore((s) => s.rootSpaces);
-  const spaces = useSpaceStore((s) => s.spaces);
-  const fileTrees = useSpaceStore((s) => s.fileTrees);
+  const activeRootPath = useSpace((s) => s.activeRootPath);
+  const activeRootId = useSpace((s) => s.activeRootId);
+  const rootSpaces = useSpace((s) => s.rootSpaces);
+  const spaces = useSpace((s) => s.spaces);
+  const fileTrees = useSpace((s) => s.fileTrees);
   const [query, setQuery] = React.useState("");
   const [items, setItems] = React.useState<SearchItem[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -369,10 +369,10 @@ function DocLinkEditContent({
   const activeDocumentSpaceId = useEntrySelectionStore(
     (s) => s.activeDocumentSpaceId,
   );
-  const activeRootPath = useSpaceStore((s) => s.activeRootPath);
-  const activeRootId = useSpaceStore((s) => s.activeRootId);
-  const rootSpaces = useSpaceStore((s) => s.rootSpaces);
-  const spaces = useSpaceStore((s) => s.spaces);
+  const activeRootPath = useSpace((s) => s.activeRootPath);
+  const activeRootId = useSpace((s) => s.activeRootId);
+  const rootSpaces = useSpace((s) => s.rootSpaces);
+  const spaces = useSpace((s) => s.spaces);
   const brokenLinks = useEditorStore((s) => s.brokenLinks);
 
   const entry = React.useMemo(

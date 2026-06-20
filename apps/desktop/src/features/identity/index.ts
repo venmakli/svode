@@ -10,5 +10,5 @@ export type {
   GlobalIdentityResult,
   RepoIdentityResult,
 } from "./model";
-export { useEffectiveIdentity, useIdentityCheck } from "./hooks";
+export { useIdentityCheck } from "./hooks/use-identity-check";
 export { isValidEmail, isValidName } from "./lib";

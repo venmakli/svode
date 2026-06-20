@@ -2,14 +2,14 @@ import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space";
+import { useSpace } from "@/features/space";
 import { isTerminalKeyboardEvent } from "@/features/terminal";
 import { useShellStore } from "../model";
 
 export function useKeyboardShortcuts() {
   const closeDocument = useEntrySelectionStore((state) => state.closeDocument);
   const { toggleChatPanel, openAppSettings } = useShellStore();
-  const goHome = useSpaceStore((s) => s.goHome);
+  const goHome = useSpace((s) => s.goHome);
   const navigate = useNavigate();
 
   useEffect(() => {

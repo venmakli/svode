@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { joinAbs, makeRelativeDocUrl } from "../lib/doc-link-utils";
 import { uploadAsset, type UploadAssetDto } from "@/platform/upload/upload-api";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space";
+import { getSpaceSnapshot } from "@/features/space";
 
 /**
  * Shape returned by `useUploadFile` — matches the subset of Plate's
@@ -40,7 +40,7 @@ export function useUploadFile({ onUploadComplete, onUploadError }: UseUploadFile
   const [isUploading, setIsUploading] = React.useState(false);
 
   async function uploadFile(file: File): Promise<UploadedFile | undefined> {
-    const projectPath = useSpaceStore.getState().activeRootPath;
+    const projectPath = getSpaceSnapshot().activeRootPath;
     if (!projectPath) {
       const err = new Error("No active project");
       toast.error(err.message);
@@ -58,7 +58,7 @@ export function useUploadFile({ onUploadComplete, onUploadError }: UseUploadFile
       onUploadError?.(err);
       return undefined;
     }
-    const { rootSpaces, spaces, activeRootId } = useSpaceStore.getState();
+    const { rootSpaces, spaces, activeRootId } = getSpaceSnapshot();
     const ownerSpacePath =
       !activeDocumentSpaceId || activeDocumentSpaceId === activeRootId
         ? rootSpaces.find((r) => r.id === activeDocumentSpaceId)?.path ??

@@ -33,7 +33,7 @@ import {
   type EntrySchemaResult,
 } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
-import { useSpaceStore } from "@/features/space";
+import { useSpace } from "@/features/space";
 import { EntryDetailActions } from "./entry-detail-actions";
 import { EntrySubpages } from "./entry-subpages";
 import { EntrySystemFields } from "./entry-system-fields";
@@ -242,7 +242,7 @@ function StandardEntryPeek({
   onEntryChange: Dispatch<SetStateAction<Entry | null>>;
   onSchemaChange: (result: EntrySchemaResult | null) => void;
 }) {
-  const patchEntryTreeMeta = useSpaceStore((state) => state.patchEntryTreeMeta);
+  const patchEntryTreeMeta = useSpace((state) => state.patchEntryTreeMeta);
   const applyEntryUpdate = useCallback(
     (entryPath: string, update: (entry: Entry) => Entry) => {
       onEntryChange((current) =>

@@ -6,7 +6,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { FileText } from "lucide-react";
-import { useSpaceStore } from "@/features/space";
+import { useSpace } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 import type { TreeNode } from "@/features/entry";
 
@@ -57,7 +57,7 @@ export function useSlashMenu(
   currentValue: string,
   cursorPosition: number,
 ): UseSlashMenuResult {
-  const { activeSpaceId, fileTrees } = useSpaceStore();
+  const { activeSpaceId, fileTrees } = useSpace();
   const tree = activeSpaceId ? (fileTrees[activeSpaceId] ?? []) : [];
   const allDocs = flattenTree(tree);
 

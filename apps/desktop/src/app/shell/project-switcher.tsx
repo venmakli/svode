@@ -22,7 +22,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { CreateProjectDialog, CloneProjectDialog } from "@/features/home";
-import { useSpaceStore } from "@/features/space";
+import { registerRootSpace, useSpace } from "@/features/space";
 import { openDialog } from "@/platform/native/dialog";
 import { cloneProject } from "@/platform/space/space-api";
 import { useShellStore } from "./model";
@@ -56,7 +56,7 @@ export function ProjectSwitcher({ className }: ProjectSwitcherProps) {
     createRoot,
     openRootFolder,
     goHome,
-  } = useSpaceStore();
+  } = useSpace();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
 
@@ -137,10 +137,7 @@ export function ProjectSwitcher({ className }: ProjectSwitcherProps) {
       setCloneDialogOpen(false);
       try {
         const project = await cloneProject(url, targetPath);
-        useSpaceStore.setState((state) => ({
-          rootSpaces: [...state.rootSpaces, project],
-          rootsLoaded: true,
-        }));
+        registerRootSpace(project);
         if (await openRoot(project.id)) {
           useShellStore.getState().openContentSurface();
           navigate({ to: "/space" });

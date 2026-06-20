@@ -1,9 +1,9 @@
 import { useEffect, useRef } from "react";
-import { useSpaceStore } from "@/features/space";
+import { useSpace } from "@/features/space";
 import { useTerminalStore } from "@/features/terminal/hooks/use-terminal-store";
 
 export function useTerminalRootLifecycle() {
-  const activeRootId = useSpaceStore((state) => state.activeRootId);
+  const activeRootId = useSpace((state) => state.activeRootId);
   const closeAllTabs = useTerminalStore((state) => state.closeAllTabs);
   const previousRootIdRef = useRef(activeRootId);
 

@@ -1,6 +1,10 @@
 import { useEffect, useRef } from "react";
 import { useGitStore } from "../model";
-import { useSpaceStore, selectActiveSpacePath } from "@/features/space";
+import {
+  getSpaceSnapshot,
+  useSpace,
+  selectActiveSpacePath,
+} from "@/features/space";
 import { getGitStatus, pushGit } from "@/platform/git/git-api";
 import { isAutoSyncEnabled, syncOnOpen } from "../api/git-actions";
 
@@ -13,7 +17,7 @@ import { isAutoSyncEnabled, syncOnOpen } from "../api/git-actions";
  * number of concurrent `git_sync`/`git_push` calls on startup and focus.
  */
 export function useAppGitFocus() {
-  const activePath = useSpaceStore((s) => selectActiveSpacePath(s));
+  const activePath = useSpace((s) => selectActiveSpacePath(s));
   const lastSynced = useRef<string | null>(null);
 
   // Silent sync-on-open for the active space only.
@@ -28,7 +32,7 @@ export function useAppGitFocus() {
   // Background network writes obey the same auto-sync policy as commit paths.
   useEffect(() => {
     const onFocus = async () => {
-      const path = selectActiveSpacePath(useSpaceStore.getState());
+      const path = selectActiveSpacePath(getSpaceSnapshot());
       if (!path) return;
       try {
         const status = await getGitStatus(path);

@@ -5,7 +5,7 @@ import {
   type MediaAdapter,
 } from "@/components/ui/media-adapter";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space";
+import { getSpaceSnapshot } from "@/features/space";
 import { resolveAssetAbsPath } from "@/platform/assets/assets-api";
 import {
   filesToFileList,
@@ -44,12 +44,12 @@ async function openEditorMediaUrl(
     return;
   }
 
-  const projectPath = useSpaceStore.getState().activeRootPath;
+  const projectPath = getSpaceSnapshot().activeRootPath;
   const { activeDocument, activeDocumentSpaceId } =
     useEntrySelectionStore.getState();
   if (!projectPath || !activeDocument) return;
 
-  const { rootSpaces, spaces, activeRootId } = useSpaceStore.getState();
+  const { rootSpaces, spaces, activeRootId } = getSpaceSnapshot();
   const owner =
     !activeDocumentSpaceId || activeDocumentSpaceId === activeRootId
       ? (rootSpaces.find((root) => root.id === activeDocumentSpaceId)?.path ??

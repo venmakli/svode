@@ -10,8 +10,6 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { useEffectiveIdentity } from "@/features/identity";
-import { avatarColorFromEmail } from "@/features/identity";
 import { cn } from "@/shared/lib/utils";
 import { NavSpaces } from "./nav-spaces";
 import * as m from "@/paraglide/messages.js";
@@ -19,6 +17,9 @@ import * as m from "@/paraglide/messages.js";
 type MainSurface = "content" | "inbox" | "sessions";
 
 interface SpaceSidebarProps {
+  identityName: string | null;
+  identityEmail: string | null;
+  identityAvatarColor: string;
   mainSurface: MainSurface;
   onActivateContent: () => void;
   onOpenInbox: () => void;
@@ -29,6 +30,9 @@ interface SpaceSidebarProps {
 }
 
 export function SpaceSidebar({
+  identityName,
+  identityEmail,
+  identityAvatarColor,
   mainSurface,
   onActivateContent,
   onOpenInbox,
@@ -37,10 +41,7 @@ export function SpaceSidebar({
   onOpenAppSettings,
   onOpenSpaceSettings,
 }: SpaceSidebarProps) {
-  const { name: identityName, email: identityEmail } = useEffectiveIdentity();
-
   const userName = identityName || "User";
-  const userAvatar = avatarColorFromEmail(identityEmail);
   const initials = userName
     .split(" ")
     .map((w) => w[0])
@@ -76,7 +77,7 @@ export function SpaceSidebar({
               <Avatar className="size-8 rounded-lg after:rounded-lg">
                 <AvatarFallback
                   className="rounded-lg text-xs font-medium text-white"
-                  style={{ backgroundColor: userAvatar }}
+                  style={{ backgroundColor: identityAvatarColor }}
                 >
                   {initials}
                 </AvatarFallback>

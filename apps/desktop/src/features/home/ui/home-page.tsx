@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { FolderPlus, FolderOpen, FolderGit2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { useAppVersion } from "@/features/settings";
-import { useSpaceStore } from "@/features/space";
+import { registerRootSpace, useSpace } from "@/features/space";
 import { ProjectList } from "./project-list";
 import { EmptyState } from "./empty-state";
 import { CreateProjectDialog } from "./create-project-dialog";
@@ -45,7 +45,7 @@ export function HomePage() {
     openRootFolder,
     deleteRoot,
     explicitHome,
-  } = useSpaceStore();
+  } = useSpace();
 
   useEffect(() => {
     if (autoOpenAttempted.current) return;
@@ -185,11 +185,7 @@ export function HomePage() {
       try {
         const ws = await cloneProject(url, targetPath);
         setCloningProject(null);
-        // Add to local store and open
-        useSpaceStore.setState((s) => ({
-          rootSpaces: [...s.rootSpaces, ws],
-          rootsLoaded: true,
-        }));
+        registerRootSpace(ws);
         if (await openRoot(ws.id)) {
           navigate({ to: "/space" });
         }

@@ -59,7 +59,7 @@ import type { SpaceInfo, SpaceGitType } from "./types";
 type RefreshTreeOptions = { continuePending?: boolean };
 type LoadTreeChildrenOptions = { force?: boolean };
 
-interface SpaceState {
+export interface SpaceState {
   // Root spaces (projects on the home page)
   rootSpaces: SpaceInfo[];
   rootsLoaded: boolean;

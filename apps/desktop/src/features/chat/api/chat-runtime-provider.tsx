@@ -8,7 +8,7 @@ import {
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { listen, type UnlistenFn } from "@/platform/native/events";
 import {
-  useSpaceStore,
+  useSpace,
   selectActiveSpacePath,
   selectActiveSpaceId,
 } from "@/features/space";
@@ -127,8 +127,8 @@ export function ChatRuntimeProvider({
 }: {
   children: React.ReactNode;
 }) {
-  const activeWsId = useSpaceStore(selectActiveSpaceId);
-  const spacePath = useSpaceStore(selectActiveSpacePath);
+  const activeWsId = useSpace(selectActiveSpaceId);
+  const spacePath = useSpace(selectActiveSpacePath);
 
   const [messages, setMessages] = useState<readonly ThreadMessageLike[]>([]);
   const [isRunning, setIsRunning] = useState(false);

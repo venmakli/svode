@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { EditorKit } from "./editor-kit";
 import { useFileWatcher } from "../hooks/use-file-watcher";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space";
+import { getSpaceSnapshot, useSpace } from "@/features/space";
 import { useEditorStore } from "../model";
 import { cn } from "@/shared/lib/utils";
 import {
@@ -96,7 +96,7 @@ export function PlateDocumentEditor({
     spaces: childWorkspaces,
     activeRootPath,
     activeRootId,
-  } = useSpaceStore();
+  } = useSpace();
   const {
     markUnsaved,
     clearUnsaved,
@@ -256,7 +256,7 @@ export function PlateDocumentEditor({
         ]);
       }
 
-      const store = useSpaceStore.getState();
+      const store = getSpaceSnapshot();
       for (const [id, sourcePaths] of pathsByTreeId) {
         void store.reloadTreePathParents(id, sourcePaths);
       }

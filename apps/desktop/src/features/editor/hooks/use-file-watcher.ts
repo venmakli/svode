@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import type { PlateEditor } from "platejs/react";
 import { deserializeWithConflicts } from "../conflict/parse-conflicts";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space";
+import { getSpaceSnapshot } from "@/features/space";
 import { useEditorStore } from "../model";
 import { setCachedDocumentValue } from "../model/plate-document-cache";
 import * as m from "@/paraglide/messages.js";
@@ -33,7 +33,7 @@ function isSchemaPath(path: string) {
 }
 
 function reindexProjectForSchemaChange() {
-  const projectPath = useSpaceStore.getState().activeRootPath;
+  const projectPath = getSpaceSnapshot().activeRootPath;
   if (!projectPath) return;
   reindexProject(projectPath).catch((err) =>
     console.warn("Failed to reindex after schema change:", err),

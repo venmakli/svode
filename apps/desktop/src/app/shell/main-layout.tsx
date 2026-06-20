@@ -4,22 +4,21 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { useKeyboardShortcuts } from "./hooks/use-keyboard-shortcuts";
 import { ShellChrome, WindowHeader } from "./window-header";
-import { useSpaceStore } from "@/features/space";
+import { useSpace } from "@/features/space";
 import { CommandPalette, useCommandPaletteStore } from "@/features/search";
 import { TerminalPanelHost } from "@/features/terminal";
-import {
-  ActiveSpaceContent,
-  SpaceFileWatcher,
-  SpaceSidebar,
-} from "@/features/space";
+import { SpaceFileWatcher, SpaceSidebar } from "@/features/space";
 import {
   GitMissingDialog,
   SpaceGitWatcher,
-  useAppGitFocus,
   useGitAvailability,
 } from "@/features/git";
+import { useAppGitFocus } from "@/features/git/app-shell";
+import { avatarColorFromEmail } from "@/features/identity";
+import { useEffectiveIdentity } from "@/features/identity/effective";
 import { useShellStore } from "./model";
 import { InboxSurface, SessionsSurface } from "./main-surfaces";
+import { ActiveSpaceContent } from "./active-space-content";
 
 export function MainLayout() {
   const navigate = useNavigate();
@@ -30,8 +29,9 @@ export function MainLayout() {
     activeRootPath,
     openLastActiveRoot,
     explicitHome,
-  } = useSpaceStore();
+  } = useSpace();
   const { available, recheck } = useGitAvailability();
+  const { name: identityName, email: identityEmail } = useEffectiveIdentity();
   const openAppSettings = useShellStore((state) => state.openAppSettings);
   const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
   const mainSurface = useShellStore((state) => state.mainSurface);
@@ -73,6 +73,9 @@ export function MainLayout() {
       <SidebarProvider className="relative min-h-0 h-dvh overflow-hidden bg-sidebar">
         <ShellChrome />
         <SpaceSidebar
+          identityName={identityName}
+          identityEmail={identityEmail}
+          identityAvatarColor={avatarColorFromEmail(identityEmail)}
           mainSurface={mainSurface}
           onActivateContent={openContentSurface}
           onOpenInbox={openInboxSurface}

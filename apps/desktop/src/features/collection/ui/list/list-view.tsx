@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useSpaceStore } from "@/features/space";
+import { useSpace } from "@/features/space";
 import { useStableViewQueryArgs } from "@/features/collection/query";
 import { useEntryFieldSave, type Entry } from "@/features/entry";
 import { propertyFieldSavePolicy, type Column } from "@/features/properties";
@@ -87,8 +87,8 @@ export function ListView({
   const rowRefs = useRef(new Map<string, HTMLElement>());
   const { persons, loadPersons } = useCollectionPersons(spacePath);
   const queryArgs = useStableViewQueryArgs(filters, sort);
-  const reloadTreeParent = useSpaceStore((state) => state.reloadTreeParent);
-  const sidebarSpaceId = useSpaceStore((state) => {
+  const reloadTreeParent = useSpace((state) => state.reloadTreeParent);
+  const sidebarSpaceId = useSpace((state) => {
     const space =
       state.spaces.find((item) => item.path === spacePath) ??
       state.rootSpaces.find((item) => item.path === spacePath);

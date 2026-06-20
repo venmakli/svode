@@ -43,7 +43,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space";
+import { useSpace } from "@/features/space";
 import { useSpaceSettingsAgent } from "../hooks/use-space-settings-agent";
 import { useSpaceSettingsConfigActions } from "../hooks/use-space-settings-config-actions";
 import { useSpaceSettingsDefaults } from "../hooks/use-space-settings-defaults";
@@ -87,7 +87,7 @@ export function SpaceSettingsDialog({
 }: SpaceSettingsDialogProps) {
   const openDocument = useEntrySelectionStore((state) => state.openDocument);
   const { activeRootId, activeRootPath, activeRootName, spaces } =
-    useSpaceStore();
+    useSpace();
 
   const spacePath = inputPath ?? "";
   const isRoot = spacePath === activeRootPath;

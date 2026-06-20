@@ -13,7 +13,7 @@ import {
   InlineComboboxItem,
 } from "@/components/ui/inline-combobox";
 import { FileText } from "lucide-react";
-import { useSpaceStore } from "@/features/space";
+import { useSpace } from "@/features/space";
 import { useEntrySelectionStore } from "@/features/entry";
 import type { SearchItem } from "@/features/search";
 import {
@@ -28,11 +28,11 @@ export function DocLinkInputElement(
   props: PlateElementProps<TComboboxInputElement>,
 ) {
   const { editor, element } = props;
-  const activeRootId = useSpaceStore((s) => s.activeRootId);
-  const activeRootPath = useSpaceStore((s) => s.activeRootPath);
-  const rootSpaces = useSpaceStore((s) => s.rootSpaces);
-  const spaces = useSpaceStore((s) => s.spaces);
-  const fileTrees = useSpaceStore((s) => s.fileTrees);
+  const activeRootId = useSpace((s) => s.activeRootId);
+  const activeRootPath = useSpace((s) => s.activeRootPath);
+  const rootSpaces = useSpace((s) => s.rootSpaces);
+  const spaces = useSpace((s) => s.spaces);
+  const fileTrees = useSpace((s) => s.fileTrees);
   const activeDocument = useEntrySelectionStore((s) => s.activeDocument);
   const activeDocumentSpaceId = useEntrySelectionStore(
     (s) => s.activeDocumentSpaceId,

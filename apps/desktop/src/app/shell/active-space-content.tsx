@@ -1,8 +1,7 @@
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "../model";
-import { CollectionScreen, EntryDocumentScreen } from "@/features/collection";
 import type { TreeNode } from "@/features/entry";
-import { EmptyProjectState } from "./empty-project-state";
+import { CollectionScreen, EntryDocumentScreen } from "@/features/collection/ui";
+import { EmptyProjectState, useSpace } from "@/features/space";
 import {
   Empty,
   EmptyDescription,
@@ -34,7 +33,7 @@ export function ActiveSpaceContent() {
     spaces,
     activeRootId,
     activeRootPath,
-  } = useSpaceStore();
+  } = useSpace();
   const documentSpaceId = activeDocumentSpaceId ?? activeRootId;
   const tree = documentSpaceId ? (fileTrees[documentSpaceId] ?? []) : [];
   const activeNode = activeDocument

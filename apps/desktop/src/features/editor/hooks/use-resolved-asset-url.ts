@@ -8,7 +8,7 @@ import {
 } from "react";
 
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore, selectActiveSpacePath } from "@/features/space";
+import { useSpace, selectActiveSpacePath } from "@/features/space";
 import { joinAbs } from "../lib/doc-link-utils";
 import {
   resolveAssetAbsPath,
@@ -94,14 +94,14 @@ export function resolveEditorAssetContext(
 
 function useActiveContext(): ActiveContext | null {
   const explicitContext = useContext(EditorAssetResolveContext);
-  const projectPath = useSpaceStore((s) => s.activeRootPath);
+  const projectPath = useSpace((s) => s.activeRootPath);
   const activeDocument = useEntrySelectionStore((s) => s.activeDocument);
   const activeDocumentSpaceId = useEntrySelectionStore(
     (s) => s.activeDocumentSpaceId,
   );
-  const activeRootId = useSpaceStore((s) => s.activeRootId);
-  const rootSpaces = useSpaceStore((s) => s.rootSpaces);
-  const spaces = useSpaceStore((s) => s.spaces);
+  const activeRootId = useSpace((s) => s.activeRootId);
+  const rootSpaces = useSpace((s) => s.rootSpaces);
+  const spaces = useSpace((s) => s.spaces);
 
   const resolvedExplicitContext = resolveEditorAssetContext(explicitContext);
   if (resolvedExplicitContext) return resolvedExplicitContext;
@@ -141,7 +141,7 @@ export function useResolvedAssetUrl(
   const context = useActiveContext();
   const projectPath = context?.projectPath ?? null;
   const documentAbsPath = context?.documentAbsPath ?? null;
-  const spacePathFallback = useSpaceStore(selectActiveSpacePath);
+  const spacePathFallback = useSpace(selectActiveSpacePath);
   const [resolved, setResolved] = useState<string | undefined>(undefined);
 
   useEffect(() => {

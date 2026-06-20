@@ -7,7 +7,7 @@ import {
   CommandGroup,
   CommandSeparator,
 } from "@/components/ui/command";
-import { useSpaceStore } from "@/features/space";
+import { useSpace } from "@/features/space";
 import { useCommandPaletteStore } from "../model";
 import { useSearch } from "../hooks/use-search";
 import { useSelectResult } from "../hooks/use-select-result";
@@ -22,7 +22,7 @@ export function CommandPalette() {
   const setOpen = useCommandPaletteStore((s) => s.setOpen);
   const toggle = useCommandPaletteStore((s) => s.toggle);
 
-  const activeRootPath = useSpaceStore((s) => s.activeRootPath);
+  const activeRootPath = useSpace((s) => s.activeRootPath);
 
   // ⌘P / Ctrl+P toggles the palette. Bound only inside a project (the /space
   // route is mounted) so the Home page doesn't intercept the shortcut.

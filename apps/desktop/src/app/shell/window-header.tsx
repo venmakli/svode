@@ -10,11 +10,11 @@ import {
 } from "@/components/ui/tooltip";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space";
+import { useSpace } from "@/features/space";
 import { useFullscreen } from "./hooks/use-fullscreen";
 import { useShellStore } from "./model";
 import { cn } from "@/shared/lib/utils";
-import { CloudUploadButton } from "@/features/git";
+import { CloudUploadButton } from "@/features/git/app-shell";
 import { buildProjectTerminalTarget } from "@/features/terminal";
 import { MainBreadcrumbs } from "@/features/space";
 import { ProjectOpenersMenu } from "./project-openers-menu";
@@ -92,7 +92,7 @@ export function ShellChrome() {
 export function WindowHeader() {
   const activeDocument = useEntrySelectionStore((state) => state.activeDocument);
   const toggleChatPanel = useShellStore((state) => state.toggleChatPanel);
-  const { activeRootId, activeRootName, activeRootPath } = useSpaceStore();
+  const { activeRootId, activeRootName, activeRootPath } = useSpace();
   const { state } = useSidebar();
   const matches = useMatches();
 
