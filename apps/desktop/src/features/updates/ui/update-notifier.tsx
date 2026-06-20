@@ -1,12 +1,17 @@
-import { useAppVersion } from "@/features/settings";
-import { getBuildCommit } from "../model";
 import { useDogfoodUpdateCheck } from "../hooks/use-dogfood-update-check";
 
-export function DogfoodUpdateNotifier() {
-  const version = useAppVersion();
+interface DogfoodUpdateNotifierProps {
+  version: string;
+  buildCommit: string;
+}
+
+export function DogfoodUpdateNotifier({
+  version,
+  buildCommit,
+}: DogfoodUpdateNotifierProps) {
   useDogfoodUpdateCheck({
     currentVersion: version,
-    currentBuildCommit: getBuildCommit(),
+    currentBuildCommit: buildCommit,
     auto: true,
   });
 
