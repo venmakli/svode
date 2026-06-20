@@ -1,11 +1,6 @@
 import { create } from "zustand";
 import type { TreeNode } from "@/features/entry";
 import { logTiming, nowMs } from "@/shared/lib/performance";
-import * as spaceNotifications from "../effects/space-notifications";
-import {
-  openScopeHomeSelection,
-  openSpaceReadmeDocument,
-} from "../api/space-selection-actions";
 import * as spaceActions from "../api/space-store-actions";
 import type { SpaceEntryDto } from "../api/space-store-actions";
 import {
@@ -381,13 +376,11 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
         .ensureSpaceAssetsScope(ws.path)
         .catch((err) => console.warn("ensure_assets_scope failed:", err));
       await get().loadTreeChildren(id, ROOT_TREE_PARENT);
-      openScopeHomeSelection(id, get().fileTrees[id] ?? []);
       await get().loadExpandedPaths(id);
       await get().loadSpaces(ws.path);
       return true;
     } catch (err) {
       console.error("Failed to open project:", err);
-      spaceNotifications.notifySpaceError();
       return false;
     }
   },
@@ -410,7 +403,6 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       path,
     });
     set((s) => ({ rootSpaces: [...s.rootSpaces, ws], rootsLoaded: true }));
-    spaceNotifications.notifyProjectCreated();
     return ws;
   },
 
@@ -453,7 +445,6 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
         .clearActiveMcpContext()
         .catch((err) => console.warn("mcp_clear_active_context failed:", err));
     }
-    spaceNotifications.notifyProjectDeleted();
   },
 
   getLastActiveRootId: async () => {
@@ -550,8 +541,6 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     });
     set((s) => ({ spaces: [...s.spaces, ws] }));
     await get().openSpace(ws.id);
-    openSpaceReadmeDocument(ws.id);
-    spaceNotifications.notifySpaceCreated();
     return ws;
   },
 
@@ -573,7 +562,6 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     if (activeSpaceId === spaceId) {
       syncMcpContext(get(), null);
     }
-    spaceNotifications.notifySpaceDeleted();
   },
 
   reorderSpaces: async (orderedSpaceIds) => {
@@ -622,11 +610,9 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       if (ws) {
         await get().reloadTreeParent(ws.id, ROOT_TREE_PARENT);
       }
-      spaceNotifications.notifyPageCreated();
       return entry;
     } catch (err) {
       console.error("Failed to create page:", err);
-      spaceNotifications.notifySpaceError();
       return null;
     }
   },

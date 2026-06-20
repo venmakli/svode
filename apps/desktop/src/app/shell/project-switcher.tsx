@@ -22,7 +22,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { CreateProjectDialog, CloneProjectDialog } from "@/features/home";
-import { registerRootSpace, useSpace } from "@/features/space";
+import { registerRootSpace, useSpace, useSpaceActions } from "@/features/space";
 import { openDialog } from "@/platform/native/dialog";
 import { cloneProject } from "@/platform/space/space-api";
 import { useShellStore } from "./model";
@@ -52,11 +52,10 @@ export function ProjectSwitcher({ className }: ProjectSwitcherProps) {
     activeRootId,
     activeRootName,
     activeRootIcon,
-    openRoot,
-    createRoot,
     openRootFolder,
     goHome,
   } = useSpace();
+  const { createRoot, openRoot } = useSpaceActions();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
 

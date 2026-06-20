@@ -13,6 +13,7 @@ import {
   listenSpaceCloneProgress,
   type SpaceCloneProgress,
 } from "../api/space-actions";
+import { useSpaceActions } from "./use-space-actions";
 import { useSpacePathCollision } from "./use-space-path-collision";
 
 type CreateSpaceTab = "create" | "clone";
@@ -90,7 +91,8 @@ function sanitizeFolder(value: string): string {
 export function useCreateSpaceDialog({
   onOpenChange,
 }: UseCreateSpaceDialogInput) {
-  const { activeRootPath, createSpace, loadSpaces } = useSpaceStore();
+  const { activeRootPath, loadSpaces } = useSpaceStore();
+  const { createSpace } = useSpaceActions();
 
   const [tab, setTab] = useState<CreateSpaceTab>("create");
   const [name, setName] = useState("");

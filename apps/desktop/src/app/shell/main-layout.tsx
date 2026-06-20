@@ -4,10 +4,14 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { useKeyboardShortcuts } from "./hooks/use-keyboard-shortcuts";
 import { ShellChrome, WindowHeader } from "./window-header";
-import { useSpace } from "@/features/space";
 import { CommandPalette, useCommandPaletteStore } from "@/features/search";
 import { TerminalPanelHost } from "@/features/terminal";
-import { SpaceFileWatcher, SpaceSidebar } from "@/features/space";
+import {
+  SpaceFileWatcher,
+  SpaceSidebar,
+  useSpace,
+  useSpaceActions,
+} from "@/features/space";
 import {
   GitMissingDialog,
   SpaceGitWatcher,
@@ -24,12 +28,8 @@ export function MainLayout() {
   const navigate = useNavigate();
   useKeyboardShortcuts();
   useAppGitFocus();
-  const {
-    activeRootId,
-    activeRootPath,
-    openLastActiveRoot,
-    explicitHome,
-  } = useSpace();
+  const { activeRootId, activeRootPath, explicitHome } = useSpace();
+  const { openLastActiveRoot } = useSpaceActions();
   const { available, recheck } = useGitAvailability();
   const { name: identityName, email: identityEmail } = useEffectiveIdentity();
   const openAppSettings = useShellStore((state) => state.openAppSettings);

@@ -21,6 +21,7 @@ export {
   useSpace,
   type SpacePublicState,
 } from "./model/public-space";
+export { useSpaceActions } from "./hooks/use-space-actions";
 export { SpaceSidebar } from "./ui/space-sidebar";
 export { MainBreadcrumbs } from "./ui/main-breadcrumbs";
 export { EmptyProjectState } from "./ui/empty-project-state";

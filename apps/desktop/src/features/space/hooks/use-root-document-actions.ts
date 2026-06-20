@@ -4,6 +4,7 @@ import * as m from "@/paraglide/messages.js";
 import { createCollection } from "@/features/collection";
 import { useEntrySelectionStore } from "@/features/entry";
 import { createTreeFolder } from "../api/tree-entry-actions";
+import { useSpaceActions } from "./use-space-actions";
 import { useSpaceStore } from "../model";
 
 export function useRootDocumentActions() {
@@ -11,10 +12,10 @@ export function useRootDocumentActions() {
     activeRootId,
     activeRootPath,
     fileTrees,
-    createEntry,
     reloadTreeParent,
     loadTreeChildren,
   } = useSpaceStore();
+  const { createEntry } = useSpaceActions();
   const { openDocument } = useEntrySelectionStore();
   const tree = activeRootId ? (fileTrees[activeRootId] ?? []) : [];
 

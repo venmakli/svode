@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { FolderPlus, FolderOpen, FolderGit2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { useAppVersion } from "@/features/settings";
-import { registerRootSpace, useSpace } from "@/features/space";
+import { registerRootSpace, useSpace, useSpaceActions } from "@/features/space";
 import { ProjectList } from "./project-list";
 import { EmptyState } from "./empty-state";
 import { CreateProjectDialog } from "./create-project-dialog";
@@ -39,13 +39,11 @@ export function HomePage() {
     rootSpaces,
     isLoadingRoots,
     loadRootSpaces,
-    openRoot,
-    openLastActiveRoot,
-    createRoot,
     openRootFolder,
-    deleteRoot,
     explicitHome,
   } = useSpace();
+  const { createRoot, deleteRoot, openLastActiveRoot, openRoot } =
+    useSpaceActions();
 
   useEffect(() => {
     if (autoOpenAttempted.current) return;

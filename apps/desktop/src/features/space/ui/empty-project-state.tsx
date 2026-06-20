@@ -11,13 +11,15 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { useEntrySelectionStore } from "@/features/entry";
+import { useSpaceActions } from "../hooks/use-space-actions";
 import { useSpaceStore } from "../model";
 
 /**
  * Shown when a project has no documents and no children.
  */
 export function EmptyProjectState() {
-  const { activeRootId, activeRootPath, createEntry } = useSpaceStore();
+  const { activeRootId, activeRootPath } = useSpaceStore();
+  const { createEntry } = useSpaceActions();
   const { openDocument } = useEntrySelectionStore();
 
   async function handleCreatePage() {

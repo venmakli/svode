@@ -10,6 +10,7 @@ import { createTreeFolder } from "../api/tree-entry-actions";
 import { renameSpace } from "../api/space-actions";
 import { useSpaceLfsStateSync } from "./use-space-lfs-state-sync";
 import { useMissingSpaceClone } from "./use-missing-space-clone";
+import { useSpaceActions } from "./use-space-actions";
 import { useSpaceStore } from "../model";
 import type { SpaceInfo } from "../model";
 import { hasRecordKey, hasScopeReadme } from "../lib/nav-space-tree";
@@ -35,14 +36,14 @@ export function useSpaceSidebarActions({
     treeRefreshing,
     openSpace,
     clearActiveSpace,
-    deleteSpace,
-    createEntry,
     reloadTreeParent,
     ensureTreeLoaded,
     loadTreeChildren,
     loadSpaces,
     reorderSpaces,
+    patchSpaceMetadata,
   } = useSpaceStore();
+  const { createEntry, deleteSpace } = useSpaceActions();
   const { activeDocument, activeDocumentSpaceId, openDocument, openScopeHome } =
     useEntrySelectionStore();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -142,19 +143,13 @@ export function useSpaceSidebarActions({
         name: nextName,
         projectPath: activeRootPath,
       });
-      useSpaceStore.setState({
-        spaces: useSpaceStore
-          .getState()
-          .spaces.map((item) =>
-            item.id === editingSpaceId ? { ...item, name: nextName } : item,
-          ),
-      });
+      patchSpaceMetadata(space.path, { name: nextName });
     } catch (err) {
       console.error("Failed to rename space:", err);
       toast.error(m.toast_error());
     }
     setEditingSpaceId(null);
-  }, [activeRootPath, editValue, editingSpaceId, spaces]);
+  }, [activeRootPath, editValue, editingSpaceId, patchSpaceMetadata, spaces]);
 
   const handleNewPage = useCallback(
     async (scope: ScopeTarget) => {
