@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getAppVersion } from "@/platform/native/app";
+import { getAppVersion } from "../api";
 
 export function useAppVersion() {
   const [version, setVersion] = useState<string>("");

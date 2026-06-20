@@ -9,8 +9,8 @@ import {
 } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
 import {
-  installMcpClient,
   getMcpStatus,
+  installMcpClient,
   printMcpConfig,
   removeMcpClient,
   runMcpDoctor,
@@ -19,7 +19,7 @@ import {
   type McpDoctorReport,
   type McpManualConfig,
   type McpStatus,
-} from "@/platform/mcp";
+} from "../api";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -227,7 +227,9 @@ export function McpIntegrationsSection() {
                   {clientBadge(client)}
                 </div>
                 <StatusPath
-                  value={client.configPath ?? client.path ?? client.message ?? "—"}
+                  value={
+                    client.configPath ?? client.path ?? client.message ?? "—"
+                  }
                 />
               </div>
               <Switch
