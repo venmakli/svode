@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
-import { useGitStore } from "@/features/git";
+import { setSpaceCloneProgress } from "@/features/git";
 import {
   cloneMissingSpace,
   listenSpaceCloneProgress,
@@ -16,12 +16,11 @@ export function useMissingSpaceClone(
     async (spaceId: string, spacePath: string) => {
       if (!rootPath) return;
 
-      const git = useGitStore.getState();
-      git.setCloning(spacePath, { phase: "Starting", percent: 0 });
+      setSpaceCloneProgress(spacePath, { phase: "Starting", percent: 0 });
 
       const unlisten = await listenSpaceCloneProgress((progress) => {
         if (progress.spacePath !== spacePath) return;
-        useGitStore.getState().setCloning(spacePath, {
+        setSpaceCloneProgress(spacePath, {
           phase: progress.phase,
           percent: progress.percent,
         });
@@ -30,19 +29,19 @@ export function useMissingSpaceClone(
       try {
         await cloneMissingSpace({ projectPath: rootPath, spaceId });
         await loadSpaces(rootPath);
-        git.setCloning(spacePath, null);
+        setSpaceCloneProgress(spacePath, null);
       } catch (err) {
         console.error("clone_missing_space failed:", err);
         const message =
           typeof err === "string" ? err : ((err as Error)?.message ?? "error");
-        git.setCloning(spacePath, {
+        setSpaceCloneProgress(spacePath, {
           phase: m.git_clone_failed(),
           percent: 0,
           error: message,
         });
         toast.error(m.git_clone_failed());
         window.setTimeout(
-          () => useGitStore.getState().setCloning(spacePath, null),
+          () => setSpaceCloneProgress(spacePath, null),
           6000,
         );
       } finally {

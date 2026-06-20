@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { getGitStatus } from "@/platform/git/git-api";
-import type { GitStatus } from "./types";
+import type { GitCloneProgress, GitStatus } from "./types";
 
 /**
  * Per-space git state.
@@ -15,7 +15,7 @@ interface GitState {
   statuses: Record<string, GitStatus>;
   syncing: Record<string, boolean>;
   syncError: Record<string, string>;
-  cloning: Record<string, { phase: string; percent: number; error?: string }>;
+  cloning: Record<string, GitCloneProgress>;
 
   /** Apply a status returned by a git IPC command. */
   applyStatus: (spacePath: string, status: GitStatus) => void;
@@ -29,7 +29,7 @@ interface GitState {
 
   setCloning: (
     spacePath: string,
-    progress: { phase: string; percent: number; error?: string } | null,
+    progress: GitCloneProgress | null,
   ) => void;
 }
 

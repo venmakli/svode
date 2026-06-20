@@ -40,7 +40,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { commitAllSpace, SpaceGitWatcher, useGitStore } from "@/features/git";
+import { SpaceGitActivityIndicator, useSpaceSidebarGit } from "@/features/git";
 import type { TreeNode } from "@/features/entry";
 import { cn } from "@/shared/lib/utils";
 import type {
@@ -51,7 +51,6 @@ import type { SpaceInfo } from "../model";
 import { FileTreeItem } from "./file-tree-item";
 import {
   LfsIndicatorIcon,
-  TreeActivityIndicator,
   TreeLoadingRows,
 } from "./nav-space-indicators";
 import { SortableFileTree } from "./sortable-file-tree";
@@ -110,14 +109,7 @@ export function SpaceRow({
   refreshing,
   treeLoaded,
 }: SpaceRowProps) {
-  const cloning = useGitStore((state) => state.cloning[ws.path]);
-  const dirty = useGitStore(
-    (state) =>
-      !!(
-        state.statuses[ws.path]?.hasStaged ||
-        state.statuses[ws.path]?.hasUnstaged
-      ),
-  );
+  const { cloning, dirty, commitAll } = useSpaceSidebarGit(ws.path, rootPath);
   const {
     attributes,
     listeners,
@@ -212,7 +204,6 @@ export function SpaceRow({
         {...attributes}
         {...listeners}
       >
-        <SpaceGitWatcher spacePath={ws.path} />
         <SidebarMenuButton
           isActive={isActive}
           disabled={!!cloning}
@@ -246,7 +237,7 @@ export function SpaceRow({
           )}
           <span className="ml-auto flex items-center gap-1">
             <LfsIndicatorIcon lfsState={ws.lfsState} />
-            <TreeActivityIndicator
+            <SpaceGitActivityIndicator
               spacePath={ws.path}
               loading={loading || refreshing}
             />
@@ -301,7 +292,7 @@ export function SpaceRow({
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
-                  onClick={() => commitAllSpace(ws.path, rootPath)}
+                  onClick={commitAll}
                 >
                   <Save />
                   {m.git_save_all()}

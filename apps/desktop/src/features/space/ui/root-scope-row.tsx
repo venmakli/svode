@@ -27,9 +27,10 @@ import {
   SidebarMenuSub,
 } from "@/components/ui/sidebar";
 import type { TreeNode } from "@/features/entry";
+import { SpaceGitActivityIndicator } from "@/features/git";
 import { FileTreeItem } from "./file-tree-item";
 import { SortableFileTree } from "./sortable-file-tree";
-import { TreeActivityIndicator, TreeLoadingRows } from "./nav-space-indicators";
+import { TreeLoadingRows } from "./nav-space-indicators";
 
 interface RootScopeRowProps {
   active: boolean;
@@ -82,7 +83,7 @@ export function RootScopeRow({
           <span>{icon || "\u{1F4C1}"}</span>
           <span className="flex-1 truncate">{name || "Project"}</span>
           <span className="ml-auto flex items-center gap-1">
-            <TreeActivityIndicator
+            <SpaceGitActivityIndicator
               spacePath={rootPath}
               loading={loading || refreshing}
             />

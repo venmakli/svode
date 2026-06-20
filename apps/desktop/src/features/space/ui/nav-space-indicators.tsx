@@ -1,5 +1,4 @@
-import { Loader2, CloudOff } from "lucide-react";
-import { GitIndicatorIcon, selectIndicator, useGitStore } from "@/features/git";
+import { CloudOff } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tooltip,
@@ -10,30 +9,6 @@ import { SidebarMenuItem, SidebarMenuSub } from "@/components/ui/sidebar";
 import * as m from "@/paraglide/messages.js";
 import { cn } from "@/shared/lib/utils";
 import type { LfsState } from "../model";
-
-export function TreeActivityIndicator({
-  spacePath,
-  loading,
-}: {
-  spacePath: string;
-  loading: boolean;
-}) {
-  const gitIndicator = useGitStore((state) =>
-    selectIndicator(state, spacePath),
-  );
-
-  if (!loading && gitIndicator === "clean") return null;
-
-  return (
-    <span className="inline-flex size-4 shrink-0 items-center justify-center">
-      {loading ? (
-        <Loader2 className="!size-3 animate-spin text-muted-foreground" />
-      ) : (
-        <GitIndicatorIcon spacePath={spacePath} />
-      )}
-    </span>
-  );
-}
 
 export function TreeLoadingRows() {
   return (

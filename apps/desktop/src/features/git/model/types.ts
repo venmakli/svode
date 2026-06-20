@@ -33,3 +33,9 @@ export interface CloneProgress {
   phase: string;
   percent: number;
 }
+
+export interface GitCloneProgress {
+  phase: string;
+  percent: number;
+  error?: string;
+}
