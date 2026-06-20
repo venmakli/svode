@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
-import { useSpaceStore, selectActiveSpacePath } from "@/features/space/model";
+import { useSpaceStore, selectActiveSpacePath } from "@/features/space";
 import { useIdentityStore } from "../model";
 import type { GitIdentity, RepoIdentityResult } from "../model";
 

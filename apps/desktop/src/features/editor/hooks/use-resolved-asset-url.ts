@@ -8,7 +8,7 @@ import {
 } from "react";
 
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore, selectActiveSpacePath } from "@/features/space/model";
+import { useSpaceStore, selectActiveSpacePath } from "@/features/space";
 import { joinAbs } from "../lib/doc-link-utils";
 import {
   resolveAssetAbsPath,

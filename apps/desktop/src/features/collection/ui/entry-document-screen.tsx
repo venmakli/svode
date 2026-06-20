@@ -18,7 +18,7 @@ import {
 } from "@/features/properties";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space/model";
+import { useSpaceStore } from "@/features/space";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 import { readEntry } from "@/platform/entries/entries-api";
 import { DeleteDialogs } from "./delete-dialogs";

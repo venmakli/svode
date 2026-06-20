@@ -18,7 +18,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useGitStore } from "../model";
-import { useSpaceStore, selectActiveSpacePath } from "@/features/space/model";
+import { useSpaceStore, selectActiveSpacePath } from "@/features/space";
 import {
   enableGitAutoSync,
   getGitRemote,

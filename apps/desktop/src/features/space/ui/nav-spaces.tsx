@@ -71,18 +71,17 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import {
-  cloneMissingSpace,
-  getSpaceConfig,
-  removeMissingSpace,
-  saveSpaceConfig,
-} from "@/platform/space/space-api";
 import { useSpaceStore } from "../model";
 import { useEntrySelectionStore } from "@/features/entry";
 import type { TreeNode } from "@/features/entry";
 import type { LfsState, SpaceInfo } from "../model";
-import { listen } from "@/platform/native/events";
-import type { CloneProgress } from "@/features/git";
+import {
+  cloneMissingSpace,
+  listenSpaceCloneProgress,
+  removeMissingSpace,
+  renameSpace,
+} from "../api/space-actions";
+import { useSpaceLfsStateSync } from "../hooks/use-space-lfs-state-sync";
 import {
   Tooltip,
   TooltipContent,
@@ -175,32 +174,7 @@ export function NavSpaces({
     setRootOpen(false);
   }, [activeRootId]);
 
-  useEffect(() => {
-    if (!activeRootPath) return;
-    let unlisten: (() => void) | null = null;
-    let cancelled = false;
-    listen<{ projectPath: string; spaceId: string | null; state: LfsState }>(
-      "space:lfs_state_changed",
-      (event) => {
-        if (cancelled) return;
-        if (event.payload.projectPath !== activeRootPath) return;
-        const targetId = event.payload.spaceId;
-        if (!targetId) return;
-        useSpaceStore.setState((s) => ({
-          spaces: s.spaces.map((ws) =>
-            ws.id === targetId ? { ...ws, lfsState: event.payload.state } : ws,
-          ),
-        }));
-      },
-    ).then((u) => {
-      if (cancelled) u();
-      else unlisten = u;
-    });
-    return () => {
-      cancelled = true;
-      if (unlisten) unlisten();
-    };
-  }, [activeRootPath]);
+  useSpaceLfsStateSync(activeRootPath);
 
   if (!activeRootId || !activeRootPath) return null;
 
@@ -253,12 +227,11 @@ export function NavSpaces({
       return;
     }
     try {
-      const cfg = await getSpaceConfig(ws.path);
-      await saveSpaceConfig(
-        ws.path,
-        { ...cfg, name: editValue.trim() },
-        rootPath,
-      );
+      await renameSpace({
+        spacePath: ws.path,
+        name: editValue.trim(),
+        projectPath: rootPath,
+      });
       useSpaceStore.setState({
         spaces: useSpaceStore
           .getState()
@@ -332,16 +305,16 @@ export function NavSpaces({
     const git = useGitStore.getState();
     git.setCloning(spacePath, { phase: "Starting", percent: 0 });
 
-    const unlisten = await listen<CloneProgress>("clone:progress", (event) => {
-      if (event.payload.spacePath !== spacePath) return;
+    const unlisten = await listenSpaceCloneProgress((progress) => {
+      if (progress.spacePath !== spacePath) return;
       useGitStore.getState().setCloning(spacePath, {
-        phase: event.payload.phase,
-        percent: event.payload.percent,
+        phase: progress.phase,
+        percent: progress.percent,
       });
     });
 
     try {
-      await cloneMissingSpace(rootPath, spaceId);
+      await cloneMissingSpace({ projectPath: rootPath, spaceId });
       await loadSpaces(rootPath);
       git.setCloning(spacePath, null);
     } catch (err) {
@@ -365,7 +338,7 @@ export function NavSpaces({
 
   async function handleRemoveBroken(spaceId: string) {
     try {
-      await removeMissingSpace(rootPath, spaceId);
+      await removeMissingSpace({ projectPath: rootPath, spaceId });
       await loadSpaces(rootPath);
     } catch (err) {
       console.error("remove_missing_space failed:", err);

@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { EditorKit } from "./editor-kit";
 import { useFileWatcher } from "../hooks/use-file-watcher";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space/model";
+import { useSpaceStore } from "@/features/space";
 import { useEditorStore } from "../model";
 import { cn } from "@/shared/lib/utils";
 import {

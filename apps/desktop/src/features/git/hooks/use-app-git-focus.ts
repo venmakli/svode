@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useGitStore } from "../model";
-import { useSpaceStore, selectActiveSpacePath } from "@/features/space/model";
+import { useSpaceStore, selectActiveSpacePath } from "@/features/space";
 import { getGitStatus, pushGit } from "@/platform/git/git-api";
 import { isAutoSyncEnabled, syncOnOpen } from "../api/git-actions";
 

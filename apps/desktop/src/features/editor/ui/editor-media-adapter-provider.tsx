@@ -5,7 +5,7 @@ import {
   type MediaAdapter,
 } from "@/components/ui/media-adapter";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space/model";
+import { useSpaceStore } from "@/features/space";
 import { resolveAssetAbsPath } from "@/platform/assets/assets-api";
 import {
   filesToFileList,

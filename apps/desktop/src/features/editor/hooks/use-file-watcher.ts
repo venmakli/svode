@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import type { PlateEditor } from "platejs/react";
 import { deserializeWithConflicts } from "../conflict/parse-conflicts";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space/model";
+import { useSpaceStore } from "@/features/space";
 import { useEditorStore } from "../model";
 import { setCachedDocumentValue } from "../model/plate-document-cache";
 import * as m from "@/paraglide/messages.js";

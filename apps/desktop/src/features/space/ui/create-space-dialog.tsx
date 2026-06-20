@@ -1,8 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import * as m from "@/paraglide/messages.js";
 import { toast } from "sonner";
-import { pathExists } from "@/platform/filesystem/path-api";
-import { listen } from "@/platform/native/events";
 import { Info } from "lucide-react";
 import {
   Dialog,
@@ -26,9 +24,13 @@ import {
 import { EmojiPicker } from "@/components/ui/emoji-picker";
 import { Progress } from "@/components/ui/progress";
 import { useSpaceStore } from "../model";
-import { cloneSpace, registerClonedSpace } from "@/platform/space/space-api";
 import type { SpaceGitType } from "../model";
-import type { CloneProgress } from "@/features/git";
+import {
+  cloneAndRegisterSpace,
+  listenSpaceCloneProgress,
+  type SpaceCloneProgress,
+} from "../api/space-actions";
+import { useSpacePathCollision } from "../hooks/use-space-path-collision";
 
 interface CreateSpaceDialogProps {
   open: boolean;
@@ -114,11 +116,8 @@ export function CreateSpaceDialog({
   const [folder, setFolder] = useState("");
   const [folderEdited, setFolderEdited] = useState(false);
   const [gitType, setGitType] = useState<SpaceGitType>("inline");
-  const [slugCollision, setSlugCollision] = useState(false);
-  const [cloneProgress, setCloneProgress] = useState<{
-    phase: string;
-    percent: number;
-  } | null>(null);
+  const [cloneProgress, setCloneProgress] =
+    useState<SpaceCloneProgress | null>(null);
 
   function resetForm() {
     setTab("create");
@@ -128,7 +127,6 @@ export function CreateSpaceDialog({
     setFolder("");
     setFolderEdited(false);
     setGitType("inline");
-    setSlugCollision(false);
     setCloneProgress(null);
   }
 
@@ -140,6 +138,7 @@ export function CreateSpaceDialog({
     activeRootPath && effectiveFolder
       ? `${activeRootPath}/${effectiveFolder}`
       : null;
+  const slugCollision = useSpacePathCollision(targetPath);
 
   const projectFolderName = activeRootPath
     ? (activeRootPath.split("/").pop() ?? "")
@@ -155,27 +154,6 @@ export function CreateSpaceDialog({
       setGitType("independent");
     }
   }, [tab]);
-
-  // Debounced collision check
-  useEffect(() => {
-    if (!targetPath || !effectiveFolder) {
-      setSlugCollision(false);
-      return;
-    }
-    let cancelled = false;
-    const timer = window.setTimeout(async () => {
-      try {
-        const exists = await pathExists(targetPath);
-        if (!cancelled) setSlugCollision(exists);
-      } catch {
-        if (!cancelled) setSlugCollision(false);
-      }
-    }, 200);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [targetPath, effectiveFolder]);
 
   const trimmedUrl = url.trim();
   const urlValid = tab === "create" || URL_REGEX.test(trimmedUrl);
@@ -246,31 +224,19 @@ export function CreateSpaceDialog({
     fallbackIcon: string;
     gitType: SpaceGitType;
   }) {
-    setCloneProgress({ phase: "Starting", percent: 0 });
+    setCloneProgress({
+      spacePath: opts.targetPath,
+      phase: "Starting",
+      percent: 0,
+    });
 
-    const unlisten = await listen<CloneProgress>("clone:progress", (event) => {
-      if (event.payload.spacePath !== opts.targetPath) return;
-      setCloneProgress({
-        phase: event.payload.phase,
-        percent: event.payload.percent,
-      });
+    const unlisten = await listenSpaceCloneProgress((progress) => {
+      if (progress.spacePath !== opts.targetPath) return;
+      setCloneProgress(progress);
     });
 
     try {
-      await cloneSpace({
-        url: opts.url,
-        targetPath: opts.targetPath,
-        projectPath: opts.parentPath,
-        gitType: opts.gitType,
-      });
-      await registerClonedSpace({
-        parentPath: opts.parentPath,
-        folderName: opts.folderName,
-        fallbackName: opts.fallbackName,
-        fallbackIcon: opts.fallbackIcon,
-        url: opts.url,
-        gitType: opts.gitType,
-      });
+      await cloneAndRegisterSpace(opts);
       await loadSpaces(opts.parentPath);
       onOpenChange(false);
       resetForm();

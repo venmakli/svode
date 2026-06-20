@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { joinAbs, makeRelativeDocUrl } from "../lib/doc-link-utils";
 import { uploadAsset, type UploadAssetDto } from "@/platform/upload/upload-api";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space/model";
+import { useSpaceStore } from "@/features/space";
 
 /**
  * Shape returned by `useUploadFile` — matches the subset of Plate's

@@ -18,7 +18,7 @@ import {
 import { useEntryFieldSave, type Entry } from "@/features/entry";
 import { normalizeSchema } from "@/features/properties";
 import { propertyFieldSavePolicy } from "@/features/properties";
-import { useSpaceStore } from "@/features/space/model";
+import { useSpaceStore } from "@/features/space";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
 import type {
   CollectionSchema,

@@ -27,7 +27,7 @@ import {
 } from "@/shared/ui/page-layout";
 import { isEntryTreeMetaField, useEntryFieldSave } from "@/features/entry";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "@/features/space/model";
+import { useSpaceStore } from "@/features/space";
 import { useViewQuery } from "@/features/collection/query";
 import { DeleteDialogs } from "./delete-dialogs";
 import { EntryDetailActions } from "./entry-detail-actions";
