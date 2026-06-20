@@ -1,5 +1,5 @@
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { useMemo, useRef } from "react";
+import { useRef } from "react";
 import { PanelBottomClose, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,13 +8,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/shared/lib/utils";
-import { useSpaceStore } from "@/features/space";
 import { useTerminalEventBridge } from "@/features/terminal/hooks/use-terminal-event-bridge";
 import { useTerminalStore } from "@/features/terminal/hooks/use-terminal-store";
-import {
-  buildProjectTerminalTarget,
-  buildSpaceTerminalTargets,
-} from "@/features/terminal/lib/targets";
+import { useTerminalTargets } from "@/features/terminal/hooks/use-terminal-targets";
 import { TerminalTargetMenu } from "./terminal-target-menu";
 import { TerminalTabStrip } from "./terminal-tab-strip";
 import { TerminalPane } from "./terminal-pane";
@@ -30,22 +26,7 @@ export function TerminalPanelHost() {
   const tabs = useTerminalStore((state) => state.tabs);
   const activeTabId = useTerminalStore((state) => state.activeTabId);
   const closePanel = useTerminalStore((state) => state.closePanel);
-  const { activeRootId, activeRootName, activeRootPath, spaces } =
-    useSpaceStore();
-
-  const projectTarget = useMemo(
-    () =>
-      buildProjectTerminalTarget({
-        id: activeRootId,
-        name: activeRootName,
-        path: activeRootPath,
-      }),
-    [activeRootId, activeRootName, activeRootPath],
-  );
-  const spaceTargets = useMemo(
-    () => buildSpaceTerminalTargets(spaces),
-    [spaces],
-  );
+  const { projectTarget, spaceTargets } = useTerminalTargets();
 
   function handleResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
     if (!panelOpen) return;
