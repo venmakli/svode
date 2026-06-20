@@ -1,3 +1,4 @@
+import { ENABLE_LEGACY_AGENT_INTEGRATION } from "@/app/config/feature-flags";
 import { useShellStore } from "@/app/shell/model";
 import { AppSettingsDialog } from "@/features/settings";
 import { SpaceSettingsDialog } from "@/features/settings";
@@ -9,6 +10,7 @@ export function SettingsDialogs() {
     <>
       <AppSettingsDialog
         open={settingsDialog === "app"}
+        enableLegacyAgentIntegration={ENABLE_LEGACY_AGENT_INTEGRATION}
         onOpenChange={(open) => {
           if (!open) closeSettings();
         }}
@@ -16,6 +18,7 @@ export function SettingsDialogs() {
       <SpaceSettingsDialog
         open={settingsDialog === "space"}
         spacePath={settingsSpacePath}
+        enableLegacyAgentIntegration={ENABLE_LEGACY_AGENT_INTEGRATION}
         onOpenChange={(open) => {
           if (!open) closeSettings();
         }}

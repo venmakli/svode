@@ -6,16 +6,15 @@ import type { SaveSpaceConfig } from "./use-space-settings-config-actions";
 interface UseSpaceSettingsGeneralOptions {
   open: boolean;
   spacePath: string;
-  isRoot: boolean;
   saveConfig: SaveSpaceConfig;
 }
 
 export function useSpaceSettingsGeneral({
   open,
   spacePath,
-  isRoot,
   saveConfig,
 }: UseSpaceSettingsGeneralOptions) {
+  const patchSpaceMetadata = useSpaceStore((state) => state.patchSpaceMetadata);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [icon, setIcon] = useState("");
@@ -46,31 +45,9 @@ export function useSpaceSettingsGeneral({
 
   const syncSpaceStore = useCallback(
     (updates: { name?: string; icon?: string; description?: string }) => {
-      if (isRoot) {
-        useSpaceStore.setState({
-          ...(updates.name !== undefined
-            ? { activeRootName: updates.name }
-            : {}),
-          ...(updates.icon !== undefined
-            ? { activeRootIcon: updates.icon }
-            : {}),
-          rootSpaces: useSpaceStore
-            .getState()
-            .rootSpaces.map((space) =>
-              space.path === spacePath ? { ...space, ...updates } : space,
-            ),
-        });
-      } else {
-        useSpaceStore.setState({
-          spaces: useSpaceStore
-            .getState()
-            .spaces.map((space) =>
-              space.path === spacePath ? { ...space, ...updates } : space,
-            ),
-        });
-      }
+      patchSpaceMetadata(spacePath, updates);
     },
-    [isRoot, spacePath],
+    [patchSpaceMetadata, spacePath],
   );
 
   async function handleNameBlur() {

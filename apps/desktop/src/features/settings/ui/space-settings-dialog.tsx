@@ -1,5 +1,4 @@
 import { useEffect, useState, type ComponentType } from "react";
-import { ENABLE_LEGACY_AGENT_INTEGRATION } from "@/app/config/feature-flags";
 import * as m from "@/paraglide/messages.js";
 import {
   Dialog,
@@ -67,6 +66,7 @@ import {
 interface SpaceSettingsDialogProps {
   open: boolean;
   spacePath: string | null;
+  enableLegacyAgentIntegration: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
@@ -82,6 +82,7 @@ type Section =
 export function SpaceSettingsDialog({
   open,
   spacePath: inputPath,
+  enableLegacyAgentIntegration,
   onOpenChange,
 }: SpaceSettingsDialogProps) {
   const openDocument = useEntrySelectionStore((state) => state.openDocument);
@@ -104,19 +105,18 @@ export function SpaceSettingsDialog({
   const generalSettings = useSpaceSettingsGeneral({
     open,
     spacePath,
-    isRoot,
     saveConfig,
   });
   const agentSettings = useSpaceSettingsAgent({
     open,
-    enabled: ENABLE_LEGACY_AGENT_INTEGRATION,
+    enabled: enableLegacyAgentIntegration,
     spacePath,
     projectPath: activeRootPath,
     saveConfig,
   });
   const defaultsSettings = useSpaceSettingsDefaults({
     open,
-    enabled: ENABLE_LEGACY_AGENT_INTEGRATION,
+    enabled: enableLegacyAgentIntegration,
     spacePath,
     saveConfig,
   });
@@ -172,7 +172,7 @@ export function SpaceSettingsDialog({
       key: "ai-agent",
       label: m.settings_ai_agent(),
       icon: Bot,
-      show: ENABLE_LEGACY_AGENT_INTEGRATION,
+      show: enableLegacyAgentIntegration,
     },
     { key: "git", label: m.git_section(), icon: GitBranch, show: true },
     { key: "storage", label: m.storage_section(), icon: HardDrive, show: true },
@@ -181,13 +181,13 @@ export function SpaceSettingsDialog({
       key: "defaults",
       label: m.settings_defaults(),
       icon: Settings,
-      show: ENABLE_LEGACY_AGENT_INTEGRATION && hasSpaces,
+      show: enableLegacyAgentIntegration && hasSpaces,
     },
     {
       key: "instructions",
       label: m.settings_instructions(),
       icon: FileText,
-      show: ENABLE_LEGACY_AGENT_INTEGRATION,
+      show: enableLegacyAgentIntegration,
     },
   ];
 
@@ -263,7 +263,7 @@ export function SpaceSettingsDialog({
                 />
               )}
 
-              {ENABLE_LEGACY_AGENT_INTEGRATION && section === "ai-agent" && (
+              {enableLegacyAgentIntegration && section === "ai-agent" && (
                 <SpaceAgentSection
                   agents={agentSettings.agents}
                   enabledClis={agentSettings.enabledClis}
@@ -332,7 +332,7 @@ export function SpaceSettingsDialog({
                 />
               )}
 
-              {ENABLE_LEGACY_AGENT_INTEGRATION &&
+              {enableLegacyAgentIntegration &&
                 section === "defaults" &&
                 hasSpaces && (
                   <SpaceDefaultsSection
@@ -345,14 +345,13 @@ export function SpaceSettingsDialog({
                   />
                 )}
 
-              {ENABLE_LEGACY_AGENT_INTEGRATION &&
-                section === "instructions" && (
-                  <SpaceInstructionsSection
-                    agentsMdContent={agentSettings.agentsMdContent}
-                    enabledClis={agentSettings.enabledClis}
-                    onOpenAgentsMd={handleOpenAgentsMd}
-                  />
-                )}
+              {enableLegacyAgentIntegration && section === "instructions" && (
+                <SpaceInstructionsSection
+                  agentsMdContent={agentSettings.agentsMdContent}
+                  enabledClis={agentSettings.enabledClis}
+                  onOpenAgentsMd={handleOpenAgentsMd}
+                />
+              )}
             </div>
           </main>
         </SidebarProvider>

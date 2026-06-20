@@ -1,4 +1,4 @@
-import { useAppVersion } from "@/features/settings/hooks/use-app-version";
+import { useAppVersion } from "@/features/settings";
 import { getBuildCommit } from "../model";
 import { useDogfoodUpdateCheck } from "../hooks/use-dogfood-update-check";
 

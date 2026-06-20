@@ -7,7 +7,7 @@ import { cloneProject } from "@/platform/space/space-api";
 import { toast } from "sonner";
 import { FolderPlus, FolderOpen, FolderGit2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { useAppVersion } from "@/features/settings/hooks/use-app-version";
+import { useAppVersion } from "@/features/settings";
 import { useSpaceStore } from "@/features/space";
 import { ProjectList } from "./project-list";
 import { EmptyState } from "./empty-state";

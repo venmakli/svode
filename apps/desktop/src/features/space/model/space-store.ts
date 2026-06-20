@@ -116,6 +116,10 @@ interface SpaceState {
   ) => Promise<void>;
   reorderSpaces: (orderedSpaceIds: string[]) => Promise<void>;
   clearActiveSpace: () => void;
+  patchSpaceMetadata: (
+    spacePath: string,
+    updates: { name?: string; icon?: string; description?: string },
+  ) => void;
 
   // Document/tree methods
   createEntry: (spacePath: string, title: string) => Promise<EntryDto | null>;
@@ -601,6 +605,26 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     if (!activeRootPath) return;
     const spaces = await reorderSpacesNative(activeRootPath, orderedSpaceIds);
     set({ spaces });
+  },
+
+  patchSpaceMetadata: (spacePath, updates) => {
+    set((state) => {
+      const isRoot = spacePath === state.activeRootPath;
+      return {
+        ...(isRoot && updates.name !== undefined
+          ? { activeRootName: updates.name }
+          : {}),
+        ...(isRoot && updates.icon !== undefined
+          ? { activeRootIcon: updates.icon }
+          : {}),
+        rootSpaces: state.rootSpaces.map((space) =>
+          space.path === spacePath ? { ...space, ...updates } : space,
+        ),
+        spaces: state.spaces.map((space) =>
+          space.path === spacePath ? { ...space, ...updates } : space,
+        ),
+      };
+    });
   },
 
   createEntry: async (spacePath: string, title: string) => {
