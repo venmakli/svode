@@ -5,7 +5,7 @@ import { IdentityGate } from "./identity-gate";
 
 export function AppProviders() {
   return (
-    <ThemeProvider defaultTheme="system">
+    <ThemeProvider defaultTheme="system" storageKey="svode-theme">
       <DogfoodUpdateNotifier />
       <IdentityGate />
       <Toaster />

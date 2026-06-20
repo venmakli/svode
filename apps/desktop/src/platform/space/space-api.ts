@@ -5,12 +5,48 @@ import {
   type UnlistenFn,
 } from "@/platform/native/events";
 import type {
+  AssetsS3ConfigDto,
+  AssetsStrategyDto,
+  LfsStateDto,
   SpaceDirtyEventDto,
   SpaceFileEventDto,
   SpaceConfigDto,
   SpaceGitTypeDto,
   SpaceInfoDto,
 } from "./space-types";
+
+export interface SpacePoolInputDto extends Record<string, unknown> {
+  projectPath: string;
+  spaceId: string | null;
+}
+
+export interface S3CredentialsInputDto extends Record<string, unknown> {
+  accessKey: string;
+  secretKey: string;
+}
+
+export interface CheckS3ConnectionInputDto
+  extends AssetsS3ConfigDto,
+    Record<string, unknown> {
+  accessKey: string;
+  secretKey: string;
+}
+
+export interface SetAssetsStrategyInputDto extends SpacePoolInputDto {
+  strategy: AssetsStrategyDto;
+  s3Config: AssetsS3ConfigDto | null;
+  s3Credentials: S3CredentialsInputDto | null;
+}
+
+export interface SetAssetsStrategyResultDto {
+  warnings: string[];
+}
+
+export interface LfsStateChangedEventDto {
+  projectPath: string;
+  spaceId: string | null;
+  state: LfsStateDto;
+}
 
 export type SpaceFileEventName =
   | "file:created"
@@ -104,6 +140,40 @@ export function ensureAssetsScope(spacePath: string): Promise<void> {
   return invokeCommand<void>("ensure_assets_scope", { spacePath });
 }
 
+export function countAssets(input: SpacePoolInputDto): Promise<number> {
+  return invokeCommand<number>("count_assets", input);
+}
+
+export function hasS3Credentials(input: SpacePoolInputDto): Promise<boolean> {
+  return invokeCommand<boolean>("has_s3_credentials", input);
+}
+
+export function checkS3Connection(
+  input: CheckS3ConnectionInputDto,
+): Promise<boolean> {
+  return invokeCommand<boolean>("check_s3_connection", input);
+}
+
+export function applyAssetsStrategy(
+  input: SetAssetsStrategyInputDto,
+): Promise<SetAssetsStrategyResultDto> {
+  return invokeCommand<SetAssetsStrategyResultDto>("set_assets_strategy", input);
+}
+
+export function getLfsState(input: SpacePoolInputDto): Promise<LfsStateDto> {
+  return invokeCommand<LfsStateDto>("get_lfs_state", input);
+}
+
+export function repairLfs(input: SpacePoolInputDto): Promise<LfsStateDto> {
+  return invokeCommand<LfsStateDto>("repair_lfs", input);
+}
+
+export function listenLfsStateChanged(
+  handler: EventCallback<LfsStateChangedEventDto>,
+): Promise<UnlistenFn> {
+  return listen<LfsStateChangedEventDto>("space:lfs_state_changed", handler);
+}
+
 export interface CreateSpaceInput {
   parentPath: string;
   name: string;
@@ -191,4 +261,8 @@ export function listenSpaceDirty(
 
 export function reindexProject(projectPath: string): Promise<void> {
   return invokeCommand<void>("reindex_project", { projectPath });
+}
+
+export function countBrokenLinks(projectPath: string): Promise<number> {
+  return invokeCommand<number>("count_broken_links", { projectPath });
 }

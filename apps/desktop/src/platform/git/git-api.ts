@@ -1,10 +1,37 @@
 import { invokeCommand } from "@/platform/native/invoke";
+import {
+  listen,
+  type EventCallback,
+  type UnlistenFn,
+} from "@/platform/native/events";
 import type {
   GitAvailabilityDto,
   GitStatusDto,
   SyncResultDto,
   UnpushedCommitDto,
 } from "./git-types";
+import type { SpaceGitTypeDto } from "@/platform/space/space-types";
+
+export interface GetSpaceGitTypeInputDto extends Record<string, unknown> {
+  projectPath: string;
+  spacePath: string;
+}
+
+export interface GetGitSubmoduleUrlInputDto extends Record<string, unknown> {
+  projectPath: string;
+  spaceFolder: string;
+}
+
+export interface SetGitRemoteInputDto extends Record<string, unknown> {
+  spacePath: string;
+  url: string;
+  projectPath?: string | null;
+  spaceId?: string | null;
+}
+
+export interface GitCommittedEventDto {
+  spacePath: string;
+}
 
 export function checkGitAvailability(): Promise<GitAvailabilityDto> {
   return invokeCommand<GitAvailabilityDto>("git_check_availability");
@@ -60,6 +87,28 @@ export function enableGitAutoSync(input: {
 
 export function getGitRemote(spacePath: string): Promise<string | null> {
   return invokeCommand<string | null>("git_get_remote", { spacePath });
+}
+
+export function setGitRemote(input: SetGitRemoteInputDto): Promise<void> {
+  return invokeCommand<void>("git_set_remote", input);
+}
+
+export function getSpaceGitType(
+  input: GetSpaceGitTypeInputDto,
+): Promise<SpaceGitTypeDto> {
+  return invokeCommand<SpaceGitTypeDto>("get_space_git_type", input);
+}
+
+export function getGitSubmoduleUrl(
+  input: GetGitSubmoduleUrlInputDto,
+): Promise<string | null> {
+  return invokeCommand<string | null>("git_get_submodule_url", input);
+}
+
+export function listenGitCommitted(
+  handler: EventCallback<GitCommittedEventDto>,
+): Promise<UnlistenFn> {
+  return listen<GitCommittedEventDto>("git:committed", handler);
 }
 
 export function getUnpushedCommits(

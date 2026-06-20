@@ -1,15 +1,36 @@
 import {
-  listen,
-  type EventCallback,
-  type UnlistenFn,
-} from "@/platform/native/events";
-import { invokeCommand } from "@/platform/native/invoke";
+  listAgentModels as listPlatformAgentModels,
+  readAgentsMd as readPlatformAgentsMd,
+  setupCliSymlinks as setupPlatformCliSymlinks,
+  teardownCliSymlinks as teardownPlatformCliSymlinks,
+} from "@/platform/agent/agent-api";
 import {
   checkGitAvailability,
+  getGitSubmoduleUrl as getPlatformGitSubmoduleUrl,
   getGitRemote,
   getGitStatus,
+  getSpaceGitType as getPlatformSpaceGitType,
+  listenGitCommitted as listenPlatformGitCommitted,
+  setGitRemote as setPlatformGitRemote,
 } from "@/platform/git/git-api";
-import { getSpaceConfig, saveSpaceConfig } from "@/platform/space/space-api";
+import {
+  applyAssetsStrategy as applyPlatformAssetsStrategy,
+  checkS3Connection as checkPlatformS3Connection,
+  countAssets as countPlatformAssets,
+  countBrokenLinks as countPlatformBrokenLinks,
+  getLfsState as getPlatformLfsState,
+  getSpaceConfig,
+  hasS3Credentials as hasPlatformS3Credentials,
+  listenLfsStateChanged as listenPlatformLfsStateChanged,
+  repairLfs as repairPlatformLfs,
+  saveSpaceConfig,
+} from "@/platform/space/space-api";
+import {
+  getProjectFanoutPreview as getPlatformProjectFanoutPreview,
+  getRepoIdentity as getPlatformRepoIdentity,
+  saveProjectIdentity as savePlatformProjectIdentity,
+  saveRepoIdentity as savePlatformRepoIdentity,
+} from "@/platform/identity/identity-api";
 
 import type { ModelOption } from "@/features/chat";
 import type {
@@ -103,6 +124,13 @@ export interface GitCommittedEvent {
   spacePath: string;
 }
 
+interface SettingsEvent<T> {
+  payload: T;
+}
+
+type SettingsEventCallback<T> = (event: SettingsEvent<T>) => void;
+type SettingsUnlistenFn = () => void;
+
 export function getSettingsSpaceConfig(
   spacePath: string,
 ): Promise<SpaceConfig> {
@@ -118,27 +146,27 @@ export function saveSettingsSpaceConfig({
 }
 
 export function hasS3Credentials(input: SpacePoolInput): Promise<boolean> {
-  return invokeCommand<boolean>("has_s3_credentials", input);
+  return hasPlatformS3Credentials(input);
 }
 
 export function getLfsState(input: SpacePoolInput): Promise<LfsState> {
-  return invokeCommand<LfsState>("get_lfs_state", input);
+  return getPlatformLfsState(input);
 }
 
 export function repairLfs(input: SpacePoolInput): Promise<LfsState> {
-  return invokeCommand<LfsState>("repair_lfs", input);
+  return repairPlatformLfs(input);
 }
 
 export function getSpaceGitType(
   input: GetSpaceGitTypeInput,
 ): Promise<SpaceGitType> {
-  return invokeCommand<SpaceGitType>("get_space_git_type", input);
+  return getPlatformSpaceGitType(input);
 }
 
 export function getGitSubmoduleUrl(
   input: GetGitSubmoduleUrlInput,
 ): Promise<string | null> {
-  return invokeCommand<string | null>("git_get_submodule_url", input);
+  return getPlatformGitSubmoduleUrl(input);
 }
 
 export function getSettingsGitRemote(
@@ -156,79 +184,77 @@ export function getSettingsGitAvailability(): Promise<GitAvailability> {
 }
 
 export function getRepoIdentity(repoPath: string): Promise<RepoIdentityResult> {
-  return invokeCommand<RepoIdentityResult>("get_repo_identity", { repoPath });
+  return getPlatformRepoIdentity(repoPath);
 }
 
 export function getProjectFanoutPreview(
   rootPath: string,
 ): Promise<FanoutPreviewEntry[]> {
-  return invokeCommand<FanoutPreviewEntry[]>("get_project_fanout_preview", {
-    rootPath,
-  });
+  return getPlatformProjectFanoutPreview(rootPath);
 }
 
 export function saveRepoIdentity(input: SaveRepoIdentityInput): Promise<void> {
-  return invokeCommand<void>("set_repo_identity", input);
+  return savePlatformRepoIdentity(input);
 }
 
 export function saveProjectIdentity(
   input: SaveProjectIdentityInput,
 ): Promise<void> {
-  return invokeCommand<void>("set_project_identity", input);
+  return savePlatformProjectIdentity(input);
 }
 
 export function listAgentModels(spacePath: string): Promise<ModelOption[]> {
-  return invokeCommand<ModelOption[]>("agent_list_models", { spacePath });
+  return listPlatformAgentModels(spacePath);
 }
 
 export function readAgentsMd(spacePath: string): Promise<string | null> {
-  return invokeCommand<string | null>("read_agents_md", { spacePath });
+  return readPlatformAgentsMd(spacePath);
 }
 
 export function setupCliSymlinks(
   input: SetupCliSymlinksInput,
 ): Promise<string[]> {
-  return invokeCommand<string[]>("setup_cli_symlinks_cmd", input);
+  return setupPlatformCliSymlinks(input);
 }
 
 export function teardownCliSymlinks(
   input: SetupCliSymlinksInput,
 ): Promise<void> {
-  return invokeCommand<void>("teardown_cli_symlinks_cmd", input);
+  return teardownPlatformCliSymlinks(input);
 }
 
 export function countBrokenLinks(projectPath: string): Promise<number> {
-  return invokeCommand<number>("count_broken_links", { projectPath });
+  return countPlatformBrokenLinks(projectPath);
 }
 
 export function setGitRemote(input: SetGitRemoteInput): Promise<void> {
-  return invokeCommand<void>("git_set_remote", input);
+  return setPlatformGitRemote(input);
 }
 
 export function countAssets(input: SpacePoolInput): Promise<number> {
-  return invokeCommand<number>("count_assets", input);
+  return countPlatformAssets(input);
 }
 
 export function checkS3Connection(
   input: CheckS3ConnectionInput,
 ): Promise<boolean> {
-  return invokeCommand<boolean>("check_s3_connection", input);
+  return checkPlatformS3Connection(input);
 }
 
 export function applyAssetsStrategy(
   input: SetAssetsStrategyInput,
 ): Promise<SetAssetsStrategyResult> {
-  return invokeCommand<SetAssetsStrategyResult>("set_assets_strategy", input);
+  return applyPlatformAssetsStrategy(input);
 }
 
 export function listenLfsStateChanged(
-  handler: EventCallback<LfsStateChangedEvent>,
-): Promise<UnlistenFn> {
-  return listen<LfsStateChangedEvent>("space:lfs_state_changed", handler);
+  handler: SettingsEventCallback<LfsStateChangedEvent>,
+): Promise<SettingsUnlistenFn> {
+  return listenPlatformLfsStateChanged(handler);
 }
 
 export function listenGitCommitted(
-  handler: EventCallback<GitCommittedEvent>,
-): Promise<UnlistenFn> {
-  return listen<GitCommittedEvent>("git:committed", handler);
+  handler: SettingsEventCallback<GitCommittedEvent>,
+): Promise<SettingsUnlistenFn> {
+  return listenPlatformGitCommitted(handler);
 }
