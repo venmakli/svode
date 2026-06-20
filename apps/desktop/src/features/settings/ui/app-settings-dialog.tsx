@@ -1,9 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
-import { getAppSettings, listAvailableAgents, saveAppSettings } from "../api";
-import { toast } from "sonner";
+import { useEffect, useState } from "react";
 import { ENABLE_LEGACY_AGENT_INTEGRATION } from "@/app/config/feature-flags";
 import * as m from "@/paraglide/messages.js";
-import { setLocale, getLocale } from "@/paraglide/runtime.js";
 import {
   Dialog,
   DialogContent,
@@ -41,7 +38,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { useTheme } from "@/components/ui/theme-provider";
 import {
   ExternalLink,
   Info,
@@ -52,12 +48,12 @@ import {
   Terminal,
   User,
 } from "lucide-react";
-import { invalidateAppSettings, useAppVersion } from "../hooks";
-import { useIdentityStore } from "@/features/identity";
-import { isValidEmail, isValidName } from "@/features/identity";
+import { useAppSettingsAbout } from "../hooks/use-app-settings-about";
+import { useAppSettingsAppearance } from "../hooks/use-app-settings-appearance";
+import { useCliAgents } from "../hooks/use-cli-agents";
+import { useGlobalIdentitySettings } from "../hooks/use-global-identity-settings";
 import { McpIntegrationsSection } from "./mcp-section";
-import { getBuildCommit, useDogfoodUpdateCheck } from "@/features/updates";
-import type { AppSettings, AvailableAgent } from "../model";
+import type { AvailableAgent } from "../model";
 
 const CLI_AUTH_COMMANDS: Record<string, string> = {
   claude: "claude login",
@@ -114,119 +110,32 @@ export function AppSettingsDialog({
   open,
   onOpenChange,
 }: AppSettingsDialogProps) {
-  const { theme, setTheme } = useTheme();
-  const version = useAppVersion();
+  const { theme, locale, handleThemeChange, handleLanguageChange } =
+    useAppSettingsAppearance(open);
+  const { version, buildCommit, releaseUrl, updates } = useAppSettingsAbout();
   const [section, setSection] = useState<Section>("profile");
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-
-  const identityGlobal = useIdentityStore((s) => s.global);
-  const saveGlobalIdentity = useIdentityStore((s) => s.saveGlobal);
-  const [identityName, setIdentityName] = useState("");
-  const [identityEmail, setIdentityEmail] = useState("");
-  const [savingIdentity, setSavingIdentity] = useState(false);
-
-  const [agents, setAgents] = useState<AvailableAgent[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
-
-  const loadSettings = useCallback(async () => {
-    try {
-      const s = await getAppSettings();
-      setSettings(s);
-    } catch (err) {
-      console.error("Failed to load settings:", err);
-    }
-  }, []);
-
-  const loadAgents = useCallback(async () => {
-    try {
-      const list = await listAvailableAgents();
-      setAgents(list);
-    } catch (err) {
-      console.error("Failed to load agents:", err);
-    }
-  }, []);
+  const {
+    identityName,
+    setIdentityName,
+    identityEmail,
+    setIdentityEmail,
+    identityNameValid,
+    identityEmailValid,
+    canSaveIdentity,
+    handleSaveIdentity,
+  } = useGlobalIdentitySettings(open);
+  const { agents, refreshing, refreshAgents } = useCliAgents({
+    open,
+    enabled: ENABLE_LEGACY_AGENT_INTEGRATION,
+  });
 
   useEffect(() => {
-    if (open) {
-      loadSettings();
-      if (ENABLE_LEGACY_AGENT_INTEGRATION) {
-        loadAgents();
-      }
+    if (!open) return;
+    const resetSection = window.setTimeout(() => {
       setSection("profile");
-      setIdentityName(identityGlobal?.name ?? "");
-      setIdentityEmail(identityGlobal?.email ?? "");
-    }
-  }, [open, loadSettings, loadAgents, identityGlobal]);
-
-  async function saveSettings(updated: Partial<AppSettings>) {
-    if (!settings) return;
-    const merged: AppSettings = {
-      ...settings,
-      appearance: { ...settings.appearance, ...updated.appearance },
-      window: { ...settings.window, ...updated.window },
-    };
-    try {
-      await saveAppSettings(merged);
-      setSettings(merged);
-      invalidateAppSettings();
-      return true;
-    } catch (err) {
-      console.error("Failed to save settings:", err);
-      toast.error(m.toast_error());
-      return false;
-    }
-  }
-
-  const identityNameValid = isValidName(identityName);
-  const identityEmailValid = isValidEmail(identityEmail);
-  const identityChanged =
-    identityName.trim() !== (identityGlobal?.name ?? "") ||
-    identityEmail.trim() !== (identityGlobal?.email ?? "");
-  const canSaveIdentity =
-    identityNameValid &&
-    identityEmailValid &&
-    identityChanged &&
-    !savingIdentity;
-
-  async function handleSaveIdentity() {
-    if (!canSaveIdentity) return;
-    setSavingIdentity(true);
-    try {
-      await saveGlobalIdentity(identityName.trim(), identityEmail.trim());
-      toast.success(m.toast_settings_saved());
-    } catch (err) {
-      console.error("set_git_identity failed:", err);
-      toast.error(m.toast_error());
-    } finally {
-      setSavingIdentity(false);
-    }
-  }
-
-  async function handleThemeChange(value: string) {
-    setTheme(value as "light" | "dark" | "system");
-    await saveSettings({
-      appearance: {
-        theme: value,
-        language: settings?.appearance.language ?? "en",
-      },
-    });
-  }
-
-  async function handleLanguageChange(value: string) {
-    setLocale(value as "en" | "ru");
-    await saveSettings({
-      appearance: {
-        theme: settings?.appearance.theme ?? "system",
-        language: value,
-      },
-    });
-  }
-
-  async function handleRefreshAgents() {
-    setRefreshing(true);
-    await loadAgents();
-    setRefreshing(false);
-  }
+    }, 0);
+    return () => window.clearTimeout(resetSection);
+  }, [open]);
 
   function getCliStatus(
     agent: AvailableAgent,
@@ -239,12 +148,6 @@ export function AppSettingsDialog({
   const visibleNavItems = NAV_ITEMS.filter((item) => item.show);
   const currentNav =
     visibleNavItems.find((i) => i.key === section) ?? visibleNavItems[0];
-  const buildCommit = getBuildCommit();
-  const releaseUrl = "https://github.com/venmakli/svode/releases";
-  const updates = useDogfoodUpdateCheck({
-    currentVersion: version,
-    currentBuildCommit: buildCommit,
-  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -382,7 +285,7 @@ export function AppSettingsDialog({
                   <div className="space-y-2">
                     <Label>{m.settings_language_label()}</Label>
                     <Select
-                      value={getLocale()}
+                      value={locale}
                       onValueChange={handleLanguageChange}
                     >
                       <SelectTrigger className="w-[200px]">
@@ -410,7 +313,7 @@ export function AppSettingsDialog({
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={handleRefreshAgents}
+                      onClick={refreshAgents}
                       disabled={refreshing}
                     >
                       <RefreshCw
