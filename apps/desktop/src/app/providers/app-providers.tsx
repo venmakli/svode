@@ -1,7 +1,8 @@
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/components/ui/theme-provider";
 import { useAppVersion } from "@/features/settings";
-import { DogfoodUpdateNotifier, getBuildCommit } from "@/features/updates";
+import { DogfoodUpdateNotifier } from "@/features/updates";
+import { getBuildCommit } from "@/platform/build-info";
 import { IdentityGate } from "./identity-gate";
 
 export function AppProviders() {

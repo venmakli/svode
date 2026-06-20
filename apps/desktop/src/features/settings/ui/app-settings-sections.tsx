@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { DogfoodUpdateSettingsControls } from "@/features/updates";
 import {
   Select,
   SelectContent,
@@ -181,7 +182,6 @@ export function AppAboutSection({
   version,
   buildCommit,
   releaseUrl,
-  updates,
 }: AppSettingsAbout) {
   return (
     <div className="flex max-w-md flex-col gap-4">
@@ -195,39 +195,10 @@ export function AppAboutSection({
           {buildCommit || m.settings_about_build_commit_unavailable()}
         </p>
       </div>
-      <div className="flex flex-col gap-1">
-        <Label>{m.settings_about_updates()}</Label>
-        <p className="text-sm text-muted-foreground">
-          {updates.update
-            ? updateStatusText(updates.update.item.kind)
-            : updateFallbackText(updates.status)}
-        </p>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void updates.check({ silent: false, force: true })}
-          disabled={updates.checking || !version}
-        >
-          <RefreshCw
-            data-icon="inline-start"
-            className={updates.checking ? "animate-spin" : undefined}
-          />
-          {updates.checking
-            ? m.settings_about_updates_checking()
-            : m.settings_about_updates_check()}
-        </Button>
-        {updates.update && (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => void updates.openUpdate(updates.update!)}
-          >
-            {m.updates_download()}
-          </Button>
-        )}
-      </div>
+      <DogfoodUpdateSettingsControls
+        version={version}
+        buildCommit={buildCommit}
+      />
       <a
         href={releaseUrl}
         target="_blank"
@@ -319,15 +290,4 @@ function getCliStatus(
   if (agent.authStatus === "not_found") return "not_found";
   if (agent.authStatus === "authorized") return "authorized";
   return "unauthorized";
-}
-
-function updateFallbackText(status: string): string {
-  if (status === "current") return m.settings_about_updates_current();
-  if (status === "error") return m.settings_about_updates_failed();
-  return m.settings_about_updates_manual();
-}
-
-function updateStatusText(kind: "stage-release" | "ci-build"): string {
-  if (kind === "ci-build") return m.settings_about_updates_ci_available();
-  return m.settings_about_updates_release_available();
 }
