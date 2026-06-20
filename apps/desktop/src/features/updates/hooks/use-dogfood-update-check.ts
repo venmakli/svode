@@ -40,6 +40,8 @@ export function useDogfoodUpdateCheck({
   const [update, setUpdate] = useState<AvailableDogfoodUpdate | null>(null);
   const [error, setError] = useState<string | null>(null);
   const autoAttempted = useRef(false);
+  const activeCheck = useRef<AbortController | null>(null);
+  const latestCheckId = useRef(0);
   const platform = useMemo(() => getCurrentUpdatePlatform(), []);
 
   const openUpdate = useCallback(async (available: AvailableDogfoodUpdate) => {
@@ -68,11 +70,24 @@ export function useDogfoodUpdateCheck({
       if (!currentVersion) return null;
       if (silent && !force && !shouldCheckNow()) return update;
 
+      activeCheck.current?.abort();
+      const controller = new AbortController();
+      const checkId = latestCheckId.current + 1;
+      activeCheck.current = controller;
+      latestCheckId.current = checkId;
+      const isCurrentCheck = () =>
+        activeCheck.current === controller &&
+        latestCheckId.current === checkId &&
+        !controller.signal.aborted;
+
       setStatus("checking");
       setError(null);
 
       try {
-        const feed = await fetchDogfoodFeed();
+        const feed = await fetchDogfoodFeed(controller.signal);
+        if (!isCurrentCheck()) return null;
+
+        const now = Date.now();
         const available = selectDogfoodUpdate(
           feed,
           {
@@ -80,9 +95,9 @@ export function useDogfoodUpdateCheck({
             commit: currentBuildCommit,
           },
           platform,
-          Date.now(),
+          now,
         );
-        writeStorage(LAST_CHECK_KEY, String(Date.now()));
+        writeStorage(LAST_CHECK_KEY, String(now));
 
         if (!available) {
           setUpdate(null);
@@ -110,12 +125,18 @@ export function useDogfoodUpdateCheck({
 
         return available;
       } catch (err) {
+        if (isAbortError(err) || !isCurrentCheck()) return null;
+
         console.error("Failed to check dogfood updates:", err);
         const message = err instanceof Error ? err.message : String(err);
         setError(message);
         setStatus("error");
         if (!silent) toast.error(m.updates_check_failed());
         return null;
+      } finally {
+        if (activeCheck.current === controller) {
+          activeCheck.current = null;
+        }
       }
     },
     [currentBuildCommit, currentVersion, openUpdate, platform, update],
@@ -129,6 +150,14 @@ export function useDogfoodUpdateCheck({
     }, 5000);
     return () => window.clearTimeout(timeout);
   }, [auto, check, currentVersion]);
+
+  useEffect(() => {
+    return () => {
+      latestCheckId.current += 1;
+      activeCheck.current?.abort();
+      activeCheck.current = null;
+    };
+  }, []);
 
   return {
     status,
@@ -144,6 +173,10 @@ function shouldCheckNow(): boolean {
   const lastCheck = Number.parseInt(readStorage(LAST_CHECK_KEY) ?? "", 10);
   if (!Number.isFinite(lastCheck)) return true;
   return Date.now() - lastCheck >= CHECK_INTERVAL_MS;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 function readStorage(key: string): string | null {
