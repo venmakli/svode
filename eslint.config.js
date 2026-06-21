@@ -23,7 +23,7 @@ const routeAppExceptions = new Map([
 const allowedFeatureSubpathExceptions = new Set([
   // Public feature subentrypoints that intentionally avoid wider root barrels.
   "@/features/collection/ui",
-  "@/features/editor/state",
+  "@/features/editor/file-tree-sync",
   "@/features/git/app-shell",
   "@/features/git/sidebar",
   "@/features/identity/effective",

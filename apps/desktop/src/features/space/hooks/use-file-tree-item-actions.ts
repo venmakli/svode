@@ -1,5 +1,5 @@
 import { useEntrySelectionStore, type TreeNode } from "@/features/entry";
-import { useEditorStore } from "@/features/editor/state";
+import { useEditorFilePendingWrite } from "@/features/editor/file-tree-sync";
 import { treeNodeHasChildren, treeParentKeyForNode } from "../lib/tree-cache";
 import { useSpaceStore } from "../model";
 import { useFileTreeItemCreate } from "./use-file-tree-item-create";
@@ -28,7 +28,7 @@ export function useFileTreeItemActions({
   loadTreeChildren,
 }: UseFileTreeItemActionsInput) {
   const { openDocument, activeDocument } = useEntrySelectionStore();
-  const { unsavedChanges } = useEditorStore();
+  const isUnsaved = useEditorFilePendingWrite(node.path);
   const {
     expandedPaths,
     treeParentLoading,
@@ -53,7 +53,6 @@ export function useFileTreeItemActions({
     ? (treeParentLoading[spaceId]?.[childParentKey] ?? false)
     : false;
   const isActive = !bareFolder && activeDocument === node.path;
-  const isUnsaved = !!unsavedChanges[node.path];
   const space =
     spaces.find((item) => item.id === spaceId) ??
     rootSpaces.find((item) => item.id === spaceId);

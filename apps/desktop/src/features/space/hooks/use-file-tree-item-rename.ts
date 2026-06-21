@@ -8,7 +8,11 @@ import {
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import type { TreeNode } from "@/features/entry";
-import { useEditorStore } from "@/features/editor/state";
+import {
+  markEditorFilesStale,
+  requestEditorFileRename,
+  suppressEditorFileEvents,
+} from "@/features/editor/file-tree-sync";
 import {
   renameTreeEntryPath,
   updateTreeEntryTitle,
@@ -83,9 +87,8 @@ export function useFileTreeItemRename({
           projectPath: activeRootPath,
         });
         if (modifiedFiles.length > 0) {
-          const editor = useEditorStore.getState();
-          for (const file of modifiedFiles) editor.markStale(file);
-          editor.suppressPaths(modifiedFiles);
+          markEditorFilesStale(modifiedFiles);
+          suppressEditorFileEvents(modifiedFiles);
         }
         removeTreePath(spaceId, node.path);
         await reloadTreeParents(spaceId, [parent]);
@@ -97,7 +100,7 @@ export function useFileTreeItemRename({
           projectPath: activeRootPath,
         });
         if (activeDocument === node.path) {
-          useEditorStore.getState().requestRename(node.path, newName, null);
+          requestEditorFileRename(node.path, newName, null);
         }
         patchEntryTreeMeta(
           spaceId,
