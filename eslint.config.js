@@ -33,7 +33,6 @@ const allowedFeatureSubpathExceptions = new Set([
   "@/features/git/api/git-actions",
   "@/features/git/model",
   "@/features/settings/hooks/use-app-version",
-  "@/features/space/model",
   "@/features/terminal/lib/is-terminal-keyboard-event",
 ]);
 
