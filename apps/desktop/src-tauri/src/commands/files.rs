@@ -18,7 +18,7 @@ use crate::git::autocommit::{AutocommitService, StructuralOp};
 use crate::git::commands::{GitState, require_cli};
 use crate::index::{self, IndexKey, IndexState, ResolvedDocLink};
 use crate::properties::{
-    self, CollectionInfo, CollectionSchema, Column, EntrySchemaResponse, Filter, ActorCandidate,
+    self, ActorCandidate, CollectionInfo, CollectionSchema, Column, EntrySchemaResponse, Filter,
     PropertyOption, PropertyType, RelationBacklink, RelationTwoWayDiagnostics, ResolvedRelation,
     SchemaMutationWarning, Sort, View,
 };
@@ -97,10 +97,32 @@ pub struct ChangeSchemaTypeResult {
     pub warnings: Vec<SchemaMutationWarning>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteEntryCommandResult {
+    pub deleted_root: String,
+    pub deleted_paths: Vec<String>,
+    pub cascade_touched: Vec<String>,
+    pub changed_paths: Vec<String>,
+}
+
 fn entry_paths_with_order(space: &str, paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
     let mut out = vec![order_path(space)];
     out.extend(paths);
     out
+}
+
+fn rel_changed_path(space: &str, path: &Path) -> String {
+    path.strip_prefix(space)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn push_unique_path(paths: &mut Vec<String>, path: String) {
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
 }
 
 fn collect_markdown_paths(
@@ -2119,20 +2141,32 @@ pub async fn write_entry(
     Ok(result)
 }
 
-#[tauri::command]
-pub async fn delete_entry(
-    space: String,
-    path: String,
-    project_path: Option<String>,
-    index_state: State<'_, IndexState>,
-    autocommit: State<'_, Arc<AutocommitService>>,
-) -> Result<(), AppError> {
-    let backlink_index = backlinks_for_space(&index_state, &space).await;
-    let deleted = entry::delete(&space, &path, Some(&backlink_index))?;
+pub async fn delete_entry_shared(
+    space: &str,
+    path: &str,
+    project_path: Option<&str>,
+    index_state: &IndexState,
+    autocommit: Option<&AutocommitService>,
+) -> Result<DeleteEntryCommandResult, AppError> {
+    let backlink_index = backlinks_for_space(index_state, space).await;
+    let deleted = entry::delete(space, path, Some(&backlink_index))?;
+    let cascade_touched = deleted
+        .cascade_touched
+        .iter()
+        .map(|path| rel_changed_path(space, path))
+        .collect::<Vec<_>>();
+    let mut changed_paths = Vec::new();
+    for deleted_path in &deleted.deleted_paths {
+        push_unique_path(&mut changed_paths, deleted_path.clone());
+    }
+    push_unique_path(&mut changed_paths, deleted.deleted_root.clone());
+    for touched in &cascade_touched {
+        push_unique_path(&mut changed_paths, touched.clone());
+    }
 
-    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+    if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
-        let source_space_id = space_id_for_dir(&index_state, &space).await;
+        let source_space_id = space_id_for_dir(index_state, space).await;
         let mut needs_reindex = false;
         for deleted_path in &deleted.deleted_paths {
             if let Err(e) = index_state
@@ -2141,8 +2175,8 @@ pub async fn delete_entry(
             {
                 tracing::warn!("remove backlinks for deleted entry failed: {e}");
             }
-            let abs_old = Path::new(&space).join(deleted_path);
-            if let Err(e) = index::update::delete_entry(&index_state, project, &abs_old).await {
+            let abs_old = Path::new(space).join(deleted_path);
+            if let Err(e) = index::update::delete_entry(index_state, project, &abs_old).await {
                 tracing::warn!("index delete_entry failed for {deleted_path}: {e}");
                 needs_reindex = true;
             } else {
@@ -2156,20 +2190,56 @@ pub async fn delete_entry(
         }
         if needs_reindex {
             tracing::info!("delete_entry: running index.reindex.repair fallback");
-            reindex_space_dir(&index_state, &space).await;
+            reindex_space_dir(index_state, space).await;
+        } else if !deleted.cascade_touched.is_empty() {
+            update_index_paths_or_reindex(
+                index_state,
+                Some(proj),
+                space,
+                deleted.cascade_touched.clone(),
+                "delete_entry",
+            )
+            .await;
         }
     } else {
-        reindex_space_dir(&index_state, &space).await;
+        reindex_space_dir(index_state, space).await;
     }
-    let mut paths = entry_paths_with_order(&space, [abs_entry_path(&space, &deleted.deleted_root)]);
-    paths.extend(deleted.cascade_touched);
-    maybe_autocommit_structural_paths(
-        &autocommit,
-        project_path.as_deref(),
+    if let Some(autocommit) = autocommit {
+        let mut paths =
+            entry_paths_with_order(space, [abs_entry_path(space, &deleted.deleted_root)]);
+        paths.extend(deleted.cascade_touched.clone());
+        maybe_autocommit_structural_paths(
+            autocommit,
+            project_path,
+            space,
+            StructuralOp::Delete(entry_commit_name(space, path)),
+            paths,
+        );
+    }
+    Ok(DeleteEntryCommandResult {
+        deleted_root: deleted.deleted_root,
+        deleted_paths: deleted.deleted_paths,
+        cascade_touched,
+        changed_paths,
+    })
+}
+
+#[tauri::command]
+pub async fn delete_entry(
+    space: String,
+    path: String,
+    project_path: Option<String>,
+    index_state: State<'_, IndexState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<(), AppError> {
+    delete_entry_shared(
         &space,
-        StructuralOp::Delete(entry_commit_name(&space, &path)),
-        paths,
-    );
+        &path,
+        project_path.as_deref(),
+        &index_state,
+        Some(&autocommit),
+    )
+    .await?;
     Ok(())
 }
 
@@ -3230,6 +3300,13 @@ mod tests {
         rels
     }
 
+    async fn delete_for_test(tmp: &TempDir, path: &str) -> DeleteEntryCommandResult {
+        let index_state = IndexState::new();
+        delete_entry_shared(tmp.path().to_str().unwrap(), path, None, &index_state, None)
+            .await
+            .expect("delete entry")
+    }
+
     #[test]
     fn parses_git_rename_suggestion_z_with_spaces_and_cyrillic() {
         let output = concat!(
@@ -3353,5 +3430,88 @@ mod tests {
         assert_eq!(outside_backlinks.len(), 1);
         assert_eq!(outside_backlinks[0].source_path, "Archive/Folder/Source.md");
         assert!(index.get_backlinks("Folder/Sibling.md").is_empty());
+    }
+
+    #[tokio::test]
+    async fn shared_delete_entry_deletes_document_and_reports_changed_paths() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("Note.md"), "note").unwrap();
+
+        let result = delete_for_test(&tmp, "Note.md").await;
+
+        assert!(!tmp.path().join("Note.md").exists());
+        assert_eq!(result.deleted_root, "Note.md");
+        assert_eq!(result.deleted_paths, vec!["Note.md".to_string()]);
+        assert!(result.changed_paths.contains(&"Note.md".to_string()));
+    }
+
+    #[tokio::test]
+    async fn shared_delete_entry_deletes_collection_entry_without_schema() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join("Tasks")).unwrap();
+        std::fs::write(
+            tmp.path().join("Tasks").join("schema.yaml"),
+            "columns: []\n",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("Tasks").join("Item.md"), "item").unwrap();
+
+        let result = delete_for_test(&tmp, "Tasks/Item.md").await;
+
+        assert!(!tmp.path().join("Tasks").join("Item.md").exists());
+        assert!(tmp.path().join("Tasks").join("schema.yaml").exists());
+        assert_eq!(result.deleted_root, "Tasks/Item.md");
+        assert_eq!(result.deleted_paths, vec!["Tasks/Item.md".to_string()]);
+        assert!(result.changed_paths.contains(&"Tasks/Item.md".to_string()));
+    }
+
+    #[tokio::test]
+    async fn shared_delete_entry_deletes_folder_document_from_readme_path() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join("Folder")).unwrap();
+        std::fs::write(tmp.path().join("Folder").join("README.md"), "folder").unwrap();
+        std::fs::write(tmp.path().join("Folder").join("Child.md"), "child").unwrap();
+
+        let result = delete_for_test(&tmp, "Folder/README.md").await;
+
+        assert!(!tmp.path().join("Folder").exists());
+        assert_eq!(result.deleted_root, "Folder");
+        assert!(
+            result
+                .deleted_paths
+                .contains(&"Folder/README.md".to_string())
+        );
+        assert!(
+            result
+                .deleted_paths
+                .contains(&"Folder/Child.md".to_string())
+        );
+        assert!(
+            result
+                .changed_paths
+                .contains(&"Folder/README.md".to_string())
+        );
+        assert!(
+            result
+                .changed_paths
+                .contains(&"Folder/Child.md".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn shared_delete_entry_returns_error_for_missing_path() {
+        let tmp = TempDir::new().unwrap();
+        let index_state = IndexState::new();
+
+        let result = delete_entry_shared(
+            tmp.path().to_str().unwrap(),
+            "Missing.md",
+            None,
+            &index_state,
+            None,
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::FileNotFound(path)) if path == "Missing.md"));
     }
 }

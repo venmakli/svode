@@ -123,7 +123,21 @@ async fn handle_jsonrpc_line(line: &str) -> Option<Value> {
         "tools/list" => Some(ok_response(id, json!({ "tools": tools::definitions() }))),
         "tools/call" => {
             let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
-            if params.get("name").and_then(Value::as_str) == Some("get_svode_guide") {
+            let Some(name) = params.get("name").and_then(Value::as_str) else {
+                return Some(error_response(
+                    id,
+                    -32602,
+                    "tools/call requires a tool name",
+                ));
+            };
+            if !tools::is_public_tool(name) {
+                return Some(error_response(
+                    id,
+                    -32602,
+                    &format!("unknown Svode MCP tool: {name}"),
+                ));
+            }
+            if name == "get_svode_guide" {
                 let result =
                     ToolCallResult::ok("Svode MCP guide.", json!({ "guide": tools::guide_text() }));
                 return Some(ok_response(
@@ -159,4 +173,60 @@ fn error_response(id: Value, code: i64, message: &str) -> Value {
         "id": id,
         "error": { "code": code, "message": message }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn initialize_returns_tools_only_capabilities() {
+        let response =
+            handle_jsonrpc_line(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#)
+                .await
+                .expect("response");
+        let result = response.get("result").expect("result");
+        assert_eq!(result["protocolVersion"], "2025-06-18");
+        assert!(result["capabilities"].get("tools").is_some());
+        assert!(result["serverInfo"].get("name").is_some());
+        assert!(result.get("instructions").is_some());
+    }
+
+    #[tokio::test]
+    async fn tools_list_tolerates_pagination_params() {
+        let response = handle_jsonrpc_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"cursor":"abc"}}"#,
+        )
+        .await
+        .expect("response");
+        let tools = response["result"]["tools"].as_array().expect("tools array");
+        assert!(tools.iter().any(|tool| tool["name"] == "delete_entry"));
+        assert!(tools.iter().any(|tool| tool["name"] == "list_actors"));
+        assert!(!tools.iter().any(|tool| tool["name"] == "get_entry"));
+    }
+
+    #[tokio::test]
+    async fn tools_call_rejects_missing_or_unadvertised_names_as_protocol_errors() {
+        let missing = handle_jsonrpc_line(
+            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"arguments":{}}}"#,
+        )
+        .await
+        .expect("response");
+        assert_eq!(missing["error"]["code"], -32602);
+
+        let hidden = handle_jsonrpc_line(
+            r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_entry","arguments":{"path":"A.md"}}}"#,
+        )
+        .await
+        .expect("response");
+        assert_eq!(hidden["error"]["code"], -32602);
+    }
+
+    #[tokio::test]
+    async fn unknown_method_is_protocol_error() {
+        let response = handle_jsonrpc_line(r#"{"jsonrpc":"2.0","id":5,"method":"resources/list"}"#)
+            .await
+            .expect("response");
+        assert_eq!(response["error"]["code"], -32601);
+    }
 }

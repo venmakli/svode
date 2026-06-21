@@ -207,4 +207,17 @@ mod tests {
             "docs/README.md"
         );
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_inside_rejects_symlink_escape() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.md"), "secret").unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("link")).unwrap();
+
+        let result = ensure_inside(root.path(), "link/secret.md");
+
+        assert!(result.is_err());
+    }
 }

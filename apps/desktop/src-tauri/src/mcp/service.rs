@@ -12,6 +12,7 @@ use super::path::{
     ensure_inside, normalize_create_document_path, validate_document_path, validate_public_rel_path,
 };
 use super::protocol::ToolCallResult;
+use crate::commands::files as files_commands;
 use crate::files::{entry, tree};
 use crate::git::{self, commands::GitState};
 use crate::index::{IndexKey, IndexState, search};
@@ -274,6 +275,15 @@ struct UpdateBodyArgs {
     body: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListActorsArgs {
+    #[serde(default)]
+    space_id: Option<String>,
+    #[serde(default)]
+    all_time: Option<bool>,
+}
+
 pub async fn call_tool(app: AppHandle, name: &str, args: Value) -> ToolCallResult {
     match call_tool_inner(app, name, args).await {
         Ok(result) => result,
@@ -300,16 +310,17 @@ async fn call_tool_inner(
         "list_collections" => list_collections(&app, decode(args)?).await,
         "get_collection_schema" => get_collection_schema(&app, decode(args)?).await,
         "query_entries" => query_entries(&app, decode(args)?).await,
-        "get_entry" => get_entry(&app, decode(args)?).await,
         "create_entry" => create_entry(&app, decode(args)?).await,
         "update_entry_fields" => update_entry_fields(&app, decode(args)?).await,
         "update_entry_body" => update_entry_body(&app, decode(args)?).await,
+        "delete_entry" => delete_entry(&app, decode(args)?).await,
         "add_collection_column" => add_collection_column(&app, decode(args)?).await,
         "update_collection_column" => update_collection_column(&app, decode(args)?).await,
         "delete_collection_column" => delete_collection_column(&app, decode(args)?).await,
         "add_collection_view" => add_collection_view(&app, decode(args)?).await,
         "update_collection_view" => update_collection_view(&app, decode(args)?).await,
         "delete_collection_view" => delete_collection_view(&app, decode(args)?).await,
+        "list_actors" => list_actors(&app, decode(args)?).await,
         "get_git_status" => get_git_status(&app, decode(args)?).await,
         "get_svode_guide" => get_svode_guide().await,
         _ => Err(McpBusinessError::new(
@@ -886,10 +897,6 @@ async fn query_entries(
     ))
 }
 
-async fn get_entry(app: &AppHandle, args: PathArgs) -> Result<ToolCallResult, McpBusinessError> {
-    read_document(app, args).await
-}
-
 async fn create_entry(
     app: &AppHandle,
     args: CreateEntryArgs,
@@ -988,6 +995,31 @@ async fn update_entry_body(
     Ok(ToolCallResult::ok(
         format!("Updated body for {path}."),
         json!({ "path": path, "newPath": result.new_path, "changedPaths": [path] }),
+    ))
+}
+
+async fn delete_entry(app: &AppHandle, args: PathArgs) -> Result<ToolCallResult, McpBusinessError> {
+    let _policy = MCP_MUTATION_POLICY;
+    let (context, space) = resolve_space(app, args.space_id).await?;
+    let path = validate_document_path(&args.path)?;
+    ensure_inside(Path::new(&space), &path)?;
+    let index_state = app.state::<IndexState>();
+    let deleted = files_commands::delete_entry_shared(
+        &space,
+        &path,
+        Some(context.project_path.as_str()),
+        &index_state,
+        None,
+    )
+    .await?;
+    Ok(ToolCallResult::ok(
+        format!("Deleted entry {path}."),
+        json!({
+            "deletedRoot": deleted.deleted_root,
+            "deletedPaths": deleted.deleted_paths,
+            "cascadeTouched": deleted.cascade_touched,
+            "changedPaths": deleted.changed_paths
+        }),
     ))
 }
 
@@ -1136,6 +1168,27 @@ async fn get_svode_guide() -> Result<ToolCallResult, McpBusinessError> {
     Ok(ToolCallResult::ok(
         "Svode MCP guide.",
         json!({ "guide": super::tools::guide_text() }),
+    ))
+}
+
+async fn list_actors(
+    app: &AppHandle,
+    args: ListActorsArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let (_, space) = resolve_space(app, args.space_id).await?;
+    let git_state = app.state::<GitState>();
+    let cli = git::commands::require_cli(&git_state)?;
+    let actor_catalog = app.state::<properties::ActorCatalogState>();
+    let actors = properties::list_actors(
+        &actor_catalog,
+        &cli,
+        Path::new(&space),
+        args.all_time.unwrap_or(false),
+    )
+    .await?;
+    Ok(ToolCallResult::ok(
+        format!("Found {} actors.", actors.len()),
+        json!({ "actors": actors }),
     ))
 }
 
