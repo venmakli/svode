@@ -54,21 +54,21 @@ import {
 import type {
   Column,
   DateRangeValue,
-  Person,
+  ActorCandidate,
   PropertyOption,
   RelationContext,
 } from "../model/types";
 import { RelationControl } from "./relation-control";
 import { PropertyBadge } from "./property-badge";
 import {
-  actorPerson,
+  resolveActorCandidate,
   STATUS_GROUPS,
   colorStyle,
   formatDateValue,
   gravatarUrl,
   hashIndex,
   hasOption,
-  initialsForPerson,
+  initialsForActor,
   isEmptyValue,
   isValidEmail,
   isValidPhone,
@@ -77,10 +77,10 @@ import {
   normalizeActorValues,
   optionByName,
   optionColor,
-  personCommitCount,
-  personDisplayName,
-  personIsMe,
-  personLastCommitAt,
+  actorCommitCount,
+  actorDisplayName,
+  actorIsMe,
+  actorLastCommitAt,
   todayIsoDate,
   uniqueIdDisplay,
   uniqueIdRawDisplay,
@@ -105,9 +105,9 @@ interface PropertyControlProps {
   invalid?: boolean;
   disabled?: boolean;
   autoOpen?: boolean;
-  persons?: Person[];
+  actors?: ActorCandidate[];
   relationContext?: RelationContext;
-  onRequestPersons?: (allTime: boolean) => Promise<Person[]>;
+  onRequestActors?: (allTime: boolean) => Promise<ActorCandidate[]>;
   onChange: (value: unknown) => void | Promise<void>;
   onOpenChange?: (open: boolean) => void;
 }
@@ -118,9 +118,9 @@ export function PropertyControl({
   invalid,
   disabled,
   autoOpen,
-  persons = [],
+  actors = [],
   relationContext,
-  onRequestPersons,
+  onRequestActors,
   onChange,
   onOpenChange,
 }: PropertyControlProps) {
@@ -190,7 +190,6 @@ export function PropertyControl({
         <UniqueIdControl column={column} value={value} invalid={invalid} />
       );
     case "actor":
-    case "person":
       return (
         <ActorControl
           column={column}
@@ -198,8 +197,8 @@ export function PropertyControl({
           invalid={invalid}
           disabled={disabled}
           autoOpen={autoOpen}
-          persons={persons}
-          onRequestPersons={onRequestPersons}
+          actors={actors}
+          onRequestActors={onRequestActors}
           onChange={onChange}
           onOpenChange={onOpenChange}
         />
@@ -349,7 +348,7 @@ function NumberControl({
               {display === "bar" ? (
                 <Progress
                   value={clamped}
-                  className="min-w-20 flex-1 [&_[data-slot=progress-indicator]]:bg-[var(--property-color)]"
+                  className="min-w-20 flex-1 **:data-[slot=progress-indicator]:bg-(--property-color)"
                   style={colorStyle(column.color ?? "blue")}
                 />
               ) : (
@@ -436,11 +435,13 @@ function RingProgress({
 }) {
   return (
     <div
-      className="grid size-7 shrink-0 place-items-center rounded-full bg-[conic-gradient(var(--property-color)_var(--progress),var(--muted)_0)] text-[10px] font-medium text-muted-foreground"
+      className="grid size-7 shrink-0 place-items-center rounded-full bg-(--property-ring-bg) text-[10px] font-medium text-muted-foreground"
       style={
         {
           ...colorStyle(color ?? "blue"),
           "--progress": `${value}%`,
+          "--property-ring-bg":
+            "conic-gradient(var(--property-color) var(--progress), var(--muted) 0)",
         } as CSSProperties
       }
     >
@@ -923,8 +924,8 @@ function ActorControl({
   invalid,
   disabled,
   autoOpen,
-  persons = [],
-  onRequestPersons,
+  actors = [],
+  onRequestActors,
   onChange,
   onOpenChange,
 }: Pick<
@@ -932,8 +933,8 @@ function ActorControl({
   | "value"
   | "invalid"
   | "disabled"
-  | "persons"
-  | "onRequestPersons"
+  | "actors"
+  | "onRequestActors"
   | "onChange"
   | "autoOpen"
   | "onOpenChange"
@@ -945,7 +946,7 @@ function ActorControl({
     : typeof value === "string" && value
       ? [value.trim().toLowerCase()]
       : [];
-  const selected = emails.map((email) => actorPerson(email, persons));
+  const selected = emails.map((email) => resolveActorCandidate(email, actors));
   const selectedSet = new Set(emails);
   const [allTime, setAllTime] = useState(column.display === "all_time");
   const [freeform, setFreeform] = useState("");
@@ -954,24 +955,24 @@ function ActorControl({
     return deferStateUpdate(() => {
       const sourceAllTime = column.display === "all_time";
       setAllTime(sourceAllTime);
-      if (sourceAllTime) void onRequestPersons?.(true);
+      if (sourceAllTime) void onRequestActors?.(true);
     });
-  }, [column.display, onRequestPersons]);
+  }, [column.display, onRequestActors]);
 
-  const sortedPersons = useMemo(() => {
-    const me = persons.filter(personIsMe);
-    const recent = persons
-      .filter((person) => !personIsMe(person))
+  const sortedActors = useMemo(() => {
+    const me = actors.filter(actorIsMe);
+    const recent = actors
+      .filter((actor) => !actorIsMe(actor))
       .sort(
-        (a, b) => (personLastCommitAt(b) ?? 0) - (personLastCommitAt(a) ?? 0),
+        (a, b) => (actorLastCommitAt(b) ?? 0) - (actorLastCommitAt(a) ?? 0),
       )
       .slice(0, 5);
-    const recentSet = new Set(recent.map((person) => person.email));
-    const all = persons
-      .filter((person) => !personIsMe(person) && !recentSet.has(person.email))
-      .sort((a, b) => personDisplayName(a).localeCompare(personDisplayName(b)));
+    const recentSet = new Set(recent.map((actor) => actor.email));
+    const all = actors
+      .filter((actor) => !actorIsMe(actor) && !recentSet.has(actor.email))
+      .sort((a, b) => actorDisplayName(a).localeCompare(actorDisplayName(b)));
     return { me, recent, all };
-  }, [persons]);
+  }, [actors]);
 
   const setActor = (email: string) => {
     const normalized = email.trim().toLowerCase();
@@ -1010,9 +1011,9 @@ function ActorControl({
         >
           {selected.length > 0 ? (
             multiple ? (
-              <ActorStack persons={selected} />
+              <ActorStack actors={selected} />
             ) : (
-              <PersonInline person={selected[0]} />
+              <ActorInline actor={selected[0]} />
             )
           ) : (
             <span className="text-muted-foreground">{m.property_empty()}</span>
@@ -1030,48 +1031,48 @@ function ActorControl({
                 addFreeform();
               }
             }}
-            placeholder={m.property_person_search()}
+            placeholder={m.property_actor_search()}
           />
           <CommandList>
             <CommandEmpty>{m.property_no_options()}</CommandEmpty>
-            <PersonGroup
+            <ActorGroup
               heading="Me"
-              persons={sortedPersons.me}
+              actors={sortedActors.me}
               selectedEmails={selectedSet}
               multiple={multiple}
-              onSelect={(person) => setActor(person.email)}
+              onSelect={(actor) => setActor(actor.email)}
             />
-            <PersonGroup
+            <ActorGroup
               heading="Recent"
-              persons={sortedPersons.recent}
+              actors={sortedActors.recent}
               selectedEmails={selectedSet}
               multiple={multiple}
-              onSelect={(person) => setActor(person.email)}
+              onSelect={(actor) => setActor(actor.email)}
             />
-            <PersonGroup
+            <ActorGroup
               heading="All"
-              persons={sortedPersons.all}
+              actors={sortedActors.all}
               selectedEmails={selectedSet}
               multiple={multiple}
-              onSelect={(person) => setActor(person.email)}
+              onSelect={(actor) => setActor(actor.email)}
             />
           </CommandList>
           {multiple && selected.length > 0 ? (
             <div className="flex flex-wrap gap-1 border-t p-2">
-              {selected.map((person) => (
+              {selected.map((actor) => (
                 <Button
-                  key={person.email}
+                  key={actor.email}
                   type="button"
                   variant="secondary"
                   size="xs"
                   className="min-w-0 max-w-full justify-start rounded-full px-2"
                   onClick={() =>
                     void onChange(
-                      emails.filter((email) => email !== person.email),
+                      emails.filter((email) => email !== actor.email),
                     )
                   }
                 >
-                  <span className="truncate">{personDisplayName(person)}</span>
+                  <span className="truncate">{actorDisplayName(actor)}</span>
                   <X data-icon="inline-end" />
                 </Button>
               ))}
@@ -1086,18 +1087,18 @@ function ActorControl({
               disabled={!isValidEmail(freeform.trim())}
               onClick={addFreeform}
             >
-              {m.property_person_enter_to_assign()}
+              {m.property_actor_enter_to_assign()}
             </Button>
           </div>
           <div className="flex items-center justify-between border-t px-3 py-2">
             <span className="text-xs text-muted-foreground">
-              {m.property_person_all_time()}
+              {m.property_actor_all_time()}
             </span>
             <Switch
               checked={allTime}
               onCheckedChange={(checked) => {
                 setAllTime(checked);
-                void onRequestPersons?.(checked);
+                void onRequestActors?.(checked);
               }}
             />
           </div>
@@ -1297,40 +1298,40 @@ function PhoneControl({
   );
 }
 
-function PersonGroup({
+function ActorGroup({
   heading,
-  persons,
+  actors,
   selectedEmails,
   multiple,
   onSelect,
 }: {
   heading: string;
-  persons: Person[];
+  actors: ActorCandidate[];
   selectedEmails: Set<string>;
   multiple: boolean;
-  onSelect: (person: Person) => void;
+  onSelect: (actor: ActorCandidate) => void;
 }) {
-  if (persons.length === 0) return null;
+  if (actors.length === 0) return null;
   return (
     <CommandGroup heading={heading}>
-      {persons.map((person) => (
+      {actors.map((actor) => (
         <CommandItem
-          key={person.email}
-          data-checked={selectedEmails.has(person.email.toLowerCase())}
-          value={`${person.name} ${person.email}`}
-          onSelect={() => onSelect(person)}
+          key={actor.email}
+          data-checked={selectedEmails.has(actor.email.toLowerCase())}
+          value={`${actor.name} ${actor.email}`}
+          onSelect={() => onSelect(actor)}
         >
           {multiple ? (
             <Checkbox
-              checked={selectedEmails.has(person.email.toLowerCase())}
+              checked={selectedEmails.has(actor.email.toLowerCase())}
               className="pointer-events-none"
             />
           ) : null}
-          <PersonAvatar person={person} />
+          <ActorAvatar actor={actor} />
           <span className="min-w-0 flex-1 truncate">
-            {personDisplayName(person)}
+            {actorDisplayName(actor)}
           </span>
-          {personCommitCount(person) === 0 ? (
+          {actorCommitCount(actor) === 0 ? (
             <span className="text-xs text-muted-foreground">new</span>
           ) : null}
         </CommandItem>
@@ -1339,55 +1340,55 @@ function PersonGroup({
   );
 }
 
-function ActorStack({ persons }: { persons: Person[] }) {
+function ActorStack({ actors }: { actors: ActorCandidate[] }) {
   return (
     <span className="inline-flex min-w-0 items-center">
-      {persons.slice(0, 3).map((person, index) => (
-        <span key={person.email} className={cn(index > 0 && "-ml-1.5")}>
-          <PersonAvatar person={person} />
+      {actors.slice(0, 3).map((actor, index) => (
+        <span key={actor.email} className={cn(index > 0 && "-ml-1.5")}>
+          <ActorAvatar actor={actor} />
         </span>
       ))}
-      {persons.length > 3 ? (
+      {actors.length > 3 ? (
         <span className="ml-1 text-xs text-muted-foreground">
-          +{persons.length - 3}
+          +{actors.length - 3}
         </span>
       ) : null}
     </span>
   );
 }
 
-function PersonInline({ person }: { person: Person }) {
+function ActorInline({ actor }: { actor: ActorCandidate }) {
   return (
     <span className="flex min-w-0 items-center gap-2">
-      <PersonAvatar person={person} />
-      <span className="min-w-0 truncate">{personDisplayName(person)}</span>
+      <ActorAvatar actor={actor} />
+      <span className="min-w-0 truncate">{actorDisplayName(actor)}</span>
     </span>
   );
 }
 
-function PersonAvatar({ person }: { person: Person }) {
+function ActorAvatar({ actor }: { actor: ActorCandidate }) {
   const color = ["blue", "green", "purple", "orange", "pink"][
-    hashIndex(person.email, 5)
+    hashIndex(actor.email, 5)
   ];
   return (
     <Avatar size="sm" className="shrink-0">
-      <AvatarImage src={gravatarUrl(person.email)} alt="" />
+      <AvatarImage src={gravatarUrl(actor.email)} alt="" />
       <AvatarFallback
         className={cn(
           "text-[10px] font-medium",
           color === "blue" &&
-            "bg-[var(--property-blue-soft)] text-[var(--property-blue)]",
+            "bg-(--property-blue-soft) text-(--property-blue)",
           color === "green" &&
-            "bg-[var(--property-green-soft)] text-[var(--property-green)]",
+            "bg-(--property-green-soft) text-(--property-green)",
           color === "purple" &&
-            "bg-[var(--property-purple-soft)] text-[var(--property-purple)]",
+            "bg-(--property-purple-soft) text-(--property-purple)",
           color === "orange" &&
-            "bg-[var(--property-orange-soft)] text-[var(--property-orange)]",
+            "bg-(--property-orange-soft) text-(--property-orange)",
           color === "pink" &&
-            "bg-[var(--property-pink-soft)] text-[var(--property-pink)]",
+            "bg-(--property-pink-soft) text-(--property-pink)",
         )}
       >
-        {initialsForPerson(person)}
+        {initialsForActor(actor)}
       </AvatarFallback>
     </Avatar>
   );
@@ -1396,7 +1397,7 @@ function PersonAvatar({ person }: { person: Person }) {
 function OptionDot({ option }: { option: PropertyOption }) {
   return (
     <span
-      className="size-2 shrink-0 rounded-full bg-[var(--property-color)]"
+      className="size-2 shrink-0 rounded-full bg-(--property-color)"
       style={colorStyle(optionColor(option))}
     />
   );

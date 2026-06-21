@@ -43,7 +43,7 @@ import {
   queryCollectionEntries,
   saveCollectionTreeOrder,
 } from "../../api";
-import { useCollectionPersons } from "../../hooks";
+import { useCollectionActors } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
 import { entryParentDir, reorderVisibleEntries } from "../table/utils";
 import { SortableGalleryCard } from "./gallery-card";
@@ -95,7 +95,7 @@ export function GalleryView({
   const draftRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const cardRefs = useRef(new Map<string, HTMLElement>());
-  const { persons, loadPersons } = useCollectionPersons(spacePath);
+  const { actors, loadActors } = useCollectionActors(spacePath);
   const queryArgs = useStableViewQueryArgs(filters, sort);
   const reloadTreeParent = useSpaceTreeSync((state) => state.reloadTreeParent);
   const sidebarSpaceId = useSpace((state) => {
@@ -128,8 +128,8 @@ export function GalleryView({
   );
   const hasSort = sort.length > 0;
   const queryFiltered = searchQuery.trim().length > 0 || filters.length > 0;
-  const hasPersonField = metaColumns.some(
-    (column) => column.type === "actor" || column.type === "person",
+  const hasActorField = metaColumns.some(
+    (column) => column.type === "actor",
   );
 
   const sensors = useSensors(
@@ -170,11 +170,11 @@ export function GalleryView({
   }, [loadEntries, refreshToken]);
 
   useEffect(() => {
-    if (!hasPersonField) return;
-    void loadPersons().catch((error) => {
-      console.warn("Failed to load gallery persons:", error);
+    if (!hasActorField) return;
+    void loadActors().catch((error) => {
+      console.warn("Failed to load gallery actors:", error);
     });
-  }, [hasPersonField, loadPersons]);
+  }, [hasActorField, loadActors]);
 
   useEffect(() => {
     if (!draftOpen) return;
@@ -377,7 +377,7 @@ export function GalleryView({
                   coverAspect={coverAspect}
                   spacePath={spacePath}
                   projectPath={projectPath}
-                  persons={persons}
+                  actors={actors}
                   nestedCollection={nestedCollection}
                   folder={isFolderEntry(entry)}
                   disabledReorder={hasSort}
@@ -386,7 +386,7 @@ export function GalleryView({
                     if (element) cardRefs.current.set(entry.path, element);
                     else cardRefs.current.delete(entry.path);
                   }}
-                  onRequestPersons={loadPersons}
+                  onRequestActors={loadActors}
                   onUpdateField={(entryToUpdate, column, value) =>
                     void commitField(entryToUpdate, column, value)
                   }

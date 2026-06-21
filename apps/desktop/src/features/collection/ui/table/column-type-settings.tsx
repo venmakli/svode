@@ -122,11 +122,11 @@ export function TypeSettingsPane({
       </div>
     );
   }
-  if (column.type === "actor" || column.type === "person") {
+  if (column.type === "actor") {
     return (
       <div className="flex flex-col gap-2 p-3">
         <ColumnSelect
-          label={m.table_person_source()}
+          label={m.table_actor_source()}
           value={column.display === "all_time" ? "all_time" : "team"}
           options={["team", "all_time"]}
           onChange={(source) =>

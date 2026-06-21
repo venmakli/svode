@@ -84,7 +84,6 @@ const FILTER_OPS_BY_TYPE: Record<PropertyType, FilterOp[]> = {
     "group_not_in",
   ],
   actor: ["eq", "neq", "in", "not_in", "is_empty", "is_not_empty"],
-  person: ["eq", "neq", "in", "not_in", "is_empty", "is_not_empty"],
   relation: [
     "contains",
     "not_contains",
@@ -137,7 +136,6 @@ export function queryFields(
     (field) =>
       field.type === "select" ||
       field.type === "status" ||
-      field.type === "person" ||
       (field.type === "actor" && !field.column?.multiple),
   );
 }
@@ -297,7 +295,6 @@ function isFilterValueValid(filter: QueryFilter, field: QueryField) {
     field.type === "select" ||
     field.type === "multi_select" ||
     field.type === "status" ||
-    field.type === "person" ||
     field.type === "actor"
   ) {
     return typeof raw === "string" || (Array.isArray(raw) && raw.length > 0);

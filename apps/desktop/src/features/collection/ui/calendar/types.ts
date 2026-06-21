@@ -8,7 +8,7 @@ import type { Entry } from "@/features/entry";
 import type {
   CollectionSchema,
   Column,
-  Person,
+  ActorCandidate,
 } from "@/features/properties";
 
 export type CalendarScope = "month" | "week" | "day" | "list";
@@ -78,8 +78,8 @@ export interface CalendarViewProps {
 export interface CalendarPropertyContext {
   spacePath: string;
   projectPath?: string | null;
-  persons: Person[];
-  onRequestPersons: (allTime: boolean) => Promise<Person[]>;
+  actors: ActorCandidate[];
+  onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   onUpdateField: (entry: Entry, column: Column, value: unknown) => void;
 }
 

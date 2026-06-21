@@ -97,7 +97,6 @@ export function propertyTypeLabel(type: PropertyType) {
     date: String(m.table_property_type_date()),
     unique_id: String(m.table_property_type_unique_id()),
     actor: String(m.table_property_type_actor()),
-    person: String(m.table_property_type_actor()),
     checkbox: String(m.table_property_type_checkbox()),
     url: String(m.table_property_type_url()),
     email: String(m.table_property_type_email()),

@@ -310,7 +310,6 @@ export function GroupPane({
     (column) =>
       column.type === "status" ||
       column.type === "select" ||
-      column.type === "person" ||
       (column.type === "actor" && !column.multiple),
   );
   return (

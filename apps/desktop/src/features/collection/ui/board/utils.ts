@@ -2,9 +2,9 @@ import type { Entry } from "@/features/entry";
 import type {
   CollectionSchema,
   Column,
-  Person,
+  ActorCandidate,
 } from "@/features/properties";
-import { isEmptyValue, personDisplayName } from "@/features/properties";
+import { isEmptyValue, actorDisplayName } from "@/features/properties";
 import type { CollectionView } from "@/features/collection/query";
 import { normalizeEntryPath } from "@/features/collection/lib/utils";
 import { entryCollectionPath } from "../table/utils";
@@ -37,7 +37,6 @@ export function isGroupableColumn(column: Column | null | undefined) {
   return (
     column?.type === "select" ||
     column?.type === "status" ||
-    column?.type === "person" ||
     (column?.type === "actor" && !column.multiple)
   );
 }
@@ -82,7 +81,7 @@ export function boardCustomFields(
 export function boardColumns(
   entries: Entry[],
   groupColumn: Column,
-  persons: Person[],
+  actors: ActorCandidate[],
 ) {
   const counts = new Map<string, number>();
   for (const entry of entries) {
@@ -118,26 +117,26 @@ export function boardColumns(
     ];
   }
 
-  const personByEmail = new Map(
-    persons.map((person) => [person.email, person]),
+  const actorByEmail = new Map(
+    actors.map((actor) => [actor.email, actor]),
   );
   const seen = Array.from(counts.keys())
     .filter((key) => key !== NO_VALUE_KEY)
     .sort((a, b) =>
-      personLabel(a, personByEmail.get(a)).localeCompare(
-        personLabel(b, personByEmail.get(b)),
+      actorLabel(a, actorByEmail.get(a)).localeCompare(
+        actorLabel(b, actorByEmail.get(b)),
       ),
     );
 
   return [
     ...noValue,
     ...seen.map((email) => {
-      const person = personByEmail.get(email) ?? null;
+      const actor = actorByEmail.get(email) ?? null;
       return {
         key: email,
         value: email,
-        label: personLabel(email, person),
-        person,
+        label: actorLabel(email, actor),
+        actor,
       };
     }),
   ];
@@ -214,6 +213,6 @@ function sortedOptions(column: Column) {
   });
 }
 
-function personLabel(email: string, person?: Person | null) {
-  return person ? personDisplayName(person) : email;
+function actorLabel(email: string, actor?: ActorCandidate | null) {
+  return actor ? actorDisplayName(actor) : email;
 }

@@ -5,7 +5,7 @@ import type {
   CollectionView,
   UseViewQueryResult,
 } from "@/features/collection/query";
-import type { CollectionSchema, Column, Person } from "@/features/properties";
+import type { CollectionSchema, Column, ActorCandidate } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
 import { ColumnMenuPopover } from "./column-menu";
 import { PropertyCell, TitleCell } from "./cells";
@@ -35,7 +35,7 @@ export function useTableColumns({
   expanded,
   nestedCollectionPaths,
   showNested,
-  persons,
+  actors,
   setEditing,
   setOpenColumn,
   setExpanded,
@@ -45,7 +45,7 @@ export function useTableColumns({
   onOpenNestedPeek,
   onOpenNestedCollection,
   onOpenFullPage,
-  onRequestPersons,
+  onRequestActors,
   onCommitField,
 }: {
   visibleFields: string[];
@@ -62,7 +62,7 @@ export function useTableColumns({
   expanded: Set<string>;
   nestedCollectionPaths: Set<string>;
   showNested: boolean;
-  persons: Person[];
+  actors: ActorCandidate[];
   setEditing: Dispatch<SetStateAction<TableEditingCell | null>>;
   setOpenColumn: (field: string | null) => void;
   setExpanded: (path: string) => void;
@@ -72,7 +72,7 @@ export function useTableColumns({
   onOpenNestedPeek: (entry: Entry) => void;
   onOpenNestedCollection: (entry: Entry) => void;
   onOpenFullPage: (entry: Entry) => void;
-  onRequestPersons: (allTime: boolean) => Promise<Person[]>;
+  onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   onCommitField: (
     entry: Entry,
     column: Column,
@@ -177,9 +177,9 @@ export function useTableColumns({
                       (entry) => entry.meta.extra?.[field] !== undefined,
                     ).length
                   }
-                  persons={persons}
-                  onRequestPersons={(allTime = false) =>
-                    onRequestPersons(allTime)
+                  actors={actors}
+                  onRequestActors={(allTime = false) =>
+                    onRequestActors(allTime)
                   }
                   onOpenChange={(open) => setOpenColumn(open ? field : null)}
                   onSchemaChange={(next) =>
@@ -195,8 +195,8 @@ export function useTableColumns({
             property ? (
               <PropertyCell
                 column={property}
-                persons={persons}
-                onRequestPersons={onRequestPersons}
+                actors={actors}
+                onRequestActors={onRequestActors}
                 relationContext={{
                   spacePath,
                   projectPath,
@@ -238,11 +238,11 @@ export function useTableColumns({
       onOpenFullPage,
       onOpenNestedPeek,
       onOpenNestedCollection,
-      onRequestPersons,
+      onRequestActors,
       onSchemaChange,
       onUpdateViewPatch,
       openColumn,
-      persons,
+      actors,
       projectPath,
       query,
       schema,

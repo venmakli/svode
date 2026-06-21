@@ -25,7 +25,7 @@ import type {
   Column,
   PropertyType,
 } from "@/features/properties";
-import { useCollectionPersons } from "../../hooks";
+import { useCollectionActors } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
 import { isEditableTarget } from "../../lib/utils";
 import { usePersistentSet, usePersistentSizing } from "./persistence";
@@ -109,7 +109,7 @@ export function TableView({
   );
   const footerInputRef = useRef<HTMLInputElement | null>(null);
   const footerRef = useRef<HTMLDivElement | null>(null);
-  const { persons, loadPersons } = useCollectionPersons(spacePath);
+  const { actors, loadActors } = useCollectionActors(spacePath);
   const queryArgs = useStableViewQueryArgs(filters, sort);
 
   const visibleFields = useMemo(
@@ -145,10 +145,10 @@ export function TableView({
     ],
   );
   const hasSort = sort.length > 0;
-  const hasPersonColumn = useMemo(
+  const hasActorColumn = useMemo(
     () =>
       schema.columns.some(
-        (column) => column.type === "actor" || column.type === "person",
+        (column) => column.type === "actor",
       ),
     [schema.columns],
   );
@@ -252,11 +252,11 @@ export function TableView({
   }, [loadEntries, refreshToken]);
 
   useEffect(() => {
-    if (!hasPersonColumn) return;
-    void loadPersons().catch((loadError) => {
-      console.warn("Failed to load table persons:", loadError);
+    if (!hasActorColumn) return;
+    void loadActors().catch((loadError) => {
+      console.warn("Failed to load table actors:", loadError);
     });
-  }, [hasPersonColumn, loadPersons]);
+  }, [hasActorColumn, loadActors]);
 
   useEffect(() => {
     if (composerOpen) footerInputRef.current?.focus();
@@ -326,7 +326,7 @@ export function TableView({
     expanded,
     nestedCollectionPaths,
     showNested,
-    persons,
+    actors,
     setEditing,
     setOpenColumn,
     setExpanded,
@@ -336,7 +336,7 @@ export function TableView({
     onOpenNestedPeek: onOpenNestedPeek ?? onOpenEntry,
     onOpenNestedCollection,
     onOpenFullPage,
-    onRequestPersons: loadPersons,
+    onRequestActors: loadActors,
     onCommitField: (entry, column, value) =>
       void commitField(entry, column, value),
   });
@@ -463,7 +463,7 @@ export function TableView({
               sensors={sensors}
               sortedEntries={filteredTopLevel}
               hasSort={hasSort}
-              persons={persons}
+              actors={actors}
               spacePath={spacePath}
               projectPath={projectPath}
               onOpenEntry={onOpenEntry}

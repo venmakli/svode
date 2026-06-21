@@ -1,4 +1,4 @@
-import type { CollectionSchema, Column, Person, PropertyType } from "@/features/properties";
+import type { CollectionSchema, Column, ActorCandidate, PropertyType } from "@/features/properties";
 
 export type FilterOp =
   | "eq"
@@ -124,7 +124,7 @@ export interface UseViewQueryResult extends ViewQueryResolvedState {
   reloadLocalQuery: () => void;
 }
 
-export interface QueryEditorPersonSource {
-  persons?: Person[];
-  onRequestPersons?: (allTime?: boolean) => Promise<Person[]>;
+export interface QueryEditorActorSource {
+  actors?: ActorCandidate[];
+  onRequestActors?: (allTime?: boolean) => Promise<ActorCandidate[]>;
 }

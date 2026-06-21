@@ -42,15 +42,15 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/shared/lib/utils";
 import type {
-  Person,
+  ActorCandidate,
   PropertyOption,
   PropertyType,
 } from "@/features/properties";
 import { PropertyBadge } from "@/features/properties";
 import {
-  initialsForPerson,
+  initialsForActor,
   normalizeSchema,
-  personDisplayName,
+  actorDisplayName,
 } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 import { MultiPanePopover } from "./multi-pane-popover";
@@ -65,7 +65,7 @@ import {
 } from "../model/query-utils";
 import type {
   FilterOp,
-  QueryEditorPersonSource,
+  QueryEditorActorSource,
   QueryField,
   QueryFilter,
   QuerySort,
@@ -84,7 +84,7 @@ type QueryPane =
   | "groupField"
   | "groupEditor";
 
-interface ViewQueryPopoverProps extends QueryEditorPersonSource {
+interface ViewQueryPopoverProps extends QueryEditorActorSource {
   trigger: React.ReactNode;
   query: UseViewQueryResult;
   schema: Parameters<typeof queryFields>[0];
@@ -108,8 +108,8 @@ export function ViewQueryPopover({
   trigger,
   query,
   schema,
-  persons = [],
-  onRequestPersons,
+  actors = [],
+  onRequestActors,
   open,
   onOpenChange,
   initialPane = "main",
@@ -347,8 +347,8 @@ export function ViewQueryPopover({
         <FilterEditor
           schema={normalizedSchema}
           draft={filterDraft.filter}
-          persons={persons}
-          onRequestPersons={onRequestPersons}
+          actors={actors}
+          onRequestActors={onRequestActors}
           onChange={(filter) => setFilterDraft({ ...filterDraft, filter })}
         />
       ) : null,
@@ -611,14 +611,14 @@ export function FieldChoiceList({
 export function FilterEditor({
   schema,
   draft,
-  persons,
-  onRequestPersons,
+  actors,
+  onRequestActors,
   onChange,
 }: {
   schema: Parameters<typeof queryField>[0];
   draft: QueryFilter;
-  persons: Person[];
-  onRequestPersons?: (allTime?: boolean) => Promise<Person[]>;
+  actors: ActorCandidate[];
+  onRequestActors?: (allTime?: boolean) => Promise<ActorCandidate[]>;
   onChange: (filter: QueryFilter) => void;
 }) {
   const field = queryField(schema, draft.field, "filter");
@@ -654,8 +654,8 @@ export function FilterEditor({
         <FilterValueControl
           field={field}
           filter={draft}
-          persons={persons}
-          onRequestPersons={onRequestPersons}
+          actors={actors}
+          onRequestActors={onRequestActors}
           onChange={onChange}
         />
       ) : (
@@ -670,14 +670,14 @@ export function FilterEditor({
 function FilterValueControl({
   field,
   filter,
-  persons,
-  onRequestPersons,
+  actors,
+  onRequestActors,
   onChange,
 }: {
   field: QueryField;
   filter: QueryFilter;
-  persons: Person[];
-  onRequestPersons?: (allTime?: boolean) => Promise<Person[]>;
+  actors: ActorCandidate[];
+  onRequestActors?: (allTime?: boolean) => Promise<ActorCandidate[]>;
   onChange: (filter: QueryFilter) => void;
 }) {
   if (
@@ -695,12 +695,12 @@ function FilterValueControl({
       />
     );
   }
-  if (field.type === "actor" || field.type === "person") {
+  if (field.type === "actor") {
     return (
-      <PersonChecklist
-        persons={persons}
+      <ActorChecklist
+        actors={actors}
         values={filterValues(filter).map(String)}
-        onRequestPersons={onRequestPersons}
+        onRequestActors={onRequestActors}
         onChange={(values) => onChange(filterWithValues(filter, values))}
       />
     );
@@ -852,25 +852,25 @@ function OptionChecklist({
   );
 }
 
-function PersonChecklist({
-  persons,
+function ActorChecklist({
+  actors,
   values,
-  onRequestPersons,
+  onRequestActors,
   onChange,
 }: {
-  persons: Person[];
+  actors: ActorCandidate[];
   values: string[];
-  onRequestPersons?: (allTime?: boolean) => Promise<Person[]>;
+  onRequestActors?: (allTime?: boolean) => Promise<ActorCandidate[]>;
   onChange: (values: string[]) => void;
 }) {
   const [search, setSearch] = useState("");
   const selected = new Set(values);
-  const visible = persons.filter((person) => {
+  const visible = actors.filter((actor) => {
     const needle = search.trim().toLowerCase();
     return (
       !needle ||
-      person.email.toLowerCase().includes(needle) ||
-      personDisplayName(person).toLowerCase().includes(needle)
+      actor.email.toLowerCase().includes(needle) ||
+      actorDisplayName(actor).toLowerCase().includes(needle)
     );
   });
   return (
@@ -880,31 +880,31 @@ function PersonChecklist({
         <Input
           className="pl-7"
           value={search}
-          placeholder={m.view_query_search_people()}
-          onFocus={() => void onRequestPersons?.()}
+          placeholder={m.view_query_search_actors()}
+          onFocus={() => void onRequestActors?.()}
           onChange={(event) => setSearch(event.target.value)}
         />
       </div>
       <div className="flex max-h-44 flex-col overflow-auto">
-        {visible.map((person) => (
+        {visible.map((actor) => (
           <label
-            key={person.email}
+            key={actor.email}
             className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
           >
             <Checkbox
-              checked={selected.has(person.email)}
+              checked={selected.has(actor.email)}
               onCheckedChange={(checked) => {
                 const next = new Set(selected);
-                if (checked) next.add(person.email);
-                else next.delete(person.email);
+                if (checked) next.add(actor.email);
+                else next.delete(actor.email);
                 onChange([...next]);
               }}
             />
             <Avatar className="size-6">
-              <AvatarFallback>{initialsForPerson(person)}</AvatarFallback>
+              <AvatarFallback>{initialsForActor(actor)}</AvatarFallback>
             </Avatar>
             <span className="min-w-0 truncate">
-              {personDisplayName(person)}
+              {actorDisplayName(actor)}
             </span>
           </label>
         ))}
@@ -1037,7 +1037,6 @@ function fieldTypeLabel(type: PropertyType) {
     date: String(m.table_property_type_date()),
     unique_id: String(m.table_property_type_unique_id()),
     actor: String(m.table_property_type_actor()),
-    person: String(m.table_property_type_actor()),
     checkbox: String(m.table_property_type_checkbox()),
     url: String(m.table_property_type_url()),
     email: String(m.table_property_type_email()),
@@ -1057,7 +1056,6 @@ function propertyTypeIcon(type: PropertyType) {
     date: Calendar,
     unique_id: Hash,
     actor: User,
-    person: User,
     checkbox: Check,
     url: Link,
     email: Mail,

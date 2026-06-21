@@ -34,7 +34,7 @@ import { normalizeSchema } from "@/features/properties";
 import { propertyFieldSavePolicy } from "@/features/properties";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
-import { useCollectionPersons } from "../../hooks";
+import { useCollectionActors } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
 import {
   entryParentDir,
@@ -93,7 +93,7 @@ export function BoardView({
   const [draftGroupKey, setDraftGroupKey] = useState<string | null>(null);
   const [draftAsFolder, setDraftAsFolder] = useState(false);
   const lastActiveGroup = useRef<string | null>(null);
-  const { persons, loadPersons } = useCollectionPersons(spacePath);
+  const { actors, loadActors } = useCollectionActors(spacePath);
   const queryArgs = useStableViewQueryArgs(filters, sort);
   const sidebarSpaceId = useSpace((state) => {
     const space =
@@ -119,10 +119,10 @@ export function BoardView({
     () => boardCustomFields(cardFields, schema, groupBy ?? ""),
     [cardFields, groupBy, schema],
   );
-  const hasPersonCardField = useMemo(
+  const hasActorCardField = useMemo(
     () =>
       customColumns.some(
-        (column) => column.type === "actor" || column.type === "person",
+        (column) => column.type === "actor",
       ),
     [customColumns],
   );
@@ -137,8 +137,8 @@ export function BoardView({
   );
   const columns = useMemo(
     () =>
-      groupColumn ? boardColumns(filteredEntries, groupColumn, persons) : [],
-    [filteredEntries, groupColumn, persons],
+      groupColumn ? boardColumns(filteredEntries, groupColumn, actors) : [],
+    [filteredEntries, groupColumn, actors],
   );
   const renderedColumns = useMemo(() => {
     if (columns.length > 0 || draftGroupKey !== noValueKey()) return columns;
@@ -205,14 +205,13 @@ export function BoardView({
   useEffect(() => {
     if (
       groupColumn?.type !== "actor" &&
-      groupColumn?.type !== "person" &&
-      !hasPersonCardField
+      !hasActorCardField
     )
       return;
-    void loadPersons().catch((error) => {
-      console.warn("Failed to load board persons:", error);
+    void loadActors().catch((error) => {
+      console.warn("Failed to load board actors:", error);
     });
-  }, [groupColumn?.type, hasPersonCardField, loadPersons]);
+  }, [groupColumn?.type, hasActorCardField, loadActors]);
 
   useEffect(() => {
     if (createFocusSignal <= 0) return;
@@ -610,8 +609,8 @@ export function BoardView({
                   overlay: false,
                   spacePath,
                   projectPath,
-                  persons,
-                  onRequestPersons: loadPersons,
+                  actors,
+                  onRequestActors: loadActors,
                   onUpdateField: (entry, column, value) =>
                     void commitField(entry, column, value),
                   onOpen: onOpenEntry,
@@ -639,8 +638,8 @@ export function BoardView({
             overlay
             spacePath={spacePath}
             projectPath={projectPath}
-            persons={persons}
-            onRequestPersons={loadPersons}
+            actors={actors}
+            onRequestActors={loadActors}
             onOpen={onOpenEntry}
             onOpenNestedPeek={onOpenNestedPeek}
             onOpenNestedCollection={onOpenNestedCollection}

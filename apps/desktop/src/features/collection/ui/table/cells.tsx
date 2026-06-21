@@ -9,7 +9,7 @@ import {
   validatePropertyValue,
 } from "@/features/properties";
 import { PropertyControl } from "@/features/properties";
-import type { Column, Person } from "@/features/properties";
+import type { Column, ActorCandidate } from "@/features/properties";
 import type { RelationContext } from "@/features/properties";
 import { valueToString } from "@/features/properties";
 import {
@@ -22,8 +22,8 @@ import * as m from "@/paraglide/messages.js";
 
 export function PropertyCell({
   column,
-  persons,
-  onRequestPersons,
+  actors,
+  onRequestActors,
   relationContext,
   value,
   editing,
@@ -32,8 +32,8 @@ export function PropertyCell({
   onCommit,
 }: {
   column: Column;
-  persons: Person[];
-  onRequestPersons: (allTime: boolean) => Promise<Person[]>;
+  actors: ActorCandidate[];
+  onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   relationContext?: RelationContext;
   value: unknown;
   editing: boolean;
@@ -95,7 +95,7 @@ export function PropertyCell({
             value={value}
             invalid={validation.invalid}
             autoOpen
-            persons={persons}
+            actors={actors}
             relationContext={relationContext}
             onChange={(next) =>
               onCommit(next, {
@@ -105,7 +105,7 @@ export function PropertyCell({
             onOpenChange={(open) => {
               if (!open) window.setTimeout(onCancel, 0);
             }}
-            onRequestPersons={onRequestPersons}
+            onRequestActors={onRequestActors}
           />
         )}
       </div>
@@ -132,7 +132,7 @@ export function PropertyCell({
         <PropertyValue
           column={column}
           value={value}
-          persons={persons}
+          actors={actors}
           relationContext={relationContext}
         />
       </span>

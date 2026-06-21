@@ -35,7 +35,7 @@ import {
   queryCollectionEntries,
   saveCollectionTreeOrder,
 } from "../../api";
-import { useCollectionPersons } from "../../hooks";
+import { useCollectionActors } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
 import { entryParentDir, reorderVisibleEntries } from "../table/utils";
 import { SortableListRow } from "./list-row";
@@ -85,7 +85,7 @@ export function ListView({
   const footerRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const rowRefs = useRef(new Map<string, HTMLElement>());
-  const { persons, loadPersons } = useCollectionPersons(spacePath);
+  const { actors, loadActors } = useCollectionActors(spacePath);
   const queryArgs = useStableViewQueryArgs(filters, sort);
   const reloadTreeParent = useSpaceTreeSync((state) => state.reloadTreeParent);
   const sidebarSpaceId = useSpace((state) => {
@@ -132,8 +132,8 @@ export function ListView({
   );
   const hasSort = sort.length > 0;
   const queryFiltered = searchQuery.trim().length > 0 || filters.length > 0;
-  const hasPersonField = metaColumns.some(
-    (column) => column.type === "actor" || column.type === "person",
+  const hasActorField = metaColumns.some(
+    (column) => column.type === "actor",
   );
 
   const sensors = useSensors(
@@ -172,11 +172,11 @@ export function ListView({
   }, [loadEntries, refreshToken]);
 
   useEffect(() => {
-    if (!hasPersonField) return;
-    void loadPersons().catch((error) => {
-      console.warn("Failed to load list persons:", error);
+    if (!hasActorField) return;
+    void loadActors().catch((error) => {
+      console.warn("Failed to load list actors:", error);
     });
-  }, [hasPersonField, loadPersons]);
+  }, [hasActorField, loadActors]);
 
   useEffect(() => {
     if (!composerOpen) return;
@@ -361,14 +361,14 @@ export function ListView({
                 metaColumns={metaColumns}
                 spacePath={spacePath}
                 projectPath={projectPath}
-                persons={persons}
+                actors={actors}
                 disabledReorder={hasSort}
                 focused={focusedPath === row.entry.path}
                 rowRef={(element) => {
                   if (element) rowRefs.current.set(row.entry.path, element);
                   else rowRefs.current.delete(row.entry.path);
                 }}
-                onRequestPersons={loadPersons}
+                onRequestActors={loadActors}
                 onUpdateField={(entry, column, value) =>
                   void commitField(entry, column, value)
                 }

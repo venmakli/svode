@@ -13,7 +13,7 @@ import type {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { addCollectionDateColumn } from "@/features/collection/api";
-import { useCollectionPersons } from "@/features/collection/hooks";
+import { useCollectionActors } from "@/features/collection/hooks";
 import type { Entry } from "@/features/entry";
 import { normalizeSchema } from "@/features/properties";
 import { propertyFieldSavePolicy } from "@/features/properties";
@@ -101,7 +101,7 @@ export function CalendarView({
   const [createDraft, setCreateDraft] = useState<CalendarCreateDraft | null>(
     null,
   );
-  const { persons, loadPersons } = useCollectionPersons(spacePath);
+  const { actors, loadActors } = useCollectionActors(spacePath);
   const {
     entries,
     setEntries,
@@ -167,8 +167,8 @@ export function CalendarView({
     ? hiddenNoDateCount(filteredEntries, dateColumn)
     : 0;
   const visibleCount = visibleEventCount(events, visibleRange);
-  const hasPersonCardField = customColumns.some(
-    (column) => column.type === "actor" || column.type === "person",
+  const hasActorCardField = customColumns.some(
+    (column) => column.type === "actor",
   );
   const locale = getLocale();
 
@@ -203,11 +203,11 @@ export function CalendarView({
   ]);
 
   useEffect(() => {
-    if (!hasPersonCardField) return;
-    void loadPersons().catch((error) => {
-      console.warn("Failed to load calendar persons:", error);
+    if (!hasActorCardField) return;
+    void loadActors().catch((error) => {
+      console.warn("Failed to load calendar actors:", error);
     });
-  }, [hasPersonCardField, loadPersons]);
+  }, [hasActorCardField, loadActors]);
 
   async function handleAddDateColumn() {
     const fieldName = uniqueColumnName(schema, m.collection_date_field());
@@ -226,15 +226,15 @@ export function CalendarView({
     () => ({
       spacePath,
       projectPath,
-      persons,
-      onRequestPersons: loadPersons,
+      actors,
+      onRequestActors: loadActors,
       onUpdateField: (entry: Entry, column: Column, value: unknown) => {
         void updateField(entry, column.name, value, {
           policy: propertyFieldSavePolicy(column),
         });
       },
     }),
-    [loadPersons, persons, projectPath, spacePath, updateField],
+    [loadActors, actors, projectPath, spacePath, updateField],
   );
 
   const handleDayCellDidMount = useCallback(

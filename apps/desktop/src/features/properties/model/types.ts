@@ -7,7 +7,6 @@ export type PropertyType =
   | "date"
   | "unique_id"
   | "actor"
-  | "person"
   | "checkbox"
   | "url"
   | "email"
@@ -93,7 +92,7 @@ export interface EntrySchemaResult {
   collection_root_path?: string;
 }
 
-export interface Person {
+export interface ActorCandidate {
   email: string;
   name: string;
   lastCommitAt?: number | null;

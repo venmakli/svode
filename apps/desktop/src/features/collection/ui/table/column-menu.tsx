@@ -23,7 +23,7 @@ import type {
   Column,
   SchemaMutationWarning,
 } from "@/features/properties";
-import type { Person } from "@/features/properties";
+import type { ActorCandidate } from "@/features/properties";
 import { FieldFilterPane, FieldSortPane } from "./column-query-pane";
 import {
   ColumnDangerActions,
@@ -47,8 +47,8 @@ export function ColumnMenuPopover({
   collectionPath,
   spacePath,
   projectPath,
-  persons = [],
-  onRequestPersons,
+  actors = [],
+  onRequestActors,
   affectedEntries = 0,
   onOpenChange,
   onSchemaChange,
@@ -65,8 +65,8 @@ export function ColumnMenuPopover({
   collectionPath: string;
   spacePath: string;
   projectPath?: string | null;
-  persons?: Person[];
-  onRequestPersons?: (allTime?: boolean) => Promise<Person[]>;
+  actors?: ActorCandidate[];
+  onRequestActors?: (allTime?: boolean) => Promise<ActorCandidate[]>;
   affectedEntries?: number;
   onOpenChange: (open: boolean) => void;
   onSchemaChange: (schema: CollectionSchema) => void;
@@ -173,8 +173,8 @@ export function ColumnMenuPopover({
           field={field}
           schema={schema}
           query={query}
-          persons={persons}
-          onRequestPersons={onRequestPersons}
+          actors={actors}
+          onRequestActors={onRequestActors}
           onSaved={(next) => onSchemaChange(next)}
         />
       ),

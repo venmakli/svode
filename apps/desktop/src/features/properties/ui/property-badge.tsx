@@ -24,7 +24,7 @@ export function PropertyBadge({
       className={cn(
         "max-w-full gap-1 rounded-md border px-1.5 text-xs font-medium",
         "border-[color-mix(in_oklab,var(--property-color),transparent_68%)]",
-        "bg-[var(--property-color-soft)] text-[var(--property-color)]",
+        "bg-(--property-color-soft) text-(--property-color)",
         invalid && "border-warning text-warning",
         className,
       )}

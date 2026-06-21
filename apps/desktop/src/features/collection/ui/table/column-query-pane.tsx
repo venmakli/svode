@@ -6,7 +6,7 @@ import {
   queryField,
 } from "@/features/collection/query";
 import type {
-  QueryEditorPersonSource,
+  QueryEditorActorSource,
   QueryFilter,
   QuerySort,
   UseViewQueryResult,
@@ -24,15 +24,15 @@ export function FieldFilterPane({
   field,
   schema,
   query,
-  persons = [],
-  onRequestPersons,
+  actors = [],
+  onRequestActors,
   onSaved,
 }: {
   field: string;
   schema: CollectionSchema;
   query: UseViewQueryResult;
   onSaved?: (schema: CollectionSchema) => void;
-} & QueryEditorPersonSource) {
+} & QueryEditorActorSource) {
   const info = useMemo(
     () => queryField(schema, field, "filter"),
     [field, schema],
@@ -101,8 +101,8 @@ export function FieldFilterPane({
       <FilterEditor
         schema={schema}
         draft={draft}
-        persons={persons}
-        onRequestPersons={onRequestPersons}
+        actors={actors}
+        onRequestActors={onRequestActors}
         onChange={setDraft}
       />
       <div className="flex flex-col gap-1 border-t p-1">

@@ -61,7 +61,7 @@ function GalleryCardContent({
   coverAspect,
   spacePath,
   projectPath,
-  persons,
+  actors,
   nestedCollection,
   folder,
   disabledReorder,
@@ -69,7 +69,7 @@ function GalleryCardContent({
   dragAttributes,
   dragListeners,
   cardRef,
-  onRequestPersons,
+  onRequestActors,
   onUpdateField,
   onOpen,
   onOpenFullPage,
@@ -170,14 +170,14 @@ function GalleryCardContent({
             <CardPropertyFlow
               entry={entry}
               columns={metaColumns}
-              persons={persons}
+              actors={actors}
               relationContext={{
                 spacePath,
                 projectPath,
                 currentFilePath: entry.path,
               }}
               className="gap-x-1.5 gap-y-1 pt-0.5"
-              onRequestPersons={onRequestPersons}
+              onRequestActors={onRequestActors}
               onUpdateField={onUpdateField}
             />
           </CardContent>

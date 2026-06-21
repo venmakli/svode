@@ -1,1 +1,1 @@
-export * from "./use-collection-persons";
+export * from "./use-collection-actors";

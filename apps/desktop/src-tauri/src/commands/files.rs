@@ -18,7 +18,7 @@ use crate::git::autocommit::{AutocommitService, StructuralOp};
 use crate::git::commands::{GitState, require_cli};
 use crate::index::{self, IndexKey, IndexState, ResolvedDocLink};
 use crate::properties::{
-    self, CollectionInfo, CollectionSchema, Column, EntrySchemaResponse, Filter, Person,
+    self, CollectionInfo, CollectionSchema, Column, EntrySchemaResponse, Filter, ActorCandidate,
     PropertyOption, PropertyType, RelationBacklink, RelationTwoWayDiagnostics, ResolvedRelation,
     SchemaMutationWarning, Sort, View,
 };
@@ -189,7 +189,6 @@ fn property_type_message(type_: PropertyType) -> &'static str {
         PropertyType::Date => "date",
         PropertyType::Relation => "relation",
         PropertyType::Actor => "actor",
-        PropertyType::Person => "person",
         PropertyType::Checkbox => "checkbox",
         PropertyType::Url => "url",
         PropertyType::Email => "email",
@@ -1908,15 +1907,15 @@ pub fn list_collections(space: String) -> Result<Vec<CollectionInfo>, AppError> 
 }
 
 #[tauri::command]
-pub async fn list_persons(
+pub async fn list_actors(
     space_path: String,
     all_time: Option<bool>,
     git_state: State<'_, GitState>,
-    person_cache: State<'_, properties::PersonCacheState>,
-) -> Result<Vec<Person>, AppError> {
+    actor_catalog: State<'_, properties::ActorCatalogState>,
+) -> Result<Vec<ActorCandidate>, AppError> {
     let cli = require_cli(&git_state)?;
-    properties::list_persons(
-        &person_cache,
+    properties::list_actors(
+        &actor_catalog,
         &cli,
         Path::new(&space_path),
         all_time.unwrap_or(false),
@@ -1925,13 +1924,13 @@ pub async fn list_persons(
 }
 
 #[tauri::command]
-pub async fn refresh_persons(
+pub async fn refresh_actors(
     space_path: String,
     git_state: State<'_, GitState>,
-    person_cache: State<'_, properties::PersonCacheState>,
-) -> Result<Vec<Person>, AppError> {
+    actor_catalog: State<'_, properties::ActorCatalogState>,
+) -> Result<Vec<ActorCandidate>, AppError> {
     let cli = require_cli(&git_state)?;
-    properties::refresh_persons(&person_cache, &cli, Path::new(&space_path), false).await
+    properties::refresh_actors(&actor_catalog, &cli, Path::new(&space_path), false).await
 }
 
 #[tauri::command]

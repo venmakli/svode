@@ -66,12 +66,12 @@ function ListRowContent({
   metaColumns,
   spacePath,
   projectPath,
-  persons,
+  actors,
   disabledReorder,
   focused,
   dragAttributes,
   dragListeners,
-  onRequestPersons,
+  onRequestActors,
   onUpdateField,
   onToggle,
   onOpen,
@@ -200,7 +200,7 @@ function ListRowContent({
           <CardPropertyFlow
             entry={entry}
             columns={metaColumns}
-            persons={persons}
+            actors={actors}
             relationContext={{
               spacePath,
               projectPath,
@@ -208,7 +208,7 @@ function ListRowContent({
             }}
             mode="inline"
             className="max-w-[46vw] justify-end gap-x-2 gap-y-0.5 overflow-hidden"
-            onRequestPersons={onRequestPersons}
+            onRequestActors={onRequestActors}
             onUpdateField={onUpdateField}
           />
         </div>

@@ -17,8 +17,7 @@ export function shouldClosePropertyEditorOnChange(type: Column["type"]) {
     type !== "multi_select" &&
     type !== "url" &&
     type !== "relation" &&
-    type !== "actor" &&
-    type !== "person"
+    type !== "actor"
   );
 }
 
@@ -67,7 +66,6 @@ export function validatePropertyValue(
         ? { invalid: false }
         : { invalid: true, message: m.property_state_type_conflict() };
     case "actor":
-    case "person":
       if (column.multiple) {
         return Array.isArray(value) &&
           normalizeActorValues(value).length === value.length

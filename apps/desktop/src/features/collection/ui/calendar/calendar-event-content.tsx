@@ -63,7 +63,7 @@ export function CalendarEventContent({
         <div
           className={cn(
             "svode-calendar-event-content group/calendar-event flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left text-[12px] leading-5 ring-1 ring-transparent",
-            "bg-[var(--calendar-event-soft)] text-foreground hover:ring-[var(--calendar-event-color)]/35",
+            "bg-(--calendar-event-soft) text-foreground hover:ring-(--calendar-event-color)/35",
             compact && "svode-calendar-event-compact",
             list && "w-full gap-2 px-0 py-1.5 text-sm",
           )}
@@ -77,7 +77,7 @@ export function CalendarEventContent({
                   list && "gap-2",
                 )}
               >
-                <span className="svode-calendar-event-color-bar h-3 w-1 shrink-0 rounded-full bg-[var(--calendar-event-color)]" />
+                <span className="svode-calendar-event-color-bar h-3 w-1 shrink-0 rounded-full bg-(--calendar-event-color)" />
                 {model.cardFields.includes("icon") ? (
                   <span className="svode-calendar-event-icon shrink-0 text-sm leading-none">
                     {entry.meta.icon || "·"}
@@ -229,13 +229,13 @@ function CalendarPropertyControl({
         column={column}
         value={value}
         invalid={validation.invalid}
-        persons={propertyContext.persons}
+        actors={propertyContext.actors}
         relationContext={{
           spacePath: propertyContext.spacePath,
           projectPath: propertyContext.projectPath,
           currentFilePath: entry.path,
         }}
-        onRequestPersons={propertyContext.onRequestPersons}
+        onRequestActors={propertyContext.onRequestActors}
         onChange={(next) => propertyContext.onUpdateField(entry, column, next)}
       />
     </span>

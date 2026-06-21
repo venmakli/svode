@@ -40,7 +40,7 @@ pub fn run() {
         .manage(git::GitState::new())
         .manage(index::IndexState::new())
         .manage(mcp::active::ActiveProjectState::new())
-        .manage(properties::PersonCacheState::new())
+        .manage(properties::ActorCatalogState::new())
         .manage(terminal::TerminalManager::new())
         .setup(|app| {
             let service = Arc::new(git::autocommit::AutocommitService::new(
@@ -104,8 +104,8 @@ pub fn run() {
             commands::files::diagnose_two_way_relation,
             commands::files::repair_two_way_relation,
             commands::files::list_collections,
-            commands::files::list_persons,
-            commands::files::refresh_persons,
+            commands::files::list_actors,
+            commands::files::refresh_actors,
             commands::files::write_entry,
             commands::files::delete_entry,
             commands::files::rename_entry,

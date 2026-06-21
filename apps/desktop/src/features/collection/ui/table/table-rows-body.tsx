@@ -15,7 +15,7 @@ import type { Entry } from "@/features/entry";
 import type {
   CollectionSchema,
   Column,
-  Person,
+  ActorCandidate,
 } from "@/features/properties";
 import { SortableTableRow } from "./table-row";
 import type { CollectionTableRow } from "./types";
@@ -28,7 +28,7 @@ export function TableRowsBody({
   sensors,
   sortedEntries,
   hasSort,
-  persons,
+  actors,
   spacePath,
   projectPath,
   onOpenEntry,
@@ -44,7 +44,7 @@ export function TableRowsBody({
   sensors: ReturnType<typeof useSensors> | undefined;
   sortedEntries: Entry[];
   hasSort: boolean;
-  persons: Person[];
+  actors: ActorCandidate[];
   spacePath: string;
   projectPath?: string | null;
   onOpenEntry: (entry: Entry) => void;
@@ -103,7 +103,7 @@ export function TableRowsBody({
                     <NestedSchemaPreview
                       row={original}
                       schema={original.nestedSchema}
-                      persons={persons}
+                      actors={actors}
                       spacePath={spacePath}
                       projectPath={projectPath}
                     />
@@ -137,13 +137,13 @@ export function TableRowsBody({
 function NestedSchemaPreview({
   row,
   schema,
-  persons,
+  actors,
   spacePath,
   projectPath,
 }: {
   row: CollectionTableRow;
   schema: CollectionSchema;
-  persons: Person[];
+  actors: ActorCandidate[];
   spacePath: string;
   projectPath?: string | null;
 }) {
@@ -167,7 +167,7 @@ function NestedSchemaPreview({
       <span
         className={cn(
           "min-w-0 truncate font-medium",
-          values.length > 0 ? "max-w-[28rem] shrink" : "flex-1",
+          values.length > 0 ? "max-w-md shrink" : "flex-1",
         )}
       >
         {row.entry.meta.icon ? `${row.entry.meta.icon} ` : ""}
@@ -189,7 +189,7 @@ function NestedSchemaPreview({
               <PropertyValue
                 column={column}
                 value={value}
-                persons={persons}
+                actors={actors}
                 relationContext={{
                   spacePath,
                   projectPath,
@@ -211,7 +211,7 @@ function nestedPreviewValueClass(column: Column) {
     return "max-w-20 shrink truncate";
   }
   if (column.type === "date") return "max-w-64 shrink truncate";
-  if (column.type === "actor" || column.type === "person") {
+  if (column.type === "actor") {
     return "max-w-44 shrink truncate";
   }
   if (column.type === "multi_select") return "max-w-52 shrink truncate";

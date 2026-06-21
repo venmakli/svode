@@ -11,18 +11,18 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { PropertyBadge } from "./property-badge";
-import type { Column, Person, RelationContext } from "../model/types";
+import type { Column, ActorCandidate, RelationContext } from "../model/types";
 import {
-  actorPerson,
+  resolveActorCandidate,
   colorStyle,
   formatDateValue,
   gravatarUrl,
   hashIndex,
-  initialsForPerson,
+  initialsForActor,
   isEmptyValue,
   normalizeActorValues,
   optionByName,
-  personDisplayName,
+  actorDisplayName,
   uniqueIdDisplay,
   uniqueIdRawDisplay,
   valueToString,
@@ -86,12 +86,12 @@ export function PropertyValueActions({
 export function PropertyValue({
   column,
   value,
-  persons = [],
+  actors = [],
   relationContext,
 }: {
   column: Column;
   value: unknown;
-  persons?: Person[];
+  actors?: ActorCandidate[];
   relationContext?: RelationContext;
 }) {
   if (column.type === "unique_id") {
@@ -109,8 +109,8 @@ export function PropertyValue({
   if (isEmptyValue(value)) {
     return <span className="text-muted-foreground">-</span>;
   }
-  if (column.type === "actor" || column.type === "person") {
-    return <ActorValue column={column} value={value} persons={persons} />;
+  if (column.type === "actor") {
+    return <ActorValue column={column} value={value} actors={actors} />;
   }
   if (column.type === "relation") {
     return (
@@ -177,23 +177,23 @@ export function PropertyValue({
   return valueToString(value);
 }
 
-export function PersonValue({
+export function ActorSingleValue({
   value,
-  persons = [],
+  actors = [],
 }: {
   value: unknown;
-  persons?: Person[];
+  actors?: ActorCandidate[];
 }) {
   const email = typeof value === "string" ? value : "";
   if (!email) return <span className="text-muted-foreground">-</span>;
-  const person = persons.find(
+  const actor = actors.find(
     (item) => item.email.toLowerCase() === email.toLowerCase(),
   ) ?? { email, name: email, commitCount: 0, isMe: false };
 
   return (
     <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
-      <PersonAvatar person={person} />
-      <span className="min-w-0 truncate">{personDisplayName(person)}</span>
+      <ActorAvatar actor={actor} />
+      <span className="min-w-0 truncate">{actorDisplayName(actor)}</span>
     </span>
   );
 }
@@ -201,11 +201,11 @@ export function PersonValue({
 export function ActorValue({
   column,
   value,
-  persons = [],
+  actors = [],
 }: {
   column: Column;
   value: unknown;
-  persons?: Person[];
+  actors?: ActorCandidate[];
 }) {
   const emails = column.multiple
     ? normalizeActorValues(value)
@@ -216,18 +216,18 @@ export function ActorValue({
     return <span className="text-muted-foreground">-</span>;
 
   if (!column.multiple) {
-    return <PersonValue value={emails[0]} persons={persons} />;
+    return <ActorSingleValue value={emails[0]} actors={actors} />;
   }
 
-  const resolved = emails.map((email) => actorPerson(email, persons));
+  const resolved = emails.map((email) => resolveActorCandidate(email, actors));
   return (
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
           <span className="inline-flex min-w-0 items-center">
-            {resolved.slice(0, 3).map((person, index) => (
-              <span key={person.email} className={cn(index > 0 && "-ml-1.5")}>
-                <PersonAvatar person={person} />
+            {resolved.slice(0, 3).map((actor, index) => (
+              <span key={actor.email} className={cn(index > 0 && "-ml-1.5")}>
+                <ActorAvatar actor={actor} />
               </span>
             ))}
             {resolved.length > 3 ? (
@@ -238,36 +238,36 @@ export function ActorValue({
           </span>
         </TooltipTrigger>
         <TooltipContent>
-          {resolved.map((person) => personDisplayName(person)).join(", ")}
+          {resolved.map((actor) => actorDisplayName(actor)).join(", ")}
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );
 }
 
-function PersonAvatar({ person }: { person: Person }) {
+function ActorAvatar({ actor }: { actor: ActorCandidate }) {
   const color = ["blue", "green", "purple", "orange", "pink"][
-    hashIndex(person.email, 5)
+    hashIndex(actor.email, 5)
   ];
   return (
     <Avatar size="sm" className="shrink-0">
-      <AvatarImage src={gravatarUrl(person.email)} alt="" />
+      <AvatarImage src={gravatarUrl(actor.email)} alt="" />
       <AvatarFallback
         className={cn(
           "text-[10px] font-medium",
           color === "blue" &&
-            "bg-[var(--property-blue-soft)] text-[var(--property-blue)]",
+            "bg-(--property-blue-soft) text-(--property-blue)",
           color === "green" &&
-            "bg-[var(--property-green-soft)] text-[var(--property-green)]",
+            "bg-(--property-green-soft) text-(--property-green)",
           color === "purple" &&
-            "bg-[var(--property-purple-soft)] text-[var(--property-purple)]",
+            "bg-(--property-purple-soft) text-(--property-purple)",
           color === "orange" &&
-            "bg-[var(--property-orange-soft)] text-[var(--property-orange)]",
+            "bg-(--property-orange-soft) text-(--property-orange)",
           color === "pink" &&
-            "bg-[var(--property-pink-soft)] text-[var(--property-pink)]",
+            "bg-(--property-pink-soft) text-(--property-pink)",
         )}
       >
-        {initialsForPerson(person)}
+        {initialsForActor(actor)}
       </AvatarFallback>
     </Avatar>
   );
@@ -288,11 +288,13 @@ export function NumberPreview({
   if (column.display === "ring") {
     return (
       <div
-        className="grid size-7 shrink-0 place-items-center rounded-full bg-[conic-gradient(var(--property-color)_var(--progress),var(--muted)_0)] text-[10px] font-medium text-muted-foreground"
+        className="grid size-7 shrink-0 place-items-center rounded-full bg-(--property-ring-bg) text-[10px] font-medium text-muted-foreground"
         style={
           {
             ...colorStyle(column.color ?? "blue"),
             "--progress": `${clamped}%`,
+            "--property-ring-bg":
+              "conic-gradient(var(--property-color) var(--progress), var(--muted) 0)",
           } as CSSProperties
         }
       >
@@ -310,7 +312,7 @@ export function NumberPreview({
           <span className="flex w-full min-w-0 items-center gap-2">
             <Progress
               value={clamped}
-              className="h-2 min-w-0 flex-1 [&_[data-slot=progress-indicator]]:bg-[var(--property-color)]"
+              className="h-2 min-w-0 flex-1 [&_[data-slot=progress-indicator]]:bg-(--property-color)"
               style={colorStyle(column.color ?? "blue")}
             />
             <span className="tabular-nums text-muted-foreground">{value}</span>

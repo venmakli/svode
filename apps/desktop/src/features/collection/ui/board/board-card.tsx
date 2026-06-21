@@ -58,8 +58,8 @@ export function BoardCardContent({
   overlay,
   spacePath,
   projectPath,
-  persons,
-  onRequestPersons,
+  actors,
+  onRequestActors,
   onUpdateField,
   onOpen,
   onOpenNestedPeek,
@@ -124,13 +124,13 @@ export function BoardCardContent({
             <BoardPropertyFlow
               entry={entry}
               columns={customColumns}
-              persons={persons}
+              actors={actors}
               relationContext={{
                 spacePath,
                 projectPath,
                 currentFilePath: entry.path,
               }}
-              onRequestPersons={onRequestPersons}
+              onRequestActors={onRequestActors}
               onUpdateField={overlay ? undefined : onUpdateField}
             />
           </CardContent>

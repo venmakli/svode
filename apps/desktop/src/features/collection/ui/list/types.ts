@@ -8,7 +8,7 @@ import type { Entry } from "@/features/entry";
 import type {
   CollectionSchema,
   Column,
-  Person,
+  ActorCandidate,
 } from "@/features/properties";
 
 export interface ListViewProps {
@@ -50,10 +50,10 @@ export interface ListRowProps {
   metaColumns: Column[];
   spacePath: string;
   projectPath?: string | null;
-  persons: Person[];
+  actors: ActorCandidate[];
   disabledReorder: boolean;
   focused: boolean;
-  onRequestPersons: (allTime: boolean) => Promise<Person[]>;
+  onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   onUpdateField: (entry: Entry, column: Column, value: unknown) => void;
   onToggle: (entry: Entry) => void;
   onOpen: (entry: Entry, nestedCollection: boolean) => void;

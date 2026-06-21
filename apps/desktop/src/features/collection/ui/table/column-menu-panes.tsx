@@ -296,7 +296,7 @@ function typeSettingsMeta(column: Column): {
   if (column.type === "number") {
     return { icon: BarChart3, label: m.table_type_settings_number() };
   }
-  if (column.type === "actor" || column.type === "person") {
+  if (column.type === "actor") {
     return { icon: User, label: m.table_type_settings_actor() };
   }
   if (column.type === "unique_id") {

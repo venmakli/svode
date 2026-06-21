@@ -22,7 +22,7 @@ export function ColorPicker({
         <button
           type="button"
           className={cn(
-            "size-4 rounded-full bg-[var(--property-color)] ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+            "size-4 rounded-full bg-(--property-color) ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
             !compact && "size-5",
           )}
           style={colorStyle(value)}
@@ -37,7 +37,7 @@ export function ColorPicker({
               key={color}
               type="button"
               className={cn(
-                "size-4 rounded-full bg-[var(--property-color)] ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                "size-4 rounded-full bg-(--property-color) ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                 value === color && "ring-2 ring-ring",
               )}
               style={colorStyle(color)}

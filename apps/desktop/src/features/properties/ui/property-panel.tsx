@@ -25,7 +25,7 @@ import {
 import type {
   Column,
   EntrySchemaResult,
-  Person,
+  ActorCandidate,
   PropertyOption,
   RelationContext,
   SchemaMutationWarning,
@@ -44,7 +44,7 @@ import {
   deleteOption,
   deleteSchemaColumn,
   getEntrySchema,
-  listPropertyPersons,
+  listPropertyActors,
   promoteOrphan,
   renameOption,
   renameSchemaColumn,
@@ -103,7 +103,7 @@ export function PropertyPanel({
     schemaResult.collectionRootPath ?? schemaResult.collection_root_path ?? "",
   );
   const [dialog, setDialog] = useState<DialogState>(null);
-  const [persons, setPersons] = useState<Person[]>([]);
+  const [actors, setActors] = useState<ActorCandidate[]>([]);
   const [editingField, setEditingField] = useState<string | null>(null);
   const [panelValues, setPanelValues] = useState(values);
 
@@ -124,16 +124,16 @@ export function PropertyPanel({
   const hasActor = useMemo(
     () =>
       schema.columns.some(
-        (column) => column.type === "actor" || column.type === "person",
+        (column) => column.type === "actor",
       ),
     [schema.columns],
   );
 
-  const loadPersons = useCallback(
+  const loadActors = useCallback(
     async (allTime = false) => {
       if (!spacePath) return [];
-      const list = await listPropertyPersons(spacePath, allTime);
-      setPersons(list);
+      const list = await listPropertyActors(spacePath, allTime);
+      setActors(list);
       return list;
     },
     [spacePath],
@@ -141,11 +141,11 @@ export function PropertyPanel({
 
   useEffect(() => {
     if (hasActor) {
-      void loadPersons().catch((error) => {
-        console.warn("Failed to load persons:", error);
+      void loadActors().catch((error) => {
+        console.warn("Failed to load actors:", error);
       });
     }
-  }, [hasActor, loadPersons]);
+  }, [hasActor, loadActors]);
 
   const refreshSchema = useCallback(async () => {
     const result = await getEntrySchema({ spacePath, filePath });
@@ -252,9 +252,9 @@ export function PropertyPanel({
                   invalid={state.invalid}
                   disabled={state.message === m.property_state_type_conflict()}
                   editing={editingField === column.name}
-                  persons={persons}
+                  actors={actors}
                   relationContext={relationContext}
-                  onRequestPersons={loadPersons}
+                  onRequestActors={loadActors}
                   onEditChange={(editing) =>
                     setEditingField(editing ? column.name : null)
                   }
@@ -540,9 +540,9 @@ function PropertyPanelValue({
   invalid,
   disabled,
   editing,
-  persons,
+  actors,
   relationContext,
-  onRequestPersons,
+  onRequestActors,
   onEditChange,
   onValueChange,
 }: {
@@ -551,9 +551,9 @@ function PropertyPanelValue({
   invalid: boolean;
   disabled: boolean;
   editing: boolean;
-  persons: Person[];
+  actors: ActorCandidate[];
   relationContext: RelationContext;
-  onRequestPersons: (allTime: boolean) => Promise<Person[]>;
+  onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   onEditChange: (editing: boolean) => void;
   onValueChange: (value: unknown) => Promise<void>;
 }) {
@@ -574,9 +574,9 @@ function PropertyPanelValue({
           invalid={invalid}
           disabled={disabled}
           autoOpen
-          persons={persons}
+          actors={actors}
           relationContext={relationContext}
-          onRequestPersons={onRequestPersons}
+          onRequestActors={onRequestActors}
           onChange={(nextValue) => {
             const close = shouldClosePropertyEditorOnChange(column.type);
             const saved = onValueChange(nextValue);
@@ -616,7 +616,7 @@ function PropertyPanelValue({
         <PropertyValue
           column={column}
           value={value}
-          persons={persons}
+          actors={actors}
           relationContext={relationContext}
         />
       </span>

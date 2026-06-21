@@ -4,7 +4,7 @@ import type {
   ChangeSchemaTypeResult,
   Column,
   EntrySchemaResult,
-  Person,
+  ActorCandidate,
   PropertyOption,
   PropertyType,
 } from "../model/types";
@@ -15,8 +15,8 @@ interface SchemaMutationInput {
   projectPath?: string | null;
 }
 
-export function listPropertyPersons(spacePath: string, allTime = false) {
-  return invoke<Person[]>("list_persons", {
+export function listPropertyActors(spacePath: string, allTime = false) {
+  return invoke<ActorCandidate[]>("list_actors", {
     spacePath,
     allTime,
   });

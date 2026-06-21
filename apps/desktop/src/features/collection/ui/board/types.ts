@@ -8,7 +8,7 @@ import type { Entry } from "@/features/entry";
 import type {
   CollectionSchema,
   Column,
-  Person,
+  ActorCandidate,
   PropertyOption,
 } from "@/features/properties";
 
@@ -25,7 +25,7 @@ export interface BoardColumnGroup {
   value: string | null;
   label: string;
   option?: PropertyOption | null;
-  person?: Person | null;
+  actor?: ActorCandidate | null;
   collapsedByDefault?: boolean;
 }
 
@@ -78,8 +78,8 @@ export interface BoardCardProps {
   overlay?: boolean;
   spacePath: string;
   projectPath?: string | null;
-  persons: Person[];
-  onRequestPersons: (allTime: boolean) => Promise<Person[]>;
+  actors: ActorCandidate[];
+  onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
   onOpen: (entry: Entry) => void;
   onOpenNestedPeek: (entry: Entry) => void;

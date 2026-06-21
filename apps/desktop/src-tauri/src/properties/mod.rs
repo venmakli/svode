@@ -36,7 +36,6 @@ pub enum PropertyType {
     Date,
     Relation,
     Actor,
-    Person,
     Checkbox,
     Url,
     Email,
@@ -364,7 +363,7 @@ pub struct EntrySchemaResponse {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Person {
+pub struct ActorCandidate {
     pub email: String,
     pub name: String,
     pub last_commit_at: Option<i64>,
@@ -373,25 +372,25 @@ pub struct Person {
 }
 
 #[derive(Default)]
-pub struct PersonCacheState {
-    cache: Mutex<HashMap<PersonCacheKey, Vec<Person>>>,
+pub struct ActorCatalogState {
+    cache: Mutex<HashMap<ActorCatalogKey, Vec<ActorCandidate>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct PersonCacheKey {
+struct ActorCatalogKey {
     space_path: PathBuf,
     all_time: bool,
 }
 
-impl PersonCacheState {
+impl ActorCatalogState {
     pub fn new() -> Self {
         Self::default()
     }
 
-    fn get(&self, space_path: &Path, all_time: bool) -> Option<Vec<Person>> {
+    fn get(&self, space_path: &Path, all_time: bool) -> Option<Vec<ActorCandidate>> {
         self.cache.lock().ok().and_then(|cache| {
             cache
-                .get(&PersonCacheKey {
+                .get(&ActorCatalogKey {
                     space_path: space_path.to_path_buf(),
                     all_time,
                 })
@@ -399,14 +398,14 @@ impl PersonCacheState {
         })
     }
 
-    fn set(&self, space_path: &Path, all_time: bool, people: Vec<Person>) {
+    fn set(&self, space_path: &Path, all_time: bool, actors: Vec<ActorCandidate>) {
         if let Ok(mut cache) = self.cache.lock() {
             cache.insert(
-                PersonCacheKey {
+                ActorCatalogKey {
                     space_path: space_path.to_path_buf(),
                     all_time,
                 },
-                people,
+                actors,
             );
         }
     }
@@ -417,7 +416,7 @@ fn schema_error(message: impl Into<String>) -> AppError {
 }
 
 fn is_actor_type(ty: PropertyType) -> bool {
-    matches!(ty, PropertyType::Actor | PropertyType::Person)
+    matches!(ty, PropertyType::Actor)
 }
 
 pub fn column_effective_sensitivity(column: &Column) -> ColumnSensitivity {
@@ -1717,7 +1716,7 @@ pub fn validate_schema(schema: &CollectionSchema) -> Result<(), AppError> {
                     )));
                 }
             }
-            PropertyType::Actor | PropertyType::Person => {
+            PropertyType::Actor => {
                 if let Some(default) = column.default.as_ref() {
                     validate_property_value(column, default)?;
                 }
@@ -1806,10 +1805,6 @@ pub fn normalize_schema(schema: &mut CollectionSchema) {
     }
 
     for column in &mut schema.columns {
-        if column.type_ == PropertyType::Person {
-            column.type_ = PropertyType::Actor;
-            column.multiple.get_or_insert(false);
-        }
         if column.sensitivity.is_none()
             && matches!(column.type_, PropertyType::Email | PropertyType::Phone)
         {
@@ -2110,7 +2105,7 @@ fn validate_filter_op(schema: &CollectionSchema, filter: &Filter) -> Result<(), 
                 | FilterOp::IsNotEmpty
         ),
         FieldType::Checkbox => matches!(filter.op, FilterOp::Eq | FilterOp::Neq),
-        FieldType::SelectLike | FieldType::Person => matches!(
+        FieldType::SelectLike | FieldType::Actor => matches!(
             filter.op,
             FilterOp::Eq
                 | FilterOp::Neq
@@ -2170,7 +2165,7 @@ enum FieldType {
     SelectLike,
     Multi,
     Status,
-    Person,
+    Actor,
     ActorMulti,
 }
 
@@ -2320,7 +2315,7 @@ fn validate_filter_value(
             })?;
             validate_declared_option(schema, &filter.field, raw)?;
         }
-        FieldType::Person | FieldType::ActorMulti => {
+        FieldType::Actor | FieldType::ActorMulti => {
             value.as_str().ok_or_else(|| {
                 schema_error(format!("filter '{}' requires actor email", filter.field))
             })?;
@@ -2392,10 +2387,8 @@ fn field_type(
             PropertyType::MultiSelect => FieldType::Multi,
             PropertyType::Status => FieldType::Status,
             PropertyType::Date => FieldType::Date,
-            PropertyType::Actor | PropertyType::Person if actor_multiple(column) => {
-                FieldType::ActorMulti
-            }
-            PropertyType::Actor | PropertyType::Person => FieldType::Person,
+            PropertyType::Actor if actor_multiple(column) => FieldType::ActorMulti,
+            PropertyType::Actor => FieldType::Actor,
             PropertyType::Checkbox => FieldType::Checkbox,
             PropertyType::Relation => FieldType::Multi,
         });
@@ -2518,7 +2511,7 @@ fn normalize_property_value_for_write(column: &Column, value: Value) -> Result<V
             "unique_id field '{}' is read-only",
             column.name
         ))),
-        PropertyType::Actor | PropertyType::Person => normalize_actor_value(column, value),
+        PropertyType::Actor => normalize_actor_value(column, value),
         _ => {
             validate_property_value(column, &value)?;
             Ok(value)
@@ -2862,7 +2855,7 @@ pub fn validate_property_value(column: &Column, value: &Value) -> Result<(), App
             Ok(())
         }
         PropertyType::Date => validate_date_value(&column.name, value),
-        PropertyType::Actor | PropertyType::Person => validate_actor_value_shape(column, value),
+        PropertyType::Actor => validate_actor_value_shape(column, value),
         PropertyType::Url | PropertyType::Email | PropertyType::Phone => {
             expect_string_value(&column.name, value).map(|_| ())
         }
@@ -3613,9 +3606,6 @@ pub fn add_schema_column(
 ) -> Result<CollectionSchema, AppError> {
     if column.type_ == PropertyType::Status && column.options.is_none() {
         column.options = Some(default_status_options());
-    }
-    if column.type_ == PropertyType::Person {
-        column.type_ = PropertyType::Actor;
     }
     if column.type_ == PropertyType::Actor {
         column.multiple = Some(column.multiple.unwrap_or(false));
@@ -4838,7 +4828,7 @@ async fn resolve_query_filters(
     filters: &[Filter],
 ) -> Result<Vec<Filter>, AppError> {
     let me_email = if query_filters_need_me(schema, filters)? {
-        Some(resolve_current_person_email(git_cli, space_path).await?)
+        Some(resolve_current_actor_email(git_cli, space_path).await?)
     } else {
         None
     };
@@ -4891,7 +4881,7 @@ fn normalize_filter_value_for_query(
             let column = column.ok_or_else(|| schema_error("unique_id field not found"))?;
             *value = yaml_u64(parse_unique_id_filter_value(column, value)?);
         }
-        FieldType::Person | FieldType::ActorMulti => {
+        FieldType::Actor | FieldType::ActorMulti => {
             if let Some(raw) = value.as_str() {
                 *value = Value::String(canonical_actor_email(raw));
             }
@@ -4905,7 +4895,7 @@ fn query_filters_need_me(schema: &CollectionSchema, filters: &[Filter]) -> Resul
     for filter in filters {
         if !matches!(
             field_type(schema, &filter.field, FieldContext::Filter)?,
-            FieldType::Person | FieldType::ActorMulti
+            FieldType::Actor | FieldType::ActorMulti
         ) {
             continue;
         }
@@ -4940,15 +4930,15 @@ fn collect_filter_value_refs<'a>(value: &'a Value, values: &mut Vec<&'a Value>) 
     }
 }
 
-async fn resolve_current_person_email(
+async fn resolve_current_actor_email(
     git_cli: Option<&GitCli>,
     space_path: &Path,
 ) -> Result<String, AppError> {
     let cli = git_cli.ok_or_else(|| schema_error("@me requires Git to be available"))?;
-    let (name, email) = current_git_person(cli, space_path)
+    let (name, email) = current_git_actor(cli, space_path)
         .await?
         .ok_or_else(|| schema_error("@me requires git user.email"))?;
-    canonicalize_person(cli, space_path, &name, &email).await
+    canonicalize_actor(cli, space_path, &name, &email).await
 }
 
 fn resolve_filter_macro_value(
@@ -4962,10 +4952,10 @@ fn resolve_filter_macro_value(
     match ty {
         FieldType::Date => resolve_today_macro(raw)
             .map(|resolved| resolved.map(Value::String).unwrap_or_else(|| value.clone())),
-        FieldType::Person | FieldType::ActorMulti if raw == "@me" => me_email
+        FieldType::Actor | FieldType::ActorMulti if raw == "@me" => me_email
             .map(|email| Value::String(email.to_string()))
             .ok_or_else(|| schema_error("@me requires git user.email")),
-        FieldType::Person | FieldType::ActorMulti => Ok(Value::String(canonical_actor_email(raw))),
+        FieldType::Actor | FieldType::ActorMulti => Ok(Value::String(canonical_actor_email(raw))),
         _ => Ok(value.clone()),
     }
 }
@@ -6119,7 +6109,7 @@ fn push_sort_sql(
     push_empty_expr(query, schema, field)?;
     query.push(" ASC, ");
     match ty {
-        FieldType::TextLike | FieldType::Person => {
+        FieldType::TextLike | FieldType::Actor => {
             push_text_sort_expr(query, field);
             query.push(sort_direction(desc));
         }
@@ -6615,7 +6605,7 @@ fn normalize_column_for_new_type(
             column.prefix = trim_unique_id_prefix(column.prefix.take());
             column.next = Some(column.next.unwrap_or(1).max(1));
         }
-        PropertyType::Actor | PropertyType::Person => {
+        PropertyType::Actor => {
             column.type_ = PropertyType::Actor;
             column.options = None;
             column.display = None;
@@ -6716,7 +6706,7 @@ fn convert_value_for_type(value: Value, column: &Column) -> Value {
                 value_to_scalar_string(&value).map(Value::String)
             }
         }
-        PropertyType::Actor | PropertyType::Person => normalize_actor_value(column, value).ok(),
+        PropertyType::Actor => normalize_actor_value(column, value).ok(),
         PropertyType::Url | PropertyType::Email | PropertyType::Phone => {
             value_to_scalar_string(&value).map(Value::String)
         }
@@ -7377,40 +7367,40 @@ fn infer_type(value: &Value) -> PropertyType {
     PropertyType::Text
 }
 
-pub async fn list_persons(
-    cache: &PersonCacheState,
+pub async fn list_actors(
+    cache: &ActorCatalogState,
     cli: &GitCli,
     space_path: &Path,
     all_time: bool,
-) -> Result<Vec<Person>, AppError> {
-    if let Some(people) = cache.get(space_path, all_time) {
-        return Ok(people);
+) -> Result<Vec<ActorCandidate>, AppError> {
+    if let Some(actors) = cache.get(space_path, all_time) {
+        return Ok(actors);
     }
-    refresh_persons(cache, cli, space_path, all_time).await
+    refresh_actors(cache, cli, space_path, all_time).await
 }
 
-pub async fn refresh_persons(
-    cache: &PersonCacheState,
+pub async fn refresh_actors(
+    cache: &ActorCatalogState,
     cli: &GitCli,
     space_path: &Path,
     all_time: bool,
-) -> Result<Vec<Person>, AppError> {
-    let people = load_persons(cli, space_path, all_time).await?;
-    cache.set(space_path, all_time, people.clone());
-    Ok(people)
+) -> Result<Vec<ActorCandidate>, AppError> {
+    let actors = load_actors(cli, space_path, all_time).await?;
+    cache.set(space_path, all_time, actors.clone());
+    Ok(actors)
 }
 
-async fn load_persons(
+async fn load_actors(
     cli: &GitCli,
     space_path: &Path,
     all_time: bool,
-) -> Result<Vec<Person>, AppError> {
+) -> Result<Vec<ActorCandidate>, AppError> {
     let mut args = vec!["log", "--use-mailmap", "--all", "--format=%aN|%aE|%at"];
     if !all_time {
         args.push("--since=6 months ago");
     }
 
-    let mut people: HashMap<String, Person> = HashMap::new();
+    let mut actors: HashMap<String, ActorCandidate> = HashMap::new();
     let output = cli.exec(space_path, &args).await?;
     if output.exit_code == 0 {
         for line in output.stdout.lines() {
@@ -7421,8 +7411,8 @@ async fn load_persons(
             if email.is_empty() {
                 continue;
             }
-            let canonical = canonicalize_person(cli, space_path, name, email).await?;
-            let entry = people.entry(canonical.clone()).or_insert_with(|| Person {
+            let canonical = canonicalize_actor(cli, space_path, name, email).await?;
+            let entry = actors.entry(canonical.clone()).or_insert_with(|| ActorCandidate {
                 email: canonical,
                 name: if name.is_empty() {
                     email.to_string()
@@ -7443,10 +7433,10 @@ async fn load_persons(
         }
     }
 
-    let me = current_git_person(cli, space_path).await?;
+    let me = current_git_actor(cli, space_path).await?;
     let me_email = if let Some((name, email)) = me {
-        let canonical = canonicalize_person(cli, space_path, &name, &email).await?;
-        let entry = people.entry(canonical.clone()).or_insert_with(|| Person {
+        let canonical = canonicalize_actor(cli, space_path, &name, &email).await?;
+        let entry = actors.entry(canonical.clone()).or_insert_with(|| ActorCandidate {
             email: canonical.clone(),
             name: if name.is_empty() {
                 canonical.clone()
@@ -7463,14 +7453,14 @@ async fn load_persons(
         None
     };
 
-    let mut people: Vec<Person> = people.into_values().collect();
+    let mut actors: Vec<ActorCandidate> = actors.into_values().collect();
     if let Some(me_email) = me_email {
-        for person in &mut people {
-            person.is_me = person.email == me_email;
+        for actor in &mut actors {
+            actor.is_me = actor.email == me_email;
         }
     }
 
-    people.sort_by(|a, b| {
+    actors.sort_by(|a, b| {
         b.is_me
             .cmp(&a.is_me)
             .then_with(|| b.last_commit_at.cmp(&a.last_commit_at))
@@ -7478,10 +7468,10 @@ async fn load_persons(
             .then_with(|| a.email.cmp(&b.email))
     });
 
-    Ok(people)
+    Ok(actors)
 }
 
-async fn current_git_person(
+async fn current_git_actor(
     cli: &GitCli,
     space_path: &Path,
 ) -> Result<Option<(String, String)>, AppError> {
@@ -7503,7 +7493,7 @@ async fn git_config_value(
     Ok((!value.is_empty()).then_some(value))
 }
 
-async fn canonicalize_person(
+async fn canonicalize_actor(
     cli: &GitCli,
     space_path: &Path,
     name: &str,
@@ -8382,17 +8372,17 @@ views: []
         .unwrap();
         assert!(validate_schema(&duplicate_unique_id).is_err());
 
-        let mut legacy_person: CollectionSchema = serde_yml::from_str(
+        let mut actor_schema: CollectionSchema = serde_yml::from_str(
             r#"
 columns:
-  - { name: Owner, type: person }
+  - { name: Owner, type: actor }
 views: []
 "#,
         )
         .unwrap();
-        normalize_schema(&mut legacy_person);
-        assert_eq!(legacy_person.columns[0].type_, PropertyType::Actor);
-        assert_eq!(legacy_person.columns[0].multiple, Some(false));
+        normalize_schema(&mut actor_schema);
+        assert_eq!(actor_schema.columns[0].type_, PropertyType::Actor);
+        assert_eq!(actor_schema.columns[0].multiple, Some(false));
     }
 
     #[test]

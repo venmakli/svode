@@ -3,7 +3,7 @@ import { validatePropertyValue } from "@/features/properties";
 import type { Entry } from "@/features/entry";
 import type {
   Column,
-  Person,
+  ActorCandidate,
   RelationContext,
 } from "@/features/properties";
 import { isEmptyValue } from "@/features/properties";
@@ -12,16 +12,16 @@ import { PropertyControl, PropertyValue } from "@/features/properties";
 export function BoardPropertyFlow({
   entry,
   columns,
-  persons,
+  actors,
   relationContext,
-  onRequestPersons,
+  onRequestActors,
   onUpdateField,
 }: {
   entry: Entry;
   columns: Column[];
-  persons: Person[];
+  actors: ActorCandidate[];
   relationContext?: RelationContext;
-  onRequestPersons: (allTime: boolean) => Promise<Person[]>;
+  onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
 }) {
   const rendered = columns
@@ -30,9 +30,9 @@ export function BoardPropertyFlow({
         key={column.name}
         entry={entry}
         column={column}
-        persons={persons}
+        actors={actors}
         relationContext={relationContext}
-        onRequestPersons={onRequestPersons}
+        onRequestActors={onRequestActors}
         onUpdateField={onUpdateField}
       />
     ))
@@ -45,16 +45,16 @@ export function BoardPropertyFlow({
 function BoardPropertyChip({
   entry,
   column,
-  persons,
+  actors,
   relationContext,
-  onRequestPersons,
+  onRequestActors,
   onUpdateField,
 }: {
   entry: Entry;
   column: Column;
-  persons: Person[];
+  actors: ActorCandidate[];
   relationContext?: RelationContext;
-  onRequestPersons: (allTime: boolean) => Promise<Person[]>;
+  onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
 }) {
   const value = entry.meta.extra?.[column.name] ?? null;
@@ -62,9 +62,7 @@ function BoardPropertyChip({
 
   const validation = validatePropertyValue(column, value);
   const interactive =
-    (column.type === "actor" ||
-      column.type === "person" ||
-      column.type === "relation") &&
+    (column.type === "actor" || column.type === "relation") &&
     Boolean(onUpdateField);
   const fullWidth =
     (column.type === "number" && column.display === "bar") ||
@@ -99,16 +97,16 @@ function BoardPropertyChip({
             column={column}
             value={value}
             invalid={validation.invalid}
-            persons={persons}
+            actors={actors}
             relationContext={relationContext}
-            onRequestPersons={onRequestPersons}
+            onRequestActors={onRequestActors}
             onChange={(next) => onUpdateField?.(entry, column, next)}
           />
         ) : (
           <PropertyValue
             column={column}
             value={value}
-            persons={persons}
+            actors={actors}
             relationContext={relationContext}
           />
         )}

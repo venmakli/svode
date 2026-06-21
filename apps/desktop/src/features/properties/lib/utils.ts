@@ -3,7 +3,7 @@ import type {
   ColorName,
   Column,
   DateRangeValue,
-  Person,
+  ActorCandidate,
   PropertyOption,
   PropertyType,
   StatusGroup,
@@ -48,7 +48,7 @@ export const COLOR_NAMES: ColorName[] = [
 export function normalizeColumn(column: Column): Column {
   const rawType = (column.type ??
     (column as unknown as { type_: PropertyType }).type_) as PropertyType;
-  const type = rawType === "person" ? "actor" : rawType;
+  const type = rawType;
   const sensitivity =
     column.sensitivity ?? (type === "email" || type === "phone" ? "pii" : null);
   return {
@@ -177,10 +177,10 @@ export function normalizeActorValues(value: unknown): string[] {
   return values;
 }
 
-export function actorPerson(email: string, persons: Person[]): Person {
+export function resolveActorCandidate(email: string, actors: ActorCandidate[]): ActorCandidate {
   return (
-    persons.find(
-      (person) => person.email.toLowerCase() === email.toLowerCase(),
+    actors.find(
+      (actor) => actor.email.toLowerCase() === email.toLowerCase(),
     ) ?? {
       email,
       name: email,
@@ -210,10 +210,10 @@ export function isValidUrl(value: string): boolean {
   }
 }
 
-export function initialsForPerson(
-  person: Pick<Person, "name" | "email">,
+export function initialsForActor(
+  actor: Pick<ActorCandidate, "name" | "email">,
 ): string {
-  const label = person.name || person.email;
+  const label = actor.name || actor.email;
   const parts = label
     .split(/[\s._-]+/)
     .filter(Boolean)
@@ -221,20 +221,20 @@ export function initialsForPerson(
   return parts.map((part) => part[0]?.toUpperCase()).join("") || "?";
 }
 
-export function personDisplayName(person: Person): string {
-  return person.name || person.email;
+export function actorDisplayName(actor: ActorCandidate): string {
+  return actor.name || actor.email;
 }
 
-export function personCommitCount(person: Person): number {
-  return person.commitCount ?? person.commit_count ?? 0;
+export function actorCommitCount(actor: ActorCandidate): number {
+  return actor.commitCount ?? actor.commit_count ?? 0;
 }
 
-export function personLastCommitAt(person: Person): number | null {
-  return person.lastCommitAt ?? person.last_commit_at ?? null;
+export function actorLastCommitAt(actor: ActorCandidate): number | null {
+  return actor.lastCommitAt ?? actor.last_commit_at ?? null;
 }
 
-export function personIsMe(person: Person): boolean {
-  return person.isMe ?? person.is_me ?? false;
+export function actorIsMe(actor: ActorCandidate): boolean {
+  return actor.isMe ?? actor.is_me ?? false;
 }
 
 export function hashIndex(value: string, modulo: number): number {

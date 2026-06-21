@@ -60,7 +60,7 @@ import type {
   PropertyType,
 } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
-import { useCollectionPersons } from "../hooks";
+import { useCollectionActors } from "../hooks";
 import { handleError } from "../lib/errors";
 import { viewType } from "../lib/utils";
 import type { SettingsPane } from "../model";
@@ -154,8 +154,8 @@ export function ViewSettingsPopover({
     sort: QuerySort;
   } | null>(null);
   const [selectedProperty, setSelectedProperty] = useState("title");
-  const { persons: queryPersons, loadPersons: loadQueryPersons } =
-    useCollectionPersons(spacePath);
+  const { actors: queryActors, loadActors: loadQueryActors } =
+    useCollectionActors(spacePath);
 
   function setPane(nextPane: SettingsPane) {
     if (nextPane !== "filterEditor") setFilterDraft(null);
@@ -645,8 +645,8 @@ export function ViewSettingsPopover({
         <FilterEditor
           schema={schema}
           draft={filterDraft.filter}
-          persons={queryPersons}
-          onRequestPersons={loadQueryPersons}
+          actors={queryActors}
+          onRequestActors={loadQueryActors}
           onChange={(filter) => setFilterDraft({ ...filterDraft, filter })}
         />
       ) : null,

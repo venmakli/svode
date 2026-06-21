@@ -8,7 +8,7 @@ import type { Entry } from "@/features/entry";
 import type {
   CollectionSchema,
   Column,
-  Person,
+  ActorCandidate,
 } from "@/features/properties";
 
 export interface GalleryViewProps {
@@ -45,12 +45,12 @@ export interface GalleryCardProps {
   coverAspect: string;
   spacePath: string;
   projectPath?: string | null;
-  persons: Person[];
+  actors: ActorCandidate[];
   nestedCollection: boolean;
   folder: boolean;
   disabledReorder: boolean;
   focused: boolean;
-  onRequestPersons: (allTime: boolean) => Promise<Person[]>;
+  onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   onUpdateField: (entry: Entry, column: Column, value: unknown) => void;
   onOpen: (entry: Entry, nestedCollection: boolean) => void;
   onOpenFullPage: (entry: Entry) => void;

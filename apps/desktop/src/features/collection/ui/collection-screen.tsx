@@ -419,7 +419,7 @@ export function CollectionScreen({
         schema.columns.find((column) => column.type === "select")?.name ??
         schema.columns.find(
           (column) =>
-            (column.type === "actor" || column.type === "person") &&
+            (column.type === "actor") &&
             !column.multiple,
         )?.name ??
         null;

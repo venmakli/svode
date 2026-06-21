@@ -438,7 +438,7 @@ mod tests {
             ) VALUES (
                 1, 'contacts/ivan.md', 'Customer record', '',
                 'Regular note body', '2026-01-01', 'contacts', 1,
-                '{"Phone":"+15550001234","Email":"person@example.com"}'
+                '{"Phone":"+15550001234","Email":"actor@example.com"}'
             )
             "#,
         )
