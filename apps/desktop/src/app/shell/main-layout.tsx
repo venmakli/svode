@@ -7,11 +7,10 @@ import { ShellChrome, WindowHeader } from "./window-header";
 import { CommandPalette, useCommandPaletteStore } from "@/features/search";
 import { TerminalPanelHost } from "@/features/terminal";
 import {
-  SpaceFileWatcher,
-  SpaceSidebar,
   useSpace,
   useSpaceActions,
 } from "@/features/space";
+import { SpaceFileWatcher, SpaceSidebar } from "@/features/space/app-shell";
 import {
   GitMissingDialog,
   SpaceGitWatcher,

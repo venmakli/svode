@@ -16,7 +16,7 @@ import { useShellStore } from "./model";
 import { cn } from "@/shared/lib/utils";
 import { CloudUploadButton } from "@/features/git/app-shell";
 import { buildProjectTerminalTarget } from "@/features/terminal";
-import { MainBreadcrumbs } from "@/features/space";
+import { MainBreadcrumbs } from "@/features/space/app-shell";
 import { ProjectOpenersMenu } from "./project-openers-menu";
 import { ProjectSwitcher } from "./project-switcher";
 

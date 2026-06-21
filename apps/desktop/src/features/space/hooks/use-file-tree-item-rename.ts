@@ -8,7 +8,7 @@ import {
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import type { TreeNode } from "@/features/entry";
-import { useEditorStore } from "@/features/editor";
+import { useEditorStore } from "@/features/editor/state";
 import {
   renameTreeEntryPath,
   updateTreeEntryTitle,

@@ -21,6 +21,14 @@ const routeAppExceptions = new Map([
   ["routes/space.tsx", new Set(["@/app/shell"])],
 ]);
 const allowedFeatureSubpathExceptions = new Set([
+  // Public feature subentrypoints that intentionally avoid wider root barrels.
+  "@/features/collection/ui",
+  "@/features/editor/state",
+  "@/features/git/app-shell",
+  "@/features/git/sidebar",
+  "@/features/identity/effective",
+  "@/features/space/app-shell",
+  // Legacy migration exceptions pending narrower public APIs.
   "@/features/editor/model",
   "@/features/git/api/git-actions",
   "@/features/git/model",

@@ -84,10 +84,10 @@ export function useSpace<T>(selector: (state: SpacePublicState) => T): T;
 export function useSpace<T>(
   selector?: (state: SpacePublicState) => T,
 ): SpacePublicState | T {
-  if (selector) {
-    return useSpaceStore((state) => selector(state));
-  }
-  return useSpaceStore(selectPublicState);
+  return useSpaceStore((state) => {
+    const publicState = selectPublicState(state);
+    return selector ? selector(publicState) : publicState;
+  });
 }
 
 export function getSpaceSnapshot(): SpacePublicState {
@@ -101,10 +101,10 @@ export function useSpaceTreeSync<T>(
 export function useSpaceTreeSync<T>(
   selector?: (state: SpaceTreeSyncState) => T,
 ): SpaceTreeSyncState | T {
-  if (selector) {
-    return useSpaceStore((state) => selector(selectTreeSyncState(state)));
-  }
-  return useSpaceStore(selectTreeSyncState);
+  return useSpaceStore((state) => {
+    const treeSyncState = selectTreeSyncState(state);
+    return selector ? selector(treeSyncState) : treeSyncState;
+  });
 }
 
 export function getSpaceTreeSyncSnapshot(): SpaceTreeSyncState {

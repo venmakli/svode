@@ -47,7 +47,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type { TreeNode } from "@/features/entry";
-import { FileGitIndicatorIcon } from "@/features/git";
+import { FileGitIndicatorIcon } from "@/features/git/sidebar";
 import { useFileTreeItemActions } from "../hooks/use-file-tree-item-actions";
 import { TreeDndContext } from "./sortable-file-tree";
 import { TreeDropIndicator } from "./tree-drop-indicator";

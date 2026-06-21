@@ -40,7 +40,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { SpaceGitActivityIndicator, useSpaceSidebarGit } from "@/features/git";
+import {
+  SpaceGitActivityIndicator,
+  useSpaceSidebarGit,
+} from "@/features/git/sidebar";
 import type { TreeNode } from "@/features/entry";
 import { cn } from "@/shared/lib/utils";
 import type {

@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { toast } from "sonner";
 import { useEntrySelectionStore, type TreeNode } from "@/features/entry";
-import { useEditorStore } from "@/features/editor";
+import { useEditorStore } from "@/features/editor/state";
 import { nestTreeEntry, unnestTreeEntry } from "../api/tree-entry-actions";
 import {
   getParentDir,
