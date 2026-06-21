@@ -1,3 +1,4 @@
+import { useShallow } from "zustand/shallow";
 import { useSpaceStore, type SpaceState } from "./space-store";
 import type { SpaceInfo } from "./types";
 
@@ -84,10 +85,12 @@ export function useSpace<T>(selector: (state: SpacePublicState) => T): T;
 export function useSpace<T>(
   selector?: (state: SpacePublicState) => T,
 ): SpacePublicState | T {
-  return useSpaceStore((state) => {
-    const publicState = selectPublicState(state);
-    return selector ? selector(publicState) : publicState;
-  });
+  return useSpaceStore(
+    useShallow((state) => {
+      const publicState = selectPublicState(state);
+      return selector ? selector(publicState) : publicState;
+    }),
+  );
 }
 
 export function getSpaceSnapshot(): SpacePublicState {
@@ -101,10 +104,12 @@ export function useSpaceTreeSync<T>(
 export function useSpaceTreeSync<T>(
   selector?: (state: SpaceTreeSyncState) => T,
 ): SpaceTreeSyncState | T {
-  return useSpaceStore((state) => {
-    const treeSyncState = selectTreeSyncState(state);
-    return selector ? selector(treeSyncState) : treeSyncState;
-  });
+  return useSpaceStore(
+    useShallow((state) => {
+      const treeSyncState = selectTreeSyncState(state);
+      return selector ? selector(treeSyncState) : treeSyncState;
+    }),
+  );
 }
 
 export function getSpaceTreeSyncSnapshot(): SpaceTreeSyncState {
