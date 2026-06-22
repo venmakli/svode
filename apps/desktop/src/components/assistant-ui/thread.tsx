@@ -157,7 +157,7 @@ const Composer: FC = () => {
     setInputValue(el.value);
     setCursorPos(el.selectionStart);
     slashMenu.handleInputChange(el.value, el.selectionStart);
-  }, [slashMenu.handleInputChange]);
+  }, [slashMenu]);
 
   const setTextareaValue = useCallback((value: string, focusEnd = true) => {
     const el = textareaRef.current;
@@ -188,7 +188,7 @@ const Composer: FC = () => {
       setTextareaValue(newValue);
     },
     [
-      slashMenu.handleSelect,
+      slashMenu,
       addDocMention,
       setTextareaValue,
       inputValue,

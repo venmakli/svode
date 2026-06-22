@@ -44,39 +44,46 @@ export function useSpaceStorageConfig({
     (hasSavedS3Credentials || (s3AccessKey.trim() && s3SecretKey.trim())),
   );
 
-  const loadStorageConfig = useCallback(async () => {
-    if (!spacePath) return;
-    try {
-      const cfg = await getSettingsSpaceConfig(spacePath);
-      const strategy: AssetsStrategy = cfg.assets?.strategy ?? "local";
-      setAssetsStrategy(strategy);
-      setSavedAssetsStrategy(strategy);
-      const s3 = cfg.assets?.s3;
-      setS3Endpoint(s3?.endpoint ?? "");
-      setS3Bucket(s3?.bucket ?? "");
-      setS3Region(s3?.region ?? "");
-      setS3AccessKey("");
-      setS3SecretKey("");
-      setS3TestState("idle");
-      setS3TestError(null);
-      try {
-        const present = await hasS3Credentials({
-          projectPath,
-          spaceId: currentSpaceId,
-        });
-        setHasSavedS3Credentials(present);
-      } catch {
-        setHasSavedS3Credentials(false);
-      }
-    } catch (err) {
-      console.error("Failed to load storage settings:", err);
-    }
-  }, [spacePath, projectPath, currentSpaceId]);
-
   useEffect(() => {
     if (!open || !spacePath) return;
-    void loadStorageConfig();
-  }, [open, spacePath, loadStorageConfig]);
+    let cancelled = false;
+
+    const loadStorageConfig = async () => {
+      const cfg = await getSettingsSpaceConfig(spacePath);
+      const hasCredentials = await hasS3Credentials({
+        projectPath,
+        spaceId: currentSpaceId,
+      }).catch(() => false);
+
+      return {
+        strategy: cfg.assets?.strategy ?? "local",
+        s3: cfg.assets?.s3,
+        hasCredentials,
+      };
+    };
+
+    void loadStorageConfig()
+      .then(({ strategy, s3, hasCredentials }) => {
+        if (cancelled) return;
+        setAssetsStrategy(strategy);
+        setSavedAssetsStrategy(strategy);
+        setS3Endpoint(s3?.endpoint ?? "");
+        setS3Bucket(s3?.bucket ?? "");
+        setS3Region(s3?.region ?? "");
+        setS3AccessKey("");
+        setS3SecretKey("");
+        setS3TestState("idle");
+        setS3TestError(null);
+        setHasSavedS3Credentials(hasCredentials);
+      })
+      .catch((err) => {
+        console.error("Failed to load storage settings:", err);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, spacePath, projectPath, currentSpaceId]);
 
   const testS3 = useCallback(async () => {
     if (!canTestS3) return;
