@@ -1,4 +1,5 @@
 import { useGitStore, type GitStatus } from "./model";
+import { refreshGitStatus } from "./api/git-status-actions";
 
 export {
   commitAllSpace,
@@ -13,5 +14,5 @@ export function getGitSpaceStatus(spacePath: string): GitStatus | undefined {
 }
 
 export function refreshGitSpaceStatus(spacePath: string): Promise<void> {
-  return useGitStore.getState().refreshStatus(spacePath);
+  return refreshGitStatus(spacePath);
 }

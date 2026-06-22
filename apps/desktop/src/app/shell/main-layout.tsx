@@ -14,9 +14,9 @@ import { SpaceFileWatcher, SpaceSidebar } from "@/features/space/app-shell";
 import {
   GitMissingDialog,
   SpaceGitWatcher,
+  useAppGitFocus,
   useGitAvailability,
-} from "@/features/git";
-import { useAppGitFocus } from "@/features/git/app-shell";
+} from "@/features/git/app-shell";
 import { avatarColorFromEmail } from "@/features/identity";
 import { useEffectiveIdentity } from "@/features/identity/app-shell";
 import { useShellStore } from "./model";

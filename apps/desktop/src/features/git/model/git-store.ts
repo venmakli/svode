@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { getGitStatus } from "@/platform/git/git-api";
 import type { GitCloneProgress, GitStatus } from "./types";
 
 /**
@@ -19,8 +18,11 @@ interface GitState {
 
   /** Apply a status returned by a git IPC command. */
   applyStatus: (spacePath: string, status: GitStatus) => void;
-  /** Fetch fresh status via `git_status`. */
-  refreshStatus: (spacePath: string) => Promise<void>;
+  /** Fetch fresh status through the feature API while guarding stale responses. */
+  refreshStatus: (
+    spacePath: string,
+    loadStatus: () => Promise<GitStatus>,
+  ) => Promise<void>;
   /** Clear local state for a removed space. */
   clear: (spacePath: string) => void;
 
@@ -49,11 +51,11 @@ export const useGitStore = create<GitState>((set) => {
       }));
     },
 
-    refreshStatus: async (spacePath) => {
+    refreshStatus: async (spacePath, loadStatus) => {
       const version = (refreshVersions[spacePath] ?? 0) + 1;
       refreshVersions[spacePath] = version;
       try {
-        const status = await getGitStatus(spacePath);
+        const status = await loadStatus();
         if (refreshVersions[spacePath] !== version) return;
         set((s) => ({
           statuses: { ...s.statuses, [spacePath]: status },

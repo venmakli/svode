@@ -9,6 +9,7 @@ import {
 } from "@/platform/git/git-api";
 import { getSpaceConfig } from "@/platform/space/space-api";
 import type { GitStatus } from "../model";
+import { refreshGitStatus } from "./git-status-actions";
 
 export interface GitCommitResult {
   status: GitStatus;
@@ -40,7 +41,7 @@ export async function syncSpace(spacePath: string): Promise<void> {
     switch (result.type) {
       case "Success":
         // Refresh status to clear any local indicators (file `↻`).
-        await git.refreshStatus(spacePath);
+        await refreshGitStatus(spacePath);
         break;
       case "NoRemote":
         // Silent — no remote configured is a normal state.
@@ -49,7 +50,7 @@ export async function syncSpace(spacePath: string): Promise<void> {
         toast.error(
           m.git_sync_conflict({ count: String(result.files.length) }),
         );
-        await git.refreshStatus(spacePath);
+        await refreshGitStatus(spacePath);
         git.setSyncError(spacePath, "conflict");
         break;
       case "AuthRequired":
@@ -138,7 +139,7 @@ export async function commitAllSpace(
 
 export async function continueGitResolve(spacePath: string): Promise<void> {
   await continuePlatformGitResolve(spacePath);
-  await useGitStore.getState().refreshStatus(spacePath);
+  await refreshGitStatus(spacePath);
   void syncSpace(spacePath);
 }
 
@@ -155,7 +156,7 @@ export async function syncOnOpen(spacePath: string): Promise<void> {
   try {
     const result = await syncGit(spacePath);
     if (result.type === "Success") {
-      await git.refreshStatus(spacePath);
+      await refreshGitStatus(spacePath);
     }
   } catch (err) {
     console.debug("sync on open failed (silent):", err);

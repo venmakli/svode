@@ -1,12 +1,13 @@
 import { useEffect, useRef } from "react";
-import { useGitStore } from "../model";
 import {
   getSpaceSnapshot,
   useSpace,
   selectActiveSpacePath,
 } from "@/features/space";
-import { getGitStatus, pushGit } from "@/platform/git/git-api";
-import { isAutoSyncEnabled, syncOnOpen } from "../api/git-actions";
+import {
+  refreshGitOnWindowFocus,
+  syncGitOnActiveSpaceOpen,
+} from "../api/git-focus-actions";
 
 /**
  * App-level git hooks that run once for the currently-active space:
@@ -14,7 +15,7 @@ import { isAutoSyncEnabled, syncOnOpen } from "../api/git-actions";
  *  - window `focus` → status refresh; auto-push only when auto-sync is enabled
  *
  * Hoisted here so sidebars rendering N space rows don't multiply the
- * number of concurrent `git_sync`/`git_push` calls on startup and focus.
+ * number of concurrent sync/push calls on startup and focus.
  */
 export function useAppGitFocus() {
   const activePath = useSpace((s) => selectActiveSpacePath(s));
@@ -25,7 +26,7 @@ export function useAppGitFocus() {
     if (!activePath) return;
     if (lastSynced.current === activePath) return;
     lastSynced.current = activePath;
-    void syncOnOpen(activePath);
+    void syncGitOnActiveSpaceOpen(activePath);
   }, [activePath]);
 
   // Single window-focus listener that refreshes status for the active space.
@@ -34,24 +35,7 @@ export function useAppGitFocus() {
     const onFocus = async () => {
       const path = selectActiveSpacePath(getSpaceSnapshot());
       if (!path) return;
-      try {
-        const status = await getGitStatus(path);
-        useGitStore.getState().applyStatus(path, status);
-        if (
-          (await isAutoSyncEnabled(path)) &&
-          status.ahead > 0 &&
-          status.tracking
-        ) {
-          try {
-            const pushed = await pushGit(path);
-            useGitStore.getState().applyStatus(path, pushed);
-          } catch (err) {
-            console.debug("auto-push on focus failed:", err);
-          }
-        }
-      } catch (err) {
-        console.debug("git_status on focus failed:", err);
-      }
+      await refreshGitOnWindowFocus(path);
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);

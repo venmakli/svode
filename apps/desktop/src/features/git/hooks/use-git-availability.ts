@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { checkGitAvailability } from "@/platform/git/git-api";
 import type { GitAvailability } from "../model";
+import { getGitAvailability } from "../api/git-availability-actions";
 
 /**
  * Check if `git` is installed at startup. Returns:
@@ -20,7 +20,7 @@ export function useGitAvailability(): {
 
   const recheck = async () => {
     try {
-      const status = await checkGitAvailability();
+      const status = await getGitAvailability();
       setAvailability(status);
       setAvailable(status.git);
     } catch (err) {

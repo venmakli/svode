@@ -1,15 +1,18 @@
 import { useEffect, useRef } from "react";
-import { listen } from "@/platform/native/events";
-import { useGitStore } from "../model";
+import { refreshGitStatus } from "../api/git-status-actions";
+import {
+  listenGitWatchCommitted,
+  listenGitWatchDirty,
+} from "../api/git-watch-actions";
 
 /**
- * Per-space `space:dirty` listener + initial `git_status` fetch.
+ * Per-space dirty listener + initial git status refresh.
  *
  * Stage-3 triggers for status refresh:
  *  1. Git commands (handled by callers — they pass returned GitStatus
  *     to `applyStatus` directly).
- *  2. `space:dirty` event from file watcher (any file change) → debounced
- *     `git_status` call — implemented here.
+ *  2. Dirty event from file watcher (any file change) → debounced
+ *     git status refresh — implemented here.
  *  3. Window `focus` event + `syncOnOpen` — implemented ONCE at the app level
  *     (see `useAppGitFocus`), not per space row.
  */
@@ -22,17 +25,17 @@ export function useGitWatch(spacePath: string | null) {
     let unlistenCommitted: (() => void) | null = null;
     let cancelled = false;
 
-    // Initial status fetch — cheap, no network.
-    useGitStore.getState().refreshStatus(spacePath);
+    // Initial status refresh — cheap, no network.
+    void refreshGitStatus(spacePath);
 
-    listen<{ space: string }>("space:dirty", (event) => {
+    listenGitWatchDirty((event) => {
       if (cancelled) return;
       if (event.payload.space !== spacePath) return;
       if (debounceRef.current) {
         window.clearTimeout(debounceRef.current);
       }
       debounceRef.current = window.setTimeout(() => {
-        useGitStore.getState().refreshStatus(spacePath);
+        void refreshGitStatus(spacePath);
       }, 500);
     }).then((unlisten) => {
       if (cancelled) {
@@ -44,14 +47,11 @@ export function useGitWatch(spacePath: string | null) {
 
     // Autocommit lands → clear any grey dot shown while the debounce was
     // pending. Refresh immediately, no debounce.
-    listen<{ spacePath: string; repoPath: string }>(
-      "git:committed",
-      (event) => {
-        if (cancelled) return;
-        if (event.payload.spacePath !== spacePath) return;
-        useGitStore.getState().refreshStatus(spacePath);
-      },
-    ).then((unlisten) => {
+    listenGitWatchCommitted((event) => {
+      if (cancelled) return;
+      if (event.payload.spacePath !== spacePath) return;
+      void refreshGitStatus(spacePath);
+    }).then((unlisten) => {
       if (cancelled) {
         unlisten();
       } else {
