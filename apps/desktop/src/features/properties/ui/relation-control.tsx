@@ -33,7 +33,7 @@ import {
   normalizeRelationRoot,
   relationValueForPath,
   resolvedRelationPath,
-} from "../api/relation-api";
+} from "../lib/relation";
 import type { Column, RelationContext, ResolvedRelationEntry } from "../model";
 import { useRelationTargets } from "../hooks/use-relation-targets";
 import { useResolvedRelations } from "../hooks/use-resolved-relations";

@@ -1,3 +1,1 @@
-export * from "./api/relation-api";
-export * from "./api/schema-api";
-export * from "./api/property-actions";
+export { changeSchemaType, deleteSchemaColumn } from "./api/schema-api";
