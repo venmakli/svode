@@ -12,62 +12,21 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useEntrySelectionStore } from "@/features/entry";
-import { useSpaceStore } from "../model";
-import type { TreeNode } from "@/features/entry";
-
-function findTitleInTree(
-  nodes: TreeNode[],
-  targetPath: string,
-): string | null {
-  for (const node of nodes) {
-    if (node.path === targetPath) return node.title;
-    const folderPath = node.path.replace(/\/readme\.md$/i, "");
-    if (folderPath === targetPath) return node.title;
-    if (node.children.length > 0) {
-      const found = findTitleInTree(node.children, targetPath);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-
-function buildSegments(
-  docPath: string,
-  tree: TreeNode[],
-): { label: string; path: string }[] {
-  const parts = docPath.split("/");
-  const segments: { label: string; path: string }[] = [];
-
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i];
-    const cumPath = parts.slice(0, i + 1).join("/");
-
-    if (i === parts.length - 1 && part.toLowerCase() === "readme.md") continue;
-
-    if (i < parts.length - 1) {
-      const title = findTitleInTree(tree, cumPath) ?? part;
-      segments.push({ label: title, path: cumPath + "/readme.md" });
-    } else {
-      const title =
-        findTitleInTree(tree, cumPath) ?? part.replace(/\.md$/, "");
-      segments.push({ label: title, path: cumPath });
-    }
-  }
-
-  return segments;
-}
+import { useMainBreadcrumbs } from "../hooks/use-main-breadcrumbs";
 
 export function MainBreadcrumbs() {
-  const { activeDocument, activeDocumentSpaceId, openDocument } =
-    useEntrySelectionStore();
-  const { spaces, fileTrees, openSpace, activeRootId } = useSpaceStore();
+  const {
+    activeDocument,
+    openDocument,
+    openSpace,
+    selectedSpace,
+    segments,
+    treeId,
+    workspaceName,
+    workspaces,
+  } = useMainBreadcrumbs();
 
   if (!activeDocument) {
-    const selectedSpace =
-      activeDocumentSpaceId && activeDocumentSpaceId !== activeRootId
-        ? spaces.find((space) => space.id === activeDocumentSpaceId)
-        : null;
     if (!selectedSpace) return null;
     return (
       <div className="min-w-0 flex-1 px-2">
@@ -84,18 +43,6 @@ export function MainBreadcrumbs() {
     );
   }
 
-  const activeWorkspace = activeDocumentSpaceId
-    ? spaces.find((w) => w.id === activeDocumentSpaceId)
-    : null;
-  const showWorkspaceName = activeDocumentSpaceId !== activeRootId;
-  const workspaceName = activeWorkspace && showWorkspaceName
-    ? `${activeWorkspace.icon} ${activeWorkspace.name}`
-    : "";
-
-  const treeId = activeDocumentSpaceId;
-  const tree = treeId ? fileTrees[treeId] ?? [] : [];
-  const segments = buildSegments(activeDocument, tree);
-
   const MAX_VISIBLE = 3;
   const needsEllipsis = segments.length > MAX_VISIBLE;
   const visibleSegments = needsEllipsis
@@ -111,7 +58,7 @@ export function MainBreadcrumbs() {
               <BreadcrumbItem className="min-w-0">
                 <WorkspaceBreadcrumb
                   label={workspaceName}
-                  workspaces={spaces}
+                  workspaces={workspaces}
                   onSwitch={openSpace}
                 />
               </BreadcrumbItem>
