@@ -9,11 +9,13 @@ import { useIdentityStore } from "../model";
 export function useIdentityCheck() {
   const load = useIdentityStore((s) => s.load);
   const loaded = useIdentityStore((s) => s.loaded);
+  const loading = useIdentityStore((s) => s.loading);
+  const loadError = useIdentityStore((s) => s.loadError);
 
   useEffect(() => {
-    if (loaded) return;
+    if (loaded || loading || loadError) return;
     void load().catch((err) => {
       console.error("load global identity failed:", err);
     });
-  }, [load, loaded]);
+  }, [load, loaded, loading, loadError]);
 }

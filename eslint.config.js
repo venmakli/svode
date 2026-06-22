@@ -29,7 +29,6 @@ const allowedFeatureSubpathExceptions = new Set([
   "@/features/git/editor",
   "@/features/git/sidebar",
   "@/features/identity/app-shell",
-  "@/features/identity/effective",
   "@/features/properties/api",
   "@/features/properties/column-settings",
   "@/features/properties/control",
