@@ -1,8 +1,10 @@
 export {
+  getGlobalIdentity,
   getProjectFanoutPreview,
   getRepoIdentity,
+  saveGlobalIdentity,
   saveProjectIdentity,
   saveRepoIdentity,
   type SaveProjectIdentityInput,
   type SaveRepoIdentityInput,
-} from "@/features/identity";
+} from "./identity-api";

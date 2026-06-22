@@ -3,12 +3,27 @@ export {
   AVATAR_COLORS,
 } from "./lib";
 export { IdentityDialog } from "./ui/identity-dialog";
-export { useIdentityStore } from "./model";
 export type {
   FanoutPreviewEntry,
   GitIdentity,
   GlobalIdentityResult,
   RepoIdentityResult,
 } from "./model";
-export { useIdentityCheck } from "./hooks/use-identity-check";
+export {
+  getGlobalIdentity,
+  getProjectFanoutPreview,
+  getRepoIdentity,
+  saveGlobalIdentity,
+  saveProjectIdentity,
+  saveRepoIdentity,
+  type SaveProjectIdentityInput,
+  type SaveRepoIdentityInput,
+} from "./api";
+export {
+  useGlobalIdentity,
+  useIdentityCheck,
+  useIdentityGateState,
+  useIdentityRefreshNotifier,
+  useSaveGlobalIdentity,
+} from "./hooks";
 export { isValidEmail, isValidName } from "./lib";

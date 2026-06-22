@@ -18,7 +18,7 @@ import {
 } from "@/features/git";
 import { useAppGitFocus } from "@/features/git/app-shell";
 import { avatarColorFromEmail } from "@/features/identity";
-import { useEffectiveIdentity } from "@/features/identity/effective";
+import { useEffectiveIdentity } from "@/features/identity/app-shell";
 import { useShellStore } from "./model";
 import { InboxSurface, SessionsSurface } from "./main-surfaces";
 import { ActiveSpaceContent } from "./active-space-content";

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
+import { getGlobalIdentity, saveGlobalIdentity } from "../api";
 import type { GitIdentity, GlobalIdentityResult } from "./types";
 
 interface IdentityState {
@@ -19,7 +19,7 @@ export const useIdentityStore = create<IdentityState>((set, get) => ({
   refreshVersion: 0,
 
   load: async () => {
-    const result = await invoke<GlobalIdentityResult>("get_git_identity");
+    const result: GlobalIdentityResult = await getGlobalIdentity();
     set({
       global: result.global,
       source: result.source,
@@ -29,7 +29,7 @@ export const useIdentityStore = create<IdentityState>((set, get) => ({
   },
 
   saveGlobal: async (name, email) => {
-    await invoke("set_git_identity", { name, email });
+    await saveGlobalIdentity(name, email);
     await get().load();
   },
 

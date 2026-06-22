@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { useSpace, selectActiveSpacePath } from "@/features/space";
+import { getRepoIdentity } from "../api";
 import { useIdentityStore } from "../model";
 import type { GitIdentity, RepoIdentityResult } from "../model";
 
@@ -33,9 +33,7 @@ export function useEffectiveIdentity(): EffectiveIdentity {
     setLoading(true);
     (async () => {
       try {
-        const result = await invoke<RepoIdentityResult>("get_repo_identity", {
-          repoPath: spacePath,
-        });
+        const result: RepoIdentityResult = await getRepoIdentity(spacePath);
         if (cancelled) return;
         setIdentity(result.effective ?? global);
       } catch (err) {

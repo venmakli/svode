@@ -4,12 +4,13 @@ import * as m from "@/paraglide/messages.js";
 import {
   isValidEmail,
   isValidName,
-  useIdentityStore,
+  useGlobalIdentity,
+  useSaveGlobalIdentity,
 } from "@/features/identity";
 
 export function useGlobalIdentitySettings(open: boolean) {
-  const identityGlobal = useIdentityStore((state) => state.global);
-  const saveGlobalIdentity = useIdentityStore((state) => state.saveGlobal);
+  const identityGlobal = useGlobalIdentity();
+  const saveGlobalIdentity = useSaveGlobalIdentity();
   const [identityName, setIdentityName] = useState("");
   const [identityEmail, setIdentityEmail] = useState("");
   const [savingIdentity, setSavingIdentity] = useState(false);

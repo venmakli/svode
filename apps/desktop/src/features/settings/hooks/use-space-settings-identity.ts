@@ -4,7 +4,7 @@ import * as m from "@/paraglide/messages.js";
 import {
   isValidEmail,
   isValidName,
-  useIdentityStore,
+  useIdentityRefreshNotifier,
   type FanoutPreviewEntry,
   type RepoIdentityResult,
 } from "@/features/identity";
@@ -26,9 +26,7 @@ export function useSpaceSettingsIdentity({
   spacePath,
   isRoot,
 }: UseSpaceSettingsIdentityOptions) {
-  const bumpIdentityVersion = useIdentityStore(
-    (state) => state.bumpRefreshVersion,
-  );
+  const bumpIdentityVersion = useIdentityRefreshNotifier();
   const [repoIdentity, setRepoIdentity] = useState<RepoIdentityResult | null>(
     null,
   );

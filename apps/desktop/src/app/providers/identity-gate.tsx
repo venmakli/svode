@@ -1,13 +1,12 @@
 import { Outlet } from "@tanstack/react-router";
 import { IdentityDialog } from "@/features/identity";
 import { useIdentityCheck } from "@/features/identity";
-import { useIdentityStore } from "@/features/identity";
+import { useIdentityGateState } from "@/features/identity";
 import { SettingsDialogs } from "./settings-dialogs";
 
 export function IdentityGate() {
   useIdentityCheck();
-  const loaded = useIdentityStore((state) => state.loaded);
-  const source = useIdentityStore((state) => state.source);
+  const { loaded, source } = useIdentityGateState();
 
   if (!loaded) {
     return <div className="h-screen w-screen" />;

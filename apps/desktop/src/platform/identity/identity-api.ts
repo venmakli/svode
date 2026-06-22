@@ -5,6 +5,11 @@ export interface GitIdentityDto {
   email: string;
 }
 
+export interface GlobalIdentityResultDto {
+  global: GitIdentityDto | null;
+  source: "global" | "missing";
+}
+
 export interface RepoIdentityResultDto {
   local: GitIdentityDto | null;
   effective: GitIdentityDto | null;
@@ -29,6 +34,21 @@ export interface SaveProjectIdentityInputDto extends Record<string, unknown> {
   name: string | null;
   email: string | null;
   targetSpaces: string[];
+}
+
+export interface SaveGlobalIdentityInputDto extends Record<string, unknown> {
+  name: string;
+  email: string;
+}
+
+export function getGlobalIdentity(): Promise<GlobalIdentityResultDto> {
+  return invokeCommand<GlobalIdentityResultDto>("get_git_identity");
+}
+
+export function saveGlobalIdentity(
+  input: SaveGlobalIdentityInputDto,
+): Promise<void> {
+  return invokeCommand<void>("set_git_identity", input);
 }
 
 export function getRepoIdentity(
