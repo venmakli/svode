@@ -92,6 +92,7 @@ export function ShellChrome() {
 export function WindowHeader() {
   const activeDocument = useEntrySelectionStore((state) => state.activeDocument);
   const toggleChatPanel = useShellStore((state) => state.toggleChatPanel);
+  const mainSurface = useShellStore((state) => state.mainSurface);
   const { activeRootId, activeRootName, activeRootPath } = useSpace();
   const { state } = useSidebar();
   const matches = useMatches();
@@ -105,6 +106,7 @@ export function WindowHeader() {
 
   // Check if we're on the /space route
   const isSpaceRoute = matches.some((match) => match.fullPath === "/space");
+  const showBreadcrumbs = isSpaceRoute && mainSurface === "content";
   const sidebarHidden = state === "collapsed";
 
   return (
@@ -121,7 +123,7 @@ export function WindowHeader() {
       )}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        {isSpaceRoute && <MainBreadcrumbs />}
+        {showBreadcrumbs && <MainBreadcrumbs />}
       </div>
 
       <div className="flex shrink-0 items-center gap-1">

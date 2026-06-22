@@ -122,6 +122,7 @@ export function NavSpaces({
               refreshing={treeRefreshing[activeRootId] ?? false}
               treeLoaded={hasRecordKey(fileTrees, activeRootId)}
               loadTreeChildren={loadTreeChildren}
+              onActivateContent={onActivateContent}
             />
             <DndContext
               sensors={sensors}
@@ -160,6 +161,7 @@ export function NavSpaces({
                       handleRemoveBroken={handleRemoveBroken}
                       ensureTreeLoaded={ensureTreeLoaded}
                       loadTreeChildren={loadTreeChildren}
+                      onActivateContent={onActivateContent}
                       editRef={editRef}
                       rootPath={activeRootPath}
                       loading={treeLoading[space.id] ?? false}

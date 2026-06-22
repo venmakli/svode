@@ -80,6 +80,7 @@ interface SpaceRowProps {
     spaceId: string,
     parentPath?: string | null,
   ) => Promise<void>;
+  onActivateContent: () => void;
   editRef: RefObject<HTMLInputElement | null>;
   rootPath: string;
   loading: boolean;
@@ -106,6 +107,7 @@ export function SpaceRow({
   handleRemoveBroken,
   ensureTreeLoaded,
   loadTreeChildren,
+  onActivateContent,
   editRef,
   rootPath,
   loading,
@@ -338,6 +340,7 @@ export function SpaceRow({
                     node={node}
                     spaceId={ws.id}
                     loadTreeChildren={loadTreeChildren}
+                    onActivateContent={onActivateContent}
                   />
                 ))}
               </SidebarMenuSub>

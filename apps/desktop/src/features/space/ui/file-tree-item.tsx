@@ -60,12 +60,14 @@ interface FileTreeItemProps {
     spaceId: string,
     parentPath?: string | null,
   ) => Promise<void>;
+  onActivateContent?: () => void;
 }
 
 export function FileTreeItem({
   node,
   spaceId,
   loadTreeChildren,
+  onActivateContent,
 }: FileTreeItemProps) {
   const {
     bareFolder,
@@ -94,7 +96,12 @@ export function FileTreeItem({
     knownChildren,
     setEditValue,
     space,
-  } = useFileTreeItemActions({ node, spaceId, loadTreeChildren });
+  } = useFileTreeItemActions({
+    node,
+    spaceId,
+    loadTreeChildren,
+    onActivateContent,
+  });
 
   const { activeId, activeFolderPath, overId, projection, flatItemsMap } =
     useContext(TreeDndContext);
@@ -360,6 +367,7 @@ export function FileTreeItem({
                     node={child}
                     spaceId={spaceId}
                     loadTreeChildren={loadTreeChildren}
+                    onActivateContent={onActivateContent}
                   />
                 ))
               )}

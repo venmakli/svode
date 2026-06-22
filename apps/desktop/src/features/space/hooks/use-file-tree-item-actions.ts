@@ -16,6 +16,7 @@ interface UseFileTreeItemActionsInput {
   node: TreeNode;
   spaceId: string;
   loadTreeChildren: LoadTreeChildren;
+  onActivateContent?: () => void;
 }
 
 function isBareFolder(node: TreeNode): boolean {
@@ -26,8 +27,10 @@ export function useFileTreeItemActions({
   node,
   spaceId,
   loadTreeChildren,
+  onActivateContent,
 }: UseFileTreeItemActionsInput) {
-  const { openDocument, activeDocument } = useEntrySelectionStore();
+  const { openDocument, activeDocument, activeDocumentSpaceId } =
+    useEntrySelectionStore();
   const isUnsaved = useEditorFilePendingWrite(node.path);
   const {
     expandedPaths,
@@ -52,7 +55,10 @@ export function useFileTreeItemActions({
   const childLoading = childParentKey
     ? (treeParentLoading[spaceId]?.[childParentKey] ?? false)
     : false;
-  const isActive = !bareFolder && activeDocument === node.path;
+  const isActive =
+    !bareFolder &&
+    activeDocument === node.path &&
+    activeDocumentSpaceId === spaceId;
   const space =
     spaces.find((item) => item.id === spaceId) ??
     rootSpaces.find((item) => item.id === spaceId);
@@ -103,6 +109,7 @@ export function useFileTreeItemActions({
     activeRootId,
     activeSpaceId,
     loadTreeChildren,
+    onActivateContent,
     openDocument,
     toggleExpanded,
   });

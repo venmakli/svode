@@ -54,6 +54,7 @@ interface RootScopeRowProps {
     spaceId: string,
     parentPath?: string | null,
   ) => Promise<void>;
+  onActivateContent: () => void;
 }
 
 export function RootScopeRow({
@@ -75,6 +76,7 @@ export function RootScopeRow({
   refreshing,
   treeLoaded,
   loadTreeChildren,
+  onActivateContent,
 }: RootScopeRowProps) {
   return (
     <Collapsible asChild open={open} onOpenChange={onOpenChange}>
@@ -139,6 +141,7 @@ export function RootScopeRow({
                     node={node}
                     spaceId={spaceId}
                     loadTreeChildren={loadTreeChildren}
+                    onActivateContent={onActivateContent}
                   />
                 ))}
               </SidebarMenuSub>

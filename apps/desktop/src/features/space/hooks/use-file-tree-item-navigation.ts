@@ -14,6 +14,7 @@ interface UseFileTreeItemNavigationInput {
   activeRootId: string | null;
   activeSpaceId: string | null;
   loadTreeChildren: LoadTreeChildren;
+  onActivateContent?: () => void;
   openDocument: (path: string, spaceId: string) => void;
   toggleExpanded: (spaceId: string, path: string) => void;
 }
@@ -26,10 +27,12 @@ export function useFileTreeItemNavigation({
   activeRootId,
   activeSpaceId,
   loadTreeChildren,
+  onActivateContent,
   openDocument,
   toggleExpanded,
 }: UseFileTreeItemNavigationInput) {
   function activateDocumentNode() {
+    onActivateContent?.();
     const isRootWorkspace = spaceId === activeRootId;
     if (isRootWorkspace && activeSpaceId) {
       useSpaceStore.getState().clearActiveSpace();
