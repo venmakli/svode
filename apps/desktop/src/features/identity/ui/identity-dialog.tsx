@@ -33,7 +33,7 @@ export function IdentityDialog({ open }: { open: boolean }) {
     try {
       await saveGlobal(name.trim(), email.trim());
     } catch (err) {
-      console.error("set_git_identity failed:", err);
+      console.error("save global identity failed:", err);
       toast.error(m.toast_error());
     } finally {
       setSaving(false);

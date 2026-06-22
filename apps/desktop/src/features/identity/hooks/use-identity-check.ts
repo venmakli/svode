@@ -13,7 +13,7 @@ export function useIdentityCheck() {
   useEffect(() => {
     if (loaded) return;
     void load().catch((err) => {
-      console.error("get_git_identity failed:", err);
+      console.error("load global identity failed:", err);
     });
   }, [load, loaded]);
 }

@@ -38,7 +38,7 @@ export function useEffectiveIdentity(): EffectiveIdentity {
         setIdentity(result.effective ?? global);
       } catch (err) {
         if (!cancelled) {
-          console.warn("get_repo_identity failed:", err);
+          console.warn("load effective identity failed:", err);
           setIdentity(global);
         }
       } finally {
