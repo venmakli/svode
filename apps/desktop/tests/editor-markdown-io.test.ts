@@ -43,6 +43,17 @@ const fixtures = {
     "  - nested bullet",
   ].join("\n"),
   codeBlockWithPipes: ["```ts", 'const row = "a | b | c";', "```"].join("\n"),
+  codeWithBareBr: [
+    "```html",
+    "<br>",
+    "```",
+    "",
+    "Inline code keeps `<br>` literal.",
+    "",
+    "| Area | Status |",
+    "| --- | --- |",
+    "| Parser | first line<br>second line |",
+  ].join("\n"),
   inlineHtml: "GitHub-style inline <kbd>Cmd</kbd> hint with normal text.",
   linksAndImages: "See [docs](./docs.md) and ![diagram](./assets/diagram.png).",
   frontmatterAndBody: ["---", "title: Fixture", "---", "# Body"].join("\n"),
@@ -171,7 +182,6 @@ test("toolbar markdown import decision delegates to the injected editor insertio
   const editor = createMarkdownEditor();
   let importedText: string | null = null;
   const value = deserializeImportedMarkdown(
-    editor,
     fixtures.gfmTableBareBr,
     (text) => {
       importedText = text;
@@ -201,6 +211,14 @@ test("real-world markdown fixtures remain crash-free under structural validation
     const value = deserializeWithConflicts(editor, markdown);
     expect(validateStructure(value).errors).toEqual([]);
   }
+});
+
+test("read-time br normalization preserves code literals", () => {
+  const normalized = normalizeMarkdownForPlate(fixtures.codeWithBareBr);
+
+  expect(normalized).toContain(["```html", "<br>", "```"].join("\n"));
+  expect(normalized).toContain("`<br>`");
+  expect(normalized).toContain("first line<br />second line");
 });
 
 test("stable markdown serializer style uses hyphen bullets", () => {

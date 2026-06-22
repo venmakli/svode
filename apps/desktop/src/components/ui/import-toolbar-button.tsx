@@ -5,11 +5,10 @@ import * as React from "react";
 import type { DropdownMenuProps } from "@radix-ui/react-dropdown-menu";
 
 import { importDocx } from "@platejs/docx-io";
-import { MarkdownPlugin } from "@platejs/markdown";
 import { ArrowUpToLineIcon } from "lucide-react";
 import type { Descendant } from "platejs";
 import { getEditorDOMFromHtmlString } from "platejs/static";
-import { type PlateEditor, useEditorRef } from "platejs/react";
+import { useEditorRef } from "platejs/react";
 import { useFilePicker } from "use-file-picker";
 
 import {
@@ -30,13 +29,10 @@ interface ImportToolbarButtonProps extends DropdownMenuProps {
 }
 
 export function deserializeImportedMarkdown(
-  editor: PlateEditor,
   text: string,
-  deserializeMarkdown?: MarkdownDeserializer,
+  deserializeMarkdown: MarkdownDeserializer,
 ): Descendant[] {
-  const nodes =
-    deserializeMarkdown?.(text) ??
-    editor.getApi(MarkdownPlugin).markdown.deserialize(text);
+  const nodes = deserializeMarkdown(text);
 
   return Array.isArray(nodes) ? (nodes as Descendant[]) : [];
 }
@@ -59,7 +55,9 @@ export function ImportToolbarButton({
     }
 
     if (type === "markdown") {
-      return deserializeImportedMarkdown(editor, text, deserializeMarkdown);
+      return deserializeMarkdown
+        ? deserializeImportedMarkdown(text, deserializeMarkdown)
+        : [];
     }
 
     return [];
@@ -118,13 +116,15 @@ export function ImportToolbarButton({
             Import from HTML
           </DropdownMenuItem>
 
-          <DropdownMenuItem
-            onSelect={() => {
-              openMdFilePicker();
-            }}
-          >
-            Import from Markdown
-          </DropdownMenuItem>
+          {deserializeMarkdown ? (
+            <DropdownMenuItem
+              onSelect={() => {
+                openMdFilePicker();
+              }}
+            >
+              Import from Markdown
+            </DropdownMenuItem>
+          ) : null}
 
           <DropdownMenuItem
             onSelect={() => {

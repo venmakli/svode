@@ -26,7 +26,7 @@ interface UseFileWatcherOptions {
   /** True while a debounce-auto-save is pending for the active document — local-wins. */
   isDebouncePendingRef: React.RefObject<boolean>;
   isLoadingRef: React.RefObject<boolean>;
-  onEditorValueReload?: (path: string, value: Descendant[]) => Descendant[];
+  onEditorValueReload: (path: string, value: Descendant[]) => Descendant[];
   onEntryReloaded?: (entry: Awaited<ReturnType<typeof readEntry>>) => void;
 }
 
@@ -100,10 +100,7 @@ export function useFileWatcher({
             isLoadingRef.current = true;
             try {
               const value = deserializeWithConflicts(editor, entry.body);
-              const loadedValue = onEditorValueReload
-                ? onEditorValueReload(changedPath, value)
-                : value;
-              if (!onEditorValueReload) editor.tf.setValue(value as never);
+              const loadedValue = onEditorValueReload(changedPath, value);
               setCachedDocumentValue(spacePath, changedPath, loadedValue);
               onEntryReloaded?.(entry);
             } finally {

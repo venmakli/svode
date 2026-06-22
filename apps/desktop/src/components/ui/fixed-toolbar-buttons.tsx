@@ -85,7 +85,9 @@ export function FixedToolbarButtons({
                 <ArrowUpToLineIcon />
               </ExportToolbarButton>
 
-              <ImportToolbarButton deserializeMarkdown={deserializeMarkdown} />
+              {deserializeMarkdown ? (
+                <ImportToolbarButton deserializeMarkdown={deserializeMarkdown} />
+              ) : null}
             </ToolbarGroup>
           )}
 
