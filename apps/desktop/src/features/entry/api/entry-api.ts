@@ -1,8 +1,16 @@
 import {
+  deleteEntry as deleteEntryDto,
+  duplicateEntry as duplicateEntryDto,
+  readEntry as readEntryDto,
   updateEntryField as updateEntryFieldDto,
   type EntryDto,
 } from "@/platform/entries/entries-api";
 import type { CoverColorName, Entry, EntryCover } from "../model/types";
+
+export interface ReadEntryInput {
+  spacePath: string;
+  path: string;
+}
 
 export interface UpdateEntryFieldInput {
   spacePath: string;
@@ -10,6 +18,18 @@ export interface UpdateEntryFieldInput {
   field: string;
   value: unknown;
   projectPath: string | null;
+}
+
+export interface DeleteEntryInput {
+  spacePath: string;
+  path: string;
+  projectPath?: string | null;
+}
+
+export interface DuplicateEntryInput {
+  spacePath: string;
+  filePath: string;
+  projectPath?: string | null;
 }
 
 const COVER_COLOR_NAMES = new Set<CoverColorName>([
@@ -25,6 +45,11 @@ const COVER_COLOR_NAMES = new Set<CoverColorName>([
   "brown",
 ]);
 
+export async function readEntry(input: ReadEntryInput): Promise<Entry> {
+  const entry = await readEntryDto(input.spacePath, input.path);
+  return entryFromDto(entry);
+}
+
 export async function updateEntryField(
   input: UpdateEntryFieldInput,
 ): Promise<Entry> {
@@ -34,6 +59,25 @@ export async function updateEntryField(
     field: input.field,
     value: input.value,
     projectPath: input.projectPath,
+  });
+  return entryFromDto(entry);
+}
+
+export function deleteEntry(input: DeleteEntryInput): Promise<void> {
+  return deleteEntryDto({
+    space: input.spacePath,
+    path: input.path,
+    projectPath: input.projectPath ?? null,
+  });
+}
+
+export async function duplicateEntry(
+  input: DuplicateEntryInput,
+): Promise<Entry> {
+  const entry = await duplicateEntryDto({
+    space: input.spacePath,
+    filePath: input.filePath,
+    projectPath: input.projectPath ?? null,
   });
   return entryFromDto(entry);
 }

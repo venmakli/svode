@@ -5,8 +5,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EntryIdentityHeader } from "@/features/editor";
 import { PlateDocumentEditor } from "@/features/editor";
 import {
+  deleteEntry as deleteEntryApi,
+  duplicateEntry as duplicateEntryApi,
   isEntryTreeMetaField,
+  readEntry,
   useEntryFieldSave,
+  useEntrySelectionStore,
   type Entry,
   type EntryCover,
 } from "@/features/entry";
@@ -17,10 +21,8 @@ import {
 } from "@/features/properties";
 import { propertyFieldSavePolicy } from "@/features/properties/entry-save-policy";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
-import { useEntrySelectionStore } from "@/features/entry";
 import { useSpaceTreeSync } from "@/features/space";
 import { logTiming, nowMs } from "@/shared/lib/performance";
-import { readEntry } from "@/platform/entries/entries-api";
 import { DeleteDialogs } from "./delete-dialogs";
 import {
   EntryDetailActions,
@@ -109,7 +111,7 @@ export function EntryDocumentScreen({
     setDetailState(null);
     try {
       const [nextEntry, nextSchemaResult, nextDetailState] = await Promise.all([
-        readEntry(spacePath, documentPath) as Promise<Entry>,
+        readEntry({ spacePath, path: documentPath }),
         invoke<EntrySchemaResult | null>("get_entry_schema", {
           space: spacePath,
           filePath: documentPath,
@@ -168,8 +170,8 @@ export function EntryDocumentScreen({
   }
 
   async function deleteCurrentEntry(entryToDelete: Entry) {
-    await invoke("delete_entry", {
-      space: spacePath,
+    await deleteEntryApi({
+      spacePath,
       path: entryToDelete.path,
       projectPath: projectPath ?? null,
     });
@@ -179,8 +181,8 @@ export function EntryDocumentScreen({
   }
 
   async function duplicateCurrentEntry(entryToDuplicate: Entry) {
-    const duplicated = await invoke<Entry>("duplicate_entry", {
-      space: spacePath,
+    const duplicated = await duplicateEntryApi({
+      spacePath,
       filePath: entryToDuplicate.path,
       projectPath: projectPath ?? null,
     });

@@ -25,8 +25,15 @@ import {
   detailPageHeaderClassName,
   detailPageToolbarClassName,
 } from "@/shared/ui/page-layout";
-import { isEntryTreeMetaField, useEntryFieldSave } from "@/features/entry";
-import { useEntrySelectionStore } from "@/features/entry";
+import {
+  deleteEntry as deleteEntryApi,
+  duplicateEntry as duplicateEntryApi,
+  isEntryTreeMetaField,
+  useEntryFieldSave,
+  useEntrySelectionStore,
+  type Entry,
+  type EntryCover,
+} from "@/features/entry";
 import { useSpaceTreeSync } from "@/features/space";
 import { useViewQuery } from "@/features/collection/query";
 import { DeleteDialogs } from "./delete-dialogs";
@@ -73,7 +80,6 @@ import {
 } from "../model";
 import type { CollectionView, ViewType } from "@/features/collection/query";
 import type { CollectionSchema } from "@/features/properties";
-import type { Entry, EntryCover } from "@/features/entry";
 import * as m from "@/paraglide/messages.js";
 
 interface CollectionScreenProps {
@@ -703,8 +709,8 @@ export function CollectionScreen({
   }
 
   async function duplicateRow(entryToDuplicate: Entry) {
-    const duplicated = await invoke<Entry>("duplicate_entry", {
-      space: spacePath,
+    const duplicated = await duplicateEntryApi({
+      spacePath,
       filePath: entryToDuplicate.path,
       projectPath: projectPath ?? null,
     });
@@ -714,8 +720,8 @@ export function CollectionScreen({
   }
 
   async function deleteRow(entryToDelete: Entry) {
-    await invoke("delete_entry", {
-      space: spacePath,
+    await deleteEntryApi({
+      spacePath,
       path: entryToDelete.path,
       projectPath: projectPath ?? null,
     });
@@ -726,8 +732,8 @@ export function CollectionScreen({
   }
 
   async function duplicateDetailEntry(entryToDuplicate: Entry) {
-    const duplicated = await invoke<Entry>("duplicate_entry", {
-      space: spacePath,
+    const duplicated = await duplicateEntryApi({
+      spacePath,
       filePath: entryToDuplicate.path,
       projectPath: projectPath ?? null,
     });

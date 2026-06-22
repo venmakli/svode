@@ -1,1 +1,1 @@
-export * from "./entry-field-api";
+export * from "./entry-api";

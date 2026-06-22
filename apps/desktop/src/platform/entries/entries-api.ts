@@ -106,6 +106,14 @@ export function deleteEntry(input: {
   return invokeCommand<void>("delete_entry", { ...input });
 }
 
+export function duplicateEntry(input: {
+  space: string;
+  filePath: string;
+  projectPath: string | null;
+}): Promise<EntryDto> {
+  return invokeCommand<EntryDto>("duplicate_entry", { ...input });
+}
+
 export function getBacklinks(input: {
   space: string;
   targetPath: string;
