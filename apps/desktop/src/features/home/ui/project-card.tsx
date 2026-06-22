@@ -40,6 +40,7 @@ export function ProjectCard({ project, onClick, onDelete }: ProjectCardProps) {
         className="flex items-center gap-3 rounded-md px-3 py-2.5 hover:bg-accent cursor-pointer transition-colors group"
         onClick={onClick}
         onKeyDown={(e) => {
+          if (e.currentTarget !== e.target) return;
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             onClick();
