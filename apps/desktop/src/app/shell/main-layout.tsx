@@ -4,7 +4,10 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { useKeyboardShortcuts } from "./hooks/use-keyboard-shortcuts";
 import { ShellChrome, WindowHeader } from "./window-header";
-import { CommandPalette, useOpenCommandPalette } from "@/features/search";
+import {
+  CommandPalette,
+  useOpenCommandPalette,
+} from "@/features/search/app-shell";
 import { TerminalPanelHost } from "@/features/terminal";
 import { useSpace, useSpaceActions } from "@/features/space";
 import { SpaceFileWatcher, SpaceSidebar } from "@/features/space/app-shell";

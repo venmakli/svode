@@ -51,7 +51,7 @@ import { cn } from "@/shared/lib/utils";
 import { useEditorStore } from "../model";
 import { useEntrySelectionStore } from "@/features/entry";
 import { useSpace } from "@/features/space";
-import type { SearchItem } from "@/features/search";
+import type { SearchItem } from "@/features/search/query";
 import * as m from "@/paraglide/messages.js";
 import {
   absoluteDocumentPath,

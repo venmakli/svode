@@ -15,7 +15,7 @@ import {
 import { FileText } from "lucide-react";
 import { useSpace } from "@/features/space";
 import { useEntrySelectionStore } from "@/features/entry";
-import type { SearchItem } from "@/features/search";
+import type { SearchItem } from "@/features/search/query";
 import {
   absoluteDocumentPath,
   findSpaceById,

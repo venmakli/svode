@@ -1,5 +1,5 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
-import { searchEntriesByTitle, type SearchItem } from "@/features/search";
+import { searchEntriesByTitle, type SearchItem } from "@/features/search/query";
 import type { TreeNode } from "@/features/entry";
 import type { SpaceInfo } from "@/features/space";
 

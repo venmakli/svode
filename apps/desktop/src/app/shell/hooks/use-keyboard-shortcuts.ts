@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
 import { useEntrySelectionStore } from "@/features/entry";
-import { useToggleCommandPalette } from "@/features/search";
+import { useToggleCommandPalette } from "@/features/search/app-shell";
 import { useSpace } from "@/features/space";
 import { isTerminalKeyboardEvent } from "@/features/terminal";
 import { useShellStore } from "../model";

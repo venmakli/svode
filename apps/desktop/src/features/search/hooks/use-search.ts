@@ -39,9 +39,12 @@ export function useSearch(
 
   useEffect(() => {
     let cancelled = false;
+    const id = ++reqId.current;
+    const isCurrent = () => !cancelled && id === reqId.current;
+
     if (!projectPath) {
       queueMicrotask(() => {
-        if (!cancelled) setState({ query, isEmpty: true, ...EMPTY_STATE });
+        if (isCurrent()) setState({ query, isEmpty: true, ...EMPTY_STATE });
       });
       return () => {
         cancelled = true;
@@ -49,10 +52,9 @@ export function useSearch(
     }
 
     const trimmed = query.trim();
-    const id = ++reqId.current;
     const isEmpty = trimmed.length === 0;
     queueMicrotask(() => {
-      if (!cancelled) {
+      if (isCurrent()) {
         setState((s) => ({ ...s, query, isEmpty, isLoading: true }));
       }
     });
@@ -64,7 +66,7 @@ export function useSearch(
         limit: LIMIT,
       })
         .then((res) => {
-          if (id !== reqId.current) return;
+          if (!isCurrent()) return;
           setState({
             query,
             isEmpty: true,
@@ -75,8 +77,8 @@ export function useSearch(
           });
         })
         .catch((err) => {
+          if (!isCurrent()) return;
           console.error("recentEntries failed:", err);
-          if (id !== reqId.current) return;
           setState({ query, isEmpty: true, ...EMPTY_STATE });
         });
       return () => {
@@ -99,7 +101,7 @@ export function useSearch(
         }),
       ])
         .then(([titleRes, ftsRes]) => {
-          if (id !== reqId.current) return;
+          if (!isCurrent()) return;
           const titleKeys = new Set(titleRes.items.map(dedupKey));
           const dedupedFts = ftsRes.items.filter(
             (it) => !titleKeys.has(dedupKey(it)),
@@ -120,8 +122,8 @@ export function useSearch(
           });
         })
         .catch((err) => {
+          if (!isCurrent()) return;
           console.error("search failed:", err);
-          if (id !== reqId.current) return;
           setState({ query, isEmpty: false, ...EMPTY_STATE });
         });
     }, DEBOUNCE_MS);
