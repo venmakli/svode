@@ -28,8 +28,11 @@ import {
   valueToString,
 } from "../lib/utils";
 import * as m from "@/paraglide/messages.js";
-import { RelationValue } from "./relation-control";
-import { copyPropertyValue, openPropertyExternal } from "../api/property-actions";
+import { RelationValue } from "./relation-value";
+import {
+  copyPropertyValue,
+  openPropertyExternal,
+} from "../api/property-actions";
 
 export function PropertyValueActions({
   column,
