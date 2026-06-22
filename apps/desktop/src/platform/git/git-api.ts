@@ -5,6 +5,7 @@ import {
   type UnlistenFn,
 } from "@/platform/native/events";
 import type {
+  CloneProgressDto,
   GitAvailabilityDto,
   GitStatusDto,
   SyncResultDto,
@@ -113,6 +114,14 @@ export function listenGitCommitted(
   handler: EventCallback<GitCommittedEventDto>,
 ): Promise<UnlistenFn> {
   return listen<GitCommittedEventDto>("git:committed", handler);
+}
+
+export function listenCloneProgress(
+  handler: (progress: CloneProgressDto) => void,
+): Promise<UnlistenFn> {
+  return listen<CloneProgressDto>("clone:progress", (event) =>
+    handler(event.payload),
+  );
 }
 
 export function getUnpushedCommits(

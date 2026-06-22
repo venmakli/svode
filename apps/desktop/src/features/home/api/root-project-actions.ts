@@ -1,11 +1,14 @@
 import { pickDirectory } from "@/platform/filesystem/native-file-picker";
 import { pathExists } from "@/platform/filesystem/path-api";
-import { listen } from "@/platform/native/events";
+import { listenCloneProgress } from "@/platform/git/git-api";
 import { cloneProject } from "@/platform/space/space-api";
-import type { CloneProgressDto } from "@/platform/git/git-types";
 import type { SpaceInfo } from "@/features/space";
 
-export type RootProjectCloneProgress = CloneProgressDto;
+export interface RootProjectCloneProgress {
+  spacePath: string;
+  phase: string;
+  percent: number;
+}
 
 export function pickRootProjectFolder(): Promise<string | null> {
   return pickDirectory();
@@ -25,7 +28,5 @@ export function cloneRootProject(
 export function listenRootProjectCloneProgress(
   handler: (progress: RootProjectCloneProgress) => void,
 ): Promise<() => void> {
-  return listen<RootProjectCloneProgress>("clone:progress", (event) =>
-    handler(event.payload),
-  );
+  return listenCloneProgress(handler);
 }
