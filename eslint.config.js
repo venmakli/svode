@@ -24,9 +24,13 @@ const allowedFeatureSubpathExceptions = new Set([
   // Public feature subentrypoints that intentionally avoid wider root barrels.
   "@/features/collection/ui",
   "@/features/editor/file-tree-sync",
+  "@/features/entry/model",
   "@/features/git/app-shell",
   "@/features/git/sidebar",
   "@/features/identity/effective",
+  "@/features/properties/api",
+  "@/features/properties/ui",
+  "@/features/search/app-shell",
   "@/features/space/app-shell",
   // Legacy migration exceptions pending narrower public APIs.
   "@/features/editor/model",
