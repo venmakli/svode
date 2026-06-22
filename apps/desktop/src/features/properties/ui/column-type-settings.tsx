@@ -17,7 +17,6 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import {
   AlertTriangle,
   GripVertical,
@@ -47,14 +46,27 @@ import type {
   PropertyOption,
   RelationTwoWayDiagnostics,
   StatusGroup,
-} from "@/features/properties";
+} from "../model/types";
+import {
+  addOption as addOptionApi,
+  deleteOption as deleteOptionApi,
+  getCollectionSchema,
+  listCollectionOptions,
+  normalizeUniqueIdCounter,
+  renameOption as renameOptionApi,
+  updateOption as updateOptionApi,
+  updateSchemaColumn,
+} from "../api/schema-api";
 import {
   diagnoseTwoWayRelation,
   repairTwoWayRelation,
-} from "@/features/properties/api";
-import { STATUS_GROUPS } from "@/features/properties";
-import { SettingsRow, SettingsSection } from "../settings-row";
+} from "../api/relation-api";
+import { STATUS_GROUPS } from "../lib/utils";
 import { ColorPicker } from "./color-picker";
+import {
+  PropertySettingsRow,
+  PropertySettingsSection,
+} from "./property-settings-row";
 import * as m from "@/paraglide/messages.js";
 
 function deferStateUpdate(update: () => void) {
@@ -73,15 +85,32 @@ export function TypeSettingsPane({
   collectionPath,
   projectPath,
   onSchemaChange,
-  onPatchColumn,
 }: {
   column: Column;
   spacePath: string;
   collectionPath: string;
   projectPath?: string | null;
   onSchemaChange: (schema: CollectionSchema) => void;
-  onPatchColumn: (patch: Record<string, unknown>) => void | Promise<void>;
 }) {
+  const patchColumn = useCallback(
+    async (patch: Record<string, unknown>) => {
+      try {
+        const next = await updateSchemaColumn({
+          spacePath,
+          collectionPath,
+          columnName: column.name,
+          patch,
+          projectPath,
+        });
+        onSchemaChange(next);
+      } catch (error) {
+        console.error(error);
+        toast.error(errorMessage(error));
+      }
+    },
+    [collectionPath, column.name, onSchemaChange, projectPath, spacePath],
+  );
+
   if (
     column.type === "select" ||
     column.type === "multi_select" ||
@@ -98,7 +127,7 @@ export function TypeSettingsPane({
     );
   }
   if (column.type === "number") {
-    return <NumberSettingsPane column={column} onPatchColumn={onPatchColumn} />;
+    return <NumberSettingsPane column={column} onPatchColumn={patchColumn} />;
   }
   if (column.type === "date") {
     return (
@@ -107,17 +136,19 @@ export function TypeSettingsPane({
           label={m.table_number_display()}
           value={String(column.display ?? "medium")}
           options={["short", "medium", "long"]}
-          onChange={(display) => onPatchColumn({ display })}
+          onChange={(display) => void patchColumn({ display })}
         />
         <ToggleRow
           label={m.property_date_time()}
           checked={Boolean(column.timeByDefault ?? column.time_by_default)}
-          onChange={(checked) => onPatchColumn({ time_by_default: checked })}
+          onChange={(checked) => void patchColumn({ time_by_default: checked })}
         />
         <ToggleRow
           label={m.property_date_range()}
           checked={Boolean(column.rangeByDefault ?? column.range_by_default)}
-          onChange={(checked) => onPatchColumn({ range_by_default: checked })}
+          onChange={(checked) =>
+            void patchColumn({ range_by_default: checked })
+          }
         />
       </div>
     );
@@ -130,7 +161,7 @@ export function TypeSettingsPane({
           value={column.display === "all_time" ? "all_time" : "team"}
           options={["team", "all_time"]}
           onChange={(source) =>
-            onPatchColumn({
+            void patchColumn({
               display: source === "all_time" ? "all_time" : null,
             })
           }
@@ -138,17 +169,17 @@ export function TypeSettingsPane({
         <ToggleRow
           label={m.property_actor_multiple()}
           checked={Boolean(column.multiple)}
-          onChange={(checked) => onPatchColumn({ multiple: checked })}
+          onChange={(checked) => void patchColumn({ multiple: checked })}
         />
       </div>
     );
   }
   if (column.type === "unique_id") {
     const normalizeCounter = () => {
-      void invoke<CollectionSchema>("normalize_unique_id_counter", {
-        space: spacePath,
+      void normalizeUniqueIdCounter({
+        spacePath,
         collectionPath,
-        projectPath: projectPath ?? null,
+        projectPath,
       })
         .then(onSchemaChange)
         .catch((error) => {
@@ -168,7 +199,7 @@ export function TypeSettingsPane({
             className="h-8 flex-1"
             placeholder="ISSUE"
             onBlur={(event) =>
-              onPatchColumn({
+              void patchColumn({
                 prefix: event.currentTarget.value.trim() || null,
               })
             }
@@ -202,7 +233,7 @@ export function TypeSettingsPane({
         collectionPath={collectionPath}
         projectPath={projectPath}
         onSchemaChange={onSchemaChange}
-        onPatchColumn={onPatchColumn}
+        onPatchColumn={patchColumn}
       />
     );
   }
@@ -242,9 +273,7 @@ function RelationSettingsPane({
 
   useEffect(() => {
     let cancelled = false;
-    void invoke<Array<{ path: string; title: string }>>("list_collections", {
-      space: spacePath,
-    })
+    void listCollectionOptions(spacePath)
       .then((items) => {
         if (!cancelled) setCollections(items);
       })
@@ -337,9 +366,10 @@ function RelationSettingsPane({
         strategy,
         reverseColumn,
       });
-      const schema = await invoke<CollectionSchema>("get_collection_schema", {
-        space: spacePath,
+      const schema = await getCollectionSchema({
+        spacePath,
         collectionPath,
+        projectPath,
       });
       onSchemaChange(schema);
       await loadDiagnostics();
@@ -610,12 +640,12 @@ function OptionsPane({
     }),
   );
   const patchOptions = (nextOptions: PropertyOption[]) => {
-    void invoke<CollectionSchema>("update_schema_column", {
-      space: spacePath,
+    void updateSchemaColumn({
+      spacePath,
       collectionPath,
       columnName: column.name,
       patch: { options: nextOptions },
-      projectPath: projectPath ?? null,
+      projectPath,
     }).then(onSchemaChange);
   };
   const handleDragEnd = (event: DragEndEvent) => {
@@ -649,48 +679,48 @@ function OptionsPane({
   const addOption = (group?: StatusGroup) => {
     const name = uniqueOptionName(column.options ?? [], "Option");
     setFocusedOption(name);
-    void invoke<CollectionSchema>("add_option", {
-      space: spacePath,
+    void addOptionApi({
+      spacePath,
       collectionPath,
       columnName: column.name,
       option: { name, color: "neutral", group: group ?? null },
-      projectPath: projectPath ?? null,
+      projectPath,
     }).then(onSchemaChange);
   };
   const updateOption = (
     option: PropertyOption,
     patch: Record<string, unknown>,
   ) => {
-    void invoke<CollectionSchema>("update_option", {
-      space: spacePath,
+    void updateOptionApi({
+      spacePath,
       collectionPath,
       columnName: column.name,
       optionName: option.name,
       option: null,
       patch,
-      projectPath: projectPath ?? null,
+      projectPath,
     }).then(onSchemaChange);
   };
   const renameOption = (option: PropertyOption, nextName: string) => {
     const trimmed = nextName.trim();
     if (!trimmed || trimmed === option.name) return;
-    void invoke<CollectionSchema>("rename_option", {
-      space: spacePath,
+    void renameOptionApi({
+      spacePath,
       collectionPath,
       columnName: column.name,
       oldOptionName: option.name,
       newOptionName: trimmed,
-      projectPath: projectPath ?? null,
+      projectPath,
     }).then(onSchemaChange);
   };
   const removeOption = (option: PropertyOption) => {
-    void invoke<CollectionSchema>("delete_option", {
-      space: spacePath,
+    void deleteOptionApi({
+      spacePath,
       collectionPath,
       columnName: column.name,
       optionName: option.name,
       deleteValues: false,
-      projectPath: projectPath ?? null,
+      projectPath,
     }).then(onSchemaChange);
   };
 
@@ -708,7 +738,7 @@ function OptionsPane({
           <div className="flex flex-col gap-0.5 p-1">
             {STATUS_GROUPS.map((group) => (
               <StatusGroupDropZone key={group.value} group={group.value}>
-                <SettingsSection label={group.label} />
+                <PropertySettingsSection label={group.label} />
                 {options
                   .filter((option) => option.group === group.value)
                   .map((option) => (
@@ -722,7 +752,7 @@ function OptionsPane({
                       onSettled={() => setFocusedOption(null)}
                     />
                   ))}
-                <SettingsRow
+                <PropertySettingsRow
                   icon={Plus}
                   label={m.property_action_add_option()}
                   onClick={() => addOption(group.value)}
@@ -757,7 +787,7 @@ function OptionsPane({
               onSettled={() => setFocusedOption(null)}
             />
           ))}
-          <SettingsRow
+          <PropertySettingsRow
             icon={Plus}
             label={m.property_action_add_option()}
             onClick={() => addOption()}

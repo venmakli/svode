@@ -3,6 +3,7 @@ import type { Entry } from "@/features/entry";
 import type {
   ChangeSchemaTypeResult,
   Column,
+  CollectionSchema,
   EntrySchemaResult,
   ActorCandidate,
   PropertyOption,
@@ -15,6 +16,11 @@ interface SchemaMutationInput {
   projectPath?: string | null;
 }
 
+export interface CollectionOption {
+  path: string;
+  title: string;
+}
+
 export function listPropertyActors(spacePath: string, allTime = false) {
   return invoke<ActorCandidate[]>("list_actors", {
     spacePath,
@@ -22,13 +28,24 @@ export function listPropertyActors(spacePath: string, allTime = false) {
   });
 }
 
-export function getEntrySchema(input: {
-  spacePath: string;
-  filePath: string;
-}) {
+export function getEntrySchema(input: { spacePath: string; filePath: string }) {
   return invoke<EntrySchemaResult | null>("get_entry_schema", {
     space: input.spacePath,
     filePath: input.filePath,
+  });
+}
+
+export function getCollectionSchema(input: SchemaMutationInput) {
+  return invoke<CollectionSchema>("get_collection_schema", {
+    space: input.spacePath,
+    collectionPath: input.collectionPath,
+    projectPath: input.projectPath ?? null,
+  });
+}
+
+export function listCollectionOptions(spacePath: string) {
+  return invoke<CollectionOption[]>("list_collections", {
+    space: spacePath,
   });
 }
 
@@ -57,6 +74,14 @@ export function assignEntryUniqueId(input: {
   });
 }
 
+export function normalizeUniqueIdCounter(input: SchemaMutationInput) {
+  return invokeSchemaMutation<CollectionSchema>(
+    "normalize_unique_id_counter",
+    input,
+    {},
+  );
+}
+
 export function changeSchemaType(input: {
   spacePath: string;
   collectionPath: string;
@@ -75,7 +100,9 @@ export function changeSchemaType(input: {
   });
 }
 
-export function clearFieldValues(input: SchemaMutationInput & { field: string }) {
+export function clearFieldValues(
+  input: SchemaMutationInput & { field: string },
+) {
   return invokeSchemaMutation("clear_field_values", input, {
     field: input.field,
   });
@@ -93,19 +120,35 @@ export function clearOptionValues(
   });
 }
 
-export function promoteOrphan(input: SchemaMutationInput & {
-  filePath: string;
-  field: string;
-}) {
+export function promoteOrphan(
+  input: SchemaMutationInput & {
+    filePath: string;
+    field: string;
+  },
+) {
   return invokeSchemaMutation("promote_orphan", input, {
     filePath: input.filePath,
     field: input.field,
   });
 }
 
-export function addSchemaColumn(input: SchemaMutationInput & { column: Column }) {
+export function addSchemaColumn(
+  input: SchemaMutationInput & { column: Column },
+) {
   return invokeSchemaMutation("add_schema_column", input, {
     column: input.column,
+  });
+}
+
+export function updateSchemaColumn(
+  input: SchemaMutationInput & {
+    columnName: string;
+    patch: Record<string, unknown>;
+  },
+) {
+  return invokeSchemaMutation<CollectionSchema>("update_schema_column", input, {
+    columnName: input.columnName,
+    patch: input.patch,
   });
 }
 
@@ -127,7 +170,7 @@ export function deleteSchemaColumn(
     deleteValues: boolean;
   },
 ) {
-  return invokeSchemaMutation("delete_schema_column", input, {
+  return invokeSchemaMutation<CollectionSchema>("delete_schema_column", input, {
     columnName: input.columnName,
     deleteValues: input.deleteValues,
   });
@@ -139,9 +182,25 @@ export function addOption(
     option: PropertyOption;
   },
 ) {
-  return invokeSchemaMutation("add_option", input, {
+  return invokeSchemaMutation<CollectionSchema>("add_option", input, {
     columnName: input.columnName,
     option: input.option,
+  });
+}
+
+export function updateOption(
+  input: SchemaMutationInput & {
+    columnName: string;
+    optionName: string;
+    option?: PropertyOption | null;
+    patch: Record<string, unknown>;
+  },
+) {
+  return invokeSchemaMutation<CollectionSchema>("update_option", input, {
+    columnName: input.columnName,
+    optionName: input.optionName,
+    option: input.option ?? null,
+    patch: input.patch,
   });
 }
 
@@ -152,7 +211,7 @@ export function renameOption(
     newOptionName: string;
   },
 ) {
-  return invokeSchemaMutation("rename_option", input, {
+  return invokeSchemaMutation<CollectionSchema>("rename_option", input, {
     columnName: input.columnName,
     oldOptionName: input.oldOptionName,
     newOptionName: input.newOptionName,
@@ -166,7 +225,7 @@ export function deleteOption(
     deleteValues: boolean;
   },
 ) {
-  return invokeSchemaMutation("delete_option", input, {
+  return invokeSchemaMutation<CollectionSchema>("delete_option", input, {
     columnName: input.columnName,
     optionName: input.optionName,
     deleteValues: input.deleteValues,

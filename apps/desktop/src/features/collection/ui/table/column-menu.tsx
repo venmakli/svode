@@ -1,5 +1,4 @@
 import { useState, type ReactNode } from "react";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -18,12 +17,16 @@ import type {
   UseViewQueryResult,
 } from "@/features/collection/query";
 import type {
-  ChangeSchemaTypeResult,
   CollectionSchema,
   Column,
   SchemaMutationWarning,
 } from "@/features/properties";
 import type { ActorCandidate } from "@/features/properties";
+import {
+  changeSchemaType,
+  deleteSchemaColumn,
+} from "@/features/properties/api";
+import { TypeSettingsPane } from "@/features/properties/column-settings";
 import { FieldFilterPane, FieldSortPane } from "./column-query-pane";
 import {
   ColumnDangerActions,
@@ -31,7 +34,6 @@ import {
   TypePane,
   type ColumnMenuPane,
 } from "./column-menu-panes";
-import { TypeSettingsPane } from "./column-type-settings";
 import { normalizeVisibleFields } from "./utils";
 import * as m from "@/paraglide/messages.js";
 
@@ -82,23 +84,6 @@ export function ColumnMenuPopover({
     query.merged.filter.find((item) => item.field === field) ?? null;
   const sort = query.merged.sort.find((item) => item.field === field) ?? null;
 
-  const patchColumn = async (patch: Record<string, unknown>) => {
-    if (!column) return;
-    try {
-      const next = await invoke<CollectionSchema>("update_schema_column", {
-        space: spacePath,
-        collectionPath,
-        columnName: column.name,
-        patch,
-        projectPath: projectPath ?? null,
-      });
-      onSchemaChange(next);
-    } catch (error) {
-      console.error(error);
-      toast.error(errorMessage(error));
-    }
-  };
-
   const panes = [
     {
       id: "main" as const,
@@ -141,16 +126,16 @@ export function ColumnMenuPopover({
         <TypePane
           activeType={column.type}
           onSelect={(type) => {
-            void invoke<ChangeSchemaTypeResult>("change_schema_type", {
-              space: spacePath,
+            void changeSchemaType({
+              spacePath,
               collectionPath,
               columnName: field,
               newType: type,
               conversionStrategy:
                 type === "relation"
                   ? { relation: collectionPath || "." }
-                  : null,
-              projectPath: projectPath ?? null,
+                  : undefined,
+              projectPath,
             })
               .then((result) => {
                 onSchemaChange(result.schema);
@@ -201,7 +186,6 @@ export function ColumnMenuPopover({
           collectionPath={collectionPath}
           projectPath={projectPath}
           onSchemaChange={onSchemaChange}
-          onPatchColumn={(patch) => void patchColumn(patch)}
         />
       ) : null,
     },
@@ -244,12 +228,12 @@ export function ColumnMenuPopover({
             <AlertDialogCancel>{m.settings_cancel()}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                void invoke<CollectionSchema>("delete_schema_column", {
-                  space: spacePath,
+                void deleteSchemaColumn({
+                  spacePath,
                   collectionPath,
                   columnName: field,
                   deleteValues,
-                  projectPath: projectPath ?? null,
+                  projectPath,
                 }).then(onSchemaChange);
                 onOpenChange(false);
               }}
