@@ -2,7 +2,6 @@ import { useEffect, useCallback, useRef, useState } from "react";
 import type { Descendant } from "platejs";
 import { Plate, usePlateEditor } from "platejs/react";
 import { MarkdownPlugin } from "@platejs/markdown";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import { EditorKit } from "./editor-kit";
 import { useFileWatcher } from "../hooks/use-file-watcher";
@@ -17,10 +16,10 @@ import { cn } from "@/shared/lib/utils";
 import {
   commitAllSpace,
   commitFileAndMaybeSync,
+  continueGitResolve,
   getGitSpaceStatus,
-  refreshGitSpaceStatus,
-  syncSpace,
 } from "@/features/git/editor";
+import { clearCommittedReviewMarkers } from "../file-tree-sync";
 import { isTerminalKeyboardEvent } from "@/features/terminal";
 import {
   deserializeWithConflicts,
@@ -36,7 +35,11 @@ import { logTiming, nowMs } from "@/shared/lib/performance";
 import { TocSidebar } from "../ui/toc-sidebar";
 import { EditorMediaAdapterProvider } from "../ui/editor-media-adapter-provider";
 import type { Entry, EntryMeta, WriteResult } from "@/features/entry";
-import { readEntry, validateLinks } from "@/platform/entries/entries-api";
+import {
+  readEntry,
+  validateLinks,
+  writeEntry,
+} from "@/platform/entries/entries-api";
 import {
   deleteCachedDocumentValue,
   getCachedDocumentValue,
@@ -49,6 +52,14 @@ import * as m from "@/paraglide/messages.js";
 
 const AUTOSAVE_DEBOUNCE_MS = 1000;
 const ENABLE_FIXED_FORMATTING_TOOLBAR = false;
+
+function clearCommittedMarkers(
+  result: { committedPaths: string[] } | null | undefined,
+): void {
+  if (result?.committedPaths.length) {
+    clearCommittedReviewMarkers(result.committedPaths);
+  }
+}
 
 function waitForNextFrame(): Promise<void> {
   if (typeof window === "undefined") {
@@ -204,7 +215,7 @@ export function PlateDocumentEditor({
     isDebouncePendingRef.current = false;
   }, []);
 
-  // Serialize the editor + current meta refs and call `write_entry`. Tracks
+  // Serialize the editor + current meta refs and write the entry. Tracks
   // the returned write-nonce so the watcher can drop our own file:changed
   // echo. `skipRename=true` = auto-save (body+frontmatter only). false = ⌘S
   // materialize (rename + update_links + structural schedule on backend).
@@ -223,7 +234,7 @@ export function PlateDocumentEditor({
 
       const markdown = editor.getApi(MarkdownPlugin).markdown.serialize();
 
-      const result = await invoke<WriteResult>("write_entry", {
+      const result = await writeEntry({
         space: spacePath,
         path,
         content: markdown,
@@ -622,24 +633,24 @@ export function PlateDocumentEditor({
       // and suppress watcher reload handling for Svode-initiated rewrites.
       handleModifiedSources(result);
 
-      // Auto-commit the saved file. During mid-merge, route through
-      // git_resolve_continue to finalize the merge instead.
+      // Auto-commit the saved file. During mid-merge, ask the Git feature to
+      // continue merge resolution instead.
       const committedPath = result.new_path ?? currentDocument;
       const status = getGitSpaceStatus(spacePath);
       if (status?.hasConflicts) {
         try {
-          await invoke("git_resolve_continue", { spacePath });
-          void refreshGitSpaceStatus(spacePath);
-          void syncSpace(spacePath);
+          await continueGitResolve(spacePath);
         } catch (err) {
-          console.error("git_resolve_continue failed:", err);
+          console.error("git merge resolution failed:", err);
           toast.error(m.git_sync_failed());
         }
       } else {
-        await commitFileAndMaybeSync(
-          spacePath,
-          committedPath,
-          projectPath ?? undefined,
+        clearCommittedMarkers(
+          await commitFileAndMaybeSync(
+            spacePath,
+            committedPath,
+            projectPath ?? undefined,
+          ),
         );
       }
     } catch (err) {
@@ -670,12 +681,16 @@ export function PlateDocumentEditor({
     cancelDebounce();
 
     if (!editor || !currentDocument) {
-      void commitAllSpace(spacePath, projectPath ?? undefined);
+      void commitAllSpace(spacePath, projectPath ?? undefined).then(
+        clearCommittedMarkers,
+      );
       return;
     }
     const isDirty = useEditorStore.getState().unsavedChanges[currentDocument];
     if (!isDirty) {
-      void commitAllSpace(spacePath, projectPath ?? undefined);
+      void commitAllSpace(spacePath, projectPath ?? undefined).then(
+        clearCommittedMarkers,
+      );
       return;
     }
     try {
@@ -698,7 +713,9 @@ export function PlateDocumentEditor({
       }
       // See handleSave: same backlinks suppress + cache-invalidate.
       handleModifiedSources(result);
-      await commitAllSpace(spacePath, projectPath ?? undefined);
+      clearCommittedMarkers(
+        await commitAllSpace(spacePath, projectPath ?? undefined),
+      );
     } catch (err) {
       console.error("Save-all failed:", err);
       toast.error(m.editor_error_save());

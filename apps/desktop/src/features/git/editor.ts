@@ -3,8 +3,10 @@ import { useGitStore, type GitStatus } from "./model";
 export {
   commitAllSpace,
   commitFileAndMaybeSync,
+  continueGitResolve,
   syncSpace,
 } from "./api/git-actions";
+export type { GitCommitResult } from "./api/git-actions";
 
 export function getGitSpaceStatus(spacePath: string): GitStatus | undefined {
   return useGitStore.getState().statuses[spacePath];

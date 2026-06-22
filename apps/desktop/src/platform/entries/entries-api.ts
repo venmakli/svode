@@ -38,6 +38,21 @@ export interface BacklinkInfoDto {
   linkCount: number;
 }
 
+export interface WriteEntryInputDto extends Record<string, unknown> {
+  space: string;
+  path: string;
+  content: string;
+  skipRename: boolean;
+  projectPath: string | null;
+}
+
+export interface WriteResultDto {
+  new_path: string | null;
+  modified_files: string[];
+  modified_sources?: { spaceId: string | null; path: string }[];
+  write_nonce: string;
+}
+
 export function createEntry(input: {
   space: string;
   parentPath: string | null;
@@ -67,6 +82,10 @@ export function renameEntry(input: {
 
 export function readEntry(space: string, path: string): Promise<EntryDto> {
   return invokeCommand<EntryDto>("read_entry", { space, path });
+}
+
+export function writeEntry(input: WriteEntryInputDto): Promise<WriteResultDto> {
+  return invokeCommand<WriteResultDto>("write_entry", input);
 }
 
 export function updateEntryField(input: {

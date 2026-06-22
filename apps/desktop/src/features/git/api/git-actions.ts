@@ -1,13 +1,19 @@
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
-import { clearCommittedReviewMarkers } from "@/features/editor/file-tree-sync";
 import { useGitStore } from "../model";
 import {
   commitGitAll,
   commitGitFile,
+  continueGitResolve as continuePlatformGitResolve,
   syncGit,
 } from "@/platform/git/git-api";
 import { getSpaceConfig } from "@/platform/space/space-api";
+import type { GitStatus } from "../model";
+
+export interface GitCommitResult {
+  status: GitStatus;
+  committedPaths: string[];
+}
 
 /**
  * Read the per-space `git.autoSync` setting (default: false).
@@ -70,7 +76,8 @@ export async function commitFileAndMaybeSync(
   spacePath: string,
   filePath: string,
   projectPath?: string,
-): Promise<void> {
+): Promise<GitCommitResult | null> {
+  let result: GitCommitResult;
   try {
     const status = await commitGitFile({
       projectPath,
@@ -78,16 +85,20 @@ export async function commitFileAndMaybeSync(
       filePath,
     });
     useGitStore.getState().applyStatus(spacePath, status);
-    if (!status.files.some((file) => file.path === filePath)) {
-      clearCommittedReviewMarkers([filePath]);
-    }
+    result = {
+      status,
+      committedPaths: status.files.some((file) => file.path === filePath)
+        ? []
+        : [filePath],
+    };
   } catch (err) {
     console.error("git_commit_file failed:", err);
-    return;
+    return null;
   }
   if (await isAutoSyncEnabled(spacePath)) {
     void syncSpace(spacePath);
   }
+  return result;
 }
 
 /**
@@ -99,10 +110,11 @@ export async function commitFileAndMaybeSync(
 export async function commitAllSpace(
   spacePath: string,
   projectPath?: string,
-): Promise<void> {
+): Promise<GitCommitResult | null> {
   const previousDirtyPaths =
     useGitStore.getState().statuses[spacePath]?.files.map((file) => file.path) ??
     [];
+  let result: GitCommitResult;
   try {
     const status = await commitGitAll({
       projectPath,
@@ -110,16 +122,24 @@ export async function commitAllSpace(
     });
     useGitStore.getState().applyStatus(spacePath, status);
     const stillDirty = new Set(status.files.map((file) => file.path));
-    clearCommittedReviewMarkers(
-      previousDirtyPaths.filter((path) => !stillDirty.has(path)),
-    );
+    result = {
+      status,
+      committedPaths: previousDirtyPaths.filter((path) => !stillDirty.has(path)),
+    };
   } catch (err) {
     console.error("git_commit_all failed:", err);
-    return;
+    return null;
   }
   if (await isAutoSyncEnabled(spacePath)) {
     void syncSpace(spacePath);
   }
+  return result;
+}
+
+export async function continueGitResolve(spacePath: string): Promise<void> {
+  await continuePlatformGitResolve(spacePath);
+  await useGitStore.getState().refreshStatus(spacePath);
+  void syncSpace(spacePath);
 }
 
 /**

@@ -71,6 +71,10 @@ export function commitGitAll(input: {
   });
 }
 
+export function continueGitResolve(spacePath: string): Promise<void> {
+  return invokeCommand<void>("git_resolve_continue", { spacePath });
+}
+
 export function publishGit(spacePath: string): Promise<GitStatusDto> {
   return invokeCommand<GitStatusDto>("git_publish", { spacePath });
 }
