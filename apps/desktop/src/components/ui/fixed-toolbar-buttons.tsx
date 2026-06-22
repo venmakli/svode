@@ -14,7 +14,7 @@ import {
   UnderlineIcon,
   WandSparklesIcon,
 } from "lucide-react";
-import { KEYS } from "platejs";
+import { KEYS, type Descendant } from "platejs";
 import { useEditorReadOnly } from "platejs/react";
 
 // eslint-disable-next-line svode/import-boundaries -- Read-only Plate feature flags stay in copied toolbar until editor-owned toolbar options replace direct config reads.
@@ -53,7 +53,13 @@ import { ToggleToolbarButton } from "./toggle-toolbar-button";
 import { ToolbarGroup } from "./toolbar";
 import { TurnIntoToolbarButton } from "./turn-into-toolbar-button";
 
-export function FixedToolbarButtons() {
+interface FixedToolbarButtonsProps {
+  deserializeMarkdown?: (text: string) => Descendant[];
+}
+
+export function FixedToolbarButtons({
+  deserializeMarkdown,
+}: FixedToolbarButtonsProps = {}) {
   const readOnly = useEditorReadOnly();
 
   return (
@@ -79,7 +85,7 @@ export function FixedToolbarButtons() {
                 <ArrowUpToLineIcon />
               </ExportToolbarButton>
 
-              <ImportToolbarButton />
+              <ImportToolbarButton deserializeMarkdown={deserializeMarkdown} />
             </ToolbarGroup>
           )}
 

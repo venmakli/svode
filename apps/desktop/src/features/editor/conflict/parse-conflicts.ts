@@ -1,6 +1,6 @@
 import type { Descendant, TElement } from "platejs";
-import { MarkdownPlugin } from "@platejs/markdown";
 import type { PlateEditor } from "platejs/react";
+import { deserializeEditorMarkdownSegment } from "../model/markdown-io";
 
 /**
  * A conflict element in the Plate tree.
@@ -38,12 +38,7 @@ export function deserializeWithConflicts(
 
   const deserializeSegment = (segment: string) => {
     if (segment.length === 0) return;
-    const nodes = editor
-      .getApi(MarkdownPlugin)
-      .markdown.deserialize(normalizeMarkdownForPlate(segment));
-    if (Array.isArray(nodes)) {
-      result.push(...(nodes as Descendant[]));
-    }
+    result.push(...deserializeEditorMarkdownSegment(editor, segment));
   };
 
   while ((match = CONFLICT_RE.exec(body)) !== null) {
@@ -67,10 +62,6 @@ export function deserializeWithConflicts(
   }
 
   return result;
-}
-
-export function normalizeMarkdownForPlate(markdown: string): string {
-  return markdown.replace(/<br\s*>/gi, "<br />");
 }
 
 /** Does the given Plate value contain any unresolved conflict elements? */

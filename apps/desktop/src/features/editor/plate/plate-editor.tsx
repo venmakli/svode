@@ -25,6 +25,7 @@ import {
   deserializeWithConflicts,
   hasUnresolvedConflicts,
 } from "../conflict/parse-conflicts";
+import { deserializeEditorMarkdownInsertion } from "../model/markdown-io";
 import { Editor, EditorContainer } from "@/components/ui/editor";
 import { FixedToolbar } from "@/components/ui/fixed-toolbar";
 import { FixedToolbarButtons } from "@/components/ui/fixed-toolbar-buttons";
@@ -92,8 +93,12 @@ export function PlateDocumentEditor({
 }: PlateDocumentEditorProps) {
   const { activeDocument, activeDocumentSpaceId, openDocument } =
     useEntrySelectionStore();
-  const { rootSpaces, spaces: childWorkspaces, activeRootPath, activeRootId } =
-    useSpace();
+  const {
+    rootSpaces,
+    spaces: childWorkspaces,
+    activeRootPath,
+    activeRootId,
+  } = useSpace();
   const { patchEntryTreeMeta, reloadTreePathParents, removeTreePath } =
     useSpaceTreeSync();
   const {
@@ -775,6 +780,10 @@ export function PlateDocumentEditor({
     },
     [editor, markUnsaved, scheduleAutoSave],
   );
+  const deserializeToolbarMarkdown = useCallback(
+    (text: string) => deserializeEditorMarkdownInsertion(editor, text),
+    [editor],
+  );
 
   return (
     <EditorMediaAdapterProvider
@@ -791,7 +800,9 @@ export function PlateDocumentEditor({
         >
           {ENABLE_FIXED_FORMATTING_TOOLBAR ? (
             <FixedToolbar>
-              <FixedToolbarButtons />
+              <FixedToolbarButtons
+                deserializeMarkdown={deserializeToolbarMarkdown}
+              />
             </FixedToolbar>
           ) : null}
 
