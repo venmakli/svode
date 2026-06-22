@@ -563,16 +563,32 @@ fn cover_opt(name: &'static str) -> (&'static str, Value) {
     (
         name,
         nullable(json!({
-            "type": "object",
             "description": "System metadata cover, not a custom column.",
-            "additionalProperties": false,
-            "properties": {
-                "type": { "type": "string", "enum": ["color", "image"] },
-                "value": { "type": "string", "description": "Color name for color covers." },
-                "path": { "type": "string", "description": "Repo-relative or asset path for image covers." },
-                "position": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 }
-            },
-            "required": ["type"]
+            "anyOf": [
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "type": { "type": "string", "enum": ["color"] },
+                        "value": {
+                            "type": "string",
+                            "enum": ["neutral", "gray", "red", "orange", "yellow", "green", "blue", "purple", "pink", "brown"],
+                            "description": "Color name for color covers."
+                        }
+                    },
+                    "required": ["type", "value"]
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "type": { "type": "string", "enum": ["image"] },
+                        "path": { "type": "string", "description": "Repo-relative or asset path for image covers." },
+                        "position": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 }
+                    },
+                    "required": ["type", "path"]
+                }
+            ]
         })),
     )
 }
@@ -651,7 +667,7 @@ fn column_properties(include_name_type: bool) -> Value {
         "prefix".to_string(),
         json!({"type": ["string", "null"], "description": "unique_id prefix."}),
     );
-    properties.insert("next".to_string(), json!({"type": ["integer", "null"], "minimum": 0, "description": "unique_id next counter. unique_id values are read-only on entries."}));
+    properties.insert("next".to_string(), json!({"type": ["integer", "null"], "minimum": 1, "description": "unique_id next counter. unique_id values are read-only on entries."}));
     properties.insert("multiple".to_string(), json!({"type": ["boolean", "null"], "description": "actor columns: true allows multiple canonical email values."}));
     Value::Object(properties)
 }
@@ -869,5 +885,28 @@ mod tests {
             .find(|definition| definition.name == "list_actors")
             .expect("list_actors definition");
         assert!(definition.output_schema.is_some());
+    }
+
+    #[test]
+    fn unique_id_next_schema_matches_backend_minimum() {
+        assert_eq!(column_schema()["properties"]["next"]["minimum"], json!(1));
+    }
+
+    #[test]
+    fn cover_schema_requires_variant_specific_fields() {
+        let (_, schema) = cover_opt("cover");
+        let cover_schema = &schema["anyOf"][0];
+        let variants = cover_schema["anyOf"].as_array().expect("cover variants");
+        let color = variants
+            .iter()
+            .find(|variant| variant["properties"]["type"]["enum"] == json!(["color"]))
+            .expect("color cover variant");
+        let image = variants
+            .iter()
+            .find(|variant| variant["properties"]["type"]["enum"] == json!(["image"]))
+            .expect("image cover variant");
+
+        assert_eq!(color["required"], json!(["type", "value"]));
+        assert_eq!(image["required"], json!(["type", "path"]));
     }
 }
