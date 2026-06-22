@@ -5,13 +5,13 @@ export {
   findSpaceById,
   isDocLink,
   joinAbs,
-  makeRelativeDocUrl,
   makeRelativePath,
   relativeDocumentPath,
   resolveRelativeDocPath,
   searchDocLinkTargets,
   stripAnchor,
 } from "./lib/doc-link-utils";
+export { makeRelativeDocUrl } from "./api/doc-link-api";
 export { DocLinkElement } from "./ui/doc-link-element";
 export { DocLinkInputElement } from "./ui/doc-link-input-element";
 export { DocLinkFloatingToolbar } from "./ui/doc-link-toolbar";

@@ -15,14 +15,14 @@ import {
 import { FileText } from "lucide-react";
 import { useSpace } from "@/features/space";
 import { useEntrySelectionStore } from "@/features/entry";
-import type { SearchItem } from "@/features/search/query";
+import type { SearchItem } from "@/features/search";
 import {
   absoluteDocumentPath,
   findSpaceById,
   joinAbs,
-  makeRelativeDocUrl,
   searchDocLinkTargets,
 } from "../lib/doc-link-utils";
+import { makeRelativeDocUrl } from "../api/doc-link-api";
 
 export function DocLinkInputElement(
   props: PlateElementProps<TComboboxInputElement>,

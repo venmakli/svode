@@ -6,7 +6,6 @@ import { getLinkAttributes } from "@platejs/link";
 import { SuggestionPlugin } from "@platejs/suggestion/react";
 import { PlateElement } from "platejs/react";
 import { FileText } from "lucide-react";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import { cn } from "@/shared/lib/utils";
 import { useEntrySelectionStore } from "@/features/entry";
@@ -27,15 +26,11 @@ import {
   relativeDocumentPath,
   resolveRelativeDocPath,
 } from "../lib/doc-link-utils";
-
-interface LinkResolveResult {
-  targetSpaceId: string | null;
-  targetSpacePath: string | null;
-  targetPath: string | null;
-  status: "ready" | "missing" | "broken" | "external";
-  exists: boolean;
-  spaceName: string;
-}
+import {
+  cloneMissingDocLinkSpace,
+  resolveDocLink,
+  type DocLinkResolveResult,
+} from "../api/doc-link-api";
 
 export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
   const { element, editor, children } = props;
@@ -52,7 +47,7 @@ export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
   const loadSpaces = useSpace((s) => s.loadSpaces);
   const brokenLinks = useEditorStore((s) => s.brokenLinks);
   const [cloneTarget, setCloneTarget] =
-    React.useState<LinkResolveResult | null>(null);
+    React.useState<DocLinkResolveResult | null>(null);
   const [isCloning, setIsCloning] = React.useState(false);
   const url = element.url as string | undefined;
   const isDoc = isDocLink(url);
@@ -106,7 +101,7 @@ export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
     (brokenLinks.has(url) ||
       (resolvedPath ? brokenLinks.has(resolvedPath) : false));
 
-  async function openResolvedLink(resolved: LinkResolveResult) {
+  async function openResolvedLink(resolved: DocLinkResolveResult) {
     if (!resolved.targetPath) return;
     if (resolved.targetSpaceId === null) {
       clearActiveSpace();
@@ -128,7 +123,7 @@ export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
     }
 
     try {
-      const resolved = await invoke<LinkResolveResult>("resolve_doc_link", {
+      const resolved = await resolveDocLink({
         projectPath: activeRootPath,
         sourceSpaceId,
         sourcePath: activeRel,
@@ -150,10 +145,10 @@ export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
   };
 
   async function handleCloneMissing() {
-    if (!cloneTarget || !activeRootPath) return;
+    if (!cloneTarget?.targetSpaceId || !activeRootPath) return;
     setIsCloning(true);
     try {
-      await invoke("clone_missing_space", {
+      await cloneMissingDocLinkSpace({
         projectPath: activeRootPath,
         spaceId: cloneTarget.targetSpaceId,
       });

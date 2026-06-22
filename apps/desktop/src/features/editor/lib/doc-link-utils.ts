@@ -1,5 +1,4 @@
-import { invokeCommand as invoke } from "@/platform/native/invoke";
-import { searchEntriesByTitle, type SearchItem } from "@/features/search/query";
+import { searchEntriesByTitle, type SearchItem } from "@/features/search";
 import type { TreeNode } from "@/features/entry";
 import type { SpaceInfo } from "@/features/space";
 
@@ -61,21 +60,6 @@ export function makeRelativePath(
   const ups = fromParts.length - common;
   const parts = [...Array<string>(ups).fill(".."), ...toParts.slice(common)];
   return parts.join("/") || toAbsPath;
-}
-
-export async function makeRelativeDocUrl(
-  fromAbsPath: string,
-  toAbsPath: string,
-): Promise<string> {
-  try {
-    return await invoke<string>("make_relative_link", {
-      sourceDocPath: fromAbsPath,
-      targetDocPath: toAbsPath,
-    });
-  } catch (err) {
-    console.warn("make_relative_link failed, using frontend fallback:", err);
-    return makeRelativePath(fromAbsPath, toAbsPath);
-  }
 }
 
 export function resolveRelativeDocPath(

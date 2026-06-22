@@ -34,7 +34,6 @@ import {
   useFormInputProps,
   usePluginOption,
 } from "platejs/react";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 
 import { buttonVariants } from "@/components/ui/button";
 import {
@@ -51,35 +50,26 @@ import { cn } from "@/shared/lib/utils";
 import { useEditorStore } from "../model";
 import { useEntrySelectionStore } from "@/features/entry";
 import { useSpace } from "@/features/space";
-import type { SearchItem } from "@/features/search/query";
+import type { SearchItem } from "@/features/search";
 import * as m from "@/paraglide/messages.js";
 import {
   absoluteDocumentPath,
   findSpaceById,
   isDocLink,
   joinAbs,
-  makeRelativeDocUrl,
   relativeDocumentPath,
   resolveRelativeDocPath,
   searchDocLinkTargets,
 } from "../lib/doc-link-utils";
+import {
+  makeRelativeDocUrl,
+  resolveDocLink,
+  suggestLinkFix,
+  type DocLinkResolveResult,
+  type LinkFixSuggestion,
+} from "../api/doc-link-api";
 
 type LinkMode = "document" | "url";
-
-interface LinkResolveResult {
-  targetSpaceId: string | null;
-  targetSpacePath: string | null;
-  targetPath: string | null;
-  status: "ready" | "missing" | "broken" | "external";
-  exists: boolean;
-  spaceName: string;
-}
-
-interface LinkFixSuggestion {
-  path: string;
-  label: string;
-  reason: string;
-}
 
 const popoverClassName =
   "z-50 w-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md outline-hidden";
@@ -455,14 +445,14 @@ function BrokenLinkRepair({
   url: string;
 }) {
   const editor = useEditorRef();
-  const [resolved, setResolved] = React.useState<LinkResolveResult | null>(
+  const [resolved, setResolved] = React.useState<DocLinkResolveResult | null>(
     null,
   );
   const [suggestions, setSuggestions] = React.useState<LinkFixSuggestion[]>([]);
 
   React.useEffect(() => {
     let cancelled = false;
-    invoke<LinkResolveResult>("resolve_doc_link", {
+    resolveDocLink({
       projectPath,
       sourceSpaceId,
       sourcePath,
@@ -472,7 +462,7 @@ function BrokenLinkRepair({
         if (cancelled) return;
         setResolved(next);
         if (!next.targetPath) return [];
-        return invoke<LinkFixSuggestion[]>("suggest_link_fix", {
+        return suggestLinkFix({
           projectPath,
           targetSpaceId: next.targetSpaceId,
           brokenPath: next.targetPath,

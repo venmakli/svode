@@ -2,7 +2,8 @@ import * as React from "react";
 
 import { toast } from "sonner";
 
-import { joinAbs, makeRelativeDocUrl } from "../lib/doc-link-utils";
+import { makeRelativeDocUrl } from "../api/doc-link-api";
+import { joinAbs } from "../lib/doc-link-utils";
 import { uploadAsset, type UploadAssetDto } from "@/platform/upload/upload-api";
 import { useEntrySelectionStore } from "@/features/entry";
 import { getSpaceSnapshot } from "@/features/space";
