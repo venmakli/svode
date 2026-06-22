@@ -1,6 +1,4 @@
-import { useState } from "react";
 import * as m from "@/paraglide/messages.js";
-import { openDialog } from "@/platform/native/dialog";
 import {
   Dialog,
   DialogContent,
@@ -14,16 +12,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { EmojiPicker } from "@/components/ui/emoji-picker";
 import { FolderOpen } from "lucide-react";
+import { useCreateProjectDialog } from "../hooks/use-create-project-dialog";
+import type { CreateProjectSubmit } from "../model/root-project";
 
 interface CreateProjectDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (
-    name: string,
-    icon: string,
-    description: string | undefined,
-    path: string,
-  ) => void;
+  onSubmit: CreateProjectSubmit;
 }
 
 export function CreateProjectDialog({
@@ -31,43 +26,20 @@ export function CreateProjectDialog({
   onOpenChange,
   onSubmit,
 }: CreateProjectDialogProps) {
-  const [name, setName] = useState("");
-  const [icon, setIcon] = useState("\u{1F4C1}");
-  const [description, setDescription] = useState("");
-  const [folderPath, setFolderPath] = useState("");
-
-  function resetForm() {
-    setName("");
-    setIcon("\u{1F4C1}");
-    setDescription("");
-    setFolderPath("");
-  }
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!name.trim() || !folderPath.trim()) return;
-    onSubmit(
-      name.trim(),
-      icon,
-      description.trim() || undefined,
-      folderPath.trim(),
-    );
-    resetForm();
-  }
-
-  function handleOpenChange(value: boolean) {
-    if (!value) resetForm();
-    onOpenChange(value);
-  }
-
-  async function handleBrowseFolder() {
-    const selected = await openDialog({ directory: true });
-    if (selected) {
-      setFolderPath(selected);
-    }
-  }
-
-  const isValid = name.trim() !== "" && folderPath.trim() !== "";
+  const {
+    description,
+    folderPath,
+    handleBrowseFolder,
+    handleOpenChange,
+    handleSubmit,
+    icon,
+    isValid,
+    name,
+    setDescription,
+    setFolderPath,
+    setIcon,
+    setName,
+  } = useCreateProjectDialog({ onOpenChange, onSubmit });
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>

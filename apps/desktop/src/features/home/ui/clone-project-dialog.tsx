@@ -1,7 +1,4 @@
-import { useEffect, useState } from "react";
 import * as m from "@/paraglide/messages.js";
-import { pathExists } from "@/platform/filesystem/path-api";
-import { openDialog } from "@/platform/native/dialog";
 import {
   Dialog,
   DialogContent,
@@ -13,94 +10,35 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { FolderOpen } from "lucide-react";
+import { useCloneProjectDialog } from "../hooks/use-clone-project-dialog";
+import type { CloneProjectSubmit } from "../model/root-project";
 
 interface CloneProjectDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (url: string, targetPath: string) => void;
+  onSubmit: CloneProjectSubmit;
 }
-
-const URL_REGEX =
-  /^(https?:\/\/|ssh:\/\/|git:\/\/|file:\/\/)\S+|^[\w.-]+@[\w.-]+:\S+$/;
 
 export function CloneProjectDialog({
   open,
   onOpenChange,
   onSubmit,
 }: CloneProjectDialogProps) {
-  const [url, setUrl] = useState("");
-  const [targetFolder, setTargetFolder] = useState("");
-  const [targetExists, setTargetExists] = useState(false);
-  const [isCheckingTarget, setIsCheckingTarget] = useState(false);
-
-  function resetForm() {
-    setUrl("");
-    setTargetFolder("");
-    setTargetExists(false);
-    setIsCheckingTarget(false);
-  }
-
-  const trimmedUrl = url.trim();
-  const urlValid = trimmedUrl !== "" && URL_REGEX.test(trimmedUrl);
-  const repoName =
-    trimmedUrl
-      .split("/")
-      .pop()
-      ?.replace(/\.git$/, "") || "";
-  const targetPath =
-    targetFolder && repoName ? `${targetFolder}/${repoName}` : "";
-
-  useEffect(() => {
-    if (!urlValid || !targetPath) {
-      setTargetExists(false);
-      setIsCheckingTarget(false);
-      return;
-    }
-
-    let cancelled = false;
-    setIsCheckingTarget(true);
-
-    const timer = window.setTimeout(async () => {
-      try {
-        const exists = await pathExists(targetPath);
-        if (!cancelled) setTargetExists(exists);
-      } catch {
-        if (!cancelled) setTargetExists(false);
-      } finally {
-        if (!cancelled) setIsCheckingTarget(false);
-      }
-    }, 200);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [targetPath, urlValid]);
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!urlValid || !targetFolder.trim()) return;
-    onSubmit(trimmedUrl, targetPath);
-    resetForm();
-  }
-
-  function handleOpenChange(value: boolean) {
-    if (!value) resetForm();
-    onOpenChange(value);
-  }
-
-  async function handleBrowseFolder() {
-    const selected = await openDialog({ directory: true });
-    if (selected) {
-      setTargetFolder(selected);
-    }
-  }
-
-  const isValid =
-    urlValid &&
-    targetFolder.trim() !== "" &&
-    !targetExists &&
-    !isCheckingTarget;
+  const {
+    handleBrowseFolder,
+    handleOpenChange,
+    handleSubmit,
+    isValid,
+    repoName,
+    setTargetFolder,
+    setUrl,
+    targetExists,
+    targetFolder,
+    targetPath,
+    trimmedUrl,
+    url,
+    urlValid,
+  } = useCloneProjectDialog({ onOpenChange, onSubmit });
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>

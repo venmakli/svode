@@ -64,6 +64,15 @@ export async function pickMediaFiles(
   return files;
 }
 
+export async function pickDirectory(): Promise<string | null> {
+  const selection = await openDialog({
+    directory: true,
+    multiple: false,
+  });
+
+  return typeof selection === "string" ? selection : null;
+}
+
 export function filesToFileList(files: File[]): FileList {
   const dt = new DataTransfer();
   files.forEach((file) => dt.items.add(file));
