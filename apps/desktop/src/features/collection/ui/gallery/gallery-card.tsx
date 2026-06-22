@@ -74,6 +74,7 @@ function GalleryCardContent({
   onOpen,
   onOpenFullPage,
   onOpenNestedCollection,
+  onOpenPath,
   onDuplicate,
   onDelete,
   onFocusCard,
@@ -175,6 +176,7 @@ function GalleryCardContent({
                 spacePath,
                 projectPath,
                 currentFilePath: entry.path,
+                onOpenPath,
               }}
               className="gap-x-1.5 gap-y-1 pt-0.5"
               onRequestActors={onRequestActors}

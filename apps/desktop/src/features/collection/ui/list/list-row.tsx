@@ -77,6 +77,7 @@ function ListRowContent({
   onOpen,
   onOpenFullPage,
   onOpenNestedCollection,
+  onOpenPath,
   onDuplicate,
   onDelete,
   onFocusRow,
@@ -205,6 +206,7 @@ function ListRowContent({
               spacePath,
               projectPath,
               currentFilePath: entry.path,
+              onOpenPath,
             }}
             mode="inline"
             className="max-w-[46vw] justify-end gap-x-2 gap-y-0.5 overflow-hidden"

@@ -27,7 +27,7 @@ import {
   type Entry,
   type EntryCover,
 } from "@/features/entry";
-import { PropertyPanel } from "@/features/properties";
+import { PropertyPanel } from "@/features/properties/ui";
 import {
   propertyFieldSavePolicy,
   type EntrySchemaResult,
@@ -57,6 +57,7 @@ interface EntryPeekSheetProps {
   spaceId: string;
   onOpenChange: (open: boolean) => void;
   onOpenFullPage: (entry: Entry) => void;
+  onOpenPath: (path: string) => void;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
   onConvertedEntry: (entry: Entry, nested: boolean) => void;
@@ -72,6 +73,7 @@ export function EntryPeekSheet({
   spaceId,
   onOpenChange,
   onOpenFullPage,
+  onOpenPath,
   onDuplicateEntry,
   onDeleteEntry,
   onConvertedEntry,
@@ -203,6 +205,7 @@ export function EntryPeekSheet({
               spaceId={spaceId}
               actions={actions}
               template={target?.template}
+              onOpenPath={onOpenPath}
               onEntryChange={setEntry}
               onSchemaChange={setSchemaResult}
             />
@@ -229,6 +232,7 @@ function StandardEntryPeek({
   spaceId,
   actions,
   template,
+  onOpenPath,
   onEntryChange,
   onSchemaChange,
 }: {
@@ -239,6 +243,7 @@ function StandardEntryPeek({
   spaceId: string;
   actions: ReactNode;
   template?: EntryPeekTarget["template"];
+  onOpenPath: (path: string) => void;
   onEntryChange: Dispatch<SetStateAction<Entry | null>>;
   onSchemaChange: (result: EntrySchemaResult | null) => void;
 }) {
@@ -320,6 +325,7 @@ function StandardEntryPeek({
               schemaResult={schemaResult}
               values={entry.meta.extra ?? {}}
               mode="peek"
+              onOpenPath={onOpenPath}
               onSchemaChange={onSchemaChange}
               onValueChange={async (field, value) => {
                 const column = schemaResult.schema.columns.find(

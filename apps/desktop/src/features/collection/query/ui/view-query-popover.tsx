@@ -46,7 +46,7 @@ import type {
   PropertyOption,
   PropertyType,
 } from "@/features/properties";
-import { PropertyBadge } from "@/features/properties";
+import { PropertyBadge } from "@/features/properties/ui";
 import {
   initialsForActor,
   normalizeSchema,
@@ -903,9 +903,7 @@ function ActorChecklist({
             <Avatar className="size-6">
               <AvatarFallback>{initialsForActor(actor)}</AvatarFallback>
             </Avatar>
-            <span className="min-w-0 truncate">
-              {actorDisplayName(actor)}
-            </span>
+            <span className="min-w-0 truncate">{actorDisplayName(actor)}</span>
           </label>
         ))}
       </div>

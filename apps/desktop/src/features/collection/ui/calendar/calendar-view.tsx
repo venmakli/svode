@@ -80,6 +80,7 @@ export function CalendarView({
   onOpenNestedPeek,
   onOpenNestedCollection,
   onOpenFullPage,
+  onOpenPath,
   onDuplicateEntry,
   onDeleteEntry,
   onSchemaChange,
@@ -226,6 +227,7 @@ export function CalendarView({
     () => ({
       spacePath,
       projectPath,
+      onOpenPath,
       actors,
       onRequestActors: loadActors,
       onUpdateField: (entry: Entry, column: Column, value: unknown) => {
@@ -234,7 +236,7 @@ export function CalendarView({
         });
       },
     }),
-    [loadActors, actors, projectPath, spacePath, updateField],
+    [loadActors, actors, onOpenPath, projectPath, spacePath, updateField],
   );
 
   const handleDayCellDidMount = useCallback(

@@ -13,11 +13,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { Entry } from "@/features/entry";
-import {
-  validatePropertyValue,
-  type Column,
-} from "@/features/properties";
-import { PropertyControl } from "@/features/properties";
+import { validatePropertyValue, type Column } from "@/features/properties";
+import { PropertyControl } from "@/features/properties/ui";
 import { cn } from "@/shared/lib/utils";
 import { eventColorStyle } from "./utils";
 import type {
@@ -234,6 +231,7 @@ function CalendarPropertyControl({
           spacePath: propertyContext.spacePath,
           projectPath: propertyContext.projectPath,
           currentFilePath: entry.path,
+          onOpenPath: propertyContext.onOpenPath,
         }}
         onRequestActors={propertyContext.onRequestActors}
         onChange={(next) => propertyContext.onUpdateField(entry, column, next)}

@@ -68,6 +68,7 @@ export function TableView({
   onOpenNestedPeek,
   onOpenNestedCollection,
   onOpenFullPage,
+  onOpenPath,
   onDuplicateEntry,
   onDeleteEntry,
   onSchemaChange,
@@ -146,10 +147,7 @@ export function TableView({
   );
   const hasSort = sort.length > 0;
   const hasActorColumn = useMemo(
-    () =>
-      schema.columns.some(
-        (column) => column.type === "actor",
-      ),
+    () => schema.columns.some((column) => column.type === "actor"),
     [schema.columns],
   );
 
@@ -336,6 +334,7 @@ export function TableView({
     onOpenNestedPeek: onOpenNestedPeek ?? onOpenEntry,
     onOpenNestedCollection,
     onOpenFullPage,
+    onOpenPath,
     onRequestActors: loadActors,
     onCommitField: (entry, column, value) =>
       void commitField(entry, column, value),
@@ -469,6 +468,7 @@ export function TableView({
               onOpenEntry={onOpenEntry}
               onOpenNestedPeek={onOpenNestedPeek ?? onOpenEntry}
               onOpenFullPage={onOpenFullPage}
+              onOpenPath={onOpenPath}
               onDuplicateEntry={onDuplicateEntry}
               onDeleteEntry={onDeleteEntry}
               onDragEnd={(event) => void handleDragEnd(event)}

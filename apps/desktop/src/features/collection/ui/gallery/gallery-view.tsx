@@ -78,6 +78,7 @@ export function GalleryView({
   onOpenNestedPeek,
   onOpenNestedCollection,
   onOpenFullPage,
+  onOpenPath,
   onDuplicateEntry,
   onDeleteEntry,
   onCreateEntry,
@@ -128,9 +129,7 @@ export function GalleryView({
   );
   const hasSort = sort.length > 0;
   const queryFiltered = searchQuery.trim().length > 0 || filters.length > 0;
-  const hasActorField = metaColumns.some(
-    (column) => column.type === "actor",
-  );
+  const hasActorField = metaColumns.some((column) => column.type === "actor");
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -393,6 +392,7 @@ export function GalleryView({
                   onOpen={openCard}
                   onOpenFullPage={onOpenFullPage}
                   onOpenNestedCollection={onOpenNestedCollection}
+                  onOpenPath={onOpenPath}
                   onDuplicate={onDuplicateEntry}
                   onDelete={onDeleteEntry}
                   onFocusCard={setFocusedPath}

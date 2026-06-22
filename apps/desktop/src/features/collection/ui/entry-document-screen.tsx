@@ -10,7 +10,7 @@ import {
   type Entry,
   type EntryCover,
 } from "@/features/entry";
-import { PropertyPanel } from "@/features/properties";
+import { PropertyPanel } from "@/features/properties/ui";
 import { normalizeSchema } from "@/features/properties";
 import {
   propertyFieldSavePolicy,
@@ -48,6 +48,10 @@ export function EntryDocumentScreen({
   spaceId,
 }: EntryDocumentScreenProps) {
   const openDocument = useEntrySelectionStore((state) => state.openDocument);
+  const openPath = useCallback(
+    (path: string) => openDocument(path, spaceId),
+    [openDocument, spaceId],
+  );
   const openScopeHome = useEntrySelectionStore((state) => state.openScopeHome);
   const patchEntryTreeMeta = useSpaceTreeSync(
     (state) => state.patchEntryTreeMeta,
@@ -248,6 +252,7 @@ export function EntryDocumentScreen({
               schemaResult={schemaResult}
               values={currentEntry.meta.extra ?? {}}
               mode="full"
+              onOpenPath={openPath}
               onSchemaChange={setSchemaResult}
               onValueChange={async (field, value) => {
                 const column = schemaResult.schema.columns.find(

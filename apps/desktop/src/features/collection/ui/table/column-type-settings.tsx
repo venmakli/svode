@@ -51,7 +51,7 @@ import type {
 import {
   diagnoseTwoWayRelation,
   repairTwoWayRelation,
-} from "@/features/properties";
+} from "@/features/properties/api";
 import { STATUS_GROUPS } from "@/features/properties";
 import { SettingsRow, SettingsSection } from "../settings-row";
 import { ColorPicker } from "./color-picker";

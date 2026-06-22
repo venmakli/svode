@@ -29,6 +29,7 @@ import {
 } from "../lib/utils";
 import * as m from "@/paraglide/messages.js";
 import { RelationValue } from "./relation-control";
+import { copyPropertyValue, openPropertyExternal } from "../api/property-actions";
 
 export function PropertyValueActions({
   column,
@@ -52,7 +53,7 @@ export function PropertyValueActions({
       {column.type === "url" ? (
         <IconAction
           label={m.property_action_open()}
-          onClick={() => openExternal(raw)}
+          onClick={() => openPropertyExternal(raw)}
         >
           <ExternalLink />
         </IconAction>
@@ -60,7 +61,7 @@ export function PropertyValueActions({
       {column.type === "email" ? (
         <IconAction
           label={m.property_action_email()}
-          onClick={() => openExternal(`mailto:${raw}`)}
+          onClick={() => openPropertyExternal(`mailto:${raw}`)}
         >
           <Mail />
         </IconAction>
@@ -68,14 +69,14 @@ export function PropertyValueActions({
       {column.type === "phone" ? (
         <IconAction
           label={m.property_action_call()}
-          onClick={() => openExternal(`tel:${raw}`)}
+          onClick={() => openPropertyExternal(`tel:${raw}`)}
         >
           <PhoneCall />
         </IconAction>
       ) : null}
       <IconAction
         label={m.property_action_copy()}
-        onClick={() => copyValue(raw)}
+        onClick={() => copyPropertyValue(raw)}
       >
         <Copy />
       </IconAction>
@@ -359,16 +360,6 @@ function IconAction({
       </Tooltip>
     </TooltipProvider>
   );
-}
-
-function copyValue(value: string) {
-  if (!value) return;
-  void navigator.clipboard?.writeText(value);
-}
-
-function openExternal(value: string) {
-  if (!value) return;
-  window.open(value, "_blank", "noopener,noreferrer");
 }
 
 function urlHref(value: unknown) {

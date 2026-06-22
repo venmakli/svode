@@ -5,7 +5,11 @@ import type {
   CollectionView,
   UseViewQueryResult,
 } from "@/features/collection/query";
-import type { CollectionSchema, Column, ActorCandidate } from "@/features/properties";
+import type {
+  CollectionSchema,
+  Column,
+  ActorCandidate,
+} from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
 import { ColumnMenuPopover } from "./column-menu";
 import { PropertyCell, TitleCell } from "./cells";
@@ -45,6 +49,7 @@ export function useTableColumns({
   onOpenNestedPeek,
   onOpenNestedCollection,
   onOpenFullPage,
+  onOpenPath,
   onRequestActors,
   onCommitField,
 }: {
@@ -72,6 +77,7 @@ export function useTableColumns({
   onOpenNestedPeek: (entry: Entry) => void;
   onOpenNestedCollection: (entry: Entry) => void;
   onOpenFullPage: (entry: Entry) => void;
+  onOpenPath: (path: string) => void;
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   onCommitField: (
     entry: Entry,
@@ -201,6 +207,7 @@ export function useTableColumns({
                   spacePath,
                   projectPath,
                   currentFilePath: row.original.entry.path,
+                  onOpenPath,
                 }}
                 value={row.original.entry.meta.extra?.[property.name] ?? null}
                 editing={
@@ -238,6 +245,7 @@ export function useTableColumns({
       onOpenFullPage,
       onOpenNestedPeek,
       onOpenNestedCollection,
+      onOpenPath,
       onRequestActors,
       onSchemaChange,
       onUpdateViewPatch,

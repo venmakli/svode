@@ -15,7 +15,7 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { EntryIdentityHeader } from "@/features/editor";
 import { TitleZone } from "@/features/editor";
 import { PlateDocumentEditor } from "@/features/editor";
-import { PropertyPanel } from "@/features/properties";
+import { PropertyPanel } from "@/features/properties/ui";
 import { normalizeSchema } from "@/features/properties";
 import {
   propertyFieldSavePolicy,
@@ -124,6 +124,10 @@ export function CollectionScreen({
   );
   const readmePath = readmePathFor(collectionPath);
   const { openDocument } = useEntrySelectionStore();
+  const openPath = useCallback(
+    (path: string) => openDocument(path, spaceId),
+    [openDocument, spaceId],
+  );
   const {
     reloadTreeParent,
     reloadTreePathParent,
@@ -418,9 +422,7 @@ export function CollectionScreen({
         schema.columns.find((column) => column.type === "status")?.name ??
         schema.columns.find((column) => column.type === "select")?.name ??
         schema.columns.find(
-          (column) =>
-            (column.type === "actor") &&
-            !column.multiple,
+          (column) => column.type === "actor" && !column.multiple,
         )?.name ??
         null;
       return groupBy
@@ -904,9 +906,7 @@ export function CollectionScreen({
       ? { ...parentSchema, schema: normalizeSchema(parentSchema.schema) }
       : null;
   const hasHeaderProperties = Boolean(
-    propertiesSchema &&
-    propertiesSchema.schema.columns.length > 0 &&
-    entry,
+    propertiesSchema && propertiesSchema.schema.columns.length > 0 && entry,
   );
 
   if (loading) {
@@ -1017,6 +1017,7 @@ export function CollectionScreen({
               schemaResult={propertiesSchema}
               values={entry.meta.extra ?? {}}
               mode="full"
+              onOpenPath={openPath}
               onValueChange={async (field, value) => {
                 const column = propertiesSchema.schema.columns.find(
                   (item) => item.name === field,
@@ -1165,6 +1166,7 @@ export function CollectionScreen({
                   openDocument(entryToOpen.path, spaceId)
                 }
                 onOpenFullPage={openFullPage}
+                onOpenPath={openPath}
                 onDuplicateEntry={(entryToDuplicate) =>
                   void duplicateRow(entryToDuplicate).catch(handleError)
                 }
@@ -1199,6 +1201,7 @@ export function CollectionScreen({
                   openDocument(entryToOpen.path, spaceId)
                 }
                 onOpenFullPage={openFullPage}
+                onOpenPath={openPath}
                 onDuplicateEntry={(entryToDuplicate) =>
                   void duplicateRow(entryToDuplicate).catch(handleError)
                 }
@@ -1231,6 +1234,7 @@ export function CollectionScreen({
                   openDocument(entryToOpen.path, spaceId)
                 }
                 onOpenFullPage={openFullPage}
+                onOpenPath={openPath}
                 onDuplicateEntry={(entryToDuplicate) =>
                   void duplicateRow(entryToDuplicate).catch(handleError)
                 }
@@ -1267,6 +1271,7 @@ export function CollectionScreen({
                 onOpenFullPage={(entryToOpen) =>
                   openDocument(entryToOpen.path, spaceId)
                 }
+                onOpenPath={openPath}
                 onDuplicateEntry={(entryToDuplicate) =>
                   void duplicateRow(entryToDuplicate).catch(handleError)
                 }
@@ -1299,6 +1304,7 @@ export function CollectionScreen({
                 onOpenFullPage={(entryToOpen) =>
                   openDocument(entryToOpen.path, spaceId)
                 }
+                onOpenPath={openPath}
                 onDuplicateEntry={(entryToDuplicate) =>
                   void duplicateRow(entryToDuplicate).catch(handleError)
                 }
@@ -1349,6 +1355,7 @@ export function CollectionScreen({
           if (!open) setPeekTarget(null);
         }}
         onOpenFullPage={openFullPage}
+        onOpenPath={openPath}
         onConvertedEntry={(nextEntry, nested) => {
           setPeekTarget({ entry: nextEntry, nested });
           setEntriesVersion((version) => version + 1);

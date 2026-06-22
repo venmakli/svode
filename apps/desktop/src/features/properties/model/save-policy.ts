@@ -1,5 +1,5 @@
-import type { EntryFieldSavePolicy } from "@/features/entry";
-import { ENTRY_FIELD_TEXT_SAVE_DELAY_MS } from "@/features/entry";
+import type { EntryFieldSavePolicy } from "@/features/entry/model";
+import { ENTRY_FIELD_TEXT_SAVE_DELAY_MS } from "@/features/entry/model";
 import type { Column, PropertyType } from "./types";
 
 export function propertyFieldSavePolicy(

@@ -30,6 +30,7 @@ export interface ListViewProps {
   onOpenNestedPeek: (entry: Entry) => void;
   onOpenNestedCollection: (entry: Entry) => void;
   onOpenFullPage: (entry: Entry) => void;
+  onOpenPath: (path: string) => void;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
   onCreateEntry: (title: string, asFolder: boolean) => Promise<Entry>;
@@ -59,6 +60,7 @@ export interface ListRowProps {
   onOpen: (entry: Entry, nestedCollection: boolean) => void;
   onOpenFullPage: (entry: Entry) => void;
   onOpenNestedCollection: (entry: Entry) => void;
+  onOpenPath: (path: string) => void;
   onDuplicate: (entry: Entry) => void;
   onDelete: (entry: Entry) => void;
   onFocusRow: (path: string) => void;

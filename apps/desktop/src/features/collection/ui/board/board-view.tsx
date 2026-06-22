@@ -77,6 +77,7 @@ export function BoardView({
   onOpenNestedPeek,
   onOpenNestedCollection,
   onOpenFullPage,
+  onOpenPath,
   onDuplicateEntry,
   onDeleteEntry,
   onSchemaChange,
@@ -120,10 +121,7 @@ export function BoardView({
     [cardFields, groupBy, schema],
   );
   const hasActorCardField = useMemo(
-    () =>
-      customColumns.some(
-        (column) => column.type === "actor",
-      ),
+    () => customColumns.some((column) => column.type === "actor"),
     [customColumns],
   );
   const topLevelEntries = useMemo(
@@ -203,11 +201,7 @@ export function BoardView({
   }, [loadEntries, refreshToken]);
 
   useEffect(() => {
-    if (
-      groupColumn?.type !== "actor" &&
-      !hasActorCardField
-    )
-      return;
+    if (groupColumn?.type !== "actor" && !hasActorCardField) return;
     void loadActors().catch((error) => {
       console.warn("Failed to load board actors:", error);
     });
@@ -617,6 +611,7 @@ export function BoardView({
                   onOpenNestedPeek,
                   onOpenNestedCollection,
                   onOpenFullPage,
+                  onOpenPath,
                   onDuplicate: onDuplicateEntry,
                   onDelete: onDeleteEntry,
                 }}
@@ -644,6 +639,7 @@ export function BoardView({
             onOpenNestedPeek={onOpenNestedPeek}
             onOpenNestedCollection={onOpenNestedCollection}
             onOpenFullPage={onOpenFullPage}
+            onOpenPath={onOpenPath}
             onDuplicate={onDuplicateEntry}
             onDelete={onDeleteEntry}
           />

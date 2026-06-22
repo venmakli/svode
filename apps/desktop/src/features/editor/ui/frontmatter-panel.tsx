@@ -6,7 +6,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import type { EntryMeta } from "@/features/entry";
-import { PropertyPanel } from "@/features/properties";
+import { PropertyPanel } from "@/features/properties/ui";
 import type { EntrySchemaResult } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 import { useEffect, useState } from "react";
@@ -18,6 +18,7 @@ interface FrontmatterPanelProps {
   filePath: string | null;
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
+  onOpenPath?: (path: string) => void;
   onPropertyChange: (field: string, value: unknown) => Promise<void>;
 }
 
@@ -50,6 +51,7 @@ export function FrontmatterPanel({
   filePath,
   isOpen,
   onOpenChange,
+  onOpenPath,
   onPropertyChange,
 }: FrontmatterPanelProps) {
   const [schemaResult, setSchemaResult] = useState<EntrySchemaResult | null>(
@@ -118,6 +120,7 @@ export function FrontmatterPanel({
                 filePath={filePath}
                 schemaResult={schemaResult}
                 values={meta.extra ?? {}}
+                onOpenPath={onOpenPath}
                 onValueChange={onPropertyChange}
                 onSchemaChange={setSchemaResult}
               />

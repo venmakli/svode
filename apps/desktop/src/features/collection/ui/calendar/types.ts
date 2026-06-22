@@ -61,6 +61,7 @@ export interface CalendarViewProps {
   onOpenNestedPeek: (entry: Entry) => void;
   onOpenNestedCollection: (entry: Entry) => void;
   onOpenFullPage: (entry: Entry) => void;
+  onOpenPath: (path: string) => void;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
   onSchemaChange: (schema: CollectionSchema) => void;
@@ -78,6 +79,7 @@ export interface CalendarViewProps {
 export interface CalendarPropertyContext {
   spacePath: string;
   projectPath?: string | null;
+  onOpenPath: (path: string) => void;
   actors: ActorCandidate[];
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   onUpdateField: (entry: Entry, column: Column, value: unknown) => void;

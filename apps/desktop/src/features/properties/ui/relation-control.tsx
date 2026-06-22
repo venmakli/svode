@@ -28,16 +28,15 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/shared/lib/utils";
-import { useEntrySelectionStore } from "@/features/entry";
 import type { Entry } from "@/features/entry";
 import {
   normalizeRelationRoot,
-  queryRelationTargets,
   relationValueForPath,
-  resolveRelationsBatch,
   resolvedRelationPath,
 } from "../api/relation-api";
 import type { Column, RelationContext, ResolvedRelationEntry } from "../model";
+import { useRelationTargets } from "../hooks/use-relation-targets";
+import { useResolvedRelations } from "../hooks/use-resolved-relations";
 import * as m from "@/paraglide/messages.js";
 
 function deferStateUpdate(update: () => void) {
@@ -73,11 +72,16 @@ export function RelationControl({
 }: RelationControlProps) {
   const [open, setOpen] = useState(Boolean(autoOpen));
   const [query, setQuery] = useState("");
-  const [targets, setTargets] = useState<Entry[]>([]);
-  const [loading, setLoading] = useState(false);
   const relation = normalizeRelationRoot(column.relation);
   const values = useRelationValues(column, value);
   const limitOne = column.limit === "one";
+  const { targets, loading } = useRelationTargets({
+    open,
+    spacePath: context?.spacePath,
+    projectPath: context?.projectPath,
+    relation,
+    query,
+  });
 
   useEffect(() => {
     if (!autoOpen) return;
@@ -87,35 +91,6 @@ export function RelationControl({
   useEffect(() => {
     onOpenChange?.(open);
   }, [onOpenChange, open]);
-
-  useEffect(() => {
-    if (!open || !context?.spacePath || !relation) return;
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (!cancelled) {
-        setTargets([]);
-        setLoading(true);
-      }
-    });
-    void queryRelationTargets({
-      spacePath: context.spacePath,
-      projectPath: context.projectPath,
-      relation,
-      query,
-    })
-      .then((entries) => {
-        if (!cancelled) setTargets(entries);
-      })
-      .catch(() => {
-        if (!cancelled) setTargets([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [context?.projectPath, context?.spacePath, open, query, relation]);
 
   const selected = useMemo(() => new Set(values), [values]);
 
@@ -233,20 +208,12 @@ export function RelationValue({
   const values = useRelationValues(column, value);
   const relation = normalizeRelationRoot(column.relation);
   const resolved = useResolvedRelations(context, relation, values);
-  const openDocument = useEntrySelectionStore((state) => state.openDocument);
 
   if (values.length === 0) {
     return <span className="text-muted-foreground">-</span>;
   }
 
-  const openPath = (path: string) => {
-    if (!path) return;
-    if (context?.onOpenPath) {
-      context.onOpenPath(path);
-      return;
-    }
-    openDocument(path, context?.spaceId ?? undefined);
-  };
+  const openPath = context?.onOpenPath;
 
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-1">
@@ -265,7 +232,11 @@ export function RelationValue({
             value={item}
             target={target}
             status={status}
-            onOpen={() => openPath(target ? resolvedRelationPath(target) : "")}
+            onOpen={
+              target && openPath
+                ? () => openPath(resolvedRelationPath(target))
+                : undefined
+            }
             onRemove={onRemove}
           />
         );
@@ -284,7 +255,7 @@ function RelationChip({
   value: string;
   target: ResolvedRelationEntry | null | undefined;
   status: RelationChipStatus;
-  onOpen: () => void;
+  onOpen?: () => void;
   onRemove?: (value: string) => void;
 }) {
   const broken = status === "orphan" || status === "out-of-scope";
@@ -386,7 +357,7 @@ function RelationChip({
     );
   }
 
-  if (pending || !target) {
+  if (pending || !target || !onOpen) {
     return chipContainer(
       <span className={triggerClassName}>
         {icon}
@@ -420,44 +391,6 @@ function EntryIcon({ icon }: { icon?: string | null }) {
     );
   }
   return <FileText data-icon="inline-start" />;
-}
-
-function useResolvedRelations(
-  context: RelationContext | undefined,
-  relation: string,
-  values: string[],
-) {
-  const [resolved, setResolved] = useState<
-    Map<string, ResolvedRelationEntry | null>
-  >(() => new Map());
-
-  useEffect(() => {
-    if (!context?.spacePath || values.length === 0) {
-      return deferStateUpdate(() => setResolved(new Map()));
-    }
-    let cancelled = false;
-    void resolveRelationsBatch({
-      spacePath: context.spacePath,
-      projectPath: context.projectPath,
-      relation,
-      values,
-    })
-      .then((items) => {
-        if (cancelled) return;
-        setResolved(
-          new Map(values.map((item, index) => [item, items[index] ?? null])),
-        );
-      })
-      .catch(() => {
-        if (!cancelled)
-          setResolved(new Map(values.map((item) => [item, null])));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [context?.projectPath, context?.spacePath, relation, values]);
-
-  return resolved;
 }
 
 function useRelationValues(column: Column, value: unknown) {

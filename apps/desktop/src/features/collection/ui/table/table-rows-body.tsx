@@ -19,7 +19,7 @@ import type {
 } from "@/features/properties";
 import { SortableTableRow } from "./table-row";
 import type { CollectionTableRow } from "./types";
-import { PropertyValue } from "@/features/properties";
+import { PropertyValue } from "@/features/properties/ui";
 import { isEmptyValue } from "@/features/properties";
 import { nestedPreviewFields } from "./utils";
 
@@ -34,6 +34,7 @@ export function TableRowsBody({
   onOpenEntry,
   onOpenNestedPeek,
   onOpenFullPage,
+  onOpenPath,
   onDuplicateEntry,
   onDeleteEntry,
   onDragEnd,
@@ -50,6 +51,7 @@ export function TableRowsBody({
   onOpenEntry: (entry: Entry) => void;
   onOpenNestedPeek: (entry: Entry) => void;
   onOpenFullPage: (entry: Entry) => void;
+  onOpenPath: (path: string) => void;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
   onDragEnd: (event: DragEndEvent) => void;
@@ -106,6 +108,7 @@ export function TableRowsBody({
                       actors={actors}
                       spacePath={spacePath}
                       projectPath={projectPath}
+                      onOpenPath={onOpenPath}
                     />
                   </TableCell>
                 ) : (
@@ -140,12 +143,14 @@ function NestedSchemaPreview({
   actors,
   spacePath,
   projectPath,
+  onOpenPath,
 }: {
   row: CollectionTableRow;
   schema: CollectionSchema;
   actors: ActorCandidate[];
   spacePath: string;
   projectPath?: string | null;
+  onOpenPath: (path: string) => void;
 }) {
   const values = nestedPreviewFields(schema)
     .filter((field) => field !== "title")
@@ -194,6 +199,7 @@ function NestedSchemaPreview({
                   spacePath,
                   projectPath,
                   currentFilePath: row.entry.path,
+                  onOpenPath,
                 }}
               />
             </span>

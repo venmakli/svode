@@ -65,6 +65,7 @@ export function BoardCardContent({
   onOpenNestedPeek,
   onOpenNestedCollection,
   onOpenFullPage,
+  onOpenPath,
   onDuplicate,
   onDelete,
 }: BoardCardProps) {
@@ -129,6 +130,7 @@ export function BoardCardContent({
                 spacePath,
                 projectPath,
                 currentFilePath: entry.path,
+                onOpenPath,
               }}
               onRequestActors={onRequestActors}
               onUpdateField={overlay ? undefined : onUpdateField}

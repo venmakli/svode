@@ -8,15 +8,15 @@ import {
   shouldClosePropertyEditorOnChange,
   validatePropertyValue,
 } from "@/features/properties";
-import { PropertyControl } from "@/features/properties";
 import type { Column, ActorCandidate } from "@/features/properties";
 import type { RelationContext } from "@/features/properties";
 import { valueToString } from "@/features/properties";
 import {
   NumberPreview,
+  PropertyControl,
   PropertyValue,
   PropertyValueActions,
-} from "@/features/properties";
+} from "@/features/properties/ui";
 import type { CollectionTableRow } from "./types";
 import * as m from "@/paraglide/messages.js";
 

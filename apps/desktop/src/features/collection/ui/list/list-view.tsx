@@ -68,6 +68,7 @@ export function ListView({
   onOpenNestedPeek,
   onOpenNestedCollection,
   onOpenFullPage,
+  onOpenPath,
   onDuplicateEntry,
   onDeleteEntry,
   onCreateEntry,
@@ -132,9 +133,7 @@ export function ListView({
   );
   const hasSort = sort.length > 0;
   const queryFiltered = searchQuery.trim().length > 0 || filters.length > 0;
-  const hasActorField = metaColumns.some(
-    (column) => column.type === "actor",
-  );
+  const hasActorField = metaColumns.some((column) => column.type === "actor");
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -376,6 +375,7 @@ export function ListView({
                 onOpen={openRow}
                 onOpenFullPage={onOpenFullPage}
                 onOpenNestedCollection={onOpenNestedCollection}
+                onOpenPath={onOpenPath}
                 onDuplicate={onDuplicateEntry}
                 onDelete={onDeleteEntry}
                 onFocusRow={setFocusedPath}
