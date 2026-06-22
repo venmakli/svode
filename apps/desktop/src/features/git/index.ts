@@ -8,4 +8,6 @@ export type {
   GitUnpushedCommit,
   SyncResult,
 } from "./model/types";
-export { setSpaceCloneProgress } from "./api/git-clone-progress-actions";
+export { getGitAvailability } from "./api/git-availability-actions";
+export { trackSpaceCloneProgress } from "./api/git-clone-progress-actions";
+export { getGitStatusSnapshot } from "./api/git-status-actions";

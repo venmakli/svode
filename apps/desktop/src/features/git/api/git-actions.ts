@@ -7,6 +7,7 @@ import {
 } from "@/platform/git/git-api";
 import { getSpaceConfig } from "@/platform/space/space-api";
 import type { GitStatus } from "../model";
+import { toGitStatus, toSyncResult } from "./git-mappers";
 import { refreshGitStatus } from "./git-status-actions";
 import {
   notifyGitSyncAuthRequired,
@@ -40,7 +41,7 @@ export async function syncSpace(spacePath: string): Promise<void> {
   git.setSyncing(spacePath, true);
   git.setSyncError(spacePath, null);
   try {
-    const result = await syncGit(spacePath);
+    const result = toSyncResult(await syncGit(spacePath));
     switch (result.type) {
       case "Success":
         // Refresh status to clear any local indicators (file `↻`).
@@ -81,11 +82,13 @@ export async function commitFileAndMaybeSync(
 ): Promise<GitCommitResult | null> {
   let result: GitCommitResult;
   try {
-    const status = await commitGitFile({
-      projectPath,
-      spacePath,
-      filePath,
-    });
+    const status = toGitStatus(
+      await commitGitFile({
+        projectPath,
+        spacePath,
+        filePath,
+      }),
+    );
     useGitStore.getState().applyStatus(spacePath, status);
     result = {
       status,
@@ -118,10 +121,12 @@ export async function commitAllSpace(
     [];
   let result: GitCommitResult;
   try {
-    const status = await commitGitAll({
-      projectPath,
-      spacePath,
-    });
+    const status = toGitStatus(
+      await commitGitAll({
+        projectPath,
+        spacePath,
+      }),
+    );
     useGitStore.getState().applyStatus(spacePath, status);
     const stillDirty = new Set(status.files.map((file) => file.path));
     result = {
@@ -155,7 +160,7 @@ export async function syncOnOpen(spacePath: string): Promise<void> {
   // re-evaluate the state rather than show the last failure forever.
   git.setSyncError(spacePath, null);
   try {
-    const result = await syncGit(spacePath);
+    const result = toSyncResult(await syncGit(spacePath));
     if (result.type === "Success") {
       await refreshGitStatus(spacePath);
     }

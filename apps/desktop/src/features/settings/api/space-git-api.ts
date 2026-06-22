@@ -1,14 +1,17 @@
 import {
-  checkGitAvailability,
   getGitRemote,
-  getGitStatus,
   getGitSubmoduleUrl as getPlatformGitSubmoduleUrl,
   getSpaceGitType as getPlatformSpaceGitType,
   listenGitCommitted as listenPlatformGitCommitted,
   setGitRemote as setPlatformGitRemote,
 } from "@/platform/git/git-api";
 
-import type { GitAvailability, GitStatus } from "@/features/git";
+import {
+  getGitAvailability,
+  getGitStatusSnapshot,
+  type GitAvailability,
+  type GitStatus,
+} from "@/features/git";
 import type { SpaceGitType } from "@/features/space";
 
 export interface GetSpaceGitTypeInput extends Record<string, unknown> {
@@ -58,11 +61,11 @@ export function getSettingsGitRemote(
 }
 
 export function getSettingsGitStatus(spacePath: string): Promise<GitStatus> {
-  return getGitStatus(spacePath);
+  return getGitStatusSnapshot(spacePath);
 }
 
 export function getSettingsGitAvailability(): Promise<GitAvailability> {
-  return checkGitAvailability();
+  return getGitAvailability();
 }
 
 export function setGitRemote(input: SetGitRemoteInput): Promise<void> {

@@ -9,6 +9,7 @@ import { getSpaceConfig } from "@/platform/space/space-api";
 import { useGitStore } from "../model";
 import type { UnpushedCommitDto } from "@/platform/git/git-types";
 import type { GitUnpushedCommit } from "../model";
+import { toGitStatus } from "./git-mappers";
 
 type GitPublishCommitHandler = (spacePath: string) => void;
 type GitPublishUnlistenFn = () => void;
@@ -71,7 +72,7 @@ export async function publishGitCommits({
   projectPath,
   enableAutoSync: shouldEnableAutoSync,
 }: PublishGitCommitsInput): Promise<void> {
-  const status = await publishGit(spacePath);
+  const status = toGitStatus(await publishGit(spacePath));
   useGitStore.getState().applyStatus(spacePath, status);
 
   if (shouldEnableAutoSync) {
