@@ -148,6 +148,9 @@ export function NavSpaces({
                       tree={visibleScopeChildren(tree)}
                       editingSpaceId={editingSpaceId}
                       editValue={editValue}
+                      openOnActiveDocument={
+                        activeDocumentSpaceId === space.id
+                      }
                       setEditValue={setEditValue}
                       setEditingSpaceId={setEditingSpaceId}
                       handleRenameSpace={handleRenameSpace}

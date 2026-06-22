@@ -1,4 +1,8 @@
-import type { CSSProperties, RefObject } from "react";
+import {
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
@@ -64,6 +68,7 @@ interface SpaceRowProps {
   tree: TreeNode[];
   editingSpaceId: string | null;
   editValue: string;
+  openOnActiveDocument: boolean;
   setEditValue: (v: string) => void;
   setEditingSpaceId: (id: string | null) => void;
   handleRenameSpace: () => void;
@@ -94,6 +99,7 @@ export function SpaceRow({
   tree,
   editingSpaceId,
   editValue,
+  openOnActiveDocument,
   setEditValue,
   setEditingSpaceId,
   handleRenameSpace,
@@ -133,6 +139,8 @@ export function SpaceRow({
     isDragging && "cursor-grabbing",
   );
   const scope = { id: ws.id, path: ws.path };
+  const [userOpen, setUserOpen] = useState(false);
+  const open = userOpen || isActive || openOnActiveDocument;
 
   if (ws.status === "missing" || ws.status === "broken") {
     return (
@@ -197,9 +205,10 @@ export function SpaceRow({
   return (
     <Collapsible
       asChild
-      defaultOpen={isActive}
-      onOpenChange={(open) => {
-        if (open) void ensureTreeLoaded(ws.id);
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setUserOpen(nextOpen);
+        if (nextOpen) void ensureTreeLoaded(ws.id);
       }}
     >
       <SidebarMenuItem

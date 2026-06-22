@@ -9,6 +9,7 @@ interface UseSpaceSidebarHomeInput {
   clearActiveSpace: () => void;
   ensureTreeLoaded: (spaceId: string) => Promise<void>;
   fileTrees: Record<string, TreeNode[]>;
+  forceRootOpen: boolean;
   onActivateContent: () => void;
   openSpace: (id: string) => Promise<void>;
 }
@@ -18,6 +19,7 @@ export function useSpaceSidebarHome({
   clearActiveSpace,
   ensureTreeLoaded,
   fileTrees,
+  forceRootOpen,
   onActivateContent,
   openSpace,
 }: UseSpaceSidebarHomeInput) {
@@ -26,7 +28,8 @@ export function useSpaceSidebarHome({
     open: boolean;
     rootId: string | null;
   }>({ open: false, rootId: null });
-  const rootOpen = rootOpenState.rootId === activeRootId && rootOpenState.open;
+  const rootOpen =
+    forceRootOpen || (rootOpenState.rootId === activeRootId && rootOpenState.open);
 
   const openHomeForScope = useCallback(
     (spaceId: string, tree: TreeNode[] | null) => {

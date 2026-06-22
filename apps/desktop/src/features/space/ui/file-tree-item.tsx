@@ -1,4 +1,10 @@
-import { useContext, type ReactElement } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  type ReactElement,
+} from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import * as m from "@/paraglide/messages.js";
 import {
@@ -114,6 +120,27 @@ export function FileTreeItem({
     id: node.path,
     disabled: isChildOfDragged,
   });
+  const itemRef = useRef<HTMLLIElement | null>(null);
+  const setItemRef = useCallback(
+    (element: HTMLLIElement | null) => {
+      itemRef.current = element;
+      setNodeRef(element);
+    },
+    [setNodeRef],
+  );
+
+  useEffect(() => {
+    if (!isActive) return;
+    const frame = window.requestAnimationFrame(() => {
+      itemRef.current?.scrollIntoView({
+        block: "center",
+        inline: "nearest",
+        behavior: "smooth",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [isActive, node.path, spaceId]);
+
   const isOver = activeId !== null && overId === node.path;
   // Use projection.overPath as source of truth for nest highlight target
   const isProjectionTarget =
@@ -296,7 +323,7 @@ export function FileTreeItem({
   if (!expandable) {
     return (
       <>
-        <SidebarMenuSubItem ref={setNodeRef} style={style} className="relative">
+        <SidebarMenuSubItem ref={setItemRef} style={style} className="relative">
           {dropIndicator}
           <div className="flex items-center group/tree-item">
             {dragHandle}
@@ -323,7 +350,7 @@ export function FileTreeItem({
   // Folder node (document with children, or bare folder)
   return (
     <>
-      <SidebarMenuSubItem ref={setNodeRef} style={style} className="relative">
+      <SidebarMenuSubItem ref={setItemRef} style={style} className="relative">
         {dropIndicator}
         <Collapsible
           open={expanded}

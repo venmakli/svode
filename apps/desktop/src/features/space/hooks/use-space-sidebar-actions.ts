@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useEntrySelectionStore } from "@/features/entry";
 import { useSpaceStore } from "../model";
 import { useMissingSpaceClone } from "./use-missing-space-clone";
@@ -30,6 +31,7 @@ export function useSpaceSidebarActions({
     fileTrees,
     treeLoading,
     treeRefreshing,
+    ensureTreePathVisible,
     openSpace,
     clearActiveSpace,
     reloadTreeParent,
@@ -76,9 +78,20 @@ export function useSpaceSidebarActions({
     clearActiveSpace,
     ensureTreeLoaded,
     fileTrees,
+    forceRootOpen: Boolean(
+      activeDocument &&
+        activeDocumentSpaceId === activeRootId &&
+        activeDocument.toLowerCase() !== "readme.md",
+    ),
     onActivateContent,
     openSpace,
   });
+
+  useEffect(() => {
+    if (!activeDocument || !activeDocumentSpaceId) return;
+    void ensureTreePathVisible(activeDocumentSpaceId, activeDocument);
+  }, [activeDocument, activeDocumentSpaceId, ensureTreePathVisible]);
+
   const { handleNewCollection, handleNewFolder, handleNewPage } =
     useSpaceScopeActions({
       activeRootPath,

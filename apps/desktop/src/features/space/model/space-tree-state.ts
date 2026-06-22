@@ -4,8 +4,11 @@ import * as spaceActions from "../api/space-store-actions";
 import type { SpaceEntryDto } from "../api/space-store-actions";
 import {
   applyReadmeMeta as applyReadmeMetaPatch,
+  dirname,
+  folderPathForNode,
   isReadmePath,
   isSystemIgnoredTreePath,
+  normalizeTreePath,
   removeReadmeMeta as removeReadmeMetaPatch,
   removeTreePath as removeTreePathPatch,
   treeRowParentPath,
@@ -60,6 +63,7 @@ export interface SpaceTreeState extends SpaceTreeDataState {
     options?: RefreshTreeOptions,
   ) => Promise<void>;
   ensureTreeLoaded: (spaceId: string) => Promise<void>;
+  ensureTreePathVisible: (spaceId: string, path: string) => Promise<void>;
   loadTreeChildren: (
     spaceId: string,
     parentPath?: string | null,
@@ -274,6 +278,29 @@ function rebuildVisibleTree(
   return buildLoadedTree(childrenByParentPath, state.expandedPaths[spaceId]);
 }
 
+function ancestorFolderPathsForTreePath(path: string): string[] {
+  const normalized = normalizeTreePath(path);
+  if (!normalized || isSystemIgnoredTreePath(normalized)) return [];
+
+  const rowPath = isReadmePath(normalized) ? dirname(normalized) : normalized;
+  const parentPath = dirname(rowPath);
+  if (!parentPath) return [];
+
+  const parts = parentPath.split("/").filter(Boolean);
+  return parts.map((_, index) => parts.slice(0, index + 1).join("/"));
+}
+
+function findNodePathForFolder(
+  nodes: TreeNode[] | undefined,
+  folderPath: string,
+): string | null {
+  const normalizedFolder = normalizeTreePath(folderPath);
+  const node = nodes?.find(
+    (item) => folderPathForNode(item) === normalizedFolder,
+  );
+  return node ? normalizeTreePath(node.path) : null;
+}
+
 export function createTreeActivityPatch(
   state: SpaceTreeDataState,
   spaceId: string,
@@ -431,6 +458,71 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
           await get().loadTreeChildren(spaceId, path);
         },
       );
+    },
+
+    ensureTreePathVisible: async (spaceId: string, path: string) => {
+      const initialSpacePath = findSpacePath(get(), spaceId);
+      if (!initialSpacePath) return;
+
+      const normalizedPath = normalizeTreePath(path);
+      if (!normalizedPath || isSystemIgnoredTreePath(normalizedPath)) return;
+
+      if (!hasSpaceExpandedPaths(get(), spaceId)) {
+        await get().loadExpandedPaths(spaceId);
+      }
+
+      if (findSpacePath(get(), spaceId) !== initialSpacePath) return;
+
+      await get().loadTreeChildren(spaceId, ROOT_TREE_PARENT);
+
+      if (findSpacePath(get(), spaceId) !== initialSpacePath) return;
+
+      const expanded = new Set(get().expandedPaths[spaceId] ?? []);
+      let changed = false;
+
+      for (const folderPath of ancestorFolderPathsForTreePath(normalizedPath)) {
+        const parentPath = dirname(folderPath);
+        const parentKey = treeParentKey(parentPath);
+
+        if (shouldValidateTreeParent(get(), spaceId, parentKey)) {
+          await get().loadTreeChildren(spaceId, parentKey);
+        }
+
+        if (findSpacePath(get(), spaceId) !== initialSpacePath) return;
+
+        const nodePath = findNodePathForFolder(
+          get().childrenByParentPath[spaceId]?.[parentKey],
+          folderPath,
+        );
+        if (!nodePath) break;
+
+        if (!expanded.has(nodePath)) {
+          expanded.add(nodePath);
+          changed = true;
+        }
+
+        await get().loadTreeChildren(spaceId, nodePath);
+
+        if (findSpacePath(get(), spaceId) !== initialSpacePath) return;
+      }
+
+      if (!changed) return;
+
+      const next = Array.from(expanded);
+      set((state) => ({
+        expandedPaths: { ...state.expandedPaths, [spaceId]: next },
+        fileTrees: {
+          ...state.fileTrees,
+          [spaceId]: state.childrenByParentPath[spaceId]
+            ? buildLoadedTree(state.childrenByParentPath[spaceId], next)
+            : (state.fileTrees[spaceId] ?? []),
+        },
+      }));
+
+      const spacePath = findSpacePath(get(), spaceId);
+      if (spacePath) {
+        spaceActions.saveSpaceExpandedPaths(spacePath, next).catch(() => {});
+      }
     },
 
     loadTreeChildren: async (spaceId, parentPath, options) => {
