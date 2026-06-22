@@ -1,5 +1,6 @@
+import { useCallback } from "react";
 import type { TreeNode } from "@/features/entry";
-import { nestTreeEntry, unnestTreeEntry } from "./tree-entry-actions";
+import { nestTreeEntry, unnestTreeEntry } from "../api/tree-entry-actions";
 import {
   buildCrossParentMovePlan,
   buildNestConversionOrder,
@@ -17,10 +18,13 @@ import { useSpaceStore, type SpaceState } from "../model/space-store";
 import type { SpaceInfo } from "../model/types";
 
 interface CommitFileTreeDragInput {
-  spaceId: string;
-  tree: TreeNode[];
   fromPath: string;
   projection: Projection;
+}
+
+interface UseFileTreeDragCommandInput {
+  spaceId: string;
+  tree: TreeNode[];
 }
 
 function findSpace(state: SpaceState, spaceId: string): SpaceInfo | null {
@@ -102,75 +106,82 @@ async function maybeUnnestEmptyOldParent(input: {
   }
 }
 
-export async function commitFileTreeDrag(input: CommitFileTreeDragInput) {
-  const state = useSpaceStore.getState();
-  const space = findSpace(state, input.spaceId);
-  if (!space) return;
+export function useFileTreeDragCommand({
+  spaceId,
+  tree,
+}: UseFileTreeDragCommandInput) {
+  return useCallback(
+    async (input: CommitFileTreeDragInput) => {
+      const state = useSpaceStore.getState();
+      const space = findSpace(state, spaceId);
+      if (!space) return;
 
-  const drag = prepareTreeDrag(input.tree, input.fromPath, input.projection);
-  if (!drag) return;
+      const drag = prepareTreeDrag(tree, input.fromPath, input.projection);
+      if (!drag) return;
 
-  const editorSync = createFileTreeEditorSync(input.spaceId);
+      const editorSync = createFileTreeEditorSync(spaceId);
 
-  await convertProjectedChildTarget({
-    space,
-    spaceId: input.spaceId,
-    tree: input.tree,
-    fromPath: input.fromPath,
-    projection: input.projection,
-    editorSync,
-  });
+      await convertProjectedChildTarget({
+        space,
+        spaceId,
+        tree,
+        fromPath: input.fromPath,
+        projection: input.projection,
+        editorSync,
+      });
 
-  const currentTree =
-    useSpaceStore.getState().fileTrees[input.spaceId] ?? input.tree;
+      const currentTree = useSpaceStore.getState().fileTrees[spaceId] ?? tree;
 
-  if (drag.fromParent === drag.toParent) {
-    const order = buildSameParentReorderOrder({
-      currentTree,
-      fromNodeName: drag.fromNode.name,
-      parentPath: drag.toParent,
-      projection: input.projection,
-    });
-    if (order) {
-      await useSpaceStore.getState().saveOrder(input.spaceId, order);
-      await useSpaceStore
+      if (drag.fromParent === drag.toParent) {
+        const order = buildSameParentReorderOrder({
+          currentTree,
+          fromNodeName: drag.fromNode.name,
+          parentPath: drag.toParent,
+          projection: input.projection,
+        });
+        if (order) {
+          await useSpaceStore.getState().saveOrder(spaceId, order);
+          await useSpaceStore
+            .getState()
+            .reloadTreeParent(spaceId, drag.toParent);
+        }
+        return;
+      }
+
+      const movePlan = buildCrossParentMovePlan(tree, drag);
+      editorSync.clearInitialUnsaved(movePlan.fromPath);
+      editorSync.suppressPaths([movePlan.fromPath, movePlan.movePath]);
+      const newPath = await useSpaceStore
         .getState()
-        .reloadTreeParent(input.spaceId, drag.toParent);
-    }
-    return;
-  }
+        .moveEntry(spaceId, movePlan.movePath, movePlan.toParent);
+      if (newPath) {
+        editorSync.suppressPaths([newPath]);
+      }
 
-  const movePlan = buildCrossParentMovePlan(input.tree, drag);
-  editorSync.clearInitialUnsaved(movePlan.fromPath);
-  editorSync.suppressPaths([movePlan.fromPath, movePlan.movePath]);
-  const newPath = await useSpaceStore
-    .getState()
-    .moveEntry(input.spaceId, movePlan.movePath, movePlan.toParent);
-  if (newPath) {
-    editorSync.suppressPaths([newPath]);
-  }
+      if (newPath && !movePlan.isBareFolder) {
+        editorSync.reopenInitialDocument(
+          movePlan.fromPath,
+          movedDocumentPath(movePlan, newPath),
+        );
+      }
 
-  if (newPath && !movePlan.isBareFolder) {
-    editorSync.reopenInitialDocument(
-      movePlan.fromPath,
-      movedDocumentPath(movePlan, newPath),
-    );
-  }
+      await maybeUnnestEmptyOldParent({
+        space,
+        spaceId,
+        currentTree,
+        movePlan,
+        editorSync,
+      });
 
-  await maybeUnnestEmptyOldParent({
-    space,
-    spaceId: input.spaceId,
-    currentTree,
-    movePlan,
-    editorSync,
-  });
-
-  const updatedTree = useSpaceStore.getState().fileTrees[input.spaceId];
-  if (updatedTree) {
-    const order = buildOrderMap(updatedTree);
-    await useSpaceStore.getState().saveOrder(input.spaceId, order);
-    await useSpaceStore
-      .getState()
-      .reloadTreeParents(input.spaceId, [drag.fromParent, drag.toParent]);
-  }
+      const updatedTree = useSpaceStore.getState().fileTrees[spaceId];
+      if (updatedTree) {
+        const order = buildOrderMap(updatedTree);
+        await useSpaceStore.getState().saveOrder(spaceId, order);
+        await useSpaceStore
+          .getState()
+          .reloadTreeParents(spaceId, [drag.fromParent, drag.toParent]);
+      }
+    },
+    [spaceId, tree],
+  );
 }

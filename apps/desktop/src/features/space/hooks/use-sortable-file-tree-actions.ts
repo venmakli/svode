@@ -3,7 +3,7 @@ import type { DragEndEvent } from "@dnd-kit/core";
 import { toast } from "sonner";
 import type { TreeNode } from "@/features/entry";
 import type { Projection } from "../lib/tree-dnd-utilities";
-import { commitFileTreeDrag } from "../api/file-tree-drag-command";
+import { useFileTreeDragCommand } from "./use-file-tree-drag-command";
 
 interface UseSortableFileTreeActionsInput {
   spaceId: string;
@@ -16,6 +16,8 @@ export function useSortableFileTreeActions({
   tree,
   resetState,
 }: UseSortableFileTreeActionsInput) {
+  const commitFileTreeDrag = useFileTreeDragCommand({ spaceId, tree });
+
   return useCallback(
     async (event: DragEndEvent, currentProjection: Projection | null) => {
       resetState();
@@ -25,8 +27,6 @@ export function useSortableFileTreeActions({
 
       try {
         await commitFileTreeDrag({
-          spaceId,
-          tree,
           fromPath: active.id as string,
           projection: currentProjection,
         });
@@ -35,6 +35,6 @@ export function useSortableFileTreeActions({
         toast.error("Failed to move file");
       }
     },
-    [tree, spaceId, resetState],
+    [commitFileTreeDrag, resetState],
   );
 }
