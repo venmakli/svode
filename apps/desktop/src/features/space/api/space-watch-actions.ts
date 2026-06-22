@@ -1,27 +1,24 @@
-import { readEntry, type EntryDto } from "@/platform/entries/entries-api";
+import { readEntry } from "@/platform/entries/entries-api";
 import {
   listenSpaceDirty,
   listenSpaceFileEvent,
   unwatchSpace,
   watchSpace,
-  type SpaceFileEventName,
 } from "@/platform/space/space-api";
 import type {
-  SpaceDirtyEventDto,
-  SpaceFileEventDto,
-} from "@/platform/space/space-types";
+  SpaceDirtyEvent,
+  SpaceFileEvent,
+  SpaceFileEventName,
+  WatchedSpaceEntry,
+} from "../model/space-watch-events";
 
-export type { SpaceFileEventDto, SpaceFileEventName };
-
-export type WatchedSpaceEntry = EntryDto;
-
-type SpaceFileEventHandler = (event: { payload: SpaceFileEventDto }) => void;
-type SpaceDirtyEventHandler = (event: { payload: SpaceDirtyEventDto }) => void;
+type SpaceFileEventHandler = (event: { payload: SpaceFileEvent }) => void;
+type SpaceDirtyEventHandler = (event: { payload: SpaceDirtyEvent }) => void;
 
 export function readWatchedSpaceEntry(
   spacePath: string,
   entryPath: string,
-): Promise<EntryDto> {
+): Promise<WatchedSpaceEntry> {
   return readEntry(spacePath, entryPath);
 }
 
@@ -37,11 +34,13 @@ export function listenWatchedSpaceFileEvent(
   eventName: SpaceFileEventName,
   handler: SpaceFileEventHandler,
 ): Promise<() => void> {
-  return listenSpaceFileEvent(eventName, handler);
+  return listenSpaceFileEvent(eventName, (event) =>
+    handler({ payload: event.payload }),
+  );
 }
 
 export function listenWatchedSpaceDirty(
   handler: SpaceDirtyEventHandler,
 ): Promise<() => void> {
-  return listenSpaceDirty(handler);
+  return listenSpaceDirty((event) => handler({ payload: event.payload }));
 }

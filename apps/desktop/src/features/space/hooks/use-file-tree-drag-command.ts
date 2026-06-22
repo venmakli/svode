@@ -13,7 +13,7 @@ import {
 } from "../lib/tree-dnd-commit-plan";
 import type { Projection } from "../lib/tree-dnd-utilities";
 import { buildOrderMap, findTreeNode } from "../lib/tree-node-queries";
-import { createFileTreeEditorSync } from "../model/file-tree-editor-sync";
+import { createFileTreeEditorSync } from "../effects/file-tree-editor-sync";
 import { useSpaceStore, type SpaceState } from "../model/space-store";
 import type { SpaceInfo } from "../model/types";
 

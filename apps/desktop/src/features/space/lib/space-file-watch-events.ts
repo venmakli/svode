@@ -1,9 +1,10 @@
 import type { TreeNode } from "@/features/entry";
 import type {
-  SpaceFileEventDto,
+  SpaceFileEvent,
+  SpaceFileEventKind,
   SpaceFileEventName,
   WatchedSpaceEntry,
-} from "../api/space-watch-actions";
+} from "../model/space-watch-events";
 import {
   basename,
   dirname,
@@ -22,7 +23,7 @@ export const SPACE_FILE_EVENT_BATCH_MS = 300;
 
 export type QueuedSpaceFileEvent = {
   eventName: SpaceFileEventName;
-  payload: SpaceFileEventDto;
+  payload: SpaceFileEvent;
 };
 
 export interface SpaceFileEventTreeStore {
@@ -54,12 +55,10 @@ export interface SpaceFileEventTreeStore {
   ) => void;
 }
 
-type SpaceFileEventKind = NonNullable<SpaceFileEventDto["kind"]>;
-
 interface ApplySpaceFileEventInput {
   eventName: SpaceFileEventName;
   getStore: () => SpaceFileEventTreeStore;
-  payload: SpaceFileEventDto;
+  payload: SpaceFileEvent;
   readEntry: (entryPath: string) => Promise<WatchedSpaceEntry>;
   repairTree: (parentPath?: string | null) => void;
   spaceId: string;
@@ -74,7 +73,7 @@ function isSchemaPath(path: string): boolean {
 }
 
 export function inferSpaceFileEventKind(
-  payload: SpaceFileEventDto,
+  payload: SpaceFileEvent,
 ): SpaceFileEventKind {
   if (payload.kind) return payload.kind;
   if (isSchemaPath(payload.path)) return "schema";
@@ -91,7 +90,7 @@ export function isSameSpaceFileEvent(
 }
 
 export function affectsSpaceTreeOrMetadata(
-  payload: SpaceFileEventDto,
+  payload: SpaceFileEvent,
 ): boolean {
   if (payload.affectsTree === false && payload.affectsMetadata === false) {
     return false;
@@ -100,7 +99,7 @@ export function affectsSpaceTreeOrMetadata(
 }
 
 export function shouldApplySpaceFileEvent(
-  payload: SpaceFileEventDto,
+  payload: SpaceFileEvent,
   spacePath: string,
 ): boolean {
   return (
