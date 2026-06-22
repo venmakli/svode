@@ -14,7 +14,6 @@ import {
   FolderPlus,
   Loader2,
   Pencil,
-  Save,
   Settings,
   Trash2,
   X,
@@ -32,7 +31,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Progress } from "@/components/ui/progress";
 import {
   SidebarMenuAction,
   SidebarMenuButton,
@@ -44,10 +42,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  SpaceGitActivityIndicator,
-  useSpaceSidebarGit,
-} from "@/features/git/sidebar";
 import type { TreeNode } from "@/features/entry";
 import { cn } from "@/shared/lib/utils";
 import type {
@@ -56,11 +50,9 @@ import type {
 } from "../hooks/use-space-sidebar-actions";
 import type { SpaceInfo } from "../model";
 import { FileTreeItem } from "./file-tree-item";
-import {
-  LfsIndicatorIcon,
-  TreeLoadingRows,
-} from "./nav-space-indicators";
+import { TreeLoadingRows } from "./nav-space-indicators";
 import { SortableFileTree } from "./sortable-file-tree";
+import { useSpaceRowGitControls } from "./space-row-git-controls";
 
 interface SpaceRowProps {
   ws: SpaceInfo;
@@ -120,7 +112,13 @@ export function SpaceRow({
   refreshing,
   treeLoaded,
 }: SpaceRowProps) {
-  const { cloning, dirty, commitAll } = useSpaceSidebarGit(ws.path, rootPath);
+  const gitControls = useSpaceRowGitControls({
+    lfsState: ws.lfsState,
+    loading,
+    refreshing,
+    rootPath,
+    spacePath: ws.path,
+  });
   const {
     attributes,
     listeners,
@@ -157,17 +155,8 @@ export function SpaceRow({
             {ws.name}
           </span>
         </SidebarMenuButton>
-        {cloning && (
-          <div className="px-2 pb-1">
-            <Progress value={cloning.percent} className="h-1" />
-            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
-              {cloning.error
-                ? cloning.error
-                : `${cloning.phase} ${cloning.percent}%`}
-            </p>
-          </div>
-        )}
-        {ws.status === "missing" && !cloning && (
+        {gitControls.progress}
+        {ws.status === "missing" && !gitControls.cloning && (
           <Tooltip>
             <TooltipTrigger asChild>
               <SidebarMenuAction
@@ -181,7 +170,7 @@ export function SpaceRow({
             </TooltipContent>
           </Tooltip>
         )}
-        {ws.status === "missing" && cloning && (
+        {ws.status === "missing" && gitControls.cloning && (
           <SidebarMenuAction disabled>
             <Loader2 className="animate-spin" />
           </SidebarMenuAction>
@@ -220,7 +209,7 @@ export function SpaceRow({
       >
         <SidebarMenuButton
           isActive={isActive}
-          disabled={!!cloning}
+          disabled={!!gitControls.cloning}
           className={draggableRowClassName}
           onClick={() => {
             if (editingSpaceId !== ws.id) openScopeHome(ws);
@@ -249,32 +238,10 @@ export function SpaceRow({
           ) : (
             <span className="flex-1 truncate">{ws.name}</span>
           )}
-          <span className="ml-auto flex items-center gap-1">
-            <LfsIndicatorIcon lfsState={ws.lfsState} />
-            <SpaceGitActivityIndicator
-              spacePath={ws.path}
-              loading={loading || refreshing}
-            />
-          </span>
+          {gitControls.inlineActivity}
         </SidebarMenuButton>
-        {cloning && (
-          <div className="px-2 pb-1">
-            <Progress value={cloning.percent} className="h-1" />
-            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
-              {cloning.error
-                ? cloning.error
-                : `${cloning.phase} ${cloning.percent}%`}
-            </p>
-          </div>
-        )}
-        {!cloning && ws.lfsState === "pulling" && (
-          <div className="flex items-center gap-1.5 px-2 pb-1">
-            <Loader2 className="animate-spin text-muted-foreground" />
-            <p className="truncate text-[10px] text-muted-foreground">
-              {m.storage_repair_lfs_pulling()}
-            </p>
-          </div>
-        )}
+        {gitControls.progress}
+        {gitControls.lfsActivity}
         <CollapsibleTrigger asChild>
           <SidebarMenuAction
             className="left-2 bg-sidebar-accent text-sidebar-accent-foreground data-[state=open]:rotate-90"
@@ -302,17 +269,7 @@ export function SpaceRow({
               <Database />
               {m.collection_new()}
             </DropdownMenuItem>
-            {dirty && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={commitAll}
-                >
-                  <Save />
-                  {m.git_save_all()}
-                </DropdownMenuItem>
-              </>
-            )}
+            {gitControls.dropdownItem}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => openSpaceSettings(ws.path)}>
               <Settings />

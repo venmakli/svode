@@ -61,7 +61,8 @@ export function useCreateSpaceDialog({
     activeRootPath && effectiveFolder
       ? `${activeRootPath}/${effectiveFolder}`
       : null;
-  const slugCollision = useSpacePathCollision(targetPath);
+  const { checking: slugChecking, collision: slugCollision } =
+    useSpacePathCollision(targetPath);
   const projectFolderName = activeRootPath
     ? (activeRootPath.split("/").pop() ?? "")
     : "";
@@ -71,12 +72,14 @@ export function useCreateSpaceDialog({
     tab === "create" &&
     name.trim() !== "" &&
     effectiveFolder !== "" &&
+    !slugChecking &&
     !slugCollision;
   const isCloneValid =
     tab === "clone" &&
     trimmedUrl !== "" &&
     urlValid &&
     effectiveFolder !== "" &&
+    !slugChecking &&
     !slugCollision;
   const isValid = isCreateValid || isCloneValid;
   const submitLabel =

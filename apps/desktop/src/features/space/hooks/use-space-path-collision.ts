@@ -1,9 +1,17 @@
 import { useEffect, useState } from "react";
 import { spacePathExists } from "../api/space-actions";
 
-export function useSpacePathCollision(spacePath: string | null): boolean {
+interface SpacePathCollisionState {
+  checking: boolean;
+  collision: boolean;
+}
+
+export function useSpacePathCollision(
+  spacePath: string | null,
+): SpacePathCollisionState {
   const [result, setResult] = useState<{
     spacePath: string;
+    checking: boolean;
     collision: boolean;
   } | null>(null);
 
@@ -14,9 +22,13 @@ export function useSpacePathCollision(spacePath: string | null): boolean {
     const timer = window.setTimeout(async () => {
       try {
         const exists = await spacePathExists(spacePath);
-        if (!cancelled) setResult({ spacePath, collision: exists });
+        if (!cancelled) {
+          setResult({ spacePath, checking: false, collision: exists });
+        }
       } catch {
-        if (!cancelled) setResult({ spacePath, collision: false });
+        if (!cancelled) {
+          setResult({ spacePath, checking: false, collision: false });
+        }
       }
     }, 200);
 
@@ -26,5 +38,9 @@ export function useSpacePathCollision(spacePath: string | null): boolean {
     };
   }, [spacePath]);
 
-  return Boolean(spacePath && result?.spacePath === spacePath && result.collision);
+  const current = result?.spacePath === spacePath ? result : null;
+  return {
+    checking: Boolean(spacePath && (!current || current.checking)),
+    collision: Boolean(spacePath && current?.collision),
+  };
 }
