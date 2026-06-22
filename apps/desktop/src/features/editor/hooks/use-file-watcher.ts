@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import type { Descendant } from "platejs";
 import { listen } from "@/platform/native/events";
 import { readEntry } from "@/platform/entries/entries-api";
 import { reindexProject } from "@/platform/space/space-api";
@@ -25,6 +26,7 @@ interface UseFileWatcherOptions {
   /** True while a debounce-auto-save is pending for the active document — local-wins. */
   isDebouncePendingRef: React.RefObject<boolean>;
   isLoadingRef: React.RefObject<boolean>;
+  onEditorValueReload?: (path: string, value: Descendant[]) => Descendant[];
   onEntryReloaded?: (entry: Awaited<ReturnType<typeof readEntry>>) => void;
 }
 
@@ -47,6 +49,7 @@ export function useFileWatcher({
   ownNoncesRef,
   isDebouncePendingRef,
   isLoadingRef,
+  onEditorValueReload,
   onEntryReloaded,
 }: UseFileWatcherOptions) {
   const { closeDocument } = useEntrySelectionStore();
@@ -97,8 +100,11 @@ export function useFileWatcher({
             isLoadingRef.current = true;
             try {
               const value = deserializeWithConflicts(editor, entry.body);
-              editor.tf.setValue(value as never);
-              setCachedDocumentValue(spacePath, changedPath, value);
+              const loadedValue = onEditorValueReload
+                ? onEditorValueReload(changedPath, value)
+                : value;
+              if (!onEditorValueReload) editor.tf.setValue(value as never);
+              setCachedDocumentValue(spacePath, changedPath, loadedValue);
               onEntryReloaded?.(entry);
             } finally {
               isLoadingRef.current = false;
@@ -144,6 +150,7 @@ export function useFileWatcher({
     ownNoncesRef,
     isDebouncePendingRef,
     isLoadingRef,
+    onEditorValueReload,
     onEntryReloaded,
   ]);
 

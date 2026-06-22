@@ -43,6 +43,7 @@ import {
   setCachedDocumentValue,
   setCachedDocumentValueByKey,
 } from "../model/plate-document-cache";
+import { loadProgrammaticEditorValue } from "../model/programmatic-editor-load";
 import * as m from "@/paraglide/messages.js";
 
 const AUTOSAVE_DEBOUNCE_MS = 1000;
@@ -182,6 +183,11 @@ export function PlateDocumentEditor({
   const editor = usePlateEditor({
     plugins: EditorKit,
   });
+
+  const loadEditorValue = useCallback(
+    (value: Descendant[]) => loadProgrammaticEditorValue(editor, value),
+    [editor],
+  );
 
   // Cancel any pending debounced auto-save. Used on document switch / unmount
   // and before ⌘S materialize.
@@ -428,7 +434,8 @@ export function PlateDocumentEditor({
           } else {
             applyMeta(entryMeta);
           }
-          editor.tf.setValue(cachedBody);
+          const loadedValue = loadEditorValue(cachedBody);
+          setCachedDocumentValue(spacePath, currentDocument, loadedValue);
           clearUnsaved(currentDocument);
           finish("ok", true, metaForCachedBody ? "cache" : "cache-meta-read");
         } catch (err) {
@@ -455,8 +462,8 @@ export function PlateDocumentEditor({
           showEntryWarnings(entry);
           applyMeta(entry.meta as EntryMeta);
           const value = deserializeWithConflicts(editor, entry.body);
-          editor.tf.setValue(value);
-          setCachedDocumentValue(spacePath, currentDocument, value);
+          const loadedValue = loadEditorValue(value);
+          setCachedDocumentValue(spacePath, currentDocument, loadedValue);
           clearUnsaved(currentDocument);
           finish("ok", false, source);
         } catch (err) {
@@ -473,6 +480,7 @@ export function PlateDocumentEditor({
     currentDocumentSpaceId,
     spacePath,
     initialEntryLoadKey,
+    loadEditorValue,
     cancelDebounce,
     clearUnsaved,
     setBrokenLinks,
@@ -754,6 +762,11 @@ export function PlateDocumentEditor({
     [],
   );
 
+  const handleEditorValueReload = useCallback(
+    (_path: string, value: Descendant[]) => loadEditorValue(value),
+    [loadEditorValue],
+  );
+
   useFileWatcher({
     editor,
     spacePath,
@@ -761,6 +774,7 @@ export function PlateDocumentEditor({
     ownNoncesRef,
     isDebouncePendingRef,
     isLoadingRef,
+    onEditorValueReload: handleEditorValueReload,
     onEntryReloaded: handleWatcherEntryReloaded,
   });
 
@@ -768,12 +782,13 @@ export function PlateDocumentEditor({
   // (skip selection-only changes like clicking or focusing)
   const handleChange = useCallback(
     (_: { value: Descendant[] }) => {
-      if (!isLoadingRef.current && currentPathRef.current) {
+      const currentPath = currentPathRef.current;
+      if (!isLoadingRef.current && currentPath) {
         const hasContentChange = editor.operations.some(
           (op) => op.type !== "set_selection",
         );
         if (hasContentChange) {
-          markUnsaved(currentPathRef.current);
+          markUnsaved(currentPath);
           scheduleAutoSave();
         }
       }
