@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import { updateEntryField } from "@/platform/entries/entries-api";
+import { updateEntryField } from "../api";
 import type { Entry } from "../model/types";
 import {
   enqueueEntryFieldSave,
@@ -100,17 +100,17 @@ export function useEntryFieldSave({
         rollbackOnError?: boolean;
       } = {}) => {
         try {
-          const updated = (await enqueueEntryFieldSave(
+          const updated = await enqueueEntryFieldSave(
             `${spacePath}:${entry.path}`,
             () =>
               updateEntryField({
-                space: spacePath,
+                spacePath,
                 filePath: entry.path,
                 field,
                 value,
                 projectPath: projectPath ?? null,
               }),
-          )) as Entry;
+          );
           if (versionsRef.current.get(key) !== version) return null;
           let appliedEntry: Entry | null = null;
           if (applyResult && mountedRef.current) {
