@@ -7,7 +7,7 @@ import {
 import { ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { PropertyBadge } from "@/features/properties/ui";
+import { PropertyBadge } from "@/features/properties/display";
 import { cn } from "@/shared/lib/utils";
 import { SortableBoardCard } from "./board-card";
 import type { BoardCardModel, BoardCardProps, BoardColumnGroup } from "./types";

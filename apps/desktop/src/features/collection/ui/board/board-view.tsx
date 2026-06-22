@@ -31,7 +31,7 @@ import type {
   PropertyType,
 } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
-import { propertyFieldSavePolicy } from "@/features/properties";
+import { propertyFieldSavePolicy } from "@/features/properties/entry-save-policy";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import { useCollectionActors } from "../../hooks";

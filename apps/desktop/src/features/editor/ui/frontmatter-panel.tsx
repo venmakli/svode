@@ -6,7 +6,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import type { EntryMeta } from "@/features/entry";
-import { PropertyPanel } from "@/features/properties/ui";
+import { PropertyPanel } from "@/features/properties/panel";
 import type { EntrySchemaResult } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 import { useEffect, useState } from "react";

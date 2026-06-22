@@ -7,7 +7,8 @@ import type {
   RelationContext,
 } from "@/features/properties";
 import { isEmptyValue } from "@/features/properties";
-import { PropertyControl, PropertyValue } from "@/features/properties/ui";
+import { PropertyControl } from "@/features/properties/control";
+import { PropertyValue } from "@/features/properties/display";
 
 export function BoardPropertyFlow({
   entry,

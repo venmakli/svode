@@ -1,7 +1,8 @@
 import { cn } from "@/shared/lib/utils";
 import { validatePropertyValue } from "@/features/properties";
 import { isEmptyValue, valueToString } from "@/features/properties";
-import { PropertyControl, PropertyValue } from "@/features/properties/ui";
+import { PropertyControl } from "@/features/properties/control";
+import { PropertyValue } from "@/features/properties/display";
 import type { Entry } from "@/features/entry";
 import type {
   Column,

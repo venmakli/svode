@@ -35,7 +35,8 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useStableViewQueryArgs } from "@/features/collection/query";
 import { useEntryFieldSave, type Entry } from "@/features/entry";
-import { propertyFieldSavePolicy, type Column } from "@/features/properties";
+import type { Column } from "@/features/properties";
+import { propertyFieldSavePolicy } from "@/features/properties/entry-save-policy";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import {

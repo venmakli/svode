@@ -46,7 +46,7 @@ import type {
   PropertyOption,
   PropertyType,
 } from "@/features/properties";
-import { PropertyBadge } from "@/features/properties/ui";
+import { PropertyBadge } from "@/features/properties/display";
 import {
   initialsForActor,
   normalizeSchema,

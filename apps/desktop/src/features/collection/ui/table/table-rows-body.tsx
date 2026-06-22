@@ -19,7 +19,7 @@ import type {
 } from "@/features/properties";
 import { SortableTableRow } from "./table-row";
 import type { CollectionTableRow } from "./types";
-import { PropertyValue } from "@/features/properties/ui";
+import { PropertyValue } from "@/features/properties/display";
 import { isEmptyValue } from "@/features/properties";
 import { nestedPreviewFields } from "./utils";
 

@@ -27,11 +27,11 @@ import {
   type Entry,
   type EntryCover,
 } from "@/features/entry";
-import { PropertyPanel } from "@/features/properties/ui";
+import { PropertyPanel } from "@/features/properties/panel";
 import {
-  propertyFieldSavePolicy,
   type EntrySchemaResult,
 } from "@/features/properties";
+import { propertyFieldSavePolicy } from "@/features/properties/entry-save-policy";
 import { normalizeSchema } from "@/features/properties";
 import { useSpaceTreeSync } from "@/features/space";
 import { EntryDetailActions } from "./entry-detail-actions";

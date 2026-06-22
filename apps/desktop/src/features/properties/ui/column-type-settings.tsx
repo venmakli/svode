@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   closestCenter,
   DndContext,
@@ -27,7 +27,6 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -47,21 +46,10 @@ import type {
   RelationTwoWayDiagnostics,
   StatusGroup,
 } from "../model/types";
-import {
-  addOption as addOptionApi,
-  deleteOption as deleteOptionApi,
-  getCollectionSchema,
-  listCollectionOptions,
-  normalizeUniqueIdCounter,
-  renameOption as renameOptionApi,
-  updateOption as updateOptionApi,
-  updateSchemaColumn,
-} from "../api/schema-api";
-import {
-  diagnoseTwoWayRelation,
-  repairTwoWayRelation,
-} from "../api/relation-api";
 import { STATUS_GROUPS } from "../lib/utils";
+import { useColumnTypeSettings } from "../hooks/use-column-type-settings";
+import { useOptionSettings } from "../hooks/use-option-settings";
+import { useRelationSettings } from "../hooks/use-relation-settings";
 import { ColorPicker } from "./color-picker";
 import {
   PropertySettingsRow,
@@ -92,24 +80,13 @@ export function TypeSettingsPane({
   projectPath?: string | null;
   onSchemaChange: (schema: CollectionSchema) => void;
 }) {
-  const patchColumn = useCallback(
-    async (patch: Record<string, unknown>) => {
-      try {
-        const next = await updateSchemaColumn({
-          spacePath,
-          collectionPath,
-          columnName: column.name,
-          patch,
-          projectPath,
-        });
-        onSchemaChange(next);
-      } catch (error) {
-        console.error(error);
-        toast.error(errorMessage(error));
-      }
-    },
-    [collectionPath, column.name, onSchemaChange, projectPath, spacePath],
-  );
+  const { patchColumn, normalizeCounter } = useColumnTypeSettings({
+    column,
+    spacePath,
+    collectionPath,
+    projectPath,
+    onSchemaChange,
+  });
 
   if (
     column.type === "select" ||
@@ -175,19 +152,6 @@ export function TypeSettingsPane({
     );
   }
   if (column.type === "unique_id") {
-    const normalizeCounter = () => {
-      void normalizeUniqueIdCounter({
-        spacePath,
-        collectionPath,
-        projectPath,
-      })
-        .then(onSchemaChange)
-        .catch((error) => {
-          console.error(error);
-          toast.error(errorMessage(error));
-        });
-    };
-
     return (
       <div className="flex flex-col gap-2 p-3">
         <label className="flex items-center gap-2 text-sm">
@@ -255,132 +219,27 @@ function RelationSettingsPane({
   onSchemaChange: (schema: CollectionSchema) => void;
   onPatchColumn: (patch: Record<string, unknown>) => void | Promise<void>;
 }) {
-  const [collections, setCollections] = useState<
-    Array<{ path: string; title: string }>
-  >([]);
-  const [reverseName, setReverseName] = useState(
-    column.twoWay ?? column.two_way ?? "",
-  );
-  const [diagnostics, setDiagnostics] =
-    useState<RelationTwoWayDiagnostics | null>(null);
-  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
-  const [selectedReverse, setSelectedReverse] = useState("");
-  const [repairing, setRepairing] = useState<string | null>(null);
-
-  useEffect(() => {
-    setReverseName(column.twoWay ?? column.two_way ?? "");
-  }, [column.twoWay, column.two_way]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void listCollectionOptions(spacePath)
-      .then((items) => {
-        if (!cancelled) setCollections(items);
-      })
-      .catch(() => {
-        if (!cancelled) setCollections([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [spacePath]);
-
-  const relation = column.relation || ".";
-  const collectionOptions = collections.map((item) => ({
-    value: item.path,
-    label: item.title || item.path,
-    description: item.path,
-  }));
-  const options = collectionOptions.some((item) => item.value === relation)
-    ? collectionOptions
-    : [
-        {
-          value: relation,
-          label: collectionLabelForPath(collections, relation),
-          description: relation,
-        },
-        ...collectionOptions,
-      ];
-  const twoWay = Boolean(column.twoWay ?? column.two_way);
-  const loadDiagnostics = useCallback(
-    async (cancelled?: () => boolean) => {
-      if (!twoWay) {
-        setDiagnostics(null);
-        setDiagnosticsLoading(false);
-        return;
-      }
-      setDiagnosticsLoading(true);
-      try {
-        const next = await diagnoseTwoWayRelation({
-          spacePath,
-          collectionPath,
-          column: column.name,
-        });
-        if (cancelled?.()) return;
-        setDiagnostics(next);
-        setSelectedReverse((current) => {
-          if (current) return current;
-          return next.compatibleReverseChoices[0]?.name ?? "";
-        });
-      } catch (error) {
-        if (cancelled?.()) return;
-        console.error(error);
-        setDiagnostics(null);
-      } finally {
-        if (!cancelled?.()) setDiagnosticsLoading(false);
-      }
-    },
-    [collectionPath, column.name, spacePath, twoWay],
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-    void loadDiagnostics(() => cancelled);
-    return () => {
-      cancelled = true;
-    };
-  }, [loadDiagnostics, column.relation, column.twoWay, column.two_way]);
-
-  const patchRelation = (patch: Record<string, unknown>) => {
-    void Promise.resolve(onPatchColumn(patch)).catch((error) => {
-      console.error(error);
-      toast.error(errorMessage(error));
-    });
-  };
-  const runRepair = async (
-    strategy:
-      | "from_this_side"
-      | "from_related_side"
-      | "choose_reverse_column"
-      | "create_reverse_column"
-      | "detach_two_way",
-    reverseColumn?: string | null,
-  ) => {
-    setRepairing(strategy);
-    try {
-      await repairTwoWayRelation({
-        spacePath,
-        projectPath,
-        collectionPath,
-        column: column.name,
-        strategy,
-        reverseColumn,
-      });
-      const schema = await getCollectionSchema({
-        spacePath,
-        collectionPath,
-        projectPath,
-      });
-      onSchemaChange(schema);
-      await loadDiagnostics();
-      toast.success(m.property_relation_repair_success());
-    } catch (error) {
-      console.error(error);
-      toast.error(errorMessage(error));
-    } finally {
-      setRepairing(null);
-    }
-  };
+  const {
+    relation,
+    options,
+    twoWay,
+    reverseName,
+    setReverseName,
+    diagnostics,
+    diagnosticsLoading,
+    selectedReverse,
+    setSelectedReverse,
+    repairing,
+    patchRelation,
+    runRepair,
+  } = useRelationSettings({
+    column,
+    spacePath,
+    collectionPath,
+    projectPath,
+    onSchemaChange,
+    onPatchColumn,
+  });
 
   return (
     <div className="flex flex-col gap-2 p-3">
@@ -631,23 +490,28 @@ function OptionsPane({
   projectPath?: string | null;
   onSchemaChange: (schema: CollectionSchema) => void;
 }) {
-  const options = column.options ?? [];
-  const [focusedOption, setFocusedOption] = useState<string | null>(null);
+  const {
+    options,
+    focusedOption,
+    clearFocusedOption,
+    patchOptions,
+    addOption,
+    updateOption,
+    renameOption,
+    removeOption,
+  } = useOptionSettings({
+    column,
+    spacePath,
+    collectionPath,
+    projectPath,
+    onSchemaChange,
+  });
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     }),
   );
-  const patchOptions = (nextOptions: PropertyOption[]) => {
-    void updateSchemaColumn({
-      spacePath,
-      collectionPath,
-      columnName: column.name,
-      patch: { options: nextOptions },
-      projectPath,
-    }).then(onSchemaChange);
-  };
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
@@ -676,54 +540,6 @@ function OptionsPane({
     );
     patchOptions(next);
   };
-  const addOption = (group?: StatusGroup) => {
-    const name = uniqueOptionName(column.options ?? [], "Option");
-    setFocusedOption(name);
-    void addOptionApi({
-      spacePath,
-      collectionPath,
-      columnName: column.name,
-      option: { name, color: "neutral", group: group ?? null },
-      projectPath,
-    }).then(onSchemaChange);
-  };
-  const updateOption = (
-    option: PropertyOption,
-    patch: Record<string, unknown>,
-  ) => {
-    void updateOptionApi({
-      spacePath,
-      collectionPath,
-      columnName: column.name,
-      optionName: option.name,
-      option: null,
-      patch,
-      projectPath,
-    }).then(onSchemaChange);
-  };
-  const renameOption = (option: PropertyOption, nextName: string) => {
-    const trimmed = nextName.trim();
-    if (!trimmed || trimmed === option.name) return;
-    void renameOptionApi({
-      spacePath,
-      collectionPath,
-      columnName: column.name,
-      oldOptionName: option.name,
-      newOptionName: trimmed,
-      projectPath,
-    }).then(onSchemaChange);
-  };
-  const removeOption = (option: PropertyOption) => {
-    void deleteOptionApi({
-      spacePath,
-      collectionPath,
-      columnName: column.name,
-      optionName: option.name,
-      deleteValues: false,
-      projectPath,
-    }).then(onSchemaChange);
-  };
-
   if (column.type === "status") {
     return (
       <DndContext
@@ -749,7 +565,7 @@ function OptionsPane({
                       onColor={(color) => updateOption(option, { color })}
                       onRename={(name) => renameOption(option, name)}
                       onDelete={() => removeOption(option)}
-                      onSettled={() => setFocusedOption(null)}
+                      onSettled={clearFocusedOption}
                     />
                   ))}
                 <PropertySettingsRow
@@ -784,7 +600,7 @@ function OptionsPane({
               onColor={(color) => updateOption(option, { color })}
               onRename={(name) => renameOption(option, name)}
               onDelete={() => removeOption(option)}
-              onSettled={() => setFocusedOption(null)}
+              onSettled={clearFocusedOption}
             />
           ))}
           <PropertySettingsRow
@@ -1027,23 +843,6 @@ function normalizeColumnSelectOption(option: ColumnSelectOption) {
   return option;
 }
 
-function collectionLabelForPath(
-  collections: Array<{ path: string; title: string }>,
-  path: string,
-) {
-  return collections.find((item) => item.path === path)?.title || path;
-}
-
-function errorMessage(error: unknown) {
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  if (error && typeof error === "object" && "message" in error) {
-    const message = (error as { message: unknown }).message;
-    if (typeof message === "string") return message;
-  }
-  return m.toast_error();
-}
-
 function ToggleRow({
   label,
   checked,
@@ -1059,14 +858,6 @@ function ToggleRow({
       <Switch checked={checked} onCheckedChange={onChange} />
     </label>
   );
-}
-
-function uniqueOptionName(options: PropertyOption[], baseName: string) {
-  const names = new Set(options.map((option) => option.name));
-  if (!names.has(baseName)) return baseName;
-  let index = 2;
-  while (names.has(`${baseName} ${index}`)) index += 1;
-  return `${baseName} ${index}`;
 }
 
 function nullableNumber(value: string) {

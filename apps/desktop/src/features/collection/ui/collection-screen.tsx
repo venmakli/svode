@@ -15,12 +15,12 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { EntryIdentityHeader } from "@/features/editor";
 import { TitleZone } from "@/features/editor";
 import { PlateDocumentEditor } from "@/features/editor";
-import { PropertyPanel } from "@/features/properties/ui";
+import { PropertyPanel } from "@/features/properties/panel";
 import { normalizeSchema } from "@/features/properties";
 import {
-  propertyFieldSavePolicy,
   type EntrySchemaResult,
 } from "@/features/properties";
+import { propertyFieldSavePolicy } from "@/features/properties/entry-save-policy";
 import {
   detailPageHeaderClassName,
   detailPageToolbarClassName,
