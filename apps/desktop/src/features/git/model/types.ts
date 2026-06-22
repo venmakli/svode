@@ -39,3 +39,10 @@ export interface GitCloneProgress {
   percent: number;
   error?: string;
 }
+
+export interface GitUnpushedCommit {
+  sha: string;
+  message: string;
+  author: string;
+  timestamp: string;
+}

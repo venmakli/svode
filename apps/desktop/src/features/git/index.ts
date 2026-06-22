@@ -5,14 +5,7 @@ export type {
   GitAvailability,
   GitCloneProgress,
   GitStatus,
+  GitUnpushedCommit,
   SyncResult,
 } from "./model/types";
-export {
-  commitAllSpace,
-  commitFileAndMaybeSync,
-  syncOnOpen,
-  syncSpace,
-} from "./api/git-actions";
-export type { GitCommitResult } from "./api/git-actions";
 export { setSpaceCloneProgress } from "./api/git-clone-progress-actions";
-export { GitIndicatorIcon } from "./ui/git-status-indicator";

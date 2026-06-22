@@ -8,12 +8,10 @@ import {
 import { getSpaceConfig } from "@/platform/space/space-api";
 import { useGitStore } from "../model";
 import type { UnpushedCommitDto } from "@/platform/git/git-types";
-import type {
-  EventCallback,
-  UnlistenFn,
-} from "@/platform/native/events";
+import type { GitUnpushedCommit } from "../model";
 
-export type GitUnpushedCommit = UnpushedCommitDto;
+type GitPublishCommitHandler = (spacePath: string) => void;
+type GitPublishUnlistenFn = () => void;
 
 export interface GitPublishPromptState {
   visible: boolean;
@@ -24,6 +22,15 @@ export interface PublishGitCommitsInput {
   spacePath: string;
   projectPath?: string | null;
   enableAutoSync: boolean;
+}
+
+function toGitUnpushedCommit(commit: UnpushedCommitDto): GitUnpushedCommit {
+  return {
+    sha: commit.sha,
+    message: commit.message,
+    author: commit.author,
+    timestamp: commit.timestamp,
+  };
 }
 
 export async function getGitPublishPromptState(
@@ -38,7 +45,7 @@ export async function getGitPublishPromptState(
     return { visible: false, commits: [] };
   }
 
-  const commits = await getUnpushedCommits(spacePath);
+  const commits = await getGitUnpushedCommits(spacePath);
   return {
     visible: commits.length > 0,
     commits,
@@ -48,13 +55,15 @@ export async function getGitPublishPromptState(
 export function getGitUnpushedCommits(
   spacePath: string,
 ): Promise<GitUnpushedCommit[]> {
-  return getUnpushedCommits(spacePath);
+  return getUnpushedCommits(spacePath).then((commits) =>
+    commits.map(toGitUnpushedCommit),
+  );
 }
 
 export function listenGitPublishCommits(
-  handler: EventCallback<{ spacePath: string }>,
-): Promise<UnlistenFn> {
-  return listenGitCommitted(handler);
+  handler: GitPublishCommitHandler,
+): Promise<GitPublishUnlistenFn> {
+  return listenGitCommitted((event) => handler(event.payload.spacePath));
 }
 
 export async function publishGitCommits({

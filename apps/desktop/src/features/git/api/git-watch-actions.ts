@@ -1,33 +1,17 @@
 import { listenGitCommitted } from "@/platform/git/git-api";
 import { listenSpaceDirty } from "@/platform/space/space-api";
 
-interface GitWatchEvent<T> {
-  payload: T;
-}
-
-type GitWatchEventHandler<T> = (event: GitWatchEvent<T>) => void;
 type GitWatchUnlistenFn = () => void;
-
-interface GitWatchDirtyEvent {
-  space: string;
-}
-
-interface GitWatchCommittedEvent {
-  spacePath: string;
-}
+type GitWatchSpaceHandler = (spacePath: string) => void;
 
 export function listenGitWatchDirty(
-  handler: GitWatchEventHandler<GitWatchDirtyEvent>,
+  handler: GitWatchSpaceHandler,
 ): Promise<GitWatchUnlistenFn> {
-  return listenSpaceDirty((event) =>
-    handler({ payload: { space: event.payload.space } }),
-  );
+  return listenSpaceDirty((event) => handler(event.payload.space));
 }
 
 export function listenGitWatchCommitted(
-  handler: GitWatchEventHandler<GitWatchCommittedEvent>,
+  handler: GitWatchSpaceHandler,
 ): Promise<GitWatchUnlistenFn> {
-  return listenGitCommitted((event) =>
-    handler({ payload: { spacePath: event.payload.spacePath } }),
-  );
+  return listenGitCommitted((event) => handler(event.payload.spacePath));
 }

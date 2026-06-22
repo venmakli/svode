@@ -28,9 +28,9 @@ export function useGitWatch(spacePath: string | null) {
     // Initial status refresh — cheap, no network.
     void refreshGitStatus(spacePath);
 
-    listenGitWatchDirty((event) => {
+    listenGitWatchDirty((dirtySpacePath) => {
       if (cancelled) return;
-      if (event.payload.space !== spacePath) return;
+      if (dirtySpacePath !== spacePath) return;
       if (debounceRef.current) {
         window.clearTimeout(debounceRef.current);
       }
@@ -47,9 +47,9 @@ export function useGitWatch(spacePath: string | null) {
 
     // Autocommit lands → clear any grey dot shown while the debounce was
     // pending. Refresh immediately, no debounce.
-    listenGitWatchCommitted((event) => {
+    listenGitWatchCommitted((committedSpacePath) => {
       if (cancelled) return;
-      if (event.payload.spacePath !== spacePath) return;
+      if (committedSpacePath !== spacePath) return;
       void refreshGitStatus(spacePath);
     }).then((unlisten) => {
       if (cancelled) {

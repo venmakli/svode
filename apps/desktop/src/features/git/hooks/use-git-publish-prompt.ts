@@ -6,8 +6,8 @@ import {
   getGitUnpushedCommits,
   listenGitPublishCommits,
   publishGitCommits,
-  type GitUnpushedCommit,
 } from "../api/git-publish-actions";
+import type { GitUnpushedCommit } from "../model";
 import { selectActiveSpacePath, useSpace } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 
@@ -61,9 +61,9 @@ export function useGitPublishPrompt(): GitPublishPrompt {
     let unlistenCommit: (() => void) | null = null;
     let cancelled = false;
 
-    listenGitPublishCommits((event) => {
+    listenGitPublishCommits((committedSpacePath) => {
       if (cancelled) return;
-      if (event.payload.spacePath !== spacePath) return;
+      if (committedSpacePath !== spacePath) return;
       void recompute();
     }).then((unlisten) => {
       if (cancelled) unlisten();

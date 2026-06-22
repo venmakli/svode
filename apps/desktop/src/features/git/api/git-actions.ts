@@ -1,5 +1,3 @@
-import { toast } from "sonner";
-import * as m from "@/paraglide/messages.js";
 import { useGitStore } from "../model";
 import {
   commitGitAll,
@@ -10,6 +8,11 @@ import {
 import { getSpaceConfig } from "@/platform/space/space-api";
 import type { GitStatus } from "../model";
 import { refreshGitStatus } from "./git-status-actions";
+import {
+  notifyGitSyncAuthRequired,
+  notifyGitSyncConflict,
+  notifyGitSyncFailed,
+} from "../effects/git-notifications";
 
 export interface GitCommitResult {
   status: GitStatus;
@@ -29,7 +32,7 @@ export async function isAutoSyncEnabled(spacePath: string): Promise<boolean> {
 }
 
 /**
- * Run pull+push for the space and surface errors as toasts.
+ * Run pull+push for the space and surface errors through feature effects.
  * Updates per-space syncing/error state in the git store.
  */
 export async function syncSpace(spacePath: string): Promise<void> {
@@ -47,20 +50,18 @@ export async function syncSpace(spacePath: string): Promise<void> {
         // Silent — no remote configured is a normal state.
         break;
       case "Conflict":
-        toast.error(
-          m.git_sync_conflict({ count: String(result.files.length) }),
-        );
+        notifyGitSyncConflict(result.files.length);
         await refreshGitStatus(spacePath);
         git.setSyncError(spacePath, "conflict");
         break;
       case "AuthRequired":
-        toast.error(m.git_sync_auth_required());
+        notifyGitSyncAuthRequired();
         git.setSyncError(spacePath, "auth");
         break;
     }
   } catch (err) {
     console.error("git_sync failed:", err);
-    toast.error(m.git_sync_failed());
+    notifyGitSyncFailed();
     git.setSyncError(spacePath, String(err));
   } finally {
     git.setSyncing(spacePath, false);
