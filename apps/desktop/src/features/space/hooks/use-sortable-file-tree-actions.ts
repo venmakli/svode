@@ -3,7 +3,7 @@ import type { DragEndEvent } from "@dnd-kit/core";
 import { toast } from "sonner";
 import type { TreeNode } from "@/features/entry";
 import type { Projection } from "../lib/tree-dnd-utilities";
-import { commitFileTreeDrag } from "../model/file-tree-drag-command";
+import { commitFileTreeDrag } from "../api/file-tree-drag-command";
 
 interface UseSortableFileTreeActionsInput {
   spaceId: string;

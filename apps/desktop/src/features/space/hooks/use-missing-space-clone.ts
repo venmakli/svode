@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
-import { setSpaceCloneProgress } from "@/features/git/sidebar";
+import { setSpaceCloneProgress } from "@/features/git/clone-progress";
 import {
   cloneMissingSpace,
   listenSpaceCloneProgress,

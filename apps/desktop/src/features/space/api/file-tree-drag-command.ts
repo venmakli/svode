@@ -1,5 +1,5 @@
 import type { TreeNode } from "@/features/entry";
-import { nestTreeEntry, unnestTreeEntry } from "../api/tree-entry-actions";
+import { nestTreeEntry, unnestTreeEntry } from "./tree-entry-actions";
 import {
   buildCrossParentMovePlan,
   buildNestConversionOrder,
@@ -12,9 +12,9 @@ import {
 } from "../lib/tree-dnd-commit-plan";
 import type { Projection } from "../lib/tree-dnd-utilities";
 import { buildOrderMap, findTreeNode } from "../lib/tree-node-queries";
-import { createFileTreeEditorSync } from "./file-tree-editor-sync";
-import { useSpaceStore, type SpaceState } from "./space-store";
-import type { SpaceInfo } from "./types";
+import { createFileTreeEditorSync } from "../model/file-tree-editor-sync";
+import { useSpaceStore, type SpaceState } from "../model/space-store";
+import type { SpaceInfo } from "../model/types";
 
 interface CommitFileTreeDragInput {
   spaceId: string;
