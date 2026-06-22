@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   CommandDialog,
   CommandInput,
@@ -14,31 +14,12 @@ import { useSelectResult } from "../hooks/use-select-result";
 import { ResultItem } from "./result-item";
 import { dedupKey } from "../lib/utils";
 import type { SearchItem } from "../model";
-import { isTerminalKeyboardEvent } from "@/features/terminal";
 import * as m from "@/paraglide/messages.js";
 
 export function CommandPalette() {
   const open = useCommandPaletteStore((s) => s.open);
   const setOpen = useCommandPaletteStore((s) => s.setOpen);
-  const toggle = useCommandPaletteStore((s) => s.toggle);
-
   const activeRootPath = useSpace((s) => s.activeRootPath);
-
-  // ⌘P / Ctrl+P toggles the palette. Bound only inside a project (the /space
-  // route is mounted) so the Home page doesn't intercept the shortcut.
-  useEffect(() => {
-    if (!activeRootPath) return;
-    function onKey(e: KeyboardEvent) {
-      if (isTerminalKeyboardEvent(e)) return;
-      const isMeta = e.metaKey || e.ctrlKey;
-      if (isMeta && e.key.toLowerCase() === "p" && !e.shiftKey && !e.altKey) {
-        e.preventDefault();
-        toggle();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [activeRootPath, toggle]);
 
   if (!open) return null;
 
@@ -136,7 +117,11 @@ function SearchResults({
           {search.titles.length > 0 && <CommandSeparator />}
           <CommandGroup heading={m.search_group_contents()}>
             {search.contents.map((item) => (
-              <ResultItem key={dedupKey(item)} item={item} onSelect={onSelect} />
+              <ResultItem
+                key={dedupKey(item)}
+                item={item}
+                onSelect={onSelect}
+              />
             ))}
           </CommandGroup>
         </>

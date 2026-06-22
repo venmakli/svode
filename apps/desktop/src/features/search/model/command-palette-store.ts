@@ -11,3 +11,11 @@ export const useCommandPaletteStore = create<CommandPaletteState>((set) => ({
   setOpen: (open) => set({ open }),
   toggle: () => set((s) => ({ open: !s.open })),
 }));
+
+export function useOpenCommandPalette() {
+  return useCommandPaletteStore((state) => state.setOpen);
+}
+
+export function useToggleCommandPalette() {
+  return useCommandPaletteStore((state) => state.toggle);
+}

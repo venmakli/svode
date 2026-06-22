@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
+import { recentEntries, searchEntries, searchEntriesByTitle } from "../api";
 import { dedupKey } from "../lib/utils";
-import type { SearchItem, SearchResponse } from "../model";
+import type { SearchItem } from "../model";
 
 const DEBOUNCE_MS = 150;
 const LIMIT = 10;
@@ -59,7 +59,7 @@ export function useSearch(
 
     // Empty query → fetch recent immediately (no debounce).
     if (isEmpty) {
-      invoke<SearchResponse>("recent_project_entries", {
+      recentEntries({
         projectPath,
         limit: LIMIT,
       })
@@ -75,7 +75,7 @@ export function useSearch(
           });
         })
         .catch((err) => {
-          console.error("recent_project_entries failed:", err);
+          console.error("recentEntries failed:", err);
           if (id !== reqId.current) return;
           setState({ query, isEmpty: true, ...EMPTY_STATE });
         });
@@ -87,12 +87,12 @@ export function useSearch(
     // Non-empty → debounce 150ms then run title + FTS in parallel.
     const timer = setTimeout(() => {
       Promise.all([
-        invoke<SearchResponse>("search_project_entries_by_title", {
+        searchEntriesByTitle({
           projectPath,
           query: trimmed,
           limit: LIMIT,
         }),
-        invoke<SearchResponse>("search_project_entries", {
+        searchEntries({
           projectPath,
           query: trimmed,
           limit: LIMIT,

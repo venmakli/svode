@@ -4,12 +4,9 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { useKeyboardShortcuts } from "./hooks/use-keyboard-shortcuts";
 import { ShellChrome, WindowHeader } from "./window-header";
-import { CommandPalette, useCommandPaletteStore } from "@/features/search";
+import { CommandPalette, useOpenCommandPalette } from "@/features/search";
 import { TerminalPanelHost } from "@/features/terminal";
-import {
-  useSpace,
-  useSpaceActions,
-} from "@/features/space";
+import { useSpace, useSpaceActions } from "@/features/space";
 import { SpaceFileWatcher, SpaceSidebar } from "@/features/space/app-shell";
 import {
   GitMissingDialog,
@@ -39,7 +36,7 @@ export function MainLayout() {
   const openSessionsSurface = useShellStore(
     (state) => state.openSessionsSurface,
   );
-  const setCommandPaletteOpen = useCommandPaletteStore((state) => state.setOpen);
+  const setCommandPaletteOpen = useOpenCommandPalette();
   const bootstrapAttempted = useRef(false);
 
   useEffect(() => {

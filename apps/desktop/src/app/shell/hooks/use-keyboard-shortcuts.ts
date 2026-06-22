@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
 import { useEntrySelectionStore } from "@/features/entry";
+import { useToggleCommandPalette } from "@/features/search";
 import { useSpace } from "@/features/space";
 import { isTerminalKeyboardEvent } from "@/features/terminal";
 import { useShellStore } from "../model";
@@ -9,6 +10,8 @@ import { useShellStore } from "../model";
 export function useKeyboardShortcuts() {
   const closeDocument = useEntrySelectionStore((state) => state.closeDocument);
   const { toggleChatPanel, openAppSettings } = useShellStore();
+  const toggleCommandPalette = useToggleCommandPalette();
+  const activeRootPath = useSpace((s) => s.activeRootPath);
   const goHome = useSpace((s) => s.goHome);
   const navigate = useNavigate();
 
@@ -28,6 +31,18 @@ export function useKeyboardShortcuts() {
         toggleChatPanel();
       }
 
+      // Cmd/Ctrl+P - open project command palette.
+      if (
+        activeRootPath &&
+        isMeta &&
+        e.key.toLowerCase() === "p" &&
+        !e.shiftKey &&
+        !e.altKey
+      ) {
+        e.preventDefault();
+        toggleCommandPalette();
+      }
+
       // Cmd+W — close document
       if (isMeta && e.key === "w") {
         e.preventDefault();
@@ -44,5 +59,13 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [toggleChatPanel, closeDocument, openAppSettings, goHome, navigate]);
+  }, [
+    activeRootPath,
+    toggleCommandPalette,
+    toggleChatPanel,
+    closeDocument,
+    openAppSettings,
+    goHome,
+    navigate,
+  ]);
 }

@@ -1,5 +1,5 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
-import type { SearchItem, SearchResponse } from "@/features/search";
+import { searchEntriesByTitle, type SearchItem } from "@/features/search";
 import type { TreeNode } from "@/features/entry";
 import type { SpaceInfo } from "@/features/space";
 
@@ -121,7 +121,7 @@ export async function searchDocLinkTargets(
   const calls =
     activeSpaceId === null
       ? [
-          invoke<SearchResponse>("search_project_entries_by_title", {
+          searchEntriesByTitle({
             projectPath,
             query: trimmed,
             limit: DOC_SEARCH_LIMIT,
@@ -129,13 +129,13 @@ export async function searchDocLinkTargets(
           }),
         ]
       : [
-          invoke<SearchResponse>("search_project_entries_by_title", {
+          searchEntriesByTitle({
             projectPath,
             query: trimmed,
             limit: DOC_SEARCH_LIMIT,
             scope: { kind: "space", spaceId: activeSpaceId },
           }),
-          invoke<SearchResponse>("search_project_entries_by_title", {
+          searchEntriesByTitle({
             projectPath,
             query: trimmed,
             limit: DOC_SEARCH_LIMIT,
