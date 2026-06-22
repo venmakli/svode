@@ -14,9 +14,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/shared/lib/utils";
-import type { Entry } from "@/features/entry";
 import { normalizeRelationRoot, relationValueForPath } from "../lib/relation";
-import type { Column, RelationContext } from "../model";
+import type { Column, RelationContext, RelationTarget } from "../model";
 import { useRelationTargets } from "../hooks/use-relation-targets";
 import {
   RelationEntryIcon,
@@ -93,8 +92,8 @@ export function RelationControl({
   );
 
   const addTarget = useCallback(
-    (entry: Entry) => {
-      const nextValue = relationValueForPath(relation, entry.path);
+    (target: RelationTarget) => {
+      const nextValue = relationValueForPath(relation, target.path);
       if (!nextValue || selected.has(nextValue)) return;
       const nextValues = limitOne ? [nextValue] : [...values, nextValue];
       void commit(nextValues);
@@ -156,13 +155,13 @@ export function RelationControl({
                     return (
                       <CommandItem
                         key={entry.path}
-                        value={`${entry.meta.title} ${entry.path}`}
+                        value={`${entry.title} ${entry.path}`}
                         disabled={selected.has(targetValue)}
                         onSelect={() => addTarget(entry)}
                       >
-                        <RelationEntryIcon icon={entry.meta.icon} />
+                        <RelationEntryIcon icon={entry.icon} />
                         <span className="min-w-0 flex-1 truncate">
-                          {entry.meta.title}
+                          {entry.title}
                         </span>
                         <span className="max-w-28 truncate text-xs text-muted-foreground">
                           {targetValue}

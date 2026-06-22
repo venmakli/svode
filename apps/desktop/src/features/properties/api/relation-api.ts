@@ -1,10 +1,18 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
-import type { Entry } from "@/features/entry";
 import type {
+  RelationTarget,
   RelationTwoWayDiagnostics,
   ResolvedRelationEntry,
 } from "../model/types";
 import { relationValueForPath } from "../lib/relation";
+
+interface RelationTargetEntryDto {
+  path: string;
+  meta?: {
+    title?: string | null;
+    icon?: string | null;
+  } | null;
+}
 
 export async function resolveRelationsBatch({
   spacePath,
@@ -40,7 +48,7 @@ export async function queryRelationTargets({
   const filters = trimmed
     ? [{ field: "title", op: "contains", value: trimmed }]
     : null;
-  const entries = await invoke<Entry[]>("query_entries", {
+  const entries = await invoke<RelationTargetEntryDto[]>("query_entries", {
     space: spacePath,
     collectionPath: relation,
     filters,
@@ -50,17 +58,18 @@ export async function queryRelationTargets({
     offset: null,
     projectPath: projectPath ?? null,
   });
-  if (!trimmed) return entries;
+  const targets = entries.map(toRelationTarget);
+  if (!trimmed) return targets;
 
   const normalized = trimmed.toLowerCase();
-  const matchingEntries = entries.filter(
-    (entry) =>
-      entry.meta.title.toLowerCase().includes(normalized) ||
-      relationValueForPath(relation, entry.path).toLowerCase().includes(normalized),
+  const matchingTargets = targets.filter(
+    (target) =>
+      target.title.toLowerCase().includes(normalized) ||
+      relationValueForPath(relation, target.path).toLowerCase().includes(normalized),
   );
-  if (matchingEntries.length > 0) return matchingEntries;
+  if (matchingTargets.length > 0) return matchingTargets;
 
-  const fallback = await invoke<Entry[]>("query_entries", {
+  const fallback = await invoke<RelationTargetEntryDto[]>("query_entries", {
     space: spacePath,
     collectionPath: relation,
     filters: null,
@@ -71,12 +80,21 @@ export async function queryRelationTargets({
     projectPath: projectPath ?? null,
   });
   return fallback
+    .map(toRelationTarget)
     .filter(
-      (entry) =>
-        entry.meta.title.toLowerCase().includes(normalized) ||
-        relationValueForPath(relation, entry.path).toLowerCase().includes(normalized),
+      (target) =>
+        target.title.toLowerCase().includes(normalized) ||
+        relationValueForPath(relation, target.path).toLowerCase().includes(normalized),
     )
     .slice(0, 50);
+}
+
+function toRelationTarget(entry: RelationTargetEntryDto): RelationTarget {
+  return {
+    path: entry.path,
+    title: entry.meta?.title || entry.path,
+    icon: entry.meta?.icon ?? null,
+  };
 }
 
 export async function diagnoseTwoWayRelation({

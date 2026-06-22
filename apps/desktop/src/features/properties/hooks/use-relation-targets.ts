@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import type { Entry } from "@/features/entry";
 import { queryRelationTargets } from "../api/relation-api";
+import type { RelationTarget } from "../model";
 
 interface UseRelationTargetsInput {
   open: boolean;
@@ -17,7 +17,7 @@ export function useRelationTargets({
   relation,
   query,
 }: UseRelationTargetsInput) {
-  const [targets, setTargets] = useState<Entry[]>([]);
+  const [targets, setTargets] = useState<RelationTarget[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {

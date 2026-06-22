@@ -140,12 +140,12 @@ export function usePropertyPanelState({
   const assignUniqueId = useCallback(
     () =>
       runSchemaMutation(async () => {
-        const entry = await assignEntryUniqueId({
+        const nextValues = await assignEntryUniqueId({
           spacePath,
           filePath,
           projectPath,
         });
-        setPanelValues(entry.meta.extra ?? {});
+        setPanelValues(nextValues);
         await refreshSchema();
       }),
     [filePath, projectPath, refreshSchema, runSchemaMutation, spacePath],

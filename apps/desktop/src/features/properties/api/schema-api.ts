@@ -1,5 +1,4 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
-import type { Entry } from "@/features/entry";
 import type {
   ChangeSchemaTypeResult,
   Column,
@@ -14,6 +13,12 @@ interface SchemaMutationInput {
   spacePath: string;
   collectionPath: string;
   projectPath?: string | null;
+}
+
+interface AssignedEntryDto {
+  meta?: {
+    extra?: Record<string, unknown> | null;
+  } | null;
 }
 
 export interface CollectionOption {
@@ -62,16 +67,17 @@ function invokeSchemaMutation<T = unknown>(
   });
 }
 
-export function assignEntryUniqueId(input: {
+export async function assignEntryUniqueId(input: {
   spacePath: string;
   filePath: string;
   projectPath?: string | null;
 }) {
-  return invoke<Entry>("assign_unique_id", {
+  const entry = await invoke<AssignedEntryDto>("assign_unique_id", {
     space: input.spacePath,
     filePath: input.filePath,
     projectPath: input.projectPath ?? null,
   });
+  return entry.meta?.extra ?? {};
 }
 
 export function normalizeUniqueIdCounter(input: SchemaMutationInput) {

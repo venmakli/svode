@@ -125,6 +125,12 @@ export interface ResolvedRelationEntry {
   collection_root_path?: string | null;
 }
 
+export interface RelationTarget {
+  path: string;
+  title: string;
+  icon?: string | null;
+}
+
 export type RelationTwoWaySchemaStatus =
   | "ok"
   | "not_two_way"
