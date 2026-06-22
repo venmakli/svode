@@ -179,7 +179,10 @@ pub async fn reindex_after_pull(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::ProjectSpacesCache;
     use crate::index::search::search_fts;
+    use crate::space::types::SpaceStatus;
+    use std::collections::HashMap;
     use tempfile::TempDir;
 
     async fn indexed_pool(state: &IndexState, space: &Path) -> SqlitePool {
@@ -187,6 +190,20 @@ mod tests {
             .get_or_create(&IndexKey::Root(space.to_path_buf()))
             .await
             .expect("index pool")
+    }
+
+    async fn entry_index_flags(
+        pool: &SqlitePool,
+        path: &str,
+    ) -> (String, Option<String>, i64, i64) {
+        sqlx::query_as(
+            "SELECT parent_path, collection_root_path, in_collection, is_entry_head \
+             FROM entries WHERE file_path = ?",
+        )
+        .bind(path)
+        .fetch_one(pool)
+        .await
+        .expect("entry flags")
     }
 
     #[tokio::test]
@@ -242,6 +259,118 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn targeted_update_indexes_entry_flags_and_search_body() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let state = IndexState::new();
+        let collection_dir = space.join("tasks");
+        std::fs::create_dir_all(&collection_dir).unwrap();
+        std::fs::write(
+            collection_dir.join("schema.yaml"),
+            "columns:\n  - name: Status\n    type: text\nviews: []\n",
+        )
+        .unwrap();
+        let file = collection_dir.join("item.md");
+
+        std::fs::write(
+            &file,
+            "---\ntitle: Indexed Task\nStatus: Open\n---\nneedle body",
+        )
+        .unwrap();
+        update_entry(&state, space, &file).await.unwrap();
+
+        let pool = indexed_pool(&state, space).await;
+        assert_eq!(
+            entry_index_flags(&pool, "tasks/item.md").await,
+            ("tasks".to_string(), Some("tasks".to_string()), 1, 1)
+        );
+        let fields: String = sqlx::query_scalar("SELECT fields FROM entries WHERE file_path = ?")
+            .bind("tasks/item.md")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&fields).unwrap()["Status"],
+            "Open"
+        );
+        let hits = search_fts(&pool, "needle", None, None, 10).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].path, "tasks/item.md");
+    }
+
+    #[tokio::test]
+    async fn targeted_delete_path_removes_stale_renamed_entry_and_fts() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let state = IndexState::new();
+        let old_file = space.join("Old.md");
+        let new_file = space.join("New.md");
+
+        std::fs::write(&old_file, "stale-rename-token").unwrap();
+        update_entry(&state, space, &old_file).await.unwrap();
+        std::fs::rename(&old_file, &new_file).unwrap();
+        update_entry(&state, space, &new_file).await.unwrap();
+        delete_entry(&state, space, &old_file).await.unwrap();
+
+        let pool = indexed_pool(&state, space).await;
+        let paths =
+            sqlx::query_scalar::<_, String>("SELECT file_path FROM entries ORDER BY file_path")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(paths, vec!["New.md".to_string()]);
+        let hits = search_fts(&pool, "stale-rename-token", None, None, 10)
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].path, "New.md");
+    }
+
+    #[tokio::test]
+    async fn targeted_replace_after_rename_removes_stale_entry_and_fts_row() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let state = IndexState::new();
+        let old_file = space.join("old-name.md");
+        let new_file = space.join("new-name.md");
+
+        std::fs::write(&old_file, "oldtoken searchable body").unwrap();
+        update_entry(&state, space, &old_file).await.unwrap();
+        std::fs::rename(&old_file, &new_file).unwrap();
+        std::fs::write(&new_file, "newtoken searchable body").unwrap();
+
+        delete_entry(&state, space, &old_file).await.unwrap();
+        update_entry(&state, space, &new_file).await.unwrap();
+
+        let pool = indexed_pool(&state, space).await;
+        let old_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entries WHERE file_path = ?")
+            .bind("old-name.md")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let new_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entries WHERE file_path = ?")
+            .bind("new-name.md")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(old_count, 0);
+        assert_eq!(new_count, 1);
+        assert!(
+            search_fts(&pool, "oldtoken", None, None, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            search_fts(&pool, "newtoken", None, None, 10)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn targeted_update_recomputes_collection_membership() {
         let tmp = TempDir::new().unwrap();
         let space = tmp.path();
@@ -254,14 +383,14 @@ mod tests {
         update_entry(&state, space, &file).await.unwrap();
 
         let pool = indexed_pool(&state, space).await;
-        let before: (Option<String>, i64) = sqlx::query_as(
-            "SELECT collection_root_path, in_collection FROM entries WHERE file_path = ?",
+        let before: (Option<String>, i64, i64) = sqlx::query_as(
+            "SELECT collection_root_path, in_collection, is_entry_head FROM entries WHERE file_path = ?",
         )
         .bind("tasks/item.md")
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(before, (None, 0));
+        assert_eq!(before, (None, 0, 1));
 
         std::fs::write(
             collection_dir.join("schema.yaml"),
@@ -270,13 +399,79 @@ mod tests {
         .unwrap();
         update_entry(&state, space, &file).await.unwrap();
 
-        let after: (Option<String>, i64) = sqlx::query_as(
-            "SELECT collection_root_path, in_collection FROM entries WHERE file_path = ?",
+        let after: (Option<String>, i64, i64) = sqlx::query_as(
+            "SELECT collection_root_path, in_collection, is_entry_head FROM entries WHERE file_path = ?",
         )
         .bind("tasks/item.md")
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(after, (Some("tasks".to_string()), 1));
+        assert_eq!(after, (Some("tasks".to_string()), 1, 1));
+    }
+
+    #[tokio::test]
+    async fn targeted_updates_do_not_leak_between_root_and_child_space_pools() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path();
+        let child = project.join("child");
+        std::fs::create_dir_all(project.join(".svode")).unwrap();
+        std::fs::create_dir_all(child.join(".svode")).unwrap();
+        std::fs::write(project.join("root.md"), "root searchable").unwrap();
+        std::fs::write(child.join("child.md"), "child searchable").unwrap();
+
+        let state = IndexState::new();
+        state.spaces_cache.lock().await.insert(
+            project.to_path_buf(),
+            ProjectSpacesCache {
+                by_folder: HashMap::from([("child".to_string(), "child-space".to_string())]),
+                folder_by_id: HashMap::from([("child-space".to_string(), "child".to_string())]),
+                status_by_id: HashMap::from([("child-space".to_string(), SpaceStatus::Ready)]),
+                root_name: "Root".to_string(),
+                name_by_id: HashMap::from([("child-space".to_string(), "Child".to_string())]),
+            },
+        );
+
+        update_entry(&state, project, &project.join("root.md"))
+            .await
+            .unwrap();
+        update_entry(&state, project, &child.join("child.md"))
+            .await
+            .unwrap();
+
+        let root_pool = state
+            .get_or_create(&IndexKey::Root(project.to_path_buf()))
+            .await
+            .unwrap();
+        let child_key = IndexKey::Space {
+            project: project.to_path_buf(),
+            space_id: "child-space".to_string(),
+        };
+        let child_pool = state.get_or_create(&child_key).await.unwrap();
+
+        let root_paths =
+            sqlx::query_scalar::<_, String>("SELECT file_path FROM entries ORDER BY file_path")
+                .fetch_all(&root_pool)
+                .await
+                .unwrap();
+        let child_paths =
+            sqlx::query_scalar::<_, String>("SELECT file_path FROM entries ORDER BY file_path")
+                .fetch_all(&child_pool)
+                .await
+                .unwrap();
+
+        assert_eq!(root_paths, vec!["root.md".to_string()]);
+        assert_eq!(child_paths, vec!["child.md".to_string()]);
+        assert!(
+            search_fts(&root_pool, "child", None, None, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            search_fts(&child_pool, "root", None, None, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 }

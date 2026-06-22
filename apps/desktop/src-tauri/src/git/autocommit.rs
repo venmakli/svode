@@ -1176,6 +1176,98 @@ mod tests {
     }
 
     #[test]
+    fn structural_pending_items_keep_expected_paths_by_operation() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let space = temp.path().join("space");
+        let order = space.join(".svode").join("order.json");
+        let created = space.join("new.md");
+        let deleted = space.join("old.md");
+        let move_old = space.join("from.md");
+        let move_new = space.join("Folder").join("from.md");
+        let reordered = space.join("reordered.md");
+
+        let items = vec![
+            PendingItem {
+                op: Some(StructuralOp::Create("new.md".to_string())),
+                paths: vec![order.clone(), created.clone()],
+            },
+            PendingItem {
+                op: Some(StructuralOp::Delete("old.md".to_string())),
+                paths: vec![order.clone(), deleted.clone()],
+            },
+            PendingItem {
+                op: Some(StructuralOp::Move("from.md".to_string())),
+                paths: vec![order.clone(), move_old.clone(), move_new.clone()],
+            },
+            PendingItem {
+                op: Some(StructuralOp::Reorder),
+                paths: vec![order.clone(), reordered.clone()],
+            },
+        ];
+
+        let (drained, kept) = split_related_pending_items(
+            items,
+            std::slice::from_ref(&move_new),
+            &[Some(StructuralOp::Move("from.md".to_string()))],
+        );
+
+        assert_eq!(
+            dedupe_paths(drained),
+            vec![order.clone(), move_old, move_new]
+        );
+        assert_eq!(kept.len(), 3);
+        assert_eq!(
+            dedupe_paths(kept.into_iter().flat_map(|item| item.paths)),
+            vec![order, created, deleted, reordered]
+        );
+    }
+
+    #[test]
+    fn single_file_save_drains_move_backlink_sources_by_operation() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let project = temp.path().join("project");
+        let space = project.join("docs");
+
+        let unrelated_create = space.join("draft.md");
+        let old_path = space.join("Source.md");
+        let moved_path = space.join("Folder").join("Source.md");
+        let backlink_source = space.join("Backlink.md");
+        let move_op = StructuralOp::Move("Source.md".to_string());
+
+        let items = vec![
+            PendingItem {
+                op: Some(StructuralOp::Create("draft.md".to_string())),
+                paths: vec![unrelated_create.clone()],
+            },
+            PendingItem {
+                op: Some(move_op.clone()),
+                paths: vec![old_path.clone(), moved_path.clone()],
+            },
+            PendingItem {
+                op: Some(move_op),
+                paths: vec![backlink_source.clone()],
+            },
+        ];
+        let anchors = vec![moved_path.clone()];
+        let matching_ops: Vec<Option<StructuralOp>> = items
+            .iter()
+            .filter(|item| pending_item_touches(item, &anchors))
+            .map(|item| item.op.clone())
+            .collect();
+        let (drained, kept) = split_related_pending_items(items, &anchors, &matching_ops);
+
+        assert!(drained.contains(&old_path));
+        assert!(drained.contains(&moved_path));
+        assert!(drained.contains(&backlink_source));
+        assert!(!drained.contains(&unrelated_create));
+
+        assert_eq!(
+            dedupe_paths(kept.into_iter().flat_map(|item| item.paths)),
+            vec![unrelated_create]
+        );
+    }
+
+    #[test]
     fn single_create() {
         let ops = vec![StructuralOp::Create(s("meeting.md"))];
         assert_eq!(aggregate_message(&ops), "Create meeting.md");

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::error::AppError;
 use crate::files::{
@@ -1893,13 +1893,13 @@ pub fn diagnose_two_way_relation(
 
 #[tauri::command]
 pub async fn repair_two_way_relation(
+    app: AppHandle,
     space: String,
     collection_path: String,
     column: String,
     strategy: String,
     reverse_column: Option<String>,
     project_path: Option<String>,
-    index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
     let paths = properties::relation_repair_mutation_paths(&space, &collection_path, &column)?;
@@ -1911,8 +1911,6 @@ pub async fn repair_two_way_relation(
         &strategy,
         reverse_column.as_deref(),
     )?;
-    tracing::info!("repair_two_way_relation: running full space reindex after relation repair");
-    reindex_space_dir(&index_state, &space).await;
     let paths = changed_paths(snapshot)?;
     let message = if collection_has_sensitive_columns(&space, &collection_path) {
         "Update collection field".to_string()
@@ -1920,6 +1918,14 @@ pub async fn repair_two_way_relation(
         format!("Repair two-way relation \"{column}\"")
     };
     maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    let reindex_space = space.clone();
+    tauri::async_runtime::spawn(async move {
+        let index_state = app.state::<IndexState>();
+        tracing::info!(
+            "repair_two_way_relation: scheduling background full space reindex after relation repair"
+        );
+        reindex_space_dir(&index_state, &reindex_space).await;
+    });
     Ok(())
 }
 
@@ -3260,6 +3266,7 @@ mod tests {
     use super::*;
     use crate::space::config::write_space_config;
     use crate::space::types::{SpaceConfig, TreeSpaceConfig};
+    use sqlx::SqlitePool;
     use tempfile::TempDir;
 
     fn write_tree_config(tmp: &TempDir, exclude: Vec<&str>, include: Vec<&str>) {
@@ -3305,6 +3312,20 @@ mod tests {
         delete_entry_shared(tmp.path().to_str().unwrap(), path, None, &index_state, None)
             .await
             .expect("delete entry")
+    }
+
+    async fn indexed_pool(state: &IndexState, space: &Path) -> SqlitePool {
+        state
+            .get_or_create(&IndexKey::Root(space.to_path_buf()))
+            .await
+            .expect("index pool")
+    }
+
+    async fn indexed_paths(pool: &SqlitePool) -> Vec<String> {
+        sqlx::query_scalar::<_, String>("SELECT file_path FROM entries ORDER BY file_path")
+            .fetch_all(pool)
+            .await
+            .expect("indexed paths")
     }
 
     #[test]
@@ -3446,6 +3467,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn shared_delete_entry_removes_targeted_index_rows_and_fts() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let state = IndexState::new();
+        std::fs::write(space.join("Note.md"), "search-token body").unwrap();
+        index::update::update_entry(&state, space, &space.join("Note.md"))
+            .await
+            .unwrap();
+        let pool = indexed_pool(&state, space).await;
+
+        let result = delete_entry_shared(
+            space.to_str().unwrap(),
+            "Note.md",
+            Some(space.to_str().unwrap()),
+            &state,
+            None,
+        )
+        .await
+        .expect("delete entry");
+
+        assert_eq!(result.deleted_paths, vec!["Note.md".to_string()]);
+        assert!(indexed_paths(&pool).await.is_empty());
+        let hits = index::search::search_fts(&pool, "search-token", None, None, 10)
+            .await
+            .unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[tokio::test]
     async fn shared_delete_entry_deletes_collection_entry_without_schema() {
         let tmp = TempDir::new().unwrap();
         std::fs::create_dir_all(tmp.path().join("Tasks")).unwrap();
@@ -3496,6 +3546,146 @@ mod tests {
                 .changed_paths
                 .contains(&"Folder/Child.md".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn targeted_convert_to_folder_replaces_stale_leaf_index_row() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let state = IndexState::new();
+        std::fs::write(space.join("Topic.md"), "leaf-body-token").unwrap();
+        index::update::update_entry(&state, space, &space.join("Topic.md"))
+            .await
+            .unwrap();
+        let pool = indexed_pool(&state, space).await;
+
+        let entry = entry::convert_entry_to_folder(space, "Topic.md", None).unwrap();
+        replace_index_entries_or_reindex(
+            &state,
+            Some(space.to_str().unwrap()),
+            space.to_str().unwrap(),
+            &["Topic.md".to_string()],
+            std::slice::from_ref(&entry.path),
+            "convert_entry_to_folder",
+        )
+        .await;
+
+        assert_eq!(entry.path, "Topic/README.md");
+        assert_eq!(
+            indexed_paths(&pool).await,
+            vec!["Topic/README.md".to_string()]
+        );
+        assert!(
+            index::search::search_fts(&pool, "leaf-body-token", None, None, 10)
+                .await
+                .unwrap()
+                .iter()
+                .all(|row| row.path != "Topic.md")
+        );
+    }
+
+    #[tokio::test]
+    async fn targeted_convert_to_leaf_replaces_stale_readme_index_row() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let state = IndexState::new();
+        std::fs::create_dir_all(space.join("Topic")).unwrap();
+        std::fs::write(space.join("Topic").join("README.md"), "readme-body-token").unwrap();
+        index::update::update_entry(&state, space, &space.join("Topic").join("README.md"))
+            .await
+            .unwrap();
+        let pool = indexed_pool(&state, space).await;
+
+        let entry = entry::convert_entry_to_leaf(space, "Topic/README.md", None).unwrap();
+        replace_index_entries_or_reindex(
+            &state,
+            Some(space.to_str().unwrap()),
+            space.to_str().unwrap(),
+            &["Topic/README.md".to_string()],
+            std::slice::from_ref(&entry.path),
+            "convert_entry_to_leaf",
+        )
+        .await;
+
+        assert_eq!(entry.path, "Topic.md");
+        assert_eq!(indexed_paths(&pool).await, vec!["Topic.md".to_string()]);
+        assert!(
+            index::search::search_fts(&pool, "readme-body-token", None, None, 10)
+                .await
+                .unwrap()
+                .iter()
+                .all(|row| row.path != "Topic/README.md")
+        );
+    }
+
+    #[tokio::test]
+    async fn targeted_duplicate_indexes_created_tree_only() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let state = IndexState::new();
+        std::fs::write(
+            space.join("Original.md"),
+            "---\ntitle: Original\n---\noriginal-token",
+        )
+        .unwrap();
+        index::update::update_entry(&state, space, &space.join("Original.md"))
+            .await
+            .unwrap();
+        let pool = indexed_pool(&state, space).await;
+
+        let entry = entry::duplicate_entry(space, "Original.md").unwrap();
+        update_index_tree_or_reindex(
+            &state,
+            Some(space.to_str().unwrap()),
+            space.to_str().unwrap(),
+            root_path_for_head(&entry.path),
+            "duplicate_entry",
+        )
+        .await;
+
+        assert_eq!(entry.path, "original-copy.md");
+        assert_eq!(
+            indexed_paths(&pool).await,
+            vec!["Original.md".to_string(), "original-copy.md".to_string()]
+        );
+        let hits = index::search::search_fts(&pool, "original-token", None, None, 10)
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn targeted_nested_collection_convert_recomputes_descendant_flags() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let state = IndexState::new();
+        std::fs::create_dir_all(space.join("Tasks")).unwrap();
+        std::fs::write(space.join("Tasks").join("README.md"), "Tasks").unwrap();
+        std::fs::write(space.join("Tasks").join("Item.md"), "item-token").unwrap();
+        index::update::update_entry(&state, space, &space.join("Tasks").join("Item.md"))
+            .await
+            .unwrap();
+        let pool = indexed_pool(&state, space).await;
+
+        let collection_path =
+            entry::convert_entry_to_nested_collection(space, "Tasks/README.md").unwrap();
+        update_index_tree_or_reindex(
+            &state,
+            Some(space.to_str().unwrap()),
+            space.to_str().unwrap(),
+            &collection_path,
+            "convert_entry_to_nested_collection",
+        )
+        .await;
+
+        let flags: (Option<String>, i64, i64) = sqlx::query_as(
+            "SELECT collection_root_path, in_collection, is_entry_head FROM entries WHERE file_path = ?",
+        )
+        .bind("Tasks/Item.md")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(flags, (Some("Tasks".to_string()), 1, 1));
     }
 
     #[tokio::test]

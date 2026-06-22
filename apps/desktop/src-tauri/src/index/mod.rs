@@ -1243,8 +1243,31 @@ impl IndexState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::fs;
     use tempfile::TempDir;
+
+    async fn install_child_space_cache(state: &IndexState, project: &Path) {
+        state.spaces_cache.lock().await.insert(
+            project.to_path_buf(),
+            ProjectSpacesCache {
+                by_folder: HashMap::from([("child".to_string(), "child-space".to_string())]),
+                folder_by_id: HashMap::from([("child-space".to_string(), "child".to_string())]),
+                status_by_id: HashMap::from([("child-space".to_string(), SpaceStatus::Ready)]),
+                root_name: "Root".to_string(),
+                name_by_id: HashMap::from([("child-space".to_string(), "Child".to_string())]),
+            },
+        );
+    }
+
+    async fn broken_link_count(state: &IndexState, key: &IndexKey, source: &str) -> i64 {
+        let pool = state.get_or_create(key).await.unwrap();
+        sqlx::query_scalar("SELECT COUNT(*) FROM broken_links WHERE source_rel_path = ?")
+            .bind(source)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    }
 
     #[tokio::test]
     async fn rebase_source_links_project_rewrites_content_and_backlink_source() {
@@ -1284,5 +1307,201 @@ mod tests {
         let backlinks = target_index.get_backlinks("B.md");
         assert_eq!(backlinks.len(), 1);
         assert_eq!(backlinks[0].source_path, "Folder/A.md");
+    }
+
+    #[tokio::test]
+    async fn targeted_index_rows_do_not_leak_between_root_and_child_space_keys() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path();
+        let child = project.join("child");
+        fs::create_dir_all(project.join(".svode")).unwrap();
+        fs::create_dir_all(child.join(".svode")).unwrap();
+        fs::write(project.join("shared.md"), "root-token").unwrap();
+        fs::write(child.join("shared.md"), "child-token").unwrap();
+        let state = IndexState::new();
+        install_child_space_cache(&state, project).await;
+
+        update::update_entry(&state, project, &project.join("shared.md"))
+            .await
+            .unwrap();
+        update::update_entry(&state, project, &child.join("shared.md"))
+            .await
+            .unwrap();
+
+        let root_key = IndexKey::Root(project.to_path_buf());
+        let child_key = IndexKey::Space {
+            project: project.to_path_buf(),
+            space_id: "child-space".to_string(),
+        };
+        let root_pool = state.get_or_create(&root_key).await.unwrap();
+        let child_pool = state.get_or_create(&child_key).await.unwrap();
+        let root_paths = sqlx::query_scalar::<_, String>("SELECT file_path FROM entries")
+            .fetch_all(&root_pool)
+            .await
+            .unwrap();
+        let child_paths = sqlx::query_scalar::<_, String>("SELECT file_path FROM entries")
+            .fetch_all(&child_pool)
+            .await
+            .unwrap();
+
+        assert_eq!(root_paths, vec!["shared.md".to_string()]);
+        assert_eq!(child_paths, vec!["shared.md".to_string()]);
+        assert_eq!(
+            search::search_fts(&root_pool, "root-token", None, None, 10)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            search::search_fts(&root_pool, "child-token", None, None, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            search::search_fts(&child_pool, "child-token", None, None, 10)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            search::search_fts(&child_pool, "root-token", None, None, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn update_file_backlinks_cleans_source_side_broken_links_when_target_appears() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path();
+        fs::create_dir_all(project.join(".svode")).unwrap();
+        fs::write(project.join("Source.md"), "See [Missing](Missing.md).\n").unwrap();
+
+        let state = IndexState::new();
+        let root_key = IndexKey::Root(project.to_path_buf());
+        state
+            .update_file_backlinks(project, None, "Source.md")
+            .await
+            .unwrap();
+        assert_eq!(broken_link_count(&state, &root_key, "Source.md").await, 1);
+
+        fs::write(project.join("Missing.md"), "Target.\n").unwrap();
+        state
+            .update_file_backlinks(project, None, "Source.md")
+            .await
+            .unwrap();
+
+        assert_eq!(broken_link_count(&state, &root_key, "Source.md").await, 0);
+        let target_index = state.backlinks_for(&root_key).await;
+        let backlinks = target_index.get_backlinks("Missing.md");
+        assert_eq!(backlinks.len(), 1);
+        assert_eq!(backlinks[0].source_path, "Source.md");
+        assert_eq!(backlinks[0].source_space_id, None);
+    }
+
+    #[tokio::test]
+    async fn update_file_backlinks_tracks_cross_space_sources_and_targets() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path();
+        let child = project.join("child");
+        fs::create_dir_all(project.join(".svode")).unwrap();
+        fs::create_dir_all(child.join(".svode")).unwrap();
+        fs::write(project.join("RootTarget.md"), "Root target.\n").unwrap();
+        fs::write(
+            project.join("RootSource.md"),
+            "See [Child](child/ChildTarget.md).\n",
+        )
+        .unwrap();
+        fs::write(child.join("ChildTarget.md"), "Child target.\n").unwrap();
+        fs::write(
+            child.join("ChildSource.md"),
+            "See [Root](../RootTarget.md).\n",
+        )
+        .unwrap();
+
+        let state = IndexState::new();
+        install_child_space_cache(&state, project).await;
+        let root_key = IndexKey::Root(project.to_path_buf());
+        let child_key = IndexKey::Space {
+            project: project.to_path_buf(),
+            space_id: "child-space".to_string(),
+        };
+
+        state
+            .update_file_backlinks(project, None, "RootSource.md")
+            .await
+            .unwrap();
+        state
+            .update_file_backlinks(project, Some("child-space"), "ChildSource.md")
+            .await
+            .unwrap();
+
+        let child_index = state.backlinks_for(&child_key).await;
+        let child_backlinks = child_index.get_backlinks("ChildTarget.md");
+        assert_eq!(child_backlinks.len(), 1);
+        assert_eq!(child_backlinks[0].source_path, "RootSource.md");
+        assert_eq!(child_backlinks[0].source_space_id, None);
+
+        let root_index = state.backlinks_for(&root_key).await;
+        let root_backlinks = root_index.get_backlinks("RootTarget.md");
+        assert_eq!(root_backlinks.len(), 1);
+        assert_eq!(root_backlinks[0].source_path, "ChildSource.md");
+        assert_eq!(
+            root_backlinks[0].source_space_id,
+            Some("child-space".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn folder_rename_project_rewrites_descendant_target_links() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path();
+        fs::create_dir_all(project.join(".svode")).unwrap();
+        fs::create_dir_all(project.join("Docs")).unwrap();
+        fs::create_dir_all(project.join("Folder").join("Sub")).unwrap();
+        fs::write(
+            project.join("Docs").join("Source.md"),
+            "See [Target](../Folder/Sub/Target.md).\n",
+        )
+        .unwrap();
+        fs::write(
+            project.join("Folder").join("Sub").join("Target.md"),
+            "Target.\n",
+        )
+        .unwrap();
+
+        let state = IndexState::new();
+        let root_key = IndexKey::Root(project.to_path_buf());
+        state
+            .update_file_backlinks(project, None, "Docs/Source.md")
+            .await
+            .unwrap();
+        state.backlinks_for(&root_key).await.mark_built();
+
+        fs::rename(project.join("Folder"), project.join("Archive")).unwrap();
+        let modified = state
+            .update_links_on_folder_rename_project(project, None, "Folder", "Archive")
+            .await
+            .unwrap();
+
+        assert_eq!(modified.len(), 1);
+        assert_eq!(modified[0].path, "Docs/Source.md");
+        assert_eq!(
+            fs::read_to_string(project.join("Docs").join("Source.md")).unwrap(),
+            "See [Target](../Archive/Sub/Target.md).\n"
+        );
+        let target_index = state.backlinks_for(&root_key).await;
+        assert!(
+            target_index
+                .get_backlinks("Folder/Sub/Target.md")
+                .is_empty()
+        );
+        let backlinks = target_index.get_backlinks("Archive/Sub/Target.md");
+        assert_eq!(backlinks.len(), 1);
+        assert_eq!(backlinks[0].source_path, "Docs/Source.md");
     }
 }
