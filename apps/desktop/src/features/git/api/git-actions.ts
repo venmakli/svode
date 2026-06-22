@@ -1,6 +1,6 @@
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
-import { useEditorStore } from "@/features/editor/model";
+import { clearCommittedReviewMarkers } from "@/features/editor/file-tree-sync";
 import { useGitStore } from "../model";
 import {
   commitGitAll,
@@ -18,14 +18,6 @@ export async function isAutoSyncEnabled(spacePath: string): Promise<boolean> {
     return cfg.git?.autoSync === true;
   } catch {
     return false;
-  }
-}
-
-function clearCommittedReviewMarkers(paths: string[]) {
-  if (paths.length === 0) return;
-  const editor = useEditorStore.getState();
-  for (const path of paths) {
-    editor.clearAiModified(path);
   }
 }
 

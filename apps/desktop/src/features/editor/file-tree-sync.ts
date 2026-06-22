@@ -15,6 +15,14 @@ export function markEditorFilesStale(paths: string[]): void {
   }
 }
 
+export function clearCommittedReviewMarkers(paths: string[]): void {
+  if (paths.length === 0) return;
+  const editor = useEditorStore.getState();
+  for (const path of paths) {
+    editor.clearAiModified(path);
+  }
+}
+
 export function requestEditorFileRename(
   path: string,
   title: string,

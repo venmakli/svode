@@ -26,18 +26,13 @@ const allowedFeatureSubpathExceptions = new Set([
   "@/features/editor/file-tree-sync",
   "@/features/entry/model",
   "@/features/git/app-shell",
+  "@/features/git/editor",
   "@/features/git/sidebar",
   "@/features/identity/effective",
   "@/features/properties/api",
   "@/features/properties/ui",
   "@/features/search/app-shell",
   "@/features/space/app-shell",
-  // Legacy migration exceptions pending narrower public APIs.
-  "@/features/editor/model",
-  "@/features/git/api/git-actions",
-  "@/features/git/model",
-  "@/features/settings/hooks/use-app-version",
-  "@/features/terminal/lib/is-terminal-keyboard-event",
 ]);
 
 function srcRelativePath(filename) {

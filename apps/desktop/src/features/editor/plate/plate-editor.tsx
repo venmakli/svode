@@ -17,10 +17,11 @@ import { cn } from "@/shared/lib/utils";
 import {
   commitAllSpace,
   commitFileAndMaybeSync,
+  getGitSpaceStatus,
+  refreshGitSpaceStatus,
   syncSpace,
-} from "@/features/git/api/git-actions";
+} from "@/features/git/editor";
 import { isTerminalKeyboardEvent } from "@/features/terminal";
-import { useGitStore } from "@/features/git/model";
 import {
   deserializeWithConflicts,
   hasUnresolvedConflicts,
@@ -624,11 +625,11 @@ export function PlateDocumentEditor({
       // Auto-commit the saved file. During mid-merge, route through
       // git_resolve_continue to finalize the merge instead.
       const committedPath = result.new_path ?? currentDocument;
-      const status = useGitStore.getState().statuses[spacePath];
+      const status = getGitSpaceStatus(spacePath);
       if (status?.hasConflicts) {
         try {
           await invoke("git_resolve_continue", { spacePath });
-          void useGitStore.getState().refreshStatus(spacePath);
+          void refreshGitSpaceStatus(spacePath);
           void syncSpace(spacePath);
         } catch (err) {
           console.error("git_resolve_continue failed:", err);
