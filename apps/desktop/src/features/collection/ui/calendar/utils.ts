@@ -44,21 +44,6 @@ export function normalizeCalendarScope(value: unknown): CalendarScope {
     : "month";
 }
 
-export function initialCalendarScope(view: CollectionView): CalendarScope {
-  const params = new URLSearchParams(window.location.search);
-  const queryScope = params.get("scope");
-  if (calendarScopes.includes(queryScope as CalendarScope)) {
-    return queryScope as CalendarScope;
-  }
-  return normalizeCalendarScope(view.default_scope);
-}
-
-export function setCalendarScopeQuery(scope: CalendarScope) {
-  const url = new URL(window.location.href);
-  url.searchParams.set("scope", scope);
-  window.history.replaceState(null, "", `${url.pathname}${url.search}`);
-}
-
 export function calendarDateColumn(
   view: CollectionView,
   schema: CollectionSchema,

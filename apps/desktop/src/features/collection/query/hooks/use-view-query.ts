@@ -3,12 +3,14 @@ import { listen } from "@/platform/native/events";
 import { updateCollectionView } from "../../api";
 import {
   nextStoredQueryState,
-  readStoredViewQuery,
   resolveViewQuery,
   viewStateStorageKey,
   viewUpdatePatch,
-  writeStoredViewQuery,
 } from "../model/query-utils";
+import {
+  readStoredViewQuery,
+  writeStoredViewQuery,
+} from "../lib/view-query-storage";
 import type {
   StoredViewQueryState,
   UseViewQueryOptions,

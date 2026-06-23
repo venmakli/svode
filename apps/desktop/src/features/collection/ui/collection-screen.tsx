@@ -2,7 +2,6 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -39,6 +38,8 @@ import { TableView } from "./table/table-view";
 import { ViewActionBar } from "./view-action-bar";
 import {
   useCollectionEntryActions,
+  useCollectionActiveTab,
+  useCollectionKeyboardShortcuts,
   useCollectionSchemaState,
   useCollectionTemplates,
   useCollectionViewActions,
@@ -46,12 +47,11 @@ import {
 import {
   collectionPathFor,
   humanize,
-  isEditableTarget,
   readmePathFor,
   viewName,
   viewType,
 } from "../lib/utils";
-import type { ActiveTab, EntryPeekTarget, SettingsPane } from "../model";
+import type { EntryPeekTarget, SettingsPane } from "../model";
 import type { CollectionView } from "@/features/collection/query";
 import * as m from "@/paraglide/messages.js";
 
@@ -109,7 +109,6 @@ export function CollectionScreen({
     hasReadme,
     openDocument,
   });
-  const [activeTab, setActiveTab] = useState<ActiveTab>("document");
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -138,7 +137,6 @@ export function CollectionScreen({
     signal: 0,
     asFolder: false,
   });
-  const initializedCollectionRef = useRef<string | null>(null);
   const {
     deleteEntry,
     setDeleteEntry,
@@ -164,6 +162,12 @@ export function CollectionScreen({
       ),
     [schema],
   );
+  const { activeTab, selectTab } = useCollectionActiveTab({
+    collectionPath,
+    hasReadme,
+    schema,
+    views,
+  });
   const activeView = views.find((view) => view.name === activeTab) ?? null;
   const query = useViewQuery({
     spacePath,
@@ -173,42 +177,6 @@ export function CollectionScreen({
     schema: schema ?? { columns: [], views: [] },
     view: activeView,
   });
-
-  const selectTab = useCallback((next: ActiveTab) => {
-    setActiveTab(next);
-    const url = new URL(window.location.href);
-    if (next === "document") url.searchParams.delete("view");
-    else url.searchParams.set("view", next);
-    window.history.replaceState(null, "", `${url.pathname}${url.search}`);
-  }, []);
-
-  useEffect(() => {
-    if (!schema) return;
-    const key = `${collectionPath}:${hasReadme ? "readme" : "no-readme"}`;
-    if (initializedCollectionRef.current === key) {
-      if (
-        activeTab !== "document" &&
-        !views.some((view) => view.name === activeTab)
-      ) {
-        queueMicrotask(() =>
-          selectTab(hasReadme ? "document" : (views[0]?.name ?? "document")),
-        );
-      }
-      return;
-    }
-    initializedCollectionRef.current = key;
-    const params = new URLSearchParams(window.location.search);
-    const requested = params.get("view");
-    if (requested && views.some((view) => view.name === requested)) {
-      queueMicrotask(() => selectTab(requested));
-      return;
-    }
-    if (hasReadme) {
-      queueMicrotask(() => selectTab("document"));
-      return;
-    }
-    queueMicrotask(() => selectTab(views[0]?.name ?? "document"));
-  }, [activeTab, collectionPath, hasReadme, schema, selectTab, views]);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -314,105 +282,41 @@ export function CollectionScreen({
     openDocument(entryToOpen.path, spaceId);
   }
 
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (isEditableTarget(event.target)) return;
-      if (!(event.ctrlKey || event.metaKey)) return;
-      if (event.shiftKey && event.key === "ArrowRight") {
-        event.preventDefault();
-        void moveActive(1).catch(handleError);
-        return;
+  const focusActiveViewCreate = useCallback(
+    (asFolder: boolean) => {
+      if (activeView && viewType(activeView) === "table") {
+        focusTableCreate(asFolder);
+        return true;
       }
-      if (event.shiftKey && event.key === "ArrowLeft") {
-        event.preventDefault();
-        void moveActive(-1).catch(handleError);
-        return;
+      if (activeView && viewType(activeView) === "board") {
+        focusBoardCreate(asFolder);
+        return true;
       }
-      if (!event.shiftKey && event.key === "ArrowRight") {
-        event.preventDefault();
-        const tabs = [
-          hasReadme ? "document" : null,
-          ...views.map((view) => view.name),
-        ].filter(Boolean) as string[];
-        const index = tabs.indexOf(activeTab);
-        selectTab(tabs[Math.min(tabs.length - 1, index + 1)] ?? activeTab);
-        return;
+      if (activeView && viewType(activeView) === "calendar") {
+        focusCalendarCreate(asFolder);
+        return true;
       }
-      if (!event.shiftKey && event.key === "ArrowLeft") {
-        event.preventDefault();
-        const tabs = [
-          hasReadme ? "document" : null,
-          ...views.map((view) => view.name),
-        ].filter(Boolean) as string[];
-        const index = tabs.indexOf(activeTab);
-        selectTab(tabs[Math.max(0, index - 1)] ?? activeTab);
-        return;
+      if (activeView && viewType(activeView) === "list") {
+        focusListCreate(asFolder);
+        return true;
       }
-      const numeric = Number(event.key);
-      if (numeric >= 1 && numeric <= 9) {
-        const tabs = [
-          hasReadme ? "document" : null,
-          ...views.map((view) => view.name),
-        ].filter(Boolean) as string[];
-        const next = tabs[numeric - 1];
-        if (next) {
-          event.preventDefault();
-          selectTab(next);
-        }
-        return;
+      if (activeView && viewType(activeView) === "gallery") {
+        focusGalleryCreate(asFolder);
+        return true;
       }
-      if (!event.shiftKey && event.key.toLowerCase() === "n") {
-        event.preventDefault();
-        if (activeView && viewType(activeView) === "table") {
-          focusTableCreate(false);
-          return;
-        }
-        if (activeView && viewType(activeView) === "board") {
-          focusBoardCreate(false);
-          return;
-        }
-        if (activeView && viewType(activeView) === "calendar") {
-          focusCalendarCreate(false);
-          return;
-        }
-        if (activeView && viewType(activeView) === "list") {
-          focusListCreate(false);
-          return;
-        }
-        if (activeView && viewType(activeView) === "gallery") {
-          focusGalleryCreate(false);
-          return;
-        }
-        void createEntry(false).catch(handleError);
-        return;
-      }
-      if (event.shiftKey && event.key.toLowerCase() === "n") {
-        event.preventDefault();
-        if (activeView && viewType(activeView) === "table") {
-          focusTableCreate(true);
-          return;
-        }
-        if (activeView && viewType(activeView) === "board") {
-          focusBoardCreate(true);
-          return;
-        }
-        if (activeView && viewType(activeView) === "calendar") {
-          focusCalendarCreate(true);
-          return;
-        }
-        if (activeView && viewType(activeView) === "list") {
-          focusListCreate(true);
-          return;
-        }
-        if (activeView && viewType(activeView) === "gallery") {
-          focusGalleryCreate(true);
-          return;
-        }
-        void createEntry(true).catch(handleError);
-      }
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+      return false;
+    },
+    [activeView],
+  );
+
+  useCollectionKeyboardShortcuts({
+    activeTab,
+    hasReadme,
+    views,
+    selectTab,
+    moveActive,
+    focusActiveViewCreate,
+    createEntry,
   });
 
   const hasHeaderProperties = Boolean(

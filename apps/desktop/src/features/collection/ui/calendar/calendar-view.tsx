@@ -42,7 +42,6 @@ import { CalendarTitlePopover } from "./calendar-title-popover";
 import type {
   CalendarCreateDraft,
   CalendarEventInput,
-  CalendarScope,
   CalendarViewProps,
 } from "./types";
 import {
@@ -53,14 +52,13 @@ import {
   dateValueFromSelection,
   fullCalendarViewForScope,
   hiddenNoDateCount,
-  initialCalendarScope,
   normalizeCalendarCardFields,
-  setCalendarScopeQuery,
   valueFromEventDrop,
   valueFromEventResize,
   visibleEventCount,
 } from "./utils";
 import { useCalendarEntries } from "./use-calendar-entries";
+import { useCalendarScopeQuery } from "./use-calendar-scope-query";
 import * as m from "@/paraglide/messages.js";
 
 export function CalendarView({
@@ -89,9 +87,7 @@ export function CalendarView({
 }: CalendarViewProps) {
   const calendarRef = useRef<FullCalendar | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
-  const [scope, setScope] = useState<CalendarScope>(() =>
-    initialCalendarScope(view),
-  );
+  const [scope, setScope] = useCalendarScopeQuery(view);
   const [periodLabel, setPeriodLabel] = useState("");
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [visibleRange, setVisibleRange] = useState<{
@@ -177,7 +173,6 @@ export function CalendarView({
     const api = calendarApi(calendarRef.current);
     if (!api) return;
     api.changeView(fullCalendarViewForScope(scope));
-    setCalendarScopeQuery(scope);
   }, [scope]);
 
   useEffect(() => {
