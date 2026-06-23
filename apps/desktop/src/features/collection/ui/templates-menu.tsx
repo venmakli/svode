@@ -1,4 +1,3 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   closestCenter,
   DndContext,
@@ -9,7 +8,6 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import {
-  arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
   useSortable,
@@ -39,6 +37,7 @@ import { MultiPanePopover } from "@/features/collection/query";
 import type { CollectionSchema } from "@/features/properties";
 import type { TemplateInfo, TemplateKind } from "../model";
 import { templateIsDefault } from "../model";
+import { useTemplateMenuState } from "../hooks/use-template-menu-state";
 import { handleError } from "../lib/errors";
 import { SettingsRow, SettingsSection } from "./settings-row";
 import * as m from "@/paraglide/messages.js";
@@ -48,8 +47,6 @@ const typeIcons = {
   folder: FolderOpen,
   nestedCollection: Database,
 } satisfies Record<TemplateKind, typeof FileText>;
-
-type TemplatesPane = "main" | "templateActions" | "newTemplate";
 
 interface TemplatesSplitButtonProps {
   schema: CollectionSchema;
@@ -81,21 +78,25 @@ export function TemplatesSplitButton({
   onDeleteTemplate,
   onReorderTemplates,
 }: TemplatesSplitButtonProps) {
-  const [open, setOpen] = useState(false);
-  const [pane, setPane] = useState<TemplatesPane>("main");
-  const [loading, setLoading] = useState(false);
-  const [templatesLoaded, setTemplatesLoaded] = useState(false);
-  const [templates, setTemplates] = useState<TemplateInfo[]>([]);
-  const [orderedSlugs, setOrderedSlugs] = useState<string[]>([]);
-  const [activeTemplate, setActiveTemplate] = useState<TemplateInfo | null>(
-    null,
-  );
-  const defaultSlug = schema.templates?.default ?? null;
-  const missingDefault = Boolean(
-    templatesLoaded &&
-    defaultSlug &&
-    !templates.some((template) => template.slug === defaultSlug),
-  );
+  const {
+    activeTemplate,
+    handleOpenChange,
+    loading,
+    missingDefault,
+    open,
+    openTemplateActions,
+    orderedSlugs,
+    pane,
+    reorderTemplates,
+    runAndClose,
+    runAndReturnToMain,
+    setPane,
+    sortedTemplates,
+  } = useTemplateMenuState({
+    defaultSlug: schema.templates?.default ?? null,
+    onLoadTemplates,
+    onReorderTemplates,
+  });
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, {
@@ -103,82 +104,9 @@ export function TemplatesSplitButton({
     }),
   );
 
-  const sortedTemplates = useMemo(() => {
-    const bySlug = new Map(
-      templates.map((template) => [template.slug, template]),
-    );
-    return orderedSlugs
-      .map((slug) => bySlug.get(slug))
-      .filter((template): template is TemplateInfo => Boolean(template));
-  }, [orderedSlugs, templates]);
-
-  const loadTemplates = useCallback(async () => {
-    setLoading(true);
-    try {
-      const next = await onLoadTemplates();
-      setTemplates(next);
-      setOrderedSlugs(next.map((template) => template.slug));
-      setTemplatesLoaded(true);
-    } catch (error) {
-      handleError(error);
-    } finally {
-      setLoading(false);
-    }
-  }, [onLoadTemplates]);
-
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (!cancelled) void loadTemplates();
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [loadTemplates, open]);
-
-  function handleOpenChange(nextOpen: boolean) {
-    setOpen(nextOpen);
-    if (nextOpen) {
-      setPane("main");
-      setActiveTemplate(null);
-    }
-  }
-
   async function handleDragEnd(event: DragEndEvent) {
     if (!event.over || event.active.id === event.over.id) return;
-    const activeSlug = String(event.active.id);
-    const overSlug = String(event.over.id);
-    const oldIndex = orderedSlugs.indexOf(activeSlug);
-    const newIndex = orderedSlugs.indexOf(overSlug);
-    if (oldIndex < 0 || newIndex < 0) return;
-
-    const previous = orderedSlugs;
-    const next = arrayMove(orderedSlugs, oldIndex, newIndex);
-    setOrderedSlugs(next);
-    try {
-      await onReorderTemplates(next);
-    } catch (error) {
-      setOrderedSlugs(previous);
-      handleError(error);
-    }
-  }
-
-  async function runAndClose(action: () => Promise<void>) {
-    await action();
-    setOpen(false);
-  }
-
-  async function runAndReturnToMain(action: () => Promise<void>) {
-    await action();
-    await loadTemplates();
-    setPane("main");
-    setActiveTemplate(null);
-  }
-
-  function openTemplateActions(template: TemplateInfo) {
-    setActiveTemplate(template);
-    setPane("templateActions");
+    await reorderTemplates(String(event.active.id), String(event.over.id));
   }
 
   const panes = [

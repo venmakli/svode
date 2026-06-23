@@ -418,7 +418,7 @@ export function ViewQueryPopover({
             <Trash2 data-icon="inline-start" />
             {m.view_query_delete_sort()}
           </Button>
-          <SaveButton query={query} />
+          <SaveButton query={query} onSaved={onSaved} />
         </div>
       ) : null,
     },
@@ -488,7 +488,7 @@ export function ViewQueryPopover({
             <Check data-icon="inline-start" />
             {m.view_query_apply_group()}
           </Button>
-          <SaveButton query={query} />
+          <SaveButton query={query} onSaved={onSaved} />
         </div>
       ),
     },

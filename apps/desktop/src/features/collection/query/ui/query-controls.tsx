@@ -53,6 +53,7 @@ import {
   needsFilterValue,
   queryField,
 } from "../model/query-utils";
+import { useSaveViewQuery } from "../hooks/use-save-view-query";
 import type {
   FilterOp,
   QueryField,
@@ -456,6 +457,8 @@ export function SaveButton({
   query: UseViewQueryResult;
   onSaved?: (schema: CollectionSchema) => void;
 }) {
+  const saveViewQuery = useSaveViewQuery({ query, onSaved });
+
   if (!query.hasLocalChanges) return null;
   return (
     <Button
@@ -463,16 +466,7 @@ export function SaveButton({
       variant="ghost"
       className="w-full justify-start"
       disabled={query.issues.length > 0}
-      onClick={() => {
-        void query
-          .saveForAll({
-            confirmOverwrite: () =>
-              window.confirm(m.view_query_confirm_save_changed()),
-          })
-          .then((schema) => {
-            if (schema) onSaved?.(schema);
-          });
-      }}
+      onClick={() => void saveViewQuery()}
     >
       <Save data-icon="inline-start" />
       {m.view_query_save_for_all()}
