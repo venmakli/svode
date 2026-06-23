@@ -9,7 +9,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useSidebar } from "@/components/ui/sidebar";
-import { useEntrySelectionStore } from "@/features/entry";
+import { useEntrySelectionStore } from "@/features/entry/selection";
 import { useSpace } from "@/features/space";
 import { useFullscreen } from "./hooks/use-fullscreen";
 import { useShellStore } from "./model";

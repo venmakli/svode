@@ -26,14 +26,19 @@ import {
   detailPageToolbarClassName,
 } from "@/shared/ui/page-layout";
 import {
+  convertEntryToFolder as convertEntryToFolderApi,
+  createEntry as createEntryApi,
   deleteEntry as deleteEntryApi,
   duplicateEntry as duplicateEntryApi,
+  readEntry as readEntryApi,
+  renameEntry as renameEntryApi,
+} from "@/features/entry/api";
+import {
   isEntryTreeMetaField,
   useEntryFieldSave,
-  useEntrySelectionStore,
-  type Entry,
-  type EntryCover,
-} from "@/features/entry";
+} from "@/features/entry/field-save";
+import { useEntrySelectionStore } from "@/features/entry/selection";
+import type { Entry, EntryCover } from "@/features/entry";
 import { useSpaceTreeSync } from "@/features/space";
 import { useViewQuery } from "@/features/collection/query";
 import { DeleteDialogs } from "./delete-dialogs";
@@ -236,10 +241,7 @@ export function CollectionScreen({
       );
       setSchema(normalizeSchema(nextSchema));
       if (hasReadme) {
-        const nextEntry = await invoke<Entry>("read_entry", {
-          space: spacePath,
-          path: readmePath,
-        });
+        const nextEntry = await readEntryApi({ spacePath, path: readmePath });
         setEntry(nextEntry);
       } else {
         setEntry(null);
@@ -344,24 +346,21 @@ export function CollectionScreen({
 
   async function createReadmeForIdentity() {
     if (hasReadme) return entry;
-    const created = await invoke<Entry>("create_entry", {
-      space: spacePath,
+    const created = await createEntryApi({
+      spacePath,
       parentPath: collectionPath,
       title: humanize(collectionPath),
       projectPath: projectPath ?? null,
     });
     let nextEntry = created;
     if (created.path.toLowerCase() !== readmePath.toLowerCase()) {
-      await invoke("rename_entry", {
-        space: spacePath,
+      await renameEntryApi({
+        spacePath,
         from: created.path,
         to: readmePath,
         projectPath: projectPath ?? null,
       });
-      nextEntry = await invoke<Entry>("read_entry", {
-        space: spacePath,
-        path: readmePath,
-      });
+      nextEntry = await readEntryApi({ spacePath, path: readmePath });
     }
     await reloadTreePathParent(spaceId, readmePath);
     await reloadTreeParent(spaceId, collectionPath);
@@ -541,8 +540,8 @@ export function CollectionScreen({
       }
     }
 
-    const created = await invoke<Entry>("create_entry", {
-      space: spacePath,
+    const created = await createEntryApi({
+      spacePath,
       parentPath: collectionPath,
       title,
       contextualDefaults: contextualDefaults ?? null,
@@ -550,8 +549,8 @@ export function CollectionScreen({
     });
     let nextEntry = created;
     if (asFolder) {
-      nextEntry = await invoke<Entry>("convert_entry_to_folder", {
-        space: spacePath,
+      nextEntry = await convertEntryToFolderApi({
+        spacePath,
         filePath: created.path,
         projectPath: projectPath ?? null,
       });

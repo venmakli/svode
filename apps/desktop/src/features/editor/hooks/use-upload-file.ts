@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { makeRelativeDocUrl } from "../api/doc-link-api";
 import { joinAbs } from "../lib/doc-link-utils";
 import { uploadAsset, type UploadAssetDto } from "@/platform/upload/upload-api";
-import { useEntrySelectionStore } from "@/features/entry";
+import { useEntrySelectionStore } from "@/features/entry/selection";
 import { getSpaceSnapshot } from "@/features/space";
 
 /**

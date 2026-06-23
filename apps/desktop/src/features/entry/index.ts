@@ -1,3 +1,10 @@
-export * from "./model";
-export * from "./api";
-export * from "./hooks/use-entry-field-save";
+export type {
+  CoverColorName,
+  Entry,
+  EntryCover,
+  EntryMeta,
+  EntryTreeNode,
+  EntryWarning,
+  TreeNode,
+  WriteResult,
+} from "./model/types";

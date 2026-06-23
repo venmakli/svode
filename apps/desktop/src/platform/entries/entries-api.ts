@@ -57,6 +57,7 @@ export function createEntry(input: {
   space: string;
   parentPath: string | null;
   title: string;
+  contextualDefaults?: Record<string, unknown> | null;
   projectPath: string | null;
 }): Promise<EntryDto> {
   return invokeCommand<EntryDto>("create_entry", { ...input });
@@ -154,6 +155,14 @@ export function convertEntryToFolder(input: {
   projectPath: string | null;
 }): Promise<EntryDto> {
   return invokeCommand<EntryDto>("convert_entry_to_folder", { ...input });
+}
+
+export function convertEntryToLeaf(input: {
+  space: string;
+  filePath: string;
+  projectPath: string | null;
+}): Promise<EntryDto> {
+  return invokeCommand<EntryDto>("convert_entry_to_leaf", { ...input });
 }
 
 export function convertEntryToNestedCollection(input: {

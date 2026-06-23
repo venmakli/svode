@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
-import { useEntrySelectionStore, type TreeNode } from "@/features/entry";
+import { useEntrySelectionStore } from "@/features/entry/selection";
+import type { TreeNode } from "@/features/entry";
 import type { SpaceInfo } from "../model";
 import { useSpaceStore } from "../model";
 import { hasRecordKey, hasScopeReadme } from "../lib/nav-space-tree";

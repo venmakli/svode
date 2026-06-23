@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
-import { useEntrySelectionStore } from "@/features/entry";
+import { useEntrySelectionStore } from "@/features/entry/selection";
 
 type SettingsDialog = "app" | "space" | null;
 export type MainSurface = "content" | "inbox" | "sessions";

@@ -7,13 +7,14 @@ import { PlateDocumentEditor } from "@/features/editor";
 import {
   deleteEntry as deleteEntryApi,
   duplicateEntry as duplicateEntryApi,
-  isEntryTreeMetaField,
   readEntry,
+} from "@/features/entry/api";
+import {
+  isEntryTreeMetaField,
   useEntryFieldSave,
-  useEntrySelectionStore,
-  type Entry,
-  type EntryCover,
-} from "@/features/entry";
+} from "@/features/entry/field-save";
+import { useEntrySelectionStore } from "@/features/entry/selection";
+import type { Entry, EntryCover } from "@/features/entry";
 import { PropertyPanel } from "@/features/properties/panel";
 import { normalizeSchema } from "@/features/properties";
 import {

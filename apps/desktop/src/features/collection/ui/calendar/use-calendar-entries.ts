@@ -11,9 +11,9 @@ import {
 } from "@/features/collection/query";
 import {
   useEntryFieldSave,
-  type Entry,
   type EntryFieldSavePolicy,
-} from "@/features/entry";
+} from "@/features/entry/field-save";
+import type { Entry } from "@/features/entry";
 import * as m from "@/paraglide/messages.js";
 
 export function useCalendarEntries({

@@ -17,12 +17,12 @@ import { CSS } from "@dnd-kit/utilities";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { FileText, Folder, GripVertical, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useEntrySelectionStore } from "@/features/entry";
+import { createEntry as createEntryApi } from "@/features/entry/api";
+import { useEntrySelectionStore } from "@/features/entry/selection";
 import {
   getSpaceTreeSyncSnapshot,
   useSpaceTreeSync,
 } from "@/features/space";
-import type { Entry } from "@/features/entry";
 import { detailPageSectionClassName } from "@/shared/ui/page-layout";
 import type { TreeNode } from "@/features/entry";
 import { cn } from "@/shared/lib/utils";
@@ -87,8 +87,8 @@ export function EntrySubpages({
   if (folderPath === null) return null;
 
   async function createSubpage() {
-    const created = await invoke<Entry>("create_entry", {
-      space: spacePath,
+    const created = await createEntryApi({
+      spacePath,
       parentPath: folderPath,
       title: String(m.editor_untitled()),
       contextualDefaults: null,

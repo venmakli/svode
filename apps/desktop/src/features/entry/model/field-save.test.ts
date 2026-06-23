@@ -1,3 +1,4 @@
+import { expect, test } from "bun:test";
 import type { Entry } from "./types";
 import {
   enqueueEntryFieldSave,
@@ -6,7 +7,7 @@ import {
   rollbackEntryField,
 } from "./field-save";
 
-await run("patchEntryField updates system fields and extra fields", () => {
+test("patchEntryField updates system fields and extra fields", () => {
   const initial = entry({
     title: "Initial",
     description: "Draft",
@@ -14,32 +15,21 @@ await run("patchEntryField updates system fields and extra fields", () => {
   });
 
   const titled = patchEntryField(initial, "title", "Renamed");
-  assert(titled.meta.title === "Renamed", "title should be patched");
-  assert(
-    titled.meta.extra.status === "todo",
-    "system field patches should preserve extra fields",
-  );
+  expect(titled.meta.title).toBe("Renamed");
+  expect(titled.meta.extra.status).toBe("todo");
 
   const described = patchEntryField(titled, "description", "   ");
-  assert(
-    described.meta.description === null,
-    "blank descriptions should normalize to null",
-  );
+  expect(described.meta.description).toBeNull();
 
   const withPriority = patchEntryField(described, "priority", "high");
-  assert(
-    withPriority.meta.extra.priority === "high",
-    "custom fields should patch meta.extra",
-  );
+  expect(withPriority.meta.extra.priority).toBe("high");
 
   const cleared = patchEntryField(withPriority, "priority", []);
-  assert(
-    !Object.prototype.hasOwnProperty.call(cleared.meta.extra, "priority"),
-    "cleared custom values should be removed from meta.extra",
-  );
+  expect(Object.prototype.hasOwnProperty.call(cleared.meta.extra, "priority"))
+    .toBe(false);
 });
 
-await run("mergeSavedEntryField applies saved values and timestamp", () => {
+test("mergeSavedEntryField applies saved values and timestamp", () => {
   const current = entry({
     updated: "2026-06-20T00:00:00.000Z",
     extra: { status: "todo", owner: "current" },
@@ -50,27 +40,16 @@ await run("mergeSavedEntryField applies saved values and timestamp", () => {
   });
 
   const mergedOwner = mergeSavedEntryField(current, "owner", saved);
-  assert(
-    mergedOwner.meta.updated === "2026-06-21T00:00:00.000Z",
-    "saved timestamp should win",
-  );
-  assert(
-    mergedOwner.meta.extra.owner === "saved",
-    "saved custom field value should win",
-  );
-  assert(
-    mergedOwner.meta.extra.status === "todo",
-    "unrelated custom fields should be preserved",
-  );
+  expect(mergedOwner.meta.updated).toBe("2026-06-21T00:00:00.000Z");
+  expect(mergedOwner.meta.extra.owner).toBe("saved");
+  expect(mergedOwner.meta.extra.status).toBe("todo");
 
   const mergedStatus = mergeSavedEntryField(current, "status", saved);
-  assert(
-    !Object.prototype.hasOwnProperty.call(mergedStatus.meta.extra, "status"),
-    "missing saved custom field should delete the current field",
-  );
+  expect(Object.prototype.hasOwnProperty.call(mergedStatus.meta.extra, "status"))
+    .toBe(false);
 });
 
-await run("rollbackEntryField restores previous field without rewinding updated", () => {
+test("rollbackEntryField restores previous field without rewinding updated", () => {
   const current = entry({
     title: "Optimistic",
     updated: "2026-06-22T00:00:00.000Z",
@@ -81,17 +60,11 @@ await run("rollbackEntryField restores previous field without rewinding updated"
   });
 
   const rolledBack = rollbackEntryField(current, "title", previous);
-  assert(
-    rolledBack.meta.title === "Previous",
-    "previous field should be restored",
-  );
-  assert(
-    rolledBack.meta.updated === "2026-06-22T00:00:00.000Z",
-    "current timestamp should be preserved",
-  );
+  expect(rolledBack.meta.title).toBe("Previous");
+  expect(rolledBack.meta.updated).toBe("2026-06-22T00:00:00.000Z");
 });
 
-await run("enqueueEntryFieldSave serializes saves per key", async () => {
+test("enqueueEntryFieldSave serializes saves per key", async () => {
   const events: string[] = [];
 
   const first = enqueueEntryFieldSave("field-save-test:serial", async () => {
@@ -106,14 +79,11 @@ await run("enqueueEntryFieldSave serializes saves per key", async () => {
   });
 
   const results = await Promise.all([first, second]);
-  assert(results.join(",") === "first,second", "queued results should resolve");
-  assert(
-    events.join(",") === "first:start,first:end,second:start",
-    "second task should start after first task completes",
-  );
+  expect(results).toEqual(["first", "second"]);
+  expect(events).toEqual(["first:start", "first:end", "second:start"]);
 });
 
-await run("enqueueEntryFieldSave continues after a rejected save", async () => {
+test("enqueueEntryFieldSave continues after a rejected save", async () => {
   const events: string[] = [];
 
   const first = enqueueEntryFieldSave("field-save-test:rejection", async () => {
@@ -126,21 +96,10 @@ await run("enqueueEntryFieldSave continues after a rejected save", async () => {
   });
 
   const results = await Promise.allSettled([first, second]);
-  assert(results[0]?.status === "rejected", "first task should reject");
-  assert(results[1]?.status === "fulfilled", "second task should still run");
-  assert(events.join(",") === "first:start,second:start", "queue should recover");
+  expect(results[0]?.status).toBe("rejected");
+  expect(results[1]?.status).toBe("fulfilled");
+  expect(events).toEqual(["first:start", "second:start"]);
 });
-
-async function run(name: string, test: () => void | Promise<void>) {
-  await test();
-  console.log(`ok - ${name}`);
-}
-
-function assert(condition: unknown, message: string): asserts condition {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
 
 function entry({
   title = "Title",

@@ -19,6 +19,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useSpaceTreeSync } from "@/features/space";
+import {
+  convertEntryToFolder,
+  convertEntryToLeaf,
+  convertEntryToNestedCollection,
+  createEntry,
+  readEntry,
+} from "@/features/entry/api";
 import type { Entry } from "@/features/entry";
 import { normalizeEntryPath } from "../lib/utils";
 import { handleError } from "../lib/errors";
@@ -106,7 +113,7 @@ export function EntryDetailActions({
   async function refreshDetail(path: string, changedPaths: string[] = [path]) {
     await reloadTreePathParents(spaceId, changedPaths);
     const [nextEntry, nextState] = await Promise.all([
-      invoke<Entry>("read_entry", { space: spacePath, path }),
+      readEntry({ spacePath, path }),
       invoke<EntryDetailState>("get_entry_detail_state", {
         space: spacePath,
         path,
@@ -117,8 +124,8 @@ export function EntryDetailActions({
   }
 
   async function nestPage() {
-    const folderEntry = await invoke<Entry>("convert_entry_to_folder", {
-      space: spacePath,
+    const folderEntry = await convertEntryToFolder({
+      spacePath,
       filePath: entry.path,
       projectPath: projectPath ?? null,
     });
@@ -126,8 +133,8 @@ export function EntryDetailActions({
       /\/readme\.md$/i,
       "",
     );
-    const childEntry = await invoke<Entry>("create_entry", {
-      space: spacePath,
+    const childEntry = await createEntry({
+      spacePath,
       parentPath,
       title: String(m.editor_untitled()),
       contextualDefaults: null,
@@ -144,8 +151,8 @@ export function EntryDetailActions({
 
   async function convertToLeaf() {
     if (leafDisabledReason) return;
-    const next = await invoke<Entry>("convert_entry_to_leaf", {
-      space: spacePath,
+    const next = await convertEntryToLeaf({
+      spacePath,
       filePath: entry.path,
       projectPath: projectPath ?? null,
     });
@@ -158,8 +165,8 @@ export function EntryDetailActions({
   }
 
   async function convertToNestedCollection() {
-    await invoke("convert_entry_to_nested_collection", {
-      space: spacePath,
+    await convertEntryToNestedCollection({
+      spacePath,
       filePath: entry.path,
       projectPath: projectPath ?? null,
     });

@@ -1,4 +1,4 @@
-import { useEntrySelectionStore } from "@/features/entry";
+import { useEntrySelectionStore } from "@/features/entry/selection";
 import {
   clearEditorFileUnsaved,
   suppressEditorFileEvents,

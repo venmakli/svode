@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { useEntrySelectionStore } from "@/features/entry";
+import { useEntrySelectionStore } from "@/features/entry/selection";
 import { useSpace, selectActiveSpacePath } from "@/features/space";
 import { joinAbs } from "../lib/doc-link-utils";
 import {

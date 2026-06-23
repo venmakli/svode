@@ -5,7 +5,7 @@ import { MarkdownPlugin } from "@platejs/markdown";
 import { toast } from "sonner";
 import { EditorKit } from "./editor-kit";
 import { useFileWatcher } from "../hooks/use-file-watcher";
-import { useEntrySelectionStore } from "@/features/entry";
+import { useEntrySelectionStore } from "@/features/entry/selection";
 import {
   getSpaceTreeSyncSnapshot,
   useSpace,

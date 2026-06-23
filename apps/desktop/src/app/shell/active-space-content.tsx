@@ -1,4 +1,4 @@
-import { useEntrySelectionStore } from "@/features/entry";
+import { useEntrySelectionStore } from "@/features/entry/selection";
 import type { TreeNode } from "@/features/entry";
 import { CollectionScreen, EntryDocumentScreen } from "@/features/collection/ui";
 import { useSpace } from "@/features/space";

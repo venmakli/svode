@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { toast } from "sonner";
 import { getSpaceSnapshot, useSpace } from "@/features/space";
-import { useEntrySelectionStore } from "@/features/entry";
+import { useEntrySelectionStore } from "@/features/entry/selection";
 import { useCommandPaletteStore } from "../model";
 import { joinAbs } from "../lib/utils";
 import type { SearchItem } from "../model";

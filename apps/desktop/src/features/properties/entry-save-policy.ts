@@ -1,7 +1,7 @@
 import {
   ENTRY_FIELD_TEXT_SAVE_DELAY_MS,
   type EntryFieldSavePolicy,
-} from "@/features/entry";
+} from "@/features/entry/field-save";
 import type { Column, PropertyType } from "./model/types";
 
 export function propertyFieldSavePolicy(

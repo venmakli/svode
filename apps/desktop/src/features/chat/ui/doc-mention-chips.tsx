@@ -1,6 +1,6 @@
 import { FileText, XIcon } from "lucide-react";
 import { useChatStatusStore } from "../model";
-import { useEntrySelectionStore } from "@/features/entry";
+import { useEntrySelectionStore } from "@/features/entry/selection";
 
 interface DocMentionChipsProps {
   onRemoveText?: (title: string) => void;

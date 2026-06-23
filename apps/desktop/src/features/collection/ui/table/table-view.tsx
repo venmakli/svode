@@ -15,7 +15,8 @@ import {
   useStableViewQueryArgs,
   type CollectionView,
 } from "@/features/collection/query";
-import { useEntryFieldSave, type Entry } from "@/features/entry";
+import { useEntryFieldSave } from "@/features/entry/field-save";
+import type { Entry } from "@/features/entry";
 import { normalizeSchema } from "@/features/properties";
 import { propertyFieldSavePolicy } from "@/features/properties/entry-save-policy";
 import { useSpace, useSpaceTreeSync } from "@/features/space";

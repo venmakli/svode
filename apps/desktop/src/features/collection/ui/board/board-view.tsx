@@ -23,7 +23,8 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { useEntryFieldSave, type Entry } from "@/features/entry";
+import { useEntryFieldSave } from "@/features/entry/field-save";
+import type { Entry } from "@/features/entry";
 import { useStableViewQueryArgs } from "@/features/collection/query";
 import type {
   Column,

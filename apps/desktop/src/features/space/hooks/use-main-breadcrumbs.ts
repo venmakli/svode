@@ -1,4 +1,4 @@
-import { useEntrySelectionStore } from "@/features/entry";
+import { useEntrySelectionStore } from "@/features/entry/selection";
 import { buildSpaceBreadcrumbSegments } from "../lib/space-breadcrumbs";
 import { useSpaceStore } from "../model";
 

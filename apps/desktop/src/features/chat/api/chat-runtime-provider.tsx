@@ -7,6 +7,7 @@ import {
 } from "@assistant-ui/react";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { listen, type UnlistenFn } from "@/platform/native/events";
+import { readEntry } from "@/features/entry/api";
 import {
   useSpace,
   selectActiveSpacePath,
@@ -390,10 +391,7 @@ export function ChatRuntimeProvider({
           const entries = await Promise.all(
             docMentions.map(async (doc) => {
               try {
-                const entry = await invoke<{ body: string }>("read_entry", {
-                  space: spacePath,
-                  path: doc.path,
-                });
+                const entry = await readEntry({ spacePath, path: doc.path });
                 return { path: doc.path, content: entry.body };
               } catch {
                 return null;

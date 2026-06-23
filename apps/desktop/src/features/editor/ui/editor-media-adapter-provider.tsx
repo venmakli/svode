@@ -4,7 +4,7 @@ import {
   MediaAdapterProvider,
   type MediaAdapter,
 } from "@/components/ui/media-adapter";
-import { useEntrySelectionStore } from "@/features/entry";
+import { useEntrySelectionStore } from "@/features/entry/selection";
 import { getSpaceSnapshot } from "@/features/space";
 import { resolveAssetAbsPath } from "@/platform/assets/assets-api";
 import {

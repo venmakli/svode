@@ -1,4 +1,5 @@
-import { useEntrySelectionStore, type TreeNode } from "@/features/entry";
+import { useEntrySelectionStore } from "@/features/entry/selection";
+import type { TreeNode } from "@/features/entry";
 import { useEditorFilePendingWrite } from "@/features/editor/file-tree-sync";
 import { treeNodeHasChildren, treeParentKeyForNode } from "../lib/tree-cache";
 import { useSpaceStore } from "../model";

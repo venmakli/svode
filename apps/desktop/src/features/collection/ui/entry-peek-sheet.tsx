@@ -21,12 +21,12 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/shared/lib/utils";
 import { EntryIdentityHeader } from "@/features/editor";
 import { PlateDocumentEditor } from "@/features/editor";
+import { readEntry as readEntryApi } from "@/features/entry/api";
 import {
   isEntryTreeMetaField,
   useEntryFieldSave,
-  type Entry,
-  type EntryCover,
-} from "@/features/entry";
+} from "@/features/entry/field-save";
+import type { Entry, EntryCover } from "@/features/entry";
 import { PropertyPanel } from "@/features/properties/panel";
 import {
   type EntrySchemaResult,
@@ -114,10 +114,7 @@ export function EntryPeekSheet({
       };
     }
     void Promise.all([
-      invoke<Entry>("read_entry", {
-        space: spacePath,
-        path: target.entry.path,
-      }),
+      readEntryApi({ spacePath, path: target.entry.path }),
       invoke<EntrySchemaResult | null>("get_entry_schema", {
         space: spacePath,
         filePath: target.entry.path,

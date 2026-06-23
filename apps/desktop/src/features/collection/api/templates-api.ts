@@ -1,4 +1,5 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
+import { readEntry } from "@/features/entry/api";
 import type { Entry } from "@/features/entry";
 import type { CollectionSchema } from "@/features/properties";
 import {
@@ -158,8 +159,5 @@ export function readTemplateEntry({
   spacePath: string;
   path: string;
 }) {
-  return invoke<Entry>("read_entry", {
-    space: spacePath,
-    path,
-  });
+  return readEntry({ spacePath, path });
 }

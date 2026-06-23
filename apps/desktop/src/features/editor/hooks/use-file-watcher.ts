@@ -6,7 +6,7 @@ import { reindexProject } from "@/platform/space/space-api";
 import { toast } from "sonner";
 import type { PlateEditor } from "platejs/react";
 import { deserializeWithConflicts } from "../conflict/parse-conflicts";
-import { useEntrySelectionStore } from "@/features/entry";
+import { useEntrySelectionStore } from "@/features/entry/selection";
 import { getSpaceSnapshot } from "@/features/space";
 import { useEditorStore } from "../model";
 import { setCachedDocumentValue } from "../model/plate-document-cache";

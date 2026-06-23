@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useEntrySelectionStore } from "@/features/entry";
+import { useEntrySelectionStore } from "@/features/entry/selection";
 import { useSpaceStore } from "../model";
 import { useMissingSpaceClone } from "./use-missing-space-clone";
 import { useSpaceActions } from "./use-space-actions";

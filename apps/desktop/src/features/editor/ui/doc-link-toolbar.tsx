@@ -48,7 +48,7 @@ import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/shared/lib/utils";
 import { useEditorStore } from "../model";
-import { useEntrySelectionStore } from "@/features/entry";
+import { useEntrySelectionStore } from "@/features/entry/selection";
 import { useSpace } from "@/features/space";
 import type { SearchItem } from "@/features/search";
 import * as m from "@/paraglide/messages.js";

@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { createCollection } from "@/features/collection";
-import { useEntrySelectionStore } from "@/features/entry";
+import { useEntrySelectionStore } from "@/features/entry/selection";
 import { createTreeFolder } from "../api/tree-entry-actions";
 import { useSpaceActions } from "./use-space-actions";
 

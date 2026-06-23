@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/inline-combobox";
 import { FileText } from "lucide-react";
 import { useSpace } from "@/features/space";
-import { useEntrySelectionStore } from "@/features/entry";
+import { useEntrySelectionStore } from "@/features/entry/selection";
 import type { SearchItem } from "@/features/search";
 import {
   absoluteDocumentPath,

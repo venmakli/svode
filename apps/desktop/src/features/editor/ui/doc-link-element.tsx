@@ -8,7 +8,7 @@ import { PlateElement } from "platejs/react";
 import { FileText } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/shared/lib/utils";
-import { useEntrySelectionStore } from "@/features/entry";
+import { useEntrySelectionStore } from "@/features/entry/selection";
 import { useEditorStore } from "../model";
 import { useSpace } from "@/features/space";
 import { GhostCloneDialog } from "./ghost-clone-dialog";
