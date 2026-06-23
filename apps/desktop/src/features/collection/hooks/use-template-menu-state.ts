@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { arrayMove } from "@dnd-kit/sortable";
 import type { TemplateInfo } from "../model";
-import { handleError } from "../lib/errors";
+import { handleError } from "./error-feedback";
 
 export type TemplateMenuPane = "main" | "templateActions" | "newTemplate";
 

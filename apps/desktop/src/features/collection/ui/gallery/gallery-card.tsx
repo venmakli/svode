@@ -53,8 +53,7 @@ export function SortableGalleryCard(props: GalleryCardProps) {
 
 function GalleryCardContent({
   entry,
-  schema,
-  cardCover,
+  cover,
   cardFields,
   metaColumns,
   coverFit,
@@ -139,12 +138,9 @@ function GalleryCardContent({
             onOpenNested={() => onOpenNestedCollection(entry)}
           />
           <GalleryCover
-            entry={entry}
-            cardCover={cardCover}
+            cover={cover}
             coverFit={coverFit}
             coverAspect={coverAspect}
-            schema={schema}
-            spacePath={spacePath}
           />
           <CardContent className="flex flex-1 flex-col gap-1.5 px-2.5 py-2.5">
             {showTitle ? (

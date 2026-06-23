@@ -20,7 +20,7 @@ import {
 } from "./collection-document-surface";
 import { DocumentSettings } from "./document-settings-popover";
 import { EntryPeekSheet } from "./entry-peek-sheet";
-import { handleError } from "../lib/errors";
+import { handleError } from "../hooks/error-feedback";
 import { CollectionSkeleton } from "./skeleton";
 import { CollectionViewContent } from "./collection-view-content";
 import { CollectionTabStrip } from "./view-tabs";

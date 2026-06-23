@@ -6,7 +6,7 @@ import {
   normalizeSchema,
   type EntrySchemaResult,
 } from "@/features/properties";
-import { handleError } from "../lib/errors";
+import { handleError } from "./error-feedback";
 import type { EntryPeekTarget } from "../model";
 
 export function useEntryPeekLoader({

@@ -34,7 +34,6 @@ import * as m from "@/paraglide/messages.js";
 export function GalleryView(props: GalleryViewProps) {
   const {
     query,
-    schema,
     spacePath,
     projectPath,
     onClearSearch,
@@ -46,7 +45,6 @@ export function GalleryView(props: GalleryViewProps) {
   } = props;
   const {
     actors,
-    cardCover,
     cardFields,
     cardRef,
     cardWidth,
@@ -72,6 +70,7 @@ export function GalleryView(props: GalleryViewProps) {
     openCard,
     openDraft,
     queryFiltered,
+    resolveCover,
     setDraftValue,
     setFocusedPath,
     topLevelEntries,
@@ -138,8 +137,7 @@ export function GalleryView(props: GalleryViewProps) {
                 <SortableGalleryCard
                   key={entry.path}
                   entry={entry}
-                  schema={schema}
-                  cardCover={cardCover}
+                  cover={resolveCover(entry)}
                   cardFields={cardFields}
                   metaColumns={metaColumns}
                   coverFit={coverFit}

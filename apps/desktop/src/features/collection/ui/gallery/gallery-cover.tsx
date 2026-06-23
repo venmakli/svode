@@ -1,29 +1,21 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { cn } from "@/shared/lib/utils";
-import type { Entry } from "@/features/entry";
-import type { CollectionSchema } from "@/features/properties";
+import type { GalleryResolvedCover } from "../../model/gallery-cover-types";
 import { galleryCoverRatio } from "./utils";
-import { coverStyle, resolveGalleryCover } from "./gallery-cover-utils";
+import { coverStyle } from "./gallery-cover-utils";
 
 export function GalleryCover({
-  entry,
-  cardCover,
+  cover,
   coverFit,
   coverAspect,
-  schema,
-  spacePath,
 }: {
-  entry: Entry;
-  cardCover: string[];
+  cover: GalleryResolvedCover | null;
   coverFit: "cover" | "contain";
   coverAspect: string;
-  schema: CollectionSchema;
-  spacePath: string;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const visible = useLazyVisible(ref);
-  const cover = resolveGalleryCover({ entry, cardCover, schema, spacePath });
 
   if (!cover) return null;
 

@@ -1,16 +1,12 @@
 import type { Entry } from "@/features/entry";
-import type {
-  ActorCandidate,
-  CollectionSchema,
-  Column,
-} from "@/features/properties";
+import type { ActorCandidate, Column } from "@/features/properties";
+import type { GalleryResolvedCover } from "../../model/gallery-cover-types";
 
 export type { GalleryViewProps } from "../../model/gallery-types";
 
 export interface GalleryCardProps {
   entry: Entry;
-  schema: CollectionSchema;
-  cardCover: string[];
+  cover: GalleryResolvedCover | null;
   cardFields: string[];
   metaColumns: Column[];
   coverFit: "cover" | "contain";

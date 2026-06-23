@@ -15,7 +15,7 @@ import {
   EntryDetailActions,
   EntryPeekSurface,
 } from "@/features/entry/detail";
-import { handleError } from "../lib/errors";
+import { handleError } from "../hooks/error-feedback";
 import { useEntryPeekLoader } from "../hooks";
 import type { EntryPeekTarget } from "../model";
 import * as m from "@/paraglide/messages.js";

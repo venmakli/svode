@@ -14,6 +14,7 @@ import {
 } from "../../lib/gallery-view";
 import { useCollectionActors } from "../use-collection-actors";
 import { useCollectionEntryFieldSave } from "../use-collection-entry-field-save";
+import { resolveGalleryCover } from "./resolve-gallery-cover";
 import { useGalleryEntries } from "./use-gallery-entries";
 import { useGalleryEntryActions } from "./use-gallery-entry-actions";
 
@@ -64,6 +65,16 @@ export function useGalleryViewRuntime({
   const cardCover = useMemo(() => galleryCardCover(view), [view]);
   const coverFit = galleryCoverFit(view);
   const coverAspect = galleryCoverAspect(view);
+  const resolveCover = useCallback(
+    (entry: Entry) =>
+      resolveGalleryCover({
+        entry,
+        cardCover,
+        schema,
+        spacePath,
+      }),
+    [cardCover, schema, spacePath],
+  );
   const topLevelEntries = useMemo(
     () =>
       entries.filter((entry) => entryParentDir(entry.path) === collectionPath),
@@ -215,7 +226,6 @@ export function useGalleryViewRuntime({
 
   return {
     actors,
-    cardCover,
     cardFields,
     cardRef,
     cardWidth,
@@ -242,6 +252,7 @@ export function useGalleryViewRuntime({
     openCard,
     openDraft,
     queryFiltered,
+    resolveCover,
     setDraftValue,
     setFocusedPath,
     topLevelEntries,

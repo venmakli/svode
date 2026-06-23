@@ -38,7 +38,7 @@ import type { CollectionSchema } from "@/features/properties";
 import type { TemplateInfo, TemplateKind } from "../model";
 import { templateIsDefault } from "../model";
 import { useTemplateMenuState } from "../hooks/use-template-menu-state";
-import { handleError } from "../lib/errors";
+import { handleError } from "../hooks/error-feedback";
 import { SettingsRow, SettingsSection } from "./settings-row";
 import * as m from "@/paraglide/messages.js";
 

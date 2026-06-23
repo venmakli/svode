@@ -3,7 +3,7 @@ import type { DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import type { CollectionSchema, PropertyType } from "@/features/properties";
 import { addCollectionColumn } from "../api";
-import { handleError } from "../lib/errors";
+import { handleError } from "./error-feedback";
 import {
   defaultFilterOpForField,
   queryField,

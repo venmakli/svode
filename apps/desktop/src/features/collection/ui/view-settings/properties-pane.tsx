@@ -28,7 +28,7 @@ import type {
   ViewType,
 } from "@/features/collection/query/model";
 import type { CollectionSchema, PropertyType } from "@/features/properties";
-import { handleError } from "../../lib/errors";
+import { handleError } from "../../hooks/error-feedback";
 import { TypePane } from "../table/column-menu-panes";
 import { SortableFieldVisibilityRow } from "../view-settings-panes";
 import { SettingsRow, SettingsSection } from "../settings-row";

@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import type { Entry } from "@/features/entry";
 import type { ActiveTab } from "../model";
 import type { CollectionView } from "../query";
-import { handleError } from "../lib/errors";
+import { handleError } from "./error-feedback";
 import { isEditableTarget } from "./is-editable-target";
 
 export function useCollectionKeyboardShortcuts({

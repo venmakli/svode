@@ -15,7 +15,7 @@ import type {
 } from "@/features/collection/query/model";
 import type { CollectionSchema } from "@/features/properties";
 import type { SettingsPane } from "../../model";
-import { handleError } from "../../lib/errors";
+import { handleError } from "../../hooks/error-feedback";
 import { viewType } from "../../lib/utils";
 import { SettingsRow, SettingsSection } from "../settings-row";
 import {

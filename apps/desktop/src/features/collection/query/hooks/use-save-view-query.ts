@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import type { CollectionSchema } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
-import { handleError } from "../../lib/errors";
+import { handleError } from "../../hooks/error-feedback";
 import type { UseViewQueryResult } from "../model/types";
 
 export function useSaveViewQuery({
