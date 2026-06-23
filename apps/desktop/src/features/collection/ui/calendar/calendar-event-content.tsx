@@ -16,7 +16,7 @@ import type { Entry } from "@/features/entry";
 import { validatePropertyValue, type Column } from "@/features/properties";
 import { PropertyControl } from "@/features/properties/control";
 import { cn } from "@/shared/lib/utils";
-import { eventColorStyle } from "../../model/calendar-utils";
+import { eventColorStyle } from "../../hooks/calendar/calendar-adapter";
 import type {
   CalendarEventModel,
   CalendarPropertyContext,

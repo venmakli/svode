@@ -1,4 +1,3 @@
-import type { EventInput } from "@fullcalendar/core";
 import type {
   CollectionView,
   QueryFilter,
@@ -36,12 +35,6 @@ export interface CalendarEventModel {
   folder: boolean;
   nestedCollection: boolean;
   color: string | null;
-}
-
-export interface CalendarEventInput extends EventInput {
-  extendedProps: {
-    model: CalendarEventModel;
-  };
 }
 
 export interface CalendarViewProps {

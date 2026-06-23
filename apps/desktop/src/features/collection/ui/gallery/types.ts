@@ -1,4 +1,39 @@
-export type {
-  GalleryCardProps,
-  GalleryViewProps,
-} from "../../model/gallery-types";
+import type { Entry } from "@/features/entry";
+import type {
+  ActorCandidate,
+  CollectionSchema,
+  Column,
+} from "@/features/properties";
+
+export type { GalleryViewProps } from "../../model/gallery-types";
+
+export interface GalleryCardProps {
+  entry: Entry;
+  schema: CollectionSchema;
+  cardCover: string[];
+  cardFields: string[];
+  metaColumns: Column[];
+  coverFit: "cover" | "contain";
+  coverAspect: string;
+  spacePath: string;
+  projectPath?: string | null;
+  actors: ActorCandidate[];
+  nestedCollection: boolean;
+  folder: boolean;
+  disabledReorder: boolean;
+  focused: boolean;
+  onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
+  onUpdateField: (entry: Entry, column: Column, value: unknown) => void;
+  onOpen: (entry: Entry, nestedCollection: boolean) => void;
+  onOpenFullPage: (entry: Entry) => void;
+  onOpenNestedCollection: (entry: Entry) => void;
+  onOpenPath: (path: string) => void;
+  onDuplicate: (entry: Entry) => void;
+  onDelete: (entry: Entry) => void;
+  onFocusCard: (path: string) => void;
+  onKeyboardMove: (
+    path: string,
+    direction: "left" | "right" | "up" | "down",
+  ) => void;
+  cardRef?: (element: HTMLElement | null) => void;
+}

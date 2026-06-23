@@ -3,7 +3,7 @@ import type { Entry } from "@/features/entry";
 import type { ActiveTab } from "../model";
 import type { CollectionView } from "../query";
 import { handleError } from "../lib/errors";
-import { isEditableTarget } from "../lib/utils";
+import { isEditableTarget } from "./is-editable-target";
 
 export function useCollectionKeyboardShortcuts({
   activeTab,

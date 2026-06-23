@@ -8,7 +8,7 @@ import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import { Table } from "@/components/ui/table";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
-import { isEditableTarget } from "../../lib/utils";
+import { isEditableTarget } from "../../hooks/is-editable-target";
 import { useTableViewRuntime } from "../../hooks/table/use-table-view-runtime";
 import { EmptyTableBody } from "./table-empty-state";
 import { TableFooterComposer } from "./table-footer-composer";

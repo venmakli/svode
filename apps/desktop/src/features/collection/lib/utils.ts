@@ -48,14 +48,6 @@ export function titleFilter(entries: Entry[], query: string) {
   );
 }
 
-export function isEditableTarget(target: EventTarget | null) {
-  if (!(target instanceof HTMLElement)) return false;
-  const tagName = target.tagName.toLowerCase();
-  return (
-    tagName === "input" || tagName === "textarea" || target.isContentEditable
-  );
-}
-
 export function nextViewName(views: CollectionView[], baseName: string) {
   const names = new Set(views.map((view) => view.name));
   if (!names.has(baseName)) return baseName;

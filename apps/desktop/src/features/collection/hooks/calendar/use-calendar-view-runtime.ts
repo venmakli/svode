@@ -26,25 +26,24 @@ import {
   isInteractiveEventTarget,
   mountCalendarDayNewButton,
   nearestListCreateDate,
-} from "../../lib/calendar-dom";
-import type {
-  CalendarCreateDraft,
-  CalendarEventInput,
-  CalendarViewProps,
-} from "../../model/calendar-types";
+} from "./calendar-dom";
+import type { CalendarCreateDraft, CalendarViewProps } from "../../model/calendar-types";
 import {
-  buildCalendarEvents,
   calendarCustomFields,
   calendarDateColumn,
   dateValueFromClick,
   dateValueFromSelection,
-  fullCalendarViewForScope,
   hiddenNoDateCount,
   normalizeCalendarCardFields,
+} from "../../model/calendar-utils";
+import {
+  buildCalendarEvents,
+  fullCalendarViewForScope,
   valueFromEventDrop,
   valueFromEventResize,
   visibleEventCount,
-} from "../../model/calendar-utils";
+  type CalendarEventInput,
+} from "./calendar-adapter";
 import { useCalendarEntries } from "./use-calendar-entries";
 import { useCalendarScopeQuery } from "./use-calendar-scope-query";
 

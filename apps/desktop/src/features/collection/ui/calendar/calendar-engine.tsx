@@ -17,13 +17,15 @@ import type {
 import ruLocale from "@fullcalendar/core/locales/ru";
 import type { Entry } from "@/features/entry";
 import { CalendarEventContent } from "./calendar-event-content";
-import { unmountCalendarDayNewButton } from "../../lib/calendar-dom";
+import { unmountCalendarDayNewButton } from "../../hooks/calendar/calendar-dom";
 import type {
-  CalendarEventInput,
   CalendarPropertyContext,
   CalendarScope,
 } from "../../model/calendar-types";
-import { fullCalendarViewForScope } from "../../model/calendar-utils";
+import {
+  fullCalendarViewForScope,
+  type CalendarEventInput,
+} from "../../hooks/calendar/calendar-adapter";
 
 export function CalendarEngine({
   calendarRef,

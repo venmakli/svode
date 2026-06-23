@@ -12,7 +12,7 @@ import {
 import {
   readStoredViewQuery,
   writeStoredViewQuery,
-} from "../lib/view-query-storage";
+} from "../api/view-query-storage";
 import type {
   StoredViewQueryState,
   UseViewQueryOptions,

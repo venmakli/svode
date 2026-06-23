@@ -4,7 +4,7 @@ import type {
   DatesSetArg,
   DayCellMountArg,
 } from "@fullcalendar/core";
-import type { CalendarEventInput } from "../model/calendar-types";
+import type { CalendarEventInput } from "./calendar-adapter";
 import * as m from "@/paraglide/messages.js";
 
 export function handleDatesSet(
