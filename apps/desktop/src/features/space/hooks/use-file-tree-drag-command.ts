@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import type { TreeNode } from "@/features/entry";
+import type { TreeNode } from "../model/types";
 import { nestTreeEntry, unnestTreeEntry } from "../api/tree-entry-actions";
 import {
   buildCrossParentMovePlan,

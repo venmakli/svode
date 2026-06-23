@@ -24,7 +24,7 @@ import {
   useSpaceTreeSync,
 } from "@/features/space";
 import { detailPageSectionClassName } from "@/shared/ui/page-layout";
-import type { TreeNode } from "@/features/entry";
+import type { TreeNode } from "@/features/space";
 import { cn } from "@/shared/lib/utils";
 import { normalizeEntryPath } from "../lib/utils";
 import { handleError } from "../lib/errors";

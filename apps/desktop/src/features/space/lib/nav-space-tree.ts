@@ -1,4 +1,4 @@
-import type { TreeNode } from "@/features/entry";
+import type { TreeNode } from "../model/types";
 
 export function visibleScopeChildren(tree: TreeNode[]): TreeNode[] {
   return tree.filter((node) => node.path.toLowerCase() !== "readme.md");

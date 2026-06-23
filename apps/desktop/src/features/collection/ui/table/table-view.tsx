@@ -17,6 +17,7 @@ import {
 } from "@/features/collection/query";
 import { useEntryFieldSave } from "@/features/entry/field-save";
 import type { Entry } from "@/features/entry";
+import { entriesFromDto, type EntryDto } from "@/features/entry/entry-api";
 import { normalizeSchema } from "@/features/properties";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
@@ -157,7 +158,7 @@ export function TableView({
     setError(null);
     try {
       const [baseEntries, collections] = await Promise.all([
-        invoke<Entry[]>("query_entries", {
+        invoke<EntryDto[]>("query_entries", {
           space: spacePath,
           collectionPath,
           filters: queryArgs.filters,
@@ -166,7 +167,7 @@ export function TableView({
           limit: null,
           offset: null,
           projectPath: projectPath ?? null,
-        }),
+        }).then(entriesFromDto),
         invoke<CollectionInfo[]>("list_collections", {
           space: spacePath,
         }).catch(() => []),
@@ -210,7 +211,7 @@ export function TableView({
             (nestedSchema?.views ?? []) as CollectionView[]
           ).find((item) => item?.type === "table");
           try {
-            return await invoke<Entry[]>("query_entries", {
+            return await invoke<EntryDto[]>("query_entries", {
               space: spacePath,
               collectionPath: nestedPath,
               filters: nestedTableView?.filter ?? null,
@@ -221,7 +222,7 @@ export function TableView({
               limit: null,
               offset: null,
               projectPath: projectPath ?? null,
-            });
+            }).then(entriesFromDto);
           } catch (nestedLoadError) {
             console.warn(
               "Failed to load nested table entries:",

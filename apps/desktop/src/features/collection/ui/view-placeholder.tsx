@@ -17,6 +17,7 @@ import {
 import type { CollectionView, ViewType } from "@/features/collection/query";
 import type { CollectionSchema } from "@/features/properties";
 import type { Entry } from "@/features/entry";
+import { entriesFromDto, type EntryDto } from "@/features/entry/entry-api";
 import { IncompleteState } from "./incomplete-state";
 import { titleFilter } from "../lib/utils";
 import * as m from "@/paraglide/messages.js";
@@ -48,13 +49,14 @@ export function ViewPlaceholder({
 }) {
   const [entries, setEntries] = useState<Entry[]>([]);
   useEffect(() => {
-    invoke<Entry[]>("list_entries_for_view", {
+    invoke<EntryDto[]>("list_entries_for_view", {
       space: spacePath,
       collectionPath,
       viewName: name,
       includeNested: false,
       projectPath: projectPath ?? null,
     })
+      .then(entriesFromDto)
       .then(setEntries)
       .catch((error) => console.warn("Failed to load view entries:", error));
   }, [collectionPath, name, projectPath, refreshToken, spacePath]);

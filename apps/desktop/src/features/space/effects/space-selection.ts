@@ -2,7 +2,7 @@ import {
   openEntryDocument,
   openEntryScopeHome,
 } from "@/features/entry/selection";
-import type { TreeNode } from "@/features/entry";
+import type { TreeNode } from "../model/types";
 
 function hasScopeReadme(nodes: TreeNode[]): boolean {
   return nodes.some((node) => node.path.toLowerCase() === "readme.md");

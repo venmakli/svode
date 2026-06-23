@@ -12,6 +12,7 @@ export type {
   SpaceInfo,
   SpaceRef,
   SpaceStatus,
+  TreeNode,
 } from "./model/types";
 export {
   getSpaceSnapshot,

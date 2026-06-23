@@ -3,7 +3,7 @@ import {
   useOpenEntryDocument,
   useOpenEntryScopeHome,
 } from "@/features/entry/selection";
-import type { TreeNode } from "@/features/entry";
+import type { TreeNode } from "../model/types";
 import type { SpaceInfo } from "../model";
 import { useSpaceStore } from "../model";
 import { hasRecordKey, hasScopeReadme } from "../lib/nav-space-tree";

@@ -14,7 +14,7 @@ import {
   type DragOverEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import type { TreeNode } from "@/features/entry";
+import type { TreeNode } from "../model/types";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 import { treeNodeHasChildren } from "../lib/tree-cache";
 import {

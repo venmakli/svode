@@ -8,7 +8,7 @@ import {
 import { FileText } from "lucide-react";
 import { useSpace } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
-import type { TreeNode } from "@/features/entry";
+import type { TreeNode } from "@/features/space";
 
 interface DocItem {
   title: string;

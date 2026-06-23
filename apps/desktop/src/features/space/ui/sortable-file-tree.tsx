@@ -2,7 +2,7 @@ import { createContext, type ReactNode } from "react";
 import { DndContext, DragOverlay, closestCenter } from "@dnd-kit/core";
 import { SortableContext } from "@dnd-kit/sortable";
 import { FileText } from "lucide-react";
-import type { TreeNode } from "@/features/entry";
+import type { TreeNode } from "../model/types";
 import {
   useSortableFileTreeDnd,
   type SortableFileTreeDndContextValue,

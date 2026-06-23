@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { toast } from "sonner";
-import type { TreeNode } from "@/features/entry";
+import type { TreeNode } from "../model/types";
 import type { Projection } from "../lib/tree-dnd-utilities";
 import { useFileTreeDragCommand } from "./use-file-tree-drag-command";
 

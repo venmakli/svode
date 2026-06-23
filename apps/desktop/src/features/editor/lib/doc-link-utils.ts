@@ -1,5 +1,5 @@
 import { searchEntriesByTitle, type SearchItem } from "@/features/search";
-import type { TreeNode } from "@/features/entry";
+import type { TreeNode } from "@/features/space";
 import type { SpaceInfo } from "@/features/space";
 
 const DOC_SEARCH_LIMIT = 8;

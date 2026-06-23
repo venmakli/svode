@@ -1,5 +1,5 @@
 import { arrayMove } from "@dnd-kit/sortable";
-import type { TreeNode } from "@/features/entry";
+import type { TreeNode } from "../model/types";
 import { treeNodeHasChildren, treeParentKeyForNode } from "./tree-cache";
 
 // SidebarMenuSub CSS: ml-2 (8px) + pl-2 (8px) = 16px per nesting level

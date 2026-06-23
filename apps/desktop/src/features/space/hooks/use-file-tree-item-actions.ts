@@ -2,7 +2,7 @@ import {
   useActiveEntrySelection,
   useOpenEntryDocument,
 } from "@/features/entry/selection";
-import type { TreeNode } from "@/features/entry";
+import type { TreeNode } from "../model/types";
 import { useEditorFilePendingWrite } from "@/features/editor/file-tree-sync";
 import { treeNodeHasChildren, treeParentKeyForNode } from "../lib/tree-cache";
 import { useSpaceStore } from "../model";

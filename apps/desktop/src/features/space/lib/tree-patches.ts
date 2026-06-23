@@ -1,4 +1,4 @@
-import type { TreeNode } from "@/features/entry";
+import type { TreeNode } from "../model/types";
 
 export interface TreeNodePatchMeta {
   title: string;

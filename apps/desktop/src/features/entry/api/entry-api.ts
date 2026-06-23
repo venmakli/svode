@@ -22,6 +22,8 @@ import type {
   WriteResult,
 } from "../model/types";
 
+export type { EntryDto };
+
 export interface ReadEntryInput {
   spacePath: string;
   path: string;
@@ -218,7 +220,7 @@ export function convertEntryToNestedCollection(
   });
 }
 
-function entryFromDto(entry: EntryDto): Entry {
+export function entryFromDto(entry: EntryDto): Entry {
   return {
     ...entry,
     meta: {
@@ -226,6 +228,10 @@ function entryFromDto(entry: EntryDto): Entry {
       cover: entryCoverFromDto(entry.meta.cover),
     },
   };
+}
+
+export function entriesFromDto(entries: EntryDto[]): Entry[] {
+  return entries.map(entryFromDto);
 }
 
 function writeResultFromDto(result: WriteResultDto): WriteResult {

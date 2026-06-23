@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/empty";
 import { useEntryFieldSave } from "@/features/entry/field-save";
 import type { Entry } from "@/features/entry";
+import { entriesFromDto, type EntryDto } from "@/features/entry/entry-api";
 import { useStableViewQueryArgs } from "@/features/collection/query";
 import type {
   Column,
@@ -160,7 +161,7 @@ export function BoardView({
     setLoading(true);
     try {
       const [baseEntries, orderEntries, collections] = await Promise.all([
-        invoke<Entry[]>("query_entries", {
+        invoke<EntryDto[]>("query_entries", {
           space: spacePath,
           collectionPath,
           filters: queryArgs.filters,
@@ -169,10 +170,10 @@ export function BoardView({
           limit: null,
           offset: null,
           projectPath: projectPath ?? null,
-        }),
+        }).then(entriesFromDto),
         hasActiveSort
           ? Promise.resolve<Entry[]>([])
-          : invoke<Entry[]>("query_entries", {
+          : invoke<EntryDto[]>("query_entries", {
               space: spacePath,
               collectionPath,
               filters: null,
@@ -181,7 +182,7 @@ export function BoardView({
               limit: null,
               offset: null,
               projectPath: projectPath ?? null,
-            }),
+            }).then(entriesFromDto),
         invoke<CollectionInfo[]>("list_collections", {
           space: spacePath,
         }).catch(() => []),

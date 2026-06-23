@@ -52,7 +52,7 @@ import {
   Pencil,
   Trash2,
 } from "lucide-react";
-import type { TreeNode } from "@/features/entry";
+import type { TreeNode } from "../model/types";
 import { FileGitIndicatorIcon } from "@/features/git/sidebar";
 import { useFileTreeItemActions } from "../hooks/use-file-tree-item-actions";
 import { TreeDndContext } from "./sortable-file-tree";

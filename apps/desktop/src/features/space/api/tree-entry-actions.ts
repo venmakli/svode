@@ -14,7 +14,7 @@ import {
   type BacklinkInfoDto,
   type EntryDto,
 } from "@/platform/entries/entries-api";
-import type { TreeNode } from "@/features/entry";
+import type { TreeNode } from "../model/types";
 import { treeNodeHasChildren, treeParentKeyForNode } from "../lib/tree-cache";
 
 type ProjectPath = string | null;

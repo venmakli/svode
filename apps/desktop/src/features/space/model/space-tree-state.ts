@@ -1,4 +1,4 @@
-import type { TreeNode } from "@/features/entry";
+import type { TreeNode } from "./types";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 import * as spaceActions from "../api/space-store-actions";
 import type { SpaceEntryDto } from "../api/space-store-actions";

@@ -42,7 +42,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { TreeNode } from "@/features/entry";
+import type { TreeNode } from "../model/types";
 import { cn } from "@/shared/lib/utils";
 import type {
   ScopeTarget,

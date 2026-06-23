@@ -7,7 +7,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
-import type { TreeNode } from "@/features/entry";
+import type { TreeNode } from "../model/types";
 import {
   markEditorFilesStale,
   requestEditorFileRename,

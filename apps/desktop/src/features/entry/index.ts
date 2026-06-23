@@ -3,9 +3,7 @@ export type {
   Entry,
   EntryCover,
   EntryMeta,
-  EntryTreeNode,
   EntryWarning,
   LinkValidationResult,
-  TreeNode,
   WriteResult,
 } from "./model/types";

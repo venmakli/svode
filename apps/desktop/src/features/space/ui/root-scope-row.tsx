@@ -26,7 +26,7 @@ import {
   SidebarMenuItem,
   SidebarMenuSub,
 } from "@/components/ui/sidebar";
-import type { TreeNode } from "@/features/entry";
+import type { TreeNode } from "../model/types";
 import { SpaceGitActivityIndicator } from "@/features/git/sidebar";
 import { FileTreeItem } from "./file-tree-item";
 import { SortableFileTree } from "./sortable-file-tree";
