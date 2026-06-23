@@ -20,7 +20,6 @@ import { normalizeSchema } from "@/features/properties";
 import {
   type EntrySchemaResult,
 } from "@/features/properties";
-import { propertyFieldSavePolicy } from "@/features/properties/entry-save-policy";
 import {
   detailPageHeaderClassName,
   detailPageToolbarClassName,
@@ -47,6 +46,7 @@ import { EntrySystemFields } from "./entry-system-fields";
 import { DocumentSettings } from "./document-settings-popover";
 import { EntryPeekSheet, type EntryPeekTarget } from "./entry-peek-sheet";
 import { handleError } from "../lib/errors";
+import { propertyFieldSavePolicy } from "../model/property-field-save-policy";
 import { CollectionSkeleton } from "./skeleton";
 import { CollectionTabStrip } from "./view-tabs";
 import { ViewPlaceholder } from "./view-placeholder";

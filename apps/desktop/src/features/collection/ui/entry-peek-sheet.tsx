@@ -31,13 +31,13 @@ import {
   type EntrySchemaResult,
 } from "@/features/properties";
 import { getEntrySchema } from "@/features/properties/api";
-import { propertyFieldSavePolicy } from "@/features/properties/entry-save-policy";
 import { normalizeSchema } from "@/features/properties";
 import { useSpaceTreeSync } from "@/features/space";
 import { EntryDetailActions } from "./entry-detail-actions";
 import { EntrySubpages } from "./entry-subpages";
 import { EntrySystemFields } from "./entry-system-fields";
 import { handleError } from "../lib/errors";
+import { propertyFieldSavePolicy } from "../model/property-field-save-policy";
 import * as m from "@/paraglide/messages.js";
 
 export interface EntryPeekTarget {

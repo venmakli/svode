@@ -21,7 +21,6 @@ import {
   type EntrySchemaResult,
 } from "@/features/properties";
 import { getEntrySchema } from "@/features/properties/api";
-import { propertyFieldSavePolicy } from "@/features/properties/entry-save-policy";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
 import { useSpaceTreeSync } from "@/features/space";
 import { logTiming, nowMs } from "@/shared/lib/performance";
@@ -33,6 +32,7 @@ import {
 import { EntrySubpages } from "./entry-subpages";
 import { EntrySystemFields } from "./entry-system-fields";
 import { handleError } from "../lib/errors";
+import { propertyFieldSavePolicy } from "../model/property-field-save-policy";
 
 interface EntryDocumentScreenProps {
   spacePath: string;

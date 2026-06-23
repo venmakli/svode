@@ -18,7 +18,6 @@ import {
 import { useEntryFieldSave } from "@/features/entry/field-save";
 import type { Entry } from "@/features/entry";
 import { normalizeSchema } from "@/features/properties";
-import { propertyFieldSavePolicy } from "@/features/properties/entry-save-policy";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
 import type {
@@ -29,6 +28,7 @@ import type {
 import { useCollectionActors } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
 import { isEditableTarget } from "../../lib/utils";
+import { propertyFieldSavePolicy } from "../../model/property-field-save-policy";
 import { usePersistentSet, usePersistentSizing } from "./persistence";
 import { propertyTypeLabel } from "./property-type-picker";
 import { EmptyTableBody } from "./table-empty-state";

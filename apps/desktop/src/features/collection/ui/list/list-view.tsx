@@ -30,7 +30,6 @@ import { useStableViewQueryArgs } from "@/features/collection/query";
 import { useEntryFieldSave } from "@/features/entry/field-save";
 import type { Entry } from "@/features/entry";
 import type { Column } from "@/features/properties";
-import { propertyFieldSavePolicy } from "@/features/properties/entry-save-policy";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import {
   listCollectionInfos,
@@ -39,6 +38,7 @@ import {
 } from "../../api";
 import { useCollectionActors } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
+import { propertyFieldSavePolicy } from "../../model/property-field-save-policy";
 import { entryParentDir, reorderVisibleEntries } from "../table/utils";
 import { SortableListRow } from "./list-row";
 import type { ListViewProps } from "./types";

@@ -35,7 +35,6 @@ const allowedFeatureSubpathExceptions = new Set([
   "@/features/properties/column-settings",
   "@/features/properties/control",
   "@/features/properties/display",
-  "@/features/properties/entry-save-policy",
   "@/features/properties/panel",
   "@/features/search/app-shell",
   "@/features/space/app-shell",
