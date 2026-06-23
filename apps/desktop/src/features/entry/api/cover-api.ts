@@ -1,15 +1,19 @@
-import type { EntryCover } from "@/features/entry";
+import type { EntryCover } from "../model/types";
 import { toWebviewAssetUrl } from "@/platform/assets/assets-api";
 import { pickMediaFiles } from "@/platform/filesystem/native-file-picker";
 import { uploadAsset } from "@/platform/upload/upload-api";
-
-import { joinAbs } from "../lib/doc-link-utils";
 
 interface UploadCoverImageInput {
   file: File;
   projectPath: string;
   spacePath: string;
   documentPath: string;
+}
+
+function joinAbs(base: string, rel: string): string {
+  if (!rel) return base;
+  if (rel.startsWith("/")) return rel;
+  return `${base.replace(/\/+$/, "")}/${rel.replace(/^\/+/, "")}`;
 }
 
 export async function uploadCoverImage({

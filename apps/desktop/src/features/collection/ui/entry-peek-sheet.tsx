@@ -16,7 +16,6 @@ import {
 } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/shared/lib/utils";
-import { EntryIdentityHeader } from "@/features/editor";
 import { PlateDocumentEditor } from "@/features/editor";
 import {
   propertyFieldSavePolicy,
@@ -25,6 +24,7 @@ import {
 } from "@/features/entry";
 import {
   EntryDetailActions,
+  EntryIdentityHeader,
   EntrySubpages,
   EntrySystemFields,
 } from "@/features/entry/detail";

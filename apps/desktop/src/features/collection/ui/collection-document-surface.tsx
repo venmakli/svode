@@ -1,13 +1,13 @@
 import type { ReactNode } from "react";
 import { Database } from "lucide-react";
 import { TabsContent } from "@/components/ui/tabs";
+import { PlateDocumentEditor } from "@/features/editor";
+import type { Entry, EntryCover } from "@/features/entry";
 import {
   EntryIdentityHeader,
-  PlateDocumentEditor,
+  EntrySystemFields,
   TitleZone,
-} from "@/features/editor";
-import type { Entry, EntryCover } from "@/features/entry";
-import { EntrySystemFields } from "@/features/entry/detail";
+} from "@/features/entry/detail";
 import { PropertyPanel } from "@/features/properties/panel";
 import type { EntrySchemaResult } from "@/features/properties";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";

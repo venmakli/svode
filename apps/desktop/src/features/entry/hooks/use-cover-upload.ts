@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { toast } from "sonner";
 
-import type { EntryCover } from "@/features/entry";
+import type { EntryCover } from "../model/types";
 
 import * as m from "@/paraglide/messages.js";
 import { pickCoverImageFile, uploadCoverImage } from "../api/cover-api";

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { EntryIdentityHeader } from "@/features/editor";
 import { PlateDocumentEditor } from "@/features/editor";
 import {
   deleteEntry as deleteEntryApi,
@@ -29,6 +28,7 @@ import { useSpaceTreeSync } from "@/features/space";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 import { EntryDeleteDialog } from "./entry-delete-dialog";
 import { EntryDetailActions } from "./entry-detail-actions";
+import { EntryIdentityHeader } from "./entry-identity-header";
 import { EntrySubpages } from "./entry-subpages";
 import { EntrySystemFields } from "./entry-system-fields";
 import { handleError } from "../lib/errors";

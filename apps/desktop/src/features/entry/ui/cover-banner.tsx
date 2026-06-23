@@ -12,7 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/shared/lib/utils";
-import type { CoverColorName, EntryCover } from "@/features/entry";
+import type { CoverColorName, EntryCover } from "../model/types";
 import * as m from "@/paraglide/messages.js";
 import { getCoverImageSrc } from "../api/cover-api";
 import { useCoverUpload } from "../hooks/use-cover-upload";
