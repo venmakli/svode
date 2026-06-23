@@ -1,11 +1,18 @@
-import { invokeCommand as invoke } from "@/platform/native/invoke";
-import { normalizeEntry, type Entry } from "@/features/entry";
+import {
+  createTemplate as createTemplateDto,
+  deleteTemplate as deleteTemplateDto,
+  duplicateTemplate as duplicateTemplateDto,
+  instantiateTemplate as instantiateTemplateDto,
+  listTemplates as listTemplatesDto,
+  reorderTemplates as reorderTemplatesDto,
+  setDefaultTemplate as setDefaultTemplateDto,
+} from "@/platform/collections/collections-api";
+import { normalizeEntry } from "@/features/entry";
 import { readEntry } from "@/features/entry/entry-api";
-import type { CollectionSchema } from "@/features/properties";
+import { normalizeSchema } from "@/features/properties";
 import {
   normalizeTemplateInfo,
   templateKindToCommand,
-  type TemplateInfo,
   type TemplateKind,
 } from "../model/templates";
 
@@ -16,10 +23,7 @@ export async function listTemplates({
   spacePath: string;
   collectionPath: string;
 }) {
-  const templates = await invoke<TemplateInfo[]>("list_templates", {
-    space: spacePath,
-    collectionPath,
-  });
+  const templates = await listTemplatesDto({ spacePath, collectionPath });
   return templates.map(normalizeTemplateInfo);
 }
 
@@ -36,8 +40,8 @@ export async function createTemplate({
   kind: TemplateKind;
   projectPath?: string | null;
 }) {
-  return invoke<string>("create_template", {
-    space: spacePath,
+  return createTemplateDto({
+    spacePath,
     collectionPath,
     title,
     kind: templateKindToCommand(kind),
@@ -56,8 +60,8 @@ export async function deleteTemplate({
   templateSlug: string;
   projectPath?: string | null;
 }) {
-  return invoke("delete_template", {
-    space: spacePath,
+  return deleteTemplateDto({
+    spacePath,
     collectionPath,
     templateSlug,
     projectPath: projectPath ?? null,
@@ -75,8 +79,8 @@ export async function duplicateTemplate({
   templateSlug: string;
   projectPath?: string | null;
 }) {
-  return invoke<string>("duplicate_template", {
-    space: spacePath,
+  return duplicateTemplateDto({
+    spacePath,
     collectionPath,
     templateSlug,
     projectPath: projectPath ?? null,
@@ -102,8 +106,8 @@ export async function instantiateTemplate({
   contextualDefaults?: Record<string, unknown> | null;
   projectPath?: string | null;
 }) {
-  return invoke<Entry>("instantiate_template", {
-    space: spacePath,
+  return instantiateTemplateDto({
+    spacePath,
     collectionPath,
     templateSlug,
     parentDir,
@@ -125,12 +129,12 @@ export async function setDefaultTemplate({
   templateSlug: string | null;
   projectPath?: string | null;
 }) {
-  return invoke<CollectionSchema>("set_default_template", {
-    space: spacePath,
+  return setDefaultTemplateDto({
+    spacePath,
     collectionPath,
     templateSlug,
     projectPath: projectPath ?? null,
-  });
+  }).then(normalizeSchema);
 }
 
 export async function reorderTemplates({
@@ -144,12 +148,12 @@ export async function reorderTemplates({
   newOrder: string[];
   projectPath?: string | null;
 }) {
-  return invoke<CollectionSchema>("reorder_templates", {
-    space: spacePath,
+  return reorderTemplatesDto({
+    spacePath,
     collectionPath,
     newOrder,
     projectPath: projectPath ?? null,
-  });
+  }).then(normalizeSchema);
 }
 
 export function readTemplateEntry({

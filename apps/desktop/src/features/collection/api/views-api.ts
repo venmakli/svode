@@ -1,5 +1,13 @@
-import { invokeCommand as invoke } from "@/platform/native/invoke";
-import type { CollectionSchema } from "@/features/properties";
+import {
+  addCollectionView as addCollectionViewDto,
+  deleteCollectionView as deleteCollectionViewDto,
+  duplicateCollectionView as duplicateCollectionViewDto,
+  renameCollectionView as renameCollectionViewDto,
+  reorderCollectionViews as reorderCollectionViewsDto,
+  updateCollectionDocumentLabel as updateCollectionDocumentLabelDto,
+  updateCollectionView as updateCollectionViewDto,
+} from "@/platform/collections/collections-api";
+import { normalizeSchema, type CollectionSchema } from "@/features/properties";
 import type { CollectionView } from "@/features/collection/query/model";
 
 export function addCollectionView({
@@ -14,14 +22,14 @@ export function addCollectionView({
   view: Record<string, unknown>;
   position?: number | null;
   projectPath?: string | null;
-}) {
-  return invoke<CollectionSchema>("add_view", {
-    space: spacePath,
+}): Promise<CollectionSchema> {
+  return addCollectionViewDto({
+    spacePath,
     collectionPath,
     view,
     position: position ?? null,
     projectPath: projectPath ?? null,
-  });
+  }).then(normalizeSchema);
 }
 
 export function updateCollectionView({
@@ -36,14 +44,14 @@ export function updateCollectionView({
   viewName: string;
   patch: Record<string, unknown>;
   projectPath?: string | null;
-}) {
-  return invoke<CollectionSchema>("update_view", {
-    space: spacePath,
+}): Promise<CollectionSchema> {
+  return updateCollectionViewDto({
+    spacePath,
     collectionPath,
     viewName,
     patch,
     projectPath: projectPath ?? null,
-  });
+  }).then(normalizeSchema);
 }
 
 export function renameCollectionView({
@@ -58,14 +66,14 @@ export function renameCollectionView({
   oldName: string;
   newName: string;
   projectPath?: string | null;
-}) {
-  return invoke<CollectionSchema>("rename_view", {
-    space: spacePath,
+}): Promise<CollectionSchema> {
+  return renameCollectionViewDto({
+    spacePath,
     collectionPath,
     oldName,
     newName,
     projectPath: projectPath ?? null,
-  });
+  }).then(normalizeSchema);
 }
 
 export function duplicateCollectionView({
@@ -80,14 +88,14 @@ export function duplicateCollectionView({
   viewName: string;
   newName: string;
   projectPath?: string | null;
-}) {
-  return invoke<CollectionSchema>("duplicate_view", {
-    space: spacePath,
+}): Promise<CollectionSchema> {
+  return duplicateCollectionViewDto({
+    spacePath,
     collectionPath,
     viewName,
     newName,
     projectPath: projectPath ?? null,
-  });
+  }).then(normalizeSchema);
 }
 
 export function deleteCollectionView({
@@ -100,13 +108,13 @@ export function deleteCollectionView({
   collectionPath: string;
   viewName: string;
   projectPath?: string | null;
-}) {
-  return invoke<CollectionSchema>("delete_view", {
-    space: spacePath,
+}): Promise<CollectionSchema> {
+  return deleteCollectionViewDto({
+    spacePath,
     collectionPath,
     viewName,
     projectPath: projectPath ?? null,
-  });
+  }).then(normalizeSchema);
 }
 
 export function reorderCollectionViews({
@@ -119,13 +127,13 @@ export function reorderCollectionViews({
   collectionPath: string;
   newOrder: string[];
   projectPath?: string | null;
-}) {
-  return invoke<CollectionSchema>("reorder_views", {
-    space: spacePath,
+}): Promise<CollectionSchema> {
+  return reorderCollectionViewsDto({
+    spacePath,
     collectionPath,
     newOrder,
     projectPath: projectPath ?? null,
-  });
+  }).then(normalizeSchema);
 }
 
 export function updateCollectionDocumentLabel({
@@ -138,13 +146,13 @@ export function updateCollectionDocumentLabel({
   collectionPath: string;
   label: string | null;
   projectPath?: string | null;
-}) {
-  return invoke<CollectionSchema>("update_document_label", {
-    space: spacePath,
+}): Promise<CollectionSchema> {
+  return updateCollectionDocumentLabelDto({
+    spacePath,
     collectionPath,
     label,
     projectPath: projectPath ?? null,
-  });
+  }).then(normalizeSchema);
 }
 
 export function lastCollectionView(schema: CollectionSchema) {

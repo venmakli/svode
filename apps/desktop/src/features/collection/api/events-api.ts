@@ -1,14 +1,10 @@
-import { listen, type UnlistenFn } from "@/platform/native/events";
-
-interface FileEventDto {
-  path: string;
-}
-
-interface SpaceSyncedEventDto {
-  projectPath?: string;
-  spacePath?: string;
-  path?: string;
-}
+import {
+  listenFileChanged,
+  listenFileCreated,
+  listenFileDeleted,
+} from "@/platform/filesystem/file-events-api";
+import { listenSpaceSynced } from "@/platform/space/space-events-api";
+import type { UnlistenFn } from "@/platform/filesystem/file-events-api";
 
 function isMarkdownEntryPath(path: string) {
   return path.replace(/\\/g, "/").toLowerCase().endsWith(".md");
@@ -28,9 +24,9 @@ export async function listenCollectionEntryChanges(
   onEntriesChanged: () => void,
 ): Promise<UnlistenFn> {
   const unlisteners = await Promise.all(
-    ["file:created", "file:changed", "file:deleted"].map((eventName) =>
-      listen<FileEventDto>(eventName, (event) => {
-        if (!isMarkdownEntryPath(event.payload.path)) return;
+    [listenFileCreated, listenFileChanged, listenFileDeleted].map((listenFile) =>
+      listenFile((payload) => {
+        if (!isMarkdownEntryPath(payload.path)) return;
         onEntriesChanged();
       }),
     ),
@@ -47,13 +43,13 @@ export async function listenCollectionQueryInvalidations({
   onQueryInvalidated: () => void;
 }): Promise<UnlistenFn> {
   const unlisteners = await Promise.all([
-    listen<FileEventDto>("file:changed", (event) => {
-      if (isSchemaPath(event.payload.path)) {
+    listenFileChanged((payload) => {
+      if (isSchemaPath(payload.path)) {
         onQueryInvalidated();
       }
     }),
-    listen<SpaceSyncedEventDto>("space:synced", (event) => {
-      if (!event.payload.spacePath || event.payload.spacePath === spacePath) {
+    listenSpaceSynced((payload) => {
+      if (!payload.spacePath || payload.spacePath === spacePath) {
         onQueryInvalidated();
       }
     }),

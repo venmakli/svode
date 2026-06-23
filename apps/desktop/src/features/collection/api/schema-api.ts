@@ -1,5 +1,14 @@
-import { invokeCommand as invoke } from "@/platform/native/invoke";
-import type { CollectionSchema, Column } from "@/features/properties";
+import {
+  addCollectionColumn as addCollectionColumnDto,
+  getCollectionSchema as getCollectionSchemaDto,
+  renameCollectionColumn as renameCollectionColumnDto,
+  updateCollectionSystemFieldLabel as updateCollectionSystemFieldLabelDto,
+} from "@/platform/collections/collections-api";
+import {
+  normalizeSchema,
+  type CollectionSchema,
+  type Column,
+} from "@/features/properties";
 
 export function getCollectionSchema({
   spacePath,
@@ -7,11 +16,10 @@ export function getCollectionSchema({
 }: {
   spacePath: string;
   collectionPath: string;
-}) {
-  return invoke<CollectionSchema>("get_collection_schema", {
-    space: spacePath,
-    collectionPath,
-  });
+}): Promise<CollectionSchema> {
+  return getCollectionSchemaDto({ spacePath, collectionPath }).then(
+    normalizeSchema,
+  );
 }
 
 export function addCollectionColumn({
@@ -24,13 +32,13 @@ export function addCollectionColumn({
   collectionPath: string;
   column: Column;
   projectPath?: string | null;
-}) {
-  return invoke<CollectionSchema>("add_schema_column", {
-    space: spacePath,
+}): Promise<CollectionSchema> {
+  return addCollectionColumnDto({
+    spacePath,
     collectionPath,
     column,
     projectPath: projectPath ?? null,
-  });
+  }).then(normalizeSchema);
 }
 
 export function renameCollectionColumn({
@@ -45,14 +53,14 @@ export function renameCollectionColumn({
   oldName: string;
   newName: string;
   projectPath?: string | null;
-}) {
-  return invoke<CollectionSchema>("rename_schema_column", {
-    space: spacePath,
+}): Promise<CollectionSchema> {
+  return renameCollectionColumnDto({
+    spacePath,
     collectionPath,
     oldName,
     newName,
     projectPath: projectPath ?? null,
-  });
+  }).then(normalizeSchema);
 }
 
 export function updateCollectionSystemFieldLabel({
@@ -67,12 +75,12 @@ export function updateCollectionSystemFieldLabel({
   field: string;
   label: string | null;
   projectPath?: string | null;
-}) {
-  return invoke<CollectionSchema>("update_system_field_label", {
-    space: spacePath,
+}): Promise<CollectionSchema> {
+  return updateCollectionSystemFieldLabelDto({
+    spacePath,
     collectionPath,
     field,
     label,
     projectPath: projectPath ?? null,
-  });
+  }).then(normalizeSchema);
 }

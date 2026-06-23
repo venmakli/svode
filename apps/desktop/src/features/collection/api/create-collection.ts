@@ -1,4 +1,7 @@
-import { invokeCommand as invoke } from "@/platform/native/invoke";
+import {
+  convertBareFolderToCollection,
+  createFolder,
+} from "@/platform/collections/collections-api";
 
 export interface CollectionEntry {
   path: string;
@@ -17,16 +20,18 @@ export async function createCollection({
   title,
   projectPath,
 }: CreateCollectionArgs): Promise<CollectionEntry> {
-  const folderPath = await invoke<string>("create_folder", {
-    space: spacePath,
+  const folderPath = await createFolder({
+    spacePath,
     parentPath,
     name: title,
-    projectPath,
+    projectPath: projectPath ?? null,
   });
 
-  return invoke<CollectionEntry>("convert_bare_folder_to_collection", {
-    space: spacePath,
+  const entry = await convertBareFolderToCollection({
+    spacePath,
     folderPath,
-    projectPath,
+    projectPath: projectPath ?? null,
   });
+
+  return { path: entry.path };
 }

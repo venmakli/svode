@@ -1,4 +1,4 @@
-import { invokeCommand as invoke } from "@/platform/native/invoke";
+import { listCollectionInfos as listCollectionInfosDto } from "@/platform/collections/collections-api";
 import type { QueryFilter, QuerySort } from "@/features/collection/query/model";
 import type { Column } from "@/features/properties";
 import { queryCollectionEntries } from "./entries-api";
@@ -35,10 +35,8 @@ export function queryCalendarEntries({
   });
 }
 
-export function listCollectionInfos(spacePath: string) {
-  return invoke<CollectionInfo[]>("list_collections", {
-    space: spacePath,
-  });
+export function listCollectionInfos(spacePath: string): Promise<CollectionInfo[]> {
+  return listCollectionInfosDto(spacePath);
 }
 
 export function addCollectionDateColumn({

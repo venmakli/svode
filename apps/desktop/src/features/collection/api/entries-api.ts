@@ -1,4 +1,7 @@
-import { invokeCommand as invoke } from "@/platform/native/invoke";
+import {
+  listEntriesForView as listEntriesForViewDto,
+  queryCollectionEntries as queryCollectionEntriesDto,
+} from "@/platform/collections/collections-api";
 import type { QueryFilter, QuerySort } from "@/features/collection/query/model";
 import { normalizeEntries, type Entry } from "@/features/entry";
 import {
@@ -21,14 +24,12 @@ export function queryCollectionEntries({
   includeNested: boolean;
   projectPath?: string | null;
 }) {
-  return invoke<Entry[]>("query_entries", {
-    space: spacePath,
+  return queryCollectionEntriesDto({
+    spacePath,
     collectionPath,
     filters,
     sort,
     includeNested,
-    limit: null,
-    offset: null,
     projectPath: projectPath ?? null,
   }).then(normalizeEntries);
 }
@@ -46,8 +47,8 @@ export function listEntriesForView({
   includeNested: boolean;
   projectPath?: string | null;
 }) {
-  return invoke<Entry[]>("list_entries_for_view", {
-    space: spacePath,
+  return listEntriesForViewDto({
+    spacePath,
     collectionPath,
     viewName,
     includeNested,
