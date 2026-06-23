@@ -1,6 +1,6 @@
-import { convertFileSrc } from "@/platform/native/invoke";
 import type { CSSProperties } from "react";
 import type { CollectionView } from "@/features/collection/query";
+import { resolveEntryImageSource } from "@/features/collection/lib";
 import { normalizeEntryPath } from "@/features/collection/lib/utils";
 import type { Entry, EntryCover } from "@/features/entry";
 import type {
@@ -171,7 +171,11 @@ export function resolveGalleryCover({
     if (typeof value !== "string" || !isRenderableImagePath(value)) continue;
     return {
       kind: "image",
-      src: resolveImageSource(value, spacePath, entry.path),
+      src: resolveEntryImageSource({
+        value,
+        spacePath,
+        entryPath: entry.path,
+      }),
       position: 50,
     };
   }
@@ -203,51 +207,15 @@ function resolveSystemCover(
   if (cover.type === "image" && cover.path) {
     return {
       kind: "image",
-      src: resolveImageSource(cover.path, spacePath, entryPath),
+      src: resolveEntryImageSource({
+        value: cover.path,
+        spacePath,
+        entryPath,
+      }),
       position: cover.position ?? 50,
     };
   }
   return null;
-}
-
-function resolveImageSource(
-  value: string,
-  spacePath: string,
-  entryPath: string,
-) {
-  if (/^(https?:|data:|blob:|asset:|file:)/i.test(value)) return value;
-  if (value.startsWith("/")) return convertFileSrc(value);
-  if (value.startsWith("./") || value.startsWith("../")) {
-    return convertFileSrc(joinEntryPath(spacePath, entryPath, value));
-  }
-  return convertFileSrc(joinSpacePath(spacePath, value));
-}
-
-function joinSpacePath(spacePath: string, value: string) {
-  const base = spacePath.replace(/\\/g, "/").replace(/\/$/, "");
-  const rel = value.replace(/\\/g, "/").replace(/^\.\//, "");
-  return `${base}/${rel}`;
-}
-
-function joinEntryPath(spacePath: string, entryPath: string, value: string) {
-  const normalizedEntry = entryPath.replace(/\\/g, "/");
-  const parent = normalizedEntry.includes("/")
-    ? normalizedEntry.slice(0, normalizedEntry.lastIndexOf("/"))
-    : "";
-  return normalizePath(
-    joinSpacePath(spacePath, `${parent}/${value.replace(/\\/g, "/")}`),
-  );
-}
-
-function normalizePath(path: string) {
-  const absolute = path.startsWith("/");
-  const parts: string[] = [];
-  for (const part of path.split("/")) {
-    if (!part || part === ".") continue;
-    if (part === "..") parts.pop();
-    else parts.push(part);
-  }
-  return `${absolute ? "/" : ""}${parts.join("/")}`;
 }
 
 function isRenderableImagePath(value: string) {

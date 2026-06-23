@@ -8,7 +8,6 @@ import {
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { toast } from "sonner";
 import { Table } from "@/components/ui/table";
 import {
@@ -20,7 +19,12 @@ import type { Entry } from "@/features/entry";
 import { normalizeSchema } from "@/features/properties";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
-import { listCollectionInfos, queryCollectionEntries } from "../../api";
+import {
+  addCollectionColumn,
+  getCollectionSchema,
+  listCollectionInfos,
+  queryCollectionEntries,
+} from "../../api";
 import type {
   CollectionSchema,
   Column,
@@ -175,13 +179,10 @@ export function TableView({
           .filter((item) => item.path !== collectionPath)
           .map(async (item) => {
             try {
-              const nestedSchema = await invoke<CollectionSchema>(
-                "get_collection_schema",
-                {
-                  space: spacePath,
-                  collectionPath: item.path,
-                },
-              );
+              const nestedSchema = await getCollectionSchema({
+                spacePath,
+                collectionPath: item.path,
+              });
               return [item.path, normalizeSchema(nestedSchema)] as const;
             } catch {
               return null;
@@ -354,15 +355,15 @@ export function TableView({
 
   async function handleAddColumn(type: PropertyType) {
     const name = uniqueColumnName(schema, propertyTypeLabel(type));
-    const next = await invoke<CollectionSchema>("add_schema_column", {
-      space: spacePath,
+    const next = await addCollectionColumn({
+      spacePath,
       collectionPath,
       column: {
         name,
         type,
         relation: type === "relation" ? collectionPath || "." : undefined,
       },
-      projectPath: projectPath ?? null,
+      projectPath,
     });
     onSchemaChange(normalizeSchema(next));
     await updateViewPatch({ visible_fields: [...visibleFields, name] });

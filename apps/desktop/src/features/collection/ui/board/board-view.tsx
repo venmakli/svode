@@ -12,7 +12,6 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { Settings } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -28,13 +27,16 @@ import type { Entry } from "@/features/entry";
 import { useStableViewQueryArgs } from "@/features/collection/query";
 import type {
   Column,
-  CollectionSchema,
   PropertyType,
 } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
-import { listCollectionInfos, queryCollectionEntries } from "../../api";
+import {
+  addCollectionColumn,
+  listCollectionInfos,
+  queryCollectionEntries,
+} from "../../api";
 import { useCollectionActors } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
 import { propertyFieldSavePolicy } from "../../model/property-field-save-policy";
@@ -412,11 +414,11 @@ export function BoardView({
 
   async function addGroupColumn(type: PropertyType = "status") {
     const column = { name: uniqueColumnName(schema, "Status"), type };
-    const next = await invoke<CollectionSchema>("add_schema_column", {
-      space: spacePath,
+    const next = await addCollectionColumn({
+      spacePath,
       collectionPath,
       column,
-      projectPath: projectPath ?? null,
+      projectPath,
     });
     onSchemaChange(normalizeSchema(next));
     query.setLocalQuery({ groupBy: column.name });

@@ -67,3 +67,15 @@ export function nextViewName(views: CollectionView[], baseName: string) {
 export function nextTableViewName(views: CollectionView[]) {
   return nextViewName(views, "Table");
 }
+
+export function entryTemplateSlug(collectionPath: string, entryPath: string) {
+  const normalizedCollectionPath = normalizeEntryPath(collectionPath);
+  const normalizedEntryPath = normalizeEntryPath(entryPath);
+  const prefix = normalizedCollectionPath
+    ? `${normalizedCollectionPath}/.templates/`
+    : ".templates/";
+  const rest = normalizedEntryPath.startsWith(prefix)
+    ? normalizedEntryPath.slice(prefix.length)
+    : normalizedEntryPath;
+  return rest.replace(/\/README\.md$/i, "").replace(/\.md$/i, "");
+}

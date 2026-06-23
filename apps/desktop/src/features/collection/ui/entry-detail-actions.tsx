@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import {
   Copy,
   Database,
@@ -27,15 +26,11 @@ import {
   readEntry,
 } from "@/features/entry/entry-api";
 import type { Entry } from "@/features/entry";
+import { getEntryDetailState } from "../api";
 import { normalizeEntryPath } from "../lib/utils";
 import { handleError } from "../lib/errors";
+import type { EntryDetailState } from "../model";
 import * as m from "@/paraglide/messages.js";
-
-export interface EntryDetailState {
-  form: "leaf" | "folder" | "nestedCollection";
-  subpageCount: number;
-  otherFileCount: number;
-}
 
 interface EntryDetailActionsProps {
   entry: Entry;
@@ -74,8 +69,8 @@ export function EntryDetailActions({
 
   useEffect(() => {
     let cancelled = false;
-    void invoke<EntryDetailState>("get_entry_detail_state", {
-      space: spacePath,
+    void getEntryDetailState({
+      spacePath,
       path: entry.path,
     })
       .then((next) => {
@@ -114,8 +109,8 @@ export function EntryDetailActions({
     await reloadTreePathParents(spaceId, changedPaths);
     const [nextEntry, nextState] = await Promise.all([
       readEntry({ spacePath, path }),
-      invoke<EntryDetailState>("get_entry_detail_state", {
-        space: spacePath,
+      getEntryDetailState({
+        spacePath,
         path,
       }).catch(() => null),
     ]);

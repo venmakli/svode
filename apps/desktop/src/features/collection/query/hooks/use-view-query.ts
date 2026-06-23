@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { listen } from "@/platform/native/events";
-import type { CollectionSchema } from "@/features/properties";
+import { updateCollectionView } from "../../api";
 import {
   nextStoredQueryState,
   readStoredViewQuery,
@@ -153,12 +152,12 @@ export function useViewQuery({
         const confirmed = await options?.confirmOverwrite?.();
         if (!confirmed) return null;
       }
-      const updated = await invoke<CollectionSchema>("update_view", {
-        space: spacePath,
+      const updated = await updateCollectionView({
+        spacePath,
         collectionPath,
         viewName,
         patch: viewUpdatePatch(resolved.merged),
-        projectPath: projectPath ?? null,
+        projectPath,
       });
       writeStoredViewQuery(storageKey, null);
       setEphemeralSnapshot({ storageKey, value: null });

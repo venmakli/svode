@@ -1,4 +1,3 @@
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import {
   ArrowUpDown,
   BarChart3,
@@ -28,6 +27,11 @@ import {
   isSensitiveColumn,
   isSensitivePropertyType,
 } from "@/features/properties";
+import {
+  addCollectionColumn,
+  renameCollectionColumn,
+  updateCollectionSystemFieldLabel,
+} from "../../api";
 import { SettingsRow, SettingsSection } from "../settings-row";
 import { PROPERTY_TYPE_ICONS } from "./icons";
 import {
@@ -86,20 +90,20 @@ export function MainPane({
             const next = event.currentTarget.value.trim();
             if (!next) return;
             if (isTitle) {
-              void invoke<CollectionSchema>("update_system_field_label", {
-                space: spacePath,
+              void updateCollectionSystemFieldLabel({
+                spacePath,
                 collectionPath,
                 field: "title",
                 label: next === m.collection_field_title() ? null : next,
-                projectPath: projectPath ?? null,
+                projectPath,
               }).then(onSchemaChange);
             } else if (next !== field) {
-              void invoke<CollectionSchema>("rename_schema_column", {
-                space: spacePath,
+              void renameCollectionColumn({
+                spacePath,
                 collectionPath,
                 oldName: field,
                 newName: next,
-                projectPath: projectPath ?? null,
+                projectPath,
               })
                 .then(onSchemaChange)
                 .then(() =>
@@ -241,11 +245,11 @@ export function ColumnDangerActions({
                 `${column.name} (${m.table_duplicate_column_suffix()})`,
               ),
             };
-            void invoke<CollectionSchema>("add_schema_column", {
-              space: spacePath,
+            void addCollectionColumn({
+              spacePath,
               collectionPath,
               column: duplicate,
-              projectPath: projectPath ?? null,
+              projectPath,
             }).then(onSchemaChange);
           }}
         />

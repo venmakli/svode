@@ -38,17 +38,8 @@ import { EntrySubpages } from "./entry-subpages";
 import { EntrySystemFields } from "./entry-system-fields";
 import { handleError } from "../lib/errors";
 import { propertyFieldSavePolicy } from "../model/property-field-save-policy";
+import type { EntryPeekTarget } from "../model";
 import * as m from "@/paraglide/messages.js";
-
-export interface EntryPeekTarget {
-  entry: Entry;
-  nested: boolean;
-  template?: {
-    slug: string;
-    collectionPath: string;
-    isDefault: boolean;
-  };
-}
 
 interface EntryPeekSheetProps {
   target: EntryPeekTarget | null;

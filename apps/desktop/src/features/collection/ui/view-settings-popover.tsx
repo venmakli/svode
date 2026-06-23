@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import {
   closestCenter,
   DndContext,
@@ -60,6 +59,7 @@ import type {
   PropertyType,
 } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
+import { addCollectionColumn } from "../api";
 import { useCollectionActors } from "../hooks";
 import { handleError } from "../lib/errors";
 import { viewType } from "../lib/utils";
@@ -297,11 +297,11 @@ export function ViewSettingsPopover({
 
   async function addColumnWithType(type: PropertyType) {
     const column = { name: nextColumnName(), type };
-    const next = await invoke<CollectionSchema>("add_schema_column", {
-      space: spacePath,
+    const next = await addCollectionColumn({
+      spacePath,
       collectionPath,
       column,
-      projectPath: projectPath ?? null,
+      projectPath,
     });
     onSchemaChange(next);
     if (view) {

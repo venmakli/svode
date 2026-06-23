@@ -1,7 +1,8 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import type { QueryFilter, QuerySort } from "@/features/collection/query";
-import type { CollectionSchema, Column } from "@/features/properties";
+import type { Column } from "@/features/properties";
 import { queryCollectionEntries } from "./entries-api";
+import { addCollectionColumn } from "./schema-api";
 
 export interface CollectionInfo {
   path: string;
@@ -51,10 +52,10 @@ export function addCollectionDateColumn({
   column: Column;
   projectPath?: string | null;
 }) {
-  return invoke<CollectionSchema>("add_schema_column", {
-    space: spacePath,
+  return addCollectionColumn({
+    spacePath,
     collectionPath,
     column,
-    projectPath: projectPath ?? null,
+    projectPath,
   });
 }

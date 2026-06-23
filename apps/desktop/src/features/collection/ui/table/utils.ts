@@ -1,4 +1,3 @@
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import type { CollectionView } from "@/features/collection/query";
 import type { Entry } from "@/features/entry";
 import type {
@@ -8,6 +7,7 @@ import type {
 } from "@/features/properties";
 import { normalizeEntryPath } from "@/features/collection/lib/utils";
 import { PROPERTY_TYPES } from "@/features/properties";
+import { saveCollectionTreeOrder } from "../../api";
 import type { CollectionTableRow } from "./types";
 
 export function showNestedForView(view: CollectionView) {
@@ -179,25 +179,10 @@ export async function saveTableOrder(
   entries: Entry[],
   projectPath?: string | null,
 ) {
-  const existing = await invoke<Record<string, string[]>>("read_tree_order", {
-    space: spacePath,
-  }).catch(() => ({}));
-  const key = collectionPath || ".";
-  await invoke("save_tree_order", {
-    space: spacePath,
-    order: {
-      ...existing,
-      [key]: entries.map(orderNameForEntry),
-    },
-    projectPath: projectPath ?? null,
+  await saveCollectionTreeOrder({
+    spacePath,
+    orderKey: collectionPath,
+    entries,
+    projectPath,
   });
-}
-
-function orderNameForEntry(entry: Entry) {
-  const path = normalizeEntryPath(entry.path);
-  if (path.toLowerCase().endsWith("/readme.md")) {
-    const folder = path.replace(/\/readme\.md$/i, "");
-    return folder.split("/").at(-1) ?? folder;
-  }
-  return path.split("/").at(-1) ?? path;
 }

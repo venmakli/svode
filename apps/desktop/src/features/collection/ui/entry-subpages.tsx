@@ -14,7 +14,6 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { FileText, Folder, GripVertical, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { createEntry as createEntryApi } from "@/features/entry/entry-api";
@@ -26,6 +25,7 @@ import {
 import { detailPageSectionClassName } from "@/shared/ui/page-layout";
 import type { TreeNode } from "@/features/space";
 import { cn } from "@/shared/lib/utils";
+import { saveCollectionTreeOrderNames } from "../api";
 import { normalizeEntryPath } from "../lib/utils";
 import { handleError } from "../lib/errors";
 import * as m from "@/paraglide/messages.js";
@@ -107,19 +107,11 @@ export function EntrySubpages({
     const next = arrayMove(subpages, oldIndex, newIndex);
     setSubpages(next);
     try {
-      const existing = await invoke<Record<string, string[]>>(
-        "read_tree_order",
-        {
-          space: spacePath,
-        },
-      ).catch(() => ({}));
-      await invoke("save_tree_order", {
-        space: spacePath,
-        order: {
-          ...existing,
-          [folderPath || "."]: next.map(orderNameForNode),
-        },
-        projectPath: projectPath ?? null,
+      await saveCollectionTreeOrderNames({
+        spacePath,
+        orderKey: folderPath || ".",
+        names: next.map(orderNameForNode),
+        projectPath,
       });
       await loadTreeChildren(spaceId, folderPath, { force: true });
     } catch (error) {

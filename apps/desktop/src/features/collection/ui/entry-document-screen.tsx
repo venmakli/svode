@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EntryIdentityHeader } from "@/features/editor";
@@ -28,11 +27,10 @@ import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
 import { useSpaceTreeSync } from "@/features/space";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 import { DeleteDialogs } from "./delete-dialogs";
-import {
-  EntryDetailActions,
-  type EntryDetailState,
-} from "./entry-detail-actions";
+import { EntryDetailActions } from "./entry-detail-actions";
 import { EntrySubpages } from "./entry-subpages";
+import { getEntryDetailState } from "../api";
+import type { EntryDetailState } from "../model";
 import { EntrySystemFields } from "./entry-system-fields";
 import { handleError } from "../lib/errors";
 import { propertyFieldSavePolicy } from "../model/property-field-save-policy";
@@ -118,8 +116,8 @@ export function EntryDocumentScreen({
       const [nextEntry, nextSchemaResult, nextDetailState] = await Promise.all([
         readEntry({ spacePath, path: documentPath }),
         getEntrySchema({ spacePath, filePath: documentPath }).catch(() => null),
-        invoke<EntryDetailState>("get_entry_detail_state", {
-          space: spacePath,
+        getEntryDetailState({
+          spacePath,
           path: documentPath,
         }).catch(() => null),
       ]);

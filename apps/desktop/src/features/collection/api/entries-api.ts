@@ -63,6 +63,25 @@ export async function saveCollectionTreeOrder({
   entries: Entry[];
   projectPath?: string | null;
 }) {
+  await saveCollectionTreeOrderNames({
+    spacePath,
+    orderKey,
+    names: entries.map(orderNameForEntry),
+    projectPath,
+  });
+}
+
+export async function saveCollectionTreeOrderNames({
+  spacePath,
+  orderKey,
+  names,
+  projectPath,
+}: {
+  spacePath: string;
+  orderKey: string;
+  names: string[];
+  projectPath?: string | null;
+}) {
   const existing = await invoke<Record<string, string[]>>("read_tree_order", {
     space: spacePath,
   }).catch(() => ({}));
@@ -71,7 +90,7 @@ export async function saveCollectionTreeOrder({
     space: spacePath,
     order: {
       ...existing,
-      [orderKey || "."]: entries.map(orderNameForEntry),
+      [orderKey || "."]: names,
     },
     projectPath: projectPath ?? null,
   });
