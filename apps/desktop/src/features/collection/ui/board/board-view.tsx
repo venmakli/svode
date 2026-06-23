@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   closestCorners,
   DndContext,
@@ -13,7 +13,6 @@ import {
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { Settings } from "lucide-react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -27,26 +26,22 @@ import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import {
   useCollectionActors,
   useCollectionColumnActions,
-  useCollectionEntryFieldSave,
-  useCollectionTreeOrder,
 } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
 import { entryParentDir } from "../table/utils";
 import { BoardCardContent } from "./board-card";
 import { BoardColumn } from "./board-column";
 import type { BoardViewProps } from "./types";
+import { useBoardEntryActions } from "./use-board-entry-actions";
 import {
   boardColumns,
   boardCustomFields,
   entriesForGroup,
   groupKeyForValue,
   groupValue,
-  groupValueForKey,
   isGroupableColumn,
   noValueKey,
   normalizeBoardCardFields,
-  reorderEntryAround,
-  updateEntryGroupValue,
 } from "./utils";
 import { useBoardEntries } from "./use-board-entries";
 import * as m from "@/paraglide/messages.js";
@@ -96,10 +91,6 @@ export function BoardView({
     refreshToken,
     sort,
     spacePath,
-  });
-  const { reloadOrderParent, saveOrder } = useCollectionTreeOrder({
-    spacePath,
-    projectPath,
   });
   const { addColumn } = useCollectionColumnActions({
     schema,
@@ -151,6 +142,20 @@ export function BoardView({
   const activeCard = activePath
     ? filteredEntries.find((entry) => entry.path === activePath)
     : null;
+  const { commitField, createDraft, moveCard } = useBoardEntryActions({
+    collectionPath,
+    spacePath,
+    projectPath,
+    entries,
+    manualOrderEntries,
+    topLevelEntries,
+    groupColumn,
+    hasSort,
+    setEntries,
+    setManualOrderEntries,
+    loadEntries,
+    onCreateEntry,
+  });
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -185,21 +190,6 @@ export function BoardView({
     };
   }, [createAsFolder, createFocusSignal, renderedColumns]);
 
-  const handleFieldCommitError = useCallback(
-    (error: unknown) => {
-      console.warn("Failed to update board field:", error);
-      void loadEntries();
-    },
-    [loadEntries],
-  );
-  const { commitField, saveField } = useCollectionEntryFieldSave({
-    spacePath,
-    projectPath,
-    setEntries,
-    setManualOrderEntries,
-    onCommitError: handleFieldCommitError,
-  });
-
   function handleDragStart(event: DragStartEvent) {
     setActivePath(String(event.active.id));
   }
@@ -211,145 +201,16 @@ export function BoardView({
   async function handleDragEnd(event: DragEndEvent) {
     setActivePath(null);
     setOverGroupKey(null);
-    if (!groupColumn || !event.over || event.active.id === event.over.id)
-      return;
-
-    const activeEntryPath = String(event.active.id);
-    const activeEntry = topLevelEntries.find(
-      (entry) => entry.path === activeEntryPath,
-    );
-    if (!activeEntry) return;
+    if (!event.over || event.active.id === event.over.id) return;
 
     const overData = event.over.data.current;
-    const targetGroupKey = groupKeyFromOver(overData);
-    if (!targetGroupKey) return;
-
-    const sourceGroupKey = groupKeyForValue(
-      groupValue(activeEntry, groupColumn),
-    );
-    const targetValue = groupValueForKey(targetGroupKey);
-    const overEntryPath =
-      overData?.type === "card" ? String(overData.entryPath) : null;
-    const crossColumn = sourceGroupKey !== targetGroupKey;
-    const positional = Boolean(overEntryPath) && !hasSort;
-    const placement = dropPlacement(event);
-
-    if (!crossColumn && (!positional || activeEntryPath === overEntryPath)) {
-      return;
-    }
-    if (hasSort && !crossColumn) return;
-
-    const previousEntries = entries;
-    const previousManualOrderEntries = manualOrderEntries;
-    const orderTopLevelEntries = (
-      manualOrderEntries.length > 0 ? manualOrderEntries : topLevelEntries
-    ).filter((entry) => entryParentDir(entry.path) === collectionPath);
-    const withGroup = crossColumn
-      ? topLevelEntries.map((entry) =>
-          entry.path === activeEntryPath
-            ? updateEntryGroupValue(entry, groupColumn, targetValue)
-            : entry,
-        )
-      : topLevelEntries;
-    const withGroupForOrder = crossColumn
-      ? orderTopLevelEntries.map((entry) =>
-          entry.path === activeEntryPath
-            ? updateEntryGroupValue(entry, groupColumn, targetValue)
-            : entry,
-        )
-      : orderTopLevelEntries;
-    const nextTopLevel =
-      positional && overEntryPath
-        ? reorderEntryAround(
-            withGroup,
-            activeEntryPath,
-            overEntryPath,
-            placement,
-          )
-        : withGroup;
-    const nextOrderTopLevel =
-      positional && overEntryPath
-        ? reorderEntryAround(
-            withGroupForOrder,
-            activeEntryPath,
-            overEntryPath,
-            placement,
-          )
-        : withGroupForOrder;
-    setEntries((current) =>
-      positional
-        ? [
-            ...nextTopLevel,
-            ...current.filter(
-              (entry) => entryParentDir(entry.path) !== collectionPath,
-            ),
-          ]
-        : current.map((entry) =>
-            entry.path === activeEntryPath
-              ? updateEntryGroupValue(entry, groupColumn, targetValue)
-              : entry,
-          ),
-    );
-    setManualOrderEntries((current) =>
-      positional
-        ? [
-            ...nextOrderTopLevel,
-            ...current.filter(
-              (entry) => entryParentDir(entry.path) !== collectionPath,
-            ),
-          ]
-        : current.map((entry) =>
-            entry.path === activeEntryPath
-              ? updateEntryGroupValue(entry, groupColumn, targetValue)
-              : entry,
-          ),
-    );
-
-    try {
-      if (crossColumn) {
-        await saveField(activeEntry, groupColumn, targetValue, { flush: true });
-      }
-      if (positional) {
-        await saveOrder(collectionPath, nextOrderTopLevel);
-        await reloadOrderParent(collectionPath);
-      }
-      await loadEntries();
-    } catch (error) {
-      console.warn("Failed to move board card:", error);
-      if (crossColumn) {
-        try {
-          await saveField(
-            activeEntry,
-            groupColumn,
-            groupValueForKey(sourceGroupKey),
-            { flush: true },
-          );
-        } catch (rollbackError) {
-          console.warn("Failed to rollback board card move:", rollbackError);
-        }
-      }
-      setEntries(previousEntries);
-      setManualOrderEntries(previousManualOrderEntries);
-      void loadEntries();
-      toast.error(m.board_move_error());
-    }
-  }
-
-  async function createDraft(
-    title: string,
-    groupKey: string,
-    asFolder: boolean,
-  ) {
-    const defaults =
-      groupKey === noValueKey() || !groupColumn
-        ? undefined
-        : { [groupColumn.name]: groupValueForKey(groupKey) };
-    const created = await onCreateEntry(title, asFolder, defaults);
-    setDraftGroupKey(null);
-    setDraftAsFolder(false);
-    setEntries((current) => [...current, created]);
-    setManualOrderEntries((current) => [...current, created]);
-    await loadEntries();
+    await moveCard({
+      activeEntryPath: String(event.active.id),
+      targetGroupKey: groupKeyFromOver(overData),
+      overEntryPath:
+        overData?.type === "card" ? String(overData.entryPath) : null,
+      placement: dropPlacement(event),
+    });
   }
 
   async function addGroupColumn(type: PropertyType = "status") {
@@ -521,12 +382,10 @@ export function BoardView({
                   setDraftAsFolder(false);
                 }}
                 onCreateDraft={(title, asFolder) =>
-                  void createDraft(title, column.key, asFolder).catch(
-                    (error) => {
-                      console.warn("Failed to create board entry:", error);
-                      toast.error(m.board_create_error());
-                    },
-                  )
+                  void createDraft(title, column.key, asFolder, () => {
+                    setDraftGroupKey(null);
+                    setDraftAsFolder(false);
+                  })
                 }
                 cardProps={{
                   groupColumn,

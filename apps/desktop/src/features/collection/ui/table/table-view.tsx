@@ -15,7 +15,6 @@ import {
   useCollectionActors,
   useCollectionColumnActions,
   useCollectionEntryFieldSave,
-  useCollectionTreeOrder,
 } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
 import { isEditableTarget } from "../../lib/utils";
@@ -36,9 +35,9 @@ import {
   entryParentDir,
   flattenRows,
   normalizeVisibleFields,
-  reorderVisibleEntries,
   showNestedForView,
 } from "./utils";
+import { useTableEntryActions } from "./use-table-entry-actions";
 import * as m from "@/paraglide/messages.js";
 
 export function TableView({
@@ -72,10 +71,6 @@ export function TableView({
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerAsFolder, setComposerAsFolder] = useState(false);
   const [composerValue, setComposerValue] = useState("");
-  const { reloadOrderParent, saveOrder } = useCollectionTreeOrder({
-    spacePath,
-    projectPath,
-  });
   const showNested = showNestedForView(view);
   const density =
     view.density === "compact" || view.density === "spacious"
@@ -146,6 +141,16 @@ export function TableView({
     () => schema.columns.some((column) => column.type === "actor"),
     [schema.columns],
   );
+  const { createEntry, reorderEntries } = useTableEntryActions({
+    collectionPath,
+    spacePath,
+    projectPath,
+    topLevelEntries,
+    filteredTopLevel,
+    setEntries,
+    loadEntries,
+    onCreateEntry,
+  });
 
   useEffect(() => {
     if (!hasActorColumn) return;
@@ -259,11 +264,11 @@ export function TableView({
       setComposerAsFolder(false);
       return;
     }
-    await onCreateEntry(title, asFolder || composerAsFolder);
-    setComposerValue("");
-    setComposerOpen(false);
-    setComposerAsFolder(false);
-    await loadEntries();
+    await createEntry(title, asFolder || composerAsFolder, () => {
+      setComposerValue("");
+      setComposerOpen(false);
+      setComposerAsFolder(false);
+    });
   }
 
   function openComposer(asFolder: boolean) {
@@ -273,29 +278,7 @@ export function TableView({
 
   async function handleDragEnd(event: DragEndEvent) {
     if (hasSort) return;
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const oldIndex = filteredTopLevel.findIndex(
-      (entry) => entry.path === active.id,
-    );
-    const newIndex = filteredTopLevel.findIndex(
-      (entry) => entry.path === over.id,
-    );
-    if (oldIndex < 0 || newIndex < 0) return;
-    const fullOrder = reorderVisibleEntries(
-      topLevelEntries,
-      filteredTopLevel,
-      String(active.id),
-      newIndex,
-    );
-    await saveOrder(collectionPath, fullOrder);
-    setEntries((current) => {
-      const children = current.filter(
-        (entry) => entryParentDir(entry.path) !== collectionPath,
-      );
-      return [...fullOrder, ...children];
-    });
-    await reloadOrderParent(collectionPath);
+    await reorderEntries(event);
   }
 
   if (loading) return <LoadingTable fields={visibleFields} schema={schema} />;

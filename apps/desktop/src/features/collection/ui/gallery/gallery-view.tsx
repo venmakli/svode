@@ -21,7 +21,6 @@ import {
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
 import { Plus, Settings } from "lucide-react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -38,12 +37,12 @@ import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import {
   useCollectionActors,
   useCollectionEntryFieldSave,
-  useCollectionTreeOrder,
 } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
-import { entryParentDir, reorderVisibleEntries } from "../table/utils";
+import { entryParentDir } from "../table/utils";
 import { SortableGalleryCard } from "./gallery-card";
 import type { GalleryViewProps } from "./types";
+import { useGalleryEntryActions } from "./use-gallery-entry-actions";
 import {
   galleryCardCover,
   galleryCardWidth,
@@ -89,10 +88,6 @@ export function GalleryView({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const cardRefs = useRef(new Map<string, HTMLElement>());
   const { actors, loadActors } = useCollectionActors(spacePath);
-  const { reloadOrderParent, saveOrder } = useCollectionTreeOrder({
-    spacePath,
-    projectPath,
-  });
   const {
     entries,
     setEntries,
@@ -132,6 +127,17 @@ export function GalleryView({
   const hasSort = sort.length > 0;
   const queryFiltered = searchQuery.trim().length > 0 || filters.length > 0;
   const hasActorField = metaColumns.some((column) => column.type === "actor");
+  const { createEntry, reorderEntries } = useGalleryEntryActions({
+    collectionPath,
+    spacePath,
+    projectPath,
+    entries,
+    topLevelEntries,
+    filteredEntries,
+    setEntries,
+    loadEntries,
+    onCreateEntry,
+  });
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -193,18 +199,11 @@ export function GalleryView({
       setDraftValue("");
       return;
     }
-    try {
-      const created = await onCreateEntry(title, draftAsFolder);
+    const created = await createEntry(title, draftAsFolder, () => {
       setDraftOpen(false);
       setDraftValue("");
-      setEntries((current) => [...current, created]);
-      await reloadOrderParent(collectionPath);
-      await loadEntries();
-      focusCard(created.path);
-    } catch (error) {
-      console.warn("Failed to create gallery entry:", error);
-      toast.error(m.board_create_error());
-    }
+    });
+    if (created) focusCard(created.path);
   }
 
   function openCard(entry: Entry, nestedCollection: boolean) {
@@ -245,33 +244,7 @@ export function GalleryView({
 
   async function handleDragEnd(event: DragEndEvent) {
     if (hasSort || !event.over || event.active.id === event.over.id) return;
-    const activePath = String(event.active.id);
-    const overPath = String(event.over.id);
-    const nextVisibleIndex = filteredEntries.findIndex(
-      (entry) => entry.path === overPath,
-    );
-    const nextEntries = reorderVisibleEntries(
-      topLevelEntries,
-      filteredEntries,
-      activePath,
-      nextVisibleIndex,
-    );
-    const previousEntries = entries;
-    setEntries((current) => [
-      ...nextEntries,
-      ...current.filter(
-        (entry) => entryParentDir(entry.path) !== collectionPath,
-      ),
-    ]);
-    try {
-      await saveOrder(collectionPath, nextEntries);
-      await reloadOrderParent(collectionPath);
-      await loadEntries();
-    } catch (error) {
-      console.warn("Failed to reorder gallery entries:", error);
-      setEntries(previousEntries);
-      toast.error(m.board_move_error());
-    }
+    await reorderEntries(event);
   }
 
   if (loading) return <GallerySkeleton cardWidth={cardWidth} />;

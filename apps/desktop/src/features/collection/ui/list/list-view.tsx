@@ -14,7 +14,6 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { Plus, Settings } from "lucide-react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -30,19 +29,17 @@ import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import {
   useCollectionActors,
   useCollectionEntryFieldSave,
-  useCollectionTreeOrder,
 } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
-import { entryParentDir, reorderVisibleEntries } from "../table/utils";
+import { entryParentDir } from "../table/utils";
 import { SortableListRow } from "./list-row";
 import type { ListViewProps } from "./types";
+import { useListEntryActions } from "./use-list-entry-actions";
 import {
   flattenListRows,
   listDensity,
   listMetaColumns,
   normalizeListCardFields,
-  replaceSiblings,
-  siblingEntries,
 } from "./utils";
 import { useListEntries } from "./use-list-entries";
 import * as m from "@/paraglide/messages.js";
@@ -79,10 +76,6 @@ export function ListView({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const rowRefs = useRef(new Map<string, HTMLElement>());
   const { actors, loadActors } = useCollectionActors(spacePath);
-  const { reloadOrderParent, saveOrder } = useCollectionTreeOrder({
-    spacePath,
-    projectPath,
-  });
   const {
     entries,
     setEntries,
@@ -136,6 +129,16 @@ export function ListView({
   const hasSort = sort.length > 0;
   const queryFiltered = searchQuery.trim().length > 0 || filters.length > 0;
   const hasActorField = metaColumns.some((column) => column.type === "actor");
+  const { createEntry, reorderEntries } = useListEntryActions({
+    collectionPath,
+    spacePath,
+    projectPath,
+    entries,
+    rows,
+    setEntries,
+    loadEntries,
+    onCreateEntry,
+  });
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -195,18 +198,11 @@ export function ListView({
       setComposerValue("");
       return;
     }
-    try {
-      const created = await onCreateEntry(title, composerAsFolder);
+    const created = await createEntry(title, composerAsFolder, () => {
       setComposerOpen(false);
       setComposerValue("");
-      setEntries((current) => [...current, created]);
-      await reloadOrderParent(collectionPath);
-      await loadEntries();
-      focusRow(created.path);
-    } catch (error) {
-      console.warn("Failed to create list entry:", error);
-      toast.error(m.board_create_error());
-    }
+    });
+    if (created) focusRow(created.path);
   }
 
   function toggleRow(entry: Entry) {
@@ -238,39 +234,7 @@ export function ListView({
 
   async function handleDragEnd(event: DragEndEvent) {
     if (hasSort || !event.over || event.active.id === event.over.id) return;
-    const activePath = String(event.active.id);
-    const overPath = String(event.over.id);
-    const activeEntry = entries.find((entry) => entry.path === activePath);
-    const overEntry = entries.find((entry) => entry.path === overPath);
-    if (!activeEntry || !overEntry) return;
-
-    const parentPath = entryParentDir(activeEntry.path);
-    if (parentPath !== entryParentDir(overEntry.path)) return;
-
-    const siblings = siblingEntries(entries, parentPath);
-    const visibleSiblings = rows
-      .map((row) => row.entry)
-      .filter((entry) => entryParentDir(entry.path) === parentPath);
-    const nextVisibleIndex = visibleSiblings.findIndex(
-      (entry) => entry.path === overPath,
-    );
-    const nextSiblings = reorderVisibleEntries(
-      siblings,
-      visibleSiblings,
-      activePath,
-      nextVisibleIndex,
-    );
-    const previousEntries = entries;
-    setEntries((current) => replaceSiblings(current, parentPath, nextSiblings));
-    try {
-      await saveOrder(parentPath, nextSiblings);
-      await reloadOrderParent(parentPath);
-      await loadEntries();
-    } catch (error) {
-      console.warn("Failed to reorder list entries:", error);
-      setEntries(previousEntries);
-      toast.error(m.board_move_error());
-    }
+    await reorderEntries(event);
   }
 
   if (loading) return <ListSkeleton density={density} />;
