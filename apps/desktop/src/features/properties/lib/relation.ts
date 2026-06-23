@@ -16,7 +16,7 @@ export function normalizeRelationRoot(relation: string | null | undefined) {
 }
 
 export function resolvedRelationPath(entry: ResolvedRelationEntry) {
-  return entry.filePath ?? entry.file_path ?? "";
+  return entry.filePath ?? "";
 }
 
 export function normalizeRelationValues(

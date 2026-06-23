@@ -43,6 +43,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/shared/lib/utils";
 import type {
   ActorCandidate,
+  CollectionSchema,
   PropertyOption,
   PropertyType,
 } from "@/features/properties";
@@ -91,7 +92,7 @@ interface ViewQueryPopoverProps extends QueryEditorActorSource {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   initialPane?: QueryPane;
-  onSaved?: (schema: Parameters<typeof normalizeSchema>[0]) => void;
+  onSaved?: (schema: CollectionSchema) => void;
 }
 
 interface FilterDraft {
@@ -941,7 +942,7 @@ export function SaveButton({
   onSaved,
 }: {
   query: UseViewQueryResult;
-  onSaved?: (schema: Parameters<typeof normalizeSchema>[0]) => void;
+  onSaved?: (schema: CollectionSchema) => void;
 }) {
   if (!query.hasLocalChanges) return null;
   return (

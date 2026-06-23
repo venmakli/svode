@@ -906,8 +906,7 @@ export function CollectionScreen({
 
   const propertiesSchema =
     parentSchema &&
-    (parentSchema.collectionRootPath ?? parentSchema.collection_root_path) !==
-      collectionPath
+    parentSchema.collectionRootPath !== collectionPath
       ? { ...parentSchema, schema: normalizeSchema(parentSchema.schema) }
       : null;
   const hasHeaderProperties = Boolean(

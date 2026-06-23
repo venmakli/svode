@@ -43,12 +43,9 @@ function sameActors(current: ActorCandidate[], next: ActorCandidate[]) {
     return (
       actor.email === other.email &&
       actor.name === other.name &&
-      (actor.commitCount ?? actor.commit_count ?? 0) ===
-        (other.commitCount ?? other.commit_count ?? 0) &&
-      (actor.lastCommitAt ?? actor.last_commit_at ?? null) ===
-        (other.lastCommitAt ?? other.last_commit_at ?? null) &&
-      (actor.isMe ?? actor.is_me ?? false) ===
-        (other.isMe ?? other.is_me ?? false)
+      (actor.commitCount ?? 0) === (other.commitCount ?? 0) &&
+      (actor.lastCommitAt ?? null) === (other.lastCommitAt ?? null) &&
+      (actor.isMe ?? false) === (other.isMe ?? false)
     );
   });
 }

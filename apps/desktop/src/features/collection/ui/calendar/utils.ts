@@ -219,8 +219,8 @@ export function dateValueFromSelection(
   column: Column,
 ) {
   const allDay = selection.allDay;
-  const rangeByDefault = column.rangeByDefault ?? column.range_by_default;
-  const timeByDefault = column.timeByDefault ?? column.time_by_default;
+  const rangeByDefault = column.rangeByDefault;
+  const timeByDefault = column.timeByDefault;
   const start =
     allDay && !timeByDefault
       ? dateOnly(selection.startStr)

@@ -1,14 +1,29 @@
 import type {
+  ActorCandidate,
   CollectionSchema,
   ColorName,
   Column,
   DateRangeValue,
-  ActorCandidate,
   PropertyOption,
   PropertyType,
   StatusGroup,
 } from "../model/types";
 import type { CSSProperties } from "react";
+
+type ColumnInput = Omit<Column, "type"> & {
+  type?: PropertyType;
+  type_?: PropertyType;
+  time_by_default?: boolean | null;
+  range_by_default?: boolean | null;
+  two_way?: string | null;
+};
+
+type CollectionSchemaInput = Omit<CollectionSchema, "columns"> & {
+  system_fields?: {
+    title?: { label?: string | null } | null;
+  } | null;
+  columns?: ColumnInput[];
+};
 
 export const PROPERTY_TYPES: { value: PropertyType; label: string }[] = [
   { value: "text", label: "Text" },
@@ -45,14 +60,21 @@ export const COLOR_NAMES: ColorName[] = [
   "brown",
 ];
 
-export function normalizeColumn(column: Column): Column {
+export function normalizeColumn(column: ColumnInput): Column {
   const rawType = (column.type ??
     (column as unknown as { type_: PropertyType }).type_) as PropertyType;
   const type = rawType;
   const sensitivity =
     column.sensitivity ?? (type === "email" || type === "phone" ? "pii" : null);
+  const {
+    type_: _type,
+    time_by_default: _timeByDefault,
+    range_by_default: _rangeByDefault,
+    two_way: _twoWay,
+    ...rest
+  } = column;
   return {
-    ...column,
+    ...rest,
     type,
     timeByDefault: column.timeByDefault ?? column.time_by_default ?? false,
     rangeByDefault: column.rangeByDefault ?? column.range_by_default ?? false,
@@ -66,9 +88,12 @@ export function normalizeColumn(column: Column): Column {
   };
 }
 
-export function normalizeSchema(schema: CollectionSchema): CollectionSchema {
+export function normalizeSchema(
+  schema: CollectionSchemaInput,
+): CollectionSchema {
+  const { system_fields: _systemFields, ...rest } = schema;
   return {
-    ...schema,
+    ...rest,
     systemFields: schema.systemFields ?? schema.system_fields ?? null,
     columns: (schema.columns ?? []).map(normalizeColumn),
   };
@@ -226,15 +251,15 @@ export function actorDisplayName(actor: ActorCandidate): string {
 }
 
 export function actorCommitCount(actor: ActorCandidate): number {
-  return actor.commitCount ?? actor.commit_count ?? 0;
+  return actor.commitCount ?? 0;
 }
 
 export function actorLastCommitAt(actor: ActorCandidate): number | null {
-  return actor.lastCommitAt ?? actor.last_commit_at ?? null;
+  return actor.lastCommitAt ?? null;
 }
 
 export function actorIsMe(actor: ActorCandidate): boolean {
-  return actor.isMe ?? actor.is_me ?? false;
+  return actor.isMe ?? false;
 }
 
 export function hashIndex(value: string, modulo: number): number {

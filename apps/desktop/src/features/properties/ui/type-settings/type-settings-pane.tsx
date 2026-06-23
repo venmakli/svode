@@ -60,14 +60,14 @@ export function TypeSettingsPane({
         />
         <ToggleRow
           label={m.property_date_time()}
-          checked={Boolean(column.timeByDefault ?? column.time_by_default)}
-          onChange={(checked) => void patchColumn({ time_by_default: checked })}
+          checked={Boolean(column.timeByDefault)}
+          onChange={(checked) => void patchColumn({ timeByDefault: checked })}
         />
         <ToggleRow
           label={m.property_date_range()}
-          checked={Boolean(column.rangeByDefault ?? column.range_by_default)}
+          checked={Boolean(column.rangeByDefault)}
           onChange={(checked) =>
-            void patchColumn({ range_by_default: checked })
+            void patchColumn({ rangeByDefault: checked })
           }
         />
       </div>

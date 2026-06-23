@@ -10,18 +10,13 @@ import {
 } from "../api/relation-api";
 import { propertyErrorMessage } from "../lib/error-message";
 import type {
+  ColumnPatch,
   CollectionSchema,
   Column,
+  RelationRepairStrategy,
   RelationTwoWayDiagnostics,
 } from "../model/types";
 import * as m from "@/paraglide/messages.js";
-
-type RelationRepairStrategy =
-  | "from_this_side"
-  | "from_related_side"
-  | "choose_reverse_column"
-  | "create_reverse_column"
-  | "detach_two_way";
 
 interface UseRelationSettingsInput {
   column: Column;
@@ -29,7 +24,7 @@ interface UseRelationSettingsInput {
   collectionPath: string;
   projectPath?: string | null;
   onSchemaChange: (schema: CollectionSchema) => void;
-  onPatchColumn: (patch: Record<string, unknown>) => void | Promise<void>;
+  onPatchColumn: (patch: ColumnPatch) => void | Promise<void>;
 }
 
 export function useRelationSettings({
@@ -44,7 +39,7 @@ export function useRelationSettings({
     Array<{ path: string; title: string }>
   >([]);
   const [reverseName, setReverseName] = useState(
-    column.twoWay ?? column.two_way ?? "",
+    column.twoWay ?? "",
   );
   const [diagnostics, setDiagnostics] =
     useState<RelationTwoWayDiagnostics | null>(null);
@@ -53,8 +48,8 @@ export function useRelationSettings({
   const [repairing, setRepairing] = useState<string | null>(null);
 
   useEffect(() => {
-    setReverseName(column.twoWay ?? column.two_way ?? "");
-  }, [column.twoWay, column.two_way]);
+    setReverseName(column.twoWay ?? "");
+  }, [column.twoWay]);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,7 +83,7 @@ export function useRelationSettings({
           ...collectionOptions,
         ];
   }, [collections, relation]);
-  const twoWay = Boolean(column.twoWay ?? column.two_way);
+  const twoWay = Boolean(column.twoWay);
 
   const loadDiagnostics = useCallback(
     async (cancelled?: () => boolean) => {
@@ -127,10 +122,10 @@ export function useRelationSettings({
     return () => {
       cancelled = true;
     };
-  }, [loadDiagnostics, column.relation, column.twoWay, column.two_way]);
+  }, [loadDiagnostics, column.relation, column.twoWay]);
 
   const patchRelation = useCallback(
-    (patch: Record<string, unknown>) => {
+    (patch: ColumnPatch) => {
       void Promise.resolve(onPatchColumn(patch)).catch((error) => {
         console.error(error);
         toast.error(propertyErrorMessage(error));

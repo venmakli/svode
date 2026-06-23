@@ -240,7 +240,7 @@ function relationStatus({
   if (!hasContext) return "unresolved";
   if (!hasResolution) return "loading";
   if (!target) return "orphan";
-  const root = target.collectionRootPath ?? target.collection_root_path ?? null;
+  const root = target.collectionRootPath ?? null;
   if (root && normalizeRelationRoot(root) !== relation) return "out-of-scope";
   return "ok";
 }

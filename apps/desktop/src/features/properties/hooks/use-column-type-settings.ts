@@ -5,7 +5,7 @@ import {
   updateSchemaColumn,
 } from "../api/schema-api";
 import { propertyErrorMessage } from "../lib/error-message";
-import type { CollectionSchema, Column } from "../model/types";
+import type { CollectionSchema, Column, ColumnPatch } from "../model/types";
 
 interface UseColumnTypeSettingsInput {
   column: Column;
@@ -28,7 +28,7 @@ export function useColumnTypeSettings({
   }, []);
 
   const patchColumn = useCallback(
-    async (patch: Record<string, unknown>) => {
+    async (patch: ColumnPatch) => {
       try {
         const next = await updateSchemaColumn({
           spacePath,

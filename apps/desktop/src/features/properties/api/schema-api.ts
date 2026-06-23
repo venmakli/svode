@@ -1,10 +1,17 @@
-import { invokeCommand as invoke } from "@/platform/native/invoke";
+import * as propertiesPlatform from "@/platform/properties/properties-api";
 import type {
-  ChangeSchemaTypeResult,
-  Column,
-  CollectionSchema,
-  EntrySchemaResult,
+  ActorCandidateDto,
+  ColumnDto,
+  PropertyOptionDto,
+} from "@/platform/properties/properties-api";
+import { normalizeSchema } from "../lib/utils";
+import type {
   ActorCandidate,
+  ChangeSchemaTypeResult,
+  CollectionSchema,
+  Column,
+  ColumnPatch,
+  EntrySchemaResult,
   PropertyOption,
   PropertyType,
 } from "../model/types";
@@ -15,56 +22,38 @@ interface SchemaMutationInput {
   projectPath?: string | null;
 }
 
-interface AssignedEntryDto {
-  meta?: {
-    extra?: Record<string, unknown> | null;
-  } | null;
-}
-
 export interface CollectionOption {
   path: string;
   title: string;
 }
 
-export function listPropertyActors(spacePath: string, allTime = false) {
-  return invoke<ActorCandidate[]>("list_actors", {
-    spacePath,
-    allTime,
-  });
+export async function listPropertyActors(spacePath: string, allTime = false) {
+  const actors = await propertiesPlatform.listActors(spacePath, allTime);
+  return actors.map(toActorCandidate);
 }
 
-export function getEntrySchema(input: { spacePath: string; filePath: string }) {
-  return invoke<EntrySchemaResult | null>("get_entry_schema", {
-    space: input.spacePath,
-    filePath: input.filePath,
-  });
+export async function getEntrySchema(input: {
+  spacePath: string;
+  filePath: string;
+}): Promise<EntrySchemaResult | null> {
+  const result = await propertiesPlatform.getEntrySchema(input);
+  return result
+    ? {
+        schema: normalizeSchema(result.schema),
+        collectionRootPath:
+          result.collectionRootPath ?? result.collection_root_path ?? "",
+      }
+    : null;
 }
 
-export function getCollectionSchema(input: SchemaMutationInput) {
-  return invoke<CollectionSchema>("get_collection_schema", {
-    space: input.spacePath,
-    collectionPath: input.collectionPath,
-    projectPath: input.projectPath ?? null,
-  });
+export async function getCollectionSchema(
+  input: SchemaMutationInput,
+): Promise<CollectionSchema> {
+  return normalizeSchema(await propertiesPlatform.getCollectionSchema(input));
 }
 
 export function listCollectionOptions(spacePath: string) {
-  return invoke<CollectionOption[]>("list_collections", {
-    space: spacePath,
-  });
-}
-
-function invokeSchemaMutation<T = unknown>(
-  command: string,
-  input: SchemaMutationInput,
-  args: Record<string, unknown>,
-) {
-  return invoke<T>(command, {
-    space: input.spacePath,
-    collectionPath: input.collectionPath,
-    projectPath: input.projectPath ?? null,
-    ...args,
-  });
+  return propertiesPlatform.listCollections(spacePath);
 }
 
 export async function assignEntryUniqueId(input: {
@@ -72,46 +61,35 @@ export async function assignEntryUniqueId(input: {
   filePath: string;
   projectPath?: string | null;
 }) {
-  const entry = await invoke<AssignedEntryDto>("assign_unique_id", {
-    space: input.spacePath,
-    filePath: input.filePath,
-    projectPath: input.projectPath ?? null,
-  });
+  const entry = await propertiesPlatform.assignUniqueId(input);
   return entry.meta?.extra ?? {};
 }
 
-export function normalizeUniqueIdCounter(input: SchemaMutationInput) {
-  return invokeSchemaMutation<CollectionSchema>(
-    "normalize_unique_id_counter",
-    input,
-    {},
-  );
+export async function normalizeUniqueIdCounter(
+  input: SchemaMutationInput,
+): Promise<CollectionSchema> {
+  return normalizeSchema(await propertiesPlatform.normalizeUniqueIdCounter(input));
 }
 
-export function changeSchemaType(input: {
+export async function changeSchemaType(input: {
   spacePath: string;
   collectionPath: string;
   projectPath?: string | null;
   columnName: string;
   newType: PropertyType;
   conversionStrategy?: Record<string, unknown>;
-}) {
-  return invoke<ChangeSchemaTypeResult>("change_schema_type", {
-    space: input.spacePath,
-    collectionPath: input.collectionPath,
-    projectPath: input.projectPath ?? null,
-    columnName: input.columnName,
-    newType: input.newType,
-    conversionStrategy: input.conversionStrategy,
-  });
+}): Promise<ChangeSchemaTypeResult> {
+  const result = await propertiesPlatform.changeSchemaType(input);
+  return {
+    schema: normalizeSchema(result.schema),
+    warnings: result.warnings,
+  };
 }
 
 export function clearFieldValues(
   input: SchemaMutationInput & { field: string },
 ) {
-  return invokeSchemaMutation("clear_field_values", input, {
-    field: input.field,
-  });
+  return propertiesPlatform.clearFieldValues(input);
 }
 
 export function clearOptionValues(
@@ -120,10 +98,7 @@ export function clearOptionValues(
     optionNames: string[];
   },
 ) {
-  return invokeSchemaMutation("clear_option_values", input, {
-    columnName: input.columnName,
-    optionNames: input.optionNames,
-  });
+  return propertiesPlatform.clearOptionValues(input);
 }
 
 export function promoteOrphan(
@@ -132,30 +107,30 @@ export function promoteOrphan(
     field: string;
   },
 ) {
-  return invokeSchemaMutation("promote_orphan", input, {
-    filePath: input.filePath,
-    field: input.field,
-  });
+  return propertiesPlatform.promoteOrphan(input);
 }
 
 export function addSchemaColumn(
   input: SchemaMutationInput & { column: Column },
 ) {
-  return invokeSchemaMutation("add_schema_column", input, {
-    column: input.column,
+  return propertiesPlatform.addSchemaColumn({
+    ...input,
+    column: toColumnDto(input.column),
   });
 }
 
-export function updateSchemaColumn(
+export async function updateSchemaColumn(
   input: SchemaMutationInput & {
     columnName: string;
-    patch: Record<string, unknown>;
+    patch: ColumnPatch;
   },
-) {
-  return invokeSchemaMutation<CollectionSchema>("update_schema_column", input, {
-    columnName: input.columnName,
-    patch: input.patch,
-  });
+): Promise<CollectionSchema> {
+  return normalizeSchema(
+    await propertiesPlatform.updateSchemaColumn({
+      ...input,
+      patch: toColumnPatchDto(input.patch),
+    }),
+  );
 }
 
 export function renameSchemaColumn(
@@ -164,76 +139,106 @@ export function renameSchemaColumn(
     newName: string;
   },
 ) {
-  return invokeSchemaMutation("rename_schema_column", input, {
-    oldName: input.oldName,
-    newName: input.newName,
-  });
+  return propertiesPlatform.renameSchemaColumn(input);
 }
 
-export function deleteSchemaColumn(
+export async function deleteSchemaColumn(
   input: SchemaMutationInput & {
     columnName: string;
     deleteValues: boolean;
   },
-) {
-  return invokeSchemaMutation<CollectionSchema>("delete_schema_column", input, {
-    columnName: input.columnName,
-    deleteValues: input.deleteValues,
-  });
+): Promise<CollectionSchema> {
+  return normalizeSchema(await propertiesPlatform.deleteSchemaColumn(input));
 }
 
-export function addOption(
+export async function addOption(
   input: SchemaMutationInput & {
     columnName: string;
     option: PropertyOption;
   },
-) {
-  return invokeSchemaMutation<CollectionSchema>("add_option", input, {
-    columnName: input.columnName,
-    option: input.option,
-  });
+): Promise<CollectionSchema> {
+  return normalizeSchema(
+    await propertiesPlatform.addOption({
+      ...input,
+      option: toPropertyOptionDto(input.option),
+    }),
+  );
 }
 
-export function updateOption(
+export async function updateOption(
   input: SchemaMutationInput & {
     columnName: string;
     optionName: string;
     option?: PropertyOption | null;
     patch: Record<string, unknown>;
   },
-) {
-  return invokeSchemaMutation<CollectionSchema>("update_option", input, {
-    columnName: input.columnName,
-    optionName: input.optionName,
-    option: input.option ?? null,
-    patch: input.patch,
-  });
+): Promise<CollectionSchema> {
+  return normalizeSchema(
+    await propertiesPlatform.updateOption({
+      ...input,
+      option: input.option ? toPropertyOptionDto(input.option) : null,
+    }),
+  );
 }
 
-export function renameOption(
+export async function renameOption(
   input: SchemaMutationInput & {
     columnName: string;
     oldOptionName: string;
     newOptionName: string;
   },
-) {
-  return invokeSchemaMutation<CollectionSchema>("rename_option", input, {
-    columnName: input.columnName,
-    oldOptionName: input.oldOptionName,
-    newOptionName: input.newOptionName,
-  });
+): Promise<CollectionSchema> {
+  return normalizeSchema(await propertiesPlatform.renameOption(input));
 }
 
-export function deleteOption(
+export async function deleteOption(
   input: SchemaMutationInput & {
     columnName: string;
     optionName: string;
     deleteValues: boolean;
   },
-) {
-  return invokeSchemaMutation<CollectionSchema>("delete_option", input, {
-    columnName: input.columnName,
-    optionName: input.optionName,
-    deleteValues: input.deleteValues,
-  });
+): Promise<CollectionSchema> {
+  return normalizeSchema(await propertiesPlatform.deleteOption(input));
+}
+
+function toActorCandidate(actor: ActorCandidateDto): ActorCandidate {
+  return {
+    email: actor.email,
+    name: actor.name,
+    lastCommitAt: actor.lastCommitAt ?? actor.last_commit_at ?? null,
+    commitCount: actor.commitCount ?? actor.commit_count ?? 0,
+    isMe: actor.isMe ?? actor.is_me ?? false,
+  };
+}
+
+function toColumnDto(column: Column): ColumnDto {
+  const { timeByDefault, rangeByDefault, twoWay, options, ...rest } = column;
+  return {
+    ...rest,
+    options: options?.map(toPropertyOptionDto) ?? options,
+    ...(timeByDefault !== undefined ? { time_by_default: timeByDefault } : {}),
+    ...(rangeByDefault !== undefined
+      ? { range_by_default: rangeByDefault }
+      : {}),
+    ...(twoWay !== undefined ? { two_way: twoWay } : {}),
+  };
+}
+
+function toColumnPatchDto(patch: ColumnPatch): Record<string, unknown> {
+  const { timeByDefault, rangeByDefault, twoWay, options, ...rest } = patch;
+  return {
+    ...rest,
+    ...(options !== undefined
+      ? { options: options?.map(toPropertyOptionDto) ?? options }
+      : {}),
+    ...(timeByDefault !== undefined ? { time_by_default: timeByDefault } : {}),
+    ...(rangeByDefault !== undefined
+      ? { range_by_default: rangeByDefault }
+      : {}),
+    ...(twoWay !== undefined ? { two_way: twoWay } : {}),
+  };
+}
+
+function toPropertyOptionDto(option: PropertyOption): PropertyOptionDto {
+  return { ...option };
 }

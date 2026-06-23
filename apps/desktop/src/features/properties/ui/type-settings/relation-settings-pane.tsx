@@ -16,8 +16,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type {
+  ColumnPatch,
   CollectionSchema,
   Column,
+  RelationRepairStrategy,
   RelationTwoWayDiagnostics,
 } from "../../model/types";
 import { useRelationSettings } from "../../hooks/use-relation-settings";
@@ -37,7 +39,7 @@ export function RelationSettingsPane({
   collectionPath: string;
   projectPath?: string | null;
   onSchemaChange: (schema: CollectionSchema) => void;
-  onPatchColumn: (patch: Record<string, unknown>) => void | Promise<void>;
+  onPatchColumn: (patch: ColumnPatch) => void | Promise<void>;
 }) {
   const {
     relation,
@@ -81,7 +83,7 @@ export function RelationSettingsPane({
           const fallback =
             reverseName.trim() || m.property_relation_reverse_default();
           if (checked) setReverseName(fallback);
-          patchRelation({ two_way: checked ? fallback : null });
+          patchRelation({ twoWay: checked ? fallback : null });
         }}
       />
       {twoWay ? (
@@ -96,7 +98,7 @@ export function RelationSettingsPane({
             onChange={(event) => setReverseName(event.target.value)}
             onBlur={() => {
               const next = reverseName.trim();
-              if (next) patchRelation({ two_way: next });
+              if (next) patchRelation({ twoWay: next });
             }}
             onKeyDown={(event) => {
               if (event.key === "Enter") event.currentTarget.blur();
@@ -135,30 +137,18 @@ function RelationDiagnosticsPanel({
   repairing: string | null;
   onSelectReverse: (value: string) => void;
   onRepair: (
-    strategy:
-      | "from_this_side"
-      | "from_related_side"
-      | "choose_reverse_column"
-      | "create_reverse_column"
-      | "detach_two_way",
+    strategy: RelationRepairStrategy,
     reverseColumn?: string | null,
   ) => void | Promise<void>;
 }) {
   if (loading || !diagnostics) return null;
 
-  const schemaStatus =
-    diagnostics.schemaStatus ?? diagnostics.schema_status ?? "not_two_way";
-  const reverseColumn =
-    diagnostics.reverseColumn ?? diagnostics.reverse_column ?? reverseName;
-  const choices =
-    diagnostics.compatibleReverseChoices ??
-    diagnostics.compatible_reverse_choices ??
-    [];
+  const schemaStatus = diagnostics.schemaStatus;
+  const reverseColumn = diagnostics.reverseColumn ?? reverseName;
+  const choices = diagnostics.compatibleReverseChoices;
   const drift = diagnostics.drift;
-  const missingReverse =
-    drift.missingReverseCount ?? drift.missing_reverse_count ?? 0;
-  const missingSource =
-    drift.missingSourceCount ?? drift.missing_source_count ?? 0;
+  const missingReverse = drift.missingReverseCount;
+  const missingSource = drift.missingSourceCount;
   const hasSchemaWarning = schemaStatus !== "ok";
   const hasDrift = missingReverse + missingSource > 0;
 
@@ -169,9 +159,7 @@ function RelationDiagnosticsPanel({
     reverseName.trim() ||
     m.property_relation_reverse_default();
   const description = hasSchemaWarning
-    ? (diagnostics.schemaMessage ??
-      diagnostics.schema_message ??
-      schemaWarningDescription(schemaStatus))
+    ? (diagnostics.schemaMessage ?? schemaWarningDescription(schemaStatus))
     : m.property_relation_drift_counts({
         reverse: String(missingReverse),
         source: String(missingSource),

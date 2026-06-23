@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
-import type { Column } from "../../model/types";
+import type { Column, ColumnPatch } from "../../model/types";
 import { ColorPicker } from "../color-picker";
 import { ColumnSelect, deferStateUpdate } from "./common";
 import * as m from "@/paraglide/messages.js";
@@ -10,7 +10,7 @@ export function NumberSettingsPane({
   onPatchColumn,
 }: {
   column: Column;
-  onPatchColumn: (patch: Record<string, unknown>) => void;
+  onPatchColumn: (patch: ColumnPatch) => void;
 }) {
   const [min, setMin] = useState(column.min == null ? "" : String(column.min));
   const [max, setMax] = useState(column.max == null ? "" : String(column.max));

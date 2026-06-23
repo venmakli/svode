@@ -338,7 +338,7 @@ export function usePropertyPanelState({
 }
 
 function schemaResultCollectionPath(result: EntrySchemaResult) {
-  return result.collectionRootPath ?? result.collection_root_path ?? "";
+  return result.collectionRootPath ?? "";
 }
 
 function showSchemaMutationWarnings(warnings: SchemaMutationWarning[]) {

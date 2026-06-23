@@ -1,18 +1,22 @@
-import { invokeCommand as invoke } from "@/platform/native/invoke";
+import * as propertiesPlatform from "@/platform/properties/properties-api";
 import type {
+  CompatibleReverseChoiceDto,
+  RelationDriftRowDto,
+  RelationDriftSummaryDto,
+  RelationTargetEntryDto,
+  RelationTwoWayDiagnosticsDto,
+  ResolvedRelationEntryDto,
+} from "@/platform/properties/properties-api";
+import { relationValueForPath } from "../lib/relation";
+import type {
+  CompatibleReverseChoice,
+  RelationDriftRow,
+  RelationDriftSummary,
+  RelationRepairStrategy,
   RelationTarget,
   RelationTwoWayDiagnostics,
   ResolvedRelationEntry,
 } from "../model/types";
-import { relationValueForPath } from "../lib/relation";
-
-interface RelationTargetEntryDto {
-  path: string;
-  meta?: {
-    title?: string | null;
-    icon?: string | null;
-  } | null;
-}
 
 export async function resolveRelationsBatch({
   spacePath,
@@ -25,12 +29,13 @@ export async function resolveRelationsBatch({
   relation: string;
   values: string[];
 }) {
-  return invoke<Array<ResolvedRelationEntry | null>>("resolve_relations_batch", {
-    space: spacePath,
+  const entries = await propertiesPlatform.resolveRelationsBatch({
+    spacePath,
+    projectPath,
     relation,
     values,
-    projectPath: projectPath ?? null,
   });
+  return entries.map((entry) => (entry ? toResolvedRelationEntry(entry) : null));
 }
 
 export async function queryRelationTargets({
@@ -45,18 +50,12 @@ export async function queryRelationTargets({
   query: string;
 }) {
   const trimmed = query.trim();
-  const filters = trimmed
-    ? [{ field: "title", op: "contains", value: trimmed }]
-    : null;
-  const entries = await invoke<RelationTargetEntryDto[]>("query_entries", {
-    space: spacePath,
-    collectionPath: relation,
-    filters,
-    sort: null,
-    includeNested: true,
+  const entries = await propertiesPlatform.queryRelationTargetEntries({
+    spacePath,
+    projectPath,
+    relation,
+    titleQuery: trimmed || null,
     limit: 50,
-    offset: null,
-    projectPath: projectPath ?? null,
   });
   const targets = entries.map(toRelationTarget);
   if (!trimmed) return targets;
@@ -65,36 +64,29 @@ export async function queryRelationTargets({
   const matchingTargets = targets.filter(
     (target) =>
       target.title.toLowerCase().includes(normalized) ||
-      relationValueForPath(relation, target.path).toLowerCase().includes(normalized),
+      relationValueForPath(relation, target.path)
+        .toLowerCase()
+        .includes(normalized),
   );
   if (matchingTargets.length > 0) return matchingTargets;
 
-  const fallback = await invoke<RelationTargetEntryDto[]>("query_entries", {
-    space: spacePath,
-    collectionPath: relation,
-    filters: null,
-    sort: null,
-    includeNested: true,
+  const fallback = await propertiesPlatform.queryRelationTargetEntries({
+    spacePath,
+    projectPath,
+    relation,
+    titleQuery: null,
     limit: 200,
-    offset: null,
-    projectPath: projectPath ?? null,
   });
   return fallback
     .map(toRelationTarget)
     .filter(
       (target) =>
         target.title.toLowerCase().includes(normalized) ||
-        relationValueForPath(relation, target.path).toLowerCase().includes(normalized),
+        relationValueForPath(relation, target.path)
+          .toLowerCase()
+          .includes(normalized),
     )
     .slice(0, 50);
-}
-
-function toRelationTarget(entry: RelationTargetEntryDto): RelationTarget {
-  return {
-    path: entry.path,
-    title: entry.meta?.title || entry.path,
-    icon: entry.meta?.icon ?? null,
-  };
 }
 
 export async function diagnoseTwoWayRelation({
@@ -106,14 +98,16 @@ export async function diagnoseTwoWayRelation({
   collectionPath: string;
   column: string;
 }) {
-  return invoke<RelationTwoWayDiagnostics>("diagnose_two_way_relation", {
-    space: spacePath,
-    collectionPath,
-    column,
-  });
+  return toRelationTwoWayDiagnostics(
+    await propertiesPlatform.diagnoseTwoWayRelation({
+      spacePath,
+      collectionPath,
+      column,
+    }),
+  );
 }
 
-export async function repairTwoWayRelation({
+export function repairTwoWayRelation({
   spacePath,
   projectPath,
   collectionPath,
@@ -125,20 +119,91 @@ export async function repairTwoWayRelation({
   projectPath?: string | null;
   collectionPath: string;
   column: string;
-  strategy:
-    | "from_this_side"
-    | "from_related_side"
-    | "choose_reverse_column"
-    | "create_reverse_column"
-    | "detach_two_way";
+  strategy: RelationRepairStrategy;
   reverseColumn?: string | null;
 }) {
-  return invoke<void>("repair_two_way_relation", {
-    space: spacePath,
+  return propertiesPlatform.repairTwoWayRelation({
+    spacePath,
+    projectPath,
     collectionPath,
     column,
     strategy,
-    reverseColumn: reverseColumn ?? null,
-    projectPath: projectPath ?? null,
+    reverseColumn,
   });
+}
+
+function toRelationTarget(entry: RelationTargetEntryDto): RelationTarget {
+  return {
+    path: entry.path,
+    title: entry.meta?.title || entry.path,
+    icon: entry.meta?.icon ?? null,
+  };
+}
+
+function toResolvedRelationEntry(
+  entry: ResolvedRelationEntryDto,
+): ResolvedRelationEntry {
+  return {
+    title: entry.title,
+    icon: entry.icon ?? null,
+    filePath: entry.filePath ?? entry.file_path ?? "",
+    collectionRootPath:
+      entry.collectionRootPath ?? entry.collection_root_path ?? null,
+  };
+}
+
+function toRelationTwoWayDiagnostics(
+  diagnostics: RelationTwoWayDiagnosticsDto,
+): RelationTwoWayDiagnostics {
+  return {
+    collectionPath:
+      diagnostics.collectionPath ?? diagnostics.collection_path ?? "",
+    column: diagnostics.column,
+    relation: diagnostics.relation ?? null,
+    reverseColumn:
+      diagnostics.reverseColumn ?? diagnostics.reverse_column ?? null,
+    schemaStatus:
+      diagnostics.schemaStatus ??
+      diagnostics.schema_status ??
+      "not_two_way",
+    schemaMessage:
+      diagnostics.schemaMessage ?? diagnostics.schema_message ?? null,
+    compatibleReverseChoices: (
+      diagnostics.compatibleReverseChoices ??
+      diagnostics.compatible_reverse_choices ??
+      []
+    ).map(toCompatibleReverseChoice),
+    drift: toRelationDriftSummary(diagnostics.drift),
+  };
+}
+
+function toCompatibleReverseChoice(
+  choice: CompatibleReverseChoiceDto,
+): CompatibleReverseChoice {
+  return {
+    name: choice.name,
+    twoWay: choice.twoWay ?? choice.two_way ?? null,
+  };
+}
+
+function toRelationDriftSummary(
+  drift: RelationDriftSummaryDto,
+): RelationDriftSummary {
+  return {
+    missingReverseCount:
+      drift.missingReverseCount ?? drift.missing_reverse_count ?? 0,
+    missingSourceCount:
+      drift.missingSourceCount ?? drift.missing_source_count ?? 0,
+    rows: drift.rows.map(toRelationDriftRow),
+  };
+}
+
+function toRelationDriftRow(row: RelationDriftRowDto): RelationDriftRow {
+  return {
+    kind: row.kind,
+    sourceFilePath: row.sourceFilePath ?? row.source_file_path ?? "",
+    targetFilePath: row.targetFilePath ?? row.target_file_path ?? "",
+    sourceValue: row.sourceValue ?? row.source_value ?? "",
+    targetValue: row.targetValue ?? row.target_value ?? "",
+  };
 }
