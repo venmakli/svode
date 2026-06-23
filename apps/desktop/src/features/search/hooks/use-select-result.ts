@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { toast } from "sonner";
 import { getSpaceSnapshot, useSpace } from "@/features/space";
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import { useOpenEntryDocument } from "@/features/entry/selection";
 import { useCommandPaletteStore } from "../model";
 import { joinAbs } from "../lib/utils";
 import type { SearchItem } from "../model";
@@ -16,7 +16,7 @@ export function useSelectResult() {
   const activeRootId = useSpace((s) => s.activeRootId);
   const openSpace = useSpace((s) => s.openSpace);
   const clearActiveSpace = useSpace((s) => s.clearActiveSpace);
-  const openDocument = useEntrySelectionStore((s) => s.openDocument);
+  const openDocument = useOpenEntryDocument();
   const setOpen = useCommandPaletteStore((s) => s.setOpen);
 
   return useCallback(

@@ -5,7 +5,10 @@ import { MarkdownPlugin } from "@platejs/markdown";
 import { toast } from "sonner";
 import { EditorKit } from "./editor-kit";
 import { useFileWatcher } from "../hooks/use-file-watcher";
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import {
+  useActiveEntrySelection,
+  useOpenEntryDocument,
+} from "@/features/entry/selection";
 import {
   getSpaceTreeSyncSnapshot,
   useSpace,
@@ -104,8 +107,8 @@ export function PlateDocumentEditor({
   initialEntrySpacePath = null,
   onDocumentPathChange,
 }: PlateDocumentEditorProps) {
-  const { activeDocument, activeDocumentSpaceId, openDocument } =
-    useEntrySelectionStore();
+  const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
+  const openDocument = useOpenEntryDocument();
   const {
     rootSpaces,
     spaces: childWorkspaces,

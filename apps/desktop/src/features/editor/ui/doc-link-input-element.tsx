@@ -14,7 +14,10 @@ import {
 } from "@/components/ui/inline-combobox";
 import { FileText } from "lucide-react";
 import { useSpace } from "@/features/space";
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import {
+  useActiveEntryDocument,
+  useActiveEntryDocumentSpaceId,
+} from "@/features/entry/selection";
 import type { SearchItem } from "@/features/search";
 import {
   absoluteDocumentPath,
@@ -33,10 +36,8 @@ export function DocLinkInputElement(
   const rootSpaces = useSpace((s) => s.rootSpaces);
   const spaces = useSpace((s) => s.spaces);
   const fileTrees = useSpace((s) => s.fileTrees);
-  const activeDocument = useEntrySelectionStore((s) => s.activeDocument);
-  const activeDocumentSpaceId = useEntrySelectionStore(
-    (s) => s.activeDocumentSpaceId,
-  );
+  const activeDocument = useActiveEntryDocument();
+  const activeDocumentSpaceId = useActiveEntryDocumentSpaceId();
   const [items, setItems] = useState<SearchItem[]>([]);
   const sourceSpaceId =
     activeDocumentSpaceId === activeRootId ? null : activeDocumentSpaceId;

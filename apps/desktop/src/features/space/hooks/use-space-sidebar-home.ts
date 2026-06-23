@@ -1,5 +1,8 @@
 import { useCallback, useState } from "react";
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import {
+  useOpenEntryDocument,
+  useOpenEntryScopeHome,
+} from "@/features/entry/selection";
 import type { TreeNode } from "@/features/entry";
 import type { SpaceInfo } from "../model";
 import { useSpaceStore } from "../model";
@@ -24,7 +27,8 @@ export function useSpaceSidebarHome({
   onActivateContent,
   openSpace,
 }: UseSpaceSidebarHomeInput) {
-  const { openDocument, openScopeHome } = useEntrySelectionStore();
+  const openDocument = useOpenEntryDocument();
+  const openScopeHome = useOpenEntryScopeHome();
   const [rootOpenState, setRootOpenState] = useState<{
     open: boolean;
     rootId: string | null;

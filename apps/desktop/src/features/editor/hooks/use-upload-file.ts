@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { makeRelativeDocUrl } from "../api/doc-link-api";
 import { joinAbs } from "../lib/doc-link-utils";
 import { uploadAsset, type UploadAssetDto } from "@/platform/upload/upload-api";
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import { getActiveEntrySelection } from "@/features/entry/selection";
 import { getSpaceSnapshot } from "@/features/space";
 
 /**
@@ -51,8 +51,7 @@ export function useUploadFile({ onUploadComplete, onUploadError }: UseUploadFile
     // Snapshot the active document at upload initiation. If the user switches
     // documents while `file.arrayBuffer()` is resolving, we still attribute
     // the asset to the document where the upload was started.
-    const { activeDocument, activeDocumentSpaceId } =
-      useEntrySelectionStore.getState();
+    const { activeDocument, activeDocumentSpaceId } = getActiveEntrySelection();
     if (!activeDocument) {
       const err = new Error("No active document");
       toast.error(err.message);

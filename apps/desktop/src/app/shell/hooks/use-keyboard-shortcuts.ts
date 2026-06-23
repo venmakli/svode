@@ -1,14 +1,14 @@
 import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import { useCloseEntryDocument } from "@/features/entry/selection";
 import { useToggleCommandPalette } from "@/features/search/app-shell";
 import { useSpace } from "@/features/space";
 import { isTerminalKeyboardEvent } from "@/features/terminal";
 import { useShellStore } from "../model";
 
 export function useKeyboardShortcuts() {
-  const closeDocument = useEntrySelectionStore((state) => state.closeDocument);
+  const closeDocument = useCloseEntryDocument();
   const { toggleChatPanel, openAppSettings } = useShellStore();
   const toggleCommandPalette = useToggleCommandPalette();
   const activeRootPath = useSpace((s) => s.activeRootPath);

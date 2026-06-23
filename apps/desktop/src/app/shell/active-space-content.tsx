@@ -1,4 +1,4 @@
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import { useActiveEntrySelection } from "@/features/entry/selection";
 import type { TreeNode } from "@/features/entry";
 import { CollectionScreen, EntryDocumentScreen } from "@/features/collection/ui";
 import { useSpace } from "@/features/space";
@@ -27,7 +27,7 @@ function findNodeInTree(
 }
 
 export function ActiveSpaceContent() {
-  const { activeDocument, activeDocumentSpaceId } = useEntrySelectionStore();
+  const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
   const {
     fileTrees,
     rootSpaces,

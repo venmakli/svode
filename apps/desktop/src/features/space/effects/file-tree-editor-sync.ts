@@ -1,4 +1,7 @@
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import {
+  getActiveEntrySelection,
+  openEntryDocument,
+} from "@/features/entry/selection";
 import {
   clearEditorFileUnsaved,
   suppressEditorFileEvents,
@@ -18,8 +21,7 @@ export interface FileTreeEditorSync {
 }
 
 export function createFileTreeEditorSync(spaceId: string): FileTreeEditorSync {
-  const initialActiveDocument =
-    useEntrySelectionStore.getState().activeDocument;
+  const initialActiveDocument = getActiveEntrySelection().activeDocument;
 
   return {
     initialActiveDocument,
@@ -34,13 +36,13 @@ export function createFileTreeEditorSync(spaceId: string): FileTreeEditorSync {
     reopenInitialDocument: (fromPath, toPath) => {
       if (initialActiveDocument !== fromPath) return;
       clearEditorFileUnsaved(fromPath);
-      useEntrySelectionStore.getState().openDocument(toPath, spaceId);
+      openEntryDocument(toPath, spaceId);
     },
-    activeDocument: () => useEntrySelectionStore.getState().activeDocument,
+    activeDocument: () => getActiveEntrySelection().activeDocument,
     reopenDocumentSnapshot: (activeDocument, fromPath, toPath) => {
       if (activeDocument !== fromPath) return;
       clearEditorFileUnsaved(fromPath);
-      useEntrySelectionStore.getState().openDocument(toPath, spaceId);
+      openEntryDocument(toPath, spaceId);
     },
   };
 }

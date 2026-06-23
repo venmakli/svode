@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { createCollection } from "@/features/collection";
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import { useOpenEntryDocument } from "@/features/entry/selection";
 import { createTreeFolder } from "../api/tree-entry-actions";
 import { useSpaceActions } from "./use-space-actions";
 
@@ -23,7 +23,7 @@ export function useSpaceScopeActions({
   reloadTreeParent,
 }: UseSpaceScopeActionsInput) {
   const { createEntry } = useSpaceActions();
-  const { openDocument } = useEntrySelectionStore();
+  const openDocument = useOpenEntryDocument();
 
   const handleNewPage = useCallback(
     async (scope: ScopeTarget) => {

@@ -1,4 +1,7 @@
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import {
+  useActiveEntrySelection,
+  useOpenEntryDocument,
+} from "@/features/entry/selection";
 import type { TreeNode } from "@/features/entry";
 import { useEditorFilePendingWrite } from "@/features/editor/file-tree-sync";
 import { treeNodeHasChildren, treeParentKeyForNode } from "../lib/tree-cache";
@@ -30,8 +33,8 @@ export function useFileTreeItemActions({
   loadTreeChildren,
   onActivateContent,
 }: UseFileTreeItemActionsInput) {
-  const { openDocument, activeDocument, activeDocumentSpaceId } =
-    useEntrySelectionStore();
+  const openDocument = useOpenEntryDocument();
+  const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
   const isUnsaved = useEditorFilePendingWrite(node.path);
   const {
     expandedPaths,

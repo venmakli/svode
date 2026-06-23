@@ -9,7 +9,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useSidebar } from "@/components/ui/sidebar";
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import { useActiveEntryDocument } from "@/features/entry/selection";
 import { useSpace } from "@/features/space";
 import { useFullscreen } from "./hooks/use-fullscreen";
 import { useShellStore } from "./model";
@@ -90,7 +90,7 @@ export function ShellChrome() {
 }
 
 export function WindowHeader() {
-  const activeDocument = useEntrySelectionStore((state) => state.activeDocument);
+  const activeDocument = useActiveEntryDocument();
   const toggleChatPanel = useShellStore((state) => state.toggleChatPanel);
   const mainSurface = useShellStore((state) => state.mainSurface);
   const { activeRootId, activeRootName, activeRootPath } = useSpace();

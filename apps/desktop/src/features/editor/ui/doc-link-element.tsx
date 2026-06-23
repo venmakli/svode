@@ -8,7 +8,10 @@ import { PlateElement } from "platejs/react";
 import { FileText } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/shared/lib/utils";
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import {
+  useActiveEntrySelection,
+  useOpenEntryDocument,
+} from "@/features/entry/selection";
 import { useEditorStore } from "../model";
 import { useSpace } from "@/features/space";
 import { GhostCloneDialog } from "./ghost-clone-dialog";
@@ -34,9 +37,8 @@ import {
 
 export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
   const { element, editor, children } = props;
-  const { openDocument } = useEntrySelectionStore();
-  const activeDocument = useEntrySelectionStore((s) => s.activeDocument);
-  const activeDocumentSpaceId = useEntrySelectionStore((s) => s.activeDocumentSpaceId);
+  const openDocument = useOpenEntryDocument();
+  const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
   const activeRootId = useSpace((s) => s.activeRootId);
   const activeRootPath = useSpace((s) => s.activeRootPath);
   const rootSpaces = useSpace((s) => s.rootSpaces);

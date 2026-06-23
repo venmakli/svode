@@ -1,4 +1,7 @@
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import {
+  openEntryDocument,
+  openEntryScopeHome,
+} from "@/features/entry/selection";
 import type { TreeNode } from "@/features/entry";
 
 function hasScopeReadme(nodes: TreeNode[]): boolean {
@@ -6,14 +9,13 @@ function hasScopeReadme(nodes: TreeNode[]): boolean {
 }
 
 export function openScopeHomeSelection(spaceId: string, tree: TreeNode[]) {
-  const selection = useEntrySelectionStore.getState();
   if (hasScopeReadme(tree)) {
-    selection.openDocument("README.md", spaceId);
+    openEntryDocument("README.md", spaceId);
   } else {
-    selection.openScopeHome(spaceId);
+    openEntryScopeHome(spaceId);
   }
 }
 
 export function openSpaceReadmeDocument(spaceId: string) {
-  useEntrySelectionStore.getState().openDocument("README.md", spaceId);
+  openEntryDocument("README.md", spaceId);
 }

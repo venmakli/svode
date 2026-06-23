@@ -1,10 +1,13 @@
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import {
+  useActiveEntrySelection,
+  useOpenEntryDocument,
+} from "@/features/entry/selection";
 import { buildSpaceBreadcrumbSegments } from "../lib/space-breadcrumbs";
 import { useSpaceStore } from "../model";
 
 export function useMainBreadcrumbs() {
-  const { activeDocument, activeDocumentSpaceId, openDocument } =
-    useEntrySelectionStore();
+  const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
+  const openDocument = useOpenEntryDocument();
   const { activeRootId, fileTrees, openSpace, spaces } = useSpaceStore();
 
   if (!activeDocument) {

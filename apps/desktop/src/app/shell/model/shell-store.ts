@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import { getActiveEntrySelection } from "@/features/entry/selection";
 
 type SettingsDialog = "app" | "space" | null;
 export type MainSurface = "content" | "inbox" | "sessions";
@@ -29,7 +29,7 @@ export const useShellStore = create<ShellState>((set) => ({
 
   toggleChatPanel: () => {
     if (!ENABLE_IN_APP_CHAT) return;
-    const { activeDocument } = useEntrySelectionStore.getState();
+    const { activeDocument } = getActiveEntrySelection();
     if (!activeDocument) return;
     set((state) => ({ chatPanelOpen: !state.chatPanelOpen }));
   },

@@ -7,7 +7,10 @@ import {
   type ReactNode,
 } from "react";
 
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import {
+  useActiveEntryDocument,
+  useActiveEntryDocumentSpaceId,
+} from "@/features/entry/selection";
 import { useSpace, selectActiveSpacePath } from "@/features/space";
 import { joinAbs } from "../lib/doc-link-utils";
 import {
@@ -95,10 +98,8 @@ export function resolveEditorAssetContext(
 function useActiveContext(): ActiveContext | null {
   const explicitContext = useContext(EditorAssetResolveContext);
   const projectPath = useSpace((s) => s.activeRootPath);
-  const activeDocument = useEntrySelectionStore((s) => s.activeDocument);
-  const activeDocumentSpaceId = useEntrySelectionStore(
-    (s) => s.activeDocumentSpaceId,
-  );
+  const activeDocument = useActiveEntryDocument();
+  const activeDocumentSpaceId = useActiveEntryDocumentSpaceId();
   const activeRootId = useSpace((s) => s.activeRootId);
   const rootSpaces = useSpace((s) => s.rootSpaces);
   const spaces = useSpace((s) => s.spaces);

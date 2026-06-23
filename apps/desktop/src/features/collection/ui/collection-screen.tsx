@@ -36,7 +36,7 @@ import {
   isEntryTreeMetaField,
   useEntryFieldSave,
 } from "@/features/entry/field-save";
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import { useOpenEntryDocument } from "@/features/entry/selection";
 import type { Entry, EntryCover } from "@/features/entry";
 import { useSpaceTreeSync } from "@/features/space";
 import { useViewQuery } from "@/features/collection/query";
@@ -134,7 +134,7 @@ export function CollectionScreen({
     [documentPath],
   );
   const readmePath = readmePathFor(collectionPath);
-  const { openDocument } = useEntrySelectionStore();
+  const openDocument = useOpenEntryDocument();
   const openPath = useCallback(
     (path: string) => openDocument(path, spaceId),
     [openDocument, spaceId],

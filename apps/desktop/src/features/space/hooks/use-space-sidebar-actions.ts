@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import { useActiveEntrySelection } from "@/features/entry/selection";
 import { useSpaceStore } from "../model";
 import { useMissingSpaceClone } from "./use-missing-space-clone";
 import { useSpaceActions } from "./use-space-actions";
@@ -42,7 +42,7 @@ export function useSpaceSidebarActions({
     patchSpaceMetadata,
   } = useSpaceStore();
   const { deleteSpace } = useSpaceActions();
-  const { activeDocument, activeDocumentSpaceId } = useEntrySelectionStore();
+  const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
   const {
     createDialogOpen,
     deleteFiles,

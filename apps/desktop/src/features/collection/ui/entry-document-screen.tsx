@@ -13,7 +13,10 @@ import {
   isEntryTreeMetaField,
   useEntryFieldSave,
 } from "@/features/entry/field-save";
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import {
+  useOpenEntryDocument,
+  useOpenEntryScopeHome,
+} from "@/features/entry/selection";
 import type { Entry, EntryCover } from "@/features/entry";
 import { PropertyPanel } from "@/features/properties/panel";
 import { normalizeSchema } from "@/features/properties";
@@ -51,12 +54,12 @@ export function EntryDocumentScreen({
   documentPath,
   spaceId,
 }: EntryDocumentScreenProps) {
-  const openDocument = useEntrySelectionStore((state) => state.openDocument);
+  const openDocument = useOpenEntryDocument();
   const openPath = useCallback(
     (path: string) => openDocument(path, spaceId),
     [openDocument, spaceId],
   );
-  const openScopeHome = useEntrySelectionStore((state) => state.openScopeHome);
+  const openScopeHome = useOpenEntryScopeHome();
   const patchEntryTreeMeta = useSpaceTreeSync(
     (state) => state.patchEntryTreeMeta,
   );

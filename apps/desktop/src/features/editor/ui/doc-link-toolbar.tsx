@@ -48,7 +48,10 @@ import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/shared/lib/utils";
 import { useEditorStore } from "../model";
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import {
+  useActiveEntryDocument,
+  useActiveEntryDocumentSpaceId,
+} from "@/features/entry/selection";
 import { useSpace } from "@/features/space";
 import type { SearchItem } from "@/features/search";
 import * as m from "@/paraglide/messages.js";
@@ -222,10 +225,8 @@ function LegacyUrlInput({
 
 function DocLinkTargetPicker() {
   const editor = useEditorRef();
-  const activeDocument = useEntrySelectionStore((s) => s.activeDocument);
-  const activeDocumentSpaceId = useEntrySelectionStore(
-    (s) => s.activeDocumentSpaceId,
-  );
+  const activeDocument = useActiveEntryDocument();
+  const activeDocumentSpaceId = useActiveEntryDocumentSpaceId();
   const activeRootPath = useSpace((s) => s.activeRootPath);
   const activeRootId = useSpace((s) => s.activeRootId);
   const rootSpaces = useSpace((s) => s.rootSpaces);
@@ -355,10 +356,8 @@ function DocLinkEditContent({
 }) {
   const editor = useEditorRef();
   const selection = useEditorSelection();
-  const activeDocument = useEntrySelectionStore((s) => s.activeDocument);
-  const activeDocumentSpaceId = useEntrySelectionStore(
-    (s) => s.activeDocumentSpaceId,
-  );
+  const activeDocument = useActiveEntryDocument();
+  const activeDocumentSpaceId = useActiveEntryDocumentSpaceId();
   const activeRootPath = useSpace((s) => s.activeRootPath);
   const activeRootId = useSpace((s) => s.activeRootId);
   const rootSpaces = useSpace((s) => s.rootSpaces);

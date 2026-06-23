@@ -18,7 +18,7 @@ import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { FileText, Folder, GripVertical, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { createEntry as createEntryApi } from "@/features/entry/api";
-import { useEntrySelectionStore } from "@/features/entry/selection";
+import { useOpenEntryDocument } from "@/features/entry/selection";
 import {
   getSpaceTreeSyncSnapshot,
   useSpaceTreeSync,
@@ -43,7 +43,7 @@ export function EntrySubpages({
   spaceId,
   documentPath,
 }: EntrySubpagesProps) {
-  const openDocument = useEntrySelectionStore((state) => state.openDocument);
+  const openDocument = useOpenEntryDocument();
   const loadTreeChildren = useSpaceTreeSync((state) => state.loadTreeChildren);
   const [subpages, setSubpages] = useState<TreeNode[]>([]);
   const [loading, setLoading] = useState(false);
