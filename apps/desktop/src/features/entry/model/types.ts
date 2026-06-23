@@ -37,10 +37,15 @@ export interface Entry {
 }
 
 export interface WriteResult {
-  new_path: string | null;
-  modified_files: string[];
-  modified_sources?: { spaceId: string | null; path: string }[];
-  write_nonce: string;
+  newPath: string | null;
+  modifiedFiles: string[];
+  modifiedSources?: { spaceId: string | null; path: string }[];
+  writeNonce: string;
+}
+
+export interface LinkValidationResult {
+  url: string;
+  exists: boolean;
 }
 
 export interface EntryTreeNode {

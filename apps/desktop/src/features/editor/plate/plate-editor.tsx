@@ -39,7 +39,7 @@ import {
   readEntry,
   validateLinks,
   writeEntry,
-} from "@/platform/entries/entries-api";
+} from "@/features/entry/api";
 import {
   deleteCachedDocumentValue,
   getCachedDocumentValue,
@@ -235,15 +235,15 @@ export function PlateDocumentEditor({
       const markdown = editor.getApi(MarkdownPlugin).markdown.serialize();
 
       const result = await writeEntry({
-        space: spacePath,
+        spacePath,
         path,
         content: markdown,
         skipRename,
         projectPath: projectPath ?? null,
       });
 
-      if (result.write_nonce) {
-        ownNoncesRef.current.add(result.write_nonce);
+      if (result.writeNonce) {
+        ownNoncesRef.current.add(result.writeNonce);
       }
 
       return result;
@@ -254,9 +254,9 @@ export function PlateDocumentEditor({
   const handleModifiedSources = useCallback(
     (result: WriteResult) => {
       const sources =
-        result.modified_sources && result.modified_sources.length > 0
-          ? result.modified_sources
-          : result.modified_files.map((path) => ({
+        result.modifiedSources && result.modifiedSources.length > 0
+          ? result.modifiedSources
+          : result.modifiedFiles.map((path) => ({
               spaceId: activeWsId ?? null,
               path,
             }));
@@ -327,7 +327,7 @@ export function PlateDocumentEditor({
           if (editor) {
             setCachedDocumentValueByKey(cacheKey, editor.children);
           }
-          patchCurrentTreeMeta(result.new_path ?? path);
+          patchCurrentTreeMeta(result.newPath ?? path);
         })
         .catch((err) => {
           console.error("Auto-save failed:", err);
@@ -438,7 +438,7 @@ export function PlateDocumentEditor({
         try {
           const entryMeta =
             metaForCachedBody ??
-            ((await readEntry(spacePath, currentDocument)) as Entry);
+            await readEntry({ spacePath, path: currentDocument });
           if (sequence !== loadSeqRef.current) return;
           if ("meta" in entryMeta) {
             showEntryWarnings(entryMeta);
@@ -469,7 +469,8 @@ export function PlateDocumentEditor({
         try {
           await waitForNextFrame();
           const entry =
-            initialForDocument ?? (await readEntry(spacePath, currentDocument));
+            initialForDocument ??
+            (await readEntry({ spacePath, path: currentDocument }));
           if (sequence !== loadSeqRef.current) return;
           showEntryWarnings(entry);
           applyMeta(entry.meta as EntryMeta);
@@ -507,7 +508,7 @@ export function PlateDocumentEditor({
     let cancelled = false;
     const timer = window.setTimeout(() => {
       validateLinks({
-        space: spacePath,
+        spacePath,
         path: currentDocument,
         projectPath: projectPath ?? null,
       })
@@ -613,15 +614,15 @@ export function PlateDocumentEditor({
 
       clearUnsaved(currentDocument);
 
-      if (result.new_path) {
+      if (result.newPath) {
         deleteCachedDocumentValue(currentDocument, spacePath);
-        setCachedDocumentValue(spacePath, result.new_path, editor.children);
-        setCurrentDocument(result.new_path);
+        setCachedDocumentValue(spacePath, result.newPath, editor.children);
+        setCurrentDocument(result.newPath);
         if (activeWsId) {
           removeTreePath(activeWsId, currentDocument);
           void reloadTreePathParents(activeWsId, [
             currentDocument,
-            result.new_path,
+            result.newPath,
           ]);
         }
       } else {
@@ -635,7 +636,7 @@ export function PlateDocumentEditor({
 
       // Auto-commit the saved file. During mid-merge, ask the Git feature to
       // continue merge resolution instead.
-      const committedPath = result.new_path ?? currentDocument;
+      const committedPath = result.newPath ?? currentDocument;
       const status = getGitSpaceStatus(spacePath);
       if (status?.hasConflicts) {
         try {
@@ -697,15 +698,15 @@ export function PlateDocumentEditor({
       const result = await performWrite(false);
       if (!result) return;
       clearUnsaved(currentDocument);
-      if (result.new_path) {
+      if (result.newPath) {
         deleteCachedDocumentValue(currentDocument, spacePath);
-        setCachedDocumentValue(spacePath, result.new_path, editor.children);
-        setCurrentDocument(result.new_path);
+        setCachedDocumentValue(spacePath, result.newPath, editor.children);
+        setCurrentDocument(result.newPath);
         if (activeWsId) {
           removeTreePath(activeWsId, currentDocument);
           void reloadTreePathParents(activeWsId, [
             currentDocument,
-            result.new_path,
+            result.newPath,
           ]);
         }
       } else {

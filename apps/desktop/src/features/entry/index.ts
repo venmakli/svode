@@ -5,6 +5,7 @@ export type {
   EntryMeta,
   EntryTreeNode,
   EntryWarning,
+  LinkValidationResult,
   TreeNode,
   WriteResult,
 } from "./model/types";

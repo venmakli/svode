@@ -5,12 +5,22 @@ import {
   convertEntryToNestedCollection as convertEntryToNestedCollectionDto,
   deleteEntry as deleteEntryDto,
   duplicateEntry as duplicateEntryDto,
+  type LinkValidationResultDto,
   readEntry as readEntryDto,
   renameEntry as renameEntryDto,
   updateEntryField as updateEntryFieldDto,
+  validateLinks as validateLinksDto,
+  writeEntry as writeEntryDto,
   type EntryDto,
+  type WriteResultDto,
 } from "@/platform/entries/entries-api";
-import type { CoverColorName, Entry, EntryCover } from "../model/types";
+import type {
+  CoverColorName,
+  Entry,
+  EntryCover,
+  LinkValidationResult,
+  WriteResult,
+} from "../model/types";
 
 export interface ReadEntryInput {
   spacePath: string;
@@ -37,6 +47,20 @@ export interface UpdateEntryFieldInput {
   filePath: string;
   field: string;
   value: unknown;
+  projectPath: string | null;
+}
+
+export interface WriteEntryInput {
+  spacePath: string;
+  path: string;
+  content: string;
+  skipRename: boolean;
+  projectPath: string | null;
+}
+
+export interface ValidateLinksInput {
+  spacePath: string;
+  path: string;
   projectPath: string | null;
 }
 
@@ -121,6 +145,28 @@ export async function updateEntryField(
   return entryFromDto(entry);
 }
 
+export async function writeEntry(input: WriteEntryInput): Promise<WriteResult> {
+  const result = await writeEntryDto({
+    space: input.spacePath,
+    path: input.path,
+    content: input.content,
+    skipRename: input.skipRename,
+    projectPath: input.projectPath,
+  });
+  return writeResultFromDto(result);
+}
+
+export async function validateLinks(
+  input: ValidateLinksInput,
+): Promise<LinkValidationResult[]> {
+  const result = await validateLinksDto({
+    space: input.spacePath,
+    path: input.path,
+    projectPath: input.projectPath,
+  });
+  return result.map(linkValidationResultFromDto);
+}
+
 export function deleteEntry(input: DeleteEntryInput): Promise<void> {
   return deleteEntryDto({
     space: input.spacePath,
@@ -180,6 +226,21 @@ function entryFromDto(entry: EntryDto): Entry {
       cover: entryCoverFromDto(entry.meta.cover),
     },
   };
+}
+
+function writeResultFromDto(result: WriteResultDto): WriteResult {
+  return {
+    newPath: result.new_path,
+    modifiedFiles: result.modified_files,
+    modifiedSources: result.modified_sources,
+    writeNonce: result.write_nonce,
+  };
+}
+
+function linkValidationResultFromDto(
+  result: LinkValidationResultDto,
+): LinkValidationResult {
+  return result;
 }
 
 function entryCoverFromDto(
