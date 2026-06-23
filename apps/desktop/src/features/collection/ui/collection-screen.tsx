@@ -18,10 +18,7 @@ import {
 } from "@/shared/ui/page-layout";
 import { useOpenEntryDocument } from "@/features/entry/selection";
 import { propertyFieldSavePolicy, type Entry } from "@/features/entry";
-import {
-  EntryDetailActions,
-  EntrySystemFields,
-} from "@/features/entry/detail";
+import { EntryDetailActions, EntrySystemFields } from "@/features/entry/detail";
 import { useSpaceTreeSync } from "@/features/space";
 import { useViewQuery } from "@/features/collection/query";
 import { DeleteDialogs } from "./delete-dialogs";
@@ -29,13 +26,8 @@ import { DocumentSettings } from "./document-settings-popover";
 import { EntryPeekSheet } from "./entry-peek-sheet";
 import { handleError } from "../lib/errors";
 import { CollectionSkeleton } from "./skeleton";
+import { CollectionViewContent } from "./collection-view-content";
 import { CollectionTabStrip } from "./view-tabs";
-import { ViewPlaceholder } from "./view-placeholder";
-import { BoardView } from "./board/board-view";
-import { CalendarView } from "./calendar/calendar-view";
-import { GalleryView } from "./gallery/gallery-view";
-import { ListView } from "./list/list-view";
-import { TableView } from "./table/table-view";
 import { ViewActionBar } from "./view-action-bar";
 import {
   useCollectionEntryActions,
@@ -44,6 +36,7 @@ import {
   useCollectionSchemaState,
   useCollectionTemplates,
   useCollectionViewActions,
+  useCollectionViewCreateFocus,
 } from "../hooks";
 import {
   collectionPathFor,
@@ -118,26 +111,6 @@ export function CollectionScreen({
   const [documentLabelOpen, setDocumentLabelOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [peekTarget, setPeekTarget] = useState<EntryPeekTarget | null>(null);
-  const [tableCreateRequest, setTableCreateRequest] = useState({
-    signal: 0,
-    asFolder: false,
-  });
-  const [boardCreateRequest, setBoardCreateRequest] = useState({
-    signal: 0,
-    asFolder: false,
-  });
-  const [calendarCreateRequest, setCalendarCreateRequest] = useState({
-    signal: 0,
-    asFolder: false,
-  });
-  const [listCreateRequest, setListCreateRequest] = useState({
-    signal: 0,
-    asFolder: false,
-  });
-  const [galleryCreateRequest, setGalleryCreateRequest] = useState({
-    signal: 0,
-    asFolder: false,
-  });
   const {
     deleteEntry,
     setDeleteEntry,
@@ -170,6 +143,8 @@ export function CollectionScreen({
     views,
   });
   const activeView = views.find((view) => view.name === activeTab) ?? null;
+  const { focusActiveViewCreate, requests: createRequests } =
+    useCollectionViewCreateFocus(activeView);
   const query = useViewQuery({
     spacePath,
     projectPath,
@@ -239,41 +214,6 @@ export function CollectionScreen({
     openDocument,
   });
 
-  function focusTableCreate(asFolder: boolean) {
-    setTableCreateRequest((request) => ({
-      signal: request.signal + 1,
-      asFolder,
-    }));
-  }
-
-  function focusBoardCreate(asFolder: boolean) {
-    setBoardCreateRequest((request) => ({
-      signal: request.signal + 1,
-      asFolder,
-    }));
-  }
-
-  function focusCalendarCreate(asFolder: boolean) {
-    setCalendarCreateRequest((request) => ({
-      signal: request.signal + 1,
-      asFolder,
-    }));
-  }
-
-  function focusListCreate(asFolder: boolean) {
-    setListCreateRequest((request) => ({
-      signal: request.signal + 1,
-      asFolder,
-    }));
-  }
-
-  function focusGalleryCreate(asFolder: boolean) {
-    setGalleryCreateRequest((request) => ({
-      signal: request.signal + 1,
-      asFolder,
-    }));
-  }
-
   function openPeek(entryToOpen: Entry, nested = false) {
     setPeekTarget({ entry: entryToOpen, nested });
   }
@@ -282,33 +222,6 @@ export function CollectionScreen({
     setPeekTarget(null);
     openDocument(entryToOpen.path, spaceId);
   }
-
-  const focusActiveViewCreate = useCallback(
-    (asFolder: boolean) => {
-      if (activeView && viewType(activeView) === "table") {
-        focusTableCreate(asFolder);
-        return true;
-      }
-      if (activeView && viewType(activeView) === "board") {
-        focusBoardCreate(asFolder);
-        return true;
-      }
-      if (activeView && viewType(activeView) === "calendar") {
-        focusCalendarCreate(asFolder);
-        return true;
-      }
-      if (activeView && viewType(activeView) === "list") {
-        focusListCreate(asFolder);
-        return true;
-      }
-      if (activeView && viewType(activeView) === "gallery") {
-        focusGalleryCreate(asFolder);
-        return true;
-      }
-      return false;
-    },
-    [activeView],
-  );
 
   useCollectionKeyboardShortcuts({
     activeTab,
@@ -510,24 +423,7 @@ export function CollectionScreen({
               onDeleteTemplate={deleteTemplateForMenu}
               onReorderTemplates={reorderTemplatesForMenu}
               onCreateEntry={(asFolder) => {
-                if (activeView && viewType(activeView) === "table") {
-                  focusTableCreate(asFolder);
-                  return;
-                }
-                if (activeView && viewType(activeView) === "board") {
-                  focusBoardCreate(asFolder);
-                  return;
-                }
-                if (activeView && viewType(activeView) === "calendar") {
-                  focusCalendarCreate(asFolder);
-                  return;
-                }
-                if (activeView && viewType(activeView) === "list") {
-                  focusListCreate(asFolder);
-                  return;
-                }
-                if (activeView && viewType(activeView) === "gallery") {
-                  focusGalleryCreate(asFolder);
+                if (focusActiveViewCreate(asFolder)) {
                   return;
                 }
                 void createEntry(asFolder).catch(handleError);
@@ -559,192 +455,36 @@ export function CollectionScreen({
         ) : null}
         {views.map((view) => (
           <TabsContent key={view.name} value={view.name} className="flex-none">
-            {viewType(view) === "table" ? (
-              <TableView
-                name={view.name}
-                view={view}
-                query={query}
-                schema={schema}
-                collectionPath={collectionPath}
-                projectPath={projectPath}
-                spacePath={spacePath}
-                searchQuery={searchQuery}
-                filters={query.merged.filter}
-                sort={query.merged.sort}
-                refreshToken={entriesVersion}
-                createFocusSignal={tableCreateRequest.signal}
-                createAsFolder={tableCreateRequest.asFolder}
-                onClearSearch={() => setSearchQuery("")}
-                onOpenEntry={(entryToOpen) => openPeek(entryToOpen)}
-                onOpenNestedPeek={(entryToOpen) => openPeek(entryToOpen, true)}
-                onOpenNestedCollection={(entryToOpen) =>
-                  openDocument(entryToOpen.path, spaceId)
-                }
-                onOpenFullPage={openFullPage}
-                onOpenPath={openPath}
-                onDuplicateEntry={(entryToDuplicate) =>
-                  void duplicateRow(entryToDuplicate).catch(handleError)
-                }
-                onDeleteEntry={setDeleteEntry}
-                onSchemaChange={(nextSchema) =>
-                  setSchema(normalizeSchema(nextSchema))
-                }
-                onUpdateView={updateView}
-                onCreateEntry={(title, asFolder) =>
-                  createEntry(asFolder, title, false)
-                }
-              />
-            ) : viewType(view) === "board" ? (
-              <BoardView
-                name={view.name}
-                view={view}
-                query={query}
-                schema={schema}
-                collectionPath={collectionPath}
-                projectPath={projectPath}
-                spacePath={spacePath}
-                searchQuery={searchQuery}
-                filters={query.merged.filter}
-                sort={query.merged.sort}
-                refreshToken={entriesVersion}
-                createFocusSignal={boardCreateRequest.signal}
-                createAsFolder={boardCreateRequest.asFolder}
-                onClearSearch={() => setSearchQuery("")}
-                onOpenEntry={(entryToOpen) => openPeek(entryToOpen)}
-                onOpenNestedPeek={(entryToOpen) => openPeek(entryToOpen, true)}
-                onOpenNestedCollection={(entryToOpen) =>
-                  openDocument(entryToOpen.path, spaceId)
-                }
-                onOpenFullPage={openFullPage}
-                onOpenPath={openPath}
-                onDuplicateEntry={(entryToDuplicate) =>
-                  void duplicateRow(entryToDuplicate).catch(handleError)
-                }
-                onDeleteEntry={setDeleteEntry}
-                onSchemaChange={(nextSchema) =>
-                  setSchema(normalizeSchema(nextSchema))
-                }
-                onUpdateView={updateView}
-                onCreateEntry={(title, asFolder, contextualDefaults) =>
-                  createEntry(asFolder, title, false, contextualDefaults)
-                }
-              />
-            ) : viewType(view) === "calendar" ? (
-              <CalendarView
-                name={view.name}
-                view={view}
-                schema={schema}
-                collectionPath={collectionPath}
-                projectPath={projectPath}
-                spacePath={spacePath}
-                searchQuery={searchQuery}
-                filters={query.merged.filter}
-                sort={query.merged.sort}
-                refreshToken={entriesVersion}
-                createFocusSignal={calendarCreateRequest.signal}
-                createAsFolder={calendarCreateRequest.asFolder}
-                onOpenEntry={(entryToOpen) => openPeek(entryToOpen)}
-                onOpenNestedPeek={(entryToOpen) => openPeek(entryToOpen, true)}
-                onOpenNestedCollection={(entryToOpen) =>
-                  openDocument(entryToOpen.path, spaceId)
-                }
-                onOpenFullPage={openFullPage}
-                onOpenPath={openPath}
-                onDuplicateEntry={(entryToDuplicate) =>
-                  void duplicateRow(entryToDuplicate).catch(handleError)
-                }
-                onDeleteEntry={setDeleteEntry}
-                onSchemaChange={(nextSchema) =>
-                  setSchema(normalizeSchema(nextSchema))
-                }
-                onUpdateView={updateView}
-                onCreateEntry={(title, asFolder, contextualDefaults) =>
-                  createEntry(asFolder, title, false, contextualDefaults)
-                }
-              />
-            ) : viewType(view) === "list" ? (
-              <ListView
-                name={view.name}
-                view={view}
-                query={query}
-                schema={schema}
-                collectionPath={collectionPath}
-                projectPath={projectPath}
-                spacePath={spacePath}
-                searchQuery={searchQuery}
-                filters={query.merged.filter}
-                sort={query.merged.sort}
-                refreshToken={entriesVersion}
-                createFocusSignal={listCreateRequest.signal}
-                createAsFolder={listCreateRequest.asFolder}
-                onClearSearch={() => setSearchQuery("")}
-                onOpenEntry={(entryToOpen) => openPeek(entryToOpen)}
-                onOpenNestedPeek={(entryToOpen) => openPeek(entryToOpen, true)}
-                onOpenNestedCollection={(entryToOpen) =>
-                  openDocument(entryToOpen.path, spaceId)
-                }
-                onOpenFullPage={(entryToOpen) =>
-                  openDocument(entryToOpen.path, spaceId)
-                }
-                onOpenPath={openPath}
-                onDuplicateEntry={(entryToDuplicate) =>
-                  void duplicateRow(entryToDuplicate).catch(handleError)
-                }
-                onDeleteEntry={setDeleteEntry}
-                onCreateEntry={(title, asFolder) =>
-                  createEntry(asFolder, title, false)
-                }
-              />
-            ) : viewType(view) === "gallery" ? (
-              <GalleryView
-                name={view.name}
-                view={view}
-                query={query}
-                schema={schema}
-                collectionPath={collectionPath}
-                projectPath={projectPath}
-                spacePath={spacePath}
-                searchQuery={searchQuery}
-                filters={query.merged.filter}
-                sort={query.merged.sort}
-                refreshToken={entriesVersion}
-                createFocusSignal={galleryCreateRequest.signal}
-                createAsFolder={galleryCreateRequest.asFolder}
-                onClearSearch={() => setSearchQuery("")}
-                onOpenEntry={(entryToOpen) => openPeek(entryToOpen)}
-                onOpenNestedPeek={(entryToOpen) => openPeek(entryToOpen, true)}
-                onOpenNestedCollection={(entryToOpen) =>
-                  openDocument(entryToOpen.path, spaceId)
-                }
-                onOpenFullPage={(entryToOpen) =>
-                  openDocument(entryToOpen.path, spaceId)
-                }
-                onOpenPath={openPath}
-                onDuplicateEntry={(entryToDuplicate) =>
-                  void duplicateRow(entryToDuplicate).catch(handleError)
-                }
-                onDeleteEntry={setDeleteEntry}
-                onCreateEntry={(title, asFolder) =>
-                  createEntry(asFolder, title, false)
-                }
-              />
-            ) : (
-              <ViewPlaceholder
-                type={viewType(view)}
-                name={view.name}
-                schema={schema}
-                collectionPath={collectionPath}
-                projectPath={projectPath}
-                spacePath={spacePath}
-                searchQuery={searchQuery}
-                refreshToken={entriesVersion}
-                onOpenEntry={(entryToOpen) => openPeek(entryToOpen)}
-                onDuplicateEntry={(entryToDuplicate) =>
-                  void duplicateRow(entryToDuplicate).catch(handleError)
-                }
-                onDeleteEntry={setDeleteEntry}
-              />
-            )}
+            <CollectionViewContent
+              view={view}
+              query={query}
+              schema={schema}
+              collectionPath={collectionPath}
+              projectPath={projectPath}
+              spacePath={spacePath}
+              searchQuery={searchQuery}
+              refreshToken={entriesVersion}
+              createRequest={createRequests[viewType(view)]}
+              onClearSearch={() => setSearchQuery("")}
+              onOpenEntry={(entryToOpen) => openPeek(entryToOpen)}
+              onOpenNestedPeek={(entryToOpen) => openPeek(entryToOpen, true)}
+              onOpenNestedCollection={(entryToOpen) =>
+                openDocument(entryToOpen.path, spaceId)
+              }
+              onOpenFullPage={openFullPage}
+              onOpenPath={openPath}
+              onDuplicateEntry={(entryToDuplicate) =>
+                void duplicateRow(entryToDuplicate).catch(handleError)
+              }
+              onDeleteEntry={setDeleteEntry}
+              onSchemaChange={(nextSchema) =>
+                setSchema(normalizeSchema(nextSchema))
+              }
+              onUpdateView={updateView}
+              onCreateEntry={(title, asFolder, contextualDefaults) =>
+                createEntry(asFolder, title, false, contextualDefaults)
+              }
+            />
           </TabsContent>
         ))}
       </Tabs>

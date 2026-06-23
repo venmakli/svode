@@ -9,6 +9,8 @@ export * from "./use-collection-schema-state";
 export * from "./use-collection-templates";
 export * from "./use-collection-tree-order";
 export * from "./use-collection-view-actions";
+export * from "./use-collection-view-create-focus";
 export * from "./use-entry-peek-field-save";
 export * from "./use-entry-peek-loader";
+export * from "./use-view-placeholder-entries";
 export * from "./use-view-settings-actions";

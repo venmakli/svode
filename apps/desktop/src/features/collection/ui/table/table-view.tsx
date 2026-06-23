@@ -225,6 +225,7 @@ export function TableView({
       void commitField(entry, column, value),
   });
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Table intentionally returns an imperative table instance for this view.
   const table = useReactTable({
     data: rows,
     columns: tableColumns,

@@ -1,5 +1,4 @@
 import { useState, type ReactNode } from "react";
-import { toast } from "sonner";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -16,17 +15,10 @@ import type {
   CollectionView,
   UseViewQueryResult,
 } from "@/features/collection/query";
-import type {
-  CollectionSchema,
-  Column,
-  SchemaMutationWarning,
-} from "@/features/properties";
+import type { CollectionSchema, Column } from "@/features/properties";
 import type { ActorCandidate } from "@/features/properties";
-import {
-  changeSchemaType,
-  deleteSchemaColumn,
-} from "@/features/properties/api";
 import { TypeSettingsPane } from "@/features/properties/column-settings";
+import { useCollectionColumnActions } from "../../hooks";
 import { FieldFilterPane, FieldSortPane } from "./column-query-pane";
 import {
   ColumnDangerActions,
@@ -83,6 +75,19 @@ export function ColumnMenuPopover({
   const filter =
     query.merged.filter.find((item) => item.field === field) ?? null;
   const sort = query.merged.sort.find((item) => item.field === field) ?? null;
+  const {
+    changeColumnType,
+    deleteColumn,
+    duplicateColumn,
+    renameColumn,
+    updateSystemFieldLabel,
+  } = useCollectionColumnActions({
+    schema,
+    spacePath,
+    collectionPath,
+    projectPath,
+    onSchemaChange,
+  });
 
   const panes = [
     {
@@ -93,28 +98,33 @@ export function ColumnMenuPopover({
           field={field}
           label={draftLabel}
           column={column}
-          collectionPath={collectionPath}
-          spacePath={spacePath}
-          projectPath={projectPath}
           isTitle={isTitle}
           visibleFields={visibleFields}
           filter={filter}
           sort={sort}
           onLabelChange={setDraftLabel}
-          onSchemaChange={onSchemaChange}
           onUpdateViewPatch={onUpdateViewPatch}
           onOpenPane={setPane}
           onClose={() => onOpenChange(false)}
+          onRenameSystemField={(label) =>
+            void updateSystemFieldLabel({ field: "title", label })
+          }
+          onRenameColumn={(newName, nextVisibleFields, updateViewPatch) =>
+            void renameColumn({
+              oldName: field,
+              newName,
+              visibleFields: nextVisibleFields,
+              onUpdateViewPatch: updateViewPatch,
+            })
+          }
         />
       ),
       footer: column ? (
         <ColumnDangerActions
           column={column}
-          schema={schema}
-          collectionPath={collectionPath}
-          spacePath={spacePath}
-          projectPath={projectPath}
-          onSchemaChange={onSchemaChange}
+          onDuplicateColumn={(columnToDuplicate, baseName) =>
+            void duplicateColumn(columnToDuplicate, baseName)
+          }
           onDelete={() => setDeleteOpen(true)}
         />
       ) : null,
@@ -126,25 +136,7 @@ export function ColumnMenuPopover({
         <TypePane
           activeType={column.type}
           onSelect={(type) => {
-            void changeSchemaType({
-              spacePath,
-              collectionPath,
-              columnName: field,
-              newType: type,
-              conversionStrategy:
-                type === "relation"
-                  ? { relation: collectionPath || "." }
-                  : undefined,
-              projectPath,
-            })
-              .then((result) => {
-                onSchemaChange(result.schema);
-                showSchemaMutationWarnings(result.warnings);
-              })
-              .catch((error) => {
-                console.error(error);
-                toast.error(errorMessage(error));
-              });
+            void changeColumnType({ columnName: field, newType: type });
           }}
         />
       ) : null,
@@ -228,13 +220,7 @@ export function ColumnMenuPopover({
             <AlertDialogCancel>{m.settings_cancel()}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                void deleteSchemaColumn({
-                  spacePath,
-                  collectionPath,
-                  columnName: field,
-                  deleteValues,
-                  projectPath,
-                }).then(onSchemaChange);
+                void deleteColumn({ columnName: field, deleteValues });
                 onOpenChange(false);
               }}
             >
@@ -245,27 +231,4 @@ export function ColumnMenuPopover({
       </AlertDialog>
     </>
   );
-}
-
-function showSchemaMutationWarnings(warnings: SchemaMutationWarning[]) {
-  for (const warning of warnings) {
-    if (warning.code === "relation_unconverted_values") {
-      toast.warning(
-        m.property_relation_convert_warning({
-          count: String(warning.count),
-          field: warning.field,
-        }),
-      );
-    }
-  }
-}
-
-function errorMessage(error: unknown) {
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  if (error && typeof error === "object" && "message" in error) {
-    const message = (error as { message: unknown }).message;
-    if (typeof message === "string") return message;
-  }
-  return m.toast_error();
 }

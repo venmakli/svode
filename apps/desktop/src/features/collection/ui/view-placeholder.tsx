@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { Copy, FileText, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,7 +15,7 @@ import {
 import type { CollectionView, ViewType } from "@/features/collection/query";
 import type { CollectionSchema } from "@/features/properties";
 import type { Entry } from "@/features/entry";
-import { listEntriesForView } from "../api";
+import { useViewPlaceholderEntries } from "../hooks";
 import { IncompleteState } from "./incomplete-state";
 import { titleFilter } from "../lib/utils";
 import * as m from "@/paraglide/messages.js";
@@ -46,18 +45,13 @@ export function ViewPlaceholder({
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
 }) {
-  const [entries, setEntries] = useState<Entry[]>([]);
-  useEffect(() => {
-    listEntriesForView({
-      spacePath,
-      collectionPath,
-      viewName: name,
-      includeNested: false,
-      projectPath,
-    })
-      .then(setEntries)
-      .catch((error) => console.warn("Failed to load view entries:", error));
-  }, [collectionPath, name, projectPath, refreshToken, spacePath]);
+  const entries = useViewPlaceholderEntries({
+    spacePath,
+    collectionPath,
+    viewName: name,
+    projectPath,
+    refreshToken,
+  });
 
   const filtered = titleFilter(entries, searchQuery);
   const needsGroup =

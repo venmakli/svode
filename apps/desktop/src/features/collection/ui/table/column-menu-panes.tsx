@@ -18,27 +18,17 @@ import { Input } from "@/components/ui/input";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { FILTER_OP_LABELS } from "@/features/collection/query";
 import type { QueryFilter, QuerySort } from "@/features/collection/query";
-import type {
-  CollectionSchema,
-  Column,
-  PropertyType,
-} from "@/features/properties";
+import type { Column, PropertyType } from "@/features/properties";
 import {
   isSensitiveColumn,
   isSensitivePropertyType,
 } from "@/features/properties";
-import {
-  addCollectionColumn,
-  renameCollectionColumn,
-  updateCollectionSystemFieldLabel,
-} from "../../api";
 import { SettingsRow, SettingsSection } from "../settings-row";
 import { PROPERTY_TYPE_ICONS } from "./icons";
 import {
   propertyTypeLabel,
   SensitivePropertyTypeHint,
 } from "./property-type-picker";
-import { uniqueColumnName } from "./utils";
 import * as m from "@/paraglide/messages.js";
 
 export type ColumnMenuPane = "main" | "type" | "filter" | "sort" | "settings";
@@ -47,34 +37,34 @@ export function MainPane({
   field,
   label,
   column,
-  collectionPath,
-  spacePath,
-  projectPath,
   isTitle,
   visibleFields,
   filter,
   sort,
   onLabelChange,
-  onSchemaChange,
   onUpdateViewPatch,
   onOpenPane,
   onClose,
+  onRenameColumn,
+  onRenameSystemField,
 }: {
   field: string;
   label: string;
   column?: Column;
-  collectionPath: string;
-  spacePath: string;
-  projectPath?: string | null;
   isTitle: boolean;
   visibleFields: string[];
   filter: QueryFilter | null;
   sort: QuerySort | null;
   onLabelChange: (label: string) => void;
-  onSchemaChange: (schema: CollectionSchema) => void;
   onUpdateViewPatch: (patch: Record<string, unknown>) => Promise<void>;
   onOpenPane: (pane: ColumnMenuPane) => void;
   onClose: () => void;
+  onRenameColumn: (
+    nextName: string,
+    visibleFields: string[],
+    onUpdateViewPatch: (patch: Record<string, unknown>) => Promise<void>,
+  ) => void;
+  onRenameSystemField: (label: string | null) => void;
 }) {
   const typeSettings = column ? typeSettingsMeta(column) : null;
 
@@ -90,29 +80,11 @@ export function MainPane({
             const next = event.currentTarget.value.trim();
             if (!next) return;
             if (isTitle) {
-              void updateCollectionSystemFieldLabel({
-                spacePath,
-                collectionPath,
-                field: "title",
-                label: next === m.collection_field_title() ? null : next,
-                projectPath,
-              }).then(onSchemaChange);
+              onRenameSystemField(
+                next === m.collection_field_title() ? null : next,
+              );
             } else if (next !== field) {
-              void renameCollectionColumn({
-                spacePath,
-                collectionPath,
-                oldName: field,
-                newName: next,
-                projectPath,
-              })
-                .then(onSchemaChange)
-                .then(() =>
-                  onUpdateViewPatch({
-                    visible_fields: visibleFields.map((visible) =>
-                      visible === field ? next : visible,
-                    ),
-                  }),
-                );
+              onRenameColumn(next, visibleFields, onUpdateViewPatch);
             }
           }}
           onKeyDown={(event) => {
@@ -213,20 +185,12 @@ export function TypePane({
 
 export function ColumnDangerActions({
   column,
-  schema,
-  collectionPath,
-  spacePath,
-  projectPath,
-  onSchemaChange,
   onDelete,
+  onDuplicateColumn,
 }: {
   column: Column;
-  schema: CollectionSchema;
-  collectionPath: string;
-  spacePath: string;
-  projectPath?: string | null;
-  onSchemaChange: (schema: CollectionSchema) => void;
   onDelete: () => void;
+  onDuplicateColumn: (column: Column, baseName: string) => void;
 }) {
   const sensitive = isSensitiveColumn(column);
 
@@ -238,19 +202,10 @@ export function ColumnDangerActions({
           label={m.table_duplicate_column()}
           right={null}
           onClick={() => {
-            const duplicate = {
-              ...column,
-              name: uniqueColumnName(
-                schema,
-                `${column.name} (${m.table_duplicate_column_suffix()})`,
-              ),
-            };
-            void addCollectionColumn({
-              spacePath,
-              collectionPath,
-              column: duplicate,
-              projectPath,
-            }).then(onSchemaChange);
+            onDuplicateColumn(
+              column,
+              `${column.name} (${m.table_duplicate_column_suffix()})`,
+            );
           }}
         />
         <SettingsRow
