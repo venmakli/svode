@@ -1,5 +1,6 @@
 export * from "./calendar-api";
 export * from "./create-collection";
+export * from "./entry-image-source";
 export * from "./entries-api";
 export * from "./schema-api";
 export * from "./actors-api";

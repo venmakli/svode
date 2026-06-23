@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import type { CollectionView } from "@/features/collection/query";
-import { resolveEntryImageSource } from "@/features/collection/lib";
+import { resolveEntryImageSource } from "../../api";
 import { normalizeEntryPath } from "@/features/collection/lib/utils";
 import type { Entry, EntryCover } from "@/features/entry";
 import type {

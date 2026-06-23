@@ -1,4 +1,4 @@
-import { convertFileSrc } from "@/platform/native/invoke";
+import { toWebviewAssetUrl } from "@/platform/assets/assets-api";
 
 export function resolveEntryImageSource({
   value,
@@ -10,11 +10,11 @@ export function resolveEntryImageSource({
   entryPath: string;
 }) {
   if (/^(https?:|data:|blob:|asset:|file:)/i.test(value)) return value;
-  if (value.startsWith("/")) return convertFileSrc(value);
+  if (value.startsWith("/")) return toWebviewAssetUrl(value);
   if (value.startsWith("./") || value.startsWith("../")) {
-    return convertFileSrc(joinEntryPath(spacePath, entryPath, value));
+    return toWebviewAssetUrl(joinEntryPath(spacePath, entryPath, value));
   }
-  return convertFileSrc(joinSpacePath(spacePath, value));
+  return toWebviewAssetUrl(joinSpacePath(spacePath, value));
 }
 
 function joinSpacePath(spacePath: string, value: string) {

@@ -25,13 +25,13 @@ import {
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useSpace, useSpaceTreeSync } from "@/features/space";
-import { propertyFieldSavePolicy, type Entry } from "@/features/entry";
-import { useEntryFieldSave } from "@/features/entry/field-save";
-import type { Column } from "@/features/properties";
+import type { Entry } from "@/features/entry";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
-import { saveCollectionTreeOrder } from "../../api";
-import { useCollectionActors } from "../../hooks";
+import {
+  useCollectionActors,
+  useCollectionEntryFieldSave,
+  useCollectionTreeOrder,
+} from "../../hooks";
 import { titleFilter } from "../../lib/utils";
 import { entryParentDir, reorderVisibleEntries } from "../table/utils";
 import { SortableListRow } from "./list-row";
@@ -79,12 +79,9 @@ export function ListView({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const rowRefs = useRef(new Map<string, HTMLElement>());
   const { actors, loadActors } = useCollectionActors(spacePath);
-  const reloadTreeParent = useSpaceTreeSync((state) => state.reloadTreeParent);
-  const sidebarSpaceId = useSpace((state) => {
-    const space =
-      state.spaces.find((item) => item.path === spacePath) ??
-      state.rootSpaces.find((item) => item.path === spacePath);
-    return space?.id ?? null;
+  const { reloadOrderParent, saveOrder } = useCollectionTreeOrder({
+    spacePath,
+    projectPath,
   });
   const {
     entries,
@@ -177,33 +174,19 @@ export function ListView({
     };
   }, [createAsFolder, createFocusSignal]);
 
-  const applyEntryUpdate = useCallback(
-    (entryPath: string, update: (entry: Entry) => Entry) => {
-      setEntries((current) =>
-        current.map((item) => (item.path === entryPath ? update(item) : item)),
-      );
+  const handleFieldCommitError = useCallback(
+    (error: unknown) => {
+      console.warn("Failed to update list field:", error);
+      void loadEntries();
     },
-    [setEntries],
+    [loadEntries],
   );
-  const saveEntryField = useEntryFieldSave({
+  const { commitField } = useCollectionEntryFieldSave({
     spacePath,
     projectPath,
-    applyEntryUpdate,
+    setEntries,
+    onCommitError: handleFieldCommitError,
   });
-
-  const commitField = useCallback(
-    async (entry: Entry, column: Column, value: unknown) => {
-      try {
-        await saveEntryField(entry, column.name, value, {
-          policy: propertyFieldSavePolicy(column),
-        });
-      } catch (error) {
-        console.warn("Failed to update list field:", error);
-        void loadEntries();
-      }
-    },
-    [loadEntries, saveEntryField],
-  );
 
   async function createDraft() {
     const title = composerValue.trim();
@@ -217,8 +200,7 @@ export function ListView({
       setComposerOpen(false);
       setComposerValue("");
       setEntries((current) => [...current, created]);
-      if (sidebarSpaceId)
-        await reloadTreeParent(sidebarSpaceId, collectionPath);
+      await reloadOrderParent(collectionPath);
       await loadEntries();
       focusRow(created.path);
     } catch (error) {
@@ -281,13 +263,8 @@ export function ListView({
     const previousEntries = entries;
     setEntries((current) => replaceSiblings(current, parentPath, nextSiblings));
     try {
-      await saveCollectionTreeOrder({
-        spacePath,
-        orderKey: parentPath,
-        entries: nextSiblings,
-        projectPath,
-      });
-      if (sidebarSpaceId) await reloadTreeParent(sidebarSpaceId, parentPath);
+      await saveOrder(parentPath, nextSiblings);
+      await reloadOrderParent(parentPath);
       await loadEntries();
     } catch (error) {
       console.warn("Failed to reorder list entries:", error);

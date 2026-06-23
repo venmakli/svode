@@ -12,14 +12,14 @@ import type {
 } from "@fullcalendar/core";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { addCollectionDateColumn } from "@/features/collection/api";
-import { useCollectionActors } from "@/features/collection/hooks";
+import {
+  useCollectionActors,
+  useCollectionColumnActions,
+} from "@/features/collection/hooks";
 import { propertyFieldSavePolicy, type Entry } from "@/features/entry";
-import { normalizeSchema } from "@/features/properties";
 import type { Column } from "@/features/properties";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
 import { getLocale } from "@/paraglide/runtime.js";
-import { uniqueColumnName } from "../table/utils";
 import {
   anchorFromMouse,
   calendarApi,
@@ -98,6 +98,13 @@ export function CalendarView({
     null,
   );
   const { actors, loadActors } = useCollectionActors(spacePath);
+  const { addDateColumn } = useCollectionColumnActions({
+    schema,
+    spacePath,
+    collectionPath,
+    projectPath,
+    onSchemaChange,
+  });
   const {
     entries,
     setEntries,
@@ -205,15 +212,9 @@ export function CalendarView({
   }, [hasActorCardField, loadActors]);
 
   async function handleAddDateColumn() {
-    const fieldName = uniqueColumnName(schema, m.collection_date_field());
-    const next = await addCollectionDateColumn({
-      spacePath,
-      collectionPath,
-      column: { name: fieldName, type: "date" },
-      projectPath,
+    const { name: fieldName } = await addDateColumn({
+      baseName: m.collection_date_field(),
     });
-    const normalized = normalizeSchema(next);
-    onSchemaChange(normalized);
     await onUpdateView(name, { date_field: fieldName });
   }
 

@@ -7,7 +7,6 @@ import type {
 } from "@/features/properties";
 import { normalizeEntryPath } from "@/features/collection/lib/utils";
 import { PROPERTY_TYPES } from "@/features/properties";
-import { saveCollectionTreeOrder } from "../../api";
 import type { CollectionTableRow } from "./types";
 
 export function showNestedForView(view: CollectionView) {
@@ -171,18 +170,4 @@ export function reorderVisibleEntries(
   const insertAt = next.findIndex((entry) => entry.path === anchor.path);
   if (insertAt < 0) return [...next, moved];
   return [...next.slice(0, insertAt), moved, ...next.slice(insertAt)];
-}
-
-export async function saveTableOrder(
-  spacePath: string,
-  collectionPath: string,
-  entries: Entry[],
-  projectPath?: string | null,
-) {
-  await saveCollectionTreeOrder({
-    spacePath,
-    orderKey: collectionPath,
-    entries,
-    projectPath,
-  });
 }

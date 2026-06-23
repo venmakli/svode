@@ -22,23 +22,16 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { propertyFieldSavePolicy, type Entry } from "@/features/entry";
-import { useEntryFieldSave } from "@/features/entry/field-save";
-import type {
-  Column,
-  PropertyType,
-} from "@/features/properties";
-import { normalizeSchema } from "@/features/properties";
-import { useSpace, useSpaceTreeSync } from "@/features/space";
+import type { PropertyType } from "@/features/properties";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
-import { addCollectionColumn } from "../../api";
-import { useCollectionActors } from "../../hooks";
-import { titleFilter } from "../../lib/utils";
 import {
-  entryParentDir,
-  saveTableOrder,
-  uniqueColumnName,
-} from "../table/utils";
+  useCollectionActors,
+  useCollectionColumnActions,
+  useCollectionEntryFieldSave,
+  useCollectionTreeOrder,
+} from "../../hooks";
+import { titleFilter } from "../../lib/utils";
+import { entryParentDir } from "../table/utils";
 import { BoardCardContent } from "./board-card";
 import { BoardColumn } from "./board-column";
 import type { BoardViewProps } from "./types";
@@ -104,13 +97,17 @@ export function BoardView({
     sort,
     spacePath,
   });
-  const sidebarSpaceId = useSpace((state) => {
-    const space =
-      state.spaces.find((item) => item.path === spacePath) ??
-      state.rootSpaces.find((item) => item.path === spacePath);
-    return space?.id ?? null;
+  const { reloadOrderParent, saveOrder } = useCollectionTreeOrder({
+    spacePath,
+    projectPath,
   });
-  const reloadTreeParent = useSpaceTreeSync((state) => state.reloadTreeParent);
+  const { addColumn } = useCollectionColumnActions({
+    schema,
+    spacePath,
+    collectionPath,
+    projectPath,
+    onSchemaChange,
+  });
   const groupBy = query.merged.groupBy;
   const groupColumn = useMemo(
     () => schema.columns.find((column) => column.name === groupBy) ?? null,
@@ -188,21 +185,19 @@ export function BoardView({
     };
   }, [createAsFolder, createFocusSignal, renderedColumns]);
 
-  const applyEntryUpdate = useCallback(
-    (entryPath: string, update: (entry: Entry) => Entry) => {
-      setEntries((current) =>
-        current.map((item) => (item.path === entryPath ? update(item) : item)),
-      );
-      setManualOrderEntries((current) =>
-        current.map((item) => (item.path === entryPath ? update(item) : item)),
-      );
+  const handleFieldCommitError = useCallback(
+    (error: unknown) => {
+      console.warn("Failed to update board field:", error);
+      void loadEntries();
     },
-    [setEntries, setManualOrderEntries],
+    [loadEntries],
   );
-  const saveEntryField = useEntryFieldSave({
+  const { commitField, saveField } = useCollectionEntryFieldSave({
     spacePath,
     projectPath,
-    applyEntryUpdate,
+    setEntries,
+    setManualOrderEntries,
+    onCommitError: handleFieldCommitError,
   });
 
   function handleDragStart(event: DragStartEvent) {
@@ -312,34 +307,22 @@ export function BoardView({
 
     try {
       if (crossColumn) {
-        await saveEntryField(activeEntry, groupColumn.name, targetValue, {
-          policy: propertyFieldSavePolicy(groupColumn),
-          flush: true,
-        });
+        await saveField(activeEntry, groupColumn, targetValue, { flush: true });
       }
       if (positional) {
-        await saveTableOrder(
-          spacePath,
-          collectionPath,
-          nextOrderTopLevel,
-          projectPath,
-        );
-        if (sidebarSpaceId)
-          await reloadTreeParent(sidebarSpaceId, collectionPath);
+        await saveOrder(collectionPath, nextOrderTopLevel);
+        await reloadOrderParent(collectionPath);
       }
       await loadEntries();
     } catch (error) {
       console.warn("Failed to move board card:", error);
       if (crossColumn) {
         try {
-          await saveEntryField(
+          await saveField(
             activeEntry,
-            groupColumn.name,
+            groupColumn,
             groupValueForKey(sourceGroupKey),
-            {
-              policy: propertyFieldSavePolicy(groupColumn),
-              flush: true,
-            },
+            { flush: true },
           );
         } catch (rollbackError) {
           console.warn("Failed to rollback board card move:", rollbackError);
@@ -369,30 +352,12 @@ export function BoardView({
     await loadEntries();
   }
 
-  const commitField = useCallback(
-    async (entry: Entry, column: Column, value: unknown) => {
-      try {
-        await saveEntryField(entry, column.name, value, {
-          policy: propertyFieldSavePolicy(column),
-        });
-      } catch (error) {
-        console.warn("Failed to update board field:", error);
-        void loadEntries();
-      }
-    },
-    [loadEntries, saveEntryField],
-  );
-
   async function addGroupColumn(type: PropertyType = "status") {
-    const column = { name: uniqueColumnName(schema, "Status"), type };
-    const next = await addCollectionColumn({
-      spacePath,
-      collectionPath,
-      column,
-      projectPath,
+    const { name } = await addColumn({
+      type,
+      baseName: "Status",
     });
-    onSchemaChange(normalizeSchema(next));
-    query.setLocalQuery({ groupBy: column.name });
+    query.setLocalQuery({ groupBy: name });
   }
 
   if (loading) {

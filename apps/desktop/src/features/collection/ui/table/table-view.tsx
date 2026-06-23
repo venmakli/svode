@@ -9,14 +9,14 @@ import {
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import { Table } from "@/components/ui/table";
-import { propertyFieldSavePolicy, type Entry } from "@/features/entry";
-import { useEntryFieldSave } from "@/features/entry/field-save";
-import { normalizeSchema } from "@/features/properties";
-import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
-import { addCollectionColumn } from "../../api";
-import type { Column, PropertyType } from "@/features/properties";
-import { useCollectionActors } from "../../hooks";
+import type { PropertyType } from "@/features/properties";
+import {
+  useCollectionActors,
+  useCollectionColumnActions,
+  useCollectionEntryFieldSave,
+  useCollectionTreeOrder,
+} from "../../hooks";
 import { titleFilter } from "../../lib/utils";
 import { isEditableTarget } from "../../lib/utils";
 import {
@@ -37,9 +37,7 @@ import {
   flattenRows,
   normalizeVisibleFields,
   reorderVisibleEntries,
-  saveTableOrder,
   showNestedForView,
-  uniqueColumnName,
 } from "./utils";
 import * as m from "@/paraglide/messages.js";
 
@@ -74,13 +72,10 @@ export function TableView({
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerAsFolder, setComposerAsFolder] = useState(false);
   const [composerValue, setComposerValue] = useState("");
-  const sidebarSpaceId = useSpace((state) => {
-    const space =
-      state.spaces.find((item) => item.path === spacePath) ??
-      state.rootSpaces.find((item) => item.path === spacePath);
-    return space?.id ?? null;
+  const { reloadOrderParent, saveOrder } = useCollectionTreeOrder({
+    spacePath,
+    projectPath,
   });
-  const reloadTreeParent = useSpaceTreeSync((state) => state.reloadTreeParent);
   const showNested = showNestedForView(view);
   const density =
     view.density === "compact" || view.density === "spacious"
@@ -173,44 +168,31 @@ export function TableView({
     });
   }, [createAsFolder, createFocusSignal]);
 
-  const applyEntryUpdate = useCallback(
-    (entryPath: string, update: (entry: Entry) => Entry) => {
-      setEntries((current) =>
-        current.map((item) => (item.path === entryPath ? update(item) : item)),
-      );
+  const handleFieldCommitError = useCallback(
+    (saveError: unknown) => {
+      console.warn("Failed to update table field:", saveError);
+      void loadEntries();
     },
-    [setEntries],
+    [loadEntries],
   );
-  const saveEntryField = useEntryFieldSave({
+  const { commitField } = useCollectionEntryFieldSave({
     spacePath,
     projectPath,
-    applyEntryUpdate,
+    setEntries,
+    onCommitError: handleFieldCommitError,
   });
-
-  const commitField = useCallback(
-    async (
-      entry: Entry,
-      column: Column,
-      value: unknown,
-      options?: { flush?: boolean },
-    ) => {
-      try {
-        await saveEntryField(entry, column.name, value, {
-          policy: propertyFieldSavePolicy(column),
-          flush: options?.flush,
-        });
-      } catch (saveError) {
-        console.warn("Failed to update table field:", saveError);
-        void loadEntries();
-      }
-    },
-    [loadEntries, saveEntryField],
-  );
 
   const updateViewPatch = useCallback(
     (patch: Record<string, unknown>) => onUpdateView(name, patch),
     [name, onUpdateView],
   );
+  const { addColumn } = useCollectionColumnActions({
+    schema,
+    spacePath,
+    collectionPath,
+    projectPath,
+    onSchemaChange,
+  });
 
   const tableColumns = useTableColumns({
     visibleFields,
@@ -260,18 +242,11 @@ export function TableView({
   );
 
   async function handleAddColumn(type: PropertyType) {
-    const name = uniqueColumnName(schema, propertyTypeLabel(type));
-    const next = await addCollectionColumn({
-      spacePath,
-      collectionPath,
-      column: {
-        name,
-        type,
-        relation: type === "relation" ? collectionPath || "." : undefined,
-      },
-      projectPath,
+    const { name } = await addColumn({
+      type,
+      baseName: propertyTypeLabel(type),
+      relation: type === "relation" ? collectionPath || "." : undefined,
     });
-    onSchemaChange(normalizeSchema(next));
     await updateViewPatch({ visible_fields: [...visibleFields, name] });
     setOpenColumn(name);
   }
@@ -312,16 +287,14 @@ export function TableView({
       String(active.id),
       newIndex,
     );
-    await saveTableOrder(spacePath, collectionPath, fullOrder, projectPath);
+    await saveOrder(collectionPath, fullOrder);
     setEntries((current) => {
       const children = current.filter(
         (entry) => entryParentDir(entry.path) !== collectionPath,
       );
       return [...fullOrder, ...children];
     });
-    if (sidebarSpaceId) {
-      await reloadTreeParent(sidebarSpaceId, collectionPath);
-    }
+    await reloadOrderParent(collectionPath);
   }
 
   if (loading) return <LoadingTable fields={visibleFields} schema={schema} />;

@@ -1,8 +1,5 @@
 import {
-  useCallback,
-  useEffect,
   useMemo,
-  useState,
   type Dispatch,
   type ReactNode,
   type SetStateAction,
@@ -21,11 +18,6 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/shared/lib/utils";
 import { EntryIdentityHeader } from "@/features/editor";
 import { PlateDocumentEditor } from "@/features/editor";
-import { readEntry as readEntryApi } from "@/features/entry/entry-api";
-import {
-  isEntryTreeMetaField,
-  useEntryFieldSave,
-} from "@/features/entry/field-save";
 import {
   propertyFieldSavePolicy,
   type Entry,
@@ -37,13 +29,9 @@ import {
   EntrySystemFields,
 } from "@/features/entry/detail";
 import { PropertyPanel } from "@/features/properties/panel";
-import {
-  type EntrySchemaResult,
-} from "@/features/properties";
-import { getEntrySchema } from "@/features/properties/api";
-import { normalizeSchema } from "@/features/properties";
-import { useSpaceTreeSync } from "@/features/space";
+import type { EntrySchemaResult } from "@/features/properties";
 import { handleError } from "../lib/errors";
+import { useEntryPeekFieldSave, useEntryPeekLoader } from "../hooks";
 import type { EntryPeekTarget } from "../model";
 import * as m from "@/paraglide/messages.js";
 
@@ -79,61 +67,10 @@ export function EntryPeekSheet({
   renderNested,
 }: EntryPeekSheetProps) {
   const open = Boolean(target);
-  const [entry, setEntry] = useState<Entry | null>(target?.entry ?? null);
-  const [schemaResult, setSchemaResult] = useState<EntrySchemaResult | null>(
-    null,
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!target) {
-      queueMicrotask(() => {
-        if (!cancelled) {
-          setEntry(null);
-          setSchemaResult(null);
-        }
-      });
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    queueMicrotask(() => {
-      if (!cancelled) {
-        setEntry(target.entry);
-        setSchemaResult(null);
-      }
-    });
-
-    if (target.nested) {
-      return () => {
-        cancelled = true;
-      };
-    }
-    void Promise.all([
-      readEntryApi({ spacePath, path: target.entry.path }),
-      getEntrySchema({ spacePath, filePath: target.entry.path }).catch(
-        () => null,
-      ),
-    ])
-      .then(([nextEntry, nextSchemaResult]) => {
-        if (cancelled) return;
-        setEntry(nextEntry);
-        setSchemaResult(
-          nextSchemaResult
-            ? {
-                ...nextSchemaResult,
-                schema: normalizeSchema(nextSchemaResult.schema),
-              }
-            : null,
-        );
-      })
-      .catch(handleError);
-
-    return () => {
-      cancelled = true;
-    };
-  }, [spacePath, target]);
+  const { entry, setEntry, schemaResult, setSchemaResult } = useEntryPeekLoader({
+    target,
+    spacePath,
+  });
 
   const contentClassName = useMemo(
     () =>
@@ -240,32 +177,11 @@ function StandardEntryPeek({
   onEntryChange: Dispatch<SetStateAction<Entry | null>>;
   onSchemaChange: (result: EntrySchemaResult | null) => void;
 }) {
-  const patchEntryTreeMeta = useSpaceTreeSync(
-    (state) => state.patchEntryTreeMeta,
-  );
-  const applyEntryUpdate = useCallback(
-    (entryPath: string, update: (entry: Entry) => Entry) => {
-      onEntryChange((current) =>
-        current && current.path === entryPath ? update(current) : current,
-      );
-    },
-    [onEntryChange],
-  );
-  const updateField = useEntryFieldSave({
+  const updateField = useEntryPeekFieldSave({
     spacePath,
     projectPath,
-    applyEntryUpdate,
-    onSaved: (updated, context) => {
-      if (isEntryTreeMetaField(context.field)) {
-        patchEntryTreeMeta(
-          spaceId,
-          updated.path,
-          updated.meta.title,
-          updated.meta.icon,
-          updated.meta.description ?? null,
-        );
-      }
-    },
+    spaceId,
+    onEntryChange,
   });
 
   async function updateCover(cover: EntryCover | null) {
