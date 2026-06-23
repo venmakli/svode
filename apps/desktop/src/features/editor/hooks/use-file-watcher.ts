@@ -65,7 +65,15 @@ export function useFileWatcher({
   useEffect(() => {
     if (!spacePath) return;
 
+    let disposed = false;
     const unlisteners: Array<() => void> = [];
+    const trackUnlisten = (unlisten: () => void) => {
+      if (disposed) {
+        unlisten();
+        return;
+      }
+      unlisteners.push(unlisten);
+    };
 
     // file:changed
     listen<FileEvent>("file:changed", (event) => {
@@ -112,7 +120,7 @@ export function useFileWatcher({
         // Document not currently open — mark cache stale until it is opened.
         markAiModified(changedPath);
       }
-    }).then((unlisten) => unlisteners.push(unlisten));
+    }).then(trackUnlisten);
 
     // file:deleted
     listen<FileEvent>("file:deleted", (event) => {
@@ -127,16 +135,17 @@ export function useFileWatcher({
         closeDocument();
         toast.error(m.editor_file_deleted());
       }
-    }).then((unlisten) => unlisteners.push(unlisten));
+    }).then(trackUnlisten);
 
     // file:created
     listen<FileEvent>("file:created", (event) => {
       if (isSchemaPath(event.payload.path)) {
         reindexProjectForSchemaChange();
       }
-    }).then((unlisten) => unlisteners.push(unlisten));
+    }).then(trackUnlisten);
 
     return () => {
+      disposed = true;
       unlisteners.forEach((fn) => fn());
     };
   }, [
