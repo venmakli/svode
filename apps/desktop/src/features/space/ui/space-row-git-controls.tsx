@@ -8,6 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import {
   SpaceGitActivityIndicator,
   useSpaceSidebarGit,
+  type SpaceSidebarGitCloneProgress,
 } from "@/features/git/sidebar";
 import type { LfsState } from "../model";
 import { LfsIndicatorIcon } from "./nav-space-indicators";
@@ -18,6 +19,17 @@ interface SpaceRowGitControlsProps {
   refreshing: boolean;
   rootPath: string;
   spacePath: string;
+}
+
+function cloneProgressLabel(cloning: SpaceSidebarGitCloneProgress): string {
+  switch (cloning.status) {
+    case "starting":
+      return m.git_clone_progress();
+    case "failed":
+      return cloning.error ?? m.git_clone_failed();
+    case "progress":
+      return `${cloning.phase ?? m.git_clone_progress()} ${cloning.percent}%`;
+  }
 }
 
 export function useSpaceRowGitControls({
@@ -63,9 +75,7 @@ export function useSpaceRowGitControls({
       <div className="px-2 pb-1">
         <Progress value={cloning.percent} className="h-1" />
         <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
-          {cloning.error
-            ? cloning.error
-            : `${cloning.phase} ${cloning.percent}%`}
+          {cloneProgressLabel(cloning)}
         </p>
       </div>
     ) : null,

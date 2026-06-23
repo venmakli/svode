@@ -1,7 +1,6 @@
 import { listenCloneProgress } from "@/platform/git/git-api";
 import type { CloneProgressDto } from "@/platform/git/git-types";
 import { useGitStore, type GitCloneProgress } from "../model";
-import * as m from "@/paraglide/messages.js";
 
 export interface GitCloneProgressTracker {
   complete: () => void;
@@ -18,6 +17,7 @@ function setSpaceCloneProgress(
 
 function toGitCloneProgress(progress: CloneProgressDto): GitCloneProgress {
   return {
+    status: "progress",
     phase: progress.phase,
     percent: progress.percent,
   };
@@ -27,7 +27,11 @@ export async function trackSpaceCloneProgress(
   spacePath: string,
 ): Promise<GitCloneProgressTracker> {
   let disposed = false;
-  setSpaceCloneProgress(spacePath, { phase: "Starting", percent: 0 });
+  setSpaceCloneProgress(spacePath, {
+    status: "starting",
+    phase: null,
+    percent: 0,
+  });
 
   const unlisten = await listenCloneProgress((progress) => {
     if (disposed) return;
@@ -39,7 +43,8 @@ export async function trackSpaceCloneProgress(
     complete: () => setSpaceCloneProgress(spacePath, null),
     fail: (message) => {
       setSpaceCloneProgress(spacePath, {
-        phase: m.git_clone_failed(),
+        status: "failed",
+        phase: null,
         percent: 0,
         error: message,
       });

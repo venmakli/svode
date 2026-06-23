@@ -28,14 +28,21 @@ export type SyncResult =
   | { type: "NoRemote" }
   | { type: "AuthRequired" };
 
+export type GitSyncOutcome =
+  | SyncResult
+  | { type: "Failed"; message: string };
+
 export interface CloneProgress {
   spacePath: string;
   phase: string;
   percent: number;
 }
 
+export type GitCloneProgressStatus = "starting" | "progress" | "failed";
+
 export interface GitCloneProgress {
-  phase: string;
+  status: GitCloneProgressStatus;
+  phase: string | null;
   percent: number;
   error?: string;
 }

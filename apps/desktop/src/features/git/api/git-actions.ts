@@ -6,18 +6,23 @@ import {
   syncGit,
 } from "@/platform/git/git-api";
 import { getSpaceConfig } from "@/platform/space/space-api";
-import type { GitStatus } from "../model";
+import type { GitStatus, GitSyncOutcome } from "../model";
 import { toGitStatus, toSyncResult } from "./git-mappers";
 import { refreshGitStatus } from "./git-status-actions";
-import {
-  notifyGitSyncAuthRequired,
-  notifyGitSyncConflict,
-  notifyGitSyncFailed,
-} from "../effects/git-notifications";
 
 export interface GitCommitResult {
   status: GitStatus;
   committedPaths: string[];
+}
+
+export interface GitAutoSyncOptions {
+  onSyncOutcome?: (outcome: GitSyncOutcome) => void;
+}
+
+function runAutoSync(spacePath: string, options?: GitAutoSyncOptions): void {
+  void syncSpace(spacePath).then((outcome) => {
+    options?.onSyncOutcome?.(outcome);
+  });
 }
 
 /**
@@ -33,10 +38,10 @@ export async function isAutoSyncEnabled(spacePath: string): Promise<boolean> {
 }
 
 /**
- * Run pull+push for the space and surface errors through feature effects.
+ * Run pull+push for the space and return a typed outcome to callers.
  * Updates per-space syncing/error state in the git store.
  */
-export async function syncSpace(spacePath: string): Promise<void> {
+export async function syncSpace(spacePath: string): Promise<GitSyncOutcome> {
   const git = useGitStore.getState();
   git.setSyncing(spacePath, true);
   git.setSyncError(spacePath, null);
@@ -46,24 +51,23 @@ export async function syncSpace(spacePath: string): Promise<void> {
       case "Success":
         // Refresh status to clear any local indicators (file `↻`).
         await refreshGitStatus(spacePath);
-        break;
+        return result;
       case "NoRemote":
         // Silent — no remote configured is a normal state.
-        break;
+        return result;
       case "Conflict":
-        notifyGitSyncConflict(result.files.length);
         await refreshGitStatus(spacePath);
         git.setSyncError(spacePath, "conflict");
-        break;
+        return result;
       case "AuthRequired":
-        notifyGitSyncAuthRequired();
         git.setSyncError(spacePath, "auth");
-        break;
+        return result;
     }
   } catch (err) {
     console.error("git_sync failed:", err);
-    notifyGitSyncFailed();
-    git.setSyncError(spacePath, String(err));
+    const message = String(err);
+    git.setSyncError(spacePath, message);
+    return { type: "Failed", message };
   } finally {
     git.setSyncing(spacePath, false);
   }
@@ -79,6 +83,7 @@ export async function commitFileAndMaybeSync(
   spacePath: string,
   filePath: string,
   projectPath?: string,
+  options?: GitAutoSyncOptions,
 ): Promise<GitCommitResult | null> {
   let result: GitCommitResult;
   try {
@@ -101,7 +106,7 @@ export async function commitFileAndMaybeSync(
     return null;
   }
   if (await isAutoSyncEnabled(spacePath)) {
-    void syncSpace(spacePath);
+    runAutoSync(spacePath, options);
   }
   return result;
 }
@@ -115,6 +120,7 @@ export async function commitFileAndMaybeSync(
 export async function commitAllSpace(
   spacePath: string,
   projectPath?: string,
+  options?: GitAutoSyncOptions,
 ): Promise<GitCommitResult | null> {
   const previousDirtyPaths =
     useGitStore.getState().statuses[spacePath]?.files.map((file) => file.path) ??
@@ -138,15 +144,18 @@ export async function commitAllSpace(
     return null;
   }
   if (await isAutoSyncEnabled(spacePath)) {
-    void syncSpace(spacePath);
+    runAutoSync(spacePath, options);
   }
   return result;
 }
 
-export async function continueGitResolve(spacePath: string): Promise<void> {
+export async function continueGitResolve(
+  spacePath: string,
+  options?: GitAutoSyncOptions,
+): Promise<void> {
   await continuePlatformGitResolve(spacePath);
   await refreshGitStatus(spacePath);
-  void syncSpace(spacePath);
+  runAutoSync(spacePath, options);
 }
 
 /**

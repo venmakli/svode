@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { commitAllSpace } from "../api/git-actions";
+import { notifyGitSyncOutcome } from "../effects/git-notifications";
 import { useGitStore, type GitCloneProgress } from "../model";
 import { useGitWatch } from "./use-git-watch";
 
@@ -23,7 +24,9 @@ export function useSpaceSidebarGit(
     return !!(status?.hasStaged || status?.hasUnstaged);
   });
   const commitAll = useCallback(() => {
-    void commitAllSpace(spacePath, projectPath);
+    void commitAllSpace(spacePath, projectPath, {
+      onSyncOutcome: notifyGitSyncOutcome,
+    });
   }, [projectPath, spacePath]);
 
   return {
