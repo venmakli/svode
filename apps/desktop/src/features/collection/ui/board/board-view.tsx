@@ -25,7 +25,6 @@ import {
 } from "@/components/ui/empty";
 import { useEntryFieldSave } from "@/features/entry/field-save";
 import type { Entry } from "@/features/entry";
-import { entriesFromDto, type EntryDto } from "@/features/entry/entry-api";
 import { useStableViewQueryArgs } from "@/features/collection/query";
 import type {
   Column,
@@ -35,6 +34,7 @@ import type {
 import { normalizeSchema } from "@/features/properties";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
+import { listCollectionInfos, queryCollectionEntries } from "../../api";
 import { useCollectionActors } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
 import { propertyFieldSavePolicy } from "../../model/property-field-save-policy";
@@ -45,7 +45,7 @@ import {
 } from "../table/utils";
 import { BoardCardContent } from "./board-card";
 import { BoardColumn } from "./board-column";
-import type { BoardViewProps, CollectionInfo } from "./types";
+import type { BoardViewProps } from "./types";
 import {
   boardColumns,
   boardCustomFields,
@@ -161,31 +161,25 @@ export function BoardView({
     setLoading(true);
     try {
       const [baseEntries, orderEntries, collections] = await Promise.all([
-        invoke<EntryDto[]>("query_entries", {
-          space: spacePath,
+        queryCollectionEntries({
+          spacePath,
           collectionPath,
           filters: queryArgs.filters,
           sort: queryArgs.sort,
           includeNested: false,
-          limit: null,
-          offset: null,
-          projectPath: projectPath ?? null,
-        }).then(entriesFromDto),
+          projectPath,
+        }),
         hasActiveSort
           ? Promise.resolve<Entry[]>([])
-          : invoke<EntryDto[]>("query_entries", {
-              space: spacePath,
+          : queryCollectionEntries({
+              spacePath,
               collectionPath,
               filters: null,
               sort: null,
               includeNested: false,
-              limit: null,
-              offset: null,
-              projectPath: projectPath ?? null,
-            }).then(entriesFromDto),
-        invoke<CollectionInfo[]>("list_collections", {
-          space: spacePath,
-        }).catch(() => []),
+              projectPath,
+            }),
+        listCollectionInfos(spacePath).catch(() => []),
       ]);
       setEntries(baseEntries);
       setManualOrderEntries(hasActiveSort ? baseEntries : orderEntries);

@@ -1,9 +1,6 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
-import {
-  entryFromDto,
-  readEntry,
-  type EntryDto,
-} from "@/features/entry/entry-api";
+import { normalizeEntry, type Entry } from "@/features/entry";
+import { readEntry } from "@/features/entry/entry-api";
 import type { CollectionSchema } from "@/features/properties";
 import {
   normalizeTemplateInfo,
@@ -105,7 +102,7 @@ export async function instantiateTemplate({
   contextualDefaults?: Record<string, unknown> | null;
   projectPath?: string | null;
 }) {
-  return invoke<EntryDto>("instantiate_template", {
+  return invoke<Entry>("instantiate_template", {
     space: spacePath,
     collectionPath,
     templateSlug,
@@ -114,7 +111,7 @@ export async function instantiateTemplate({
     forceFolder: Boolean(forceFolder),
     contextualDefaults: contextualDefaults ?? {},
     projectPath: projectPath ?? null,
-  }).then(entryFromDto);
+  }).then(normalizeEntry);
 }
 
 export async function setDefaultTemplate({

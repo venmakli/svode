@@ -1,7 +1,7 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import type { QueryFilter, QuerySort } from "@/features/collection/query";
-import { entriesFromDto, type EntryDto } from "@/features/entry/entry-api";
 import type { CollectionSchema, Column } from "@/features/properties";
+import { queryCollectionEntries } from "./entries-api";
 
 export interface CollectionInfo {
   path: string;
@@ -24,16 +24,14 @@ export function queryCalendarEntries({
   sort: QuerySort[];
   projectPath?: string | null;
 }) {
-  return invoke<EntryDto[]>("query_entries", {
-    space: spacePath,
+  return queryCollectionEntries({
+    spacePath,
     collectionPath,
     filters,
     sort,
     includeNested: false,
-    limit: null,
-    offset: null,
-    projectPath: projectPath ?? null,
-  }).then(entriesFromDto);
+    projectPath,
+  });
 }
 
 export function listCollectionInfos(spacePath: string) {

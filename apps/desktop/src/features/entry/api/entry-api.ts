@@ -14,15 +14,12 @@ import {
   type EntryDto,
   type WriteResultDto,
 } from "@/platform/entries/entries-api";
+import { normalizeEntry } from "../model/normalize-entry";
 import type {
-  CoverColorName,
   Entry,
-  EntryCover,
   LinkValidationResult,
   WriteResult,
 } from "../model/types";
-
-export type { EntryDto };
 
 export interface ReadEntryInput {
   spacePath: string;
@@ -95,19 +92,6 @@ export interface ConvertEntryToNestedCollectionInput {
   filePath: string;
   projectPath?: string | null;
 }
-
-const COVER_COLOR_NAMES = new Set<CoverColorName>([
-  "neutral",
-  "gray",
-  "red",
-  "orange",
-  "yellow",
-  "green",
-  "blue",
-  "purple",
-  "pink",
-  "brown",
-]);
 
 export async function readEntry(input: ReadEntryInput): Promise<Entry> {
   const entry = await readEntryDto(input.spacePath, input.path);
@@ -220,18 +204,8 @@ export function convertEntryToNestedCollection(
   });
 }
 
-export function entryFromDto(entry: EntryDto): Entry {
-  return {
-    ...entry,
-    meta: {
-      ...entry.meta,
-      cover: entryCoverFromDto(entry.meta.cover),
-    },
-  };
-}
-
-export function entriesFromDto(entries: EntryDto[]): Entry[] {
-  return entries.map(entryFromDto);
+function entryFromDto(entry: EntryDto): Entry {
+  return normalizeEntry(entry);
 }
 
 function writeResultFromDto(result: WriteResultDto): WriteResult {
@@ -247,17 +221,4 @@ function linkValidationResultFromDto(
   result: LinkValidationResultDto,
 ): LinkValidationResult {
   return result;
-}
-
-function entryCoverFromDto(
-  cover: EntryDto["meta"]["cover"],
-): EntryCover | null | undefined {
-  if (cover == null) return cover;
-  if (cover.type === "image") return cover;
-  return {
-    type: "color",
-    value: COVER_COLOR_NAMES.has(cover.value as CoverColorName)
-      ? (cover.value as CoverColorName)
-      : "neutral",
-  };
 }

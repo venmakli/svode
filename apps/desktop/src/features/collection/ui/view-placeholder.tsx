@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { Copy, FileText, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,7 +16,7 @@ import {
 import type { CollectionView, ViewType } from "@/features/collection/query";
 import type { CollectionSchema } from "@/features/properties";
 import type { Entry } from "@/features/entry";
-import { entriesFromDto, type EntryDto } from "@/features/entry/entry-api";
+import { listEntriesForView } from "../api";
 import { IncompleteState } from "./incomplete-state";
 import { titleFilter } from "../lib/utils";
 import * as m from "@/paraglide/messages.js";
@@ -49,14 +48,13 @@ export function ViewPlaceholder({
 }) {
   const [entries, setEntries] = useState<Entry[]>([]);
   useEffect(() => {
-    invoke<EntryDto[]>("list_entries_for_view", {
-      space: spacePath,
+    listEntriesForView({
+      spacePath,
       collectionPath,
       viewName: name,
       includeNested: false,
-      projectPath: projectPath ?? null,
+      projectPath,
     })
-      .then(entriesFromDto)
       .then(setEntries)
       .catch((error) => console.warn("Failed to load view entries:", error));
   }, [collectionPath, name, projectPath, refreshToken, spacePath]);

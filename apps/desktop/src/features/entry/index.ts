@@ -7,3 +7,8 @@ export type {
   LinkValidationResult,
   WriteResult,
 } from "./model/types";
+export {
+  normalizeEntries,
+  normalizeEntry,
+  normalizeEntryCover,
+} from "./model/normalize-entry";

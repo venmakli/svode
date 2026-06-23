@@ -1,8 +1,7 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import type { QueryFilter, QuerySort } from "@/features/collection/query";
 import { normalizeEntryPath } from "@/features/collection/lib/utils";
-import type { Entry } from "@/features/entry";
-import { entriesFromDto, type EntryDto } from "@/features/entry/entry-api";
+import { normalizeEntries, type Entry } from "@/features/entry";
 
 export function queryCollectionEntries({
   spacePath,
@@ -19,7 +18,7 @@ export function queryCollectionEntries({
   includeNested: boolean;
   projectPath?: string | null;
 }) {
-  return invoke<EntryDto[]>("query_entries", {
+  return invoke<Entry[]>("query_entries", {
     space: spacePath,
     collectionPath,
     filters,
@@ -28,7 +27,29 @@ export function queryCollectionEntries({
     limit: null,
     offset: null,
     projectPath: projectPath ?? null,
-  }).then(entriesFromDto);
+  }).then(normalizeEntries);
+}
+
+export function listEntriesForView({
+  spacePath,
+  collectionPath,
+  viewName,
+  includeNested,
+  projectPath,
+}: {
+  spacePath: string;
+  collectionPath: string;
+  viewName: string;
+  includeNested: boolean;
+  projectPath?: string | null;
+}) {
+  return invoke<Entry[]>("list_entries_for_view", {
+    space: spacePath,
+    collectionPath,
+    viewName,
+    includeNested,
+    projectPath: projectPath ?? null,
+  }).then(normalizeEntries);
 }
 
 export async function saveCollectionTreeOrder({

@@ -17,10 +17,10 @@ import {
 } from "@/features/collection/query";
 import { useEntryFieldSave } from "@/features/entry/field-save";
 import type { Entry } from "@/features/entry";
-import { entriesFromDto, type EntryDto } from "@/features/entry/entry-api";
 import { normalizeSchema } from "@/features/properties";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
+import { listCollectionInfos, queryCollectionEntries } from "../../api";
 import type {
   CollectionSchema,
   Column,
@@ -37,7 +37,7 @@ import { TableFooterComposer } from "./table-footer-composer";
 import { TableHeaderRow } from "./table-header-row";
 import { TableRowsBody } from "./table-rows-body";
 import { ErrorState, LoadingTable, TableShell } from "./table-shell";
-import type { CollectionInfo, TableEditingCell, TableViewProps } from "./types";
+import type { TableEditingCell, TableViewProps } from "./types";
 import { useTableColumns } from "./use-table-columns";
 import {
   entryParentDir,
@@ -158,19 +158,15 @@ export function TableView({
     setError(null);
     try {
       const [baseEntries, collections] = await Promise.all([
-        invoke<EntryDto[]>("query_entries", {
-          space: spacePath,
+        queryCollectionEntries({
+          spacePath,
           collectionPath,
           filters: queryArgs.filters,
           sort: queryArgs.sort,
           includeNested: showNested,
-          limit: null,
-          offset: null,
-          projectPath: projectPath ?? null,
-        }).then(entriesFromDto),
-        invoke<CollectionInfo[]>("list_collections", {
-          space: spacePath,
-        }).catch(() => []),
+          projectPath,
+        }),
+        listCollectionInfos(spacePath).catch(() => []),
       ]);
       const collectionPaths = new Set(collections.map((item) => item.path));
       setNestedCollectionPaths(collectionPaths);
@@ -211,18 +207,16 @@ export function TableView({
             (nestedSchema?.views ?? []) as CollectionView[]
           ).find((item) => item?.type === "table");
           try {
-            return await invoke<EntryDto[]>("query_entries", {
-              space: spacePath,
+            return await queryCollectionEntries({
+              spacePath,
               collectionPath: nestedPath,
               filters: nestedTableView?.filter ?? null,
               sort: nestedTableView?.sort ?? null,
               includeNested: nestedTableView
                 ? showNestedForView(nestedTableView)
                 : true,
-              limit: null,
-              offset: null,
-              projectPath: projectPath ?? null,
-            }).then(entriesFromDto);
+              projectPath,
+            });
           } catch (nestedLoadError) {
             console.warn(
               "Failed to load nested table entries:",
