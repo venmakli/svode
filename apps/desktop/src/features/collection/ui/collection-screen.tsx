@@ -17,16 +17,17 @@ import {
   detailPageToolbarClassName,
 } from "@/shared/ui/page-layout";
 import { useOpenEntryDocument } from "@/features/entry/selection";
-import type { Entry } from "@/features/entry";
+import { propertyFieldSavePolicy, type Entry } from "@/features/entry";
+import {
+  EntryDetailActions,
+  EntrySystemFields,
+} from "@/features/entry/detail";
 import { useSpaceTreeSync } from "@/features/space";
 import { useViewQuery } from "@/features/collection/query";
 import { DeleteDialogs } from "./delete-dialogs";
-import { EntryDetailActions } from "./entry-detail-actions";
-import { EntrySystemFields } from "./entry-system-fields";
 import { DocumentSettings } from "./document-settings-popover";
 import { EntryPeekSheet } from "./entry-peek-sheet";
 import { handleError } from "../lib/errors";
-import { propertyFieldSavePolicy } from "../model/property-field-save-policy";
 import { CollectionSkeleton } from "./skeleton";
 import { CollectionTabStrip } from "./view-tabs";
 import { ViewPlaceholder } from "./view-placeholder";

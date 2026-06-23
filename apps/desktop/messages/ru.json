@@ -577,6 +577,7 @@
   "collection_no_entries": "В этом виде нет записей.",
   "collection_open_in_peek": "Открыть в peek",
   "collection_duplicate_entry": "Дублировать",
+  "entry_duplicate": "Дублировать",
   "entry_actions": "Действия записи",
   "entry_created": "Создано",
   "entry_updated": "Обновлено",

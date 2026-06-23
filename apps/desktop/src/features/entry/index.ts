@@ -12,3 +12,7 @@ export {
   normalizeEntry,
   normalizeEntryCover,
 } from "./model/normalize-entry";
+export {
+  isTextLikePropertyType,
+  propertyFieldSavePolicy,
+} from "./property-field-save";

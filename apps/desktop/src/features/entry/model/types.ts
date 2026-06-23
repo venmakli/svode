@@ -36,6 +36,12 @@ export interface Entry {
   warnings?: EntryWarning[];
 }
 
+export interface EntryDetailState {
+  form: "leaf" | "folder" | "nestedCollection";
+  subpageCount: number;
+  otherFileCount: number;
+}
+
 export interface WriteResult {
   newPath: string | null;
   modifiedFiles: string[];

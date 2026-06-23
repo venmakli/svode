@@ -9,8 +9,8 @@ import {
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import { Table } from "@/components/ui/table";
+import { propertyFieldSavePolicy, type Entry } from "@/features/entry";
 import { useEntryFieldSave } from "@/features/entry/field-save";
-import type { Entry } from "@/features/entry";
 import { normalizeSchema } from "@/features/properties";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
@@ -19,7 +19,6 @@ import type { Column, PropertyType } from "@/features/properties";
 import { useCollectionActors } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
 import { isEditableTarget } from "../../lib/utils";
-import { propertyFieldSavePolicy } from "../../model/property-field-save-policy";
 import {
   usePersistentSet,
   usePersistentSizing,

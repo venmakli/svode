@@ -7,9 +7,10 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
-import { Maximize2, X } from "lucide-react";
+import { Maximize2, Star, StarOff, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import {
   Sheet,
   SheetClose,
@@ -25,7 +26,16 @@ import {
   isEntryTreeMetaField,
   useEntryFieldSave,
 } from "@/features/entry/field-save";
-import type { Entry, EntryCover } from "@/features/entry";
+import {
+  propertyFieldSavePolicy,
+  type Entry,
+  type EntryCover,
+} from "@/features/entry";
+import {
+  EntryDetailActions,
+  EntrySubpages,
+  EntrySystemFields,
+} from "@/features/entry/detail";
 import { PropertyPanel } from "@/features/properties/panel";
 import {
   type EntrySchemaResult,
@@ -33,11 +43,7 @@ import {
 import { getEntrySchema } from "@/features/properties/api";
 import { normalizeSchema } from "@/features/properties";
 import { useSpaceTreeSync } from "@/features/space";
-import { EntryDetailActions } from "./entry-detail-actions";
-import { EntrySubpages } from "./entry-subpages";
-import { EntrySystemFields } from "./entry-system-fields";
 import { handleError } from "../lib/errors";
-import { propertyFieldSavePolicy } from "../model/property-field-save-policy";
 import type { EntryPeekTarget } from "../model";
 import * as m from "@/paraglide/messages.js";
 
@@ -378,6 +384,27 @@ function EntryPeekActions({
   projectPath?: string | null;
   spaceId: string;
 }) {
+  const templateDefaultAction =
+    template && onSetTemplateDefault ? (
+      template.isDefault ? (
+        <DropdownMenuItem
+          onClick={() => void onSetTemplateDefault(null).catch(handleError)}
+        >
+          <StarOff data-icon="inline-start" />
+          {m.collection_template_unset_default()}
+        </DropdownMenuItem>
+      ) : (
+        <DropdownMenuItem
+          onClick={() =>
+            void onSetTemplateDefault(template.slug).catch(handleError)
+          }
+        >
+          <Star data-icon="inline-start" />
+          {m.collection_template_set_default()}
+        </DropdownMenuItem>
+      )
+    ) : null;
+
   return (
     <div className="flex items-center gap-1">
       <Button
@@ -407,11 +434,18 @@ function EntryPeekActions({
         projectPath={projectPath}
         spaceId={spaceId}
         onConverted={onConvertedEntry}
-        onDuplicateEntry={onDuplicateEntry}
+        onDuplicateEntry={(entryToDuplicate) => {
+          if (template && onDuplicateTemplate) {
+            void onDuplicateTemplate(entryToDuplicate).catch(handleError);
+            return;
+          }
+          onDuplicateEntry(entryToDuplicate);
+        }}
         onDeleteEntry={onDeleteEntry}
-        template={template}
-        onSetTemplateDefault={onSetTemplateDefault}
-        onDuplicateTemplate={onDuplicateTemplate}
+        actionItemsBeforeDuplicate={templateDefaultAction}
+        duplicateLabel={
+          template ? m.collection_template_duplicate() : undefined
+        }
       />
     </div>
   );

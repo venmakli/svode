@@ -1,12 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Copy,
   Database,
   FilePlus,
   FileText,
   MoreVertical,
-  Star,
-  StarOff,
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,13 +21,12 @@ import {
   convertEntryToLeaf,
   convertEntryToNestedCollection,
   createEntry,
+  getEntryDetailState,
   readEntry,
-} from "@/features/entry/entry-api";
-import type { Entry } from "@/features/entry";
-import { getEntryDetailState } from "../api";
-import { normalizeEntryPath } from "../lib/utils";
+} from "../entry-api";
+import type { Entry, EntryDetailState } from "../model";
+import { normalizeEntryPath } from "../lib/path";
 import { handleError } from "../lib/errors";
-import type { EntryDetailState } from "../model";
 import * as m from "@/paraglide/messages.js";
 
 interface EntryDetailActionsProps {
@@ -40,13 +37,8 @@ interface EntryDetailActionsProps {
   onConverted?: (entry: Entry, nested: boolean) => void;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
-  template?: {
-    slug: string;
-    collectionPath: string;
-    isDefault: boolean;
-  };
-  onSetTemplateDefault?: (slug: string | null) => Promise<void>;
-  onDuplicateTemplate?: (entry: Entry) => Promise<void>;
+  actionItemsBeforeDuplicate?: ReactNode;
+  duplicateLabel?: string;
 }
 
 export function EntryDetailActions({
@@ -57,9 +49,8 @@ export function EntryDetailActions({
   onConverted,
   onDuplicateEntry,
   onDeleteEntry,
-  template,
-  onSetTemplateDefault,
-  onDuplicateTemplate,
+  actionItemsBeforeDuplicate,
+  duplicateLabel,
 }: EntryDetailActionsProps) {
   const [state, setState] = useState<{
     path: string;
@@ -215,38 +206,10 @@ export function EntryDetailActions({
             </DropdownMenuItem>
           </>
         ) : null}
-        {template && onSetTemplateDefault ? (
-          template.isDefault ? (
-            <DropdownMenuItem
-              onClick={() => void onSetTemplateDefault(null).catch(handleError)}
-            >
-              <StarOff data-icon="inline-start" />
-              {m.collection_template_unset_default()}
-            </DropdownMenuItem>
-          ) : (
-            <DropdownMenuItem
-              onClick={() =>
-                void onSetTemplateDefault(template.slug).catch(handleError)
-              }
-            >
-              <Star data-icon="inline-start" />
-              {m.collection_template_set_default()}
-            </DropdownMenuItem>
-          )
-        ) : null}
-        <DropdownMenuItem
-          onClick={() => {
-            if (template && onDuplicateTemplate) {
-              void onDuplicateTemplate(entry).catch(handleError);
-              return;
-            }
-            onDuplicateEntry(entry);
-          }}
-        >
+        {actionItemsBeforeDuplicate}
+        <DropdownMenuItem onClick={() => onDuplicateEntry(entry)}>
           <Copy data-icon="inline-start" />
-          {template
-            ? m.collection_template_duplicate()
-            : m.collection_duplicate_entry()}
+          {duplicateLabel ?? m.entry_duplicate()}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem

@@ -16,12 +16,6 @@ export type SettingsPane =
   | "sortEditor"
   | "group";
 
-export interface EntryDetailState {
-  form: "leaf" | "folder" | "nestedCollection";
-  subpageCount: number;
-  otherFileCount: number;
-}
-
 export interface EntryPeekTarget {
   entry: Entry;
   nested: boolean;

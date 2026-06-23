@@ -38,6 +38,12 @@ export interface BacklinkInfoDto {
   linkCount: number;
 }
 
+export interface EntryDetailStateDto {
+  form: "leaf" | "folder" | "nestedCollection";
+  subpageCount: number;
+  otherFileCount: number;
+}
+
 export interface WriteEntryInputDto extends Record<string, unknown> {
   space: string;
   path: string;
@@ -83,6 +89,15 @@ export function renameEntry(input: {
 
 export function readEntry(space: string, path: string): Promise<EntryDto> {
   return invokeCommand<EntryDto>("read_entry", { space, path });
+}
+
+export function getEntryDetailState(input: {
+  space: string;
+  path: string;
+}): Promise<EntryDetailStateDto> {
+  return invokeCommand<EntryDetailStateDto>("get_entry_detail_state", {
+    ...input,
+  });
 }
 
 export function writeEntry(input: WriteEntryInputDto): Promise<WriteResultDto> {
@@ -238,4 +253,8 @@ export function saveTreeOrder(input: {
   projectPath: string | null;
 }): Promise<void> {
   return invokeCommand<void>("save_tree_order", { ...input });
+}
+
+export function readTreeOrder(space: string): Promise<Record<string, string[]>> {
+  return invokeCommand<Record<string, string[]>>("read_tree_order", { space });
 }

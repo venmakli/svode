@@ -6,17 +6,18 @@ import { PlateDocumentEditor } from "@/features/editor";
 import {
   deleteEntry as deleteEntryApi,
   duplicateEntry as duplicateEntryApi,
+  getEntryDetailState,
   readEntry,
-} from "@/features/entry/entry-api";
+} from "../entry-api";
 import {
   isEntryTreeMetaField,
   useEntryFieldSave,
-} from "@/features/entry/field-save";
+} from "../field-save";
 import {
   useOpenEntryDocument,
   useOpenEntryScopeHome,
-} from "@/features/entry/selection";
-import type { Entry, EntryCover } from "@/features/entry";
+} from "../selection";
+import type { Entry, EntryCover, EntryDetailState } from "../model";
 import { PropertyPanel } from "@/features/properties/panel";
 import { normalizeSchema } from "@/features/properties";
 import {
@@ -26,14 +27,12 @@ import { getEntrySchema } from "@/features/properties/api";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
 import { useSpaceTreeSync } from "@/features/space";
 import { logTiming, nowMs } from "@/shared/lib/performance";
-import { DeleteDialogs } from "./delete-dialogs";
+import { EntryDeleteDialog } from "./entry-delete-dialog";
 import { EntryDetailActions } from "./entry-detail-actions";
 import { EntrySubpages } from "./entry-subpages";
-import { getEntryDetailState } from "../api";
-import type { EntryDetailState } from "../model";
 import { EntrySystemFields } from "./entry-system-fields";
 import { handleError } from "../lib/errors";
-import { propertyFieldSavePolicy } from "../model/property-field-save-policy";
+import { propertyFieldSavePolicy } from "../property-field-save";
 
 interface EntryDocumentScreenProps {
   spacePath: string;
@@ -293,14 +292,11 @@ export function EntryDocumentScreen({
           documentPath={currentEntry.path}
         />
       ) : null}
-      <DeleteDialogs
-        viewOpen={false}
+      <EntryDeleteDialog
         entry={deleteEntry}
-        onViewOpenChange={() => undefined}
-        onEntryOpenChange={(open) => {
+        onOpenChange={(open) => {
           if (!open) setDeleteEntry(null);
         }}
-        onDeleteView={() => undefined}
         onDeleteEntry={(entryToDelete) =>
           void deleteCurrentEntry(entryToDelete).catch(handleError)
         }

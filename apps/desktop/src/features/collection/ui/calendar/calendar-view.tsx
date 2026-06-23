@@ -14,12 +14,11 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { addCollectionDateColumn } from "@/features/collection/api";
 import { useCollectionActors } from "@/features/collection/hooks";
-import type { Entry } from "@/features/entry";
+import { propertyFieldSavePolicy, type Entry } from "@/features/entry";
 import { normalizeSchema } from "@/features/properties";
 import type { Column } from "@/features/properties";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
 import { getLocale } from "@/paraglide/runtime.js";
-import { propertyFieldSavePolicy } from "../../model/property-field-save-policy";
 import { uniqueColumnName } from "../table/utils";
 import {
   anchorFromMouse,

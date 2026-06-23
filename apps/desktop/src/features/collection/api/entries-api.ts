@@ -1,7 +1,10 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import type { QueryFilter, QuerySort } from "@/features/collection/query";
-import { normalizeEntryPath } from "@/features/collection/lib/utils";
 import { normalizeEntries, type Entry } from "@/features/entry";
+import {
+  saveEntryTreeOrder,
+  saveEntryTreeOrderNames,
+} from "@/features/entry/entry-api";
 
 export function queryCollectionEntries({
   spacePath,
@@ -63,10 +66,10 @@ export async function saveCollectionTreeOrder({
   entries: Entry[];
   projectPath?: string | null;
 }) {
-  await saveCollectionTreeOrderNames({
+  await saveEntryTreeOrder({
     spacePath,
     orderKey,
-    names: entries.map(orderNameForEntry),
+    entries,
     projectPath,
   });
 }
@@ -82,25 +85,10 @@ export async function saveCollectionTreeOrderNames({
   names: string[];
   projectPath?: string | null;
 }) {
-  const existing = await invoke<Record<string, string[]>>("read_tree_order", {
-    space: spacePath,
-  }).catch(() => ({}));
-
-  await invoke("save_tree_order", {
-    space: spacePath,
-    order: {
-      ...existing,
-      [orderKey || "."]: names,
-    },
-    projectPath: projectPath ?? null,
+  await saveEntryTreeOrderNames({
+    spacePath,
+    orderKey,
+    names,
+    projectPath,
   });
-}
-
-function orderNameForEntry(entry: Entry) {
-  const path = normalizeEntryPath(entry.path);
-  if (path.toLowerCase().endsWith("/readme.md")) {
-    const folder = path.replace(/\/readme\.md$/i, "");
-    return folder.split("/").at(-1) ?? folder;
-  }
-  return path.split("/").at(-1) ?? path;
 }

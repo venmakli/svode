@@ -5,9 +5,12 @@ import {
   convertEntryToNestedCollection as convertEntryToNestedCollectionDto,
   deleteEntry as deleteEntryDto,
   duplicateEntry as duplicateEntryDto,
+  getEntryDetailState as getEntryDetailStateDto,
   type LinkValidationResultDto,
   readEntry as readEntryDto,
+  readTreeOrder as readTreeOrderDto,
   renameEntry as renameEntryDto,
+  saveTreeOrder as saveTreeOrderDto,
   updateEntryField as updateEntryFieldDto,
   validateLinks as validateLinksDto,
   writeEntry as writeEntryDto,
@@ -17,9 +20,11 @@ import {
 import { normalizeEntry } from "../model/normalize-entry";
 import type {
   Entry,
+  EntryDetailState,
   LinkValidationResult,
   WriteResult,
 } from "../model/types";
+import { normalizeEntryPath } from "../lib/path";
 
 export interface ReadEntryInput {
   spacePath: string;
@@ -93,9 +98,37 @@ export interface ConvertEntryToNestedCollectionInput {
   projectPath?: string | null;
 }
 
+export interface GetEntryDetailStateInput {
+  spacePath: string;
+  path: string;
+}
+
+export interface SaveEntryTreeOrderInput {
+  spacePath: string;
+  orderKey: string;
+  entries: Entry[];
+  projectPath?: string | null;
+}
+
+export interface SaveEntryTreeOrderNamesInput {
+  spacePath: string;
+  orderKey: string;
+  names: string[];
+  projectPath?: string | null;
+}
+
 export async function readEntry(input: ReadEntryInput): Promise<Entry> {
   const entry = await readEntryDto(input.spacePath, input.path);
   return entryFromDto(entry);
+}
+
+export function getEntryDetailState(
+  input: GetEntryDetailStateInput,
+): Promise<EntryDetailState> {
+  return getEntryDetailStateDto({
+    space: input.spacePath,
+    path: input.path,
+  });
 }
 
 export async function createEntry(input: CreateEntryInput): Promise<Entry> {
@@ -204,8 +237,49 @@ export function convertEntryToNestedCollection(
   });
 }
 
+export async function saveEntryTreeOrder({
+  spacePath,
+  orderKey,
+  entries,
+  projectPath,
+}: SaveEntryTreeOrderInput) {
+  await saveEntryTreeOrderNames({
+    spacePath,
+    orderKey,
+    names: entries.map(orderNameForEntry),
+    projectPath,
+  });
+}
+
+export async function saveEntryTreeOrderNames({
+  spacePath,
+  orderKey,
+  names,
+  projectPath,
+}: SaveEntryTreeOrderNamesInput) {
+  const existing = await readTreeOrderDto(spacePath).catch(() => ({}));
+
+  await saveTreeOrderDto({
+    space: spacePath,
+    order: {
+      ...existing,
+      [orderKey || "."]: names,
+    },
+    projectPath: projectPath ?? null,
+  });
+}
+
 function entryFromDto(entry: EntryDto): Entry {
   return normalizeEntry(entry);
+}
+
+function orderNameForEntry(entry: Entry) {
+  const path = normalizeEntryPath(entry.path);
+  if (path.toLowerCase().endsWith("/readme.md")) {
+    const folder = path.replace(/\/readme\.md$/i, "");
+    return folder.split("/").at(-1) ?? folder;
+  }
+  return path.split("/").at(-1) ?? path;
 }
 
 function writeResultFromDto(result: WriteResultDto): WriteResult {

@@ -22,8 +22,8 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { propertyFieldSavePolicy, type Entry } from "@/features/entry";
 import { useEntryFieldSave } from "@/features/entry/field-save";
-import type { Entry } from "@/features/entry";
 import type {
   Column,
   PropertyType,
@@ -34,7 +34,6 @@ import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import { addCollectionColumn } from "../../api";
 import { useCollectionActors } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
-import { propertyFieldSavePolicy } from "../../model/property-field-save-policy";
 import {
   entryParentDir,
   saveTableOrder,

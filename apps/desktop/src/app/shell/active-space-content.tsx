@@ -1,9 +1,7 @@
 import { useActiveEntrySelection } from "@/features/entry/selection";
 import type { TreeNode } from "@/features/space";
-import {
-  CollectionScreen,
-  EntryDocumentScreen,
-} from "@/features/collection/app-shell";
+import { CollectionScreen } from "@/features/collection/app-shell";
+import { EntryDocumentScreen } from "@/features/entry/app-shell";
 import { useSpace } from "@/features/space";
 import { EmptyProjectState } from "@/features/space/app-shell";
 import {

@@ -16,8 +16,11 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { FileText, Folder, GripVertical, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { createEntry as createEntryApi } from "@/features/entry/entry-api";
-import { useOpenEntryDocument } from "@/features/entry/selection";
+import {
+  createEntry as createEntryApi,
+  saveEntryTreeOrderNames,
+} from "../entry-api";
+import { useOpenEntryDocument } from "../selection";
 import {
   getSpaceTreeSyncSnapshot,
   useSpaceTreeSync,
@@ -25,8 +28,7 @@ import {
 import { detailPageSectionClassName } from "@/shared/ui/page-layout";
 import type { TreeNode } from "@/features/space";
 import { cn } from "@/shared/lib/utils";
-import { saveCollectionTreeOrderNames } from "../api";
-import { normalizeEntryPath } from "../lib/utils";
+import { normalizeEntryPath } from "../lib/path";
 import { handleError } from "../lib/errors";
 import * as m from "@/paraglide/messages.js";
 
@@ -107,7 +109,7 @@ export function EntrySubpages({
     const next = arrayMove(subpages, oldIndex, newIndex);
     setSubpages(next);
     try {
-      await saveCollectionTreeOrderNames({
+      await saveEntryTreeOrderNames({
         spacePath,
         orderKey: folderPath || ".",
         names: next.map(orderNameForNode),

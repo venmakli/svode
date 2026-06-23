@@ -577,6 +577,7 @@
   "collection_no_entries": "No entries match this view.",
   "collection_open_in_peek": "Open in peek",
   "collection_duplicate_entry": "Duplicate",
+  "entry_duplicate": "Duplicate",
   "entry_actions": "Entry actions",
   "entry_created": "Created",
   "entry_updated": "Updated",
