@@ -8,14 +8,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { copyPropertyValue } from "../../api/property-actions";
 import { colorStyle, valueToString } from "../../lib/utils";
 import type { Column } from "../../model/types";
 import * as m from "@/paraglide/messages.js";
-import {
-  copyPropertyValue,
-  deferStateUpdate,
-  IconAction,
-} from "./common";
+import { deferStateUpdate, IconAction } from "./common";
 import type { PropertyControlProps } from "./types";
 
 export function TextControl({

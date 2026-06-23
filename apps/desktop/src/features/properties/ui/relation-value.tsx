@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { FileText, Link2Off, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import { cn } from "@/shared/lib/utils";
 import { normalizeRelationRoot, resolvedRelationPath } from "../lib/relation";
 import type { Column, RelationContext, ResolvedRelationEntry } from "../model";
 import { useResolvedRelations } from "../hooks/use-resolved-relations";
+import { useRelationValues } from "../hooks/use-relation-values";
 import * as m from "@/paraglide/messages.js";
 
 export function RelationValue({
@@ -216,27 +217,6 @@ export function RelationEntryIcon({ icon }: { icon?: string | null }) {
     );
   }
   return <FileText data-icon="inline-start" />;
-}
-
-export function useRelationValues(column: Column, value: unknown) {
-  return useMemo(() => normalizeRelationValues(column, value), [column, value]);
-}
-
-function normalizeRelationValues(column: Column, value: unknown) {
-  const raw = Array.isArray(value)
-    ? value
-    : typeof value === "string"
-      ? [value]
-      : [];
-  const values = Array.from(
-    new Set(
-      raw
-        .filter((item): item is string => typeof item === "string")
-        .map((item) => item.replace(/\\/g, "/").replace(/^\/+/, ""))
-        .filter(Boolean),
-    ),
-  );
-  return column.limit === "one" ? values.slice(0, 1) : values;
 }
 
 type RelationChipStatus =

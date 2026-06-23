@@ -6,14 +6,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  copyPropertyValue,
-  openPropertyExternal,
-} from "../../api/property-actions";
 import { colorStyle, optionColor } from "../../lib/utils";
 import type { PropertyOption } from "../../model/types";
-
-export { copyPropertyValue, openPropertyExternal };
 
 export function deferStateUpdate(update: () => void) {
   let cancelled = false;

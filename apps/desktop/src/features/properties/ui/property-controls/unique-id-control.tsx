@@ -1,11 +1,12 @@
 import { Copy } from "lucide-react";
 import { cn } from "@/shared/lib/utils";
+import { copyPropertyValue } from "../../api/property-actions";
 import {
   uniqueIdDisplay,
   uniqueIdRawDisplay,
 } from "../../lib/utils";
 import * as m from "@/paraglide/messages.js";
-import { copyPropertyValue, IconAction } from "./common";
+import { IconAction } from "./common";
 import type { PropertyControlProps } from "./types";
 
 export function UniqueIdControl({

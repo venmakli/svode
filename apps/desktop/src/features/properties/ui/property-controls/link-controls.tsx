@@ -11,19 +11,17 @@ import {
   normalizeUrlValue,
 } from "../../lib/url";
 import {
+  copyPropertyValue,
+  openPropertyExternal,
+} from "../../api/property-actions";
+import {
   isValidEmail,
   isValidPhone,
   isValidUrl,
   valueToString,
 } from "../../lib/utils";
 import * as m from "@/paraglide/messages.js";
-import {
-  copyPropertyValue,
-  deferStateUpdate,
-  IconAction,
-  openPropertyExternal,
-  useAutoOpen,
-} from "./common";
+import { deferStateUpdate, IconAction, useAutoOpen } from "./common";
 import type { PropertyControlProps } from "./types";
 
 export function UrlControl({

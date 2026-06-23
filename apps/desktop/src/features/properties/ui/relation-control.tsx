@@ -17,11 +17,8 @@ import { cn } from "@/shared/lib/utils";
 import { normalizeRelationRoot, relationValueForPath } from "../lib/relation";
 import type { Column, RelationContext, RelationTarget } from "../model";
 import { useRelationTargets } from "../hooks/use-relation-targets";
-import {
-  RelationEntryIcon,
-  RelationValue,
-  useRelationValues,
-} from "./relation-value";
+import { useRelationValues } from "../hooks/use-relation-values";
+import { RelationEntryIcon, RelationValue } from "./relation-value";
 import * as m from "@/paraglide/messages.js";
 
 function deferStateUpdate(update: () => void) {

@@ -1,4 +1,4 @@
-import type { ResolvedRelationEntry } from "../model/types";
+import type { Column, ResolvedRelationEntry } from "../model/types";
 
 export function relationValueForPath(relation: string, filePath: string) {
   const root = normalizeRelationRoot(relation);
@@ -17,4 +17,24 @@ export function normalizeRelationRoot(relation: string | null | undefined) {
 
 export function resolvedRelationPath(entry: ResolvedRelationEntry) {
   return entry.filePath ?? entry.file_path ?? "";
+}
+
+export function normalizeRelationValues(
+  column: Pick<Column, "limit">,
+  value: unknown,
+) {
+  const raw = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? [value]
+      : [];
+  const values = Array.from(
+    new Set(
+      raw
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.replace(/\\/g, "/").replace(/^\/+/, ""))
+        .filter(Boolean),
+    ),
+  );
+  return column.limit === "one" ? values.slice(0, 1) : values;
 }
