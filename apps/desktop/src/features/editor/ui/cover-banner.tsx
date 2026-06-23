@@ -1,7 +1,5 @@
 import { useMemo, useRef, useState, type PointerEvent } from "react";
-import { convertFileSrc, invokeCommand as invoke } from "@/platform/native/invoke";
 import { ImagePlus, MoveVertical, Trash2, Upload } from "lucide-react";
-import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -13,11 +11,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { joinAbs } from "../lib/doc-link-utils";
 import { cn } from "@/shared/lib/utils";
-import { pickMediaFiles } from "@/platform/filesystem/native-file-picker";
 import type { CoverColorName, EntryCover } from "@/features/entry";
 import * as m from "@/paraglide/messages.js";
+import { getCoverImageSrc } from "../api/cover-api";
+import { useCoverUpload } from "../hooks/use-cover-upload";
 
 const COVER_COLORS: { name: CoverColorName; label: string }[] = [
   { name: "neutral", label: "Neutral" },
@@ -45,14 +43,6 @@ const COVER_GRADIENTS: Record<CoverColorName, string> = {
   pink: "linear-gradient(135deg, oklch(0.9 0.13 340), oklch(0.82 0.16 350))",
   brown: "linear-gradient(135deg, oklch(0.88 0.07 70), oklch(0.76 0.09 60))",
 };
-
-interface UploadResponse {
-  spaceId: string | null;
-  relPath: string;
-  fileName: string;
-  sizeBytes: number;
-  mime: string;
-}
 
 interface CoverBannerProps {
   cover: EntryCover | null;
@@ -86,45 +76,18 @@ export function CoverBanner({
 
   const imageSrc = useMemo(() => {
     if (!cover || cover.type !== "image" || !spacePath) return undefined;
-    return convertFileSrc(joinAbs(spacePath, cover.path));
+    return getCoverImageSrc(spacePath, cover.path);
   }, [cover, spacePath]);
 
   const imagePosition =
     cover?.type === "image" ? (draftPosition ?? cover.position ?? 50) : 50;
 
-  async function uploadImageCover() {
-    if (!projectPath || !spacePath || !documentPath) {
-      toast.error(m.toast_error());
-      return;
-    }
-
-    const files = await pickMediaFiles("image", false);
-    const file = files[0];
-    if (!file) return;
-
-    try {
-      const buffer = await file.arrayBuffer();
-      const bytes = Array.from(new Uint8Array(buffer));
-      const documentAbsPath = documentPath.startsWith("/")
-        ? documentPath
-        : joinAbs(spacePath, documentPath);
-      const result = await invoke<UploadResponse>("upload_asset", {
-        projectPath,
-        documentAbsPath,
-        fileName: file.name,
-        bytes,
-        documentId: documentPath,
-      });
-      onCoverChange({
-        type: "image",
-        path: result.relPath,
-        position: 50,
-      });
-    } catch (err) {
-      console.error("Failed to upload cover image:", err);
-      toast.error(m.toast_error());
-    }
-  }
+  const uploadImageCover = useCoverUpload({
+    projectPath,
+    spacePath,
+    documentPath,
+    onCoverChange,
+  });
 
   function handlePointerDown(e: PointerEvent<HTMLDivElement>) {
     if (!isRepositioning || cover?.type !== "image") return;

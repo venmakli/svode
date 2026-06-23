@@ -23,9 +23,8 @@ import {
   absoluteDocumentPath,
   findSpaceById,
   joinAbs,
-  searchDocLinkTargets,
 } from "../lib/doc-link-utils";
-import { makeRelativeDocUrl } from "../api/doc-link-api";
+import { makeRelativeDocUrl, searchDocLinkTargets } from "../api/doc-link-api";
 
 export function DocLinkInputElement(
   props: PlateElementProps<TComboboxInputElement>,

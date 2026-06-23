@@ -62,11 +62,11 @@ import {
   joinAbs,
   relativeDocumentPath,
   resolveRelativeDocPath,
-  searchDocLinkTargets,
 } from "../lib/doc-link-utils";
 import {
   makeRelativeDocUrl,
   resolveDocLink,
+  searchDocLinkTargets,
   suggestLinkFix,
   type DocLinkResolveResult,
   type LinkFixSuggestion,
