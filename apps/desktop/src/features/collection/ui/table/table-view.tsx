@@ -30,14 +30,14 @@ import { TableRowsBody } from "./table-rows-body";
 import { ErrorState, LoadingTable, TableShell } from "./table-shell";
 import type { TableEditingCell, TableViewProps } from "./types";
 import { useTableColumns } from "./use-table-columns";
-import { useTableEntries } from "./use-table-entries";
+import { useTableEntries } from "../../hooks/table/use-table-entries";
 import {
   entryParentDir,
   flattenRows,
   normalizeVisibleFields,
   showNestedForView,
 } from "./utils";
-import { useTableEntryActions } from "./use-table-entry-actions";
+import { useTableEntryActions } from "../../hooks/table/use-table-entry-actions";
 import * as m from "@/paraglide/messages.js";
 
 export function TableView({

@@ -34,14 +34,14 @@ import { titleFilter } from "../../lib/utils";
 import { entryParentDir } from "../table/utils";
 import { SortableListRow } from "./list-row";
 import type { ListViewProps } from "./types";
-import { useListEntryActions } from "./use-list-entry-actions";
+import { useListEntryActions } from "../../hooks/list/use-list-entry-actions";
 import {
   flattenListRows,
   listDensity,
   listMetaColumns,
   normalizeListCardFields,
 } from "./utils";
-import { useListEntries } from "./use-list-entries";
+import { useListEntries } from "../../hooks/list/use-list-entries";
 import * as m from "@/paraglide/messages.js";
 
 export function ListView({

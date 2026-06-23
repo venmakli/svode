@@ -1,14 +1,13 @@
 import type { CSSProperties } from "react";
 import type { CollectionView } from "@/features/collection/query";
 import { resolveEntryImageSource } from "../../api";
-import { normalizeEntryPath } from "@/features/collection/lib/utils";
+import { entryCollectionPath, isFolderEntry } from "../../lib/entry-tree";
 import type { Entry, EntryCover } from "@/features/entry";
 import type {
   CollectionSchema,
   Column,
   ColorName,
 } from "@/features/properties";
-import { entryCollectionPath } from "../table/utils";
 
 const GALLERY_BODY_SYSTEM_FIELDS = new Set([
   "title",
@@ -55,7 +54,9 @@ export type GalleryResolvedCover =
   | {
       kind: "icon" | "initial";
       value: string;
-    };
+  };
+
+export { isFolderEntry };
 
 export function galleryCardWidth(view: CollectionView) {
   const size = String(view.size ?? "medium");
@@ -128,10 +129,6 @@ export function isNestedCollectionEntry(
   nestedCollectionPaths: Set<string>,
 ) {
   return nestedCollectionPaths.has(entryCollectionPath(entry));
-}
-
-export function isFolderEntry(entry: Entry) {
-  return normalizeEntryPath(entry.path).toLowerCase().endsWith("/readme.md");
 }
 
 export function resolveGalleryCover({

@@ -2,10 +2,13 @@ import { useCallback, type Dispatch, type SetStateAction } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { toast } from "sonner";
 import type { Entry } from "@/features/entry";
-import { useCollectionTreeOrder } from "../../hooks";
-import { entryParentDir, reorderVisibleEntries } from "../table/utils";
-import type { ListRowModel } from "./types";
-import { replaceSiblings, siblingEntries } from "./utils";
+import {
+  entryParentDir,
+  replaceSiblings,
+  reorderVisibleEntries,
+  siblingEntries,
+} from "../../lib/entry-tree";
+import { useCollectionTreeOrder } from "../use-collection-tree-order";
 import * as m from "@/paraglide/messages.js";
 
 interface UseListEntryActionsOptions {
@@ -13,7 +16,7 @@ interface UseListEntryActionsOptions {
   spacePath: string;
   projectPath?: string | null;
   entries: Entry[];
-  rows: ListRowModel[];
+  rows: Array<{ entry: Entry }>;
   setEntries: Dispatch<SetStateAction<Entry[]>>;
   loadEntries: () => Promise<void>;
   onCreateEntry: (title: string, asFolder: boolean) => Promise<Entry>;

@@ -5,7 +5,7 @@ import {
   PopoverAnchor,
   PopoverContent,
 } from "@/components/ui/popover";
-import type { CalendarCreateDraft } from "./types";
+import type { CalendarCreateDraft } from "../../model/calendar-types";
 import * as m from "@/paraglide/messages.js";
 
 export function CalendarTitlePopover({

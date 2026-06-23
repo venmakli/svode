@@ -1,8 +1,13 @@
 import type { CollectionView } from "@/features/collection/query";
 import type { Entry } from "@/features/entry";
-import { normalizeEntryPath } from "@/features/collection/lib/utils";
 import type { CollectionSchema, Column } from "@/features/properties";
-import { entryCollectionPath, entryParentDir } from "../table/utils";
+import {
+  entryCollectionPath,
+  entryParentDir,
+  isFolderEntry,
+  replaceSiblings,
+  siblingEntries,
+} from "../../lib/entry-tree";
 import type { ListRowModel } from "./types";
 
 const LIST_CANONICAL_FIELDS = new Set([
@@ -97,34 +102,4 @@ export function flattenListRows({
   return rows;
 }
 
-export function isFolderEntry(entry: Entry) {
-  return normalizeEntryPath(entry.path).toLowerCase().endsWith("/readme.md");
-}
-
-export function siblingEntries(entries: Entry[], parentPath: string) {
-  return entries.filter((entry) => entryParentDir(entry.path) === parentPath);
-}
-
-export function replaceSiblings(
-  entries: Entry[],
-  parentPath: string,
-  siblings: Entry[],
-) {
-  const siblingPaths = new Set(siblings.map((entry) => entry.path));
-  const next: Entry[] = [];
-  let inserted = false;
-
-  for (const entry of entries) {
-    if (entryParentDir(entry.path) !== parentPath) {
-      next.push(entry);
-      continue;
-    }
-    if (!inserted) {
-      next.push(...siblings);
-      inserted = true;
-    }
-    if (!siblingPaths.has(entry.path)) next.push(entry);
-  }
-
-  return inserted ? next : [...entries, ...siblings];
-}
+export { isFolderEntry, replaceSiblings, siblingEntries };

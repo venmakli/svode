@@ -2,11 +2,11 @@ import { useCallback, type Dispatch, type SetStateAction } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { toast } from "sonner";
 import type { Entry } from "@/features/entry";
-import { useCollectionTreeOrder } from "../../hooks";
 import {
   entryParentDir,
   reorderVisibleEntries,
-} from "../table/utils";
+} from "../../lib/entry-tree";
+import { useCollectionTreeOrder } from "../use-collection-tree-order";
 import * as m from "@/paraglide/messages.js";
 
 interface UseGalleryEntryActionsOptions {

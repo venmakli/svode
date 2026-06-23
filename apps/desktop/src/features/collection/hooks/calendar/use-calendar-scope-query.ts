@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import type { CollectionView } from "@/features/collection/query";
-import type { CalendarScope } from "./types";
-import { calendarScopes, normalizeCalendarScope } from "./utils";
+import type { CalendarScope } from "../../model/calendar-types";
+import {
+  calendarScopes,
+  normalizeCalendarScope,
+} from "../../model/calendar-utils";
 
 export function useCalendarScopeQuery(view: CollectionView) {
   const [scope, setScope] = useState<CalendarScope>(() =>

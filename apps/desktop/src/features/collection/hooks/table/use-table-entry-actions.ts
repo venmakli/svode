@@ -1,8 +1,8 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import type { Entry } from "@/features/entry";
-import { useCollectionTreeOrder } from "../../hooks";
-import { entryParentDir, reorderVisibleEntries } from "./utils";
+import { entryParentDir, reorderVisibleEntries } from "../../lib/entry-tree";
+import { useCollectionTreeOrder } from "../use-collection-tree-order";
 
 interface UseTableEntryActionsOptions {
   collectionPath: string;

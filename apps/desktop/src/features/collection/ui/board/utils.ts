@@ -4,14 +4,17 @@ import type {
   Column,
   ActorCandidate,
 } from "@/features/properties";
-import { isEmptyValue, actorDisplayName } from "@/features/properties";
+import { actorDisplayName } from "@/features/properties";
 import type { CollectionView } from "@/features/collection/query";
-import { normalizeEntryPath } from "@/features/collection/lib/utils";
-import { entryCollectionPath } from "../table/utils";
+import { entryCollectionPath, isFolderEntry } from "../../lib/entry-tree";
+import {
+  groupKeyForValue,
+  groupValue,
+  noValueKey,
+} from "../../lib/board-entry";
 import type { BoardColumnGroup } from "./types";
 import * as m from "@/paraglide/messages.js";
 
-const NO_VALUE_KEY = "__no_value__";
 const STATUS_GROUP_ORDER = { todo: 0, in_progress: 1, done: 2 };
 const SYSTEM_CARD_FIELDS = new Set([
   "title",
@@ -21,17 +24,16 @@ const SYSTEM_CARD_FIELDS = new Set([
   "updated",
 ]);
 
-export function noValueKey() {
-  return NO_VALUE_KEY;
-}
+export {
+  groupKeyForValue,
+  groupValue,
+  groupValueForKey,
+  noValueKey,
+  reorderEntryAround,
+  updateEntryGroupValue,
+} from "../../lib/board-entry";
 
-export function groupKeyForValue(value: unknown) {
-  return isEmptyValue(value) ? NO_VALUE_KEY : String(value);
-}
-
-export function groupValueForKey(key: string) {
-  return key === NO_VALUE_KEY ? null : key;
-}
+export { isFolderEntry };
 
 export function isGroupableColumn(column: Column | null | undefined) {
   return (
@@ -39,10 +41,6 @@ export function isGroupableColumn(column: Column | null | undefined) {
     column?.type === "status" ||
     (column?.type === "actor" && !column.multiple)
   );
-}
-
-export function groupValue(entry: Entry, column: Column) {
-  return entry.meta.extra?.[column.name] ?? null;
 }
 
 export function normalizeBoardCardFields(
@@ -89,15 +87,15 @@ export function boardColumns(
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
-  const noValue: BoardColumnGroup[] = counts.has(NO_VALUE_KEY)
-    ? [{ key: NO_VALUE_KEY, value: null, label: m.board_no_value() }]
+  const noValue: BoardColumnGroup[] = counts.has(noValueKey())
+    ? [{ key: noValueKey(), value: null, label: m.board_no_value() }]
     : [];
 
   if (groupColumn.type === "select" || groupColumn.type === "status") {
     const options = sortedOptions(groupColumn);
     const optionNames = new Set(options.map((option) => option.name));
     const invalid = Array.from(counts.keys())
-      .filter((key) => key !== NO_VALUE_KEY && !optionNames.has(key))
+      .filter((key) => key !== noValueKey() && !optionNames.has(key))
       .sort((a, b) => a.localeCompare(b));
     return [
       ...noValue,
@@ -121,7 +119,7 @@ export function boardColumns(
     actors.map((actor) => [actor.email, actor]),
   );
   const seen = Array.from(counts.keys())
-    .filter((key) => key !== NO_VALUE_KEY)
+    .filter((key) => key !== noValueKey())
     .sort((a, b) =>
       actorLabel(a, actorByEmail.get(a)).localeCompare(
         actorLabel(b, actorByEmail.get(b)),
@@ -152,52 +150,11 @@ export function entriesForGroup(
   );
 }
 
-export function updateEntryGroupValue(
-  entry: Entry,
-  column: Column,
-  value: string | null,
-) {
-  const extra = { ...entry.meta.extra };
-  if (value === null) delete extra[column.name];
-  else extra[column.name] = value;
-  return {
-    ...entry,
-    meta: {
-      ...entry.meta,
-      extra,
-    },
-  };
-}
-
-export function reorderEntryAround(
-  entries: Entry[],
-  activePath: string,
-  overPath: string,
-  placement: "before" | "after",
-) {
-  if (activePath === overPath) return entries;
-  const active = entries.find((entry) => entry.path === activePath);
-  if (!active) return entries;
-  const withoutActive = entries.filter((entry) => entry.path !== activePath);
-  const insertAt = withoutActive.findIndex((entry) => entry.path === overPath);
-  if (insertAt < 0) return entries;
-  const offset = placement === "after" ? 1 : 0;
-  return [
-    ...withoutActive.slice(0, insertAt + offset),
-    active,
-    ...withoutActive.slice(insertAt + offset),
-  ];
-}
-
 export function isNestedCollectionEntry(
   entry: Entry,
   nestedCollectionPaths: Set<string>,
 ) {
   return nestedCollectionPaths.has(entryCollectionPath(entry));
-}
-
-export function isFolderEntry(entry: Entry) {
-  return normalizeEntryPath(entry.path).toLowerCase().endsWith("/readme.md");
 }
 
 function sortedOptions(column: Column) {

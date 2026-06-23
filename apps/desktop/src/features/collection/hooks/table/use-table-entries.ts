@@ -13,7 +13,8 @@ import {
   listCollectionInfos,
   queryCollectionEntries,
 } from "../../api";
-import { entryCollectionPath, showNestedForView } from "./utils";
+import { entryCollectionPath } from "../../lib/entry-tree";
+import { showNestedForView } from "../../lib/view-options";
 import * as m from "@/paraglide/messages.js";
 
 export function useTableEntries({

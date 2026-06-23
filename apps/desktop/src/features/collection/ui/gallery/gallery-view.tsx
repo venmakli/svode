@@ -42,7 +42,7 @@ import { titleFilter } from "../../lib/utils";
 import { entryParentDir } from "../table/utils";
 import { SortableGalleryCard } from "./gallery-card";
 import type { GalleryViewProps } from "./types";
-import { useGalleryEntryActions } from "./use-gallery-entry-actions";
+import { useGalleryEntryActions } from "../../hooks/gallery/use-gallery-entry-actions";
 import {
   galleryCardCover,
   galleryCardWidth,
@@ -53,7 +53,7 @@ import {
   isNestedCollectionEntry,
   normalizeGalleryCardFields,
 } from "./utils";
-import { useGalleryEntries } from "./use-gallery-entries";
+import { useGalleryEntries } from "../../hooks/gallery/use-gallery-entries";
 import * as m from "@/paraglide/messages.js";
 
 export function GalleryView({

@@ -2,7 +2,7 @@ import type { DateSelectArg, EventDropArg } from "@fullcalendar/core";
 import type { EventResizeDoneArg } from "@fullcalendar/interaction";
 import type { CSSProperties } from "react";
 import type { CollectionView } from "@/features/collection/query";
-import { normalizeEntryPath } from "@/features/collection/lib/utils";
+import { entryCollectionPath, isFolderEntry } from "../lib/entry-tree";
 import type { Entry } from "@/features/entry";
 import type {
   CollectionSchema,
@@ -10,13 +10,12 @@ import type {
   PropertyOption,
 } from "@/features/properties";
 import { isDateRangeValue, optionByName } from "@/features/properties";
-import { entryCollectionPath } from "../table/utils";
 import type {
   CalendarDateValue,
   CalendarEventInput,
   CalendarEventModel,
   CalendarScope,
-} from "./types";
+} from "./calendar-types";
 
 const SYSTEM_CARD_FIELDS = new Set([
   "title",
@@ -276,10 +275,6 @@ export function eventColorStyle(color: string | null) {
     "--calendar-event-color": `var(--property-${color})`,
     "--calendar-event-soft": `var(--property-${color}-soft)`,
   } as CSSProperties;
-}
-
-export function isFolderEntry(entry: Entry) {
-  return normalizeEntryPath(entry.path).toLowerCase().endsWith("/readme.md");
 }
 
 function eventColor(

@@ -5,14 +5,23 @@ import type {
   Column,
   PropertyType,
 } from "@/features/properties";
-import { normalizeEntryPath } from "@/features/collection/lib/utils";
 import { PROPERTY_TYPES } from "@/features/properties";
+import {
+  entryCollectionPath,
+  entryParentDir,
+  isFolderEntry,
+  reorderVisibleEntries,
+} from "../../lib/entry-tree";
+import { showNestedForView } from "../../lib/view-options";
 import type { CollectionTableRow } from "./types";
 
-export function showNestedForView(view: CollectionView) {
-  const raw = view.show_nested ?? view.showNested;
-  return raw === undefined ? true : Boolean(raw);
-}
+export {
+  entryCollectionPath,
+  entryParentDir,
+  isFolderEntry,
+  reorderVisibleEntries,
+  showNestedForView,
+};
 
 export function normalizeVisibleFields(
   view: CollectionView,
@@ -45,18 +54,6 @@ export function minColumnWidth(column?: Column) {
   if (column.type === "select" || column.type === "status") return 120;
   if (column.type === "text") return 200;
   return 120;
-}
-
-export function entryParentDir(path: string) {
-  const normalized = normalizeEntryPath(path).replace(/\/readme\.md$/i, ".md");
-  const index = normalized.lastIndexOf("/");
-  return index < 0 ? "" : normalized.slice(0, index);
-}
-
-export function entryCollectionPath(entry: Entry) {
-  return normalizeEntryPath(entry.path)
-    .replace(/\/readme\.md$/i, "")
-    .replace(/\.md$/i, "");
 }
 
 export function flattenRows(
@@ -119,9 +116,7 @@ export function isExpandable(
   nestedCollectionPaths: Set<string> = new Set(),
 ) {
   if (!showNested) return false;
-  const folderEntry = normalizeEntryPath(entry.path)
-    .toLowerCase()
-    .endsWith("/readme.md");
+  const folderEntry = isFolderEntry(entry);
   const nestedCollection = nestedCollectionPaths.has(
     entryCollectionPath(entry),
   );
@@ -147,27 +142,4 @@ export function uniqueColumnName(schema: CollectionSchema, baseName: string) {
 
 export function propertyTypeLabel(type: PropertyType) {
   return PROPERTY_TYPES.find((item) => item.value === type)?.label ?? type;
-}
-
-export function reorderVisibleEntries(
-  all: Entry[],
-  visible: Entry[],
-  movedPath: string,
-  toVisibleIndex: number,
-) {
-  const visiblePaths = new Set(visible.map((entry) => entry.path));
-  if (!visiblePaths.has(movedPath)) return all;
-
-  const next = all.filter((entry) => entry.path !== movedPath);
-  const visibleWithoutMoved = all.filter(
-    (entry) => visiblePaths.has(entry.path) && entry.path !== movedPath,
-  );
-  const anchor = visibleWithoutMoved[toVisibleIndex];
-  const moved = all.find((entry) => entry.path === movedPath);
-  if (!moved) return all;
-
-  if (!anchor) return [...next, moved];
-  const insertAt = next.findIndex((entry) => entry.path === anchor.path);
-  if (insertAt < 0) return [...next, moved];
-  return [...next.slice(0, insertAt), moved, ...next.slice(insertAt)];
 }

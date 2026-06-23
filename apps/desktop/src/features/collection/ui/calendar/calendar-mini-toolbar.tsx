@@ -7,7 +7,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import type { CalendarScope } from "./types";
+import type { CalendarScope } from "../../model/calendar-types";
 import * as m from "@/paraglide/messages.js";
 
 export function CalendarMiniToolbar({

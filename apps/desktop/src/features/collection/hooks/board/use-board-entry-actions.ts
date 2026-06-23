@@ -2,11 +2,7 @@ import { useCallback, type Dispatch, type SetStateAction } from "react";
 import { toast } from "sonner";
 import type { Entry } from "@/features/entry";
 import type { Column } from "@/features/properties";
-import {
-  useCollectionEntryFieldSave,
-  useCollectionTreeOrder,
-} from "../../hooks";
-import { entryParentDir } from "../table/utils";
+import { entryParentDir } from "../../lib/entry-tree";
 import {
   groupKeyForValue,
   groupValue,
@@ -14,7 +10,11 @@ import {
   noValueKey,
   reorderEntryAround,
   updateEntryGroupValue,
-} from "./utils";
+} from "../../lib/board-entry";
+import {
+  useCollectionEntryFieldSave,
+  useCollectionTreeOrder,
+} from "..";
 import * as m from "@/paraglide/messages.js";
 
 interface MoveBoardCardArgs {

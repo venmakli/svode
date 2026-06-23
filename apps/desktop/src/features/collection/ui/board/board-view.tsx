@@ -32,7 +32,7 @@ import { entryParentDir } from "../table/utils";
 import { BoardCardContent } from "./board-card";
 import { BoardColumn } from "./board-column";
 import type { BoardViewProps } from "./types";
-import { useBoardEntryActions } from "./use-board-entry-actions";
+import { useBoardEntryActions } from "../../hooks/board/use-board-entry-actions";
 import {
   boardColumns,
   boardCustomFields,
@@ -43,7 +43,7 @@ import {
   noValueKey,
   normalizeBoardCardFields,
 } from "./utils";
-import { useBoardEntries } from "./use-board-entries";
+import { useBoardEntries } from "../../hooks/board/use-board-entries";
 import * as m from "@/paraglide/messages.js";
 
 export function BoardView({
