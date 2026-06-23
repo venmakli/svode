@@ -8,33 +8,22 @@ import {
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
-import { toast } from "sonner";
 import { Table } from "@/components/ui/table";
-import {
-  useStableViewQueryArgs,
-  type CollectionView,
-} from "@/features/collection/query";
 import { useEntryFieldSave } from "@/features/entry/field-save";
 import type { Entry } from "@/features/entry";
 import { normalizeSchema } from "@/features/properties";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
-import {
-  addCollectionColumn,
-  getCollectionSchema,
-  listCollectionInfos,
-  queryCollectionEntries,
-} from "../../api";
-import type {
-  CollectionSchema,
-  Column,
-  PropertyType,
-} from "@/features/properties";
+import { addCollectionColumn } from "../../api";
+import type { Column, PropertyType } from "@/features/properties";
 import { useCollectionActors } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
 import { isEditableTarget } from "../../lib/utils";
 import { propertyFieldSavePolicy } from "../../model/property-field-save-policy";
-import { usePersistentSet, usePersistentSizing } from "./persistence";
+import {
+  usePersistentSet,
+  usePersistentSizing,
+} from "../../hooks/use-table-persistence";
 import { propertyTypeLabel } from "./property-type-picker";
 import { EmptyTableBody } from "./table-empty-state";
 import { TableFooterComposer } from "./table-footer-composer";
@@ -43,9 +32,9 @@ import { TableRowsBody } from "./table-rows-body";
 import { ErrorState, LoadingTable, TableShell } from "./table-shell";
 import type { TableEditingCell, TableViewProps } from "./types";
 import { useTableColumns } from "./use-table-columns";
+import { useTableEntries } from "./use-table-entries";
 import {
   entryParentDir,
-  entryCollectionPath,
   flattenRows,
   normalizeVisibleFields,
   reorderVisibleEntries,
@@ -81,15 +70,6 @@ export function TableView({
   onUpdateView,
   onCreateEntry,
 }: TableViewProps) {
-  const [entries, setEntries] = useState<Entry[]>([]);
-  const [nestedCollectionPaths, setNestedCollectionPaths] = useState<
-    Set<string>
-  >(new Set());
-  const [nestedSchemas, setNestedSchemas] = useState<
-    Map<string, CollectionSchema>
-  >(new Map());
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<TableEditingCell | null>(null);
   const [openColumn, setOpenColumn] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
@@ -117,7 +97,23 @@ export function TableView({
   const footerInputRef = useRef<HTMLInputElement | null>(null);
   const footerRef = useRef<HTMLDivElement | null>(null);
   const { actors, loadActors } = useCollectionActors(spacePath);
-  const queryArgs = useStableViewQueryArgs(filters, sort);
+  const {
+    entries,
+    setEntries,
+    nestedCollectionPaths,
+    nestedSchemas,
+    loading,
+    error,
+    loadEntries,
+  } = useTableEntries({
+    collectionPath,
+    filters,
+    includeNested: showNested,
+    projectPath,
+    refreshToken,
+    sort,
+    spacePath,
+  });
 
   const visibleFields = useMemo(
     () => normalizeVisibleFields(view, schema),
@@ -157,95 +153,6 @@ export function TableView({
     [schema.columns],
   );
 
-  const loadEntries = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [baseEntries, collections] = await Promise.all([
-        queryCollectionEntries({
-          spacePath,
-          collectionPath,
-          filters: queryArgs.filters,
-          sort: queryArgs.sort,
-          includeNested: showNested,
-          projectPath,
-        }),
-        listCollectionInfos(spacePath).catch(() => []),
-      ]);
-      const collectionPaths = new Set(collections.map((item) => item.path));
-      setNestedCollectionPaths(collectionPaths);
-      const schemaPairs = await Promise.all(
-        collections
-          .filter((item) => item.path !== collectionPath)
-          .map(async (item) => {
-            try {
-              const nestedSchema = await getCollectionSchema({
-                spacePath,
-                collectionPath: item.path,
-              });
-              return [item.path, normalizeSchema(nestedSchema)] as const;
-            } catch {
-              return null;
-            }
-          }),
-      );
-      const nextNestedSchemas = new Map(
-        schemaPairs.filter((item) => item !== null),
-      );
-      const nestedParentPaths = Array.from(
-        new Set(
-          baseEntries
-            .map((entry) => entryCollectionPath(entry))
-            .filter(
-              (path) => path !== collectionPath && collectionPaths.has(path),
-            ),
-        ),
-      );
-      const nestedEntryBatches = await Promise.all(
-        nestedParentPaths.map(async (nestedPath) => {
-          const nestedSchema = nextNestedSchemas.get(nestedPath);
-          const nestedTableView = (
-            (nestedSchema?.views ?? []) as CollectionView[]
-          ).find((item) => item?.type === "table");
-          try {
-            return await queryCollectionEntries({
-              spacePath,
-              collectionPath: nestedPath,
-              filters: nestedTableView?.filter ?? null,
-              sort: nestedTableView?.sort ?? null,
-              includeNested: nestedTableView
-                ? showNestedForView(nestedTableView)
-                : true,
-              projectPath,
-            });
-          } catch (nestedLoadError) {
-            console.warn(
-              "Failed to load nested table entries:",
-              nestedLoadError,
-            );
-            return [];
-          }
-        }),
-      );
-      const entriesByPath = new Map<string, Entry>();
-      [...baseEntries, ...nestedEntryBatches.flat()].forEach((entry) => {
-        entriesByPath.set(entry.path, entry);
-      });
-      setEntries(Array.from(entriesByPath.values()));
-      setNestedSchemas(nextNestedSchemas);
-    } catch (loadError) {
-      console.warn("Failed to load table entries:", loadError);
-      toast.error(m.table_error_title());
-      setError(String(loadError));
-    } finally {
-      setLoading(false);
-    }
-  }, [collectionPath, projectPath, queryArgs, showNested, spacePath]);
-
-  useEffect(() => {
-    void loadEntries();
-  }, [loadEntries, refreshToken]);
-
   useEffect(() => {
     if (!hasActorColumn) return;
     void loadActors().catch((loadError) => {
@@ -273,7 +180,7 @@ export function TableView({
         current.map((item) => (item.path === entryPath ? update(item) : item)),
       );
     },
-    [],
+    [setEntries],
   );
   const saveEntryField = useEntryFieldSave({
     spacePath,

@@ -26,16 +26,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
-import { useStableViewQueryArgs } from "@/features/collection/query";
 import { useEntryFieldSave } from "@/features/entry/field-save";
 import type { Entry } from "@/features/entry";
 import type { Column } from "@/features/properties";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
-import {
-  listCollectionInfos,
-  queryCollectionEntries,
-  saveCollectionTreeOrder,
-} from "../../api";
+import { saveCollectionTreeOrder } from "../../api";
 import { useCollectionActors } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
 import { propertyFieldSavePolicy } from "../../model/property-field-save-policy";
@@ -50,6 +45,7 @@ import {
   replaceSiblings,
   siblingEntries,
 } from "./utils";
+import { useListEntries } from "./use-list-entries";
 import * as m from "@/paraglide/messages.js";
 
 export function ListView({
@@ -75,12 +71,7 @@ export function ListView({
   onDeleteEntry,
   onCreateEntry,
 }: ListViewProps) {
-  const [entries, setEntries] = useState<EntryState>([]);
-  const [nestedCollectionPaths, setNestedCollectionPaths] = useState<
-    Set<string>
-  >(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
   const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerAsFolder, setComposerAsFolder] = useState(false);
@@ -89,13 +80,26 @@ export function ListView({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const rowRefs = useRef(new Map<string, HTMLElement>());
   const { actors, loadActors } = useCollectionActors(spacePath);
-  const queryArgs = useStableViewQueryArgs(filters, sort);
   const reloadTreeParent = useSpaceTreeSync((state) => state.reloadTreeParent);
   const sidebarSpaceId = useSpace((state) => {
     const space =
       state.spaces.find((item) => item.path === spacePath) ??
       state.rootSpaces.find((item) => item.path === spacePath);
     return space?.id ?? null;
+  });
+  const {
+    entries,
+    setEntries,
+    nestedCollectionPaths,
+    loading,
+    loadEntries,
+  } = useListEntries({
+    collectionPath,
+    filters,
+    projectPath,
+    refreshToken,
+    sort,
+    spacePath,
   });
 
   const density = listDensity(view);
@@ -144,34 +148,6 @@ export function ListView({
     }),
   );
 
-  const loadEntries = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [nextEntries, collections] = await Promise.all([
-        queryCollectionEntries({
-          spacePath,
-          collectionPath,
-          filters: queryArgs.filters,
-          sort: queryArgs.sort,
-          includeNested: true,
-          projectPath,
-        }),
-        listCollectionInfos(spacePath).catch(() => []),
-      ]);
-      setEntries(nextEntries);
-      setNestedCollectionPaths(new Set(collections.map((item) => item.path)));
-    } catch (error) {
-      console.warn("Failed to load list entries:", error);
-      toast.error(m.table_error_title());
-    } finally {
-      setLoading(false);
-    }
-  }, [collectionPath, projectPath, queryArgs, spacePath]);
-
-  useEffect(() => {
-    void loadEntries();
-  }, [loadEntries, refreshToken]);
-
   useEffect(() => {
     if (!hasActorField) return;
     void loadActors().catch((error) => {
@@ -186,21 +162,29 @@ export function ListView({
 
   useEffect(() => {
     if (createFocusSignal <= 0) return;
-    setComposerOpen(true);
-    setComposerAsFolder(createAsFolder);
-    window.requestAnimationFrame(() => {
-      footerRef.current?.scrollIntoView({ block: "nearest" });
-      inputRef.current?.focus();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setComposerOpen(true);
+      setComposerAsFolder(createAsFolder);
+      window.requestAnimationFrame(() => {
+        if (cancelled) return;
+        footerRef.current?.scrollIntoView({ block: "nearest" });
+        inputRef.current?.focus();
+      });
     });
+    return () => {
+      cancelled = true;
+    };
   }, [createAsFolder, createFocusSignal]);
 
   const applyEntryUpdate = useCallback(
-    (entryPath: string, update: (entry: EntryState[number]) => Entry) => {
+    (entryPath: string, update: (entry: Entry) => Entry) => {
       setEntries((current) =>
         current.map((item) => (item.path === entryPath ? update(item) : item)),
       );
     },
-    [],
+    [setEntries],
   );
   const saveEntryField = useEntryFieldSave({
     spacePath,
@@ -244,7 +228,7 @@ export function ListView({
     }
   }
 
-  function toggleRow(entry: EntryState[number]) {
+  function toggleRow(entry: Entry) {
     setExpanded((current) => {
       const next = new Set(current);
       if (next.has(entry.path)) next.delete(entry.path);
@@ -490,5 +474,3 @@ function ListSkeleton({ density }: { density: "compact" | "comfortable" }) {
     </div>
   );
 }
-
-type EntryState = Awaited<ReturnType<typeof queryCollectionEntries>>;

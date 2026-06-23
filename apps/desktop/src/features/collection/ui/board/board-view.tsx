@@ -24,7 +24,6 @@ import {
 } from "@/components/ui/empty";
 import { useEntryFieldSave } from "@/features/entry/field-save";
 import type { Entry } from "@/features/entry";
-import { useStableViewQueryArgs } from "@/features/collection/query";
 import type {
   Column,
   PropertyType,
@@ -32,11 +31,7 @@ import type {
 import { normalizeSchema } from "@/features/properties";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
-import {
-  addCollectionColumn,
-  listCollectionInfos,
-  queryCollectionEntries,
-} from "../../api";
+import { addCollectionColumn } from "../../api";
 import { useCollectionActors } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
 import { propertyFieldSavePolicy } from "../../model/property-field-save-policy";
@@ -61,6 +56,7 @@ import {
   reorderEntryAround,
   updateEntryGroupValue,
 } from "./utils";
+import { useBoardEntries } from "./use-board-entries";
 import * as m from "@/paraglide/messages.js";
 
 export function BoardView({
@@ -87,19 +83,28 @@ export function BoardView({
   onSchemaChange,
   onCreateEntry,
 }: BoardViewProps) {
-  const [entries, setEntries] = useState<Entry[]>([]);
-  const [manualOrderEntries, setManualOrderEntries] = useState<Entry[]>([]);
-  const [nestedCollectionPaths, setNestedCollectionPaths] = useState<
-    Set<string>
-  >(new Set());
-  const [loading, setLoading] = useState(true);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [overGroupKey, setOverGroupKey] = useState<string | null>(null);
   const [draftGroupKey, setDraftGroupKey] = useState<string | null>(null);
   const [draftAsFolder, setDraftAsFolder] = useState(false);
   const lastActiveGroup = useRef<string | null>(null);
   const { actors, loadActors } = useCollectionActors(spacePath);
-  const queryArgs = useStableViewQueryArgs(filters, sort);
+  const {
+    entries,
+    setEntries,
+    manualOrderEntries,
+    setManualOrderEntries,
+    nestedCollectionPaths,
+    loading,
+    loadEntries,
+  } = useBoardEntries({
+    collectionPath,
+    filters,
+    projectPath,
+    refreshToken,
+    sort,
+    spacePath,
+  });
   const sidebarSpaceId = useSpace((state) => {
     const space =
       state.spaces.find((item) => item.path === spacePath) ??
@@ -158,46 +163,6 @@ export function BoardView({
     }),
   );
 
-  const loadEntries = useCallback(async () => {
-    const hasActiveSort = queryArgs.sort.length > 0;
-    setLoading(true);
-    try {
-      const [baseEntries, orderEntries, collections] = await Promise.all([
-        queryCollectionEntries({
-          spacePath,
-          collectionPath,
-          filters: queryArgs.filters,
-          sort: queryArgs.sort,
-          includeNested: false,
-          projectPath,
-        }),
-        hasActiveSort
-          ? Promise.resolve<Entry[]>([])
-          : queryCollectionEntries({
-              spacePath,
-              collectionPath,
-              filters: null,
-              sort: null,
-              includeNested: false,
-              projectPath,
-            }),
-        listCollectionInfos(spacePath).catch(() => []),
-      ]);
-      setEntries(baseEntries);
-      setManualOrderEntries(hasActiveSort ? baseEntries : orderEntries);
-      setNestedCollectionPaths(new Set(collections.map((item) => item.path)));
-    } catch (error) {
-      console.warn("Failed to load board entries:", error);
-      toast.error(m.board_error_title());
-    } finally {
-      setLoading(false);
-    }
-  }, [collectionPath, projectPath, queryArgs, spacePath]);
-
-  useEffect(() => {
-    void loadEntries();
-  }, [loadEntries, refreshToken]);
-
   useEffect(() => {
     if (groupColumn?.type !== "actor" && !hasActorCardField) return;
     void loadActors().catch((error) => {
@@ -207,14 +172,21 @@ export function BoardView({
 
   useEffect(() => {
     if (createFocusSignal <= 0) return;
-    const key =
-      lastActiveGroup.current &&
-      renderedColumns.some((column) => column.key === lastActiveGroup.current)
-        ? lastActiveGroup.current
-        : (renderedColumns[0]?.key ?? noValueKey());
-    if (!key) return;
-    setDraftGroupKey(key);
-    setDraftAsFolder(createAsFolder);
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      const key =
+        lastActiveGroup.current &&
+        renderedColumns.some((column) => column.key === lastActiveGroup.current)
+          ? lastActiveGroup.current
+          : (renderedColumns[0]?.key ?? noValueKey());
+      if (!key) return;
+      setDraftGroupKey(key);
+      setDraftAsFolder(createAsFolder);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [createAsFolder, createFocusSignal, renderedColumns]);
 
   const applyEntryUpdate = useCallback(
@@ -226,7 +198,7 @@ export function BoardView({
         current.map((item) => (item.path === entryPath ? update(item) : item)),
       );
     },
-    [],
+    [setEntries, setManualOrderEntries],
   );
   const saveEntryField = useEntryFieldSave({
     spacePath,

@@ -33,17 +33,12 @@ import {
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useStableViewQueryArgs } from "@/features/collection/query";
 import { useEntryFieldSave } from "@/features/entry/field-save";
 import type { Entry } from "@/features/entry";
 import type { Column } from "@/features/properties";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
-import {
-  listCollectionInfos,
-  queryCollectionEntries,
-  saveCollectionTreeOrder,
-} from "../../api";
+import { saveCollectionTreeOrder } from "../../api";
 import { useCollectionActors } from "../../hooks";
 import { titleFilter } from "../../lib/utils";
 import { propertyFieldSavePolicy } from "../../model/property-field-save-policy";
@@ -60,6 +55,7 @@ import {
   isNestedCollectionEntry,
   normalizeGalleryCardFields,
 } from "./utils";
+import { useGalleryEntries } from "./use-gallery-entries";
 import * as m from "@/paraglide/messages.js";
 
 export function GalleryView({
@@ -85,11 +81,6 @@ export function GalleryView({
   onDeleteEntry,
   onCreateEntry,
 }: GalleryViewProps) {
-  const [entries, setEntries] = useState<Entry[]>([]);
-  const [nestedCollectionPaths, setNestedCollectionPaths] = useState<
-    Set<string>
-  >(new Set());
-  const [loading, setLoading] = useState(true);
   const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const [draftOpen, setDraftOpen] = useState(false);
   const [draftAsFolder, setDraftAsFolder] = useState(false);
@@ -99,13 +90,26 @@ export function GalleryView({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const cardRefs = useRef(new Map<string, HTMLElement>());
   const { actors, loadActors } = useCollectionActors(spacePath);
-  const queryArgs = useStableViewQueryArgs(filters, sort);
   const reloadTreeParent = useSpaceTreeSync((state) => state.reloadTreeParent);
   const sidebarSpaceId = useSpace((state) => {
     const space =
       state.spaces.find((item) => item.path === spacePath) ??
       state.rootSpaces.find((item) => item.path === spacePath);
     return space?.id ?? null;
+  });
+  const {
+    entries,
+    setEntries,
+    nestedCollectionPaths,
+    loading,
+    loadEntries,
+  } = useGalleryEntries({
+    collectionPath,
+    filters,
+    projectPath,
+    refreshToken,
+    sort,
+    spacePath,
   });
 
   const cardWidth = galleryCardWidth(view);
@@ -142,34 +146,6 @@ export function GalleryView({
     }),
   );
 
-  const loadEntries = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [nextEntries, collections] = await Promise.all([
-        queryCollectionEntries({
-          spacePath,
-          collectionPath,
-          filters: queryArgs.filters,
-          sort: queryArgs.sort,
-          includeNested: false,
-          projectPath,
-        }),
-        listCollectionInfos(spacePath).catch(() => []),
-      ]);
-      setEntries(nextEntries);
-      setNestedCollectionPaths(new Set(collections.map((item) => item.path)));
-    } catch (error) {
-      console.warn("Failed to load gallery entries:", error);
-      toast.error(m.table_error_title());
-    } finally {
-      setLoading(false);
-    }
-  }, [collectionPath, projectPath, queryArgs, spacePath]);
-
-  useEffect(() => {
-    void loadEntries();
-  }, [loadEntries, refreshToken]);
-
   useEffect(() => {
     if (!hasActorField) return;
     void loadActors().catch((error) => {
@@ -184,12 +160,20 @@ export function GalleryView({
 
   useEffect(() => {
     if (createFocusSignal <= 0) return;
-    setDraftOpen(true);
-    setDraftAsFolder(createAsFolder);
-    window.requestAnimationFrame(() => {
-      draftRef.current?.scrollIntoView({ block: "nearest" });
-      inputRef.current?.focus();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setDraftOpen(true);
+      setDraftAsFolder(createAsFolder);
+      window.requestAnimationFrame(() => {
+        if (cancelled) return;
+        draftRef.current?.scrollIntoView({ block: "nearest" });
+        inputRef.current?.focus();
+      });
     });
+    return () => {
+      cancelled = true;
+    };
   }, [createAsFolder, createFocusSignal]);
 
   const applyEntryUpdate = useCallback(
@@ -198,7 +182,7 @@ export function GalleryView({
         current.map((item) => (item.path === entryPath ? update(item) : item)),
       );
     },
-    [],
+    [setEntries],
   );
   const saveEntryField = useEntryFieldSave({
     spacePath,
