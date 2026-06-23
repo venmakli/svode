@@ -25,7 +25,7 @@ import {
   convertEntryToNestedCollection,
   createEntry,
   readEntry,
-} from "@/features/entry/api";
+} from "@/features/entry/entry-api";
 import type { Entry } from "@/features/entry";
 import { normalizeEntryPath } from "../lib/utils";
 import { handleError } from "../lib/errors";

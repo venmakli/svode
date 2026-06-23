@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { Descendant } from "platejs";
 import { listen } from "@/platform/native/events";
-import { readEntry } from "@/features/entry/api";
+import { readEntry } from "@/features/entry/entry-api";
 import { reindexProject } from "@/platform/space/space-api";
 import { toast } from "sonner";
 import type { PlateEditor } from "platejs/react";

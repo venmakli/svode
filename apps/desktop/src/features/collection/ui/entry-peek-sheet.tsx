@@ -20,7 +20,7 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/shared/lib/utils";
 import { EntryIdentityHeader } from "@/features/editor";
 import { PlateDocumentEditor } from "@/features/editor";
-import { readEntry as readEntryApi } from "@/features/entry/api";
+import { readEntry as readEntryApi } from "@/features/entry/entry-api";
 import {
   isEntryTreeMetaField,
   useEntryFieldSave,

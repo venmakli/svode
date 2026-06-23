@@ -1,5 +1,5 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
-import { readEntry } from "@/features/entry/api";
+import { readEntry } from "@/features/entry/entry-api";
 import type { Entry } from "@/features/entry";
 import type { CollectionSchema } from "@/features/properties";
 import {

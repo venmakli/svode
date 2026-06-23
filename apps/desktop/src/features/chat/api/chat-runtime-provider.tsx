@@ -7,7 +7,7 @@ import {
 } from "@assistant-ui/react";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { listen, type UnlistenFn } from "@/platform/native/events";
-import { readEntry } from "@/features/entry/api";
+import { readEntry } from "@/features/entry/entry-api";
 import {
   useSpace,
   selectActiveSpacePath,

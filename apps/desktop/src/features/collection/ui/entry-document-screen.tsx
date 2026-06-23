@@ -8,7 +8,7 @@ import {
   deleteEntry as deleteEntryApi,
   duplicateEntry as duplicateEntryApi,
   readEntry,
-} from "@/features/entry/api";
+} from "@/features/entry/entry-api";
 import {
   isEntryTreeMetaField,
   useEntryFieldSave,

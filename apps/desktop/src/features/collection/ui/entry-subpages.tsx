@@ -17,7 +17,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { FileText, Folder, GripVertical, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { createEntry as createEntryApi } from "@/features/entry/api";
+import { createEntry as createEntryApi } from "@/features/entry/entry-api";
 import { useOpenEntryDocument } from "@/features/entry/selection";
 import {
   getSpaceTreeSyncSnapshot,

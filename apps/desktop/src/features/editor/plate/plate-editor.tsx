@@ -42,7 +42,7 @@ import {
   readEntry,
   validateLinks,
   writeEntry,
-} from "@/features/entry/api";
+} from "@/features/entry/entry-api";
 import {
   deleteCachedDocumentValue,
   getCachedDocumentValue,

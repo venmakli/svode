@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import { updateEntryField } from "../api";
+import { updateEntryField } from "../api/entry-api";
 import type { Entry } from "../model/types";
 import {
   enqueueEntryFieldSave,

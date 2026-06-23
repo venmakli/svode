@@ -31,7 +31,7 @@ import {
   duplicateEntry as duplicateEntryApi,
   readEntry as readEntryApi,
   renameEntry as renameEntryApi,
-} from "@/features/entry/api";
+} from "@/features/entry/entry-api";
 import {
   isEntryTreeMetaField,
   useEntryFieldSave,
