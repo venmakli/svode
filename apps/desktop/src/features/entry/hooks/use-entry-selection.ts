@@ -1,6 +1,6 @@
 import { useShallow } from "zustand/shallow";
-import type { EntrySelectionSnapshot } from "../model/entry-selection";
-import { useEntrySelectionStore } from "../model/entry-selection-store";
+import type { EntrySelectionSnapshot } from "./entry-selection-actions";
+import { useEntrySelectionStore } from "./entry-selection-store";
 
 export function useActiveEntrySelection(): EntrySelectionSnapshot {
   return useEntrySelectionStore(

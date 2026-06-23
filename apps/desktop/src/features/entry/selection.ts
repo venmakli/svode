@@ -4,7 +4,7 @@ export {
   openEntryDocument,
   openEntryScopeHome,
   type EntrySelectionSnapshot,
-} from "./model/entry-selection";
+} from "./hooks/entry-selection-actions";
 export {
   useActiveEntryDocument,
   useActiveEntryDocumentSpaceId,

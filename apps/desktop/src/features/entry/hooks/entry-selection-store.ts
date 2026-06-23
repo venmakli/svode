@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-interface EntrySelectionState {
+export interface EntrySelectionState {
   activeDocument: string | null;
   activeDocumentSpaceId: string | null;
   openDocument: (path: string, spaceId?: string) => void;

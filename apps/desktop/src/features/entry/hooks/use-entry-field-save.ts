@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef } from "react";
 import { updateEntryField } from "../api/entry-api";
+import { enqueueEntryFieldSave } from "../lib/entry-field-save-queue";
 import type { Entry } from "../model/types";
 import {
-  enqueueEntryFieldSave,
   entryFieldSavePolicy,
   mergeSavedEntryField,
   patchEntryField,
