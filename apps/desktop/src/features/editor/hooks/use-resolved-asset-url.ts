@@ -17,28 +17,17 @@ import {
   resolveAssetAbsPath,
   toWebviewAssetUrl,
 } from "@/platform/assets/assets-api";
+import {
+  resolveEditorAssetContext,
+  type EditorAssetResolveContext,
+  type ResolvedEditorDocumentContext,
+} from "../lib/editor-asset-context";
 
 const EXTERNAL = /^(https?:|data:|blob:|asset:|file:)/i;
 const resolvedAssetUrlCache = new Map<string, string>();
 const pendingAssetUrlResolutions = new Map<string, Promise<string>>();
 
-export interface EditorAssetResolveContext {
-  documentPath: string | null;
-  projectPath: string | null;
-  spaceId: string | null;
-  spacePath: string | null;
-}
-
-export interface ResolvedEditorDocumentContext {
-  projectPath: string;
-  spaceId: string | null;
-  sourceSpaceId: string | null;
-  documentPath: string;
-  documentAbsPath: string;
-  spacePath: string;
-}
-
-const EditorAssetResolveContext =
+const EditorAssetResolveReactContext =
   createContext<EditorAssetResolveContext | null>(null);
 
 export function EditorAssetResolveProvider({
@@ -48,7 +37,11 @@ export function EditorAssetResolveProvider({
   children: ReactNode;
   value: EditorAssetResolveContext;
 }) {
-  return createElement(EditorAssetResolveContext.Provider, { value }, children);
+  return createElement(
+    EditorAssetResolveReactContext.Provider,
+    { value },
+    children,
+  );
 }
 
 function assetCacheKey(
@@ -85,29 +78,8 @@ function resolveCachedAssetUrl(
   return promise;
 }
 
-export function resolveEditorAssetContext(
-  context: EditorAssetResolveContext | null | undefined,
-  activeRootId?: string | null,
-): ResolvedEditorDocumentContext | null {
-  if (!context?.projectPath || !context.documentPath || !context.spacePath) {
-    return null;
-  }
-
-  const spaceId = context.spaceId ?? null;
-  return {
-    projectPath: context.projectPath,
-    spaceId,
-    sourceSpaceId: spaceId && spaceId !== activeRootId ? spaceId : null,
-    documentPath: context.documentPath,
-    documentAbsPath: context.documentPath.startsWith("/")
-      ? context.documentPath
-      : joinAbs(context.spacePath, context.documentPath),
-    spacePath: context.spacePath,
-  };
-}
-
 export function useEditorDocumentContext(): ResolvedEditorDocumentContext | null {
-  const explicitContext = useContext(EditorAssetResolveContext);
+  const explicitContext = useContext(EditorAssetResolveReactContext);
   const projectPath = useSpace((s) => s.activeRootPath);
   const activeDocument = useActiveEntryDocument();
   const activeDocumentSpaceId = useActiveEntryDocumentSpaceId();

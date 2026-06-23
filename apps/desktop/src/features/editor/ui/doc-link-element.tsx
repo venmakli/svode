@@ -6,47 +6,22 @@ import { getLinkAttributes } from "@platejs/link";
 import { SuggestionPlugin } from "@platejs/suggestion/react";
 import { PlateElement } from "platejs/react";
 import { FileText } from "lucide-react";
-import { toast } from "sonner";
 import { cn } from "@/shared/lib/utils";
-import { useOpenEntryDocument } from "@/features/entry/selection";
-import { useEditorStore } from "../model";
-import { useSpace } from "@/features/space";
 import { GhostCloneDialog } from "./ghost-clone-dialog";
-import * as m from "@/paraglide/messages.js";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  absoluteDocumentPath,
-  isDocLink,
-  relativeDocumentPath,
-  resolveRelativeDocPath,
-} from "../lib/doc-link-utils";
-import {
-  cloneMissingDocLinkSpace,
-  resolveDocLink,
-  type DocLinkResolveResult,
-} from "../api/doc-link-api";
-import { useEditorDocumentContext } from "../hooks/use-resolved-asset-url";
+import { isDocLink } from "../lib/doc-link-utils";
+import { useDocLinkNavigation } from "../hooks/use-doc-link-navigation";
 
 export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
   const { element, editor, children } = props;
-  const openDocument = useOpenEntryDocument();
-  const editorDocument = useEditorDocumentContext();
-  const activeRootId = useSpace((s) => s.activeRootId);
-  const activeSpaceId = useSpace((s) => s.activeSpaceId);
-  const openSpace = useSpace((s) => s.openSpace);
-  const clearActiveSpace = useSpace((s) => s.clearActiveSpace);
-  const loadSpaces = useSpace((s) => s.loadSpaces);
-  const brokenLinks = useEditorStore((s) => s.brokenLinks);
-  const [cloneTarget, setCloneTarget] =
-    React.useState<DocLinkResolveResult | null>(null);
-  const [isCloning, setIsCloning] = React.useState(false);
   const url = element.url as string | undefined;
   const isDoc = isDocLink(url);
+  const docLink = useDocLinkNavigation(url);
 
   const suggestionData = editor
     .getApi(SuggestionPlugin)
@@ -78,86 +53,11 @@ export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
   }
 
   // Doc link — pill rendering
-  const activeDocument = editorDocument?.documentPath ?? null;
-  const activeRootPath = editorDocument?.projectPath ?? null;
-  const currentSpacePath = editorDocument?.spacePath ?? "";
-  const activeRel =
-    activeDocument && currentSpacePath
-      ? relativeDocumentPath(activeDocument, currentSpacePath)
-      : activeDocument;
-  const activeAbs =
-    activeDocument && currentSpacePath
-      ? absoluteDocumentPath(activeDocument, currentSpacePath)
-      : activeDocument;
-  const resolvedPath =
-    activeRel && url ? resolveRelativeDocPath(activeRel, url) : url;
-  const sourceSpaceId = editorDocument?.sourceSpaceId ?? null;
-  const isBroken =
-    !!url &&
-    (brokenLinks.has(url) ||
-      (resolvedPath ? brokenLinks.has(resolvedPath) : false));
-
-  async function openResolvedLink(resolved: DocLinkResolveResult) {
-    if (!resolved.targetPath) return;
-    if (resolved.targetSpaceId === null) {
-      clearActiveSpace();
-      openDocument(resolved.targetPath, activeRootId ?? undefined);
-      return;
-    }
-    if (resolved.targetSpaceId !== activeSpaceId) {
-      await openSpace(resolved.targetSpaceId);
-    }
-    openDocument(resolved.targetPath, resolved.targetSpaceId);
-  }
-
   const handleClick = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!url || !activeRel || !activeRootPath) {
-      if (resolvedPath && !isBroken) openDocument(resolvedPath);
-      return;
-    }
-
-    try {
-      const resolved = await resolveDocLink({
-        projectPath: activeRootPath,
-        sourceSpaceId,
-        sourcePath: activeRel,
-        url,
-      });
-      if (resolved.status === "ready" && resolved.exists) {
-        await openResolvedLink(resolved);
-      } else if (resolved.status === "missing") {
-        setCloneTarget(resolved);
-      } else if (resolved.status === "broken") {
-        toast.error(m.doc_link_space_unavailable({ name: resolved.spaceName }));
-      }
-    } catch (err) {
-      console.error("resolve_doc_link failed:", err);
-      if (resolvedPath && !isBroken) {
-        openDocument(resolvedPath);
-      }
-    }
+    await docLink.openDocLink();
   };
-
-  async function handleCloneMissing() {
-    if (!cloneTarget?.targetSpaceId || !activeRootPath) return;
-    setIsCloning(true);
-    try {
-      await cloneMissingDocLinkSpace({
-        projectPath: activeRootPath,
-        spaceId: cloneTarget.targetSpaceId,
-      });
-      await loadSpaces(activeRootPath);
-      await openResolvedLink({ ...cloneTarget, status: "ready", exists: true });
-      setCloneTarget(null);
-    } catch (err) {
-      console.error("clone_missing_space failed:", err);
-      toast.error(m.doc_link_clone_missing_failed());
-    } finally {
-      setIsCloning(false);
-    }
-  }
 
   const pill = (
     <PlateElement
@@ -168,7 +68,7 @@ export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
         "text-accent-foreground text-sm font-medium",
         "cursor-pointer hover:bg-accent/80 transition-colors",
         "no-underline",
-        isBroken && "opacity-50 line-through",
+        docLink.isBroken && "opacity-50 line-through",
         suggestionData?.type === "remove" && "bg-red-100 text-red-700",
         suggestionData?.type === "insert" && "bg-emerald-100 text-emerald-700",
       )}
@@ -185,27 +85,21 @@ export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
   );
 
   // Wrap in tooltip showing the resolved path
-  if (resolvedPath) {
+  if (docLink.resolvedPath) {
     return (
       <>
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>{pill}</TooltipTrigger>
-            <TooltipContent side="bottom">
-              {activeAbs && url
-                ? resolveRelativeDocPath(activeAbs, url)
-                : resolvedPath}
-            </TooltipContent>
+            <TooltipContent side="bottom">{docLink.tooltipPath}</TooltipContent>
           </Tooltip>
         </TooltipProvider>
         <GhostCloneDialog
-          open={cloneTarget !== null}
-          spaceName={cloneTarget?.spaceName ?? ""}
-          cloning={isCloning}
-          onOpenChange={(open) => {
-            if (!open && !isCloning) setCloneTarget(null);
-          }}
-          onConfirm={handleCloneMissing}
+          open={docLink.cloneTarget !== null}
+          spaceName={docLink.cloneTarget?.spaceName ?? ""}
+          cloning={docLink.isCloning}
+          onOpenChange={docLink.onCloneDialogOpenChange}
+          onConfirm={docLink.handleCloneMissing}
         />
       </>
     );

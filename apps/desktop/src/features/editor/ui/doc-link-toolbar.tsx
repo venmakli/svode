@@ -46,10 +46,10 @@ import {
 } from "@/components/ui/command";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import type { SearchItem } from "@/features/search";
+import { useSpace } from "@/features/space";
 import { cn } from "@/shared/lib/utils";
 import { useEditorStore } from "../model";
-import { useSpace } from "@/features/space";
-import type { SearchItem } from "@/features/search";
 import * as m from "@/paraglide/messages.js";
 import {
   absoluteDocumentPath,
@@ -59,14 +59,9 @@ import {
   relativeDocumentPath,
   resolveRelativeDocPath,
 } from "../lib/doc-link-utils";
-import {
-  makeRelativeDocUrl,
-  resolveDocLink,
-  searchDocLinkTargets,
-  suggestLinkFix,
-  type DocLinkResolveResult,
-  type LinkFixSuggestion,
-} from "../api/doc-link-api";
+import { makeRelativeDocUrl } from "../api/doc-link-api";
+import { useBrokenDocLinkRepair } from "../hooks/use-broken-doc-link-repair";
+import { useDocLinkTargetSearch } from "../hooks/use-doc-link-target-search";
 import { useEditorDocumentContext } from "../hooks/use-resolved-asset-url";
 
 type LinkMode = "document" | "url";
@@ -227,8 +222,6 @@ function DocLinkTargetPicker() {
   const fileTrees = useSpace((s) => s.fileTrees);
   const editorDocument = useEditorDocumentContext();
   const [query, setQuery] = React.useState("");
-  const [items, setItems] = React.useState<SearchItem[]>([]);
-  const [loading, setLoading] = React.useState(false);
   const projectPath = editorDocument?.projectPath ?? null;
   const activeDocument = editorDocument?.documentPath ?? null;
   const currentSpacePath = editorDocument?.spacePath ?? "";
@@ -249,34 +242,12 @@ function DocLinkTargetPicker() {
         : null,
     [fileTrees, sourceSpace, sourceSpaceId],
   );
-
-  React.useEffect(() => {
-    if (!projectPath) {
-      setItems([]);
-      return;
-    }
-
-    let cancelled = false;
-    setLoading(true);
-    const timer = window.setTimeout(() => {
-      searchDocLinkTargets(projectPath, sourceSpaceId, query, localCurrentSpace)
-        .then((next) => {
-          if (!cancelled) setItems(next);
-        })
-        .catch((err) => {
-          console.error("doc link search failed:", err);
-          if (!cancelled) setItems([]);
-        })
-        .finally(() => {
-          if (!cancelled) setLoading(false);
-        });
-    }, 150);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [projectPath, sourceSpaceId, query, localCurrentSpace]);
+  const { items, loading } = useDocLinkTargetSearch({
+    localCurrentSpace,
+    projectPath,
+    query,
+    sourceSpaceId,
+  });
 
   const sourceAbs =
     activeDocument && currentSpacePath
@@ -428,47 +399,17 @@ function BrokenLinkRepair({
   url: string;
 }) {
   const editor = useEditorRef();
-  const [resolved, setResolved] = React.useState<DocLinkResolveResult | null>(
-    null,
-  );
-  const [suggestions, setSuggestions] = React.useState<LinkFixSuggestion[]>([]);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    resolveDocLink({
-      projectPath,
-      sourceSpaceId,
-      sourcePath,
-      url,
-    })
-      .then((next) => {
-        if (cancelled) return;
-        setResolved(next);
-        if (!next.targetPath) return [];
-        return suggestLinkFix({
-          projectPath,
-          targetSpaceId: next.targetSpaceId,
-          brokenPath: next.targetPath,
-        });
-      })
-      .then((next) => {
-        if (!cancelled && next) setSuggestions(next.slice(0, 3));
-      })
-      .catch((err) => {
-        console.error("suggest_link_fix failed:", err);
-        if (!cancelled) setSuggestions([]);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [projectPath, sourceSpaceId, sourcePath, url]);
+  const { makeSuggestionUrl, suggestions } = useBrokenDocLinkRepair({
+    projectPath,
+    sourcePath,
+    sourceSpaceId,
+    url,
+  });
 
   async function applySuggestion(path: string) {
-    if (!resolved?.targetSpacePath) return;
-    const sourceAbs = joinAbs(sourceSpacePath || projectPath, sourcePath);
-    const targetAbs = joinAbs(resolved.targetSpacePath, path);
-    applyLinkUrl(editor, await makeRelativeDocUrl(sourceAbs, targetAbs));
+    const nextUrl = await makeSuggestionUrl(path, sourceSpacePath);
+    if (!nextUrl) return;
+    applyLinkUrl(editor, nextUrl);
   }
 
   return (

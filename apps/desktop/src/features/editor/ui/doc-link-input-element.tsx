@@ -1,7 +1,7 @@
 import type { PlateElementProps } from "platejs/react";
 import type { TComboboxInputElement } from "platejs";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { PlateElement } from "platejs/react";
 import * as m from "@/paraglide/messages.js";
 import {
@@ -14,13 +14,13 @@ import {
 } from "@/components/ui/inline-combobox";
 import { FileText } from "lucide-react";
 import { useSpace } from "@/features/space";
-import type { SearchItem } from "@/features/search";
 import {
   absoluteDocumentPath,
   findSpaceById,
   joinAbs,
 } from "../lib/doc-link-utils";
-import { makeRelativeDocUrl, searchDocLinkTargets } from "../api/doc-link-api";
+import { makeRelativeDocUrl } from "../api/doc-link-api";
+import { useDocLinkTargetSearch } from "../hooks/use-doc-link-target-search";
 import { useEditorDocumentContext } from "../hooks/use-resolved-asset-url";
 
 export function DocLinkInputElement(
@@ -31,7 +31,6 @@ export function DocLinkInputElement(
   const spaces = useSpace((s) => s.spaces);
   const fileTrees = useSpace((s) => s.fileTrees);
   const editorDocument = useEditorDocumentContext();
-  const [items, setItems] = useState<SearchItem[]>([]);
   const projectPath = editorDocument?.projectPath ?? null;
   const activeDocument = editorDocument?.documentPath ?? null;
   const currentSpacePath = editorDocument?.spacePath ?? "";
@@ -52,30 +51,13 @@ export function DocLinkInputElement(
         : null,
     [fileTrees, sourceSpace, sourceSpaceId],
   );
-
-  useEffect(() => {
-    if (!projectPath) {
-      let cancelled = false;
-      queueMicrotask(() => {
-        if (!cancelled) setItems([]);
-      });
-      return () => {
-        cancelled = true;
-      };
-    }
-    let cancelled = false;
-    searchDocLinkTargets(projectPath, sourceSpaceId, "", localCurrentSpace)
-      .then((next) => {
-        if (!cancelled) setItems(next);
-      })
-      .catch((err) => {
-        console.error("doc link input search failed:", err);
-        if (!cancelled) setItems([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectPath, sourceSpaceId, localCurrentSpace]);
+  const { items } = useDocLinkTargetSearch({
+    debounceMs: 0,
+    localCurrentSpace,
+    projectPath,
+    query: "",
+    sourceSpaceId,
+  });
 
   return (
     <PlateElement {...props} as="span">
