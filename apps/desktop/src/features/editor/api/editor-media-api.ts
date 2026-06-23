@@ -1,5 +1,3 @@
-import { getActiveEntrySelection } from "@/features/entry/selection";
-import { getSpaceSnapshot } from "@/features/space";
 import {
   resolveAssetAbsPath,
   toWebviewAssetUrl,
@@ -17,7 +15,6 @@ import {
 
 import type { EditorAssetResolveContext } from "../lib/editor-asset-context";
 import { resolveEditorAssetContext } from "../lib/editor-asset-context";
-import { joinAbs } from "../lib/doc-link-utils";
 
 const EXTERNAL = /^(https?:|data:|blob:|asset:|file:)/i;
 
@@ -57,32 +54,12 @@ export async function openEditorMediaUrl(
   }
 
   const explicitContext = resolveEditorAssetContext(context);
-  if (explicitContext) {
-    const abs = await resolveAssetAbsPath(
-      url,
-      explicitContext.projectPath,
-      explicitContext.documentAbsPath,
-    );
-    await openPath(abs);
-    return;
-  }
+  if (!explicitContext) return;
 
-  const projectPath = getSpaceSnapshot().activeRootPath;
-  const { activeDocument, activeDocumentSpaceId } = getActiveEntrySelection();
-  if (!projectPath || !activeDocument) return;
-
-  const { rootSpaces, spaces, activeRootId } = getSpaceSnapshot();
-  const owner =
-    !activeDocumentSpaceId || activeDocumentSpaceId === activeRootId
-      ? (rootSpaces.find((root) => root.id === activeDocumentSpaceId)?.path ??
-        projectPath)
-      : spaces.find((space) => space.id === activeDocumentSpaceId)?.path;
-
-  if (!owner) return;
-
-  const documentAbsPath = activeDocument.startsWith("/")
-    ? activeDocument
-    : joinAbs(owner, activeDocument);
-  const abs = await resolveAssetAbsPath(url, projectPath, documentAbsPath);
+  const abs = await resolveAssetAbsPath(
+    url,
+    explicitContext.projectPath,
+    explicitContext.documentAbsPath,
+  );
   await openPath(abs);
 }

@@ -8,17 +8,16 @@ import {
 } from "react";
 
 import {
-  useActiveEntryDocument,
-  useActiveEntryDocumentSpaceId,
+  useActiveEntrySelection,
 } from "@/features/entry/selection";
 import { useSpace, selectActiveSpacePath } from "@/features/space";
-import { joinAbs } from "../lib/doc-link-utils";
 import {
   resolveEditorAssetWebviewUrl,
   toEditorWebviewAssetUrl,
 } from "../api/editor-media-api";
 import {
   resolveEditorAssetContext,
+  resolveEditorDocumentContext,
   type EditorAssetResolveContext,
   type ResolvedEditorDocumentContext,
 } from "../lib/editor-asset-context";
@@ -79,12 +78,15 @@ function resolveCachedAssetUrl(
 
 export function useEditorDocumentContext(): ResolvedEditorDocumentContext | null {
   const explicitContext = useContext(EditorAssetResolveReactContext);
-  const projectPath = useSpace((s) => s.activeRootPath);
-  const activeDocument = useActiveEntryDocument();
-  const activeDocumentSpaceId = useActiveEntryDocumentSpaceId();
-  const activeRootId = useSpace((s) => s.activeRootId);
-  const rootSpaces = useSpace((s) => s.rootSpaces);
-  const spaces = useSpace((s) => s.spaces);
+  const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
+  const { activeRootId, activeRootPath, rootSpaces, spaces } = useSpace(
+    (state) => ({
+      activeRootId: state.activeRootId,
+      activeRootPath: state.activeRootPath,
+      rootSpaces: state.rootSpaces,
+      spaces: state.spaces,
+    }),
+  );
 
   const resolvedExplicitContext = resolveEditorAssetContext(
     explicitContext,
@@ -92,28 +94,14 @@ export function useEditorDocumentContext(): ResolvedEditorDocumentContext | null
   );
   if (resolvedExplicitContext) return resolvedExplicitContext;
 
-  if (!projectPath || !activeDocument) return null;
-
-  const ownerId = activeDocumentSpaceId;
-  let spacePath: string | undefined;
-  if (!ownerId || ownerId === activeRootId) {
-    spacePath = rootSpaces.find((r) => r.id === ownerId)?.path ?? projectPath;
-  } else {
-    spacePath = spaces.find((s) => s.id === ownerId)?.path;
-  }
-  if (!spacePath) return null;
-
-  const documentAbsPath = activeDocument.startsWith("/")
-    ? activeDocument
-    : joinAbs(spacePath, activeDocument);
-  return {
-    projectPath,
-    spaceId: ownerId,
-    sourceSpaceId: ownerId && ownerId !== activeRootId ? ownerId : null,
+  return resolveEditorDocumentContext({
+    activeRootId,
     documentPath: activeDocument,
-    documentAbsPath,
-    spacePath,
-  };
+    documentSpaceId: activeDocumentSpaceId,
+    projectPath: activeRootPath,
+    rootSpaces,
+    spaces,
+  });
 }
 
 /**

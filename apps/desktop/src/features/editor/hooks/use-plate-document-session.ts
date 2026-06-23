@@ -13,6 +13,7 @@ import { deserializeEditorMarkdownInsertion } from "../model/markdown-io";
 import { loadProgrammaticEditorValue } from "../model/programmatic-editor-load";
 import { useEditorStore } from "../model";
 import { getDocumentCacheKey } from "../model/plate-document-cache";
+import { resolveEditorDocumentContext } from "../lib/editor-asset-context";
 import { useEditorDocumentLoader } from "./use-editor-document-loader";
 import { useEditorDocumentWriter } from "./use-editor-document-writer";
 import { useEditorLinkValidation } from "./use-editor-link-validation";
@@ -75,14 +76,18 @@ export function usePlateDocumentSession({
 
   const currentDocument = documentPath ?? activeDocument;
   const currentDocumentSpaceId = documentSpaceId ?? activeDocumentSpaceId;
-  const docWs = currentDocumentSpaceId
-    ? [...rootSpaces, ...childWorkspaces].find(
-        (w) => w.id === currentDocumentSpaceId,
-      )
-    : null;
-  const spacePath = spacePathProp ?? docWs?.path ?? "";
+  const resolvedDocumentContext = resolveEditorDocumentContext({
+    activeRootId,
+    documentPath: currentDocument,
+    documentSpaceId: currentDocumentSpaceId,
+    projectPath: projectPathProp ?? activeRootPath,
+    rootSpaces,
+    spaces: childWorkspaces,
+  });
+  const spacePath = spacePathProp ?? resolvedDocumentContext?.spacePath ?? "";
   const activeWsId = currentDocumentSpaceId;
-  const projectPath = projectPathProp ?? activeRootPath;
+  const projectPath =
+    projectPathProp ?? resolvedDocumentContext?.projectPath ?? activeRootPath;
 
   const setCurrentDocument = useCallback(
     (path: string) => {
