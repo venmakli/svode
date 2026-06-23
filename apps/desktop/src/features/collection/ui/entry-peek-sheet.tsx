@@ -7,7 +7,6 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
-import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { Maximize2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,6 +30,7 @@ import { PropertyPanel } from "@/features/properties/panel";
 import {
   type EntrySchemaResult,
 } from "@/features/properties";
+import { getEntrySchema } from "@/features/properties/api";
 import { propertyFieldSavePolicy } from "@/features/properties/entry-save-policy";
 import { normalizeSchema } from "@/features/properties";
 import { useSpaceTreeSync } from "@/features/space";
@@ -115,10 +115,9 @@ export function EntryPeekSheet({
     }
     void Promise.all([
       readEntryApi({ spacePath, path: target.entry.path }),
-      invoke<EntrySchemaResult | null>("get_entry_schema", {
-        space: spacePath,
-        filePath: target.entry.path,
-      }).catch(() => null),
+      getEntrySchema({ spacePath, filePath: target.entry.path }).catch(
+        () => null,
+      ),
     ])
       .then(([nextEntry, nextSchemaResult]) => {
         if (cancelled) return;

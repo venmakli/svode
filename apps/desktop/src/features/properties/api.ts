@@ -1,1 +1,5 @@
-export { changeSchemaType, deleteSchemaColumn } from "./api/schema-api";
+export {
+  changeSchemaType,
+  deleteSchemaColumn,
+  getEntrySchema,
+} from "./api/schema-api";

@@ -20,6 +20,7 @@ import { normalizeSchema } from "@/features/properties";
 import {
   type EntrySchemaResult,
 } from "@/features/properties";
+import { getEntrySchema } from "@/features/properties/api";
 import { propertyFieldSavePolicy } from "@/features/properties/entry-save-policy";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
 import { useSpaceTreeSync } from "@/features/space";
@@ -113,10 +114,7 @@ export function EntryDocumentScreen({
     try {
       const [nextEntry, nextSchemaResult, nextDetailState] = await Promise.all([
         readEntry({ spacePath, path: documentPath }),
-        invoke<EntrySchemaResult | null>("get_entry_schema", {
-          space: spacePath,
-          filePath: documentPath,
-        }).catch(() => null),
+        getEntrySchema({ spacePath, filePath: documentPath }).catch(() => null),
         invoke<EntryDetailState>("get_entry_detail_state", {
           space: spacePath,
           path: documentPath,
