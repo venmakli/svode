@@ -58,6 +58,7 @@ export function useCalendarViewRuntime({
   filters,
   sort,
   refreshToken,
+  calendarScope,
   createFocusSignal = 0,
   createAsFolder = false,
   onOpenEntry,
@@ -66,11 +67,20 @@ export function useCalendarViewRuntime({
   onOpenPath,
   onSchemaChange,
   onUpdateView,
+  onCalendarScopeChange,
   onCreateEntry,
 }: CalendarViewProps) {
   const calendarRef = useRef<FullCalendar | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
-  const [scope, setScope] = useCalendarScopeQuery(view);
+  const [scope, setScope] = useCalendarScopeQuery(
+    view,
+    onCalendarScopeChange
+      ? {
+          calendarScope: calendarScope ?? null,
+          onCalendarScopeChange,
+        }
+      : undefined,
+  );
   const [periodLabel, setPeriodLabel] = useState("");
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [visibleRange, setVisibleRange] = useState<{

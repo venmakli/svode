@@ -48,6 +48,7 @@ export interface CalendarViewProps {
   filters: QueryFilter[];
   sort: QuerySort[];
   refreshToken: number;
+  calendarScope?: CalendarScope | null;
   createFocusSignal?: number;
   createAsFolder?: boolean;
   onOpenEntry: (entry: Entry) => void;
@@ -62,6 +63,7 @@ export interface CalendarViewProps {
     viewName: string,
     patch: Record<string, unknown>,
   ) => Promise<void>;
+  onCalendarScopeChange?: (scope: CalendarScope) => void;
   onCreateEntry: (
     title: string,
     asFolder: boolean,

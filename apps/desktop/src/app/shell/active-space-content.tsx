@@ -12,6 +12,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { FileText } from "lucide-react";
+import { useCollectionRouteState } from "./hooks/use-collection-route-state";
 import * as m from "@/paraglide/messages.js";
 
 function findNodeInTree(
@@ -29,6 +30,7 @@ function findNodeInTree(
 
 export function ActiveSpaceContent() {
   const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
+  const collectionRouteState = useCollectionRouteState();
   const {
     fileTrees,
     rootSpaces,
@@ -72,6 +74,7 @@ export function ActiveSpaceContent() {
         documentPath={activeDocument}
         spaceId={documentSpaceId}
         hasReadme={activeNode.path.toLowerCase().endsWith(".md")}
+        routeState={collectionRouteState}
       />
     ) : activeSpace && documentSpaceId && activeDocument ? (
       <EntryDocumentScreen

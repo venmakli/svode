@@ -41,7 +41,11 @@ import {
   viewName,
   viewType,
 } from "../lib/utils";
-import type { EntryPeekTarget, SettingsPane } from "../model";
+import type {
+  CollectionRouteState,
+  EntryPeekTarget,
+  SettingsPane,
+} from "../model";
 import type { CollectionView } from "@/features/collection/query/model";
 import * as m from "@/paraglide/messages.js";
 
@@ -51,6 +55,7 @@ interface CollectionScreenProps {
   documentPath: string;
   spaceId: string;
   hasReadme: boolean;
+  routeState?: CollectionRouteState;
   headerActions?: ReactNode;
 }
 
@@ -60,6 +65,7 @@ export function CollectionScreen({
   documentPath,
   spaceId,
   hasReadme,
+  routeState,
   headerActions,
 }: CollectionScreenProps) {
   const collectionPath = useMemo(
@@ -135,6 +141,7 @@ export function CollectionScreen({
   const { activeTab, selectTab } = useCollectionActiveTab({
     collectionPath,
     hasReadme,
+    routeState,
     schema,
     views,
   });
@@ -399,6 +406,7 @@ export function CollectionScreen({
               spacePath={spacePath}
               searchQuery={searchQuery}
               refreshToken={entriesVersion}
+              calendarScope={routeState?.calendarScope}
               createRequest={createRequests[viewType(view)]}
               onClearSearch={() => setSearchQuery("")}
               onOpenEntry={(entryToOpen) => openPeek(entryToOpen)}
@@ -416,6 +424,7 @@ export function CollectionScreen({
                 setSchema(normalizeSchema(nextSchema))
               }
               onUpdateView={updateView}
+              onCalendarScopeChange={routeState?.onCalendarScopeChange}
               onCreateEntry={(title, asFolder, contextualDefaults) =>
                 createEntry(asFolder, title, false, contextualDefaults)
               }

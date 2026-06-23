@@ -5,6 +5,7 @@ import type {
 } from "@/features/collection/query/model";
 import type { Entry } from "@/features/entry";
 import type { CollectionSchema } from "@/features/properties";
+import type { CalendarScope } from "../model/calendar-types";
 import type { ViewCreateRequest } from "../hooks";
 import { viewType } from "../lib/utils";
 import { BoardView } from "./board/board-view";
@@ -23,6 +24,7 @@ interface CollectionViewContentProps {
   spacePath: string;
   searchQuery: string;
   refreshToken: number;
+  calendarScope?: CalendarScope | null;
   createRequest: ViewCreateRequest;
   onClearSearch: () => void;
   onOpenEntry: (entry: Entry) => void;
@@ -37,6 +39,7 @@ interface CollectionViewContentProps {
     viewName: string,
     patch: Record<string, unknown>,
   ) => Promise<void>;
+  onCalendarScopeChange?: (scope: CalendarScope) => void;
   onCreateEntry: (
     title: string,
     asFolder: boolean,
@@ -53,6 +56,7 @@ export function CollectionViewContent({
   spacePath,
   searchQuery,
   refreshToken,
+  calendarScope,
   createRequest,
   onClearSearch,
   onOpenEntry,
@@ -64,6 +68,7 @@ export function CollectionViewContent({
   onDeleteEntry,
   onSchemaChange,
   onUpdateView,
+  onCalendarScopeChange,
   onCreateEntry,
 }: CollectionViewContentProps) {
   const type = viewType(view);
@@ -120,8 +125,10 @@ export function CollectionViewContent({
     return (
       <CalendarView
         {...commonProps}
+        calendarScope={calendarScope}
         onSchemaChange={onSchemaChange}
         onUpdateView={onUpdateView}
+        onCalendarScopeChange={onCalendarScopeChange}
         onCreateEntry={(title, asFolder, contextualDefaults) =>
           onCreateEntry(title, asFolder, contextualDefaults)
         }
