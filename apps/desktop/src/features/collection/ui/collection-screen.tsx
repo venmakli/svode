@@ -9,7 +9,7 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { normalizeSchema } from "@/features/properties";
 import { detailPageToolbarClassName } from "@/shared/ui/page-layout";
 import { useOpenEntryDocument } from "@/features/entry/selection";
-import { propertyFieldSavePolicy, type Entry } from "@/features/entry";
+import type { Entry } from "@/features/entry";
 import { EntryDetailActions } from "@/features/entry/detail";
 import { useSpaceTreeSync } from "@/features/space";
 import { useViewQuery } from "@/features/collection/query/hooks";
@@ -85,7 +85,7 @@ export function CollectionScreen({
     schemaError,
     documentLabel,
     setDocumentLabel,
-    updateReadmeField,
+    updateReadmeProperty,
     createReadmeForIdentity,
     updateIdentity,
     updateCover,
@@ -251,15 +251,6 @@ export function CollectionScreen({
   const documentLabelValue =
     schema.document?.label || m.collection_document_tab();
 
-  async function updateReadmeProperty(field: string, value: unknown) {
-    if (!entry || !propertiesSchema) return;
-    const column = propertiesSchema.schema.columns.find(
-      (item) => item.name === field,
-    );
-    await updateReadmeField(entry, field, value, {
-      policy: column ? propertyFieldSavePolicy(column) : undefined,
-    });
-  }
   const effectiveHeaderActions =
     headerActions ??
     (entry ? (

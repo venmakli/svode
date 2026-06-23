@@ -73,10 +73,16 @@ export function useViewQuery({
     listenCollectionQueryInvalidations({
       spacePath,
       onQueryInvalidated: reloadLocalQuery,
-    }).then((nextUnlisten) => {
-      if (disposed) nextUnlisten();
-      else unlisten = nextUnlisten;
-    });
+    })
+      .then((nextUnlisten) => {
+        if (disposed) nextUnlisten();
+        else unlisten = nextUnlisten;
+      })
+      .catch((error) => {
+        if (!disposed) {
+          console.warn("Failed to listen for collection query changes:", error);
+        }
+      });
 
     return () => {
       disposed = true;

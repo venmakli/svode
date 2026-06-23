@@ -1,9 +1,4 @@
-import {
-  useMemo,
-  type Dispatch,
-  type ReactNode,
-  type SetStateAction,
-} from "react";
+import { useMemo, type ReactNode } from "react";
 import { Maximize2, Star, StarOff, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,24 +9,14 @@ import {
   SheetContent,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { Separator } from "@/components/ui/separator";
 import { cn } from "@/shared/lib/utils";
-import { PlateDocumentEditor } from "@/features/editor";
-import {
-  propertyFieldSavePolicy,
-  type Entry,
-  type EntryCover,
-} from "@/features/entry";
+import type { Entry } from "@/features/entry";
 import {
   EntryDetailActions,
-  EntryIdentityHeader,
-  EntrySubpages,
-  EntrySystemFields,
+  EntryPeekSurface,
 } from "@/features/entry/detail";
-import { PropertyPanel } from "@/features/properties/panel";
-import type { EntrySchemaResult } from "@/features/properties";
 import { handleError } from "../lib/errors";
-import { useEntryPeekFieldSave, useEntryPeekLoader } from "../hooks";
+import { useEntryPeekLoader } from "../hooks";
 import type { EntryPeekTarget } from "../model";
 import * as m from "@/paraglide/messages.js";
 
@@ -127,14 +112,20 @@ export function EntryPeekSheet({
           </PeekScrollSurface>
         ) : currentEntry ? (
           <PeekScrollSurface>
-            <StandardEntryPeek
+            <EntryPeekSurface
               entry={currentEntry}
               schemaResult={schemaResult}
               spacePath={spacePath}
               projectPath={projectPath}
               spaceId={spaceId}
               actions={actions}
-              template={target?.template}
+              metadataBefore={
+                target?.template ? (
+                  <Badge variant="secondary">
+                    {m.collection_template_badge()}
+                  </Badge>
+                ) : null
+              }
               onOpenPath={onOpenPath}
               onEntryChange={setEntry}
               onSchemaChange={setSchemaResult}
@@ -150,127 +141,6 @@ function PeekScrollSurface({ children }: { children: ReactNode }) {
   return (
     <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
       {children}
-    </div>
-  );
-}
-
-function StandardEntryPeek({
-  entry,
-  schemaResult,
-  spacePath,
-  projectPath,
-  spaceId,
-  actions,
-  template,
-  onOpenPath,
-  onEntryChange,
-  onSchemaChange,
-}: {
-  entry: Entry;
-  schemaResult: EntrySchemaResult | null;
-  spacePath: string;
-  projectPath?: string | null;
-  spaceId: string;
-  actions: ReactNode;
-  template?: EntryPeekTarget["template"];
-  onOpenPath: (path: string) => void;
-  onEntryChange: Dispatch<SetStateAction<Entry | null>>;
-  onSchemaChange: (result: EntrySchemaResult | null) => void;
-}) {
-  const updateField = useEntryPeekFieldSave({
-    spacePath,
-    projectPath,
-    spaceId,
-    onEntryChange,
-  });
-
-  async function updateCover(cover: EntryCover | null) {
-    await updateField(entry, "cover", cover);
-  }
-
-  return (
-    <div className="flex min-h-full flex-col">
-      <div className="shrink-0 px-6 py-5">
-        <EntryIdentityHeader
-          title={entry.meta.title}
-          icon={entry.meta.icon}
-          description={entry.meta.description ?? ""}
-          cover={entry.meta.cover ?? null}
-          projectPath={projectPath ?? null}
-          spacePath={spacePath}
-          documentPath={entry.path}
-          onTitleChange={(value) =>
-            void updateField(entry, "title", value).catch(handleError)
-          }
-          onIconChange={(value) =>
-            void updateField(entry, "icon", value).catch(handleError)
-          }
-          onDescriptionChange={(value) =>
-            void updateField(entry, "description", value).catch(handleError)
-          }
-          onCoverChange={(cover) => void updateCover(cover).catch(handleError)}
-          onBodyFocus={() => undefined}
-          actions={actions}
-          metadata={
-            <div className="flex flex-col items-end gap-1">
-              {template ? (
-                <Badge variant="secondary">
-                  {m.collection_template_badge()}
-                </Badge>
-              ) : null}
-              <EntrySystemFields meta={entry.meta} />
-            </div>
-          }
-          coverSize="compact"
-        />
-
-        {schemaResult && schemaResult.schema.columns.length > 0 ? (
-          <div className="mt-4">
-            <PropertyPanel
-              spacePath={spacePath}
-              projectPath={projectPath}
-              spaceId={spaceId}
-              filePath={entry.path}
-              schemaResult={schemaResult}
-              values={entry.meta.extra ?? {}}
-              mode="peek"
-              onOpenPath={onOpenPath}
-              onSchemaChange={onSchemaChange}
-              onValueChange={async (field, value) => {
-                const column = schemaResult.schema.columns.find(
-                  (item) => item.name === field,
-                );
-                await updateField(entry, field, value, {
-                  policy: column ? propertyFieldSavePolicy(column) : undefined,
-                });
-              }}
-            />
-          </div>
-        ) : null}
-      </div>
-      <Separator />
-      <PlateDocumentEditor
-        bodyOnly
-        pageScroll
-        documentPath={entry.path}
-        documentSpaceId={spaceId}
-        spacePath={spacePath}
-        projectPath={projectPath}
-        bodyOnlyMeta={entry.meta}
-        initialEntry={entry}
-        initialEntrySpacePath={spacePath}
-        onDocumentPathChange={(path) => {
-          onEntryChange((current) =>
-            current ? { ...current, path } : current,
-          );
-        }}
-      />
-      <EntrySubpages
-        spacePath={spacePath}
-        projectPath={projectPath}
-        spaceId={spaceId}
-        documentPath={entry.path}
-      />
     </div>
   );
 }

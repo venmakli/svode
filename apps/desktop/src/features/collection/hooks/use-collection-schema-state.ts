@@ -8,7 +8,11 @@ import {
   isEntryTreeMetaField,
   useEntryFieldSave,
 } from "@/features/entry/field-save";
-import type { Entry, EntryCover } from "@/features/entry";
+import {
+  propertyFieldSavePolicy,
+  type Entry,
+  type EntryCover,
+} from "@/features/entry";
 import type {
   CollectionSchema,
   EntrySchemaResult,
@@ -175,6 +179,16 @@ export function useCollectionSchemaState({
     await updateReadmeField(entry, "cover", nextCover);
   }
 
+  async function updateReadmeProperty(field: string, value: unknown) {
+    if (!entry || !propertiesSchema) return;
+    const column = propertiesSchema.schema.columns.find(
+      (item) => item.name === field,
+    );
+    await updateReadmeField(entry, field, value, {
+      policy: column ? propertyFieldSavePolicy(column) : undefined,
+    });
+  }
+
   async function saveDocumentLabel() {
     const label = documentLabel.trim() || null;
     const next = await updateCollectionDocumentLabel({
@@ -196,7 +210,7 @@ export function useCollectionSchemaState({
     schemaError,
     documentLabel,
     setDocumentLabel,
-    updateReadmeField,
+    updateReadmeProperty,
     createReadmeForIdentity,
     updateIdentity,
     updateCover,
