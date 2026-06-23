@@ -19,11 +19,11 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/shared/lib/utils";
-import {
-  MultiPanePopover,
-  type CollectionView,
-  type ViewType,
-} from "@/features/collection/query";
+import { MultiPanePopover } from "@/features/collection/query/ui";
+import type {
+  CollectionView,
+  ViewType,
+} from "@/features/collection/query/model";
 import { SettingsRow, SettingsSection } from "./settings-row";
 import { ManageViewsPane } from "./manage-views-pane";
 import { viewType } from "../lib/utils";

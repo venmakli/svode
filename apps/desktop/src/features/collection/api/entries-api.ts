@@ -1,5 +1,5 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
-import type { QueryFilter, QuerySort } from "@/features/collection/query";
+import type { QueryFilter, QuerySort } from "@/features/collection/query/model";
 import { normalizeEntries, type Entry } from "@/features/entry";
 import {
   saveEntryTreeOrder,

@@ -10,11 +10,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { MultiPanePopover } from "@/features/collection/query";
+import { MultiPanePopover } from "@/features/collection/query/ui";
 import type {
   CollectionView,
   UseViewQueryResult,
-} from "@/features/collection/query";
+} from "@/features/collection/query/model";
 import type { CollectionSchema, Column } from "@/features/properties";
 import type { ActorCandidate } from "@/features/properties";
 import { TypeSettingsPane } from "@/features/properties/column-settings";

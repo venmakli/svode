@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { CollectionView } from "@/features/collection/query";
+import type { CollectionView } from "@/features/collection/query/model";
 import type { CalendarScope } from "../../model/calendar-types";
 import {
   calendarScopes,

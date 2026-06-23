@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { useStableViewQueryArgs } from "@/features/collection/query/hooks";
 import {
-  useStableViewQueryArgs,
   type CollectionView,
   type QueryFilter,
   type QuerySort,
-} from "@/features/collection/query";
+} from "@/features/collection/query/model";
 import type { Entry } from "@/features/entry";
 import { normalizeSchema, type CollectionSchema } from "@/features/properties";
 import {

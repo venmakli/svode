@@ -4,11 +4,8 @@ import {
   listCollectionInfos,
   queryCalendarEntries,
 } from "@/features/collection/api";
-import {
-  useStableViewQueryArgs,
-  type QueryFilter,
-  type QuerySort,
-} from "@/features/collection/query";
+import { useStableViewQueryArgs } from "@/features/collection/query/hooks";
+import type { QueryFilter, QuerySort } from "@/features/collection/query/model";
 import {
   useEntryFieldSave,
   type EntryFieldSavePolicy,

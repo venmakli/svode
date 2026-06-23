@@ -14,7 +14,7 @@ import {
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/shared/lib/utils";
-import type { CollectionView, ViewType } from "@/features/collection/query";
+import type { CollectionView, ViewType } from "@/features/collection/query/model";
 import type { CollectionSchema } from "@/features/properties";
 import { SettingsRow } from "./settings-row";
 import { viewIcons } from "./view-icons";

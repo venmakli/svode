@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import type { CollectionView } from "@/features/collection/query";
+import type { CollectionView } from "@/features/collection/query/model";
 import { resolveEntryImageSource } from "../../api";
 import { entryCollectionPath, isFolderEntry } from "../../lib/entry-tree";
 import type { Entry, EntryCover } from "@/features/entry";

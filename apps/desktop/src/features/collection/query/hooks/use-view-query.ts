@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { listen } from "@/platform/native/events";
-import { updateCollectionView } from "../../api";
+import {
+  listenCollectionQueryInvalidations,
+  updateCollectionView,
+} from "../../api";
 import {
   nextStoredQueryState,
   resolveViewQuery,
@@ -17,20 +19,6 @@ import type {
   UseViewQueryResult,
   ViewQueryPatch,
 } from "../model/types";
-
-interface SpaceSyncedEvent {
-  projectPath?: string;
-  spacePath?: string;
-  path?: string;
-}
-
-interface FileEvent {
-  path: string;
-}
-
-function isSchemaPath(path: string) {
-  return path.split("/").pop() === "schema.yaml";
-}
 
 export function useViewQuery({
   spacePath,
@@ -79,30 +67,20 @@ export function useViewQuery({
   }, [storageKey, storedEphemeral, view]);
 
   useEffect(() => {
-    const unlisteners: Array<() => void> = [];
+    let unlisten: (() => void) | null = null;
     let disposed = false;
 
-    listen<FileEvent>("file:changed", (event) => {
-      if (isSchemaPath(event.payload.path)) {
-        reloadLocalQuery();
-      }
-    }).then((unlisten) => {
-      if (disposed) unlisten();
-      else unlisteners.push(unlisten);
-    });
-
-    listen<SpaceSyncedEvent>("space:synced", (event) => {
-      if (!event.payload.spacePath || event.payload.spacePath === spacePath) {
-        reloadLocalQuery();
-      }
-    }).then((unlisten) => {
-      if (disposed) unlisten();
-      else unlisteners.push(unlisten);
+    listenCollectionQueryInvalidations({
+      spacePath,
+      onQueryInvalidated: reloadLocalQuery,
+    }).then((nextUnlisten) => {
+      if (disposed) nextUnlisten();
+      else unlisten = nextUnlisten;
     });
 
     return () => {
       disposed = true;
-      for (const unlisten of unlisteners) unlisten();
+      unlisten?.();
     };
   }, [reloadLocalQuery, spacePath]);
 

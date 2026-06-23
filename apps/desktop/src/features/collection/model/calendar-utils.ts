@@ -1,7 +1,7 @@
 import type { DateSelectArg, EventDropArg } from "@fullcalendar/core";
 import type { EventResizeDoneArg } from "@fullcalendar/interaction";
 import type { CSSProperties } from "react";
-import type { CollectionView } from "@/features/collection/query";
+import type { CollectionView } from "@/features/collection/query/model";
 import { entryCollectionPath, isFolderEntry } from "../lib/entry-tree";
 import type { Entry } from "@/features/entry";
 import type {

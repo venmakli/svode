@@ -4,7 +4,7 @@ import type { Entry } from "@/features/entry";
 import type {
   CollectionView,
   UseViewQueryResult,
-} from "@/features/collection/query";
+} from "@/features/collection/query/model";
 import type {
   CollectionSchema,
   Column,

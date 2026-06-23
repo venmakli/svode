@@ -3,7 +3,7 @@ import type {
   QueryFilter,
   QuerySort,
   UseViewQueryResult,
-} from "@/features/collection/query";
+} from "@/features/collection/query/model";
 import type { Entry } from "@/features/entry";
 import type {
   CollectionSchema,

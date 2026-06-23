@@ -1,5 +1,5 @@
 import type { Entry } from "@/features/entry";
-import type { CollectionView, ViewType } from "@/features/collection/query";
+import type { CollectionView, ViewType } from "@/features/collection/query/model";
 
 export function humanize(path: string) {
   const normalized = normalizeEntryPath(path);

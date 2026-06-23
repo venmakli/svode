@@ -7,8 +7,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/shared/lib/utils";
-import type { UseViewQueryResult, ViewType } from "@/features/collection/query";
-import type { CollectionView } from "@/features/collection/query";
+import type { UseViewQueryResult, ViewType } from "@/features/collection/query/model";
+import type { CollectionView } from "@/features/collection/query/model";
 import type { CollectionSchema } from "@/features/properties";
 import { SearchControl } from "./search-control";
 import type { SettingsPane } from "../model";

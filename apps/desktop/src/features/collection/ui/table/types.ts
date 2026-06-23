@@ -4,7 +4,7 @@ import type {
   QueryFilter,
   QuerySort,
   UseViewQueryResult,
-} from "@/features/collection/query";
+} from "@/features/collection/query/model";
 import type { CollectionSchema } from "@/features/properties";
 
 export interface CollectionTableRow {

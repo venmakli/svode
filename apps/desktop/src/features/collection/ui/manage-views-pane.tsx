@@ -22,7 +22,7 @@ import { cn } from "@/shared/lib/utils";
 import type {
   CollectionView,
   ViewType,
-} from "@/features/collection/query";
+} from "@/features/collection/query/model";
 import { handleError } from "../lib/errors";
 import { viewType } from "../lib/utils";
 import { SettingsSection } from "./settings-row";

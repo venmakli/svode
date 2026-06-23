@@ -16,8 +16,8 @@ import {
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { FILTER_OP_LABELS } from "@/features/collection/query";
-import type { QueryFilter, QuerySort } from "@/features/collection/query";
+import { FILTER_OP_LABELS } from "@/features/collection/query/model";
+import type { QueryFilter, QuerySort } from "@/features/collection/query/model";
 import type { Column, PropertyType } from "@/features/properties";
 import {
   isSensitiveColumn,

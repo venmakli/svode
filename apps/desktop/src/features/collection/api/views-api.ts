@@ -1,6 +1,6 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import type { CollectionSchema } from "@/features/properties";
-import type { CollectionView } from "@/features/collection/query";
+import type { CollectionView } from "@/features/collection/query/model";
 
 export function addCollectionView({
   spacePath,

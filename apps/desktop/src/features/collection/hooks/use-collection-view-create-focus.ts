@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import type { CollectionView, ViewType } from "@/features/collection/query";
+import type { CollectionView, ViewType } from "@/features/collection/query/model";
 import { viewType } from "../lib/utils";
 
 export interface ViewCreateRequest {

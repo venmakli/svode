@@ -2,7 +2,7 @@ import { Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { MultiPanePopover } from "@/features/collection/query";
+import { MultiPanePopover } from "@/features/collection/query/ui";
 import { cn } from "@/shared/lib/utils";
 import * as m from "@/paraglide/messages.js";
 

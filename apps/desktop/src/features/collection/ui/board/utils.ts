@@ -5,7 +5,7 @@ import type {
   ActorCandidate,
 } from "@/features/properties";
 import { actorDisplayName } from "@/features/properties";
-import type { CollectionView } from "@/features/collection/query";
+import type { CollectionView } from "@/features/collection/query/model";
 import { entryCollectionPath, isFolderEntry } from "../../lib/entry-tree";
 import {
   groupKeyForValue,

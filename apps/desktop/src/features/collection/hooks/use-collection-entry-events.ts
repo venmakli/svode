@@ -1,33 +1,19 @@
 import { useEffect } from "react";
-import { listen } from "@/platform/native/events";
-
-interface FileEvent {
-  path: string;
-}
-
-function isMarkdownEntryPath(path: string) {
-  return path.replace(/\\/g, "/").toLowerCase().endsWith(".md");
-}
+import { listenCollectionEntryChanges } from "../api";
 
 export function useCollectionEntryEvents(onEntriesChanged: () => void) {
   useEffect(() => {
+    let unlisten: (() => void) | null = null;
     let disposed = false;
-    const unlisteners: Array<() => void> = [];
-    const reloadEntries = (event: { payload: FileEvent }) => {
-      if (!isMarkdownEntryPath(event.payload.path)) return;
-      onEntriesChanged();
-    };
 
-    for (const eventName of ["file:created", "file:changed", "file:deleted"]) {
-      listen<FileEvent>(eventName, reloadEntries).then((unlisten) => {
-        if (disposed) unlisten();
-        else unlisteners.push(unlisten);
-      });
-    }
+    listenCollectionEntryChanges(onEntriesChanged).then((nextUnlisten) => {
+      if (disposed) nextUnlisten();
+      else unlisten = nextUnlisten;
+    });
 
     return () => {
       disposed = true;
-      for (const unlisten of unlisteners) unlisten();
+      unlisten?.();
     };
   }, [onEntriesChanged]);
 }

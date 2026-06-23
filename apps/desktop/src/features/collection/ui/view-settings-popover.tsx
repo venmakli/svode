@@ -30,20 +30,20 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/shared/lib/utils";
-import { MultiPanePopover } from "@/features/collection/query";
-import { queryField, queryFields } from "@/features/collection/query";
+import { MultiPanePopover } from "@/features/collection/query/ui";
+import { queryField, queryFields } from "@/features/collection/query/model";
 import type {
   CollectionView,
   UseViewQueryResult,
   ViewType,
-} from "@/features/collection/query";
+} from "@/features/collection/query/model";
 import {
   FieldChoiceList,
   FilterEditor,
   QueryList,
   SaveButton,
   SortEditor,
-} from "@/features/collection/query";
+} from "@/features/collection/query/ui";
 import type { CollectionSchema } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
 import { useCollectionActors, useViewSettingsActions } from "../hooks";

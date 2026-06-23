@@ -5,23 +5,19 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Database } from "lucide-react";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
-import { EntryIdentityHeader } from "@/features/editor";
-import { TitleZone } from "@/features/editor";
-import { PlateDocumentEditor } from "@/features/editor";
-import { PropertyPanel } from "@/features/properties/panel";
 import { normalizeSchema } from "@/features/properties";
-import {
-  detailPageHeaderClassName,
-  detailPageToolbarClassName,
-} from "@/shared/ui/page-layout";
+import { detailPageToolbarClassName } from "@/shared/ui/page-layout";
 import { useOpenEntryDocument } from "@/features/entry/selection";
 import { propertyFieldSavePolicy, type Entry } from "@/features/entry";
-import { EntryDetailActions, EntrySystemFields } from "@/features/entry/detail";
+import { EntryDetailActions } from "@/features/entry/detail";
 import { useSpaceTreeSync } from "@/features/space";
-import { useViewQuery } from "@/features/collection/query";
+import { useViewQuery } from "@/features/collection/query/hooks";
 import { DeleteDialogs } from "./delete-dialogs";
+import {
+  CollectionDocumentHeader,
+  CollectionDocumentTab,
+} from "./collection-document-surface";
 import { DocumentSettings } from "./document-settings-popover";
 import { EntryPeekSheet } from "./entry-peek-sheet";
 import { handleError } from "../lib/errors";
@@ -46,7 +42,7 @@ import {
   viewType,
 } from "../lib/utils";
 import type { EntryPeekTarget, SettingsPane } from "../model";
-import type { CollectionView } from "@/features/collection/query";
+import type { CollectionView } from "@/features/collection/query/model";
 import * as m from "@/paraglide/messages.js";
 
 interface CollectionScreenProps {
@@ -233,10 +229,6 @@ export function CollectionScreen({
     createEntry,
   });
 
-  const hasHeaderProperties = Boolean(
-    propertiesSchema && propertiesSchema.schema.columns.length > 0 && entry,
-  );
-
   if (loading) {
     return <CollectionSkeleton />;
   }
@@ -258,6 +250,16 @@ export function CollectionScreen({
   const cover = entry?.meta.cover ?? null;
   const documentLabelValue =
     schema.document?.label || m.collection_document_tab();
+
+  async function updateReadmeProperty(field: string, value: unknown) {
+    if (!entry || !propertiesSchema) return;
+    const column = propertiesSchema.schema.columns.find(
+      (item) => item.name === field,
+    );
+    await updateReadmeField(entry, field, value, {
+      policy: column ? propertyFieldSavePolicy(column) : undefined,
+    });
+  }
   const effectiveHeaderActions =
     headerActions ??
     (entry ? (
@@ -280,84 +282,32 @@ export function CollectionScreen({
 
   return (
     <div className="flex min-h-full flex-col">
-      <div className={detailPageHeaderClassName}>
-        <div>
-          {hasReadme ? (
-            <EntryIdentityHeader
-              title={title}
-              icon={icon}
-              description={description}
-              cover={cover}
-              projectPath={projectPath ?? null}
-              spacePath={spacePath}
-              documentPath={readmePath}
-              onTitleChange={(value) =>
-                void updateIdentity("title", value).catch(handleError)
-              }
-              onIconChange={(value) =>
-                void updateIdentity("icon", value).catch(handleError)
-              }
-              onDescriptionChange={(value) =>
-                void updateIdentity("description", value).catch(handleError)
-              }
-              onCoverChange={(nextCover) =>
-                void updateCover(nextCover).catch(handleError)
-              }
-              onBodyFocus={() => selectTab("document")}
-              titleClassName={
-                effectiveHeaderActions ? "max-w-none" : "max-w-4xl"
-              }
-              actions={effectiveHeaderActions}
-              metadata={entry ? <EntrySystemFields meta={entry.meta} /> : null}
-              coverSize={effectiveHeaderActions ? "compact" : "default"}
-            />
-          ) : (
-            <div className="max-w-4xl">
-              <TitleZone
-                title={title}
-                icon={null}
-                description=""
-                readOnly
-                hideDescription
-                fallbackIcon={Database}
-                onActivateIdentity={() =>
-                  void createReadmeForIdentity().catch(handleError)
-                }
-                onTitleChange={() =>
-                  void createReadmeForIdentity().catch(handleError)
-                }
-                onIconChange={() =>
-                  void createReadmeForIdentity().catch(handleError)
-                }
-                onDescriptionChange={() => undefined}
-                onBodyFocus={() => undefined}
-              />
-            </div>
-          )}
-        </div>
-        {hasHeaderProperties && entry && propertiesSchema ? (
-          <div className="max-w-5xl">
-            <PropertyPanel
-              spacePath={spacePath}
-              projectPath={projectPath}
-              spaceId={spaceId}
-              filePath={readmePath}
-              schemaResult={propertiesSchema}
-              values={entry.meta.extra ?? {}}
-              mode="full"
-              onOpenPath={openPath}
-              onValueChange={async (field, value) => {
-                const column = propertiesSchema.schema.columns.find(
-                  (item) => item.name === field,
-                );
-                await updateReadmeField(entry, field, value, {
-                  policy: column ? propertyFieldSavePolicy(column) : undefined,
-                });
-              }}
-            />
-          </div>
-        ) : null}
-      </div>
+      <CollectionDocumentHeader
+        hasReadme={hasReadme}
+        title={title}
+        icon={icon}
+        description={description}
+        cover={cover}
+        projectPath={projectPath}
+        spacePath={spacePath}
+        readmePath={readmePath}
+        spaceId={spaceId}
+        entry={entry}
+        propertiesSchema={propertiesSchema}
+        actions={effectiveHeaderActions}
+        onOpenPath={openPath}
+        onCreateReadmeForIdentity={() =>
+          void createReadmeForIdentity().catch(handleError)
+        }
+        onUpdateIdentity={(field, value) =>
+          void updateIdentity(field, value).catch(handleError)
+        }
+        onUpdateCover={(nextCover) =>
+          void updateCover(nextCover).catch(handleError)
+        }
+        onReadmePropertyChange={updateReadmeProperty}
+        onBodyFocus={() => selectTab("document")}
+      />
 
       <Tabs value={activeTab} onValueChange={selectTab} className="gap-0">
         <div className={detailPageToolbarClassName}>
@@ -433,25 +383,19 @@ export function CollectionScreen({
         </div>
 
         {hasReadme ? (
-          <TabsContent value="document" className="flex-none">
-            <PlateDocumentEditor
-              bodyOnly
-              pageScroll
-              documentPath={readmePath}
-              documentSpaceId={spaceId}
-              spacePath={spacePath}
-              projectPath={projectPath}
-              bodyOnlyMeta={entry?.meta ?? null}
-              initialEntry={entry}
-              initialEntrySpacePath={spacePath}
-              onDocumentPathChange={(path) => {
-                setEntry((current) =>
-                  current ? { ...current, path } : current,
-                );
-                openDocument(path, spaceId);
-              }}
-            />
-          </TabsContent>
+          <CollectionDocumentTab
+            readmePath={readmePath}
+            spaceId={spaceId}
+            spacePath={spacePath}
+            projectPath={projectPath}
+            entry={entry}
+            onDocumentPathChange={(path) => {
+              setEntry((current) =>
+                current ? { ...current, path } : current,
+              );
+              openDocument(path, spaceId);
+            }}
+          />
         ) : null}
         {views.map((view) => (
           <TabsContent key={view.name} value={view.name} className="flex-none">

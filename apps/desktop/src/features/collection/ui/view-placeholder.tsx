@@ -12,7 +12,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import type { CollectionView, ViewType } from "@/features/collection/query";
+import type { CollectionView, ViewType } from "@/features/collection/query/model";
 import type { CollectionSchema } from "@/features/properties";
 import type { Entry } from "@/features/entry";
 import { useViewPlaceholderEntries } from "../hooks";
