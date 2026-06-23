@@ -439,7 +439,7 @@ export function PlateDocumentEditor({
         try {
           const entryMeta =
             metaForCachedBody ??
-            await readEntry({ spacePath, path: currentDocument });
+            (await readEntry({ spacePath, path: currentDocument }));
           if (sequence !== loadSeqRef.current) return;
           if ("meta" in entryMeta) {
             showEntryWarnings(entryMeta);
@@ -755,6 +755,7 @@ export function PlateDocumentEditor({
     <EditorMediaAdapterProvider
       documentPath={currentDocument}
       projectPath={projectPath ?? null}
+      spaceId={currentDocumentSpaceId}
       spacePath={spacePath || null}
     >
       <Plate editor={editor} onChange={handleChange}>

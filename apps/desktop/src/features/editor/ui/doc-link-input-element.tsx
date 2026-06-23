@@ -14,10 +14,6 @@ import {
 } from "@/components/ui/inline-combobox";
 import { FileText } from "lucide-react";
 import { useSpace } from "@/features/space";
-import {
-  useActiveEntryDocument,
-  useActiveEntryDocumentSpaceId,
-} from "@/features/entry/selection";
 import type { SearchItem } from "@/features/search";
 import {
   absoluteDocumentPath,
@@ -25,21 +21,21 @@ import {
   joinAbs,
 } from "../lib/doc-link-utils";
 import { makeRelativeDocUrl, searchDocLinkTargets } from "../api/doc-link-api";
+import { useEditorDocumentContext } from "../hooks/use-resolved-asset-url";
 
 export function DocLinkInputElement(
   props: PlateElementProps<TComboboxInputElement>,
 ) {
   const { editor, element } = props;
-  const activeRootId = useSpace((s) => s.activeRootId);
-  const activeRootPath = useSpace((s) => s.activeRootPath);
   const rootSpaces = useSpace((s) => s.rootSpaces);
   const spaces = useSpace((s) => s.spaces);
   const fileTrees = useSpace((s) => s.fileTrees);
-  const activeDocument = useActiveEntryDocument();
-  const activeDocumentSpaceId = useActiveEntryDocumentSpaceId();
+  const editorDocument = useEditorDocumentContext();
   const [items, setItems] = useState<SearchItem[]>([]);
-  const sourceSpaceId =
-    activeDocumentSpaceId === activeRootId ? null : activeDocumentSpaceId;
+  const projectPath = editorDocument?.projectPath ?? null;
+  const activeDocument = editorDocument?.documentPath ?? null;
+  const currentSpacePath = editorDocument?.spacePath ?? "";
+  const sourceSpaceId = editorDocument?.sourceSpaceId ?? null;
   const sourceSpace =
     sourceSpaceId === null
       ? null
@@ -58,7 +54,7 @@ export function DocLinkInputElement(
   );
 
   useEffect(() => {
-    if (!activeRootPath) {
+    if (!projectPath) {
       let cancelled = false;
       queueMicrotask(() => {
         if (!cancelled) setItems([]);
@@ -68,7 +64,7 @@ export function DocLinkInputElement(
       };
     }
     let cancelled = false;
-    searchDocLinkTargets(activeRootPath, sourceSpaceId, "", localCurrentSpace)
+    searchDocLinkTargets(projectPath, sourceSpaceId, "", localCurrentSpace)
       .then((next) => {
         if (!cancelled) setItems(next);
       })
@@ -79,10 +75,7 @@ export function DocLinkInputElement(
     return () => {
       cancelled = true;
     };
-  }, [activeRootPath, sourceSpaceId, localCurrentSpace]);
-
-  const currentSpace = findSpaceById(rootSpaces, spaces, activeDocumentSpaceId);
-  const currentSpacePath = currentSpace?.path ?? activeRootPath ?? "";
+  }, [projectPath, sourceSpaceId, localCurrentSpace]);
 
   return (
     <PlateElement {...props} as="span">

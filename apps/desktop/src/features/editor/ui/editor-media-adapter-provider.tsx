@@ -71,6 +71,7 @@ const editorMediaAdapter: MediaAdapter = {
     openEditorMediaUrl(url, {
       documentPath: null,
       projectPath: null,
+      spaceId: null,
       spacePath: null,
     }),
   pickFiles: (kind) => pickMediaFiles(kind),
@@ -82,20 +83,23 @@ export function EditorMediaAdapterProvider({
   children,
   documentPath,
   projectPath,
+  spaceId,
   spacePath,
 }: {
   children: React.ReactNode;
   documentPath: string | null;
   projectPath: string | null;
+  spaceId: string | null;
   spacePath: string | null;
 }) {
   const context = React.useMemo<EditorAssetResolveContext>(
     () => ({
       documentPath,
       projectPath,
+      spaceId,
       spacePath,
     }),
-    [documentPath, projectPath, spacePath],
+    [documentPath, projectPath, spaceId, spacePath],
   );
   const adapter = React.useMemo<MediaAdapter>(
     () => ({

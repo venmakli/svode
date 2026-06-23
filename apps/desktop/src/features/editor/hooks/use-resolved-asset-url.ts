@@ -25,12 +25,17 @@ const pendingAssetUrlResolutions = new Map<string, Promise<string>>();
 export interface EditorAssetResolveContext {
   documentPath: string | null;
   projectPath: string | null;
+  spaceId: string | null;
   spacePath: string | null;
 }
 
-interface ActiveContext {
+export interface ResolvedEditorDocumentContext {
   projectPath: string;
+  spaceId: string | null;
+  sourceSpaceId: string | null;
+  documentPath: string;
   documentAbsPath: string;
+  spacePath: string;
 }
 
 const EditorAssetResolveContext =
@@ -82,20 +87,26 @@ function resolveCachedAssetUrl(
 
 export function resolveEditorAssetContext(
   context: EditorAssetResolveContext | null | undefined,
-): ActiveContext | null {
+  activeRootId?: string | null,
+): ResolvedEditorDocumentContext | null {
   if (!context?.projectPath || !context.documentPath || !context.spacePath) {
     return null;
   }
 
+  const spaceId = context.spaceId ?? null;
   return {
     projectPath: context.projectPath,
+    spaceId,
+    sourceSpaceId: spaceId && spaceId !== activeRootId ? spaceId : null,
+    documentPath: context.documentPath,
     documentAbsPath: context.documentPath.startsWith("/")
       ? context.documentPath
       : joinAbs(context.spacePath, context.documentPath),
+    spacePath: context.spacePath,
   };
 }
 
-function useActiveContext(): ActiveContext | null {
+export function useEditorDocumentContext(): ResolvedEditorDocumentContext | null {
   const explicitContext = useContext(EditorAssetResolveContext);
   const projectPath = useSpace((s) => s.activeRootPath);
   const activeDocument = useActiveEntryDocument();
@@ -104,7 +115,10 @@ function useActiveContext(): ActiveContext | null {
   const rootSpaces = useSpace((s) => s.rootSpaces);
   const spaces = useSpace((s) => s.spaces);
 
-  const resolvedExplicitContext = resolveEditorAssetContext(explicitContext);
+  const resolvedExplicitContext = resolveEditorAssetContext(
+    explicitContext,
+    activeRootId,
+  );
   if (resolvedExplicitContext) return resolvedExplicitContext;
 
   if (!projectPath || !activeDocument) return null;
@@ -121,7 +135,14 @@ function useActiveContext(): ActiveContext | null {
   const documentAbsPath = activeDocument.startsWith("/")
     ? activeDocument
     : joinAbs(spacePath, activeDocument);
-  return { projectPath, documentAbsPath };
+  return {
+    projectPath,
+    spaceId: ownerId,
+    sourceSpaceId: ownerId && ownerId !== activeRootId ? ownerId : null,
+    documentPath: activeDocument,
+    documentAbsPath,
+    spacePath,
+  };
 }
 
 /**
@@ -139,7 +160,7 @@ function useActiveContext(): ActiveContext | null {
 export function useResolvedAssetUrl(
   url: string | undefined,
 ): string | undefined {
-  const context = useActiveContext();
+  const context = useEditorDocumentContext();
   const projectPath = context?.projectPath ?? null;
   const documentAbsPath = context?.documentAbsPath ?? null;
   const spacePathFallback = useSpace(selectActiveSpacePath);

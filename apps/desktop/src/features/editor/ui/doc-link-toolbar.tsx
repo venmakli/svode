@@ -48,10 +48,6 @@ import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/shared/lib/utils";
 import { useEditorStore } from "../model";
-import {
-  useActiveEntryDocument,
-  useActiveEntryDocumentSpaceId,
-} from "@/features/entry/selection";
 import { useSpace } from "@/features/space";
 import type { SearchItem } from "@/features/search";
 import * as m from "@/paraglide/messages.js";
@@ -71,6 +67,7 @@ import {
   type DocLinkResolveResult,
   type LinkFixSuggestion,
 } from "../api/doc-link-api";
+import { useEditorDocumentContext } from "../hooks/use-resolved-asset-url";
 
 type LinkMode = "document" | "url";
 
@@ -225,18 +222,17 @@ function LegacyUrlInput({
 
 function DocLinkTargetPicker() {
   const editor = useEditorRef();
-  const activeDocument = useActiveEntryDocument();
-  const activeDocumentSpaceId = useActiveEntryDocumentSpaceId();
-  const activeRootPath = useSpace((s) => s.activeRootPath);
-  const activeRootId = useSpace((s) => s.activeRootId);
   const rootSpaces = useSpace((s) => s.rootSpaces);
   const spaces = useSpace((s) => s.spaces);
   const fileTrees = useSpace((s) => s.fileTrees);
+  const editorDocument = useEditorDocumentContext();
   const [query, setQuery] = React.useState("");
   const [items, setItems] = React.useState<SearchItem[]>([]);
   const [loading, setLoading] = React.useState(false);
-  const sourceSpaceId =
-    activeDocumentSpaceId === activeRootId ? null : activeDocumentSpaceId;
+  const projectPath = editorDocument?.projectPath ?? null;
+  const activeDocument = editorDocument?.documentPath ?? null;
+  const currentSpacePath = editorDocument?.spacePath ?? "";
+  const sourceSpaceId = editorDocument?.sourceSpaceId ?? null;
   const sourceSpace =
     sourceSpaceId === null
       ? null
@@ -255,7 +251,7 @@ function DocLinkTargetPicker() {
   );
 
   React.useEffect(() => {
-    if (!activeRootPath) {
+    if (!projectPath) {
       setItems([]);
       return;
     }
@@ -263,12 +259,7 @@ function DocLinkTargetPicker() {
     let cancelled = false;
     setLoading(true);
     const timer = window.setTimeout(() => {
-      searchDocLinkTargets(
-        activeRootPath,
-        sourceSpaceId,
-        query,
-        localCurrentSpace,
-      )
+      searchDocLinkTargets(projectPath, sourceSpaceId, query, localCurrentSpace)
         .then((next) => {
           if (!cancelled) setItems(next);
         })
@@ -285,10 +276,8 @@ function DocLinkTargetPicker() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [activeRootPath, sourceSpaceId, query, localCurrentSpace]);
+  }, [projectPath, sourceSpaceId, query, localCurrentSpace]);
 
-  const currentSpace = findSpaceById(rootSpaces, spaces, activeDocumentSpaceId);
-  const currentSpacePath = currentSpace?.path ?? activeRootPath ?? "";
   const sourceAbs =
     activeDocument && currentSpacePath
       ? absoluteDocumentPath(activeDocument, currentSpacePath)
@@ -356,13 +345,12 @@ function DocLinkEditContent({
 }) {
   const editor = useEditorRef();
   const selection = useEditorSelection();
-  const activeDocument = useActiveEntryDocument();
-  const activeDocumentSpaceId = useActiveEntryDocumentSpaceId();
-  const activeRootPath = useSpace((s) => s.activeRootPath);
-  const activeRootId = useSpace((s) => s.activeRootId);
-  const rootSpaces = useSpace((s) => s.rootSpaces);
-  const spaces = useSpace((s) => s.spaces);
+  const editorDocument = useEditorDocumentContext();
   const brokenLinks = useEditorStore((s) => s.brokenLinks);
+  const projectPath = editorDocument?.projectPath ?? null;
+  const activeDocument = editorDocument?.documentPath ?? null;
+  const currentSpacePath = editorDocument?.spacePath ?? "";
+  const sourceSpaceId = editorDocument?.sourceSpaceId ?? null;
 
   const entry = React.useMemo(
     () =>
@@ -374,10 +362,6 @@ function DocLinkEditContent({
   );
   const link = entry?.[0];
   const url = typeof link?.url === "string" ? link.url : "";
-  const currentSpace = findSpaceById(rootSpaces, spaces, activeDocumentSpaceId);
-  const currentSpacePath = currentSpace?.path ?? activeRootPath ?? "";
-  const sourceSpaceId =
-    activeDocumentSpaceId === activeRootId ? null : activeDocumentSpaceId;
   const activeRel =
     activeDocument && currentSpacePath
       ? relativeDocumentPath(activeDocument, currentSpacePath)
@@ -389,12 +373,12 @@ function DocLinkEditContent({
     (brokenLinks.has(url) ||
       (resolvedPath ? brokenLinks.has(resolvedPath) : false));
 
-  if (isBroken && activeRootPath && activeRel) {
+  if (isBroken && projectPath && activeRel) {
     return (
       <BrokenLinkRepair
         editButtonProps={editButtonProps}
         unlinkButtonProps={unlinkButtonProps}
-        projectPath={activeRootPath}
+        projectPath={projectPath}
         sourceSpaceId={sourceSpaceId}
         sourceSpacePath={currentSpacePath}
         sourcePath={activeRel}

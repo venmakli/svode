@@ -8,10 +8,7 @@ import { PlateElement } from "platejs/react";
 import { FileText } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/shared/lib/utils";
-import {
-  useActiveEntrySelection,
-  useOpenEntryDocument,
-} from "@/features/entry/selection";
+import { useOpenEntryDocument } from "@/features/entry/selection";
 import { useEditorStore } from "../model";
 import { useSpace } from "@/features/space";
 import { GhostCloneDialog } from "./ghost-clone-dialog";
@@ -24,7 +21,6 @@ import {
 } from "@/components/ui/tooltip";
 import {
   absoluteDocumentPath,
-  findSpaceById,
   isDocLink,
   relativeDocumentPath,
   resolveRelativeDocPath,
@@ -34,15 +30,13 @@ import {
   resolveDocLink,
   type DocLinkResolveResult,
 } from "../api/doc-link-api";
+import { useEditorDocumentContext } from "../hooks/use-resolved-asset-url";
 
 export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
   const { element, editor, children } = props;
   const openDocument = useOpenEntryDocument();
-  const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
+  const editorDocument = useEditorDocumentContext();
   const activeRootId = useSpace((s) => s.activeRootId);
-  const activeRootPath = useSpace((s) => s.activeRootPath);
-  const rootSpaces = useSpace((s) => s.rootSpaces);
-  const spaces = useSpace((s) => s.spaces);
   const activeSpaceId = useSpace((s) => s.activeSpaceId);
   const openSpace = useSpace((s) => s.openSpace);
   const clearActiveSpace = useSpace((s) => s.clearActiveSpace);
@@ -84,8 +78,9 @@ export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
   }
 
   // Doc link — pill rendering
-  const currentSpace = findSpaceById(rootSpaces, spaces, activeDocumentSpaceId);
-  const currentSpacePath = currentSpace?.path ?? activeRootPath ?? "";
+  const activeDocument = editorDocument?.documentPath ?? null;
+  const activeRootPath = editorDocument?.projectPath ?? null;
+  const currentSpacePath = editorDocument?.spacePath ?? "";
   const activeRel =
     activeDocument && currentSpacePath
       ? relativeDocumentPath(activeDocument, currentSpacePath)
@@ -96,8 +91,7 @@ export function DocLinkElement(props: PlateElementProps<TLinkElement>) {
       : activeDocument;
   const resolvedPath =
     activeRel && url ? resolveRelativeDocPath(activeRel, url) : url;
-  const sourceSpaceId =
-    activeDocumentSpaceId === activeRootId ? null : activeDocumentSpaceId;
+  const sourceSpaceId = editorDocument?.sourceSpaceId ?? null;
   const isBroken =
     !!url &&
     (brokenLinks.has(url) ||

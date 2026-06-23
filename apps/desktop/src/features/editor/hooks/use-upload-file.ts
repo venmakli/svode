@@ -5,8 +5,8 @@ import { toast } from "sonner";
 import { makeRelativeDocUrl } from "../api/doc-link-api";
 import { joinAbs } from "../lib/doc-link-utils";
 import { uploadAsset, type UploadAssetDto } from "@/platform/upload/upload-api";
-import { getActiveEntrySelection } from "@/features/entry/selection";
 import { getSpaceSnapshot } from "@/features/space";
+import { useEditorDocumentContext } from "./use-resolved-asset-url";
 
 /**
  * Shape returned by `useUploadFile` — matches the subset of Plate's
@@ -34,45 +34,29 @@ interface UseUploadFileProps {
  * Plate writes into the document body. The editor resolves that link back to
  * an absolute filesystem path at render time via `useResolvedAssetUrl`.
  */
-export function useUploadFile({ onUploadComplete, onUploadError }: UseUploadFileProps = {}) {
+export function useUploadFile({
+  onUploadComplete,
+  onUploadError,
+}: UseUploadFileProps = {}) {
+  const editorDocument = useEditorDocumentContext();
   const [uploadedFile, setUploadedFile] = React.useState<UploadedFile>();
   const [uploadingFile, setUploadingFile] = React.useState<File>();
   const [progress, setProgress] = React.useState<number>(0);
   const [isUploading, setIsUploading] = React.useState(false);
 
   async function uploadFile(file: File): Promise<UploadedFile | undefined> {
-    const projectPath = getSpaceSnapshot().activeRootPath;
-    if (!projectPath) {
-      const err = new Error("No active project");
-      toast.error(err.message);
-      onUploadError?.(err);
-      return undefined;
-    }
-    // Snapshot the active document at upload initiation. If the user switches
-    // documents while `file.arrayBuffer()` is resolving, we still attribute
-    // the asset to the document where the upload was started.
-    const { activeDocument, activeDocumentSpaceId } = getActiveEntrySelection();
-    if (!activeDocument) {
+    // Snapshot the editor-local document at upload initiation. If the user
+    // switches the app selection while file bytes are resolving, the asset still
+    // belongs to the document where the upload was started.
+    const uploadContext = editorDocument;
+    if (!uploadContext) {
       const err = new Error("No active document");
       toast.error(err.message);
       onUploadError?.(err);
       return undefined;
     }
-    const { rootSpaces, spaces, activeRootId } = getSpaceSnapshot();
-    const ownerSpacePath =
-      !activeDocumentSpaceId || activeDocumentSpaceId === activeRootId
-        ? rootSpaces.find((r) => r.id === activeDocumentSpaceId)?.path ??
-          projectPath
-        : spaces.find((s) => s.id === activeDocumentSpaceId)?.path;
-    if (!ownerSpacePath) {
-      const err = new Error("Active document's space is unavailable");
-      toast.error(err.message);
-      onUploadError?.(err);
-      return undefined;
-    }
-    const documentAbsPath = activeDocument.startsWith("/")
-      ? activeDocument
-      : joinAbs(ownerSpacePath, activeDocument);
+    const { documentAbsPath, documentPath, projectPath, spacePath } =
+      uploadContext;
 
     setIsUploading(true);
     setUploadingFile(file);
@@ -92,7 +76,7 @@ export function useUploadFile({ onUploadComplete, onUploadError }: UseUploadFile
         documentAbsPath,
         fileName: file.name,
         bytes,
-        documentId: activeDocument,
+        documentId: documentPath,
       });
 
       setProgress(100);
@@ -103,8 +87,9 @@ export function useUploadFile({ onUploadComplete, onUploadError }: UseUploadFile
       // intra-space uploads (MVP, Q3=A) this collapses to `.assets/x.ext`.
       // The asset's owning space is identified by `result.spaceId` (null =
       // project root); look it up to build the abs filesystem path.
+      const { spaces } = getSpaceSnapshot();
       const assetOwnerPath = result.spaceId
-        ? spaces.find((s) => s.id === result.spaceId)?.path ?? ownerSpacePath
+        ? (spaces.find((s) => s.id === result.spaceId)?.path ?? spacePath)
         : projectPath;
       const targetAbsPath = joinAbs(assetOwnerPath, result.relPath);
       const link = await makeRelativeDocUrl(documentAbsPath, targetAbsPath);
