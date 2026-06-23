@@ -1,8 +1,7 @@
-// eslint-disable-next-line svode/import-boundaries -- Read-only Plate feature flags stay in copied kit until editor-owned kit options replace direct config reads.
 import {
   ENABLE_PLATE_ADVANCED_BLOCKS,
   ENABLE_PLATE_REVIEW,
-} from "@/app/config/feature-flags";
+} from "@/shared/config/plate-feature-flags";
 import { BaseAlignKit } from "./plugins/align-base-kit";
 import { BaseBasicBlocksKit } from "./plugins/basic-blocks-base-kit";
 import { BaseBasicMarksKit } from "./plugins/basic-marks-base-kit";

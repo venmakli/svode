@@ -15,7 +15,6 @@ const copiedPrimitiveFiles = [
 ];
 const nodeScriptFiles = ["scripts/**/*.mjs", "apps/desktop/scripts/**/*.mjs"];
 
-const appConfigException = "@/app/config/feature-flags";
 const routeAppExceptions = new Map([
   ["routes/__root.tsx", new Set(["@/app/providers"])],
   ["routes/space.tsx", new Set(["@/app/shell"])],
@@ -164,8 +163,7 @@ function createImportBoundaryRule() {
 
         if (
           ["features", "platform", "shared", "components"].includes(layer) &&
-          source.startsWith("@/app/") &&
-          !(source === appConfigException && layer !== "components")
+          source.startsWith("@/app/")
         ) {
           report(node, "lowerApp");
           return;

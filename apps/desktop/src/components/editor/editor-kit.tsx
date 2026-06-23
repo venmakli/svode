@@ -3,12 +3,11 @@
 import { type Value, TrailingBlockPlugin } from "platejs";
 import { type TPlateEditor, useEditorRef } from "platejs/react";
 
-// eslint-disable-next-line svode/import-boundaries -- Read-only Plate feature flags stay in copied kit until editor-owned kit options replace direct config reads.
 import {
   ENABLE_PLATE_ADVANCED_BLOCKS,
   ENABLE_PLATE_AI,
   ENABLE_PLATE_REVIEW,
-} from "@/app/config/feature-flags";
+} from "@/shared/config/plate-feature-flags";
 import { AIKit } from "@/components/editor/plugins/ai-kit";
 import { AlignKit } from "@/components/editor/plugins/align-kit";
 import { AutoformatKit } from "@/components/editor/plugins/autoformat-kit";

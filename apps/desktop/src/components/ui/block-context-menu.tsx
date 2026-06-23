@@ -20,8 +20,7 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-// eslint-disable-next-line svode/import-boundaries -- Read-only Plate feature flags stay in copied block menu until editor-owned menu options replace direct config reads.
-import { ENABLE_PLATE_ADVANCED_BLOCKS } from "@/app/config/feature-flags";
+import { ENABLE_PLATE_ADVANCED_BLOCKS } from "@/shared/config/plate-feature-flags";
 import { useIsTouchDevice } from "@/shared/hooks/use-is-touch-device";
 
 export function BlockContextMenu({ children }: { children: React.ReactNode }) {

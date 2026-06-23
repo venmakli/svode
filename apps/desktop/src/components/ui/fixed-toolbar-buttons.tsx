@@ -17,12 +17,11 @@ import {
 import { KEYS, type Descendant } from "platejs";
 import { useEditorReadOnly } from "platejs/react";
 
-// eslint-disable-next-line svode/import-boundaries -- Read-only Plate feature flags stay in copied toolbar until editor-owned toolbar options replace direct config reads.
 import {
   ENABLE_PLATE_ADVANCED_BLOCKS,
   ENABLE_PLATE_AI,
   ENABLE_PLATE_REVIEW,
-} from "@/app/config/feature-flags";
+} from "@/shared/config/plate-feature-flags";
 import { AIToolbarButton } from "./ai-toolbar-button";
 import { AlignToolbarButton } from "./align-toolbar-button";
 import { CommentToolbarButton } from "./comment-toolbar-button";

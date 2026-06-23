@@ -4,8 +4,7 @@ import { AIChatPlugin } from "@platejs/ai/react";
 import { BlockSelectionPlugin } from "@platejs/selection/react";
 import { getPluginTypes, isHotkey, KEYS } from "platejs";
 
-// eslint-disable-next-line svode/import-boundaries -- Read-only Plate feature flags stay in copied kit until editor-owned kit options replace direct config reads.
-import { ENABLE_PLATE_AI } from "@/app/config/feature-flags";
+import { ENABLE_PLATE_AI } from "@/shared/config/plate-feature-flags";
 import { BlockSelection } from "@/components/ui/block-selection";
 
 export const BlockSelectionKit = [

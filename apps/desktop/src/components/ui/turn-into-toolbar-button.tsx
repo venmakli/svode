@@ -34,8 +34,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { getBlockType, setBlockType } from "@/components/editor/transforms";
-// eslint-disable-next-line svode/import-boundaries -- Read-only Plate feature flags stay in copied toolbar until editor-owned toolbar options replace direct config reads.
-import { ENABLE_PLATE_ADVANCED_BLOCKS } from "@/app/config/feature-flags";
+import { ENABLE_PLATE_ADVANCED_BLOCKS } from "@/shared/config/plate-feature-flags";
 
 import { ToolbarButton, ToolbarMenuGroup } from "./toolbar";
 

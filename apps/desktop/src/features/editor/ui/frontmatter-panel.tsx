@@ -6,10 +6,8 @@ import {
 import { Separator } from "@/components/ui/separator";
 import type { EntryMeta } from "@/features/entry";
 import { PropertyPanel } from "@/features/properties/panel";
-import type { EntrySchemaResult } from "@/features/properties";
-import { getEntrySchema } from "@/features/properties/api";
 import * as m from "@/paraglide/messages.js";
-import { useEffect, useState } from "react";
+import { useFrontmatterSchema } from "../hooks/use-frontmatter-schema";
 
 interface FrontmatterPanelProps {
   meta: EntryMeta | null;
@@ -54,31 +52,10 @@ export function FrontmatterPanel({
   onOpenPath,
   onPropertyChange,
 }: FrontmatterPanelProps) {
-  const [schemaResult, setSchemaResult] = useState<EntrySchemaResult | null>(
-    null,
+  const { schemaResult, setSchemaResult } = useFrontmatterSchema(
+    spacePath,
+    filePath,
   );
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!spacePath || !filePath) {
-      queueMicrotask(() => {
-        if (!cancelled) setSchemaResult(null);
-      });
-      return () => {
-        cancelled = true;
-      };
-    }
-    getEntrySchema({ spacePath, filePath })
-      .then((result) => {
-        if (!cancelled) setSchemaResult(result);
-      })
-      .catch(() => {
-        if (!cancelled) setSchemaResult(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [filePath, spacePath]);
 
   if (!meta) return null;
 

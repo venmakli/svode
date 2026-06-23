@@ -23,7 +23,6 @@ import {
   getGitSpaceStatus,
 } from "@/features/git/editor";
 import { clearCommittedReviewMarkers } from "../file-tree-sync";
-import { isTerminalKeyboardEvent } from "@/features/terminal";
 import {
   deserializeWithConflicts,
   hasUnresolvedConflicts,
@@ -38,11 +37,7 @@ import { logTiming, nowMs } from "@/shared/lib/performance";
 import { TocSidebar } from "../ui/toc-sidebar";
 import { EditorMediaAdapterProvider } from "../ui/editor-media-adapter-provider";
 import type { Entry, EntryMeta, WriteResult } from "@/features/entry";
-import {
-  readEntry,
-  validateLinks,
-  writeEntry,
-} from "@/features/entry/entry-api";
+import { readEntry, writeEntry } from "@/features/entry/entry-api";
 import {
   deleteCachedDocumentValue,
   getCachedDocumentValue,
@@ -51,6 +46,9 @@ import {
   setCachedDocumentValueByKey,
 } from "../model/plate-document-cache";
 import { loadProgrammaticEditorValue } from "../model/programmatic-editor-load";
+import { useEditorLinkValidation } from "../hooks/use-editor-link-validation";
+import { useEditorPendingRename } from "../hooks/use-editor-pending-rename";
+import { useEditorSaveShortcuts } from "../hooks/use-editor-save-shortcuts";
 import * as m from "@/paraglide/messages.js";
 
 const AUTOSAVE_DEBOUNCE_MS = 1000;
@@ -502,43 +500,20 @@ export function PlateDocumentEditor({
     setBrokenLinks,
   ]);
 
-  useEffect(() => {
-    if (!loadedDocumentKey || !editor || !currentDocument || !spacePath) return;
-    if (loadedDocumentKey !== getDocumentCacheKey(spacePath, currentDocument)) {
-      return;
-    }
-
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      validateLinks({
-        spacePath,
-        path: currentDocument,
-        projectPath: projectPath ?? null,
-      })
-        .then((results) => {
-          if (cancelled) return;
-          const broken = new Set(
-            results.filter((r) => !r.exists).map((r) => r.url),
-          );
-          setBrokenLinks(broken);
-        })
-        .catch(() => {
-          if (!cancelled) setBrokenLinks(new Set());
-        });
-    }, 0);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [
-    loadedDocumentKey,
-    editor,
+  const linkValidationDocumentKey =
+    loadedDocumentKey &&
+    currentDocument &&
+    spacePath &&
+    loadedDocumentKey === getDocumentCacheKey(spacePath, currentDocument)
+      ? loadedDocumentKey
+      : null;
+  useEditorLinkValidation({
+    loadedDocumentKey: linkValidationDocumentKey,
     currentDocument,
     spacePath,
-    projectPath,
+    projectPath: projectPath ?? null,
     setBrokenLinks,
-  ]);
+  });
 
   useEffect(() => {
     bodyOnlyMetaRef.current = bodyOnlyMeta;
@@ -562,47 +537,21 @@ export function PlateDocumentEditor({
   // Cancel debounce on unmount
   useEffect(() => cancelDebounce, [cancelDebounce]);
 
-  // Apply pending rename from sidebar (file already renamed on disk)
-  useEffect(() => {
-    if (!pendingRename || pendingRename.path !== currentDocument || !editor)
-      return;
-    const { title: newTitle, newPath } = pendingRename;
-    clearPendingRename();
-
-    titleRef.current = newTitle;
-    queueMicrotask(() => setTitle(newTitle));
-
-    if (newPath) {
-      // File was renamed on disk — cache editor content for new path and switch
-      if (spacePath) {
-        setCachedDocumentValue(spacePath, newPath, editor.children);
-        deleteCachedDocumentValue(pendingRename.path, spacePath);
-      }
-      clearUnsaved(pendingRename.path);
-      setCurrentDocument(newPath);
-    } else {
-      // Slug unchanged, just update sidebar
-      if (currentPathRef.current && activeWsId) {
-        patchEntryTreeMeta(
-          activeWsId,
-          currentPathRef.current,
-          newTitle,
-          iconRef.current,
-          descriptionRef.current || null,
-        );
-      }
-    }
-  }, [
+  useEditorPendingRename({
     pendingRename,
     currentDocument,
     editor,
+    spacePath,
+    activeWsId,
+    titleRef,
+    iconRef,
+    descriptionRef,
     clearPendingRename,
     clearUnsaved,
     setCurrentDocument,
     patchEntryTreeMeta,
-    activeWsId,
-    spacePath,
-  ]);
+    setTitle,
+  });
 
   // ⌘S — cancel debounce, materialize rename/backlink writes, then stage
   // directly related pending paths into this explicit save commit.
@@ -740,27 +689,7 @@ export function PlateDocumentEditor({
     setCurrentDocument,
   ]);
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (isTerminalKeyboardEvent(e)) return;
-      if (
-        (e.metaKey || e.ctrlKey) &&
-        e.shiftKey &&
-        e.key.toLowerCase() === "s"
-      ) {
-        e.preventDefault();
-        void handleSaveAll();
-        return;
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-        e.preventDefault();
-        void handleSave();
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [handleSave, handleSaveAll]);
+  useEditorSaveShortcuts({ onSave: handleSave, onSaveAll: handleSaveAll });
 
   const handleWatcherEntryReloaded = useCallback(
     (entry: Awaited<ReturnType<typeof readEntry>>) => {

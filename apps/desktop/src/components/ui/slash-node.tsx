@@ -33,11 +33,10 @@ import {
 import { type TComboboxInputElement, KEYS } from "platejs";
 import { PlateElement } from "platejs/react";
 
-// eslint-disable-next-line svode/import-boundaries -- Read-only Plate feature flags stay in copied slash menu until editor-owned menu options replace direct config reads.
 import {
   ENABLE_PLATE_ADVANCED_BLOCKS,
   ENABLE_PLATE_AI,
-} from "@/app/config/feature-flags";
+} from "@/shared/config/plate-feature-flags";
 import {
   insertBlock,
   insertInlineElement,
