@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import type { PropertyType } from "@/features/properties";
-import type { TableEditingCell, TableViewProps } from "../../ui/table/types";
+import type { TableEditingCell, TableViewProps } from "../../model/table-types";
 import {
   entryParentDir,
   flattenRows,
   normalizeVisibleFields,
   propertyTypeLabel,
   showNestedForView,
-} from "../../ui/table/utils";
+} from "../../lib/table-view";
 import { titleFilter } from "../../lib/utils";
 import { useCollectionActors } from "../use-collection-actors";
 import { useCollectionColumnActions } from "../use-collection-column-actions";

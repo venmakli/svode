@@ -1,4 +1,3 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   closestCenter,
   DndContext,
@@ -6,7 +5,6 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
-  type DragEndEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -24,121 +22,54 @@ import {
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { Entry } from "@/features/entry";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
-import {
-  useCollectionActors,
-  useCollectionEntryFieldSave,
-} from "../../hooks";
-import { titleFilter } from "../../lib/utils";
-import { entryParentDir } from "../table/utils";
 import { SortableListRow } from "./list-row";
-import type { ListViewProps } from "./types";
-import { useListEntryActions } from "../../hooks/list/use-list-entry-actions";
-import {
-  flattenListRows,
-  listDensity,
-  listMetaColumns,
-  normalizeListCardFields,
-} from "./utils";
-import { useListEntries } from "../../hooks/list/use-list-entries";
+import type { ListViewProps } from "../../model/list-types";
+import { useListViewRuntime } from "../../hooks/list/use-list-view-runtime";
 import * as m from "@/paraglide/messages.js";
 
-export function ListView({
-  view,
-  query,
-  schema,
-  collectionPath,
-  spacePath,
-  projectPath,
-  searchQuery,
-  filters,
-  sort,
-  refreshToken,
-  createFocusSignal = 0,
-  createAsFolder = false,
-  onClearSearch,
-  onOpenEntry,
-  onOpenNestedPeek,
-  onOpenNestedCollection,
-  onOpenFullPage,
-  onOpenPath,
-  onDuplicateEntry,
-  onDeleteEntry,
-  onCreateEntry,
-}: ListViewProps) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [focusedPath, setFocusedPath] = useState<string | null>(null);
-  const [composerOpen, setComposerOpen] = useState(false);
-  const [composerAsFolder, setComposerAsFolder] = useState(false);
-  const [composerValue, setComposerValue] = useState("");
-  const footerRef = useRef<HTMLDivElement | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const rowRefs = useRef(new Map<string, HTMLElement>());
-  const { actors, loadActors } = useCollectionActors(spacePath);
+export function ListView(props: ListViewProps) {
   const {
-    entries,
-    setEntries,
-    nestedCollectionPaths,
+    query,
+    spacePath,
+    projectPath,
+    onClearSearch,
+    onOpenFullPage,
+    onOpenNestedCollection,
+    onOpenPath,
+    onDuplicateEntry,
+    onDeleteEntry,
+  } = props;
+  const {
+    actors,
+    cardFields,
+    cancelComposer,
+    closeComposer,
+    commitField,
+    composerOpen,
+    composerValue,
+    createDraft,
+    density,
+    filteredTopLevel,
+    focusedPath,
+    footerRef,
+    handleDragEnd,
+    hasSort,
+    inputRef,
+    loadActors,
     loading,
-    loadEntries,
-  } = useListEntries({
-    collectionPath,
-    filters,
-    projectPath,
-    refreshToken,
-    sort,
-    spacePath,
-  });
-
-  const density = listDensity(view);
-  const cardFields = useMemo(
-    () => normalizeListCardFields(view, schema),
-    [schema, view],
-  );
-  const metaColumns = useMemo(
-    () => listMetaColumns(cardFields, schema),
-    [cardFields, schema],
-  );
-  const topLevelEntries = useMemo(
-    () =>
-      entries.filter((entry) => entryParentDir(entry.path) === collectionPath),
-    [collectionPath, entries],
-  );
-  const filteredTopLevel = useMemo(
-    () => titleFilter(topLevelEntries, searchQuery),
-    [searchQuery, topLevelEntries],
-  );
-  const rows = useMemo(
-    () =>
-      flattenListRows({
-        parents: filteredTopLevel,
-        entries,
-        expanded,
-        collectionPath,
-        nestedCollectionPaths,
-      }),
-    [
-      collectionPath,
-      entries,
-      expanded,
-      filteredTopLevel,
-      nestedCollectionPaths,
-    ],
-  );
-  const hasSort = sort.length > 0;
-  const queryFiltered = searchQuery.trim().length > 0 || filters.length > 0;
-  const hasActorField = metaColumns.some((column) => column.type === "actor");
-  const { createEntry, reorderEntries } = useListEntryActions({
-    collectionPath,
-    spacePath,
-    projectPath,
-    entries,
+    metaColumns,
+    moveFocus,
+    openComposer,
+    openRow,
+    queryFiltered,
+    rowRef,
     rows,
-    setEntries,
-    loadEntries,
-    onCreateEntry,
-  });
+    setComposerValue,
+    setFocusedPath,
+    topLevelEntries,
+    toggleRow,
+  } = useListViewRuntime(props);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -147,96 +78,6 @@ export function ListView({
     }),
   );
 
-  useEffect(() => {
-    if (!hasActorField) return;
-    void loadActors().catch((error) => {
-      console.warn("Failed to load list actors:", error);
-    });
-  }, [hasActorField, loadActors]);
-
-  useEffect(() => {
-    if (!composerOpen) return;
-    inputRef.current?.focus();
-  }, [composerOpen]);
-
-  useEffect(() => {
-    if (createFocusSignal <= 0) return;
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled) return;
-      setComposerOpen(true);
-      setComposerAsFolder(createAsFolder);
-      window.requestAnimationFrame(() => {
-        if (cancelled) return;
-        footerRef.current?.scrollIntoView({ block: "nearest" });
-        inputRef.current?.focus();
-      });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [createAsFolder, createFocusSignal]);
-
-  const handleFieldCommitError = useCallback(
-    (error: unknown) => {
-      console.warn("Failed to update list field:", error);
-      void loadEntries();
-    },
-    [loadEntries],
-  );
-  const { commitField } = useCollectionEntryFieldSave({
-    spacePath,
-    projectPath,
-    setEntries,
-    onCommitError: handleFieldCommitError,
-  });
-
-  async function createDraft() {
-    const title = composerValue.trim();
-    if (!title) {
-      setComposerOpen(false);
-      setComposerValue("");
-      return;
-    }
-    const created = await createEntry(title, composerAsFolder, () => {
-      setComposerOpen(false);
-      setComposerValue("");
-    });
-    if (created) focusRow(created.path);
-  }
-
-  function toggleRow(entry: Entry) {
-    setExpanded((current) => {
-      const next = new Set(current);
-      if (next.has(entry.path)) next.delete(entry.path);
-      else next.add(entry.path);
-      return next;
-    });
-  }
-
-  function openRow(entry: Entry, nestedCollection: boolean) {
-    if (nestedCollection) onOpenNestedPeek(entry);
-    else onOpenEntry(entry);
-  }
-
-  function focusRow(path: string) {
-    setFocusedPath(path);
-    window.requestAnimationFrame(() => {
-      rowRefs.current.get(path)?.focus();
-    });
-  }
-
-  function moveFocus(path: string, offset: number) {
-    const index = rows.findIndex((row) => row.entry.path === path);
-    const next = rows[index + offset];
-    if (next) focusRow(next.entry.path);
-  }
-
-  async function handleDragEnd(event: DragEndEvent) {
-    if (hasSort || !event.over || event.active.id === event.over.id) return;
-    await reorderEntries(event);
-  }
-
   if (loading) return <ListSkeleton density={density} />;
 
   if (topLevelEntries.length === 0 && !queryFiltered && !composerOpen) {
@@ -244,10 +85,7 @@ export function ListView({
       <EmptyState
         title={m.table_empty()}
         action={m.table_create_first_entry()}
-        onAction={() => {
-          setComposerOpen(true);
-          setComposerAsFolder(false);
-        }}
+        onAction={() => openComposer(false)}
       />
     );
   }
@@ -289,10 +127,7 @@ export function ListView({
                 actors={actors}
                 disabledReorder={hasSort}
                 focused={focusedPath === row.entry.path}
-                rowRef={(element) => {
-                  if (element) rowRefs.current.set(row.entry.path, element);
-                  else rowRefs.current.delete(row.entry.path);
-                }}
+                rowRef={(element) => rowRef(row.entry.path, element)}
                 onRequestActors={loadActors}
                 onUpdateField={(entry, column, value) =>
                   void commitField(entry, column, value)
@@ -322,18 +157,11 @@ export function ListView({
               className="h-8 max-w-sm"
               onChange={(event) => setComposerValue(event.target.value)}
               onBlur={() => {
-                if (!composerValue.trim()) {
-                  setComposerOpen(false);
-                  setComposerAsFolder(false);
-                }
+                if (!composerValue.trim()) closeComposer();
               }}
               onKeyDown={(event) => {
                 if (event.key === "Enter") void createDraft();
-                if (event.key === "Escape") {
-                  setComposerOpen(false);
-                  setComposerValue("");
-                  setComposerAsFolder(false);
-                }
+                if (event.key === "Escape") cancelComposer();
               }}
             />
           ) : (
@@ -343,8 +171,7 @@ export function ListView({
               size="sm"
               className="text-muted-foreground"
               onClick={(event) => {
-                setComposerOpen(true);
-                setComposerAsFolder(event.shiftKey);
+                openComposer(event.shiftKey);
               }}
             >
               <Plus data-icon="inline-start" />

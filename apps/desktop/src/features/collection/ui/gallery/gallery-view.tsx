@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type RefObject,
-} from "react";
+import type { RefObject } from "react";
 import {
   closestCenter,
   DndContext,
@@ -13,7 +6,6 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
-  type DragEndEvent,
 } from "@dnd-kit/core";
 import {
   rectSortingStrategy,
@@ -32,112 +24,58 @@ import {
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { Entry } from "@/features/entry";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
-import {
-  useCollectionActors,
-  useCollectionEntryFieldSave,
-} from "../../hooks";
-import { titleFilter } from "../../lib/utils";
-import { entryParentDir } from "../table/utils";
 import { SortableGalleryCard } from "./gallery-card";
-import type { GalleryViewProps } from "./types";
-import { useGalleryEntryActions } from "../../hooks/gallery/use-gallery-entry-actions";
-import {
-  galleryCardCover,
-  galleryCardWidth,
-  galleryCoverAspect,
-  galleryCoverFit,
-  galleryMetaColumns,
-  isFolderEntry,
-  isNestedCollectionEntry,
-  normalizeGalleryCardFields,
-} from "./utils";
-import { useGalleryEntries } from "../../hooks/gallery/use-gallery-entries";
+import type { GalleryViewProps } from "../../model/gallery-types";
+import { isFolderEntry, isNestedCollectionEntry } from "../../lib/gallery-view";
+import { useGalleryViewRuntime } from "../../hooks/gallery/use-gallery-view-runtime";
 import * as m from "@/paraglide/messages.js";
 
-export function GalleryView({
-  view,
-  query,
-  schema,
-  collectionPath,
-  spacePath,
-  projectPath,
-  searchQuery,
-  filters,
-  sort,
-  refreshToken,
-  createFocusSignal = 0,
-  createAsFolder = false,
-  onClearSearch,
-  onOpenEntry,
-  onOpenNestedPeek,
-  onOpenNestedCollection,
-  onOpenFullPage,
-  onOpenPath,
-  onDuplicateEntry,
-  onDeleteEntry,
-  onCreateEntry,
-}: GalleryViewProps) {
-  const [focusedPath, setFocusedPath] = useState<string | null>(null);
-  const [draftOpen, setDraftOpen] = useState(false);
-  const [draftAsFolder, setDraftAsFolder] = useState(false);
-  const [draftValue, setDraftValue] = useState("");
-  const gridRef = useRef<HTMLDivElement | null>(null);
-  const draftRef = useRef<HTMLDivElement | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const cardRefs = useRef(new Map<string, HTMLElement>());
-  const { actors, loadActors } = useCollectionActors(spacePath);
+export function GalleryView(props: GalleryViewProps) {
   const {
-    entries,
-    setEntries,
-    nestedCollectionPaths,
-    loading,
-    loadEntries,
-  } = useGalleryEntries({
-    collectionPath,
-    filters,
-    projectPath,
-    refreshToken,
-    sort,
-    spacePath,
-  });
-
-  const cardWidth = galleryCardWidth(view);
-  const cardFields = useMemo(
-    () => normalizeGalleryCardFields(view, schema),
-    [schema, view],
-  );
-  const metaColumns = useMemo(
-    () => galleryMetaColumns(cardFields, schema),
-    [cardFields, schema],
-  );
-  const cardCover = useMemo(() => galleryCardCover(view), [view]);
-  const coverFit = galleryCoverFit(view);
-  const coverAspect = galleryCoverAspect(view);
-  const topLevelEntries = useMemo(
-    () =>
-      entries.filter((entry) => entryParentDir(entry.path) === collectionPath),
-    [collectionPath, entries],
-  );
-  const filteredEntries = useMemo(
-    () => titleFilter(topLevelEntries, searchQuery),
-    [searchQuery, topLevelEntries],
-  );
-  const hasSort = sort.length > 0;
-  const queryFiltered = searchQuery.trim().length > 0 || filters.length > 0;
-  const hasActorField = metaColumns.some((column) => column.type === "actor");
-  const { createEntry, reorderEntries } = useGalleryEntryActions({
-    collectionPath,
+    query,
+    schema,
     spacePath,
     projectPath,
-    entries,
-    topLevelEntries,
+    onClearSearch,
+    onOpenFullPage,
+    onOpenNestedCollection,
+    onOpenPath,
+    onDuplicateEntry,
+    onDeleteEntry,
+  } = props;
+  const {
+    actors,
+    cardCover,
+    cardFields,
+    cardRef,
+    cardWidth,
+    cancelDraft,
+    commitField,
+    coverAspect,
+    coverFit,
+    createDraft,
+    draftOpen,
+    draftRef,
+    draftValue,
     filteredEntries,
-    setEntries,
-    loadEntries,
-    onCreateEntry,
-  });
+    focusedPath,
+    gridRef,
+    handleDragEnd,
+    hasSort,
+    inputRef,
+    loadActors,
+    loading,
+    metaColumns,
+    moveFocus,
+    nestedCollectionPaths,
+    openCard,
+    openDraft,
+    queryFiltered,
+    setDraftValue,
+    setFocusedPath,
+    topLevelEntries,
+  } = useGalleryViewRuntime(props);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -148,105 +86,6 @@ export function GalleryView({
     }),
   );
 
-  useEffect(() => {
-    if (!hasActorField) return;
-    void loadActors().catch((error) => {
-      console.warn("Failed to load gallery actors:", error);
-    });
-  }, [hasActorField, loadActors]);
-
-  useEffect(() => {
-    if (!draftOpen) return;
-    inputRef.current?.focus();
-  }, [draftOpen]);
-
-  useEffect(() => {
-    if (createFocusSignal <= 0) return;
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled) return;
-      setDraftOpen(true);
-      setDraftAsFolder(createAsFolder);
-      window.requestAnimationFrame(() => {
-        if (cancelled) return;
-        draftRef.current?.scrollIntoView({ block: "nearest" });
-        inputRef.current?.focus();
-      });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [createAsFolder, createFocusSignal]);
-
-  const handleFieldCommitError = useCallback(
-    (error: unknown) => {
-      console.warn("Failed to update gallery field:", error);
-      void loadEntries();
-    },
-    [loadEntries],
-  );
-  const { commitField } = useCollectionEntryFieldSave({
-    spacePath,
-    projectPath,
-    setEntries,
-    onCommitError: handleFieldCommitError,
-  });
-
-  async function createDraft() {
-    const title = draftValue.trim();
-    if (!title) {
-      setDraftOpen(false);
-      setDraftValue("");
-      return;
-    }
-    const created = await createEntry(title, draftAsFolder, () => {
-      setDraftOpen(false);
-      setDraftValue("");
-    });
-    if (created) focusCard(created.path);
-  }
-
-  function openCard(entry: Entry, nestedCollection: boolean) {
-    if (nestedCollection) onOpenNestedPeek(entry);
-    else onOpenEntry(entry);
-  }
-
-  function focusCard(path: string) {
-    setFocusedPath(path);
-    window.requestAnimationFrame(() => {
-      cardRefs.current.get(path)?.focus();
-    });
-  }
-
-  function moveFocus(
-    path: string,
-    direction: "left" | "right" | "up" | "down",
-  ) {
-    const index = filteredEntries.findIndex((entry) => entry.path === path);
-    if (index < 0) return;
-    const columns = currentColumnCount();
-    const offset =
-      direction === "left"
-        ? -1
-        : direction === "right"
-          ? 1
-          : direction === "up"
-            ? -columns
-            : columns;
-    const next = filteredEntries[index + offset];
-    if (next) focusCard(next.path);
-  }
-
-  function currentColumnCount() {
-    const width = gridRef.current?.clientWidth ?? cardWidth;
-    return Math.max(1, Math.floor((width + 14) / (cardWidth + 14)));
-  }
-
-  async function handleDragEnd(event: DragEndEvent) {
-    if (hasSort || !event.over || event.active.id === event.over.id) return;
-    await reorderEntries(event);
-  }
-
   if (loading) return <GallerySkeleton cardWidth={cardWidth} />;
 
   if (topLevelEntries.length === 0 && !queryFiltered && !draftOpen) {
@@ -254,10 +93,7 @@ export function GalleryView({
       <EmptyState
         title={m.table_empty()}
         action={m.table_create_first_entry()}
-        onAction={() => {
-          setDraftOpen(true);
-          setDraftAsFolder(false);
-        }}
+        onAction={() => openDraft(false)}
       />
     );
   }
@@ -315,10 +151,7 @@ export function GalleryView({
                   folder={isFolderEntry(entry)}
                   disabledReorder={hasSort}
                   focused={focusedPath === entry.path}
-                  cardRef={(element) => {
-                    if (element) cardRefs.current.set(entry.path, element);
-                    else cardRefs.current.delete(entry.path);
-                  }}
+                  cardRef={(element) => cardRef(entry.path, element)}
                   onRequestActors={loadActors}
                   onUpdateField={(entryToUpdate, column, value) =>
                     void commitField(entryToUpdate, column, value)
@@ -340,17 +173,12 @@ export function GalleryView({
             open={draftOpen}
             value={draftValue}
             onOpen={(asFolder) => {
-              setDraftOpen(true);
-              setDraftAsFolder(asFolder);
+              openDraft(asFolder);
             }}
             onValueChange={setDraftValue}
             inputRef={inputRef}
             onCreate={() => void createDraft()}
-            onCancel={() => {
-              setDraftOpen(false);
-              setDraftValue("");
-              setDraftAsFolder(false);
-            }}
+            onCancel={cancelDraft}
           />
         </div>
       </div>
