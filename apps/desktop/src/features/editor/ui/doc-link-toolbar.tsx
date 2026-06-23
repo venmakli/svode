@@ -7,26 +7,17 @@ import type { TLinkElement } from "platejs";
 import {
   type LinkFloatingToolbarState,
   FloatingLinkUrlInput,
-  LinkPlugin,
   useFloatingLinkEdit,
   useFloatingLinkEditState,
   useFloatingLinkInsert,
   useFloatingLinkInsertState,
 } from "@platejs/link/react";
-import { upsertLink } from "@platejs/link";
 import {
   type UseVirtualFloatingOptions,
   flip,
   offset,
 } from "@platejs/floating";
-import {
-  ExternalLink,
-  FileText,
-  Link,
-  Loader2,
-  Text,
-  Unlink,
-} from "lucide-react";
+import { ExternalLink, Link, Text, Unlink } from "lucide-react";
 import { KEYS } from "platejs";
 import {
   useEditorRef,
@@ -36,33 +27,18 @@ import {
 } from "platejs/react";
 
 import { buttonVariants } from "@/components/ui/button";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import type { SearchItem } from "@/features/search";
-import { useSpace } from "@/features/space";
-import { cn } from "@/shared/lib/utils";
 import { useEditorStore } from "../model";
 import * as m from "@/paraglide/messages.js";
 import {
-  absoluteDocumentPath,
-  findSpaceById,
   isDocLink,
-  joinAbs,
   relativeDocumentPath,
   resolveRelativeDocPath,
 } from "../lib/doc-link-utils";
-import { makeRelativeDocUrl } from "../api/doc-link-api";
-import { useBrokenDocLinkRepair } from "../hooks/use-broken-doc-link-repair";
-import { useDocLinkTargetSearch } from "../hooks/use-doc-link-target-search";
 import { useEditorDocumentContext } from "../hooks/use-resolved-asset-url";
+import { BrokenLinkRepair } from "./broken-link-repair";
+import { DocLinkTargetPicker } from "./doc-link-target-picker";
 
 type LinkMode = "document" | "url";
 
@@ -215,98 +191,6 @@ function LegacyUrlInput({
   );
 }
 
-function DocLinkTargetPicker() {
-  const editor = useEditorRef();
-  const rootSpaces = useSpace((s) => s.rootSpaces);
-  const spaces = useSpace((s) => s.spaces);
-  const fileTrees = useSpace((s) => s.fileTrees);
-  const editorDocument = useEditorDocumentContext();
-  const [query, setQuery] = React.useState("");
-  const projectPath = editorDocument?.projectPath ?? null;
-  const activeDocument = editorDocument?.documentPath ?? null;
-  const currentSpacePath = editorDocument?.spacePath ?? "";
-  const sourceSpaceId = editorDocument?.sourceSpaceId ?? null;
-  const sourceSpace =
-    sourceSpaceId === null
-      ? null
-      : findSpaceById(rootSpaces, spaces, sourceSpaceId);
-  const localCurrentSpace = React.useMemo(
-    () =>
-      sourceSpaceId !== null && sourceSpace
-        ? {
-            spaceId: sourceSpaceId,
-            spacePath: sourceSpace.path,
-            spaceName: sourceSpace.name,
-            tree: fileTrees[sourceSpaceId] ?? [],
-          }
-        : null,
-    [fileTrees, sourceSpace, sourceSpaceId],
-  );
-  const { items, loading } = useDocLinkTargetSearch({
-    localCurrentSpace,
-    projectPath,
-    query,
-    sourceSpaceId,
-  });
-
-  const sourceAbs =
-    activeDocument && currentSpacePath
-      ? absoluteDocumentPath(activeDocument, currentSpacePath)
-      : null;
-
-  async function selectItem(item: SearchItem) {
-    if (!sourceAbs) return;
-    const targetAbs = joinAbs(item.spacePath, item.path);
-    const url = await makeRelativeDocUrl(sourceAbs, targetAbs);
-    applyLinkUrl(editor, url, item.title);
-  }
-
-  return (
-    <Command shouldFilter={false} className="h-[260px] rounded-md border">
-      <CommandInput
-        value={query}
-        onValueChange={setQuery}
-        placeholder={m.editor_doc_link_search()}
-      />
-      <CommandList>
-        <CommandEmpty>
-          {loading ? (
-            <span className="inline-flex items-center gap-2">
-              <Loader2 className="size-4 animate-spin" />
-              {m.common_loading()}
-            </span>
-          ) : (
-            m.editor_doc_link_no_results()
-          )}
-        </CommandEmpty>
-        <CommandGroup>
-          {items.map((item) => (
-            <CommandItem
-              key={`${item.spaceId ?? "root"}:${item.path}`}
-              value={`${item.title} ${item.path} ${item.spaceName}`}
-              onSelect={() => selectItem(item)}
-              className="items-center gap-2 py-1.5"
-            >
-              <FileText className="size-4 shrink-0 text-muted-foreground" />
-              <span className="flex min-w-0 flex-1 flex-col justify-center leading-none">
-                <span className="truncate text-sm font-medium leading-4">
-                  {item.title}
-                </span>
-                <span className="truncate text-[11px] leading-3 text-muted-foreground">
-                  {item.spaceId === sourceSpaceId ||
-                  (item.spaceId === null && sourceSpaceId === null)
-                    ? item.path
-                    : `${item.spaceName} · ${item.path}`}
-                </span>
-              </span>
-            </CommandItem>
-          ))}
-        </CommandGroup>
-      </CommandList>
-    </Command>
-  );
-}
-
 function DocLinkEditContent({
   editButtonProps,
   unlinkButtonProps,
@@ -381,84 +265,6 @@ function DocLinkEditContent({
   );
 }
 
-function BrokenLinkRepair({
-  editButtonProps,
-  unlinkButtonProps,
-  projectPath,
-  sourceSpaceId,
-  sourceSpacePath,
-  sourcePath,
-  url,
-}: {
-  editButtonProps: React.ButtonHTMLAttributes<HTMLButtonElement>;
-  unlinkButtonProps: React.ButtonHTMLAttributes<HTMLButtonElement>;
-  projectPath: string;
-  sourceSpaceId: string | null;
-  sourceSpacePath: string;
-  sourcePath: string;
-  url: string;
-}) {
-  const editor = useEditorRef();
-  const { makeSuggestionUrl, suggestions } = useBrokenDocLinkRepair({
-    projectPath,
-    sourcePath,
-    sourceSpaceId,
-    url,
-  });
-
-  async function applySuggestion(path: string) {
-    const nextUrl = await makeSuggestionUrl(path, sourceSpacePath);
-    if (!nextUrl) return;
-    applyLinkUrl(editor, nextUrl);
-  }
-
-  return (
-    <div className="flex w-[300px] flex-col gap-1 p-1">
-      <div className="px-2 py-1 text-sm font-medium">
-        {m.doc_link_file_missing()}
-      </div>
-      {suggestions.length > 0 && (
-        <div className="flex flex-col gap-0.5">
-          {suggestions.map((suggestion) => (
-            <button
-              key={suggestion.path}
-              type="button"
-              className={cn(
-                "flex flex-col rounded-sm px-2 py-1.5 text-left text-sm hover:bg-muted",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              )}
-              onClick={() => applySuggestion(suggestion.path)}
-            >
-              <span className="truncate font-medium">{suggestion.label}</span>
-              <span className="truncate text-xs text-muted-foreground">
-                {suggestion.reason}
-              </span>
-            </button>
-          ))}
-          <Separator className="my-1" />
-        </div>
-      )}
-      <div className="flex items-center">
-        <button
-          className={buttonVariants({ size: "sm", variant: "ghost" })}
-          type="button"
-          {...editButtonProps}
-        >
-          {m.doc_link_edit_link()}
-        </button>
-        <Separator orientation="vertical" />
-        <button
-          className={buttonVariants({ size: "sm", variant: "ghost" })}
-          type="button"
-          {...unlinkButtonProps}
-        >
-          <Unlink width={18} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function LinkOpenButton() {
   const editor = useEditorRef();
   const selection = useEditorSelection();
@@ -493,26 +299,4 @@ function LinkOpenButton() {
       <ExternalLink width={18} />
     </a>
   );
-}
-
-function applyLinkUrl(
-  editor: ReturnType<typeof useEditorRef>,
-  url: string,
-  title?: string,
-) {
-  const entry = editor.api.node<TLinkElement>({
-    match: { type: editor.getType(KEYS.link) },
-  });
-  if (entry) {
-    const [, path] = entry;
-    editor.tf.setNodes({ url }, { at: path });
-  } else {
-    upsertLink(editor, {
-      url,
-      text: title,
-      skipValidation: true,
-    });
-  }
-  editor.getApi(LinkPlugin).floatingLink.hide();
-  editor.tf.focus();
 }
