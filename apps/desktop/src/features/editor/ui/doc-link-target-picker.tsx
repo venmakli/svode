@@ -11,19 +11,13 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import type { SearchItem } from "@/features/search";
 import { useSpace } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 
-import { makeRelativeDocUrl } from "../api/doc-link-api";
+import { useApplyDocLinkTarget } from "../hooks/use-doc-link-insertion";
 import { useDocLinkTargetSearch } from "../hooks/use-doc-link-target-search";
 import { useEditorDocumentContext } from "../hooks/use-resolved-asset-url";
-import { applyLinkUrl } from "../lib/doc-link-editor-actions";
-import {
-  absoluteDocumentPath,
-  findSpaceById,
-  joinAbs,
-} from "../lib/doc-link-utils";
+import { findSpaceById } from "../lib/doc-link-utils";
 
 export function DocLinkTargetPicker() {
   const editor = useEditorRef();
@@ -33,8 +27,6 @@ export function DocLinkTargetPicker() {
   const editorDocument = useEditorDocumentContext();
   const [query, setQuery] = React.useState("");
   const projectPath = editorDocument?.projectPath ?? null;
-  const activeDocument = editorDocument?.documentPath ?? null;
-  const currentSpacePath = editorDocument?.spacePath ?? "";
   const sourceSpaceId = editorDocument?.sourceSpaceId ?? null;
   const sourceSpace =
     sourceSpaceId === null
@@ -58,18 +50,7 @@ export function DocLinkTargetPicker() {
     query,
     sourceSpaceId,
   });
-
-  const sourceAbs =
-    activeDocument && currentSpacePath
-      ? absoluteDocumentPath(activeDocument, currentSpacePath)
-      : null;
-
-  async function selectItem(item: SearchItem) {
-    if (!sourceAbs) return;
-    const targetAbs = joinAbs(item.spacePath, item.path);
-    const url = await makeRelativeDocUrl(sourceAbs, targetAbs);
-    applyLinkUrl(editor, url, item.title);
-  }
+  const applyDocLinkTarget = useApplyDocLinkTarget(editor);
 
   return (
     <Command shouldFilter={false} className="h-[260px] rounded-md border">
@@ -94,7 +75,7 @@ export function DocLinkTargetPicker() {
             <CommandItem
               key={`${item.spaceId ?? "root"}:${item.path}`}
               value={`${item.title} ${item.path} ${item.spaceName}`}
-              onSelect={() => selectItem(item)}
+              onSelect={() => void applyDocLinkTarget(item)}
               className="items-center gap-2 py-1.5"
             >
               <FileText className="size-4 shrink-0 text-muted-foreground" />

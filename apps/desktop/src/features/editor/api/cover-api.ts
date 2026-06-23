@@ -1,5 +1,6 @@
 import type { EntryCover } from "@/features/entry";
 import { toWebviewAssetUrl } from "@/platform/assets/assets-api";
+import { pickMediaFiles } from "@/platform/filesystem/native-file-picker";
 import { uploadAsset } from "@/platform/upload/upload-api";
 
 import { joinAbs } from "../lib/doc-link-utils";
@@ -35,6 +36,11 @@ export async function uploadCoverImage({
     path: result.relPath,
     position: 50,
   };
+}
+
+export async function pickCoverImageFile(): Promise<File | null> {
+  const files = await pickMediaFiles("image", false);
+  return files[0] ?? null;
 }
 
 export function getCoverImageSrc(spacePath: string, coverPath: string): string {

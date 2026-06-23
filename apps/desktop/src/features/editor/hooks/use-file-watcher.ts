@@ -1,8 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { Descendant } from "platejs";
-import { listen } from "@/platform/native/events";
 import { readEntry } from "@/features/entry/entry-api";
-import { reindexProject } from "@/platform/space/space-api";
 import { toast } from "sonner";
 import type { PlateEditor } from "platejs/react";
 import { deserializeWithConflicts } from "../conflict/parse-conflicts";
@@ -11,11 +9,12 @@ import { getSpaceSnapshot } from "@/features/space";
 import { useEditorStore } from "../model";
 import { setCachedDocumentValue } from "../model/plate-document-cache";
 import * as m from "@/paraglide/messages.js";
-
-interface FileEvent {
-  path: string;
-  writeNonce?: string;
-}
+import {
+  listenToEditorFileChanged,
+  listenToEditorFileCreated,
+  listenToEditorFileDeleted,
+  reindexEditorProject,
+} from "../api/editor-file-watch-api";
 
 interface UseFileWatcherOptions {
   editor: PlateEditor | null;
@@ -37,7 +36,7 @@ function isSchemaPath(path: string) {
 function reindexProjectForSchemaChange() {
   const projectPath = getSpaceSnapshot().activeRootPath;
   if (!projectPath) return;
-  reindexProject(projectPath).catch((err) =>
+  reindexEditorProject(projectPath).catch((err) =>
     console.warn("Failed to reindex after schema change:", err),
   );
 }
@@ -76,9 +75,9 @@ export function useFileWatcher({
     };
 
     // file:changed
-    listen<FileEvent>("file:changed", (event) => {
-      const changedPath = event.payload.path;
-      const nonce = event.payload.writeNonce;
+    listenToEditorFileChanged((event) => {
+      const changedPath = event.path;
+      const nonce = event.writeNonce;
 
       if (isSchemaPath(changedPath)) {
         reindexProjectForSchemaChange();
@@ -123,8 +122,8 @@ export function useFileWatcher({
     }).then(trackUnlisten);
 
     // file:deleted
-    listen<FileEvent>("file:deleted", (event) => {
-      const deletedPath = event.payload.path;
+    listenToEditorFileDeleted((event) => {
+      const deletedPath = event.path;
 
       if (isSchemaPath(deletedPath)) {
         reindexProjectForSchemaChange();
@@ -138,8 +137,8 @@ export function useFileWatcher({
     }).then(trackUnlisten);
 
     // file:created
-    listen<FileEvent>("file:created", (event) => {
-      if (isSchemaPath(event.payload.path)) {
+    listenToEditorFileCreated((event) => {
+      if (isSchemaPath(event.path)) {
         reindexProjectForSchemaChange();
       }
     }).then(trackUnlisten);

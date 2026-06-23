@@ -4,7 +4,10 @@ import { toast } from "sonner";
 
 import { makeRelativeDocUrl } from "../api/doc-link-api";
 import { joinAbs } from "../lib/doc-link-utils";
-import { uploadAsset, type UploadAssetDto } from "@/platform/upload/upload-api";
+import {
+  uploadEditorMediaAsset,
+  type UploadAssetDto,
+} from "../api/editor-media-api";
 import { getSpaceSnapshot } from "@/features/space";
 import { useEditorDocumentContext } from "./use-resolved-asset-url";
 
@@ -71,7 +74,7 @@ export function useUploadFile({
       const bytes = Array.from(new Uint8Array(buffer));
       setProgress(50);
 
-      const result: UploadAssetDto = await uploadAsset({
+      const result: UploadAssetDto = await uploadEditorMediaAsset({
         projectPath,
         documentAbsPath,
         fileName: file.name,

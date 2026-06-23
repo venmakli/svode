@@ -14,9 +14,9 @@ import {
 import { useSpace, selectActiveSpacePath } from "@/features/space";
 import { joinAbs } from "../lib/doc-link-utils";
 import {
-  resolveAssetAbsPath,
-  toWebviewAssetUrl,
-} from "@/platform/assets/assets-api";
+  resolveEditorAssetWebviewUrl,
+  toEditorWebviewAssetUrl,
+} from "../api/editor-media-api";
 import {
   resolveEditorAssetContext,
   type EditorAssetResolveContext,
@@ -64,9 +64,8 @@ function resolveCachedAssetUrl(
   const pending = pendingAssetUrlResolutions.get(key);
   if (pending) return pending;
 
-  const promise = resolveAssetAbsPath(url, projectPath, documentAbsPath)
-    .then((abs) => {
-      const webviewUrl = toWebviewAssetUrl(abs);
+  const promise = resolveEditorAssetWebviewUrl(url, projectPath, documentAbsPath)
+    .then((webviewUrl) => {
       resolvedAssetUrlCache.set(key, webviewUrl);
       return webviewUrl;
     })
@@ -166,7 +165,7 @@ export function useResolvedAssetUrl(
         const absolute = `${spacePathFallback.replace(/\\/g, "/").replace(/\/$/, "")}/${rel}`;
         let cancelled = false;
         queueMicrotask(() => {
-          if (!cancelled) setResolved(toWebviewAssetUrl(absolute));
+          if (!cancelled) setResolved(toEditorWebviewAssetUrl(absolute));
         });
         return () => {
           cancelled = true;

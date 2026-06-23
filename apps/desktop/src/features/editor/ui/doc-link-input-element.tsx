@@ -14,12 +14,8 @@ import {
 } from "@/components/ui/inline-combobox";
 import { FileText } from "lucide-react";
 import { useSpace } from "@/features/space";
-import {
-  absoluteDocumentPath,
-  findSpaceById,
-  joinAbs,
-} from "../lib/doc-link-utils";
-import { makeRelativeDocUrl } from "../api/doc-link-api";
+import { findSpaceById } from "../lib/doc-link-utils";
+import { useInsertDocLinkTarget } from "../hooks/use-doc-link-insertion";
 import { useDocLinkTargetSearch } from "../hooks/use-doc-link-target-search";
 import { useEditorDocumentContext } from "../hooks/use-resolved-asset-url";
 
@@ -32,8 +28,6 @@ export function DocLinkInputElement(
   const fileTrees = useSpace((s) => s.fileTrees);
   const editorDocument = useEditorDocumentContext();
   const projectPath = editorDocument?.projectPath ?? null;
-  const activeDocument = editorDocument?.documentPath ?? null;
-  const currentSpacePath = editorDocument?.spacePath ?? "";
   const sourceSpaceId = editorDocument?.sourceSpaceId ?? null;
   const sourceSpace =
     sourceSpaceId === null
@@ -58,6 +52,7 @@ export function DocLinkInputElement(
     query: "",
     sourceSpaceId,
   });
+  const insertDocLinkTarget = useInsertDocLinkTarget(editor);
 
   return (
     <PlateElement {...props} as="span">
@@ -80,21 +75,7 @@ export function DocLinkInputElement(
                 focusEditor
                 keywords={[item.title, item.path, item.spaceName]}
                 className="h-auto min-h-[38px] items-center gap-2 py-1"
-                onClick={async () => {
-                  const sourceAbs =
-                    activeDocument && currentSpacePath
-                      ? absoluteDocumentPath(activeDocument, currentSpacePath)
-                      : null;
-                  const targetAbs = joinAbs(item.spacePath, item.path);
-                  const relativePath = sourceAbs
-                    ? await makeRelativeDocUrl(sourceAbs, targetAbs)
-                    : item.path;
-                  editor.tf.insertNodes({
-                    type: "a",
-                    url: relativePath,
-                    children: [{ text: item.title }],
-                  });
-                }}
+                onClick={() => void insertDocLinkTarget(item)}
               >
                 <div className="flex size-4 shrink-0 items-center justify-center text-muted-foreground">
                   {item.icon && item.icon !== "📄" ? (

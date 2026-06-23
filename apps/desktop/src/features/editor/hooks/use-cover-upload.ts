@@ -2,10 +2,9 @@ import { useCallback } from "react";
 import { toast } from "sonner";
 
 import type { EntryCover } from "@/features/entry";
-import { pickMediaFiles } from "@/platform/filesystem/native-file-picker";
 
 import * as m from "@/paraglide/messages.js";
-import { uploadCoverImage } from "../api/cover-api";
+import { pickCoverImageFile, uploadCoverImage } from "../api/cover-api";
 
 interface UseCoverUploadInput {
   projectPath: string | null;
@@ -26,8 +25,7 @@ export function useCoverUpload({
       return;
     }
 
-    const files = await pickMediaFiles("image", false);
-    const file = files[0];
+    const file = await pickCoverImageFile();
     if (!file) return;
 
     try {
