@@ -422,7 +422,7 @@ fn affects_metadata(kind: ContentTreeEventKind, path: &Path, event_kind: &EventK
 fn parent_path_for_rel(rel_path: &str) -> String {
     Path::new(rel_path)
         .parent()
-        .and_then(|parent| repo_relative_from_path_or_root(parent))
+        .and_then(repo_relative_from_path_or_root)
         .unwrap_or_default()
 }
 

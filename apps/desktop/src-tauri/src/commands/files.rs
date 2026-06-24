@@ -150,12 +150,14 @@ fn collect_markdown_paths(
     }
 
     if meta.is_file() {
-        return Ok(root
+        if root
             .extension()
             .and_then(|ext| ext.to_str())
             .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-            .then(|| vec![root.to_path_buf()])
-            .unwrap_or_default());
+        {
+            return Ok(vec![root.to_path_buf()]);
+        }
+        return Ok(Vec::new());
     }
 
     let mut paths = Vec::new();

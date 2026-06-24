@@ -260,12 +260,12 @@ pub fn build_tree(space: &str) -> Result<Vec<TreeNode>, AppError> {
         );
         return Err(error);
     }
-    let result = (|| {
+    let result = {
         let order = read_order(root);
         let skip_dirs = child_folder_names(root);
         let policy = TreeIgnorePolicy::from_space_root(root);
         read_dir_recursive(root, root, &order, &skip_dirs, &policy)
-    })();
+    };
     let duration_ms = started.elapsed().as_millis() as u64;
 
     match &result {
@@ -433,21 +433,10 @@ fn read_dir_direct(
                     TreeChildKind::Folder
                 },
             });
-        } else if meta.is_file() && name.ends_with(".md") && !is_readme_name(&name) {
-            let (title, icon, description) = read_frontmatter_meta_head(&abs_path);
-            nodes.push(TreeChildNode {
-                name,
-                path: rel_path,
-                title,
-                icon,
-                description,
-                has_changes: false,
-                has_schema: false,
-                parent: parent.clone(),
-                has_children: false,
-                kind: TreeChildKind::Document,
-            });
-        } else if meta.is_file() && parent_rel == "." && is_readme_name(&name) {
+        } else if meta.is_file()
+            && ((name.ends_with(".md") && !is_readme_name(&name))
+                || (parent_rel == "." && is_readme_name(&name)))
+        {
             let (title, icon, description) = read_frontmatter_meta_head(&abs_path);
             nodes.push(TreeChildNode {
                 name,
