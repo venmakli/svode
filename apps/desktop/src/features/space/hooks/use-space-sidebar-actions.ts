@@ -9,6 +9,7 @@ import type { ScopeTarget } from "./use-space-scope-actions";
 import { useSpaceSidebarDelete } from "./use-space-sidebar-delete";
 import { useSpaceSidebarDialogState } from "./use-space-sidebar-dialog-state";
 import type { DeleteSpaceTarget } from "./use-space-sidebar-dialog-state";
+import { getSpaceScopeActiveRevealKey } from "./use-space-scope-collapse";
 import { useSpaceSidebarHome } from "./use-space-sidebar-home";
 import { useSpaceSidebarOrder } from "./use-space-sidebar-order";
 import { useSpaceSidebarRename } from "./use-space-sidebar-rename";
@@ -42,7 +43,8 @@ export function useSpaceSidebarActions({
     patchSpaceMetadata,
   } = useSpaceStore();
   const { deleteSpace } = useSpaceActions();
-  const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
+  const { activeDocument, activeDocumentSpaceId, activeRevealRequest } =
+    useActiveEntrySelection();
   const {
     createDialogOpen,
     deleteFiles,
@@ -64,6 +66,12 @@ export function useSpaceSidebarActions({
     patchSpaceMetadata,
     spaces,
   });
+  const activeRootRevealKey = getSpaceScopeActiveRevealKey({
+    activeDocument,
+    activeDocumentSpaceId,
+    activeRevealRequest,
+    scopeId: activeRootId,
+  });
   const { handleCloneMissing, handleRemoveBroken } = useMissingSpaceClone(
     activeRootPath,
     loadSpaces,
@@ -75,14 +83,10 @@ export function useSpaceSidebarActions({
     rootOpen,
   } = useSpaceSidebarHome({
     activeRootId,
+    activeRootRevealKey,
     clearActiveSpace,
     ensureTreeLoaded,
     fileTrees,
-    forceRootOpen: Boolean(
-      activeDocument &&
-        activeDocumentSpaceId === activeRootId &&
-        activeDocument.toLowerCase() !== "readme.md",
-    ),
     onActivateContent,
     openSpace,
   });
@@ -90,7 +94,12 @@ export function useSpaceSidebarActions({
   useEffect(() => {
     if (!activeDocument || !activeDocumentSpaceId) return;
     void ensureTreePathVisible(activeDocumentSpaceId, activeDocument);
-  }, [activeDocument, activeDocumentSpaceId, ensureTreePathVisible]);
+  }, [
+    activeDocument,
+    activeDocumentSpaceId,
+    activeRevealRequest,
+    ensureTreePathVisible,
+  ]);
 
   const { handleNewCollection, handleNewFolder, handleNewPage } =
     useSpaceScopeActions({
@@ -118,6 +127,7 @@ export function useSpaceSidebarActions({
   return {
     activeDocument,
     activeDocumentSpaceId,
+    activeRevealRequest,
     activeRootIcon,
     activeRootId,
     activeRootName,

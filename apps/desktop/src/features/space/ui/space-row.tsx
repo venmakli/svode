@@ -1,8 +1,4 @@
-import {
-  useState,
-  type CSSProperties,
-  type RefObject,
-} from "react";
+import { useCallback, type CSSProperties, type RefObject } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
@@ -48,6 +44,7 @@ import type {
   ScopeTarget,
   DeleteSpaceTarget,
 } from "../hooks/use-space-sidebar-actions";
+import { useSpaceScopeCollapse } from "../hooks/use-space-scope-collapse";
 import type { SpaceInfo } from "../model";
 import { FileTreeItem } from "./file-tree-item";
 import { TreeLoadingRows } from "./nav-space-indicators";
@@ -60,7 +57,7 @@ interface SpaceRowProps {
   tree: TreeNode[];
   editingSpaceId: string | null;
   editValue: string;
-  openOnActiveDocument: boolean;
+  activeRevealKey: string | null;
   setEditValue: (v: string) => void;
   setEditingSpaceId: (id: string | null) => void;
   handleRenameSpace: () => void;
@@ -91,7 +88,7 @@ export function SpaceRow({
   tree,
   editingSpaceId,
   editValue,
-  openOnActiveDocument,
+  activeRevealKey,
   setEditValue,
   setEditingSpaceId,
   handleRenameSpace,
@@ -137,8 +134,16 @@ export function SpaceRow({
     isDragging && "cursor-grabbing",
   );
   const scope = { id: ws.id, path: ws.path };
-  const [userOpen, setUserOpen] = useState(false);
-  const open = userOpen || isActive || openOnActiveDocument;
+  const loadScopeTree = useCallback(() => {
+    void ensureTreeLoaded(ws.id);
+  }, [ensureTreeLoaded, ws.id]);
+  const {
+    handleOpenChange,
+    open,
+  } = useSpaceScopeCollapse({
+    activeRevealKey,
+    onOpen: loadScopeTree,
+  });
 
   if (ws.status === "missing" || ws.status === "broken") {
     return (
@@ -195,10 +200,7 @@ export function SpaceRow({
     <Collapsible
       asChild
       open={open}
-      onOpenChange={(nextOpen) => {
-        setUserOpen(nextOpen);
-        if (nextOpen) void ensureTreeLoaded(ws.id);
-      }}
+      onOpenChange={handleOpenChange}
     >
       <SidebarMenuItem
         ref={setNodeRef}
@@ -212,7 +214,9 @@ export function SpaceRow({
           disabled={!!gitControls.cloning}
           className={draggableRowClassName}
           onClick={() => {
-            if (editingSpaceId !== ws.id) openScopeHome(ws);
+            if (editingSpaceId !== ws.id) {
+              openScopeHome(ws);
+            }
           }}
           onDoubleClick={() => {
             setEditingSpaceId(ws.id);

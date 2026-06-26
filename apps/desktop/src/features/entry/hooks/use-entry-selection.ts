@@ -8,6 +8,7 @@ export function useActiveEntrySelection(): EntrySelectionSnapshot {
       (state): EntrySelectionSnapshot => ({
         activeDocument: state.activeDocument,
         activeDocumentSpaceId: state.activeDocumentSpaceId,
+        activeRevealRequest: state.activeRevealRequest,
       }),
     ),
   );

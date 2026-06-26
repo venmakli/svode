@@ -3,7 +3,9 @@ export {
   getActiveEntrySelection,
   openEntryDocument,
   openEntryScopeHome,
+  type EntryRevealRequest,
   type EntrySelectionSnapshot,
+  type OpenEntryDocumentOptions,
 } from "./hooks/entry-selection-actions";
 export {
   useActiveEntryDocument,

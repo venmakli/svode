@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import {
   useOpenEntryDocument,
   useOpenEntryScopeHome,
@@ -7,34 +7,39 @@ import type { TreeNode } from "../model/types";
 import type { SpaceInfo } from "../model";
 import { useSpaceStore } from "../model";
 import { hasRecordKey, hasScopeReadme } from "../lib/nav-space-tree";
+import { useSpaceScopeCollapse } from "./use-space-scope-collapse";
 
 interface UseSpaceSidebarHomeInput {
   activeRootId: string | null;
   clearActiveSpace: () => void;
   ensureTreeLoaded: (spaceId: string) => Promise<void>;
   fileTrees: Record<string, TreeNode[]>;
-  forceRootOpen: boolean;
+  activeRootRevealKey: string | null;
   onActivateContent: () => void;
   openSpace: (id: string) => Promise<void>;
 }
 
 export function useSpaceSidebarHome({
   activeRootId,
+  activeRootRevealKey,
   clearActiveSpace,
   ensureTreeLoaded,
   fileTrees,
-  forceRootOpen,
   onActivateContent,
   openSpace,
 }: UseSpaceSidebarHomeInput) {
   const openDocument = useOpenEntryDocument();
   const openScopeHome = useOpenEntryScopeHome();
-  const [rootOpenState, setRootOpenState] = useState<{
-    open: boolean;
-    rootId: string | null;
-  }>({ open: false, rootId: null });
-  const rootOpen =
-    forceRootOpen || (rootOpenState.rootId === activeRootId && rootOpenState.open);
+  const loadRootTree = useCallback(() => {
+    if (activeRootId) void ensureTreeLoaded(activeRootId);
+  }, [activeRootId, ensureTreeLoaded]);
+  const {
+    handleOpenChange: handleRootOpenChange,
+    open: rootOpen,
+  } = useSpaceScopeCollapse({
+    activeRevealKey: activeRootRevealKey,
+    onOpen: loadRootTree,
+  });
 
   const openHomeForScope = useCallback(
     (spaceId: string, tree: TreeNode[] | null) => {
@@ -65,14 +70,6 @@ export function useSpaceSidebarHome({
     onActivateContent,
     openHomeForScope,
   ]);
-
-  const handleRootOpenChange = useCallback(
-    (open: boolean) => {
-      setRootOpenState({ open, rootId: activeRootId });
-      if (open && activeRootId) void ensureTreeLoaded(activeRootId);
-    },
-    [activeRootId, ensureTreeLoaded],
-  );
 
   const handleOpenSpaceHome = useCallback(
     async (space: SpaceInfo) => {

@@ -73,20 +73,26 @@ export function useDocLinkNavigation(
       if (!resolved.targetPath) return;
       if (resolved.targetSpaceId === null) {
         clearActiveSpace();
-        openDocument(resolved.targetPath, activeRootId ?? undefined);
+        openDocument(resolved.targetPath, activeRootId ?? undefined, {
+          reveal: true,
+        });
         return;
       }
       if (resolved.targetSpaceId !== activeSpaceId) {
         await openSpace(resolved.targetSpaceId);
       }
-      openDocument(resolved.targetPath, resolved.targetSpaceId);
+      openDocument(resolved.targetPath, resolved.targetSpaceId, {
+        reveal: true,
+      });
     },
     [activeRootId, activeSpaceId, clearActiveSpace, openDocument, openSpace],
   );
 
   const openDocLink = useCallback(async () => {
     if (!url || !activeRel || !activeRootPath) {
-      if (resolvedPath && !isBroken) openDocument(resolvedPath);
+      if (resolvedPath && !isBroken) {
+        openDocument(resolvedPath, undefined, { reveal: true });
+      }
       return;
     }
 
@@ -107,7 +113,7 @@ export function useDocLinkNavigation(
     } catch (err) {
       console.error("resolve_doc_link failed:", err);
       if (resolvedPath && !isBroken) {
-        openDocument(resolvedPath);
+        openDocument(resolvedPath, undefined, { reveal: true });
       }
     }
   }, [

@@ -28,6 +28,7 @@ import {
   SidebarMenu,
 } from "@/components/ui/sidebar";
 import { useSpaceSidebarActions } from "../hooks/use-space-sidebar-actions";
+import { getSpaceScopeActiveRevealKey } from "../hooks/use-space-scope-collapse";
 import { hasRecordKey, visibleScopeChildren } from "../lib/nav-space-tree";
 import { CreateSpaceDialog } from "./create-space-dialog";
 import { RootScopeRow } from "./root-scope-row";
@@ -50,6 +51,7 @@ export function NavSpaces({
   const {
     activeDocument,
     activeDocumentSpaceId,
+    activeRevealRequest,
     activeRootIcon,
     activeRootId,
     activeRootName,
@@ -140,6 +142,12 @@ export function NavSpaces({
                     activeDocumentSpaceId === space.id &&
                     (!activeDocument ||
                       activeDocument.toLowerCase() === "readme.md");
+                  const activeRevealKey = getSpaceScopeActiveRevealKey({
+                    activeDocument,
+                    activeDocumentSpaceId,
+                    activeRevealRequest,
+                    scopeId: space.id,
+                  });
                   return (
                     <SpaceRow
                       key={space.id}
@@ -148,9 +156,7 @@ export function NavSpaces({
                       tree={visibleScopeChildren(tree)}
                       editingSpaceId={editingSpaceId}
                       editValue={editValue}
-                      openOnActiveDocument={
-                        activeDocumentSpaceId === space.id
-                      }
+                      activeRevealKey={activeRevealKey}
                       setEditValue={setEditValue}
                       setEditingSpaceId={setEditingSpaceId}
                       handleRenameSpace={handleRenameSpace}

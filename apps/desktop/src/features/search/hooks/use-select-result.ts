@@ -37,7 +37,9 @@ export function useSelectResult() {
 
       const targetSpaceId =
         item.spaceId === null ? activeRootId : item.spaceId;
-      openDocument(joinAbs(item.spacePath, item.path), targetSpaceId ?? undefined);
+      openDocument(joinAbs(item.spacePath, item.path), targetSpaceId ?? undefined, {
+        reveal: true,
+      });
       setOpen(false);
     },
     [spaces, activeRootId, clearActiveSpace, openSpace, openDocument, setOpen],

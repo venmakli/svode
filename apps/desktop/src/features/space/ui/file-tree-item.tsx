@@ -54,6 +54,7 @@ import {
 } from "lucide-react";
 import type { TreeNode } from "../model/types";
 import { FileGitIndicatorIcon } from "@/features/git/sidebar";
+import { cn } from "@/shared/lib/utils";
 import { useFileTreeItemActions } from "../hooks/use-file-tree-item-actions";
 import { TreeDndContext } from "./sortable-file-tree";
 import { TreeDropIndicator } from "./tree-drop-indicator";
@@ -374,7 +375,12 @@ export function FileTreeItem({
                     <span className="group-hover/tree-item:opacity-0 transition-opacity">
                       {iconElement}
                     </span>
-                    <ChevronRight className="absolute inset-0 m-auto h-3 w-3 opacity-0 group-hover/tree-item:opacity-100 transition-all group-data-[state=open]/collapsible:rotate-90" />
+                    <ChevronRight
+                      className={cn(
+                        "absolute inset-0 m-auto h-3 w-3 opacity-0 transition-all group-hover/tree-item:opacity-100",
+                        expanded && "rotate-90",
+                      )}
+                    />
                   </button>
                 </CollapsibleTrigger>
                 {titleElement}
