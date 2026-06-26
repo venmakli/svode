@@ -12,6 +12,7 @@ import {
   isReadmePath,
   normalizeTreePath,
   parentPathForTreeEvent,
+  treeRowParentPath,
 } from "./tree-patches";
 
 export const SPACE_FILE_EVENT_NAMES: SpaceFileEventName[] = [
@@ -19,7 +20,7 @@ export const SPACE_FILE_EVENT_NAMES: SpaceFileEventName[] = [
   "file:changed",
   "file:deleted",
 ];
-export const SPACE_FILE_EVENT_BATCH_MS = 300;
+export const SPACE_FILE_EVENT_BATCH_MS = 50;
 
 export type QueuedSpaceFileEvent = {
   eventName: SpaceFileEventName;
@@ -48,11 +49,7 @@ export interface SpaceFileEventTreeStore {
     folderPath: string,
     hasSchema: boolean,
   ) => void;
-  upsertTreeNode: (
-    spaceId: string,
-    parentPath: string,
-    node: TreeNode,
-  ) => void;
+  upsertTreeNode: (spaceId: string, parentPath: string, node: TreeNode) => void;
 }
 
 interface ApplySpaceFileEventInput {
@@ -89,9 +86,7 @@ export function isSameSpaceFileEvent(
   return !payload.space || payload.space === spacePath;
 }
 
-export function affectsSpaceTreeOrMetadata(
-  payload: SpaceFileEvent,
-): boolean {
+export function affectsSpaceTreeOrMetadata(payload: SpaceFileEvent): boolean {
   if (payload.affectsTree === false && payload.affectsMetadata === false) {
     return false;
   }
@@ -106,6 +101,19 @@ export function shouldApplySpaceFileEvent(
     isSameSpaceFileEvent(payload, spacePath) &&
     affectsSpaceTreeOrMetadata(payload)
   );
+}
+
+export function repairParentPathForSpaceFileEvent(
+  payload: SpaceFileEvent,
+): string | null {
+  const path = normalizeTreePath(payload.path);
+  const kind = inferSpaceFileEventKind(payload);
+
+  if (kind === "schema") {
+    return treeRowParentPath(folderPathForSchema(path));
+  }
+
+  return treeRowParentPath(path) ?? normalizeTreePath(payload.parentPath);
 }
 
 export function watchedEntryToTreeNode(
@@ -211,7 +219,11 @@ async function applyCreatedSpaceFileEvent({
   const entry = await readEntry(path);
   if (isReadmePath(path)) {
     if (!dirname(path)) {
-      store.upsertTreeNode(spaceId, "", watchedEntryToTreeNode(path, entry, ""));
+      store.upsertTreeNode(
+        spaceId,
+        "",
+        watchedEntryToTreeNode(path, entry, ""),
+      );
       return;
     }
     store.applyReadmeMeta(

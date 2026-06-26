@@ -231,7 +231,7 @@ fn apply_order(nodes: &mut Vec<TreeNode>, order_list: Option<&Vec<String>>) {
 }
 
 /// Collect relative folder names of child spaces from config.
-fn child_folder_names(space: &Path) -> HashSet<String> {
+pub(crate) fn child_folder_names(space: &Path) -> HashSet<String> {
     let mut names = HashSet::new();
     if let Ok(cfg) = read_space_config(space) {
         if let Some(spaces) = cfg.spaces {

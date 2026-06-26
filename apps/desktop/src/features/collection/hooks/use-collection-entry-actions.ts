@@ -33,18 +33,15 @@ export function useCollectionEntryActions({
   spaceId: string;
   openDocument: (path: string, spaceId: string) => void;
 }) {
-  const {
-    reloadTreeParent,
-    reloadTreePathParent,
-    removeTreePath,
-  } = useSpaceTreeSync();
+  const { reloadTreeParent, reloadTreePathParent, removeTreePath } =
+    useSpaceTreeSync();
   const [deleteEntry, setDeleteEntry] = useState<Entry | null>(null);
   const [entriesVersion, setEntriesVersion] = useState(0);
   const refreshEntries = useCallback(() => {
     setEntriesVersion((version) => version + 1);
   }, []);
 
-  useCollectionEntryEvents(refreshEntries);
+  useCollectionEntryEvents({ spacePath, onEntriesChanged: refreshEntries });
 
   async function createEntry(
     asFolder = false,

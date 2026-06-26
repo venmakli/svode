@@ -76,6 +76,8 @@ export function useFileWatcher({
 
     // file:changed
     listenToEditorFileChanged((event) => {
+      if (event.space && event.space !== spacePath) return;
+
       const changedPath = event.path;
       const nonce = event.writeNonce;
 
@@ -123,6 +125,8 @@ export function useFileWatcher({
 
     // file:deleted
     listenToEditorFileDeleted((event) => {
+      if (event.space && event.space !== spacePath) return;
+
       const deletedPath = event.path;
 
       if (isSchemaPath(deletedPath)) {
@@ -138,6 +142,8 @@ export function useFileWatcher({
 
     // file:created
     listenToEditorFileCreated((event) => {
+      if (event.space && event.space !== spacePath) return;
+
       if (isSchemaPath(event.path)) {
         reindexProjectForSchemaChange();
       }

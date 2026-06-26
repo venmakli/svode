@@ -2,6 +2,7 @@ import { listen } from "@/platform/native/events";
 import { reindexProject } from "@/platform/space/space-api";
 
 export interface EditorFileEvent {
+  space?: string;
   path: string;
   writeNonce?: string;
 }

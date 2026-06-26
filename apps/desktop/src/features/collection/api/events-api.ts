@@ -20,15 +20,21 @@ function combineUnlisteners(unlisteners: UnlistenFn[]): UnlistenFn {
   };
 }
 
-export async function listenCollectionEntryChanges(
-  onEntriesChanged: () => void,
-): Promise<UnlistenFn> {
+export async function listenCollectionEntryChanges({
+  spacePath,
+  onEntriesChanged,
+}: {
+  spacePath: string;
+  onEntriesChanged: () => void;
+}): Promise<UnlistenFn> {
   const unlisteners = await Promise.all(
-    [listenFileCreated, listenFileChanged, listenFileDeleted].map((listenFile) =>
-      listenFile((payload) => {
-        if (!isMarkdownEntryPath(payload.path)) return;
-        onEntriesChanged();
-      }),
+    [listenFileCreated, listenFileChanged, listenFileDeleted].map(
+      (listenFile) =>
+        listenFile((payload) => {
+          if (payload.space && payload.space !== spacePath) return;
+          if (!isMarkdownEntryPath(payload.path)) return;
+          onEntriesChanged();
+        }),
     ),
   );
 
@@ -44,6 +50,7 @@ export async function listenCollectionQueryInvalidations({
 }): Promise<UnlistenFn> {
   const unlisteners = await Promise.all([
     listenFileChanged((payload) => {
+      if (payload.space && payload.space !== spacePath) return;
       if (isSchemaPath(payload.path)) {
         onQueryInvalidated();
       }

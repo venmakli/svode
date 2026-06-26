@@ -1,12 +1,18 @@
 import { useEffect } from "react";
 import { listenCollectionEntryChanges } from "../api";
 
-export function useCollectionEntryEvents(onEntriesChanged: () => void) {
+export function useCollectionEntryEvents({
+  spacePath,
+  onEntriesChanged,
+}: {
+  spacePath: string;
+  onEntriesChanged: () => void;
+}) {
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let disposed = false;
 
-    listenCollectionEntryChanges(onEntriesChanged)
+    listenCollectionEntryChanges({ spacePath, onEntriesChanged })
       .then((nextUnlisten) => {
         if (disposed) nextUnlisten();
         else unlisten = nextUnlisten;
@@ -21,5 +27,5 @@ export function useCollectionEntryEvents(onEntriesChanged: () => void) {
       disposed = true;
       unlisten?.();
     };
-  }, [onEntriesChanged]);
+  }, [onEntriesChanged, spacePath]);
 }

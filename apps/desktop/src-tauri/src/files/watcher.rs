@@ -1,6 +1,6 @@
 use notify::event::{CreateKind, ModifyKind, RemoveKind};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -9,6 +9,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::error::AppError;
 use crate::files::WriteNonceRegistry;
+use crate::files::tree::child_folder_names;
 use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
 use crate::index::{IndexKey, IndexState};
 use crate::repo_path::{RootMode, repo_relative_from_base, repo_relative_from_path};
@@ -170,6 +171,7 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
     let mut any_tree_changed = false;
     let space_root = Path::new(space);
     let policy = TreeIgnorePolicy::from_space_root(space_root);
+    let skip_dirs = child_folder_names(space_root);
     for event in events {
         for path in &event.paths {
             // Detect `.assets/`-scoped changes so we can emit a targeted
@@ -188,7 +190,7 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
             // collection schemas. Schema changes are derived-state inputs only;
             // they do not trigger autocommit from the watcher.
             let Some(classification) =
-                classify_content_tree_event(space_root, &policy, path, &event.kind)
+                classify_content_tree_event(space_root, &policy, &skip_dirs, path, &event.kind)
             else {
                 continue;
             };
@@ -216,7 +218,8 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
     let nonces = app.state::<Arc<WriteNonceRegistry>>();
 
     for (path, kind) in seen {
-        let Some(classification) = classify_content_tree_event(space_root, &policy, &path, &kind)
+        let Some(classification) =
+            classify_content_tree_event(space_root, &policy, &skip_dirs, &path, &kind)
         else {
             continue;
         };
@@ -315,6 +318,7 @@ struct ContentTreeEventClassification {
 fn classify_content_tree_event(
     space_root: &Path,
     policy: &TreeIgnorePolicy,
+    skip_dirs: &HashSet<String>,
     path: &Path,
     event_kind: &EventKind,
 ) -> Option<ContentTreeEventClassification> {
@@ -334,6 +338,9 @@ fn classify_content_tree_event(
             return None;
         }
     };
+    if is_under_child_space(&rel_path, skip_dirs) {
+        return None;
+    }
     let parent_path = parent_path_for_rel(&rel_path);
 
     Some(ContentTreeEventClassification {
@@ -343,6 +350,12 @@ fn classify_content_tree_event(
         parent_path,
         affects_tree: affects_tree(kind, event_kind),
         affects_metadata: affects_metadata(kind, path, event_kind),
+    })
+}
+
+fn is_under_child_space(rel_path: &str, skip_dirs: &HashSet<String>) -> bool {
+    skip_dirs.iter().any(|child| {
+        !child.is_empty() && (rel_path == child || rel_path.starts_with(&format!("{child}/")))
     })
 }
 
@@ -513,7 +526,8 @@ mod tests {
         event_kind: EventKind,
     ) -> Option<ContentTreeEventClassification> {
         let policy = TreeIgnorePolicy::from_space_root(tmp.path());
-        classify_content_tree_event(tmp.path(), &policy, path, &event_kind)
+        let skip_dirs = child_folder_names(tmp.path());
+        classify_content_tree_event(tmp.path(), &policy, &skip_dirs, path, &event_kind)
     }
 
     #[test]
@@ -649,5 +663,38 @@ mod tests {
         let deleted_asset = tmp.path().join("image.png");
 
         assert!(classify(&tmp, &deleted_asset, EventKind::Remove(RemoveKind::File)).is_none());
+    }
+
+    #[test]
+    fn watcher_skips_registered_child_space_paths() {
+        let tmp = TempDir::new().unwrap();
+        write_space_config(
+            tmp.path(),
+            &SpaceConfig {
+                name: "Root".to_string(),
+                description: String::new(),
+                icon: "folder".to_string(),
+                spaces: Some(vec![crate::space::types::SpaceRef {
+                    id: "child".to_string(),
+                    path: "child".to_string(),
+                    repo: None,
+                }]),
+                agent: None,
+                defaults: None,
+                git: None,
+                assets: None,
+                tree: None,
+            },
+        )
+        .expect("write config");
+        let child_dir = tmp.path().join("child");
+        std::fs::create_dir_all(&child_dir).unwrap();
+        let child_doc = child_dir.join("note.md");
+        std::fs::write(&child_doc, "child").unwrap();
+        let sibling_doc = tmp.path().join("child-notes.md");
+        std::fs::write(&sibling_doc, "sibling").unwrap();
+
+        assert!(classify(&tmp, &child_doc, EventKind::Create(CreateKind::File)).is_none());
+        assert!(classify(&tmp, &sibling_doc, EventKind::Create(CreateKind::File)).is_some());
     }
 }
