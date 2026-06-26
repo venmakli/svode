@@ -14,7 +14,7 @@ import { useSpace } from "@/features/space";
 import { useFullscreen } from "./hooks/use-fullscreen";
 import { useShellStore } from "./model";
 import { cn } from "@/shared/lib/utils";
-import { CloudUploadButton } from "@/features/git/app-shell";
+import { GitSyncStatusWidget } from "@/features/git/app-shell";
 import { buildProjectTerminalTarget } from "@/features/terminal";
 import { MainBreadcrumbs } from "@/features/space/app-shell";
 import { ProjectOpenersMenu } from "./project-openers-menu";
@@ -127,7 +127,7 @@ export function WindowHeader() {
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
-        {isSpaceRoute && <CloudUploadButton />}
+        {isSpaceRoute && <GitSyncStatusWidget />}
         {isSpaceRoute && (
           <ProjectOpenersMenu
             projectPath={activeRootPath}
@@ -146,7 +146,9 @@ export function WindowHeader() {
                 <PanelRight />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">Toggle chat panel (⌘R)</TooltipContent>
+            <TooltipContent side="bottom">
+              Toggle chat panel (⌘R)
+            </TooltipContent>
           </Tooltip>
         )}
       </div>

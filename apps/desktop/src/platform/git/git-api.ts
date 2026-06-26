@@ -42,6 +42,10 @@ export function getGitStatus(spacePath: string): Promise<GitStatusDto> {
   return invokeCommand<GitStatusDto>("git_status", { spacePath });
 }
 
+export function fetchGitStatus(spacePath: string): Promise<GitStatusDto> {
+  return invokeCommand<GitStatusDto>("git_fetch_status", { spacePath });
+}
+
 export function pushGit(spacePath: string): Promise<GitStatusDto> {
   return invokeCommand<GitStatusDto>("git_push", { spacePath });
 }
@@ -99,6 +103,18 @@ export function enableGitAutoSync(input: {
   return invokeCommand<void>("git_enable_auto_sync", {
     spacePath: input.spacePath,
     projectPath: input.projectPath ?? null,
+  });
+}
+
+export function setGitAutoSync(input: {
+  spacePath: string;
+  projectPath?: string | null;
+  enabled: boolean;
+}): Promise<void> {
+  return invokeCommand<void>("git_set_auto_sync", {
+    spacePath: input.spacePath,
+    projectPath: input.projectPath ?? null,
+    enabled: input.enabled,
   });
 }
 

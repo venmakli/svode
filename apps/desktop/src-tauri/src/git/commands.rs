@@ -286,6 +286,19 @@ pub async fn git_status(
 }
 
 #[tauri::command]
+pub async fn git_fetch_status(
+    state: State<'_, GitState>,
+    space_path: String,
+) -> Result<GitStatus, AppError> {
+    let path = PathBuf::from(&space_path);
+    let lock = state.get_lock(&path).await;
+    let _guard = lock.lock().await;
+    let cli = state.cli()?;
+    super::ops::fetch_remote(cli, &path).await?;
+    super::ops::status_with_remote_counts(cli, &path).await
+}
+
+#[tauri::command]
 pub async fn git_commit_file(
     state: State<'_, GitState>,
     autocommit: State<'_, Arc<AutocommitService>>,
@@ -587,6 +600,17 @@ pub async fn git_enable_auto_sync(
     space_path: String,
     project_path: Option<String>,
 ) -> Result<(), AppError> {
+    git_set_auto_sync(state, autocommit, space_path, project_path, true).await
+}
+
+#[tauri::command]
+pub async fn git_set_auto_sync(
+    state: State<'_, GitState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+    space_path: String,
+    project_path: Option<String>,
+    enabled: bool,
+) -> Result<(), AppError> {
     let space = PathBuf::from(&space_path);
 
     // For inline spaces autoSync lives in the root project config (inline has
@@ -606,7 +630,7 @@ pub async fn git_enable_auto_sync(
 
     let mut cfg = crate::space::config::read_space_config(&config_target)?;
     let mut git_cfg = cfg.git.clone().unwrap_or_default();
-    git_cfg.auto_sync = Some(true);
+    git_cfg.auto_sync = Some(enabled);
     cfg.git = Some(git_cfg);
     crate::space::config::write_space_config(&config_target, &cfg)?;
 

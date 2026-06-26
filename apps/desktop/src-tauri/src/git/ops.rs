@@ -72,6 +72,46 @@ pub async fn get_remote(cli: &GitCli, space_dir: &Path) -> Result<Option<String>
     }
 }
 
+pub(crate) fn is_git_auth_error(stderr: &str) -> bool {
+    stderr.contains("Authentication")
+        || stderr.contains("Authentication failed")
+        || stderr.contains("could not read Username")
+        || stderr.contains("terminal prompts disabled")
+        || stderr.contains("Permission denied")
+}
+
+pub(crate) fn is_git_no_remote_error(stderr: &str) -> bool {
+    stderr.contains("No configured push destination")
+        || stderr.contains("does not appear to be a git repository")
+        || stderr.contains("Could not read from remote repository")
+        || stderr.contains("Repository not found")
+}
+
+pub(crate) fn git_remote_command_error(command: &str, stderr: &str) -> AppError {
+    if is_git_auth_error(stderr) {
+        return AppError::GitAuthRequired(stderr.to_string());
+    }
+    if is_git_no_remote_error(stderr) {
+        return AppError::GitNoRemote;
+    }
+    AppError::GitCommandFailed(format!("{command} failed: {stderr}"))
+}
+
+/// Fetch origin refs without touching the working tree.
+/// Returns `false` when no origin remote is configured.
+pub async fn fetch_remote(cli: &GitCli, space_dir: &Path) -> Result<bool, AppError> {
+    if get_remote(cli, space_dir).await?.is_none() {
+        return Ok(false);
+    }
+
+    let out = cli.exec(space_dir, &["fetch", "--prune", "origin"]).await?;
+    if out.exit_code != 0 {
+        let stderr = out.stderr.trim();
+        return Err(git_remote_command_error("git fetch", stderr));
+    }
+    Ok(true)
+}
+
 /// List submodules declared in `.gitmodules`.
 pub async fn list_submodules(
     cli: &GitCli,
@@ -163,20 +203,7 @@ pub async fn push(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
     let out = cli.exec(space_dir, &["push"]).await?;
     if out.exit_code != 0 {
         let stderr = out.stderr.trim();
-        if stderr.contains("Authentication")
-            || stderr.contains("could not read Username")
-            || stderr.contains("terminal prompts disabled")
-        {
-            return Err(AppError::GitAuthRequired(stderr.to_string()));
-        }
-        if stderr.contains("No configured push destination")
-            || stderr.contains("does not appear to be a git repository")
-        {
-            return Err(AppError::GitNoRemote);
-        }
-        return Err(AppError::GitCommandFailed(format!(
-            "git push failed: {stderr}"
-        )));
+        return Err(git_remote_command_error("git push", stderr));
     }
     Ok(())
 }
@@ -242,6 +269,59 @@ pub async fn status(cli: &GitCli, space_dir: &Path) -> Result<GitStatus, AppErro
     let mut status = parse_status_porcelain_v2_z(&out.stdout)?;
     strip_status_path_prefix(&mut status, &prefix)?;
     Ok(status)
+}
+
+pub async fn status_with_remote_counts(
+    cli: &GitCli,
+    space_dir: &Path,
+) -> Result<GitStatus, AppError> {
+    let mut status = status(cli, space_dir).await?;
+    if status.tracking.is_some() || get_remote(cli, space_dir).await?.is_none() {
+        return Ok(status);
+    }
+
+    let branch = match current_branch(cli, space_dir).await {
+        Ok(branch) if branch != "HEAD" && !branch.is_empty() => branch,
+        _ => return Ok(status),
+    };
+
+    let remote_ref = format!("refs/remotes/origin/{branch}");
+    if ref_exists(cli, space_dir, &remote_ref).await? {
+        status.behind = count_rev_list(cli, space_dir, &format!("HEAD..{remote_ref}")).await?;
+        status.ahead = count_rev_list(cli, space_dir, &format!("{remote_ref}..HEAD")).await?;
+    } else {
+        status.behind = 0;
+        status.ahead = count_rev_list(cli, space_dir, "HEAD").await.unwrap_or(0);
+    }
+
+    Ok(status)
+}
+
+pub async fn remote_branch_exists(
+    cli: &GitCli,
+    space_dir: &Path,
+    branch: &str,
+) -> Result<bool, AppError> {
+    let remote_ref = format!("refs/remotes/origin/{branch}");
+    ref_exists(cli, space_dir, &remote_ref).await
+}
+
+async fn ref_exists(cli: &GitCli, space_dir: &Path, reference: &str) -> Result<bool, AppError> {
+    let out = cli
+        .exec(space_dir, &["rev-parse", "--verify", reference])
+        .await?;
+    Ok(out.exit_code == 0)
+}
+
+async fn count_rev_list(cli: &GitCli, space_dir: &Path, rev: &str) -> Result<u32, AppError> {
+    let out = cli.exec(space_dir, &["rev-list", "--count", rev]).await?;
+    if out.exit_code != 0 {
+        return Err(AppError::GitCommandFailed(format!(
+            "git rev-list failed: {}",
+            out.stderr.trim()
+        )));
+    }
+    Ok(out.stdout.trim().parse().unwrap_or(0))
 }
 
 async fn status_path_prefix(cli: &GitCli, space_dir: &Path) -> Result<String, AppError> {
@@ -1101,12 +1181,6 @@ pub async fn push_set_upstream(cli: &GitCli, space_dir: &Path) -> Result<(), App
         .await?;
     if out.exit_code != 0 {
         let stderr = out.stderr.trim();
-        if stderr.contains("Authentication")
-            || stderr.contains("could not read Username")
-            || stderr.contains("terminal prompts disabled")
-        {
-            return Err(AppError::GitAuthRequired(stderr.to_string()));
-        }
         if (stderr.contains("rejected")
             && (stderr.contains("fetch first")
                 || stderr.contains("non-fast-forward")
@@ -1115,14 +1189,7 @@ pub async fn push_set_upstream(cli: &GitCli, space_dir: &Path) -> Result<(), App
         {
             return Err(AppError::GitRemoteNotEmpty);
         }
-        if stderr.contains("No configured push destination")
-            || stderr.contains("does not appear to be a git repository")
-        {
-            return Err(AppError::GitNoRemote);
-        }
-        return Err(AppError::GitCommandFailed(format!(
-            "git push failed: {stderr}"
-        )));
+        return Err(git_remote_command_error("git push", stderr));
     }
     Ok(())
 }
@@ -1372,6 +1439,26 @@ mod tests {
         let paths = parse_nul_paths("docs/a file.md\0кириллица.md\0").unwrap();
 
         assert_eq!(paths, vec!["docs/a file.md", "кириллица.md"]);
+    }
+
+    #[test]
+    fn classifies_remote_auth_errors_before_no_remote_errors() {
+        let err = git_remote_command_error(
+            "git fetch",
+            "Permission denied (publickey).\nfatal: Could not read from remote repository.",
+        );
+
+        assert!(matches!(err, AppError::GitAuthRequired(_)));
+    }
+
+    #[test]
+    fn classifies_missing_remote_errors() {
+        let err = git_remote_command_error(
+            "git fetch",
+            "fatal: 'origin' does not appear to be a git repository",
+        );
+
+        assert!(matches!(err, AppError::GitNoRemote));
     }
 
     #[test]

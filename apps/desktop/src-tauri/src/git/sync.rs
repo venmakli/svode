@@ -22,36 +22,15 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError
         return Ok(SyncResult::NoRemote);
     }
 
+    if upstream_ref(cli, space_dir).await?.is_none() {
+        return sync_without_upstream(cli, space_dir).await;
+    }
+
     // Pull
     let pull_out = cli.exec(space_dir, &["pull", "--no-rebase"]).await?;
 
     if pull_out.exit_code != 0 {
-        let stderr = pull_out.stderr.trim();
-
-        // Auth error
-        if stderr.contains("Authentication")
-            || stderr.contains("could not read Username")
-            || stderr.contains("terminal prompts disabled")
-        {
-            return Ok(SyncResult::AuthRequired);
-        }
-
-        // Merge conflict
-        if stderr.contains("CONFLICT") || stderr.contains("Automatic merge failed") {
-            let files = conflict_files(cli, space_dir).await?;
-            return Ok(SyncResult::Conflict { files });
-        }
-
-        // Check stdout too — git sometimes reports conflicts there
-        let stdout = pull_out.stdout.trim();
-        if stdout.contains("CONFLICT") || stdout.contains("Automatic merge failed") {
-            let files = conflict_files(cli, space_dir).await?;
-            return Ok(SyncResult::Conflict { files });
-        }
-
-        return Err(AppError::GitCommandFailed(format!(
-            "git pull failed: {stderr}"
-        )));
+        return handle_pull_failure(cli, space_dir, &pull_out.stderr, &pull_out.stdout).await;
     }
 
     // Push
@@ -59,20 +38,108 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError
     if push_out.exit_code != 0 {
         let stderr = push_out.stderr.trim();
 
-        if stderr.contains("Authentication")
-            || stderr.contains("could not read Username")
-            || stderr.contains("terminal prompts disabled")
-        {
+        if super::ops::is_git_auth_error(stderr) {
             return Ok(SyncResult::AuthRequired);
         }
 
-        return Err(AppError::GitCommandFailed(format!(
-            "git push failed: {stderr}"
-        )));
+        return remote_error_to_sync_result(super::ops::git_remote_command_error(
+            "git push", stderr,
+        ));
     }
 
     tracing::info!("Synced space {}", space_dir.display());
     Ok(SyncResult::Success)
+}
+
+async fn sync_without_upstream(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError> {
+    match super::ops::fetch_remote(cli, space_dir).await {
+        Ok(false) => return Ok(SyncResult::NoRemote),
+        Ok(true) => {}
+        Err(AppError::GitAuthRequired(_)) => return Ok(SyncResult::AuthRequired),
+        Err(AppError::GitNoRemote) => return Ok(SyncResult::NoRemote),
+        Err(err) => return Err(err),
+    }
+
+    let branch = super::ops::current_branch(cli, space_dir).await?;
+    if branch == "HEAD" || branch.is_empty() {
+        return Err(AppError::GitCommandFailed(
+            "Cannot sync detached HEAD without an upstream".to_string(),
+        ));
+    }
+
+    if super::ops::remote_branch_exists(cli, space_dir, &branch).await? {
+        let pull_out = cli
+            .exec(space_dir, &["pull", "--no-rebase", "origin", &branch])
+            .await?;
+        if pull_out.exit_code != 0 {
+            return handle_pull_failure(cli, space_dir, &pull_out.stderr, &pull_out.stdout).await;
+        }
+    }
+
+    match super::ops::push_set_upstream(cli, space_dir).await {
+        Ok(()) => {
+            tracing::info!("Synced space {}", space_dir.display());
+            Ok(SyncResult::Success)
+        }
+        Err(AppError::GitAuthRequired(_)) => Ok(SyncResult::AuthRequired),
+        Err(AppError::GitNoRemote) => Ok(SyncResult::NoRemote),
+        Err(err) => Err(err),
+    }
+}
+
+async fn upstream_ref(cli: &GitCli, space_dir: &Path) -> Result<Option<String>, AppError> {
+    let out = cli
+        .exec(
+            space_dir,
+            &[
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{upstream}",
+            ],
+        )
+        .await?;
+    if out.exit_code != 0 {
+        return Ok(None);
+    }
+    let upstream = out.stdout.trim().to_string();
+    if upstream.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(upstream))
+    }
+}
+
+async fn handle_pull_failure(
+    cli: &GitCli,
+    space_dir: &Path,
+    stderr: &str,
+    stdout: &str,
+) -> Result<SyncResult, AppError> {
+    let stderr = stderr.trim();
+
+    if super::ops::is_git_auth_error(stderr) {
+        return Ok(SyncResult::AuthRequired);
+    }
+
+    if stderr.contains("CONFLICT")
+        || stderr.contains("Automatic merge failed")
+        || stdout.contains("CONFLICT")
+        || stdout.contains("Automatic merge failed")
+    {
+        let files = conflict_files(cli, space_dir).await?;
+        return Ok(SyncResult::Conflict { files });
+    }
+
+    remote_error_to_sync_result(super::ops::git_remote_command_error("git pull", stderr))
+}
+
+fn remote_error_to_sync_result(error: AppError) -> Result<SyncResult, AppError> {
+    match error {
+        AppError::GitAuthRequired(_) => Ok(SyncResult::AuthRequired),
+        AppError::GitNoRemote => Ok(SyncResult::NoRemote),
+        other => Err(other),
+    }
 }
 
 /// Get list of conflicted files.
