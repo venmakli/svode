@@ -43,6 +43,7 @@ pub async fn clone_with_progress(
     // LFS credential would fail the entire clone.
     let mut cmd = Command::new(cli.git_path());
     process::hide_tokio_window(&mut cmd);
+    cli.configure_process_env(&mut cmd);
     let mut child = cmd
         .args([
             "-c",
@@ -53,8 +54,6 @@ pub async fn clone_with_progress(
             url,
             target_str,
         ])
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("LC_ALL", "C.UTF-8")
         .env("GIT_LFS_SKIP_SMUDGE", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -162,6 +161,7 @@ pub async fn submodule_add_with_progress(
 
     let mut cmd = Command::new(cli.git_path());
     process::hide_tokio_window(&mut cmd);
+    cli.configure_process_env(&mut cmd);
     let mut child = cmd
         .args([
             "-c",
@@ -174,8 +174,6 @@ pub async fn submodule_add_with_progress(
             space_folder,
         ])
         .current_dir(project_path)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("LC_ALL", "C.UTF-8")
         .env("GIT_LFS_SKIP_SMUDGE", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

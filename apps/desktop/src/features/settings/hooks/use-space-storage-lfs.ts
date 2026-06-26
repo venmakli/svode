@@ -43,7 +43,7 @@ export function useSpaceStorageLfs({
     try {
       const avail = await getSettingsGitAvailability();
       setLfsAvailable(avail.gitLfs);
-      setLfsVersion(avail.gitVersion);
+      setLfsVersion(avail.gitLfsVersion);
     } catch {
       setLfsAvailable(false);
       setLfsVersion(null);

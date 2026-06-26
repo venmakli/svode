@@ -2,6 +2,7 @@ export interface GitAvailability {
   git: boolean;
   gitLfs: boolean;
   gitVersion: string | null;
+  gitLfsVersion: string | null;
 }
 
 export type FileGitState = "modified" | "untracked" | "conflict";

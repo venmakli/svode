@@ -127,6 +127,7 @@ pub async fn git_check_availability(
             git: false,
             git_lfs: false,
             git_version: None,
+            git_lfs_version: None,
         }),
     }
 }

@@ -10,6 +10,7 @@ export function toGitAvailability(dto: GitAvailabilityDto): GitAvailability {
     git: dto.git,
     gitLfs: dto.gitLfs,
     gitVersion: dto.gitVersion,
+    gitLfsVersion: dto.gitLfsVersion,
   };
 }
 

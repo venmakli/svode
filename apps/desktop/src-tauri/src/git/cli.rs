@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 
@@ -12,6 +13,7 @@ pub struct GitAvailability {
     pub git: bool,
     pub git_lfs: bool,
     pub git_version: Option<String>,
+    pub git_lfs_version: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -24,7 +26,6 @@ pub struct GitOutput {
 #[derive(Debug, Clone)]
 pub struct GitCli {
     git_path: PathBuf,
-    lfs_available: bool,
 }
 
 impl GitCli {
@@ -34,17 +35,14 @@ impl GitCli {
 
         tracing::info!("Found git at: {}", git_path.display());
 
-        let lfs_available = detect_lfs_extension(&git_path);
-        if lfs_available {
+        let lfs = detect_lfs_extension(&git_path);
+        if lfs.available {
             tracing::info!("Git LFS is available via git lfs version");
         } else {
             tracing::debug!("Git LFS extension not available");
         }
 
-        Ok(Self {
-            git_path,
-            lfs_available,
-        })
+        Ok(Self { git_path })
     }
 
     /// Path to the git binary.
@@ -54,7 +52,12 @@ impl GitCli {
 
     /// Whether git-lfs is installed and available on PATH.
     pub fn lfs_available(&self) -> bool {
-        self.lfs_available
+        detect_lfs_extension(&self.git_path).available
+    }
+
+    /// Apply the environment Svode expects for direct git subprocesses.
+    pub(crate) fn configure_process_env(&self, cmd: &mut Command) {
+        apply_common_git_env(cmd);
     }
 
     /// Execute a git command in the given space directory.
@@ -76,6 +79,7 @@ impl GitCli {
         let git_args = args_with_quote_path(args);
         let mut cmd = Command::new(&self.git_path);
         process::hide_tokio_window(&mut cmd);
+        apply_common_git_env(&mut cmd);
         cmd.args(&git_args)
             .current_dir(space_dir)
             .env("GIT_TERMINAL_PROMPT", "0")
@@ -115,6 +119,7 @@ impl GitCli {
         let git_args = args_with_quote_path(args);
         let mut cmd = Command::new(&self.git_path);
         process::hide_tokio_window(&mut cmd);
+        apply_common_git_env(&mut cmd);
         let output = cmd
             .args(&git_args)
             .env("GIT_TERMINAL_PROMPT", "0")
@@ -136,6 +141,7 @@ impl GitCli {
     pub async fn check_availability(&self) -> GitAvailability {
         let mut cmd = Command::new(&self.git_path);
         process::hide_tokio_window(&mut cmd);
+        apply_common_git_env(&mut cmd);
         let version_output = cmd
             .args(["-c", "core.quotePath=false", "--version"])
             .env("GIT_TERMINAL_PROMPT", "0")
@@ -146,11 +152,28 @@ impl GitCli {
             .ok()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
 
+        let lfs = detect_lfs_extension(&self.git_path);
+
         GitAvailability {
             git: true,
-            git_lfs: self.lfs_available,
+            git_lfs: lfs.available,
             git_version,
+            git_lfs_version: lfs.version,
         }
+    }
+}
+
+fn apply_common_git_env(cmd: &mut Command) {
+    cmd.env("GIT_TERMINAL_PROMPT", "0").env("LC_ALL", "C.UTF-8");
+    if let Some(path) = git_subprocess_path_env() {
+        cmd.env("PATH", path);
+    }
+}
+
+fn apply_common_std_git_env(cmd: &mut StdCommand) {
+    cmd.env("GIT_TERMINAL_PROMPT", "0").env("LC_ALL", "C.UTF-8");
+    if let Some(path) = git_subprocess_path_env() {
+        cmd.env("PATH", path);
     }
 }
 
@@ -176,15 +199,89 @@ fn resolve_git_binary() -> Result<PathBuf, AppError> {
     Err(AppError::GitNotFound)
 }
 
-fn detect_lfs_extension(git_path: &Path) -> bool {
+#[derive(Debug, Clone, Default)]
+struct LfsDetection {
+    available: bool,
+    version: Option<String>,
+}
+
+fn detect_lfs_extension(git_path: &Path) -> LfsDetection {
     let mut cmd = StdCommand::new(git_path);
     process::hide_window(&mut cmd);
-    cmd.args(["-c", "core.quotePath=false", "lfs", "version"])
+    apply_common_std_git_env(&mut cmd);
+    let output = cmd
+        .args(["-c", "core.quotePath=false", "lfs", "version"])
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("LC_ALL", "C.UTF-8")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+        .output();
+    match output {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            LfsDetection {
+                available: true,
+                version: parse_lfs_version(stdout.trim()),
+            }
+        }
+        _ => LfsDetection::default(),
+    }
+}
+
+fn parse_lfs_version(output: &str) -> Option<String> {
+    let first_line = output.lines().next()?.trim();
+    if first_line.is_empty() {
+        return None;
+    }
+    first_line
+        .strip_prefix("git-lfs/")
+        .and_then(|rest| rest.split_whitespace().next())
+        .map(str::to_string)
+        .or_else(|| Some(first_line.to_string()))
+}
+
+fn git_subprocess_path_env() -> Option<OsString> {
+    let mut current_paths: Vec<PathBuf> = std::env::var_os("PATH")
+        .as_deref()
+        .map(std::env::split_paths)
+        .map(Iterator::collect)
+        .unwrap_or_default();
+
+    let mut extra_dirs = Vec::new();
+    for dir in git_lfs_candidate_dirs() {
+        if !current_paths.iter().any(|path| path == &dir)
+            && !extra_dirs.iter().any(|path| path == &dir)
+        {
+            extra_dirs.push(dir);
+        }
+    }
+    if extra_dirs.is_empty() {
+        return None;
+    }
+
+    extra_dirs.append(&mut current_paths);
+    std::env::join_paths(extra_dirs).ok()
+}
+
+fn git_lfs_candidate_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(path) = which::which("git-lfs") {
+        push_parent_dir(&mut dirs, path);
+    }
+    for candidate in git_lfs_fallback_candidates() {
+        if candidate.is_file() {
+            push_parent_dir(&mut dirs, candidate);
+        }
+    }
+    dirs
+}
+
+fn push_parent_dir(out: &mut Vec<PathBuf>, path: PathBuf) {
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    let parent = parent.to_path_buf();
+    if !out.iter().any(|existing| existing == &parent) {
+        out.push(parent);
+    }
 }
 
 #[cfg(windows)]
@@ -218,6 +315,43 @@ fn git_fallback_candidates() -> Vec<PathBuf> {
     out
 }
 
+#[cfg(windows)]
+fn git_lfs_fallback_candidates() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Some(root) = std::env::var_os("ProgramFiles") {
+        let root = PathBuf::from(root);
+        out.push(root.join("Git").join("cmd").join("git-lfs.exe"));
+        out.push(
+            root.join("Git")
+                .join("mingw64")
+                .join("bin")
+                .join("git-lfs.exe"),
+        );
+        out.push(root.join("Git LFS").join("git-lfs.exe"));
+    }
+    if let Some(root) = std::env::var_os("ProgramFiles(x86)") {
+        let root = PathBuf::from(root);
+        out.push(root.join("Git").join("cmd").join("git-lfs.exe"));
+        out.push(
+            root.join("Git")
+                .join("mingw64")
+                .join("bin")
+                .join("git-lfs.exe"),
+        );
+        out.push(root.join("Git LFS").join("git-lfs.exe"));
+    }
+    if let Some(root) = std::env::var_os("USERPROFILE") {
+        out.push(
+            PathBuf::from(root)
+                .join("scoop")
+                .join("shims")
+                .join("git-lfs.exe"),
+        );
+    }
+    out.push(PathBuf::from("C:/ProgramData/chocolatey/bin/git-lfs.exe"));
+    out
+}
+
 #[cfg(not(windows))]
 fn git_fallback_candidates() -> Vec<PathBuf> {
     [
@@ -228,4 +362,39 @@ fn git_fallback_candidates() -> Vec<PathBuf> {
     .into_iter()
     .map(PathBuf::from)
     .collect()
+}
+
+#[cfg(not(windows))]
+fn git_lfs_fallback_candidates() -> Vec<PathBuf> {
+    [
+        "/opt/homebrew/bin/git-lfs",
+        "/usr/local/bin/git-lfs",
+        "/usr/bin/git-lfs",
+        "/bin/git-lfs",
+        "/snap/bin/git-lfs",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_lfs_version;
+
+    #[test]
+    fn parses_git_lfs_version_prefix() {
+        assert_eq!(
+            parse_lfs_version("git-lfs/3.7.1 (GitHub; darwin arm64; go 1.25.3)").as_deref(),
+            Some("3.7.1")
+        );
+    }
+
+    #[test]
+    fn falls_back_to_full_lfs_output_when_format_is_unknown() {
+        assert_eq!(
+            parse_lfs_version("git-lfs version custom").as_deref(),
+            Some("git-lfs version custom")
+        );
+    }
 }
