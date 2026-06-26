@@ -3,6 +3,7 @@ import type { TreeNode } from "../model/types";
 import { nestTreeEntry, unnestTreeEntry } from "../api/tree-entry-actions";
 import {
   buildCrossParentMovePlan,
+  buildCrossParentMoveOrder,
   buildNestConversionOrder,
   buildSameParentReorderOrder,
   getChildNestConversionPlan,
@@ -175,7 +176,15 @@ export function useFileTreeDragCommand({
 
       const updatedTree = useSpaceStore.getState().fileTrees[spaceId];
       if (updatedTree) {
-        const order = buildOrderMap(updatedTree);
+        const movedNodeName =
+          newPath?.split("/").pop() ?? movePlan.fromNode.name;
+        const order =
+          buildCrossParentMoveOrder({
+            currentTree: updatedTree,
+            movedNodeName,
+            parentPath: drag.toParent,
+            projection: input.projection,
+          }) ?? buildOrderMap(updatedTree);
         await useSpaceStore.getState().saveOrder(spaceId, order);
         await useSpaceStore
           .getState()

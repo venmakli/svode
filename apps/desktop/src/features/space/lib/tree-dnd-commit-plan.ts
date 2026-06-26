@@ -100,28 +100,94 @@ export function buildSameParentReorderOrder(input: {
   parentPath: string;
   projection: Projection;
 }): Record<string, string[]> | null {
+  const order = buildOrderMap(input.currentTree);
+  const dirKey = input.parentPath || ".";
+  const currentSiblings = order[dirKey];
+  if (!currentSiblings) return null;
+
+  const fromIndex = currentSiblings.indexOf(input.fromNodeName);
+  if (fromIndex === -1) return null;
+
+  const siblings = currentSiblings.filter(
+    (name) => name !== input.fromNodeName,
+  );
+  const insertionIndex = projectedSiblingInsertionIndex({
+    currentTree: input.currentTree,
+    parentPath: input.parentPath,
+    projection: input.projection,
+    siblings,
+  });
+  if (insertionIndex === null) return null;
+
+  siblings.splice(insertionIndex, 0, input.fromNodeName);
+  if (sameStringArray(currentSiblings, siblings)) return null;
+
+  order[dirKey] = siblings;
+  return order;
+}
+
+export function buildCrossParentMoveOrder(input: {
+  currentTree: TreeNode[];
+  movedNodeName: string;
+  parentPath: string;
+  projection: Projection;
+}): Record<string, string[]> | null {
+  const order = buildOrderMap(input.currentTree);
+  const dirKey = input.parentPath || ".";
+  const currentSiblings = order[dirKey];
+  if (!currentSiblings) return null;
+
+  const movedIndex = currentSiblings.indexOf(input.movedNodeName);
+  if (movedIndex === -1) return null;
+
+  const siblings = currentSiblings.filter(
+    (name) => name !== input.movedNodeName,
+  );
+  const insertionIndex = projectedSiblingInsertionIndex({
+    currentTree: input.currentTree,
+    parentPath: input.parentPath,
+    projection: input.projection,
+    siblings,
+  });
+  if (insertionIndex === null) return null;
+
+  siblings.splice(insertionIndex, 0, input.movedNodeName);
+  order[dirKey] = siblings;
+  return order;
+}
+
+function projectedSiblingInsertionIndex(input: {
+  currentTree: TreeNode[];
+  parentPath: string;
+  projection: Projection;
+  siblings: string[];
+}): number | null {
+  if (input.projection.type === "child") {
+    return input.siblings.length;
+  }
+
   const overNode = findTreeNode(input.currentTree, input.projection.overPath);
   if (!overNode) return null;
 
-  const order = buildOrderMap(input.currentTree);
-  const dirKey = input.parentPath || ".";
-  const siblings = order[dirKey];
-  if (!siblings) return null;
-
-  const fromIndex = siblings.indexOf(input.fromNodeName);
-  const overIndex = siblings.indexOf(overNode.name);
-  if (fromIndex === -1 || overIndex === -1 || fromIndex === overIndex) {
-    return null;
+  const overIndex = input.siblings.indexOf(overNode.name);
+  if (overIndex !== -1) {
+    return input.projection.type === "after" ? overIndex + 1 : overIndex;
   }
 
-  siblings.splice(fromIndex, 1);
-  const adjustedIndex = fromIndex < overIndex ? overIndex - 1 : overIndex;
-  siblings.splice(
-    input.projection.type === "after" ? adjustedIndex + 1 : adjustedIndex,
-    0,
-    input.fromNodeName,
-  );
-  return order;
+  const overFolderPath = treeParentKeyForNode(overNode);
+  if (
+    input.projection.type === "after" &&
+    overFolderPath === input.parentPath
+  ) {
+    return 0;
+  }
+
+  return input.siblings.length;
+}
+
+function sameStringArray(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((item, index) => item === right[index]);
 }
 
 export function buildCrossParentMovePlan(

@@ -3,6 +3,8 @@ import type { TreeNode } from "../model/types";
 import type { Projection } from "./tree-dnd-utilities";
 import {
   buildCrossParentMovePlan,
+  buildCrossParentMoveOrder,
+  buildSameParentReorderOrder,
   getChildNestConversionPlan,
   movedDocumentPath,
   prepareTreeDrag,
@@ -70,6 +72,54 @@ test("collection move plan moves the collection directory, not README", () => {
   );
 });
 
+test("cross-parent move order inserts before the projected target child", () => {
+  const order = buildCrossParentMoveOrder({
+    currentTree: movedNoteIntoArchiveTree(),
+    movedNodeName: "note.md",
+    parentPath: "archive",
+    projection: {
+      depth: 1,
+      parentPath: "archive",
+      type: "before",
+      overPath: "archive/b.md",
+    },
+  });
+
+  expect(order?.archive).toEqual(["a.md", "note.md", "b.md"]);
+});
+
+test("cross-parent move order inserts first when projected after the parent row", () => {
+  const order = buildCrossParentMoveOrder({
+    currentTree: movedNoteIntoArchiveTree(),
+    movedNodeName: "note.md",
+    parentPath: "archive",
+    projection: {
+      depth: 1,
+      parentPath: "archive",
+      type: "after",
+      overPath: "archive/README.md",
+    },
+  });
+
+  expect(order?.archive).toEqual(["note.md", "a.md", "b.md"]);
+});
+
+test("same-parent reorder supports the first child projection after parent row", () => {
+  const order = buildSameParentReorderOrder({
+    currentTree: movedNoteIntoArchiveTree(["a.md", "b.md", "note.md"]),
+    fromNodeName: "note.md",
+    parentPath: "archive",
+    projection: {
+      depth: 1,
+      parentPath: "archive",
+      type: "after",
+      overPath: "archive/README.md",
+    },
+  });
+
+  expect(order?.archive).toEqual(["note.md", "a.md", "b.md"]);
+});
+
 test("child nest conversion skips folder-like collection targets", () => {
   const tree = sampleTree();
 
@@ -112,6 +162,18 @@ function sampleTree(): TreeNode[] {
     bareFolder("assets"),
     collection("tasks", "tasks/README.md"),
     folder("archive", "archive/README.md", []),
+  ];
+}
+
+function movedNoteIntoArchiveTree(
+  childNames: string[] = ["a.md", "b.md", "note.md"],
+): TreeNode[] {
+  return [
+    folder(
+      "archive",
+      "archive/README.md",
+      childNames.map((name) => doc(name, `archive/${name}`)),
+    ),
   ];
 }
 
