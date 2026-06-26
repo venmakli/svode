@@ -36,11 +36,11 @@ pub struct GitStatus {
     pub files: Vec<FileGitStatus>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileGitStatus {
     pub path: String,
-    /// "modified" | "untracked" | "conflict"
+    /// "modified" | "untracked" | "deleted" | "conflict"
     pub state: String,
 }
 
@@ -216,8 +216,20 @@ pub async fn init(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
 
 /// Get space git status by parsing `git status --porcelain=v2 --branch -z`.
 pub async fn status(cli: &GitCli, space_dir: &Path) -> Result<GitStatus, AppError> {
+    let prefix = status_path_prefix(cli, space_dir).await?;
     let out = cli
-        .exec(space_dir, &["status", "--porcelain=v2", "--branch", "-z"])
+        .exec(
+            space_dir,
+            &[
+                "status",
+                "--porcelain=v2",
+                "--branch",
+                "--untracked-files=all",
+                "-z",
+                "--",
+                ".",
+            ],
+        )
         .await?;
 
     if out.exit_code != 0 {
@@ -227,7 +239,41 @@ pub async fn status(cli: &GitCli, space_dir: &Path) -> Result<GitStatus, AppErro
         )));
     }
 
-    parse_status_porcelain_v2_z(&out.stdout)
+    let mut status = parse_status_porcelain_v2_z(&out.stdout)?;
+    strip_status_path_prefix(&mut status, &prefix)?;
+    Ok(status)
+}
+
+async fn status_path_prefix(cli: &GitCli, space_dir: &Path) -> Result<String, AppError> {
+    let out = cli.exec(space_dir, &["rev-parse", "--show-prefix"]).await?;
+    if out.exit_code != 0 {
+        return Err(AppError::GitCommandFailed(format!(
+            "git rev-parse failed: {}",
+            out.stderr
+        )));
+    }
+    Ok(out.stdout.trim().replace('\\', "/"))
+}
+
+fn strip_status_path_prefix(status: &mut GitStatus, prefix: &str) -> Result<(), AppError> {
+    let normalized = prefix.trim_matches('/');
+    if normalized.is_empty() {
+        return Ok(());
+    }
+    let with_slash = format!("{normalized}/");
+    status.files = status
+        .files
+        .drain(..)
+        .filter_map(|file| {
+            file.path.strip_prefix(&with_slash).map(|path| {
+                normalize_repo_relative(path, RootMode::Reject).map(|path| FileGitStatus {
+                    path,
+                    state: file.state,
+                })
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(())
 }
 
 fn parse_status_porcelain_v2_z(stdout: &str) -> Result<GitStatus, AppError> {
@@ -285,7 +331,7 @@ fn parse_status_porcelain_v2_z(stdout: &str) -> Result<GitStatus, AppError> {
                 update_staged_flags(fields[1], &mut has_staged, &mut has_unstaged);
                 files.push(FileGitStatus {
                     path: normalize_git_path(fields[8])?,
-                    state: "modified".to_string(),
+                    state: status_state_for_xy(fields[1]).to_string(),
                 });
             }
             continue;
@@ -297,9 +343,13 @@ fn parse_status_porcelain_v2_z(stdout: &str) -> Result<GitStatus, AppError> {
                 update_staged_flags(fields[1], &mut has_staged, &mut has_unstaged);
                 files.push(FileGitStatus {
                     path: normalize_git_path(fields[9])?,
-                    state: "modified".to_string(),
+                    state: status_state_for_xy(fields[1]).to_string(),
                 });
                 if idx < records.len() && !records[idx].is_empty() {
+                    files.push(FileGitStatus {
+                        path: normalize_git_path(records[idx])?,
+                        state: "deleted".to_string(),
+                    });
                     idx += 1;
                 }
             }
@@ -343,6 +393,13 @@ fn update_staged_flags(xy: &str, has_staged: &mut bool, has_unstaged: &mut bool)
     if y != b'.' {
         *has_unstaged = true;
     }
+}
+
+fn status_state_for_xy(xy: &str) -> &'static str {
+    if xy.as_bytes().iter().any(|status| *status == b'D') {
+        return "deleted";
+    }
+    "modified"
 }
 
 fn normalize_git_path(path: &str) -> Result<String, AppError> {
@@ -1105,7 +1162,7 @@ mod tests {
         assert!(status.has_staged);
         assert!(status.has_unstaged);
         assert!(status.has_conflicts);
-        assert_eq!(status.files.len(), 5);
+        assert_eq!(status.files.len(), 6);
         assert!(
             status
                 .files
@@ -1128,6 +1185,12 @@ mod tests {
             status
                 .files
                 .iter()
+                .any(|file| { file.path == "old file.md" && file.state == "deleted" })
+        );
+        assert!(
+            status
+                .files
+                .iter()
                 .any(|file| { file.path == "новый файл.md" && file.state == "untracked" })
         );
         assert!(
@@ -1135,6 +1198,45 @@ mod tests {
                 .files
                 .iter()
                 .any(|file| { file.path == ".assets" && file.state == "untracked" })
+        );
+    }
+
+    #[test]
+    fn strips_status_paths_to_space_relative_paths() {
+        let mut status = GitStatus {
+            branch: "main".to_string(),
+            ahead: 0,
+            behind: 0,
+            has_staged: false,
+            has_unstaged: true,
+            has_conflicts: false,
+            tracking: None,
+            files: vec![
+                FileGitStatus {
+                    path: "spaces/docs/a.md".to_string(),
+                    state: "modified".to_string(),
+                },
+                FileGitStatus {
+                    path: "spaces/docs/folder/new.md".to_string(),
+                    state: "untracked".to_string(),
+                },
+            ],
+        };
+
+        strip_status_path_prefix(&mut status, "spaces/docs/").unwrap();
+
+        assert_eq!(
+            status.files,
+            vec![
+                FileGitStatus {
+                    path: "a.md".to_string(),
+                    state: "modified".to_string(),
+                },
+                FileGitStatus {
+                    path: "folder/new.md".to_string(),
+                    state: "untracked".to_string(),
+                },
+            ]
         );
     }
 

@@ -1,5 +1,10 @@
 import { create } from "zustand";
-import type { GitCloneProgress, GitStatus } from "./types";
+import type {
+  FileGitState,
+  FileGitStatus,
+  GitCloneProgress,
+  GitStatus,
+} from "./types";
 
 /**
  * Per-space git state.
@@ -29,10 +34,7 @@ interface GitState {
   setSyncing: (spacePath: string, syncing: boolean) => void;
   setSyncError: (spacePath: string, error: string | null) => void;
 
-  setCloning: (
-    spacePath: string,
-    progress: GitCloneProgress | null,
-  ) => void;
+  setCloning: (spacePath: string, progress: GitCloneProgress | null) => void;
 }
 
 export const useGitStore = create<GitState>((set) => {
@@ -113,22 +115,31 @@ export type GitIndicator =
 
 export type FileChangeIndicator =
   | { kind: "clean" }
-  | { kind: "dirty"; reason: "git_dirty" | "pending_write" }
+  | {
+      kind: "dirty";
+      reason: "git_dirty" | "pending_write";
+      scope: "self" | "descendants" | "mixed";
+      state?: FileGitState;
+    }
   | { kind: "syncing" }
   | { kind: "conflict" }
   | { kind: "error"; message: string };
 
+export interface GitTreeNodeIndicatorTarget {
+  path: string;
+  hasSchema?: boolean;
+  isContainer?: boolean;
+  pendingWrite?: boolean;
+}
+
+type DirtyFileChangeIndicator = Extract<FileChangeIndicator, { kind: "dirty" }>;
+type DirtyFileChangeReason = DirtyFileChangeIndicator["reason"];
+type DirtyFileChangeScope = DirtyFileChangeIndicator["scope"];
+
 const CLEAN_FILE_INDICATOR: FileChangeIndicator = { kind: "clean" };
-const GIT_DIRTY_FILE_INDICATOR: FileChangeIndicator = {
-  kind: "dirty",
-  reason: "git_dirty",
-};
-const PENDING_WRITE_FILE_INDICATOR: FileChangeIndicator = {
-  kind: "dirty",
-  reason: "pending_write",
-};
 const SYNCING_FILE_INDICATOR: FileChangeIndicator = { kind: "syncing" };
 const CONFLICT_FILE_INDICATOR: FileChangeIndicator = { kind: "conflict" };
+const DIRTY_FILE_INDICATORS = new Map<string, DirtyFileChangeIndicator>();
 
 export function selectIndicator(
   state: GitState,
@@ -161,11 +172,177 @@ export function selectFileChangeIndicator(
   filePath: string,
   pendingWrite = false,
 ): FileChangeIndicator {
+  return selectFileTargetChangeIndicator(state, spacePath, {
+    selfPaths: [filePath],
+    pendingWrite,
+  });
+}
+
+export function selectTreeNodeChangeIndicator(
+  state: GitState,
+  spacePath: string,
+  target: GitTreeNodeIndicatorTarget,
+): FileChangeIndicator {
+  const nodePath = normalizeGitStatusPath(target.path);
+  const containerPath = target.isContainer
+    ? containerPathForNodePath(nodePath)
+    : null;
+  const selfPaths = [nodePath];
+  if (target.hasSchema && containerPath !== null) {
+    selfPaths.push(joinGitStatusPath(containerPath, "schema.yaml"));
+  }
+
+  return selectFileTargetChangeIndicator(state, spacePath, {
+    selfPaths,
+    descendantPath: containerPath,
+    pendingWrite: target.pendingWrite,
+  });
+}
+
+export function selectSpaceRootChangeIndicator(
+  state: GitState,
+  spacePath: string,
+): FileChangeIndicator {
+  return selectFileTargetChangeIndicator(state, spacePath, {
+    selfPaths: ["README.md"],
+    selfPathPrefixes: [".svode/"],
+    descendantPath: "",
+  });
+}
+
+interface FileTargetChangeInput {
+  selfPaths: string[];
+  selfPathPrefixes?: string[];
+  descendantPath?: string | null;
+  pendingWrite?: boolean;
+}
+
+function selectFileTargetChangeIndicator(
+  state: GitState,
+  spacePath: string,
+  target: FileTargetChangeInput,
+): FileChangeIndicator {
   const status = state.statuses[spacePath];
-  const file = status?.files.find((f) => f.path === filePath);
-  if (file?.state === "conflict") return CONFLICT_FILE_INDICATOR;
-  if (file) return GIT_DIRTY_FILE_INDICATOR;
-  if (pendingWrite) return PENDING_WRITE_FILE_INDICATOR;
+  const selfPaths = new Set(target.selfPaths.map(normalizeGitStatusPath));
+  const selfPathPrefixes = (target.selfPathPrefixes ?? []).map(
+    normalizeGitStatusPrefix,
+  );
+  const descendantPath =
+    target.descendantPath == null
+      ? null
+      : normalizeGitStatusPath(target.descendantPath);
+
+  const selfFiles: FileGitStatus[] = [];
+  const descendantFiles: FileGitStatus[] = [];
+
+  for (const file of status?.files ?? []) {
+    const filePath = normalizeGitStatusPath(file.path);
+    if (isSelfPath(filePath, selfPaths, selfPathPrefixes)) {
+      selfFiles.push(file);
+    } else if (
+      descendantPath !== null &&
+      isGitStatusPathDescendant(filePath, descendantPath)
+    ) {
+      descendantFiles.push(file);
+    }
+  }
+
+  if (
+    selfFiles.some((file) => file.state === "conflict") ||
+    descendantFiles.some((file) => file.state === "conflict")
+  ) {
+    return CONFLICT_FILE_INDICATOR;
+  }
+
+  const hasSelfChanges = selfFiles.length > 0 || target.pendingWrite === true;
+  const hasDescendantChanges = descendantFiles.length > 0;
+  if (hasSelfChanges || hasDescendantChanges) {
+    const scope =
+      hasSelfChanges && hasDescendantChanges
+        ? "mixed"
+        : hasSelfChanges
+          ? "self"
+          : "descendants";
+    const firstFile = selfFiles[0] ?? descendantFiles[0];
+    return dirtyFileChangeIndicator(
+      target.pendingWrite && selfFiles.length === 0
+        ? "pending_write"
+        : "git_dirty",
+      scope,
+      firstFile?.state,
+    );
+  }
+
   if (state.syncing[spacePath]) return SYNCING_FILE_INDICATOR;
   return CLEAN_FILE_INDICATOR;
+}
+
+function dirtyFileChangeIndicator(
+  reason: DirtyFileChangeReason,
+  scope: DirtyFileChangeScope,
+  state: FileGitState | undefined,
+): DirtyFileChangeIndicator {
+  const key = `${reason}:${scope}:${state ?? ""}`;
+  const cached = DIRTY_FILE_INDICATORS.get(key);
+  if (cached) return cached;
+
+  const indicator: DirtyFileChangeIndicator = {
+    kind: "dirty",
+    reason,
+    scope,
+    ...(state === undefined ? {} : { state }),
+  };
+  DIRTY_FILE_INDICATORS.set(key, indicator);
+  return indicator;
+}
+
+function normalizeGitStatusPath(path: string): string {
+  return path.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
+}
+
+function normalizeGitStatusPrefix(path: string): string {
+  const normalized = normalizeGitStatusPath(path);
+  return normalized ? `${normalized.replace(/\/+$/g, "")}/` : "";
+}
+
+function basename(path: string): string {
+  const normalized = normalizeGitStatusPath(path);
+  const index = normalized.lastIndexOf("/");
+  return index >= 0 ? normalized.slice(index + 1) : normalized;
+}
+
+function dirname(path: string): string {
+  const normalized = normalizeGitStatusPath(path);
+  const index = normalized.lastIndexOf("/");
+  return index >= 0 ? normalized.slice(0, index) : "";
+}
+
+function isReadmePath(path: string): boolean {
+  return basename(path).toLowerCase() === "readme.md";
+}
+
+function containerPathForNodePath(path: string): string {
+  if (!path.endsWith(".md")) return path;
+  if (isReadmePath(path)) return dirname(path);
+  return dirname(path);
+}
+
+function joinGitStatusPath(parent: string, child: string): string {
+  return parent ? `${parent}/${child}` : child;
+}
+
+function isSelfPath(
+  path: string,
+  selfPaths: Set<string>,
+  selfPathPrefixes: string[],
+): boolean {
+  return (
+    selfPaths.has(path) ||
+    selfPathPrefixes.some((prefix) => prefix !== "" && path.startsWith(prefix))
+  );
+}
+
+function isGitStatusPathDescendant(path: string, parentPath: string): boolean {
+  if (!parentPath) return path !== "";
+  return path.startsWith(`${parentPath}/`);
 }

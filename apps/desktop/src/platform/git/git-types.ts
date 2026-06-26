@@ -5,7 +5,7 @@ export interface GitAvailabilityDto {
   gitLfsVersion: string | null;
 }
 
-export type FileGitStateDto = "modified" | "untracked" | "conflict";
+export type FileGitStateDto = "modified" | "untracked" | "deleted" | "conflict";
 
 export interface FileGitStatusDto {
   path: string;
