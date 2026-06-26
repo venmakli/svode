@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "channel": "dogfood",
+  "items": [
+    {
+      "kind": "ci-build",
+      "version": "0.0.6",
+      "commit": "a6f6c066ad242e1791a1d406885db660ff5069a4",
+      "sourceRef": "main",
+      "runId": 28239803417,
+      "publishedAt": "2026-06-26T13:16:58.840Z",
+      "expiresAt": "2026-06-29T13:16:58.840Z",
+      "reason": "fix git-commits, sync, sidebar",
+      "platforms": {
+        "linux": {
+          "url": "https://github.com/venmakli/svode/actions/runs/28239803417/artifacts/7906384508",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28239803417",
+          "artifactName": "Svode-linux-deb"
+        }
+      }
+    }
+  ]
+}
