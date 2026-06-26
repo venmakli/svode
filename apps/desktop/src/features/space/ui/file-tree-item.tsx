@@ -115,16 +115,20 @@ export function FileTreeItem({
 
   // Disable sortable for children of the currently dragged folder
   const isChildOfDragged =
-    !!activeFolderPath && isDescendantOf(node.path, activeFolderPath);
+    !!activeFolderPath &&
+    node.path !== activeId &&
+    isDescendantOf(node.path, activeFolderPath);
 
   const { attributes, listeners, setNodeRef, isDragging } = useSortable({
     id: node.path,
     disabled: isChildOfDragged,
   });
   const itemRef = useRef<HTMLLIElement | null>(null);
-  const setItemRef = useCallback(
-    (element: HTMLLIElement | null) => {
-      itemRef.current = element;
+  const setItemRef = useCallback((element: HTMLLIElement | null) => {
+    itemRef.current = element;
+  }, []);
+  const setRowRef = useCallback(
+    (element: HTMLDivElement | null) => {
       setNodeRef(element);
     },
     [setNodeRef],
@@ -326,7 +330,7 @@ export function FileTreeItem({
       <>
         <SidebarMenuSubItem ref={setItemRef} style={style} className="relative">
           {dropIndicator}
-          <div className="flex items-center group/tree-item">
+          <div ref={setRowRef} className="flex items-center group/tree-item">
             {dragHandle}
             {withDescriptionTooltip(
               <SidebarMenuSubButton
@@ -358,7 +362,7 @@ export function FileTreeItem({
           onOpenChange={handleNodeOpenChange}
           className="group/collapsible"
         >
-          <div className="flex items-center group/tree-item">
+          <div ref={setRowRef} className="flex items-center group/tree-item">
             {dragHandle}
             {withDescriptionTooltip(
               <SidebarMenuSubButton

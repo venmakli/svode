@@ -1,4 +1,3 @@
-import { arrayMove } from "@dnd-kit/sortable";
 import type { TreeNode } from "../model/types";
 import { treeNodeHasChildren, treeParentKeyForNode } from "./tree-cache";
 
@@ -21,6 +20,11 @@ export interface Projection {
   parentPath: string; // "" for root, folder path for nesting
   type: "before" | "after" | "child";
   overPath: string; // path of the item we're projecting relative to
+}
+
+export interface ProjectionIntent {
+  placement: "before" | "after";
+  allowChild: boolean;
 }
 
 /**
@@ -84,6 +88,27 @@ export function removeCollapsedChildren(
   });
 }
 
+export function removeDescendantsOf(
+  flatItems: FlattenedItem[],
+  activePath: string | null,
+): FlattenedItem[] {
+  if (!activePath) return flatItems;
+
+  const activeItem = flatItems.find((item) => item.path === activePath);
+  if (!activeItem) return flatItems;
+
+  const folderPath = folderPathForItem(activeItem);
+  if (!folderPath) return flatItems;
+
+  return flatItems.filter((item) => {
+    if (item.path === activePath) return true;
+    return (
+      item.parentPath !== folderPath &&
+      !isDescendantOf(item.parentPath, folderPath)
+    );
+  });
+}
+
 /**
  * Simulate moving activeId to overId position, then compute the projected
  * depth/parent based on horizontal cursor offset.
@@ -100,21 +125,50 @@ export function getProjection(
   activeId: string,
   overId: string,
   offsetLeft: number,
+  intent?: ProjectionIntent | null,
 ): Projection | null {
   const activeIndex = flatItems.findIndex((item) => item.path === activeId);
   const overIndex = flatItems.findIndex((item) => item.path === overId);
   if (overIndex === -1 || activeIndex === -1) return null;
+  if (activeId === overId) return null;
 
   const activeItem = flatItems[activeIndex];
-
-  // Simulate the move: place active at over's position
-  const newItems = arrayMove(flatItems, activeIndex, overIndex);
-  // After move, active is now at overIndex
-  const previousItem = newItems[overIndex - 1] as FlattenedItem | undefined;
-  const nextItem = newItems[overIndex + 1] as FlattenedItem | undefined;
-
+  const overItem = flatItems[overIndex];
   const dragDepth = Math.round(offsetLeft / INDENT_WIDTH);
   const projectedDepth = activeItem.depth + dragDepth;
+
+  if (
+    intent?.allowChild &&
+    projectedDepth > overItem.depth &&
+    !isDescendantOf(overItem.path, folderPathForItem(activeItem) ?? activeId)
+  ) {
+    return {
+      depth: overItem.depth + 1,
+      parentPath: childParentPathForItem(overItem),
+      type: "child",
+      overPath: overItem.path,
+    };
+  }
+
+  const placement =
+    intent?.placement ?? (activeIndex < overIndex ? "after" : "before");
+  const withoutActive = flatItems.filter((_, index) => index !== activeIndex);
+  const overIndexWithoutActive = withoutActive.findIndex(
+    (item) => item.path === overId,
+  );
+  if (overIndexWithoutActive === -1) return null;
+
+  const insertionIndex =
+    placement === "after" ? overIndexWithoutActive + 1 : overIndexWithoutActive;
+  const newItems = [
+    ...withoutActive.slice(0, insertionIndex),
+    activeItem,
+    ...withoutActive.slice(insertionIndex),
+  ];
+  const previousItem = newItems[insertionIndex - 1] as
+    | FlattenedItem
+    | undefined;
+  const nextItem = newItems[insertionIndex + 1] as FlattenedItem | undefined;
 
   // maxDepth: previous item's depth + 1 (can nest as child of previous item)
   // If no previous item, max is 0 (root level)
@@ -148,42 +202,9 @@ export function getProjection(
   const depth = Math.max(minDepth, Math.min(maxDepth, projectedDepth));
 
   // Determine parentPath by walking backwards to find the parent at depth-1
-  const parentPath = getParentPathForDepth(newItems, overIndex, depth);
+  const parentPath = getParentPathForDepth(newItems, insertionIndex, depth);
 
-  // Determine type:
-  // - If depth === previousItem.depth + 1: nesting as child of previous item
-  // - Otherwise: sibling placement (before/after)
-  if (
-    previousItem &&
-    depth === previousItem.depth + 1 &&
-    previousItem.hasChildren
-  ) {
-    // If the over item is already a child of this folder, it's a reorder ("before"), not nesting
-    const folderPath = previousItem.path.replace(/\/readme\.md$/i, "");
-    const originalOverItem = flatItems.find((i) => i.path === overId);
-    if (originalOverItem && originalOverItem.parentPath === folderPath) {
-      return { depth, parentPath, type: "before", overPath: overId };
-    }
-    return { depth, parentPath, type: "child", overPath: previousItem.path };
-  }
-
-  // Nesting into a simple file — will need auto-nest (file → folder conversion)
-  if (
-    previousItem &&
-    depth === previousItem.depth + 1 &&
-    !previousItem.hasChildren
-  ) {
-    const prevFolderPath = previousItem.path.replace(/\.md$/i, "");
-    return {
-      depth,
-      parentPath: prevFolderPath,
-      type: "child",
-      overPath: previousItem.path,
-    };
-  }
-
-  const type = activeIndex < overIndex ? "after" : "before";
-  return { depth, parentPath, type, overPath: overId };
+  return { depth, parentPath, type: placement, overPath: overId };
 }
 
 /**
@@ -202,14 +223,23 @@ function getParentPathForDepth(
     const item = items[i];
     if (item.depth < targetDepth) {
       // This is our parent (or an ancestor)
-      if (item.hasChildren) {
-        return item.path.replace(/\/readme\.md$/i, "");
-      }
-      // Non-folder at parent depth — will become a folder via nest_entry
-      return item.path.replace(/\.md$/i, "");
+      return childParentPathForItem(item);
     }
   }
   return "";
+}
+
+function folderPathForItem(item: FlattenedItem): string | null {
+  if (!item.path.endsWith(".md")) return item.path;
+  if (/(^|\/)readme\.md$/i.test(item.path)) {
+    return item.path.replace(/\/readme\.md$/i, "");
+  }
+  if (item.hasChildren) return item.path.replace(/\.md$/i, "");
+  return null;
+}
+
+function childParentPathForItem(item: FlattenedItem): string {
+  return folderPathForItem(item) ?? item.path.replace(/\.md$/i, "");
 }
 
 /** Check if `path` is a descendant of `ancestorPath`. */

@@ -9,6 +9,8 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  type Collision,
+  type CollisionDetection,
   type DragEndEvent,
   type DragMoveEvent,
   type DragOverEvent,
@@ -16,12 +18,14 @@ import {
 } from "@dnd-kit/core";
 import type { TreeNode } from "../model/types";
 import { logTiming, nowMs } from "@/shared/lib/performance";
-import { treeNodeHasChildren } from "../lib/tree-cache";
+import { treeNodeHasChildren, treeParentKeyForNode } from "../lib/tree-cache";
 import {
   flattenTree,
   getProjection,
+  removeDescendantsOf,
   removeCollapsedChildren,
   type FlattenedItem,
+  type ProjectionIntent,
   type Projection,
 } from "../lib/tree-dnd-utilities";
 import { findTreeNode } from "../lib/tree-node-queries";
@@ -58,6 +62,7 @@ export function useSortableFileTreeDnd({
   const offsetLeftRef = useRef(0);
   const overIdRef = useRef<string | null>(null);
   const projectionRef = useRef<Projection | null>(null);
+  const projectionIntentRef = useRef<ProjectionIntent | null>(null);
 
   const scrollContainerRef = useRef<HTMLElement | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -85,8 +90,9 @@ export function useSortableFileTreeDnd({
 
   const flatItems = useMemo(() => {
     const all = flattenTree(tree);
-    return removeCollapsedChildren(all, expandedSet);
-  }, [tree, expandedSet]);
+    const visible = removeCollapsedChildren(all, expandedSet);
+    return removeDescendantsOf(visible, activeId);
+  }, [activeId, tree, expandedSet]);
 
   const flatItemsRef = useRef(flatItems);
 
@@ -122,6 +128,7 @@ export function useSortableFileTreeDnd({
         activePath,
         overPath,
         offset,
+        projectionIntentRef.current,
       );
       setProjection(nextProjection);
       projectionRef.current = nextProjection;
@@ -130,6 +137,65 @@ export function useSortableFileTreeDnd({
       projectionRef.current = null;
     }
   }, []);
+
+  const collisionDetection = useCallback<CollisionDetection>(
+    ({ collisionRect, droppableContainers, droppableRects, pointerCoordinates }) => {
+      const y =
+        pointerCoordinates?.y ?? collisionRect.top + collisionRect.height / 2;
+      const orderedVisibleIds = new Map(
+        flatItemsRef.current.map((item, index) => [item.path, index]),
+      );
+
+      const collisions: Array<
+        Collision & {
+          data: {
+            value: number;
+            placement: ProjectionIntent["placement"];
+            allowChild: boolean;
+          };
+        }
+      > = [];
+
+      for (const droppableContainer of droppableContainers) {
+        const index = orderedVisibleIds.get(String(droppableContainer.id));
+        if (index === undefined) continue;
+
+        const rect = droppableRects.get(droppableContainer.id);
+        if (!rect) continue;
+
+        const centerY = rect.top + rect.height / 2;
+        const distance =
+          y < rect.top ? rect.top - y : y > rect.bottom ? y - rect.bottom : 0;
+        const placement: ProjectionIntent["placement"] =
+          y < centerY ? "before" : "after";
+        const allowChild =
+          y >= rect.top + rect.height * 0.25 &&
+          y <= rect.bottom - rect.height * 0.25;
+
+        collisions.push({
+          id: droppableContainer.id,
+          data: {
+            value: distance * 1000 + Math.abs(centerY - y) + index / 1000,
+            placement,
+            allowChild,
+          },
+        });
+      }
+
+      collisions.sort((left, right) => left.data.value - right.data.value);
+
+      const first = collisions[0];
+      projectionIntentRef.current = first
+        ? {
+            placement: first.data.placement,
+            allowChild: first.data.allowChild,
+          }
+        : null;
+
+      return collisions;
+    },
+    [],
+  );
 
   const startAutoScroll = useCallback((speed: number) => {
     scrollSpeed.current = speed;
@@ -158,6 +224,7 @@ export function useSortableFileTreeDnd({
     overIdRef.current = id;
     offsetLeftRef.current = 0;
     projectionRef.current = null;
+    projectionIntentRef.current = null;
   }, []);
 
   const handleDragMove = useCallback(
@@ -239,6 +306,7 @@ export function useSortableFileTreeDnd({
     overIdRef.current = null;
     offsetLeftRef.current = 0;
     projectionRef.current = null;
+    projectionIntentRef.current = null;
     stopAutoScroll();
     if (autoExpandTimer.current) {
       clearTimeout(autoExpandTimer.current);
@@ -266,10 +334,8 @@ export function useSortableFileTreeDnd({
   const activeNode = activeId ? findTreeNode(tree, activeId) : null;
 
   const activeFolderPath = useMemo(() => {
-    if (!activeId || !activeNode || !treeNodeHasChildren(activeNode)) {
-      return null;
-    }
-    return activeId.replace(/\/readme\.md$/i, "");
+    if (!activeId || !activeNode) return null;
+    return treeParentKeyForNode(activeNode);
   }, [activeId, activeNode]);
 
   const contextValue = useMemo<SortableFileTreeDndContextValue>(
@@ -305,6 +371,7 @@ export function useSortableFileTreeDnd({
     handleDragMove,
     handleDragOver,
     handleDragStart,
+    collisionDetection,
     sensors,
     sortableIds,
   };

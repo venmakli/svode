@@ -1,5 +1,5 @@
 import { createContext, type ReactNode } from "react";
-import { DndContext, DragOverlay, closestCenter } from "@dnd-kit/core";
+import { DndContext, DragOverlay } from "@dnd-kit/core";
 import { SortableContext } from "@dnd-kit/sortable";
 import { FileText } from "lucide-react";
 import type { TreeNode } from "../model/types";
@@ -36,6 +36,7 @@ export function SortableFileTree({
     handleDragMove,
     handleDragOver,
     handleDragStart,
+    collisionDetection,
     sensors,
     sortableIds,
   } = useSortableFileTreeDnd({ spaceId, tree });
@@ -44,7 +45,7 @@ export function SortableFileTree({
     <TreeDndContext.Provider value={contextValue}>
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCenter}
+        collisionDetection={collisionDetection}
         onDragStart={handleDragStart}
         onDragMove={handleDragMove}
         onDragOver={handleDragOver}

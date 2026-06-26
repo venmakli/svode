@@ -1,5 +1,5 @@
 import type { TreeNode } from "../model/types";
-import { treeNodeHasChildren } from "./tree-cache";
+import { treeParentKeyForNode } from "./tree-cache";
 import {
   getParentDir,
   isDescendantOf,
@@ -44,9 +44,8 @@ export function prepareTreeDrag(
   const fromNode = findTreeNode(tree, fromPath);
   if (!fromNode) return null;
 
-  const fromFolderPath = treeNodeHasChildren(fromNode)
-    ? readmeFolderPath(fromPath)
-    : fromPath;
+  const fromNodeFolderPath = treeParentKeyForNode(fromNode);
+  const fromFolderPath = fromNodeFolderPath ?? fromPath;
   if (isDescendantOf(projection.parentPath, fromFolderPath)) {
     return null;
   }
@@ -54,9 +53,7 @@ export function prepareTreeDrag(
   return {
     fromPath,
     fromNode,
-    fromParent: treeNodeHasChildren(fromNode)
-      ? getParentDir(readmeFolderPath(fromPath))
-      : getParentDir(fromPath),
+    fromParent: getParentDir(fromNodeFolderPath ?? fromPath),
     toParent: projection.parentPath,
   };
 }
@@ -68,8 +65,8 @@ export function getChildNestConversionPlan(
   if (projection.type !== "child") return null;
 
   const targetNode = findTreeNode(tree, projection.overPath);
-  const targetIsBareFolder = targetNode && !targetNode.path.endsWith(".md");
-  if (!targetNode || treeNodeHasChildren(targetNode) || targetIsBareFolder) {
+  const targetIsFolderNode = targetNode && treeParentKeyForNode(targetNode);
+  if (!targetNode || targetIsFolderNode) {
     return null;
   }
 
@@ -140,14 +137,15 @@ export function buildCrossParentMovePlan(
     ? oldParentTreeNode.path
     : null;
   const isBareFolder = !drag.fromPath.endsWith(".md");
-  const isDocFolder = !isBareFolder && treeNodeHasChildren(drag.fromNode);
+  const folderPath = treeParentKeyForNode(drag.fromNode);
+  const isDocFolder = !isBareFolder && folderPath !== null;
 
   return {
     ...drag,
     oldParentReadme,
     isBareFolder,
     isDocFolder,
-    movePath: isDocFolder ? readmeFolderPath(drag.fromPath) : drag.fromPath,
+    movePath: isDocFolder && folderPath ? folderPath : drag.fromPath,
     readmeFilename: drag.fromPath.split("/").pop() ?? "README.md",
   };
 }
