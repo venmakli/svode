@@ -14,6 +14,7 @@ import {
   type GitIndicator,
   type FileChangeIndicator,
   type FileGitState,
+  gitSaveShortcutLabel,
 } from "../model";
 
 interface SpaceIndicatorProps {
@@ -32,7 +33,6 @@ export function GitIndicatorIcon({ spacePath }: SpaceIndicatorProps) {
 interface FileIndicatorProps {
   spacePath: string;
   filePath: string;
-  hasSchema?: boolean;
   isContainer?: boolean;
   pendingWrite?: boolean;
 }
@@ -40,7 +40,6 @@ interface FileIndicatorProps {
 export function FileGitIndicatorIcon({
   spacePath,
   filePath,
-  hasSchema = false,
   isContainer = false,
   pendingWrite = false,
 }: FileIndicatorProps) {
@@ -48,7 +47,6 @@ export function FileGitIndicatorIcon({
     isContainer
       ? selectTreeNodeChangeIndicator(s, spacePath, {
           path: filePath,
-          hasSchema,
           isContainer,
           pendingWrite,
         })
@@ -210,16 +208,5 @@ function withSaveShortcut(
 }
 
 function shortcutLabel(scope: "self" | "descendants" | "mixed"): string {
-  const mac = isMacPlatform();
-  if (scope === "self") return mac ? "⌘S" : "Ctrl+S";
-  if (scope === "descendants") return mac ? "⇧⌘S" : "Ctrl+Shift+S";
-  return mac ? "⌘S / ⇧⌘S" : "Ctrl+S / Ctrl+Shift+S";
-}
-
-function isMacPlatform(): boolean {
-  if (typeof navigator === "undefined") return false;
-  return (
-    navigator.platform.toLowerCase().includes("mac") ||
-    /macintosh|mac os x/i.test(navigator.userAgent)
-  );
+  return gitSaveShortcutLabel(scope);
 }

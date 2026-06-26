@@ -6,10 +6,18 @@ import { toast } from "sonner";
 import type { WriteResult } from "@/features/entry";
 import { writeEntry } from "@/features/entry/entry-api";
 import {
-  commitAllSpace,
   commitFileAndMaybeSync,
+  commitSaveScopeAndMaybeSync,
   continueGitResolve,
+  dirtyPathsForGitSaveScope,
+  gitSaveShortcutLabel,
+  gitStatusHasDirtyPath,
   getGitSpaceStatus,
+  resolveGitSaveAllScope,
+  selfPathsForGitSaveScope,
+  type GitSaveScope,
+  type GitSaveScopeLabel,
+  type GitSaveScopeTreeNode,
 } from "@/features/git/editor";
 
 import { hasUnresolvedConflicts } from "../conflict/parse-conflicts";
@@ -48,6 +56,7 @@ interface UseEditorDocumentWriterInput {
   projectPath: string | null;
   reloadTreePathParents: (spaceId: string, paths: string[]) => Promise<void>;
   removeTreePath: (spaceId: string, path: string) => void;
+  saveScopeTree: readonly GitSaveScopeTreeNode[];
   setCurrentDocument: (path: string) => void;
   spacePath: string;
   titleRef: MutableRef<string>;
@@ -78,6 +87,7 @@ export function useEditorDocumentWriter({
   projectPath,
   reloadTreePathParents,
   removeTreePath,
+  saveScopeTree,
   setCurrentDocument,
   spacePath,
   titleRef,
@@ -173,8 +183,23 @@ export function useEditorDocumentWriter({
   const handleSave = useCallback(async () => {
     if (!editor || !currentDocument || !spacePath) return;
 
-    cancelDebounce();
+    const status = getGitSpaceStatus(spacePath);
+    const currentSurfaceDirty =
+      useEditorStore.getState().unsavedChanges[currentDocument] ||
+      gitStatusHasDirtyPath(status, currentDocument);
+    if (!currentSurfaceDirty) {
+      showCurrentSurfaceCleanFeedback(
+        status,
+        resolveGitSaveAllScope({
+          activePath: currentDocument,
+          tree: saveScopeTree,
+        }),
+        currentDocument,
+      );
+      return;
+    }
 
+    cancelDebounce();
     try {
       const result = await performWrite(false);
       if (!result) return;
@@ -208,6 +233,7 @@ export function useEditorDocumentWriter({
     editor,
     performWrite,
     projectPath,
+    saveScopeTree,
     clearCommittedMarkers,
     spacePath,
   ]);
@@ -215,19 +241,29 @@ export function useEditorDocumentWriter({
   const handleSaveAll = useCallback(async () => {
     if (!spacePath) return;
     cancelDebounce();
+    const saveAllScope = resolveGitSaveAllScope({
+      activePath: currentDocument,
+      tree: saveScopeTree,
+    });
 
     if (!editor || !currentDocument) {
-      void commitAllSpace(spacePath, projectPath ?? undefined).then(
-        clearCommittedMarkers,
-      );
+      void commitSaveScopeAndMaybeSync(
+        spacePath,
+        saveAllScope,
+        [],
+        projectPath ?? undefined,
+      ).then(clearCommittedMarkers);
       return;
     }
 
     const isDirty = useEditorStore.getState().unsavedChanges[currentDocument];
     if (!isDirty) {
-      void commitAllSpace(spacePath, projectPath ?? undefined).then(
-        clearCommittedMarkers,
-      );
+      void commitSaveScopeAndMaybeSync(
+        spacePath,
+        saveAllScope,
+        [],
+        projectPath ?? undefined,
+      ).then(clearCommittedMarkers);
       return;
     }
 
@@ -238,7 +274,12 @@ export function useEditorDocumentWriter({
         cacheCurrentDocument: false,
       });
       clearCommittedMarkers(
-        await commitAllSpace(spacePath, projectPath ?? undefined),
+        await commitSaveScopeAndMaybeSync(
+          spacePath,
+          saveAllScope,
+          [result.newPath ?? currentDocument],
+          projectPath ?? undefined,
+        ),
       );
     } catch (err) {
       console.error("Save-all failed:", err);
@@ -252,6 +293,7 @@ export function useEditorDocumentWriter({
     editor,
     performWrite,
     projectPath,
+    saveScopeTree,
     spacePath,
   ]);
 
@@ -260,4 +302,45 @@ export function useEditorDocumentWriter({
     handleSaveAll,
     scheduleAutoSave,
   };
+}
+
+function showCurrentSurfaceCleanFeedback(
+  status: ReturnType<typeof getGitSpaceStatus>,
+  saveAllScope: GitSaveScope,
+  currentDocument: string,
+) {
+  const selfPaths = new Set([
+    ...selfPathsForGitSaveScope(saveAllScope),
+    currentDocument,
+  ]);
+  const descendantDirtyCount = dirtyPathsForGitSaveScope(
+    status,
+    saveAllScope,
+  ).filter((path) => !selfPaths.has(path)).length;
+
+  if (descendantDirtyCount > 0) {
+    toast.info(
+      m.git_save_current_clean_scope({
+        count: String(descendantDirtyCount),
+        scope: gitSaveScopeLabel(saveAllScope.label),
+        shortcut: gitSaveShortcutLabel("descendants"),
+      }),
+    );
+    return;
+  }
+
+  toast.info(m.git_save_current_clean());
+}
+
+function gitSaveScopeLabel(label: GitSaveScopeLabel): string {
+  switch (label) {
+    case "collection":
+      return m.git_save_scope_collection();
+    case "folder":
+      return m.git_save_scope_folder();
+    case "document":
+      return m.git_save_scope_document();
+    case "space":
+      return m.git_save_scope_space();
+  }
 }

@@ -5,6 +5,11 @@ import type {
   GitCloneProgress,
   GitStatus,
 } from "./types";
+import {
+  containerPathForNodePath,
+  isGitStatusPathDescendant,
+  normalizeGitStatusPath,
+} from "./git-paths";
 
 /**
  * Per-space git state.
@@ -127,7 +132,6 @@ export type FileChangeIndicator =
 
 export interface GitTreeNodeIndicatorTarget {
   path: string;
-  hasSchema?: boolean;
   isContainer?: boolean;
   pendingWrite?: boolean;
 }
@@ -187,13 +191,9 @@ export function selectTreeNodeChangeIndicator(
   const containerPath = target.isContainer
     ? containerPathForNodePath(nodePath)
     : null;
-  const selfPaths = [nodePath];
-  if (target.hasSchema && containerPath !== null) {
-    selfPaths.push(joinGitStatusPath(containerPath, "schema.yaml"));
-  }
 
   return selectFileTargetChangeIndicator(state, spacePath, {
-    selfPaths,
+    selfPaths: [nodePath],
     descendantPath: containerPath,
     pendingWrite: target.pendingWrite,
   });
@@ -205,14 +205,12 @@ export function selectSpaceRootChangeIndicator(
 ): FileChangeIndicator {
   return selectFileTargetChangeIndicator(state, spacePath, {
     selfPaths: ["README.md"],
-    selfPathPrefixes: [".svode/"],
     descendantPath: "",
   });
 }
 
 interface FileTargetChangeInput {
   selfPaths: string[];
-  selfPathPrefixes?: string[];
   descendantPath?: string | null;
   pendingWrite?: boolean;
 }
@@ -224,9 +222,6 @@ function selectFileTargetChangeIndicator(
 ): FileChangeIndicator {
   const status = state.statuses[spacePath];
   const selfPaths = new Set(target.selfPaths.map(normalizeGitStatusPath));
-  const selfPathPrefixes = (target.selfPathPrefixes ?? []).map(
-    normalizeGitStatusPrefix,
-  );
   const descendantPath =
     target.descendantPath == null
       ? null
@@ -237,7 +232,7 @@ function selectFileTargetChangeIndicator(
 
   for (const file of status?.files ?? []) {
     const filePath = normalizeGitStatusPath(file.path);
-    if (isSelfPath(filePath, selfPaths, selfPathPrefixes)) {
+    if (selfPaths.has(filePath)) {
       selfFiles.push(file);
     } else if (
       descendantPath !== null &&
@@ -294,55 +289,4 @@ function dirtyFileChangeIndicator(
   };
   DIRTY_FILE_INDICATORS.set(key, indicator);
   return indicator;
-}
-
-function normalizeGitStatusPath(path: string): string {
-  return path.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
-}
-
-function normalizeGitStatusPrefix(path: string): string {
-  const normalized = normalizeGitStatusPath(path);
-  return normalized ? `${normalized.replace(/\/+$/g, "")}/` : "";
-}
-
-function basename(path: string): string {
-  const normalized = normalizeGitStatusPath(path);
-  const index = normalized.lastIndexOf("/");
-  return index >= 0 ? normalized.slice(index + 1) : normalized;
-}
-
-function dirname(path: string): string {
-  const normalized = normalizeGitStatusPath(path);
-  const index = normalized.lastIndexOf("/");
-  return index >= 0 ? normalized.slice(0, index) : "";
-}
-
-function isReadmePath(path: string): boolean {
-  return basename(path).toLowerCase() === "readme.md";
-}
-
-function containerPathForNodePath(path: string): string {
-  if (!path.endsWith(".md")) return path;
-  if (isReadmePath(path)) return dirname(path);
-  return dirname(path);
-}
-
-function joinGitStatusPath(parent: string, child: string): string {
-  return parent ? `${parent}/${child}` : child;
-}
-
-function isSelfPath(
-  path: string,
-  selfPaths: Set<string>,
-  selfPathPrefixes: string[],
-): boolean {
-  return (
-    selfPaths.has(path) ||
-    selfPathPrefixes.some((prefix) => prefix !== "" && path.startsWith(prefix))
-  );
-}
-
-function isGitStatusPathDescendant(path: string, parentPath: string): boolean {
-  if (!parentPath) return path !== "";
-  return path.startsWith(`${parentPath}/`);
 }

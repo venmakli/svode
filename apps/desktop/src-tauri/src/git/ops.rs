@@ -483,6 +483,30 @@ pub async fn commit_all(cli: &GitCli, space_dir: &Path) -> Result<bool, AppError
     Ok(created)
 }
 
+/// Stage selected paths and auto-commit with a generated message.
+pub async fn commit_paths(
+    cli: &GitCli,
+    space_dir: &Path,
+    file_paths: &[String],
+) -> Result<bool, AppError> {
+    if file_paths.is_empty() {
+        return Ok(false);
+    }
+    for file_path in file_paths {
+        add(cli, space_dir, file_path).await?;
+    }
+    let message = generate_commit_message(cli, space_dir).await?;
+    let created = commit(cli, space_dir, &message).await?;
+    if created {
+        tracing::info!(
+            "Auto-committed {} scoped path(s) in {}",
+            file_paths.len(),
+            space_dir.display()
+        );
+    }
+    Ok(created)
+}
+
 /// Generate a commit message based on staged changes.
 pub async fn generate_commit_message(cli: &GitCli, space_dir: &Path) -> Result<String, AppError> {
     let out = cli.exec(space_dir, &["diff", "--cached", "--stat"]).await?;
@@ -997,6 +1021,41 @@ pub async fn commit_all_routed(
         SpaceGitType::Independent => commit_all(cli, space_path).await,
         SpaceGitType::Submodule => {
             let created = commit_all(cli, space_path).await?;
+            if created {
+                submodule_update_pointer(cli, project_path, space_path).await?;
+            }
+            Ok(created)
+        }
+    }
+}
+
+/// Stage selected paths and commit, routing to the correct repo based on git type.
+pub async fn commit_paths_routed(
+    cli: &GitCli,
+    project_path: &Path,
+    space_path: &Path,
+    file_paths: &[String],
+) -> Result<bool, AppError> {
+    if file_paths.is_empty() {
+        return Ok(false);
+    }
+    let git_type = detect_space_git_type(cli, project_path, space_path).await?;
+    match git_type {
+        SpaceGitType::Inline => {
+            let space_folder = space_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            for file_path in file_paths {
+                let relative = format!("{}/{}", space_folder, file_path);
+                add(cli, project_path, &relative).await?;
+            }
+            let message = generate_commit_message(cli, project_path).await?;
+            commit(cli, project_path, &message).await
+        }
+        SpaceGitType::Independent => commit_paths(cli, space_path, file_paths).await,
+        SpaceGitType::Submodule => {
+            let created = commit_paths(cli, space_path, file_paths).await?;
             if created {
                 submodule_update_pointer(cli, project_path, space_path).await?;
             }

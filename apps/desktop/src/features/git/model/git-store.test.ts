@@ -37,33 +37,31 @@ test("selectTreeNodeChangeIndicator marks containers with dirty descendants", ()
   });
 });
 
-test("selectTreeNodeChangeIndicator treats collection schema as self dirty", () => {
+test("selectTreeNodeChangeIndicator treats collection schema as descendant dirty", () => {
   const state = gitState([{ path: "tasks/schema.yaml", state: "modified" }]);
 
   expect(
     selectTreeNodeChangeIndicator(state, SPACE_PATH, {
       path: "tasks/README.md",
-      hasSchema: true,
       isContainer: true,
     }),
   ).toEqual({
     kind: "dirty",
     reason: "git_dirty",
-    scope: "self",
+    scope: "descendants",
     state: "modified",
   });
 });
 
 test("selectTreeNodeChangeIndicator separates mixed container changes", () => {
   const state = gitState([
-    { path: "tasks/schema.yaml", state: "modified" },
+    { path: "tasks/README.md", state: "modified" },
     { path: "tasks/entries/new.md", state: "untracked" },
   ]);
 
   expect(
     selectTreeNodeChangeIndicator(state, SPACE_PATH, {
       path: "tasks/README.md",
-      hasSchema: true,
       isContainer: true,
     }),
   ).toEqual({
@@ -71,6 +69,24 @@ test("selectTreeNodeChangeIndicator separates mixed container changes", () => {
     reason: "git_dirty",
     scope: "mixed",
     state: "modified",
+  });
+});
+
+test("selectTreeNodeChangeIndicator treats collection templates as descendants", () => {
+  const state = gitState([
+    { path: "tasks/.templates/default.md", state: "untracked" },
+  ]);
+
+  expect(
+    selectTreeNodeChangeIndicator(state, SPACE_PATH, {
+      path: "tasks/README.md",
+      isContainer: true,
+    }),
+  ).toEqual({
+    kind: "dirty",
+    reason: "git_dirty",
+    scope: "descendants",
+    state: "untracked",
   });
 });
 
@@ -84,6 +100,19 @@ test("selectSpaceRootChangeIndicator treats README as self and documents as desc
     kind: "dirty",
     reason: "git_dirty",
     scope: "mixed",
+    state: "modified",
+  });
+});
+
+test("selectSpaceRootChangeIndicator treats .svode files as descendants", () => {
+  const state = gitState([
+    { path: ".svode/config.json", state: "modified" },
+  ]);
+
+  expect(selectSpaceRootChangeIndicator(state, SPACE_PATH)).toEqual({
+    kind: "dirty",
+    reason: "git_dirty",
+    scope: "descendants",
     state: "modified",
   });
 });

@@ -171,7 +171,6 @@ export function FileTreeItem({
       <FileGitIndicatorIcon
         spacePath={space.path}
         filePath={node.path}
-        hasSchema={node.has_schema}
         isContainer={bareFolder || knownChildren || node.has_schema}
         pendingWrite={isUnsaved}
       />

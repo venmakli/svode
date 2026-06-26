@@ -10,6 +10,7 @@ use super::ops::{GitStatus, UnpushedCommit};
 use super::sync::SyncResult;
 use crate::AppError;
 use crate::index::{IndexKey, IndexState};
+use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::types::SpaceGitType;
 use crate::system_path;
 
@@ -356,6 +357,44 @@ pub async fn git_commit_all(
 }
 
 #[tauri::command]
+pub async fn git_commit_paths(
+    state: State<'_, GitState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+    project_path: Option<String>,
+    space_path: String,
+    file_paths: Vec<String>,
+) -> Result<GitStatus, AppError> {
+    let path = PathBuf::from(&space_path);
+    let cli = state.cli()?;
+    let file_paths = normalize_commit_paths(file_paths)?;
+
+    if file_paths.is_empty() {
+        return super::ops::status(cli, &path).await;
+    }
+
+    if let Some(proj_path) = project_path.filter(|p| !p.is_empty()) {
+        let project = PathBuf::from(&proj_path);
+        let (_, target_repo) = super::ops::resolve_target_repo(cli, &project, &path).await?;
+        let active_paths: Vec<PathBuf> = file_paths
+            .iter()
+            .map(|file_path| path.join(file_path))
+            .collect();
+        let pending_paths =
+            autocommit.take_related_pending_paths_for_space(&project, &path, &active_paths);
+        let lock = state.get_lock(&target_repo).await;
+        let _guard = lock.lock().await;
+        stage_pending_paths(cli, &target_repo, &pending_paths).await;
+        super::ops::commit_paths_routed(cli, &project, &path, &file_paths).await?;
+        super::ops::status(cli, &path).await
+    } else {
+        let lock = state.get_lock(&path).await;
+        let _guard = lock.lock().await;
+        super::ops::commit_paths(cli, &path, &file_paths).await?;
+        super::ops::status(cli, &path).await
+    }
+}
+
+#[tauri::command]
 pub async fn git_sync(
     app: AppHandle,
     state: State<'_, GitState>,
@@ -410,6 +449,17 @@ pub async fn git_sync(
     }
 
     Ok(result)
+}
+
+fn normalize_commit_paths(file_paths: Vec<String>) -> Result<Vec<String>, AppError> {
+    let mut paths = Vec::new();
+    for file_path in file_paths {
+        let normalized = normalize_repo_relative(&file_path, RootMode::Reject)?;
+        if !paths.iter().any(|path| path == &normalized) {
+            paths.push(normalized);
+        }
+    }
+    Ok(paths)
 }
 
 #[tauri::command]

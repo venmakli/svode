@@ -72,6 +72,18 @@ export function commitGitAll(input: {
   });
 }
 
+export function commitGitPaths(input: {
+  projectPath?: string | null;
+  spacePath: string;
+  filePaths: string[];
+}): Promise<GitStatusDto> {
+  return invokeCommand<GitStatusDto>("git_commit_paths", {
+    projectPath: input.projectPath ?? null,
+    spacePath: input.spacePath,
+    filePaths: input.filePaths,
+  });
+}
+
 export function continueGitResolve(spacePath: string): Promise<void> {
   return invokeCommand<void>("git_resolve_continue", { spacePath });
 }

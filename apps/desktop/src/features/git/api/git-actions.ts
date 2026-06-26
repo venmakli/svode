@@ -2,11 +2,18 @@ import { useGitStore } from "../model";
 import {
   commitGitAll,
   commitGitFile,
+  commitGitPaths,
   continueGitResolve as continuePlatformGitResolve,
   syncGit,
 } from "@/platform/git/git-api";
 import { getSpaceConfig } from "@/platform/space/space-api";
-import type { GitStatus, GitSyncOutcome } from "../model";
+import {
+  dirtyPathsForGitSaveScope,
+  normalizeGitStatusPath,
+  type GitSaveScope,
+  type GitStatus,
+  type GitSyncOutcome,
+} from "../model";
 import { toGitStatus, toSyncResult } from "./git-mappers";
 import { refreshGitStatus } from "./git-status-actions";
 
@@ -134,7 +141,9 @@ export async function commitAllSpace(
       }),
     );
     useGitStore.getState().applyStatus(spacePath, status);
-    const stillDirty = new Set(status.files.map((file) => file.path));
+    const stillDirty = new Set(
+      status.files.map((file) => normalizeGitStatusPath(file.path)),
+    );
     result = {
       status,
       committedPaths: previousDirtyPaths.filter((path) => !stillDirty.has(path)),
@@ -147,6 +156,64 @@ export async function commitAllSpace(
     runAutoSync(spacePath, options);
   }
   return result;
+}
+
+export async function commitPathsAndMaybeSync(
+  spacePath: string,
+  filePaths: string[],
+  projectPath?: string,
+  options?: GitAutoSyncOptions,
+): Promise<GitCommitResult | null> {
+  const targetPaths = uniqueGitStatusPaths(filePaths);
+  if (targetPaths.length === 0) return null;
+
+  const previousDirtyPaths =
+    useGitStore
+      .getState()
+      .statuses[spacePath]?.files.map((file) => file.path)
+      .filter((path) => targetPaths.includes(normalizeGitStatusPath(path))) ??
+    [];
+  let result: GitCommitResult;
+  try {
+    const status = toGitStatus(
+      await commitGitPaths({
+        projectPath,
+        spacePath,
+        filePaths: targetPaths,
+      }),
+    );
+    useGitStore.getState().applyStatus(spacePath, status);
+    const stillDirty = new Set(status.files.map((file) => file.path));
+    result = {
+      status,
+      committedPaths: uniqueGitStatusPaths([
+        ...previousDirtyPaths,
+        ...targetPaths,
+      ]).filter((path) => !stillDirty.has(path)),
+    };
+  } catch (err) {
+    console.error("git_commit_paths failed:", err);
+    return null;
+  }
+  if (await isAutoSyncEnabled(spacePath)) {
+    runAutoSync(spacePath, options);
+  }
+  return result;
+}
+
+export async function commitSaveScopeAndMaybeSync(
+  spacePath: string,
+  scope: GitSaveScope,
+  extraPaths: string[],
+  projectPath?: string,
+  options?: GitAutoSyncOptions,
+): Promise<GitCommitResult | null> {
+  const filePaths = dirtyPathsForGitSaveScope(
+    useGitStore.getState().statuses[spacePath],
+    scope,
+    extraPaths,
+  );
+  return commitPathsAndMaybeSync(spacePath, filePaths, projectPath, options);
 }
 
 export async function continueGitResolve(
@@ -178,4 +245,16 @@ export async function syncOnOpen(spacePath: string): Promise<void> {
   } finally {
     git.setSyncing(spacePath, false);
   }
+}
+
+function uniqueGitStatusPaths(paths: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const path of paths) {
+    const normalized = normalizeGitStatusPath(path);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    unique.push(normalized);
+  }
+  return unique;
 }

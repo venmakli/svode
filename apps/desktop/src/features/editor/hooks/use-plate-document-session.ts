@@ -59,6 +59,7 @@ export function usePlateDocumentSession({
   const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
   const openDocument = useOpenEntryDocument();
   const {
+    fileTrees,
     rootSpaces,
     spaces: childWorkspaces,
     activeRootPath,
@@ -88,6 +89,9 @@ export function usePlateDocumentSession({
   const activeWsId = currentDocumentSpaceId;
   const projectPath =
     projectPathProp ?? resolvedDocumentContext?.projectPath ?? activeRootPath;
+  const saveScopeTree = currentDocumentSpaceId
+    ? (fileTrees[currentDocumentSpaceId] ?? [])
+    : [];
 
   const setCurrentDocument = useCallback(
     (path: string) => {
@@ -206,6 +210,7 @@ export function usePlateDocumentSession({
       projectPath,
       reloadTreePathParents,
       removeTreePath,
+      saveScopeTree,
       setCurrentDocument,
       spacePath,
       titleRef,

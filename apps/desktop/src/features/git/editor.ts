@@ -1,8 +1,9 @@
-import { useGitStore, type GitStatus } from "./model";
+import { useGitStore, type GitSaveScope, type GitStatus } from "./model";
 import { refreshGitStatus } from "./api/git-status-actions";
 import {
   commitAllSpace as commitAllSpaceAction,
   commitFileAndMaybeSync as commitFileAndMaybeSyncAction,
+  commitSaveScopeAndMaybeSync as commitSaveScopeAndMaybeSyncAction,
   continueGitResolve as continueGitResolveAction,
   syncSpace as syncSpaceAction,
   type GitAutoSyncOptions,
@@ -11,6 +12,16 @@ import {
 import { notifyGitSyncOutcome } from "./effects/git-notifications";
 
 export type { GitCommitResult } from "./api/git-actions";
+export {
+  dirtyPathsForGitSaveScope,
+  gitSaveShortcutLabel,
+  gitStatusHasDirtyPath,
+  resolveGitSaveAllScope,
+  selfPathsForGitSaveScope,
+  type GitSaveScope,
+  type GitSaveScopeLabel,
+  type GitSaveScopeTreeNode,
+} from "./model";
 
 const notifyAutoSync: GitAutoSyncOptions = {
   onSyncOutcome: notifyGitSyncOutcome,
@@ -34,6 +45,21 @@ export function commitAllSpace(
   projectPath?: string,
 ): Promise<GitCommitResult | null> {
   return commitAllSpaceAction(spacePath, projectPath, notifyAutoSync);
+}
+
+export function commitSaveScopeAndMaybeSync(
+  spacePath: string,
+  scope: GitSaveScope,
+  extraPaths: string[],
+  projectPath?: string,
+): Promise<GitCommitResult | null> {
+  return commitSaveScopeAndMaybeSyncAction(
+    spacePath,
+    scope,
+    extraPaths,
+    projectPath,
+    notifyAutoSync,
+  );
 }
 
 export function continueGitResolve(spacePath: string): Promise<void> {
