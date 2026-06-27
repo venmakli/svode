@@ -10,6 +10,8 @@ use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 
 use crate::error::AppError;
 use crate::files::entry::{ColorName, EntryMeta};
+use crate::files::tree::child_folder_names;
+use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
 use crate::files::{entry, frontmatter};
 use crate::git::cli::GitCli;
 use crate::repo_path::{RootMode, normalize_repo_relative};
@@ -1302,7 +1304,7 @@ fn moved_markdown_path_pairs(
         let new_prefix = normalize_rel_path(new_path);
         let old_prefix = normalize_rel_path(old_path);
         let mut pairs = Vec::new();
-        for file in collect_md_files(new_abs)? {
+        for file in collect_md_files_in_space(space, new_abs)? {
             let new_file = rel_path_string(file.strip_prefix(space).unwrap_or(&file));
             let suffix = new_file
                 .strip_prefix(&format!("{new_prefix}/"))
@@ -3185,7 +3187,7 @@ pub fn apply_contextual_defaults_for_path_strict(
 pub fn apply_schema_defaults_to_entry_tree(space: &Path, rel_path: &str) -> Result<(), AppError> {
     let abs = space.join(rel_path);
     if abs.is_dir() {
-        for path in collect_md_files(&abs)? {
+        for path in collect_md_files_in_space(space, &abs)? {
             let rel = path
                 .strip_prefix(space)
                 .unwrap_or(&path)
@@ -3583,7 +3585,7 @@ fn sorted_collection_markdown_files_for_unique_id(
 fn markdown_files_in_tree(space: &Path, rel_path: &str) -> Result<Vec<PathBuf>, AppError> {
     let abs = space.join(normalize_rel_path(rel_path));
     if abs.is_dir() {
-        collect_md_files(&abs)
+        collect_md_files_in_space(space, &abs)
     } else if abs.extension().and_then(|ext| ext.to_str()) == Some("md") {
         Ok(vec![abs])
     } else {
@@ -4750,6 +4752,8 @@ struct RelationEdge {
 pub fn list_collections(space: &str) -> Result<Vec<CollectionInfo>, AppError> {
     let root = Path::new(space);
     let mut infos = Vec::new();
+    let skip_dirs = child_folder_names(root);
+    let policy = TreeIgnorePolicy::from_space_root(root);
     if root.join(SCHEMA_FILE).is_file() {
         infos.push(CollectionInfo {
             path: ".".to_string(),
@@ -4763,7 +4767,7 @@ pub fn list_collections(space: &str) -> Result<Vec<CollectionInfo>, AppError> {
             nested: false,
         });
     }
-    collect_collections(root, root, &mut infos)?;
+    collect_collections(root, root, &skip_dirs, &policy, &mut infos)?;
     infos.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(infos)
 }
@@ -4771,6 +4775,8 @@ pub fn list_collections(space: &str) -> Result<Vec<CollectionInfo>, AppError> {
 fn collect_collections(
     space: &Path,
     dir: &Path,
+    skip_dirs: &HashSet<String>,
+    policy: &TreeIgnorePolicy,
     out: &mut Vec<CollectionInfo>,
 ) -> Result<(), AppError> {
     for entry in fs::read_dir(dir)? {
@@ -4778,10 +4784,15 @@ fn collect_collections(
         let path = entry.path();
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name.starts_with('.') {
+
+        let Ok(meta) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() || !meta.is_dir() {
             continue;
         }
-        if !path.is_dir() {
+
+        if is_collection_traversal_ignored(space, &path, &meta, skip_dirs, policy) {
             continue;
         }
 
@@ -4804,9 +4815,48 @@ fn collect_collections(
             });
         }
 
-        collect_collections(space, &path, out)?;
+        collect_collections(space, &path, skip_dirs, policy, out)?;
     }
     Ok(())
+}
+
+fn is_registered_child_space_rel(rel: &str, skip_dirs: &HashSet<String>) -> bool {
+    if rel.is_empty() || rel == "." {
+        return false;
+    }
+
+    skip_dirs.iter().any(|child| {
+        rel == child
+            || rel
+                .strip_prefix(child)
+                .is_some_and(|suffix| suffix.starts_with('/'))
+    })
+}
+
+fn tree_path_kind(meta: &fs::Metadata) -> TreePathKind {
+    if meta.is_dir() {
+        TreePathKind::Directory
+    } else if meta.is_file() {
+        TreePathKind::File
+    } else {
+        TreePathKind::Unknown
+    }
+}
+
+fn is_collection_traversal_ignored(
+    space: &Path,
+    path: &Path,
+    meta: &fs::Metadata,
+    skip_dirs: &HashSet<String>,
+    policy: &TreeIgnorePolicy,
+) -> bool {
+    let rel_path = path.strip_prefix(space).unwrap_or(path);
+    let rel = rel_path_string(rel_path);
+    if meta.is_dir() && is_registered_child_space_rel(&rel, skip_dirs) {
+        return true;
+    }
+
+    policy.is_ignored_rel(rel_path, tree_path_kind(meta))
 }
 
 fn collection_title(collection_dir: &Path, fallback_name: &str) -> String {
@@ -7167,14 +7217,22 @@ where
 }
 
 fn collection_markdown_files(space: &str, collection_path: &str) -> Result<Vec<PathBuf>, AppError> {
+    let space_root = Path::new(space);
     let collection_root = collection_rel(collection_path);
+    let collection_root_rel = rel_path_string(&collection_root);
+    let skip_dirs = child_folder_names(space_root);
+    if is_registered_child_space_rel(&collection_root_rel, &skip_dirs) {
+        return Ok(Vec::new());
+    }
+
     let root = collection_dir(space, collection_path);
     if !root.exists() {
         return Ok(Vec::new());
     }
 
+    let policy = TreeIgnorePolicy::from_space_root(space_root);
     let mut files = Vec::new();
-    for file in collect_md_files(&root)? {
+    for file in collect_md_files(space_root, &root, &skip_dirs, &policy)? {
         let rel = file
             .strip_prefix(space)
             .unwrap_or(&file)
@@ -7190,24 +7248,56 @@ fn collection_markdown_files(space: &str, collection_path: &str) -> Result<Vec<P
     Ok(files)
 }
 
-fn collect_md_files(root: &Path) -> Result<Vec<PathBuf>, AppError> {
+fn collect_md_files_in_space(space: &Path, root: &Path) -> Result<Vec<PathBuf>, AppError> {
+    // Collection-side scans must honor the same scope boundaries as tree/index.
+    // Root project collections must not recurse into registered child spaces.
+    let root_rel = root
+        .strip_prefix(space)
+        .map(rel_path_string)
+        .unwrap_or_else(|_| rel_path_string(root));
+    let skip_dirs = child_folder_names(space);
+    if is_registered_child_space_rel(&root_rel, &skip_dirs) {
+        return Ok(Vec::new());
+    }
+
+    let policy = TreeIgnorePolicy::from_space_root(space);
+    collect_md_files(space, root, &skip_dirs, &policy)
+}
+
+fn collect_md_files(
+    space: &Path,
+    root: &Path,
+    skip_dirs: &HashSet<String>,
+    policy: &TreeIgnorePolicy,
+) -> Result<Vec<PathBuf>, AppError> {
     let mut files = Vec::new();
-    collect_md_files_inner(root, &mut files)?;
+    collect_md_files_inner(space, root, skip_dirs, policy, &mut files)?;
     Ok(files)
 }
 
-fn collect_md_files_inner(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), AppError> {
+fn collect_md_files_inner(
+    space: &Path,
+    dir: &Path,
+    skip_dirs: &HashSet<String>,
+    policy: &TreeIgnorePolicy,
+    out: &mut Vec<PathBuf>,
+) -> Result<(), AppError> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with('.') {
+
+        let Ok(meta) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.file_type().is_symlink()
+            || is_collection_traversal_ignored(space, &path, &meta, skip_dirs, policy)
+        {
             continue;
         }
-        if path.is_dir() {
-            collect_md_files_inner(&path, out)?;
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
+
+        if meta.is_dir() {
+            collect_md_files_inner(space, &path, skip_dirs, policy, out)?;
+        } else if meta.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("md") {
             out.push(path);
         }
     }
@@ -7528,6 +7618,8 @@ fn parse_identity(raw: &str) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::space::config::write_space_config;
+    use crate::space::types::{SpaceConfig, SpaceRef, TreeSpaceConfig};
     use tempfile::TempDir;
 
     fn test_column(name: &str, type_: PropertyType) -> Column {
@@ -7550,6 +7642,28 @@ mod tests {
             next: None,
             multiple: None,
         }
+    }
+
+    fn write_test_space_config(
+        space: &Path,
+        spaces: Option<Vec<SpaceRef>>,
+        tree: Option<TreeSpaceConfig>,
+    ) {
+        write_space_config(
+            space,
+            &SpaceConfig {
+                name: "Test".to_string(),
+                description: String::new(),
+                icon: "folder".to_string(),
+                spaces,
+                agent: None,
+                defaults: None,
+                git: None,
+                assets: None,
+                tree,
+            },
+        )
+        .unwrap();
     }
 
     #[test]
@@ -7653,6 +7767,103 @@ views: []
         let schema = read_schema_at(&schema_path).unwrap();
         assert_eq!(schema.columns[0].sensitivity, Some(ColumnSensitivity::Pii));
         assert_eq!(schema.columns[1].sensitivity, None);
+    }
+
+    #[test]
+    fn list_collections_skips_registered_child_space_dirs() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        write_test_space_config(
+            space,
+            Some(vec![SpaceRef {
+                id: "child-space".to_string(),
+                path: "child".to_string(),
+                repo: None,
+            }]),
+            None,
+        );
+        fs::write(space.join(SCHEMA_FILE), "columns: []\nviews: []\n").unwrap();
+        fs::write(
+            space.join("root-row.md"),
+            "---\nid: root-row\ntitle: Root row\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+        fs::create_dir_all(space.join("child")).unwrap();
+        fs::write(
+            space.join("child").join(SCHEMA_FILE),
+            "columns: []\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("child").join("child-row.md"),
+            "---\nid: child-row\ntitle: Child row\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+
+        let collections = list_collections(space.to_str().unwrap()).unwrap();
+
+        assert_eq!(
+            collections
+                .iter()
+                .map(|collection| collection.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["."]
+        );
+        assert_eq!(collections[0].row_count, 1);
+    }
+
+    #[test]
+    fn collection_markdown_files_respects_tree_excludes() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        write_test_space_config(
+            space,
+            None,
+            Some(TreeSpaceConfig {
+                exclude: vec!["heavy".to_string()],
+                include: vec![],
+                show_ignored_placeholders: false,
+            }),
+        );
+        fs::write(space.join(SCHEMA_FILE), "columns: []\nviews: []\n").unwrap();
+        fs::write(
+            space.join("visible.md"),
+            "---\nid: visible\ntitle: Visible\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+        fs::create_dir_all(space.join("heavy")).unwrap();
+        fs::write(
+            space.join("heavy").join("hidden.md"),
+            "---\nid: hidden\ntitle: Hidden\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            space.join("heavy").join(SCHEMA_FILE),
+            "columns: []\nviews: []\n",
+        )
+        .unwrap();
+
+        let files = collection_markdown_files(space.to_str().unwrap(), ".").unwrap();
+        let collections = list_collections(space.to_str().unwrap()).unwrap();
+
+        assert_eq!(
+            files
+                .iter()
+                .map(|file| file
+                    .strip_prefix(space)
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string())
+                .collect::<Vec<_>>(),
+            vec!["visible.md".to_string()]
+        );
+        assert_eq!(
+            collections
+                .iter()
+                .map(|collection| collection.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["."]
+        );
     }
 
     #[test]
