@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed Windows VS Code project opener discovery for User/System installs, `code.cmd` PATH installs, hidden spawn, and actionable error details.
+
 ## [0.0.6] - 2026-06-24
 
 ### Added

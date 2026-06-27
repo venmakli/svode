@@ -4,6 +4,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::{AppError, system_path};
 
+#[cfg(any(target_os = "windows", test))]
+const VSCODE_PATH_ENV: &str = "SVODE_VSCODE_PATH";
+
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WindowsProgramCandidate {
+    path: PathBuf,
+    source: &'static str,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectOpenerId {
@@ -112,6 +122,128 @@ fn command_available(command: &str) -> bool {
     which::which(command).is_ok()
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn push_windows_candidate(
+    candidates: &mut Vec<WindowsProgramCandidate>,
+    path: PathBuf,
+    source: &'static str,
+) {
+    if path.as_os_str().is_empty() || candidates.iter().any(|candidate| candidate.path == path) {
+        return;
+    }
+
+    candidates.push(WindowsProgramCandidate { path, source });
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn env_path(raw: std::ffi::OsString) -> PathBuf {
+    let text = raw.to_string_lossy();
+    let trimmed = text.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        return PathBuf::from(&trimmed[1..trimmed.len() - 1]);
+    }
+
+    PathBuf::from(raw)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn push_windows_vscode_install_candidates(
+    candidates: &mut Vec<WindowsProgramCandidate>,
+    root: PathBuf,
+    source: &'static str,
+) {
+    let install_dir = root.join("Microsoft VS Code");
+    push_windows_candidate(candidates, install_dir.join("Code.exe"), source);
+    push_windows_candidate(candidates, install_dir.join("bin").join("code.cmd"), source);
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_vscode_candidates_from(
+    mut lookup_path: impl FnMut(&str) -> Option<PathBuf>,
+    mut lookup_env: impl FnMut(&str) -> Option<std::ffi::OsString>,
+) -> Vec<WindowsProgramCandidate> {
+    let mut candidates = Vec::new();
+
+    if let Some(configured) = lookup_env(VSCODE_PATH_ENV) {
+        push_windows_candidate(&mut candidates, env_path(configured), "SVODE_VSCODE_PATH");
+    }
+
+    if let Some(local_app_data) = lookup_env("LOCALAPPDATA") {
+        push_windows_vscode_install_candidates(
+            &mut candidates,
+            PathBuf::from(local_app_data).join("Programs"),
+            "%LOCALAPPDATA%\\Programs",
+        );
+    }
+
+    for (env_key, source) in [
+        ("ProgramFiles", "%ProgramFiles%"),
+        ("ProgramW6432", "%ProgramW6432%"),
+        ("ProgramFiles(x86)", "%ProgramFiles(x86)%"),
+    ] {
+        if let Some(program_files) = lookup_env(env_key) {
+            push_windows_vscode_install_candidates(
+                &mut candidates,
+                PathBuf::from(program_files),
+                source,
+            );
+        }
+    }
+
+    for command in ["code.cmd", "code.exe", "code"] {
+        if let Some(path) = lookup_path(command) {
+            push_windows_candidate(&mut candidates, path, "PATH");
+        }
+    }
+
+    candidates
+}
+
+#[cfg(target_os = "windows")]
+fn windows_vscode_candidates() -> Vec<WindowsProgramCandidate> {
+    windows_vscode_candidates_from(|command| which::which(command).ok(), std::env::var_os)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn select_existing_windows_candidate(
+    candidates: &[WindowsProgramCandidate],
+    mut is_file: impl FnMut(&Path) -> bool,
+) -> Option<WindowsProgramCandidate> {
+    candidates
+        .iter()
+        .find(|candidate| is_file(&candidate.path))
+        .cloned()
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn describe_windows_candidates(candidates: &[WindowsProgramCandidate]) -> String {
+    if candidates.is_empty() {
+        return "standard VS Code install paths and PATH commands code.cmd, code.exe, code".into();
+    }
+
+    candidates
+        .iter()
+        .map(|candidate| format!("{} ({})", candidate.path.display(), candidate.source))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_vscode_help() -> String {
+    format!(
+        "Install VS Code, add its bin folder to PATH so code.cmd is available, or set {VSCODE_PATH_ENV} to the full Code.exe/code.cmd path."
+    )
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_vscode_not_found_error(candidates: &[WindowsProgramCandidate]) -> AppError {
+    AppError::General(format!(
+        "VS Code was not found. Tried: {}. {}",
+        describe_windows_candidates(candidates),
+        windows_vscode_help(),
+    ))
+}
+
 #[cfg(target_os = "macos")]
 fn macos_app_exists(app_name: &str) -> bool {
     let app_bundle = format!("{app_name}.app");
@@ -135,6 +267,12 @@ fn macos_app_exists(_app_name: &str) -> bool {
 }
 
 fn is_vscode_available() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        let candidates = windows_vscode_candidates();
+        return select_existing_windows_candidate(&candidates, |path| path.is_file()).is_some();
+    }
+
     command_available("code") || macos_app_exists("Visual Studio Code")
 }
 
@@ -215,6 +353,25 @@ fn open_macos_app(app_name: &str, path: &Path, label: &str) -> Result<(), AppErr
 }
 
 fn open_vscode(path: &Path) -> Result<(), AppError> {
+    #[cfg(target_os = "windows")]
+    {
+        let candidates = windows_vscode_candidates();
+        let candidate = select_existing_windows_candidate(&candidates, |path| path.is_file())
+            .ok_or_else(|| windows_vscode_not_found_error(&candidates))?;
+
+        let mut command = Command::new(&candidate.path);
+        command.arg(path);
+        crate::process::hide_window(&mut command);
+        return command.spawn().map(|_| ()).map_err(|err| {
+            AppError::General(format!(
+                "Failed to open VS Code using {}: {err}. Tried: {}. {}",
+                candidate.path.display(),
+                describe_windows_candidates(&candidates),
+                windows_vscode_help(),
+            ))
+        });
+    }
+
     #[cfg(target_os = "macos")]
     {
         if macos_app_exists("Visual Studio Code") {
@@ -346,5 +503,123 @@ fn open_iterm2(path: &Path) -> Result<(), AppError> {
         Err(AppError::General(
             "iTerm2 is only available on macOS".into(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    fn user_code_exe(local_app_data: &str) -> PathBuf {
+        PathBuf::from(local_app_data)
+            .join("Programs")
+            .join("Microsoft VS Code")
+            .join("Code.exe")
+    }
+
+    fn system_code_exe(program_files: &str) -> PathBuf {
+        PathBuf::from(program_files)
+            .join("Microsoft VS Code")
+            .join("Code.exe")
+    }
+
+    #[test]
+    fn windows_vscode_candidates_include_user_system_and_path_installs() {
+        let local_app_data = r"C:\Users\me\AppData\Local";
+        let program_files = r"C:\Program Files";
+        let path_code_cmd =
+            PathBuf::from(r"C:\Users\me\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd");
+
+        let candidates = windows_vscode_candidates_from(
+            |command| {
+                if command == "code.cmd" {
+                    Some(path_code_cmd.clone())
+                } else {
+                    None
+                }
+            },
+            |key| match key {
+                "LOCALAPPDATA" => Some(OsString::from(local_app_data)),
+                "ProgramFiles" => Some(OsString::from(program_files)),
+                _ => None,
+            },
+        );
+
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate.path == user_code_exe(local_app_data))
+        );
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate.path == system_code_exe(program_files))
+        );
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate.path == path_code_cmd)
+        );
+    }
+
+    #[test]
+    fn windows_vscode_selection_prefers_configured_existing_path() {
+        let configured = PathBuf::from(r"D:\Tools\VS Code\Code.exe");
+        let local_app_data = r"C:\Users\me\AppData\Local";
+        let user_install = user_code_exe(local_app_data);
+
+        let candidates = windows_vscode_candidates_from(
+            |_| None,
+            |key| match key {
+                VSCODE_PATH_ENV => Some(OsString::from(format!("\"{}\"", configured.display()))),
+                "LOCALAPPDATA" => Some(OsString::from(local_app_data)),
+                _ => None,
+            },
+        );
+
+        let selected = select_existing_windows_candidate(&candidates, |path| {
+            path == configured.as_path() || path == user_install.as_path()
+        })
+        .expect("expected a VS Code candidate");
+
+        assert_eq!(selected.path, configured);
+    }
+
+    #[test]
+    fn windows_vscode_selection_falls_back_when_configured_path_is_missing() {
+        let configured = PathBuf::from(r"D:\Missing\Code.exe");
+        let local_app_data = r"C:\Users\me\AppData\Local";
+        let user_install = user_code_exe(local_app_data);
+
+        let candidates = windows_vscode_candidates_from(
+            |_| None,
+            |key| match key {
+                VSCODE_PATH_ENV => Some(OsString::from(configured.as_os_str())),
+                "LOCALAPPDATA" => Some(OsString::from(local_app_data)),
+                _ => None,
+            },
+        );
+
+        let selected =
+            select_existing_windows_candidate(&candidates, |path| path == user_install.as_path())
+                .expect("expected a VS Code candidate");
+
+        assert_eq!(selected.path, user_install);
+    }
+
+    #[test]
+    fn windows_vscode_not_found_error_is_actionable() {
+        let candidates = vec![WindowsProgramCandidate {
+            path: PathBuf::from(r"C:\Program Files\Microsoft VS Code\Code.exe"),
+            source: "%ProgramFiles%",
+        }];
+
+        let message = windows_vscode_not_found_error(&candidates).to_string();
+
+        assert!(message.contains("VS Code was not found"));
+        assert!(message.contains(r"C:\Program Files\Microsoft VS Code\Code.exe"));
+        assert!(message.contains("code.cmd"));
+        assert!(message.contains(VSCODE_PATH_ENV));
     }
 }

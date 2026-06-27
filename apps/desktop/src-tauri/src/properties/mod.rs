@@ -7412,17 +7412,19 @@ async fn load_actors(
                 continue;
             }
             let canonical = canonicalize_actor(cli, space_path, name, email).await?;
-            let entry = actors.entry(canonical.clone()).or_insert_with(|| ActorCandidate {
-                email: canonical,
-                name: if name.is_empty() {
-                    email.to_string()
-                } else {
-                    name.to_string()
-                },
-                last_commit_at: ts,
-                commit_count: 0,
-                is_me: false,
-            });
+            let entry = actors
+                .entry(canonical.clone())
+                .or_insert_with(|| ActorCandidate {
+                    email: canonical,
+                    name: if name.is_empty() {
+                        email.to_string()
+                    } else {
+                        name.to_string()
+                    },
+                    last_commit_at: ts,
+                    commit_count: 0,
+                    is_me: false,
+                });
             entry.commit_count += 1;
             if ts > entry.last_commit_at {
                 entry.last_commit_at = ts;
@@ -7436,17 +7438,19 @@ async fn load_actors(
     let me = current_git_actor(cli, space_path).await?;
     let me_email = if let Some((name, email)) = me {
         let canonical = canonicalize_actor(cli, space_path, &name, &email).await?;
-        let entry = actors.entry(canonical.clone()).or_insert_with(|| ActorCandidate {
-            email: canonical.clone(),
-            name: if name.is_empty() {
-                canonical.clone()
-            } else {
-                name
-            },
-            last_commit_at: None,
-            commit_count: 0,
-            is_me: true,
-        });
+        let entry = actors
+            .entry(canonical.clone())
+            .or_insert_with(|| ActorCandidate {
+                email: canonical.clone(),
+                name: if name.is_empty() {
+                    canonical.clone()
+                } else {
+                    name
+                },
+                last_commit_at: None,
+                commit_count: 0,
+                is_me: true,
+            });
         entry.is_me = true;
         Some(canonical)
     } else {

@@ -17,6 +17,7 @@ import {
   TerminalPrimaryAction,
   type TerminalTarget,
 } from "@/features/terminal";
+import { getNativeErrorMessage } from "@/platform/native/errors";
 import {
   listProjectOpeners,
   openProjectInTool,
@@ -70,7 +71,9 @@ export function ProjectOpenersMenu({
       await openProjectInTool(projectPath, opener.id);
     } catch (error) {
       console.error(`Failed to open project in ${opener.label}:`, error);
-      toast.error(m.project_openers_error({ name: opener.label }));
+      toast.error(m.project_openers_error({ name: opener.label }), {
+        description: getNativeErrorMessage(error),
+      });
     } finally {
       setOpeningId(null);
     }
