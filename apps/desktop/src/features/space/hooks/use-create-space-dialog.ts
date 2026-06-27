@@ -16,7 +16,7 @@ import {
 import {
   folderFromUrl,
   isCloneUrlValid,
-  sanitizeFolder,
+  resolveFolderName,
   slugPreview,
   type CreateSpaceTab,
 } from "../lib/space-folder-rules";
@@ -56,7 +56,11 @@ export function useCreateSpaceDialog({
   }, []);
 
   const autoFolder = tab === "create" ? slugPreview(name) : folderFromUrl(url);
-  const effectiveFolder = folderEdited ? folder : autoFolder;
+  const folderInputValue = folderEdited ? folder : autoFolder;
+  const resolvedFolder = resolveFolderName(folderInputValue);
+  const effectiveFolder = resolvedFolder ?? "";
+  const folderInvalid =
+    folderEdited && folderInputValue.trim() !== "" && resolvedFolder === null;
   const targetPath =
     activeRootPath && effectiveFolder
       ? `${activeRootPath}/${effectiveFolder}`
@@ -71,14 +75,14 @@ export function useCreateSpaceDialog({
   const isCreateValid =
     tab === "create" &&
     name.trim() !== "" &&
-    effectiveFolder !== "" &&
+    resolvedFolder !== null &&
     !slugChecking &&
     !slugCollision;
   const isCloneValid =
     tab === "clone" &&
     trimmedUrl !== "" &&
     urlValid &&
-    effectiveFolder !== "" &&
+    resolvedFolder !== null &&
     !slugChecking &&
     !slugCollision;
   const isValid = isCreateValid || isCloneValid;
@@ -93,9 +97,8 @@ export function useCreateSpaceDialog({
 
   const handleFolderChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
-      const sanitized = sanitizeFolder(event.target.value);
-      setFolder(sanitized);
-      setFolderEdited(sanitized !== "");
+      setFolder(event.target.value);
+      setFolderEdited(true);
     },
     [],
   );
@@ -197,11 +200,10 @@ export function useCreateSpaceDialog({
   );
 
   return {
-    autoFolder,
     cloneProgress,
     effectiveFolder,
-    folder,
-    folderEdited,
+    folderInputValue,
+    folderInvalid,
     gitType,
     handleFolderChange,
     handleOpenChange,

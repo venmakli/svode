@@ -438,6 +438,7 @@ pub async fn create_space(
     git_type: SpaceGitType,
 ) -> Result<SpaceInfo, AppError> {
     let parent = Path::new(&parent_path);
+    let folder_name = project::normalize_space_folder(&folder_name)?;
     let info = project::create_space(parent, &name, &icon, &folder_name)?;
     let space_dir = parent.join(&folder_name);
     let structural_autocommit = auto_commit_structural_enabled(parent);
@@ -611,6 +612,7 @@ pub async fn register_cloned_space(
     git_type: String,
 ) -> Result<SpaceInfo, AppError> {
     let path = Path::new(&parent_path);
+    let folder_name = project::normalize_space_folder(&folder_name)?;
     let repo = if git_type == "independent" {
         Some(url)
     } else {

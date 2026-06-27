@@ -37,6 +37,8 @@ const CYRILLIC_MAP: Record<string, string> = {
 };
 
 const CLONE_URL_REGEX = /^(https?:\/\/)\S+|^[\w.-]+@[\w.-]+:\S+$/;
+const FOLDER_NAME_REGEX = /^[A-Za-z0-9_-]+$/;
+const WINDOWS_DRIVE_PREFIX_REGEX = /^[A-Za-z]:/;
 
 export function slugPreview(name: string): string {
   const transliterated = name
@@ -59,11 +61,31 @@ export function folderFromUrl(url: string): string {
   return lastSegment
     .replace(/\.git$/, "")
     .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "");
+    .replace(/[^a-z0-9_-]/g, "");
 }
 
-export function sanitizeFolder(value: string): string {
-  return value.replace(/[^a-z0-9-]/g, "").replace(/^[-.]/, "");
+export function normalizeFolderNameInput(value: string): string {
+  return value.trim();
+}
+
+export function resolveFolderName(value: string): string | null {
+  const normalized = normalizeFolderNameInput(value);
+  if (!normalized) return null;
+  if (normalized.startsWith("/") || WINDOWS_DRIVE_PREFIX_REGEX.test(normalized)) {
+    return null;
+  }
+
+  if (
+    normalized.includes("/") ||
+    normalized.includes("\\") ||
+    normalized === "." ||
+    normalized === ".." ||
+    !FOLDER_NAME_REGEX.test(normalized)
+  ) {
+    return null;
+  }
+
+  return normalized;
 }
 
 export function isCloneUrlValid(trimmedUrl: string): boolean {

@@ -330,6 +330,7 @@
   "space_tab_create": "Create",
   "space_tab_clone": "Clone",
   "space_folder_label": "Folder",
+  "space_folder_invalid": "Use one folder name with letters, numbers, hyphens, or underscores",
   "space_type_label": "Type",
   "space_type_inline": "In project",
   "space_type_inline_desc": "Part of the project repository",

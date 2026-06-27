@@ -34,11 +34,10 @@ export function CreateSpaceDialog({
   onOpenChange,
 }: CreateSpaceDialogProps) {
   const {
-    autoFolder,
     cloneProgress,
     effectiveFolder,
-    folder,
-    folderEdited,
+    folderInputValue,
+    folderInvalid,
     gitType,
     handleFolderChange,
     handleOpenChange,
@@ -108,12 +107,17 @@ export function CreateSpaceDialog({
                       <InputGroupText>{projectFolderName}/</InputGroupText>
                     </InputGroupAddon>
                     <InputGroupInput
-                      value={folderEdited ? folder : autoFolder}
+                      value={folderInputValue}
                       onChange={handleFolderChange}
                       placeholder="folder-name"
                       className="pl-0.5! text-sm!"
                     />
                   </InputGroup>
+                  {folderInvalid && (
+                    <p className="text-xs text-destructive">
+                      {m.space_folder_invalid()}
+                    </p>
+                  )}
                   {slugCollision && (
                     <p className="text-xs text-destructive">
                       {m.git_clone_folder_exists({ slug: effectiveFolder })}
@@ -194,12 +198,17 @@ export function CreateSpaceDialog({
                       <InputGroupText>{projectFolderName}/</InputGroupText>
                     </InputGroupAddon>
                     <InputGroupInput
-                      value={folderEdited ? folder : autoFolder}
+                      value={folderInputValue}
                       onChange={handleFolderChange}
                       placeholder="folder-name"
                       className="pl-0.5! text-sm!"
                     />
                   </InputGroup>
+                  {folderInvalid && (
+                    <p className="text-xs text-destructive">
+                      {m.space_folder_invalid()}
+                    </p>
+                  )}
                   {slugCollision && (
                     <p className="text-xs text-destructive">
                       {m.git_clone_folder_exists({ slug: effectiveFolder })}

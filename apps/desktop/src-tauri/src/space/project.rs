@@ -61,6 +61,18 @@ fn create_and_register(
     Ok((id, cfg))
 }
 
+pub fn normalize_space_folder(folder_name: &str) -> Result<String, AppError> {
+    let normalized = normalize_repo_relative(&folder_name.replace('\\', "/"), RootMode::Reject)?;
+    let is_single_ascii_segment = !normalized.contains('/')
+        && normalized
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if !is_single_ascii_segment {
+        return Err(AppError::PathNotAccessible(folder_name.to_string()));
+    }
+    Ok(normalized)
+}
+
 /// Ensure an existing root project or child space has a scope home README.
 ///
 /// Returns `true` only when README.md was created.
@@ -254,7 +266,8 @@ pub fn create_space(
     icon: &str,
     folder_name: &str,
 ) -> Result<SpaceInfo, AppError> {
-    let space_dir = parent_path.join(folder_name);
+    let folder_name = normalize_space_folder(folder_name)?;
+    let space_dir = parent_path.join(&folder_name);
     if space_dir.exists() {
         return Err(AppError::FileAlreadyExists(system_path::user_facing_path(
             &space_dir,
@@ -267,7 +280,7 @@ pub fn create_space(
         name,
         icon,
         "",
-        RegistrationTarget::ParentSpace(parent_path, folder_name.to_string(), None),
+        RegistrationTarget::ParentSpace(parent_path, folder_name.clone(), None),
     )?;
 
     Ok(SpaceInfo {
@@ -295,7 +308,8 @@ pub fn register_cloned_space(
     icon: &str,
     repo: Option<String>,
 ) -> Result<SpaceInfo, AppError> {
-    let space_dir = parent_path.join(folder_name);
+    let folder_name = normalize_space_folder(folder_name)?;
+    let space_dir = parent_path.join(&folder_name);
     if !space_dir.is_dir() {
         return Err(AppError::PathNotAccessible(system_path::user_facing_path(
             &space_dir,
@@ -332,7 +346,7 @@ pub fn register_cloned_space(
         fallback_name,
         icon,
         "",
-        RegistrationTarget::ParentSpace(parent_path, folder_name.to_string(), repo),
+        RegistrationTarget::ParentSpace(parent_path, folder_name.clone(), repo),
     )?;
 
     Ok(SpaceInfo {
@@ -537,12 +551,31 @@ pub fn remove_missing_space(parent_path: &Path, space_id: &str) -> Result<(), Ap
 #[cfg(test)]
 mod tests {
     use super::{
-        import_existing_submodule_spaces, open_project_folder, reorder_spaces, space_ref_status,
+        import_existing_submodule_spaces, normalize_space_folder, open_project_folder,
+        reorder_spaces, space_ref_status,
     };
     use crate::git::ops::SubmoduleConfig;
     use crate::space::registry;
     use crate::space::scaffold;
     use crate::space::types::{SpaceRef, SpaceStatus};
+
+    #[test]
+    fn normalize_space_folder_allows_ascii_friendly_names() {
+        assert_eq!(
+            normalize_space_folder("Ops_2026-support-v2").expect("normalize"),
+            "Ops_2026-support-v2"
+        );
+    }
+
+    #[test]
+    fn normalize_space_folder_rejects_paths_and_unsafe_names() {
+        assert!(normalize_space_folder("testov/support").is_err());
+        assert!(normalize_space_folder("testov\\support").is_err());
+        assert!(normalize_space_folder("../support").is_err());
+        assert!(normalize_space_folder("/support").is_err());
+        assert!(normalize_space_folder("C:/support").is_err());
+        assert!(normalize_space_folder("поддержка").is_err());
+    }
 
     #[test]
     fn open_registered_folder_without_svode_recreates_scaffold() {

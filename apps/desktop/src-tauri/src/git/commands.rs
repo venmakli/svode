@@ -10,7 +10,8 @@ use super::ops::{GitStatus, UnpushedCommit};
 use super::sync::SyncResult;
 use crate::AppError;
 use crate::index::{IndexKey, IndexState};
-use crate::repo_path::{RootMode, normalize_repo_relative};
+use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_base};
+use crate::space::project;
 use crate::space::types::SpaceGitType;
 use crate::system_path;
 
@@ -138,18 +139,19 @@ pub async fn git_clone_space(
     git_type: String,
 ) -> Result<(), AppError> {
     super::ops::validate_clone_url(&url)?;
+    let project_dir = PathBuf::from(&project_path);
+    let target = PathBuf::from(&target_path);
+    let target_folder = repo_relative_from_base(&project_dir, &target, RootMode::Reject)?;
+    let space_folder = project::normalize_space_folder(&target_folder)?;
+    if let Some(parent_dir) = target.parent() {
+        std::fs::create_dir_all(parent_dir)?;
+    }
 
     if git_type == "submodule" {
-        let project = PathBuf::from(&project_path);
         let cli = require_cli(&state)?;
-        let target = PathBuf::from(&target_path);
-        let space_folder = target
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let lock = state.get_lock(&project).await;
+        let lock = state.get_lock(&project_dir).await;
         let _guard = lock.lock().await;
-        super::clone::submodule_add_with_progress(&cli, &app, &project, &url, &space_folder)
+        super::clone::submodule_add_with_progress(&cli, &app, &project_dir, &url, &space_folder)
             .await?;
         // Scaffold .svode/ and README.md if not present
         let svode_dir = target.join(".svode");
@@ -163,13 +165,13 @@ pub async fn git_clone_space(
         drop(_guard);
         if !svode_existed_before || !readme_existed_before {
             let commit_result = if !svode_existed_before && readme_existed_before {
-                autocommit.commit_scaffold(project, target).await
+                autocommit.commit_scaffold(project_dir, target).await
             } else if !svode_existed_before {
                 autocommit
-                    .commit_scaffold_with_readme(project, target)
+                    .commit_scaffold_with_readme(project_dir, target)
                     .await
             } else {
-                autocommit.commit_scope_readme(project, target).await
+                autocommit.commit_scope_readme(project_dir, target).await
             };
             if let Err(e) = commit_result {
                 tracing::warn!("commit_scaffold failed after submodule clone: {e}");
@@ -177,17 +179,11 @@ pub async fn git_clone_space(
         }
     } else {
         // independent
-        let path = PathBuf::from(&target_path);
         let cli = require_cli(&state)?;
-        let lock = state.get_lock(&path).await;
+        let lock = state.get_lock(&target).await;
         let _guard = lock.lock().await;
-        super::clone::clone_with_progress(&cli, &app, &url, &path).await?;
-        let project = PathBuf::from(&project_path);
-        let space_folder = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        super::ops::add_independent_gitignore(&project, &space_folder)?;
+        super::clone::clone_with_progress(&cli, &app, &url, &target).await?;
+        super::ops::add_independent_gitignore(&project_dir, &space_folder)?;
     }
     Ok(())
 }

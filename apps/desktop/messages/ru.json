@@ -330,6 +330,7 @@
   "space_tab_create": "Создать",
   "space_tab_clone": "Клонировать",
   "space_folder_label": "Папка",
+  "space_folder_invalid": "Используйте одно имя папки: латиница, цифры, дефис или underscore",
   "space_type_label": "Тип",
   "space_type_inline": "В проекте",
   "space_type_inline_desc": "Часть репозитория проекта",
