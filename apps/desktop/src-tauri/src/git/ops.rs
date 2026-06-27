@@ -208,9 +208,17 @@ pub async fn push(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Initialize a new git repo in space_dir.
-pub async fn init(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
-    // git init
+/// Initialize a new git repo and optionally create the first scaffold commit.
+///
+/// Submodule creation uses the `false` path when structural autocommit is
+/// disabled: Git cannot create a gitlink without a child commit, so Svode keeps
+/// the child repo unborn and records submodule metadata in the parent instead
+/// of silently committing the scaffold.
+pub async fn init_with_optional_scaffold_commit(
+    cli: &GitCli,
+    space_dir: &Path,
+    commit_scaffold: bool,
+) -> Result<(), AppError> {
     let out = cli.exec(space_dir, &["init"]).await?;
     if out.exit_code != 0 {
         return Err(AppError::GitCommandFailed(format!(
@@ -225,17 +233,17 @@ pub async fn init(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
 
     ensure_svode_gitignore(space_dir)?;
 
-    // git add .
-    let out = cli.exec(space_dir, &["add", "."]).await?;
-    if out.exit_code != 0 {
-        return Err(AppError::GitCommandFailed(format!(
-            "git add failed: {}",
-            out.stderr
-        )));
-    }
+    if commit_scaffold {
+        let out = cli.exec(space_dir, &["add", "."]).await?;
+        if out.exit_code != 0 {
+            return Err(AppError::GitCommandFailed(format!(
+                "git add failed: {}",
+                out.stderr
+            )));
+        }
 
-    // initial commit
-    let _ = commit(cli, space_dir, "Scaffold .svode").await?;
+        let _ = commit(cli, space_dir, "Scaffold .svode").await?;
+    }
 
     tracing::info!("Initialized git repo at {}", space_dir.display());
     Ok(())
@@ -850,6 +858,61 @@ pub async fn get_submodule_url(
     } else {
         Ok(Some(url))
     }
+}
+
+/// Record a direct child as a submodule without running `git submodule add`.
+///
+/// This is used only when structural autocommit is disabled for a newly-created
+/// local submodule space. The child repo has no commit yet, so native
+/// `submodule add` would fail. The portable tracked source of truth is still
+/// `.gitmodules`; the gitlink appears later after an explicit user commit.
+pub async fn register_local_submodule_metadata(
+    cli: &GitCli,
+    root_path: &Path,
+    space_folder: &str,
+) -> Result<(), AppError> {
+    let normalized = normalize_repo_relative(space_folder, RootMode::Reject)?;
+    if normalized.contains('/') {
+        return Err(AppError::PathNotAccessible(space_folder.to_string()));
+    }
+
+    let path_key = format!("submodule.{}.path", normalized);
+    let url_key = format!("submodule.{}.url", normalized);
+    let url = format!("./{}", normalized);
+
+    for (key, value) in [
+        (path_key.as_str(), normalized.as_str()),
+        (url_key.as_str(), url.as_str()),
+    ] {
+        let out = cli
+            .exec(root_path, &["config", "-f", ".gitmodules", key, value])
+            .await?;
+        if out.exit_code != 0 {
+            return Err(AppError::GitCommandFailed(format!(
+                "git config .gitmodules failed: {}",
+                out.stderr
+            )));
+        }
+    }
+
+    let local_url = root_path.join(&normalized).to_string_lossy().to_string();
+    for (key, value) in [
+        (format!("submodule.{}.url", normalized), local_url),
+        (
+            format!("submodule.{}.active", normalized),
+            "true".to_string(),
+        ),
+    ] {
+        let out = cli.exec(root_path, &["config", &key, &value]).await?;
+        if out.exit_code != 0 {
+            return Err(AppError::GitCommandFailed(format!(
+                "git config submodule failed: {}",
+                out.stderr
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 /// Validate a clone URL (HTTPS or SSH).
@@ -1495,5 +1558,81 @@ mod tests {
         assert!(content.starts_with("target/\n/.svode/local.json\n"));
         assert_eq!(content.matches(".svode/local.json").count(), 1);
         assert!(content.contains(".svode/*.db-shm"));
+    }
+
+    #[tokio::test]
+    async fn init_without_scaffold_commit_leaves_repo_unborn_and_dirty() {
+        let Ok(cli) = GitCli::detect() else {
+            return;
+        };
+        let tmp = TempDir::new().unwrap();
+        crate::space::scaffold::scaffold_space(tmp.path(), "Space", "", "").unwrap();
+
+        init_with_optional_scaffold_commit(&cli, tmp.path(), false)
+            .await
+            .unwrap();
+
+        let head = cli
+            .exec(tmp.path(), &["rev-parse", "--verify", "HEAD"])
+            .await
+            .unwrap();
+        assert_ne!(head.exit_code, 0);
+
+        let status = cli
+            .exec(tmp.path(), &["status", "--short", "--untracked-files=all"])
+            .await
+            .unwrap();
+        assert!(status.stdout.contains("?? .gitignore"));
+        assert!(status.stdout.contains("?? .svode/config.json"));
+        assert!(status.stdout.contains("?? README.md"));
+    }
+
+    #[tokio::test]
+    async fn manual_policy_submodule_metadata_does_not_create_commits() {
+        let Ok(cli) = GitCli::detect() else {
+            return;
+        };
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path().join("project");
+        let child = project.join("docs");
+        std::fs::create_dir_all(&child).unwrap();
+
+        let init_parent = cli.exec(&project, &["init"]).await.unwrap();
+        assert_eq!(init_parent.exit_code, 0);
+
+        crate::space::scaffold::scaffold_space(&child, "Docs", "", "").unwrap();
+        init_with_optional_scaffold_commit(&cli, &child, false)
+            .await
+            .unwrap();
+        register_local_submodule_metadata(&cli, &project, "docs")
+            .await
+            .unwrap();
+
+        let child_head = cli
+            .exec(&child, &["rev-parse", "--verify", "HEAD"])
+            .await
+            .unwrap();
+        let parent_head = cli
+            .exec(&project, &["rev-parse", "--verify", "HEAD"])
+            .await
+            .unwrap();
+        assert_ne!(child_head.exit_code, 0);
+        assert_ne!(parent_head.exit_code, 0);
+
+        assert_eq!(
+            get_submodule_url(&cli, &project, "docs").await.unwrap(),
+            Some("./docs".to_string())
+        );
+        assert_eq!(
+            detect_space_git_type(&cli, &project, &child).await.unwrap(),
+            SpaceGitType::Submodule
+        );
+
+        let parent_status = cli
+            .exec(&project, &["status", "--short", "--untracked-files=all"])
+            .await
+            .unwrap();
+        assert!(parent_status.stdout.contains("?? .gitmodules"));
+        assert!(parent_status.stdout.contains("?? docs/"));
     }
 }

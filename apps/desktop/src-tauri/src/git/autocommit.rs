@@ -331,6 +331,38 @@ impl AutocommitService {
         Ok(())
     }
 
+    /// Commit a lifecycle-scoped set of paths. Used for project/space boundary
+    /// changes whose files look like config, but whose operation intent is
+    /// structural (for example importing submodule space refs).
+    pub async fn commit_structural_paths_now(
+        &self,
+        project_path: PathBuf,
+        space_path: PathBuf,
+        paths: Vec<PathBuf>,
+        message: &'static str,
+    ) -> Result<(), AppError> {
+        if paths.is_empty() || !space_path.exists() {
+            return Ok(());
+        }
+
+        let git_state = self.app.state::<GitState>();
+        let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
+        let git_type = ops::detect_space_git_type(&cli, &project_path, &space_path).await?;
+        if !background_commit_allowed(&space_path, CommitIntent::StructuralLifecycle) {
+            return Ok(());
+        }
+
+        do_commit_paths(
+            &self.app,
+            &project_path,
+            &space_path,
+            git_type,
+            paths,
+            message,
+        )
+        .await
+    }
+
     /// Commit the scaffolded `.svode/` directory.
     pub async fn commit_scaffold(
         &self,

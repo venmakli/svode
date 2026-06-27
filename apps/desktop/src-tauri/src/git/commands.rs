@@ -61,25 +61,8 @@ pub(crate) fn auto_commit_structural_enabled(space_path: &Path) -> bool {
 }
 
 pub(crate) async fn init_repo_with_policy(cli: &GitCli, path: &Path) -> Result<(), AppError> {
-    let out = cli.exec(path, &["init"]).await?;
-    if out.exit_code != 0 {
-        return Err(AppError::GitCommandFailed(format!(
-            "git init failed: {}",
-            out.stderr
-        )));
-    }
-
-    cli.exec(path, &["config", "core.quotePath", "false"])
-        .await?;
-    super::ops::ensure_svode_gitignore(path)?;
-
-    if auto_commit_structural_enabled(path) {
-        super::ops::add_all(cli, path).await?;
-        let _ = super::ops::commit(cli, path, "Scaffold .svode").await?;
-    }
-
-    tracing::info!("Initialized git repo at {}", path.display());
-    Ok(())
+    super::ops::init_with_optional_scaffold_commit(cli, path, auto_commit_structural_enabled(path))
+        .await
 }
 
 pub struct GitState {

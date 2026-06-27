@@ -262,10 +262,11 @@ pub async fn open_project_folder(
         }
         if imported_submodules > 0 {
             if let Err(e) = autocommit
-                .commit_system_now(
+                .commit_structural_paths_now(
                     sp_path.to_path_buf(),
                     sp_path.to_path_buf(),
-                    SystemCommitKind::SpaceConfig,
+                    vec![sp_path.join(".svode").join("config.json")],
+                    "Register submodule spaces",
                 )
                 .await
             {
@@ -358,10 +359,11 @@ pub async fn open_project(
     }
     if imported_submodules > 0 {
         if let Err(e) = autocommit
-            .commit_system_now(
+            .commit_structural_paths_now(
                 project_path.clone(),
                 project_path.clone(),
-                SystemCommitKind::SpaceConfig,
+                vec![project_path.join(".svode").join("config.json")],
+                "Register submodule spaces",
             )
             .await
         {
@@ -438,6 +440,7 @@ pub async fn create_space(
     let parent = Path::new(&parent_path);
     let info = project::create_space(parent, &name, &icon, &folder_name)?;
     let space_dir = parent.join(&folder_name);
+    let structural_autocommit = auto_commit_structural_enabled(parent);
 
     // Unified root-commit message — `Add <type> space <folder>`. Type is
     // visible in history without reading the diff.
@@ -451,7 +454,7 @@ pub async fn create_space(
     match git_type {
         SpaceGitType::Inline => {
             ops::ensure_inline_gitignore(parent)?;
-            if auto_commit_structural_enabled(parent) {
+            if structural_autocommit {
                 if let Some(cli) = &git_state.cli {
                     let lock = git_state.get_lock(parent).await;
                     let _guard = lock.lock().await;
@@ -465,7 +468,7 @@ pub async fn create_space(
             {
                 let lock = git_state.get_lock(&space_dir).await;
                 let _guard = lock.lock().await;
-                init_repo_with_policy(&cli, &space_dir).await?;
+                ops::init_with_optional_scaffold_commit(&cli, &space_dir, false).await?;
                 if let Err(e) =
                     crate::identity::scaffold_space_git_identity(&cli, &space_dir, parent).await
                 {
@@ -473,9 +476,13 @@ pub async fn create_space(
                         "scaffold_space_git_identity failed for new independent space: {e}"
                     );
                 }
+                if structural_autocommit {
+                    ops::add_all(&cli, &space_dir).await?;
+                    let _ = ops::commit(&cli, &space_dir, "Scaffold .svode").await?;
+                }
             }
             ops::add_independent_gitignore(parent, &folder_name)?;
-            if auto_commit_structural_enabled(parent) {
+            if structural_autocommit {
                 let root_lock = git_state.get_lock(parent).await;
                 let _root_guard = root_lock.lock().await;
                 ops::add_all(&cli, parent).await?;
@@ -487,10 +494,7 @@ pub async fn create_space(
             {
                 let lock = git_state.get_lock(&space_dir).await;
                 let _guard = lock.lock().await;
-                // Git cannot add a submodule whose child repository has no
-                // checked-out commit. The root .gitmodules/gitlink commit
-                // below still follows `autoCommitStructural`.
-                ops::init(&cli, &space_dir).await?;
+                ops::init_with_optional_scaffold_commit(&cli, &space_dir, false).await?;
                 if let Err(e) =
                     crate::identity::scaffold_space_git_identity(&cli, &space_dir, parent).await
                 {
@@ -498,22 +502,28 @@ pub async fn create_space(
                         "scaffold_space_git_identity failed for new submodule space: {e}"
                     );
                 }
+                if structural_autocommit {
+                    ops::add_all(&cli, &space_dir).await?;
+                    let _ = ops::commit(&cli, &space_dir, "Scaffold .svode").await?;
+                }
             }
             {
                 let parent_lock = git_state.get_lock(parent).await;
                 let _parent_guard = parent_lock.lock().await;
-                let out = cli
-                    .exec(parent, &["submodule", "add", &format!("./{folder_name}")])
-                    .await?;
-                if out.exit_code != 0 {
-                    return Err(AppError::GitCommandFailed(format!(
-                        "git submodule add failed: {}",
-                        out.stderr
-                    )));
-                }
-                if auto_commit_structural_enabled(parent) {
+                if structural_autocommit {
+                    let out = cli
+                        .exec(parent, &["submodule", "add", &format!("./{folder_name}")])
+                        .await?;
+                    if out.exit_code != 0 {
+                        return Err(AppError::GitCommandFailed(format!(
+                            "git submodule add failed: {}",
+                            out.stderr
+                        )));
+                    }
                     ops::add_all(&cli, parent).await?;
                     let _ = ops::commit(&cli, parent, &root_message).await?;
+                } else {
+                    ops::register_local_submodule_metadata(&cli, parent, &folder_name).await?;
                 }
             }
         }
@@ -701,7 +711,12 @@ pub async fn project_clone(
         }
         if imported_submodules > 0 {
             if let Err(e) = autocommit
-                .commit_system_now(path.clone(), path.clone(), SystemCommitKind::SpaceConfig)
+                .commit_structural_paths_now(
+                    path.clone(),
+                    path.clone(),
+                    vec![path.join(".svode").join("config.json")],
+                    "Register submodule spaces",
+                )
                 .await
             {
                 tracing::warn!("commit imported submodules failed after project clone: {e}");
