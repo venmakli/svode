@@ -201,7 +201,10 @@ fn windows_vscode_candidates_from(
 
 #[cfg(target_os = "windows")]
 fn windows_vscode_candidates() -> Vec<WindowsProgramCandidate> {
-    windows_vscode_candidates_from(|command| which::which(command).ok(), std::env::var_os)
+    windows_vscode_candidates_from(
+        |command| which::which(command).ok(),
+        |key| std::env::var_os(key),
+    )
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -266,13 +269,14 @@ fn macos_app_exists(_app_name: &str) -> bool {
     false
 }
 
+#[cfg(target_os = "windows")]
 fn is_vscode_available() -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        let candidates = windows_vscode_candidates();
-        return select_existing_windows_candidate(&candidates, |path| path.is_file()).is_some();
-    }
+    let candidates = windows_vscode_candidates();
+    select_existing_windows_candidate(&candidates, |path| path.is_file()).is_some()
+}
 
+#[cfg(not(target_os = "windows"))]
+fn is_vscode_available() -> bool {
     command_available("code") || macos_app_exists("Visual Studio Code")
 }
 
@@ -352,26 +356,27 @@ fn open_macos_app(app_name: &str, path: &Path, label: &str) -> Result<(), AppErr
     spawn(command, label)
 }
 
+#[cfg(target_os = "windows")]
 fn open_vscode(path: &Path) -> Result<(), AppError> {
-    #[cfg(target_os = "windows")]
-    {
-        let candidates = windows_vscode_candidates();
-        let candidate = select_existing_windows_candidate(&candidates, |path| path.is_file())
-            .ok_or_else(|| windows_vscode_not_found_error(&candidates))?;
+    let candidates = windows_vscode_candidates();
+    let candidate = select_existing_windows_candidate(&candidates, |path| path.is_file())
+        .ok_or_else(|| windows_vscode_not_found_error(&candidates))?;
 
-        let mut command = Command::new(&candidate.path);
-        command.arg(path);
-        crate::process::hide_window(&mut command);
-        return command.spawn().map(|_| ()).map_err(|err| {
-            AppError::General(format!(
-                "Failed to open VS Code using {}: {err}. Tried: {}. {}",
-                candidate.path.display(),
-                describe_windows_candidates(&candidates),
-                windows_vscode_help(),
-            ))
-        });
-    }
+    let mut command = Command::new(&candidate.path);
+    command.arg(path);
+    crate::process::hide_window(&mut command);
+    command.spawn().map(|_| ()).map_err(|err| {
+        AppError::General(format!(
+            "Failed to open VS Code using {}: {err}. Tried: {}. {}",
+            candidate.path.display(),
+            describe_windows_candidates(&candidates),
+            windows_vscode_help(),
+        ))
+    })
+}
 
+#[cfg(not(target_os = "windows"))]
+fn open_vscode(path: &Path) -> Result<(), AppError> {
     #[cfg(target_os = "macos")]
     {
         if macos_app_exists("Visual Studio Code") {
