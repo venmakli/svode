@@ -1,4 +1,9 @@
-import { useEffect, useState, type ComponentType } from "react";
+import {
+  useEffect,
+  useState,
+  type ComponentType,
+  type MouseEvent,
+} from "react";
 import * as m from "@/paraglide/messages.js";
 import {
   Dialog,
@@ -28,6 +33,7 @@ import {
   Activity,
   Bot,
   FileText,
+  Folder,
   GitBranch,
   HardDrive,
   Settings,
@@ -43,7 +49,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useOpenEntryDocument } from "@/features/entry/selection";
-import { useSpace } from "@/features/space";
+import { CreateSpaceDialog, useSpace } from "@/features/space";
 import { useSpaceSettingsAgent } from "../hooks/use-space-settings-agent";
 import { useSpaceSettingsConfigActions } from "../hooks/use-space-settings-config-actions";
 import { useSpaceSettingsDefaults } from "../hooks/use-space-settings-defaults";
@@ -52,12 +58,18 @@ import { useSpaceSettingsGit } from "../hooks/use-space-settings-git";
 import { useSpaceSettingsHealth } from "../hooks/use-space-settings-health";
 import { useSpaceSettingsIdentity } from "../hooks/use-space-settings-identity";
 import { useSpaceStorageSettings } from "../hooks/use-space-storage-settings";
+import { useProjectSpaceGitTypes } from "../hooks/use-project-space-git-types";
 import { SpaceAgentSection } from "./space-agent-section";
 import { SpaceDefaultsSection } from "./space-defaults-section";
 import { SpaceGeneralSection } from "./space-general-section";
 import { SpaceGitSection } from "./space-git-section";
 import { SpaceHealthSection } from "./space-health-section";
 import { SpaceInstructionsSection } from "./space-instructions-section";
+import {
+  ProjectSpacePolicyList,
+  ProjectSpacesSection,
+  type ProjectSpaceDetailSection,
+} from "./space-settings-spaces-section";
 import {
   StorageSettingsSection,
   StorageStrategyConfirmDialog,
@@ -71,10 +83,9 @@ interface SpaceSettingsDialogProps {
 }
 
 type Section =
-  | "general"
+  | ProjectSpaceDetailSection
+  | "spaces"
   | "ai-agent"
-  | "git"
-  | "storage"
   | "health"
   | "defaults"
   | "instructions";
@@ -86,17 +97,20 @@ export function SpaceSettingsDialog({
   onOpenChange,
 }: SpaceSettingsDialogProps) {
   const openDocument = useOpenEntryDocument();
-  const { activeRootId, activeRootPath, activeRootName, spaces } =
-    useSpace();
+  const { activeRootId, activeRootPath, activeRootName, spaces } = useSpace();
 
-  const spacePath = inputPath ?? "";
-  const isRoot = spacePath === activeRootPath;
-  const hasSpaces = isRoot && spaces.length > 0;
-  const currentSpaceId: string | null = isRoot
-    ? null
-    : (spaces.find((space) => space.path === spacePath)?.id ?? null);
-  const projectPath = activeRootPath ?? "";
+  const projectPath = activeRootPath ?? inputPath ?? "";
   const [section, setSection] = useState<Section>("general");
+  const [createSpaceOpen, setCreateSpaceOpen] = useState(false);
+  const [detailSpaceId, setDetailSpaceId] = useState<string | null>(null);
+  const detailSpace = detailSpaceId
+    ? (spaces.find((space) => space.id === detailSpaceId) ?? null)
+    : null;
+  const spacePath = detailSpace?.path ?? projectPath;
+  const isRoot = detailSpace === null;
+  const hasSpaces = spaces.length > 0;
+  const currentSpaceId: string | null = detailSpace?.id ?? null;
+  const projectName = activeRootName || "Project";
 
   const { saveConfig, saveGitConfig } = useSpaceSettingsConfigActions({
     spacePath,
@@ -147,18 +161,43 @@ export function SpaceSettingsDialog({
     activeRootPath,
     isRoot,
   });
+  const projectSpaceGitTypes = useProjectSpaceGitTypes({
+    open,
+    active: isRoot,
+    projectPath,
+    spaces,
+  });
 
   useEffect(() => {
-    if (!open || !spacePath) return;
+    if (!open || !projectPath) return;
     const resetSection = window.setTimeout(() => {
       setSection("general");
+      setDetailSpaceId(null);
     }, 0);
     return () => window.clearTimeout(resetSection);
-  }, [open, spacePath]);
+  }, [open, projectPath]);
 
   function handleOpenAgentsMd() {
     onOpenChange(false);
     openDocument(".svode/AGENTS.md", activeRootId ?? undefined);
+  }
+
+  function handleSectionChange(nextSection: Section) {
+    setSection(nextSection);
+    setDetailSpaceId(null);
+  }
+
+  function handleOpenSpaceDetail(
+    spaceId: string,
+    nextSection: ProjectSpaceDetailSection,
+  ) {
+    setDetailSpaceId(spaceId);
+    setSection(nextSection === "general" ? "spaces" : nextSection);
+  }
+
+  function handleReturnToProjectSection(event: MouseEvent) {
+    event.preventDefault();
+    setDetailSpaceId(null);
   }
 
   const navItems: {
@@ -168,6 +207,7 @@ export function SpaceSettingsDialog({
     show: boolean;
   }[] = [
     { key: "general", label: m.settings_general(), icon: Settings, show: true },
+    { key: "spaces", label: m.settings_spaces(), icon: Folder, show: true },
     {
       key: "ai-agent",
       label: m.settings_ai_agent(),
@@ -176,7 +216,7 @@ export function SpaceSettingsDialog({
     },
     { key: "git", label: m.git_section(), icon: GitBranch, show: true },
     { key: "storage", label: m.storage_section(), icon: HardDrive, show: true },
-    { key: "health", label: m.settings_health(), icon: Activity, show: isRoot },
+    { key: "health", label: m.settings_health(), icon: Activity, show: true },
     {
       key: "defaults",
       label: m.settings_defaults(),
@@ -199,10 +239,10 @@ export function SpaceSettingsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="overflow-hidden p-0 md:max-h-[500px] md:max-w-[700px] lg:max-w-[800px]">
         <DialogTitle className="sr-only">
-          {m.settings_space_title({ name: generalSettings.name || "" })}
+          {m.sidebar_project_settings()}
         </DialogTitle>
         <DialogDescription className="sr-only">
-          {m.settings_space_title({ name: generalSettings.name || "" })}
+          {m.sidebar_project_settings()}
         </DialogDescription>
         <SidebarProvider className="items-start">
           <Sidebar collapsible="none" className="hidden md:flex">
@@ -214,7 +254,7 @@ export function SpaceSettingsDialog({
                       <SidebarMenuItem key={item.key}>
                         <SidebarMenuButton
                           isActive={section === item.key}
-                          onClick={() => setSection(item.key)}
+                          onClick={() => handleSectionChange(item.key)}
                         >
                           <item.icon />
                           <span>{item.label}</span>
@@ -234,17 +274,34 @@ export function SpaceSettingsDialog({
                     <BreadcrumbItem className="hidden md:block">
                       <BreadcrumbLink
                         href="#"
-                        onClick={(event) => event.preventDefault()}
+                        onClick={handleReturnToProjectSection}
                       >
                         {m.settings_space_title({
-                          name: generalSettings.name || "",
+                          name: projectName,
                         })}
                       </BreadcrumbLink>
                     </BreadcrumbItem>
                     <BreadcrumbSeparator className="hidden md:block" />
                     <BreadcrumbItem>
-                      <BreadcrumbPage>{currentNav.label}</BreadcrumbPage>
+                      {detailSpace ? (
+                        <BreadcrumbLink
+                          href="#"
+                          onClick={handleReturnToProjectSection}
+                        >
+                          {currentNav.label}
+                        </BreadcrumbLink>
+                      ) : (
+                        <BreadcrumbPage>{currentNav.label}</BreadcrumbPage>
+                      )}
                     </BreadcrumbItem>
+                    {detailSpace && (
+                      <>
+                        <BreadcrumbSeparator />
+                        <BreadcrumbItem>
+                          <BreadcrumbPage>{detailSpace.name}</BreadcrumbPage>
+                        </BreadcrumbItem>
+                      </>
+                    )}
                   </BreadcrumbList>
                 </Breadcrumb>
               </div>
@@ -260,6 +317,28 @@ export function SpaceSettingsDialog({
                   onNameBlur={generalSettings.handleNameBlur}
                   onDescriptionChange={generalSettings.setDescription}
                   onDescriptionBlur={generalSettings.handleDescriptionBlur}
+                />
+              )}
+
+              {section === "spaces" && detailSpace && (
+                <SpaceGeneralSection
+                  icon={generalSettings.icon}
+                  name={generalSettings.name}
+                  description={generalSettings.description}
+                  onIconChange={generalSettings.handleIconChange}
+                  onNameChange={generalSettings.setName}
+                  onNameBlur={generalSettings.handleNameBlur}
+                  onDescriptionChange={generalSettings.setDescription}
+                  onDescriptionBlur={generalSettings.handleDescriptionBlur}
+                />
+              )}
+
+              {section === "spaces" && !detailSpace && (
+                <ProjectSpacesSection
+                  spaces={spaces}
+                  gitTypes={projectSpaceGitTypes}
+                  onAddSpace={() => setCreateSpaceOpen(true)}
+                  onOpenSpaceDetail={handleOpenSpaceDetail}
                 />
               )}
 
@@ -281,47 +360,67 @@ export function SpaceSettingsDialog({
               )}
 
               {section === "git" && (
-                <SpaceGitSection
-                  gitType={gitSettings.gitType}
-                  activeRootName={activeRootName}
-                  isRoot={isRoot}
-                  submoduleUrl={gitSettings.submoduleUrl}
-                  remoteUrl={gitSettings.remoteUrl}
-                  branch={gitSettings.branch}
-                  autoSync={gitSettings.autoSync}
-                  autoCommitStructural={gitSettings.autoCommitStructural}
-                  autoCommitSystem={gitSettings.autoCommitSystem}
-                  repoIdentity={identitySettings.repoIdentity}
-                  identityName={identitySettings.identityName}
-                  identityEmail={identitySettings.identityEmail}
-                  identityFormError={identitySettings.identityFormError}
-                  savingIdentity={identitySettings.savingIdentity}
-                  fanoutEnabled={identitySettings.fanoutEnabled}
-                  fanoutPreview={identitySettings.fanoutPreview}
-                  fanoutSelected={identitySettings.fanoutSelected}
-                  onRemoteChange={gitSettings.setRemoteUrl}
-                  onRemoteBlur={gitSettings.handleRemoteBlur}
-                  onAutoSyncChange={gitSettings.handleAutoSyncChange}
-                  onAutoCommitStructuralChange={
-                    gitSettings.handleAutoCommitStructuralChange
-                  }
-                  onAutoCommitSystemChange={
-                    gitSettings.handleAutoCommitSystemChange
-                  }
-                  onIdentityNameChange={identitySettings.setIdentityName}
-                  onIdentityEmailChange={identitySettings.setIdentityEmail}
-                  onSaveIdentity={identitySettings.handleSaveIdentity}
-                  onFanoutEnabledChange={identitySettings.setFanoutEnabled}
-                  onFanoutSelectedChange={identitySettings.setFanoutSelected}
-                />
+                <div className="flex flex-col gap-6">
+                  <SpaceGitSection
+                    gitType={gitSettings.gitType}
+                    activeRootName={activeRootName}
+                    isRoot={isRoot}
+                    submoduleUrl={gitSettings.submoduleUrl}
+                    remoteUrl={gitSettings.remoteUrl}
+                    branch={gitSettings.branch}
+                    autoSync={gitSettings.autoSync}
+                    autoCommitStructural={gitSettings.autoCommitStructural}
+                    autoCommitSystem={gitSettings.autoCommitSystem}
+                    repoIdentity={identitySettings.repoIdentity}
+                    identityName={identitySettings.identityName}
+                    identityEmail={identitySettings.identityEmail}
+                    identityFormError={identitySettings.identityFormError}
+                    savingIdentity={identitySettings.savingIdentity}
+                    fanoutEnabled={identitySettings.fanoutEnabled}
+                    fanoutPreview={identitySettings.fanoutPreview}
+                    fanoutSelected={identitySettings.fanoutSelected}
+                    onRemoteChange={gitSettings.setRemoteUrl}
+                    onRemoteBlur={gitSettings.handleRemoteBlur}
+                    onAutoSyncChange={gitSettings.handleAutoSyncChange}
+                    onAutoCommitStructuralChange={
+                      gitSettings.handleAutoCommitStructuralChange
+                    }
+                    onAutoCommitSystemChange={
+                      gitSettings.handleAutoCommitSystemChange
+                    }
+                    onIdentityNameChange={identitySettings.setIdentityName}
+                    onIdentityEmailChange={identitySettings.setIdentityEmail}
+                    onSaveIdentity={identitySettings.handleSaveIdentity}
+                    onFanoutEnabledChange={identitySettings.setFanoutEnabled}
+                    onFanoutSelectedChange={identitySettings.setFanoutSelected}
+                  />
+                  {isRoot && (
+                    <ProjectSpacePolicyList
+                      spaces={spaces}
+                      gitTypes={projectSpaceGitTypes}
+                      section="git"
+                      onOpenSpaceDetail={handleOpenSpaceDetail}
+                    />
+                  )}
+                </div>
               )}
 
               {section === "storage" && (
-                <StorageSettingsSection
-                  gitType={gitSettings.gitType}
-                  activeRootName={activeRootName}
-                  settings={storageSettings}
-                />
+                <div className="flex flex-col gap-6">
+                  <StorageSettingsSection
+                    gitType={gitSettings.gitType}
+                    activeRootName={activeRootName}
+                    settings={storageSettings}
+                  />
+                  {isRoot && (
+                    <ProjectSpacePolicyList
+                      spaces={spaces}
+                      gitTypes={projectSpaceGitTypes}
+                      section="storage"
+                      onOpenSpaceDetail={handleOpenSpaceDetail}
+                    />
+                  )}
+                </div>
               )}
 
               {section === "health" && isRoot && (
@@ -386,6 +485,10 @@ export function SpaceSettingsDialog({
         </AlertDialogContent>
       </AlertDialog>
       <StorageStrategyConfirmDialog settings={storageSettings} />
+      <CreateSpaceDialog
+        open={createSpaceOpen}
+        onOpenChange={setCreateSpaceOpen}
+      />
     </Dialog>
   );
 }

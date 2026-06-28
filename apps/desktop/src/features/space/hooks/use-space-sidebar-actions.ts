@@ -47,11 +47,9 @@ export function useSpaceSidebarActions({
   const { activeDocument, activeDocumentSpaceId, activeRevealRequest } =
     useActiveEntrySelection();
   const {
-    createDialogOpen,
     deleteFiles,
     deleteTarget,
     resetDeleteDialog,
-    setCreateDialogOpen,
     setDeleteFiles,
     setDeleteTarget,
   } = useSpaceSidebarDialogState();
@@ -162,7 +160,6 @@ export function useSpaceSidebarActions({
     activeRootId,
     activeRootName,
     activeRootPath,
-    createDialogOpen,
     deleteFiles,
     deleteTarget,
     editRef,
@@ -190,7 +187,6 @@ export function useSpaceSidebarActions({
     sidebarTreeExpansionLabel: sidebarTreeExpansion.label,
     getSidebarScopeCollapseState: sidebarTreeExpansion.getScopeCollapseState,
     setSidebarScopeCollapseState: sidebarTreeExpansion.setScopeCollapseState,
-    setCreateDialogOpen,
     setDeleteFiles,
     setDeleteTarget,
     setEditingSpaceId,

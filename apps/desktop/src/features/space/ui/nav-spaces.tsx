@@ -37,19 +37,14 @@ import {
 import { useSpaceSidebarActions } from "../hooks/use-space-sidebar-actions";
 import { getSpaceScopeActiveRevealKey } from "../hooks/use-space-scope-collapse";
 import { hasRecordKey, visibleScopeChildren } from "../lib/nav-space-tree";
-import { CreateSpaceDialog } from "./create-space-dialog";
 import { RootScopeRow } from "./root-scope-row";
 import { SpaceRow } from "./space-row";
 
 interface NavSpacesProps {
   onActivateContent: () => void;
-  onOpenSpaceSettings: (spacePath: string) => void;
 }
 
-export function NavSpaces({
-  onActivateContent,
-  onOpenSpaceSettings,
-}: NavSpacesProps) {
+export function NavSpaces({ onActivateContent }: NavSpacesProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 6 },
@@ -63,7 +58,6 @@ export function NavSpaces({
     activeRootId,
     activeRootName,
     activeRootPath,
-    createDialogOpen,
     deleteFiles,
     deleteTarget,
     editRef,
@@ -90,7 +84,6 @@ export function NavSpaces({
     sidebarTreeExpansionLabel,
     getSidebarScopeCollapseState,
     setSidebarScopeCollapseState,
-    setCreateDialogOpen,
     setDeleteFiles,
     setDeleteTarget,
     setEditingSpaceId,
@@ -148,8 +141,6 @@ export function NavSpaces({
               onNewCollection={() =>
                 handleNewCollection({ id: activeRootId, path: activeRootPath })
               }
-              onAddSpace={() => setCreateDialogOpen(true)}
-              onProjectSettings={() => onOpenSpaceSettings(activeRootPath)}
               spaceId={activeRootId}
               rootPath={activeRootPath}
               loading={treeLoading[activeRootId] ?? false}
@@ -195,7 +186,6 @@ export function NavSpaces({
                       handleNewPage={handleNewPage}
                       handleNewFolder={handleNewFolder}
                       handleNewCollection={handleNewCollection}
-                      openSpaceSettings={onOpenSpaceSettings}
                       openScopeHome={handleOpenSpaceHome}
                       setDeleteTarget={setDeleteTarget}
                       handleCloneMissing={handleCloneMissing}
@@ -220,11 +210,6 @@ export function NavSpaces({
           </SidebarMenu>
         </SidebarGroupContent>
       </SidebarGroup>
-
-      <CreateSpaceDialog
-        open={createDialogOpen}
-        onOpenChange={setCreateDialogOpen}
-      />
 
       <AlertDialog
         open={!!deleteTarget}

@@ -7,7 +7,9 @@ import {
   FolderOpen,
   FolderPlus,
   Home,
+  Settings as SettingsIcon,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,24 +22,36 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { RootProjectDialogs, useRootProjectWorkflow } from "@/features/home";
 import { useSpace } from "@/features/space";
+import { cn } from "@/shared/lib/utils";
 import { useShellStore } from "./model";
 import * as m from "@/paraglide/messages.js";
 
 interface ProjectSwitcherProps {
   className?: string;
+  showSettingsButton?: boolean;
 }
 
-export function ProjectSwitcher({ className }: ProjectSwitcherProps) {
+export function ProjectSwitcher({
+  className,
+  showSettingsButton = true,
+}: ProjectSwitcherProps) {
   const navigate = useNavigate();
   const {
     rootSpaces,
     activeRootId,
     activeRootName,
     activeRootIcon,
+    activeRootPath,
     goHome,
   } = useSpace();
+  const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
   const openContentSurface = useCallback(() => {
     useShellStore.getState().openContentSurface();
   }, []);
@@ -57,60 +71,88 @@ export function ProjectSwitcher({ className }: ProjectSwitcherProps) {
     navigate({ to: "/" });
   }
 
+  function handleProjectSettings() {
+    if (!activeRootPath) return;
+    openSpaceSettings(activeRootPath);
+  }
+
   return (
     <>
-      <SidebarMenu className={className}>
-        <SidebarMenuItem>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <SidebarMenuButton className="w-fit max-w-full px-1.5">
-                <span className="text-base leading-none">
-                  {activeRootIcon || "\u{1F4C1}"}
-                </span>
-                <span className="truncate font-medium">
-                  {activeRootName || "Project"}
-                </span>
-                <ChevronDown className="opacity-50" />
-              </SidebarMenuButton>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              className="w-max min-w-48 max-w-72 rounded-lg"
-              align="start"
-              side="bottom"
-              sideOffset={4}
-            >
-              <DropdownMenuItem onClick={handleHome}>
-                <Home />
-                {m.sidebar_all_projects()}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setCreateDialogOpen(true)}>
-                <FolderPlus />
-                {m.home_create_project()}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleOpenProjectFolder}>
-                <FolderOpen />
-                {m.home_open_project()}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setCloneDialogOpen(true)}>
-                <FolderGit2 />
-                {m.home_clone_project()}
-              </DropdownMenuItem>
-              {rootSpaces.length > 0 && <DropdownMenuSeparator />}
-              {rootSpaces.map((project) => (
-                <DropdownMenuItem
-                  key={project.id}
-                  onClick={() => void openProject(project.id)}
-                >
-                  <span>{project.icon}</span>
-                  <span className="truncate pr-3">{project.name}</span>
-                  {project.id === activeRootId && <Check className="ml-auto" />}
+      <div className={cn("flex min-w-0 items-center gap-1", className)}>
+        <SidebarMenu className="min-w-0 flex-1">
+          <SidebarMenuItem>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <SidebarMenuButton className="w-fit max-w-full px-1.5">
+                  <span className="text-base leading-none">
+                    {activeRootIcon || "\u{1F4C1}"}
+                  </span>
+                  <span className="truncate font-medium">
+                    {activeRootName || "Project"}
+                  </span>
+                  <ChevronDown className="opacity-50" />
+                </SidebarMenuButton>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                className="w-max min-w-48 max-w-72 rounded-lg"
+                align="start"
+                side="bottom"
+                sideOffset={4}
+              >
+                <DropdownMenuItem onClick={handleHome}>
+                  <Home />
+                  {m.sidebar_all_projects()}
                 </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </SidebarMenuItem>
-      </SidebarMenu>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setCreateDialogOpen(true)}>
+                  <FolderPlus />
+                  {m.home_create_project()}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleOpenProjectFolder}>
+                  <FolderOpen />
+                  {m.home_open_project()}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setCloneDialogOpen(true)}>
+                  <FolderGit2 />
+                  {m.home_clone_project()}
+                </DropdownMenuItem>
+                {rootSpaces.length > 0 && <DropdownMenuSeparator />}
+                {rootSpaces.map((project) => (
+                  <DropdownMenuItem
+                    key={project.id}
+                    onClick={() => void openProject(project.id)}
+                  >
+                    <span>{project.icon}</span>
+                    <span className="truncate pr-3">{project.name}</span>
+                    {project.id === activeRootId && (
+                      <Check className="ml-auto" />
+                    )}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </SidebarMenuItem>
+        </SidebarMenu>
+        {showSettingsButton && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                aria-label={m.sidebar_project_settings()}
+                variant="ghost"
+                size="icon-sm"
+                className="ml-auto"
+                onClick={handleProjectSettings}
+                disabled={!activeRootPath}
+              >
+                <SettingsIcon />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {m.sidebar_project_settings()}
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </div>
 
       <RootProjectDialogs
         cloneOpen={cloneDialogOpen}

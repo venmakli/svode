@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import * as m from "@/paraglide/messages.js";
-import type { AssetsStrategy } from "@/features/space";
+import type { AssetsS3Config, AssetsStrategy } from "@/features/space";
 import {
   checkS3Connection,
   getAssetsConfig,
@@ -25,6 +25,11 @@ export function useSpaceStorageConfig({
   const [assetsStrategy, setAssetsStrategy] = useState<AssetsStrategy>("local");
   const [savedAssetsStrategy, setSavedAssetsStrategy] =
     useState<AssetsStrategy>("local");
+  const [savedS3Config, setSavedS3Config] = useState<AssetsS3Config | null>(
+    null,
+  );
+  const [inheritedFromProject, setInheritedFromProject] = useState(false);
+  const [ownerSpaceId, setOwnerSpaceId] = useState<string | null>(null);
   const [s3Endpoint, setS3Endpoint] = useState("");
   const [s3Bucket, setS3Bucket] = useState("");
   const [s3Region, setS3Region] = useState("");
@@ -37,11 +42,19 @@ export function useSpaceStorageConfig({
   const canTestS3 =
     s3TestState !== "testing" &&
     Boolean(s3Endpoint.trim() && s3Bucket.trim() && s3Region.trim());
+  const currentS3Config: AssetsS3Config | null = {
+    endpoint: s3Endpoint.trim(),
+    bucket: s3Bucket.trim(),
+    region: s3Region.trim(),
+  };
+  const canUseSavedS3Credentials =
+    hasSavedS3Credentials && sameS3Config(currentS3Config, savedS3Config);
   const canSaveS3 = Boolean(
-    s3Endpoint.trim() &&
-    s3Bucket.trim() &&
-    s3Region.trim() &&
-    (hasSavedS3Credentials || (s3AccessKey.trim() && s3SecretKey.trim())),
+    currentS3Config.endpoint &&
+      currentS3Config.bucket &&
+      currentS3Config.region &&
+      (canUseSavedS3Credentials ||
+        (s3AccessKey.trim() && s3SecretKey.trim())),
   );
 
   useEffect(() => {
@@ -61,24 +74,37 @@ export function useSpaceStorageConfig({
       return {
         strategy: cfg.strategy,
         s3: cfg.s3,
+        inheritedFromProject: cfg.inheritedFromProject,
+        ownerSpaceId: cfg.ownerSpaceId,
         hasCredentials,
       };
     };
 
     void loadStorageConfig()
-      .then(({ strategy, s3, hasCredentials }) => {
-        if (cancelled) return;
-        setAssetsStrategy(strategy);
-        setSavedAssetsStrategy(strategy);
-        setS3Endpoint(s3?.endpoint ?? "");
-        setS3Bucket(s3?.bucket ?? "");
-        setS3Region(s3?.region ?? "");
-        setS3AccessKey("");
-        setS3SecretKey("");
-        setS3TestState("idle");
-        setS3TestError(null);
-        setHasSavedS3Credentials(hasCredentials);
-      })
+      .then(
+        ({
+          strategy,
+          s3,
+          inheritedFromProject,
+          ownerSpaceId,
+          hasCredentials,
+        }) => {
+          if (cancelled) return;
+          setAssetsStrategy(strategy);
+          setSavedAssetsStrategy(strategy);
+          setSavedS3Config(s3 ?? null);
+          setInheritedFromProject(inheritedFromProject);
+          setOwnerSpaceId(ownerSpaceId);
+          setS3Endpoint(s3?.endpoint ?? "");
+          setS3Bucket(s3?.bucket ?? "");
+          setS3Region(s3?.region ?? "");
+          setS3AccessKey("");
+          setS3SecretKey("");
+          setS3TestState("idle");
+          setS3TestError(null);
+          setHasSavedS3Credentials(hasCredentials);
+        },
+      )
       .catch((err) => {
         console.error("Failed to load storage settings:", err);
       });
@@ -117,25 +143,35 @@ export function useSpaceStorageConfig({
   }, [canTestS3, s3AccessKey, s3SecretKey, s3Endpoint, s3Bucket, s3Region]);
 
   const markStrategyApplied = useCallback(
-    (next: AssetsStrategy) => {
+    (next: AssetsStrategy, nextS3Config: AssetsS3Config | null) => {
+      const keepSavedCredentials =
+        next === "lfs-s3" &&
+        hasSavedS3Credentials &&
+        sameS3Config(nextS3Config, savedS3Config);
       setAssetsStrategy(next);
       setSavedAssetsStrategy(next);
+      setSavedS3Config(nextS3Config);
       if (next === "lfs-s3") {
         if (s3AccessKey.trim() && s3SecretKey.trim()) {
           setHasSavedS3Credentials(true);
           setS3AccessKey("");
           setS3SecretKey("");
+        } else {
+          setHasSavedS3Credentials(keepSavedCredentials);
         }
       } else {
         setHasSavedS3Credentials(false);
       }
     },
-    [s3AccessKey, s3SecretKey],
+    [hasSavedS3Credentials, s3AccessKey, s3SecretKey, savedS3Config],
   );
 
   return {
     assetsStrategy,
     savedAssetsStrategy,
+    savedS3Config,
+    inheritedFromProject,
+    ownerSpaceId,
     s3Endpoint,
     s3Bucket,
     s3Region,
@@ -155,4 +191,17 @@ export function useSpaceStorageConfig({
     testS3,
     markStrategyApplied,
   };
+}
+
+function sameS3Config(
+  left: AssetsS3Config | null,
+  right: AssetsS3Config | null,
+) {
+  return (
+    left !== null &&
+    right !== null &&
+    left.endpoint === right.endpoint &&
+    left.bucket === right.bucket &&
+    left.region === right.region
+  );
 }

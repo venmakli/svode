@@ -32,7 +32,6 @@ export function MainLayout() {
   const { available, recheck } = useGitAvailability();
   const { name: identityName, email: identityEmail } = useEffectiveIdentity();
   const openAppSettings = useShellStore((state) => state.openAppSettings);
-  const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
   const mainSurface = useShellStore((state) => state.mainSurface);
   const openContentSurface = useShellStore((state) => state.openContentSurface);
   const openInboxSurface = useShellStore((state) => state.openInboxSurface);
@@ -81,7 +80,6 @@ export function MainLayout() {
           onOpenSessions={openSessionsSurface}
           onOpenSearch={() => setCommandPaletteOpen(true)}
           onOpenAppSettings={openAppSettings}
-          onOpenSpaceSettings={openSpaceSettings}
         />
         <SidebarInset className="min-h-0 overflow-hidden md:peer-data-[state=expanded]:rounded-l-xl md:peer-data-[state=expanded]:border-l md:peer-data-[state=expanded]:border-sidebar-border">
           <WindowHeader />

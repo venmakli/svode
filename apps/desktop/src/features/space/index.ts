@@ -26,3 +26,4 @@ export {
   type SpaceTreeSyncState,
 } from "./model/public-space";
 export { useSpaceActions } from "./hooks/use-space-actions";
+export { CreateSpaceDialog } from "./ui/create-space-dialog";

@@ -29,10 +29,11 @@ function isMacPlatform() {
 }
 
 export function ShellChrome() {
-  const { state, toggleSidebar } = useSidebar();
+  const { state, toggleSidebar, isMobile, openMobile } = useSidebar();
   const isFullscreen = useFullscreen();
   const chromeRef = useRef<HTMLDivElement>(null);
   const sidebarHidden = state === "collapsed";
+  const showProjectSettings = !sidebarHidden && (!isMobile || openMobile);
   const isMac = isMacPlatform();
   const reserveTrafficLights = isMac && !isFullscreen;
   const sidebarShortcutLabel = isMac ? "⌘B" : "Ctrl+B";
@@ -64,7 +65,10 @@ export function ShellChrome() {
       ref={chromeRef}
       data-tauri-drag-region
       className={cn(
-        "absolute left-0 top-0 z-30 flex h-[44px] w-max max-w-[var(--sidebar-width)] min-w-0 items-center gap-1 bg-sidebar pr-2 transition-colors",
+        "absolute left-0 top-0 z-30 flex h-[44px] min-w-0 items-center gap-1 bg-sidebar pr-2 transition-colors",
+        sidebarHidden
+          ? "w-max max-w-[var(--sidebar-width)]"
+          : "w-[var(--sidebar-width)]",
         sidebarHidden && "bg-transparent",
         reserveTrafficLights ? "pl-[72px]" : "pl-2",
       )}
@@ -84,7 +88,10 @@ export function ShellChrome() {
           Toggle sidebar ({sidebarShortcutLabel})
         </TooltipContent>
       </Tooltip>
-      <ProjectSwitcher className="w-fit min-w-0 max-w-full" />
+      <ProjectSwitcher
+        className="min-w-0 flex-1"
+        showSettingsButton={showProjectSettings}
+      />
     </div>
   );
 }

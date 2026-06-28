@@ -26,7 +26,6 @@ interface SpaceSidebarProps {
   onOpenSessions: () => void;
   onOpenSearch: () => void;
   onOpenAppSettings: () => void;
-  onOpenSpaceSettings: (spacePath: string) => void;
 }
 
 export function SpaceSidebar({
@@ -39,7 +38,6 @@ export function SpaceSidebar({
   onOpenSessions,
   onOpenSearch,
   onOpenAppSettings,
-  onOpenSpaceSettings,
 }: SpaceSidebarProps) {
   const userName = identityName || "User";
   const initials = userName
@@ -60,10 +58,7 @@ export function SpaceSidebar({
           onOpenSessions={onOpenSessions}
           onOpenSearch={onOpenSearch}
         />
-        <NavSpaces
-          onActivateContent={onActivateContent}
-          onOpenSpaceSettings={onOpenSpaceSettings}
-        />
+        <NavSpaces onActivateContent={onActivateContent} />
       </SidebarContent>
 
       <SidebarFooter>

@@ -10,7 +10,6 @@ import {
   FolderPlus,
   Loader2,
   Pencil,
-  Settings,
   Trash2,
   X,
 } from "lucide-react";
@@ -67,7 +66,6 @@ interface SpaceRowProps {
   handleNewPage: (scope: ScopeTarget) => void;
   handleNewFolder: (scope: ScopeTarget) => void;
   handleNewCollection: (scope: ScopeTarget) => void;
-  openSpaceSettings: (path: string) => void;
   openScopeHome: (ws: SpaceInfo) => void;
   setDeleteTarget: (target: DeleteSpaceTarget) => void;
   handleCloneMissing: (spaceId: string, spacePath: string) => void;
@@ -100,7 +98,6 @@ export function SpaceRow({
   handleNewPage,
   handleNewFolder,
   handleNewCollection,
-  openSpaceSettings,
   openScopeHome,
   setDeleteTarget,
   handleCloneMissing,
@@ -279,10 +276,6 @@ export function SpaceRow({
             </DropdownMenuItem>
             {gitControls.dropdownItem}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => openSpaceSettings(ws.path)}>
-              <Settings />
-              {m.space_settings()}
-            </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => {
                 setEditingSpaceId(ws.id);

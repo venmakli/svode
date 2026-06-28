@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Loader2 } from "lucide-react";
+import { CheckCircle2, Loader2 } from "lucide-react";
 import type { AssetsStrategy, LfsState, SpaceGitType } from "@/features/space";
 import type { UseSpaceStorageSettingsResult } from "../hooks/use-space-storage-settings";
 
@@ -29,6 +29,9 @@ export function StorageSettingsSection({
   activeRootName,
   settings,
 }: StorageSettingsSectionProps) {
+  const isRepoSpace =
+    !settings.isRoot && (gitType === "independent" || gitType === "submodule");
+
   if (gitType === "inline") {
     return (
       <div className="space-y-3 max-w-md">
@@ -82,7 +85,7 @@ export function StorageSettingsSection({
     },
   ];
 
-  return (
+  const storageControls = (
     <div className="space-y-4 max-w-md">
       <div>
         <Label className="text-sm font-medium">{m.storage_title()}</Label>
@@ -302,6 +305,82 @@ export function StorageSettingsSection({
           {m.storage_used_by_inline_spaces({
             names: settings.inlineSpaceNames.join(", "),
           })}
+        </p>
+      )}
+    </div>
+  );
+
+  if (isRepoSpace) {
+    return (
+      <div className="flex max-w-md flex-col gap-4">
+        <RepositoryProjectSetting
+          activeRootName={activeRootName}
+          settings={settings}
+        />
+        {storageControls}
+      </div>
+    );
+  }
+
+  return storageControls;
+}
+
+function RepositoryProjectSetting({
+  activeRootName,
+  settings,
+}: {
+  activeRootName: string | null;
+  settings: UseSpaceStorageSettingsResult;
+}) {
+  const projectName = activeRootName ?? "";
+  const isS3ProjectDefault = settings.projectAssetsStrategy === "lfs-s3";
+  const showS3Hint = isS3ProjectDefault && !settings.projectDefaultApplied;
+  const projectSettingDisabled =
+    settings.applyingStrategy || (isS3ProjectDefault && !settings.lfsAvailable);
+
+  return (
+    <div className="flex flex-col gap-3 rounded-md border p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 space-y-1">
+          <Label className="text-sm font-medium">
+            {m.storage_project_setting_title()}
+          </Label>
+          <p className="text-xs text-muted-foreground">
+            {m.storage_project_setting_summary({
+              name: projectName,
+              strategy: settings.projectAssetsStrategy,
+            })}
+          </p>
+        </div>
+        {settings.projectDefaultApplied ? (
+          <Badge variant="secondary" className="shrink-0 gap-1">
+            <CheckCircle2 className="size-3" />
+            {m.storage_project_setting_applied()}
+          </Badge>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            onClick={() => void settings.useProjectStorageSetting()}
+            disabled={projectSettingDisabled}
+          >
+            {settings.applyingStrategy && (
+              <Loader2 className="mr-1 size-3 animate-spin" />
+            )}
+            {m.storage_use_project_setting()}
+          </Button>
+        )}
+      </div>
+      {!settings.projectDefaultApplied && (
+        <p className="text-xs text-muted-foreground">
+          {m.storage_project_setting_differs_hint()}
+        </p>
+      )}
+      {showS3Hint && (
+        <p className="text-xs text-muted-foreground">
+          {m.storage_project_setting_s3_hint()}
         </p>
       )}
     </div>
