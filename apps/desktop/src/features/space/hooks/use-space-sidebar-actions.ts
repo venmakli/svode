@@ -1,8 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useActiveEntrySelection } from "@/features/entry/selection";
 import { useSpaceStore } from "../model";
 import { useMissingSpaceClone } from "./use-missing-space-clone";
 import { useSpaceActions } from "./use-space-actions";
+import { useSidebarTreeExpansionControl } from "./use-sidebar-tree-expansion-control";
 import { useSpaceLfsStateSync } from "./use-space-lfs-state-sync";
 import { useSpaceScopeActions } from "./use-space-scope-actions";
 import type { ScopeTarget } from "./use-space-scope-actions";
@@ -72,6 +73,33 @@ export function useSpaceSidebarActions({
     activeRevealRequest,
     scopeId: activeRootId,
   });
+  const activeRevealKeysByScopeId = useMemo(() => {
+    const keys: Record<string, string | null> = {};
+    if (activeRootId) {
+      keys[activeRootId] = activeRootRevealKey;
+    }
+    for (const space of spaces) {
+      keys[space.id] = getSpaceScopeActiveRevealKey({
+        activeDocument,
+        activeDocumentSpaceId,
+        activeRevealRequest,
+        scopeId: space.id,
+      });
+    }
+    return keys;
+  }, [
+    activeDocument,
+    activeDocumentSpaceId,
+    activeRevealRequest,
+    activeRootId,
+    activeRootRevealKey,
+    spaces,
+  ]);
+  const sidebarTreeExpansion = useSidebarTreeExpansionControl({
+    activeRootId,
+    activeRevealKeysByScopeId,
+    spaces,
+  });
   const { handleCloneMissing, handleRemoveBroken } = useMissingSpaceClone(
     activeRootPath,
     loadSpaces,
@@ -87,8 +115,10 @@ export function useSpaceSidebarActions({
     clearActiveSpace,
     ensureTreeLoaded,
     fileTrees,
+    getScopeCollapseState: sidebarTreeExpansion.getScopeCollapseState,
     onActivateContent,
     openSpace,
+    setScopeCollapseState: sidebarTreeExpansion.setScopeCollapseState,
   });
 
   useEffect(() => {
@@ -150,10 +180,16 @@ export function useSpaceSidebarActions({
     handleRemoveBroken,
     handleRenameSpace,
     handleRootOpenChange,
+    handleSidebarTreeExpansionToggle:
+      sidebarTreeExpansion.handleToggleExpansion,
     handleSpaceDragEnd,
     loadTreeChildren,
     rootHomeActive,
     rootOpen,
+    sidebarTreeExpansionAction: sidebarTreeExpansion.action,
+    sidebarTreeExpansionLabel: sidebarTreeExpansion.label,
+    getSidebarScopeCollapseState: sidebarTreeExpansion.getScopeCollapseState,
+    setSidebarScopeCollapseState: sidebarTreeExpansion.setScopeCollapseState,
     setCreateDialogOpen,
     setDeleteFiles,
     setDeleteTarget,

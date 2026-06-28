@@ -9,6 +9,8 @@
   "sidebar_documents": "DOCUMENTS",
   "sidebar_spaces": "SPACES",
   "sidebar_content": "Space",
+  "sidebar_collapse_all": "Collapse all",
+  "sidebar_expand_all": "Expand all",
   "sidebar_inbox": "Inbox",
   "sidebar_sessions": "Sessions",
   "sidebar_project_settings": "Project settings",

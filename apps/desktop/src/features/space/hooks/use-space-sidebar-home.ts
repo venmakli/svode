@@ -7,13 +7,21 @@ import type { TreeNode } from "../model/types";
 import type { SpaceInfo } from "../model";
 import { useSpaceStore } from "../model";
 import { hasRecordKey, hasScopeReadme } from "../lib/nav-space-tree";
-import { useSpaceScopeCollapse } from "./use-space-scope-collapse";
+import {
+  useSpaceScopeCollapse,
+  type SpaceScopeCollapseState,
+} from "./use-space-scope-collapse";
 
 interface UseSpaceSidebarHomeInput {
   activeRootId: string | null;
   clearActiveSpace: () => void;
   ensureTreeLoaded: (spaceId: string) => Promise<void>;
   fileTrees: Record<string, TreeNode[]>;
+  getScopeCollapseState: (scopeId: string | null) => SpaceScopeCollapseState;
+  setScopeCollapseState: (
+    scopeId: string,
+    state: SpaceScopeCollapseState,
+  ) => void;
   activeRootRevealKey: string | null;
   onActivateContent: () => void;
   openSpace: (id: string) => Promise<void>;
@@ -25,6 +33,8 @@ export function useSpaceSidebarHome({
   clearActiveSpace,
   ensureTreeLoaded,
   fileTrees,
+  getScopeCollapseState,
+  setScopeCollapseState,
   onActivateContent,
   openSpace,
 }: UseSpaceSidebarHomeInput) {
@@ -33,13 +43,15 @@ export function useSpaceSidebarHome({
   const loadRootTree = useCallback(() => {
     if (activeRootId) void ensureTreeLoaded(activeRootId);
   }, [activeRootId, ensureTreeLoaded]);
-  const {
-    handleOpenChange: handleRootOpenChange,
-    open: rootOpen,
-  } = useSpaceScopeCollapse({
-    activeRevealKey: activeRootRevealKey,
-    onOpen: loadRootTree,
-  });
+  const { handleOpenChange: handleRootOpenChange, open: rootOpen } =
+    useSpaceScopeCollapse({
+      activeRevealKey: activeRootRevealKey,
+      onOpen: loadRootTree,
+      onScopeStateChange: (state) => {
+        if (activeRootId) setScopeCollapseState(activeRootId, state);
+      },
+      scopeState: getScopeCollapseState(activeRootId),
+    });
 
   const openHomeForScope = useCallback(
     (spaceId: string, tree: TreeNode[] | null) => {

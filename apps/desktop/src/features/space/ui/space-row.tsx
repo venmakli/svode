@@ -44,7 +44,10 @@ import type {
   ScopeTarget,
   DeleteSpaceTarget,
 } from "../hooks/use-space-sidebar-actions";
-import { useSpaceScopeCollapse } from "../hooks/use-space-scope-collapse";
+import {
+  useSpaceScopeCollapse,
+  type SpaceScopeCollapseState,
+} from "../hooks/use-space-scope-collapse";
 import type { SpaceInfo } from "../model";
 import { FileTreeItem } from "./file-tree-item";
 import { TreeLoadingRows } from "./nav-space-indicators";
@@ -70,10 +73,12 @@ interface SpaceRowProps {
   handleCloneMissing: (spaceId: string, spacePath: string) => void;
   handleRemoveBroken: (spaceId: string) => void;
   ensureTreeLoaded: (spaceId: string) => Promise<void>;
+  scopeState: SpaceScopeCollapseState;
   loadTreeChildren: (
     spaceId: string,
     parentPath?: string | null,
   ) => Promise<void>;
+  onScopeStateChange: (state: SpaceScopeCollapseState) => void;
   onActivateContent: () => void;
   editRef: RefObject<HTMLInputElement | null>;
   rootPath: string;
@@ -101,7 +106,9 @@ export function SpaceRow({
   handleCloneMissing,
   handleRemoveBroken,
   ensureTreeLoaded,
+  scopeState,
   loadTreeChildren,
+  onScopeStateChange,
   onActivateContent,
   editRef,
   rootPath,
@@ -134,15 +141,16 @@ export function SpaceRow({
     isDragging && "cursor-grabbing",
   );
   const scope = { id: ws.id, path: ws.path };
+  const scopeReady = ws.status === "ready";
   const loadScopeTree = useCallback(() => {
     void ensureTreeLoaded(ws.id);
   }, [ensureTreeLoaded, ws.id]);
-  const {
-    handleOpenChange,
-    open,
-  } = useSpaceScopeCollapse({
+  const { handleOpenChange, open } = useSpaceScopeCollapse({
     activeRevealKey,
+    disabled: !scopeReady,
     onOpen: loadScopeTree,
+    onScopeStateChange,
+    scopeState,
   });
 
   if (ws.status === "missing" || ws.status === "broken") {
@@ -197,11 +205,7 @@ export function SpaceRow({
   }
 
   return (
-    <Collapsible
-      asChild
-      open={open}
-      onOpenChange={handleOpenChange}
-    >
+    <Collapsible asChild open={open} onOpenChange={handleOpenChange}>
       <SidebarMenuItem
         ref={setNodeRef}
         style={sortableStyle}

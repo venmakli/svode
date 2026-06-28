@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import type { EntryRevealRequest } from "@/features/entry/selection";
 
 interface SpaceScopeRevealInput {
@@ -8,15 +8,21 @@ interface SpaceScopeRevealInput {
   scopeId: string | null;
 }
 
-interface SpaceScopeOpenInput {
-  activeRevealKey: string | null;
+export interface SpaceScopeCollapseState {
   manuallyCollapsedRevealKey: string | null;
   manuallyOpened: boolean;
 }
 
+interface SpaceScopeOpenInput extends SpaceScopeCollapseState {
+  activeRevealKey: string | null;
+}
+
 interface UseSpaceScopeCollapseInput {
   activeRevealKey: string | null;
+  disabled?: boolean;
   onOpen?: () => void;
+  onScopeStateChange: (state: SpaceScopeCollapseState) => void;
+  scopeState: SpaceScopeCollapseState;
 }
 
 export function getSpaceScopeActiveRevealKey({
@@ -44,36 +50,55 @@ export function isSpaceScopeOpen({
 }: SpaceScopeOpenInput): boolean {
   return (
     manuallyOpened ||
-    (activeRevealKey !== null &&
-      manuallyCollapsedRevealKey !== activeRevealKey)
+    (activeRevealKey !== null && manuallyCollapsedRevealKey !== activeRevealKey)
   );
 }
 
 export function useSpaceScopeCollapse({
   activeRevealKey,
+  disabled = false,
   onOpen,
+  onScopeStateChange,
+  scopeState,
 }: UseSpaceScopeCollapseInput) {
-  const [manuallyOpened, setManuallyOpened] = useState(false);
-  const [manuallyCollapsedRevealKey, setManuallyCollapsedRevealKey] = useState<
-    string | null
-  >(null);
-  const open = isSpaceScopeOpen({
-    activeRevealKey,
-    manuallyCollapsedRevealKey,
-    manuallyOpened,
-  });
+  const open =
+    !disabled &&
+    isSpaceScopeOpen({
+      activeRevealKey,
+      manuallyCollapsedRevealKey: scopeState.manuallyCollapsedRevealKey,
+      manuallyOpened: scopeState.manuallyOpened,
+    });
 
   const handleOpenChange = useCallback(
     (nextOpen: boolean) => {
-      setManuallyOpened(nextOpen);
-      setManuallyCollapsedRevealKey(nextOpen ? null : activeRevealKey);
+      if (disabled) return;
+      onScopeStateChange({
+        manuallyCollapsedRevealKey: nextOpen ? null : activeRevealKey,
+        manuallyOpened: nextOpen,
+      });
       if (nextOpen) onOpen?.();
     },
-    [activeRevealKey, onOpen],
+    [activeRevealKey, disabled, onOpen, onScopeStateChange],
   );
 
   return {
     handleOpenChange,
     open,
+  };
+}
+
+export function collapsedSpaceScopeState(
+  activeRevealKey: string | null,
+): SpaceScopeCollapseState {
+  return {
+    manuallyCollapsedRevealKey: activeRevealKey,
+    manuallyOpened: false,
+  };
+}
+
+export function expandedSpaceScopeState(): SpaceScopeCollapseState {
+  return {
+    manuallyCollapsedRevealKey: null,
+    manuallyOpened: true,
   };
 }

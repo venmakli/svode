@@ -31,6 +31,10 @@ import {
   updateTreeSchemaInParents,
   upsertTreeNodeInParent,
 } from "../lib/tree-cache";
+import {
+  sidebarTreeExpansionPaths,
+  type SidebarTreeExpansionAction,
+} from "../lib/sidebar-tree-expansion";
 import type { SpaceInfo } from "./types";
 
 export type RefreshTreeOptions = { continuePending?: boolean };
@@ -111,6 +115,10 @@ export interface SpaceTreeState extends SpaceTreeDataState {
   markTreeDirty: (spaceId: string) => void;
   markTreeParentDirty: (spaceId: string, parentPath?: string | null) => void;
   loadExpandedPaths: (spaceId: string) => Promise<void>;
+  applySidebarTreeExpansion: (
+    spaceIds: string[],
+    action: SidebarTreeExpansionAction,
+  ) => void;
   toggleExpanded: (spaceId: string, path: string) => void;
   moveEntry: (
     spaceId: string,
@@ -160,6 +168,11 @@ function withoutRecordKey<T>(record: Record<string, T>, key: string) {
   const next = { ...record };
   delete next[key];
   return next;
+}
+
+function sameStringArray(left: string[] | undefined, right: string[]) {
+  if (!left || left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
 }
 
 async function runLimited<T>(
@@ -981,6 +994,49 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
         }));
       } catch {
         // ignore — no persisted state
+      }
+    },
+
+    applySidebarTreeExpansion: (spaceIds, action) => {
+      const state = get();
+      const uniqueSpaceIds = Array.from(new Set(spaceIds));
+      const nextExpandedPaths = { ...state.expandedPaths };
+      const nextFileTrees = { ...state.fileTrees };
+      const changedSpaceIds: string[] = [];
+
+      for (const spaceId of uniqueSpaceIds) {
+        const next = sidebarTreeExpansionPaths(
+          action,
+          state.childrenByParentPath[spaceId],
+        );
+        const current = state.expandedPaths[spaceId] ?? [];
+
+        if (sameStringArray(current, next)) continue;
+
+        nextExpandedPaths[spaceId] = next;
+        if (state.childrenByParentPath[spaceId]) {
+          nextFileTrees[spaceId] = buildLoadedTree(
+            state.childrenByParentPath[spaceId],
+            next,
+          );
+        }
+        changedSpaceIds.push(spaceId);
+      }
+
+      if (changedSpaceIds.length === 0) return;
+
+      set({
+        expandedPaths: nextExpandedPaths,
+        fileTrees: nextFileTrees,
+      });
+
+      for (const spaceId of changedSpaceIds) {
+        const spacePath = findSpacePath(get(), spaceId);
+        if (spacePath) {
+          spaceActions
+            .saveSpaceExpandedPaths(spacePath, nextExpandedPaths[spaceId] ?? [])
+            .catch(() => {});
+        }
       }
     },
 

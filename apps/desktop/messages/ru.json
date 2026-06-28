@@ -9,6 +9,8 @@
   "sidebar_documents": "ДОКУМЕНТЫ",
   "sidebar_spaces": "ПРОСТРАНСТВА",
   "sidebar_content": "Пространство",
+  "sidebar_collapse_all": "Свернуть всё",
+  "sidebar_expand_all": "Развернуть всё",
   "sidebar_inbox": "Входящие",
   "sidebar_sessions": "Сессии",
   "sidebar_project_settings": "Настройки проекта",

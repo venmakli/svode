@@ -9,6 +9,7 @@ import {
   SortableContext,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import { ChevronsDownUp, ChevronsUpDown } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
 import {
   AlertDialog,
@@ -23,10 +24,16 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   SidebarGroup,
+  SidebarGroupAction,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarMenu,
 } from "@/components/ui/sidebar";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useSpaceSidebarActions } from "../hooks/use-space-sidebar-actions";
 import { getSpaceScopeActiveRevealKey } from "../hooks/use-space-scope-collapse";
 import { hasRecordKey, visibleScopeChildren } from "../lib/nav-space-tree";
@@ -74,10 +81,15 @@ export function NavSpaces({
     handleRemoveBroken,
     handleRenameSpace,
     handleRootOpenChange,
+    handleSidebarTreeExpansionToggle,
     handleSpaceDragEnd,
     loadTreeChildren,
     rootHomeActive,
     rootOpen,
+    sidebarTreeExpansionAction,
+    sidebarTreeExpansionLabel,
+    getSidebarScopeCollapseState,
+    setSidebarScopeCollapseState,
     setCreateDialogOpen,
     setDeleteFiles,
     setDeleteTarget,
@@ -96,7 +108,27 @@ export function NavSpaces({
   return (
     <>
       <SidebarGroup>
-        <SidebarGroupLabel>{m.sidebar_content()}</SidebarGroupLabel>
+        <SidebarGroupLabel className="group/space-header pr-8">
+          <span className="truncate">{m.sidebar_content()}</span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <SidebarGroupAction
+                aria-label={sidebarTreeExpansionLabel}
+                className="size-5 text-sidebar-foreground/70 opacity-0 transition-opacity hover:bg-transparent hover:text-sidebar-foreground/70 group-hover/space-header:opacity-100 group-focus-within/space-header:opacity-100 focus-visible:opacity-100 [&>svg]:size-3"
+                onClick={handleSidebarTreeExpansionToggle}
+              >
+                {sidebarTreeExpansionAction === "collapse" ? (
+                  <ChevronsDownUp />
+                ) : (
+                  <ChevronsUpDown />
+                )}
+              </SidebarGroupAction>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              {sidebarTreeExpansionLabel}
+            </TooltipContent>
+          </Tooltip>
+        </SidebarGroupLabel>
         <SidebarGroupContent>
           <SidebarMenu>
             <RootScopeRow
@@ -169,7 +201,11 @@ export function NavSpaces({
                       handleCloneMissing={handleCloneMissing}
                       handleRemoveBroken={handleRemoveBroken}
                       ensureTreeLoaded={ensureTreeLoaded}
+                      scopeState={getSidebarScopeCollapseState(space.id)}
                       loadTreeChildren={loadTreeChildren}
+                      onScopeStateChange={(state) =>
+                        setSidebarScopeCollapseState(space.id, state)
+                      }
                       onActivateContent={onActivateContent}
                       editRef={editRef}
                       rootPath={activeRootPath}
