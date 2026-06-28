@@ -117,7 +117,7 @@ export function useSpaceStorageSettings({
   const [strategyInFlight, setStrategyInFlight] =
     useState<AssetsStrategy | null>(null);
 
-  const countCurrentAssets = useCallback(async () => {
+  const countCurrentAssets = useCallback(async (): Promise<number | null> => {
     if (!spacePath) return 0;
     try {
       return await countAssets({
@@ -125,37 +125,11 @@ export function useSpaceStorageSettings({
         spaceId: currentSpaceId,
       });
     } catch (err) {
-      console.warn("count_assets failed, continuing without warning:", err);
-      return 0;
+      console.warn("count_assets failed, blocking strategy apply:", err);
+      toast.error(m.storage_count_failed());
+      return null;
     }
   }, [spacePath, projectPath, currentSpaceId]);
-
-  const selectStrategy = useCallback(
-    async (next: AssetsStrategy) => {
-      if (next === savedAssetsStrategy) return;
-      if ((next === "lfs-remote" || next === "lfs-s3") && !lfsAvailable) {
-        return;
-      }
-      if (next === "lfs-s3") {
-        setAssetsStrategy("lfs-s3");
-        return;
-      }
-      setPendingAssetCount(await countCurrentAssets());
-      setPendingStrategy(next);
-    },
-    [
-      countCurrentAssets,
-      lfsAvailable,
-      savedAssetsStrategy,
-      setAssetsStrategy,
-    ],
-  );
-
-  const saveS3 = useCallback(async () => {
-    if (!canSaveS3) return;
-    setPendingAssetCount(await countCurrentAssets());
-    setPendingStrategy("lfs-s3");
-  }, [canSaveS3, countCurrentAssets]);
 
   const applyStrategy = useCallback(
     async (next: AssetsStrategy) => {
@@ -234,6 +208,83 @@ export function useSpaceStorageSettings({
       spacePath,
     ],
   );
+
+  const confirmOrApplyStrategy = useCallback(
+    async (next: AssetsStrategy) => {
+      const assetCount = await countCurrentAssets();
+      if (assetCount === null) {
+        setAssetsStrategy(savedAssetsStrategy);
+        setPendingAssetCount(0);
+        setPendingStrategy(null);
+        return;
+      }
+      if (assetCount > 0) {
+        setPendingAssetCount(assetCount);
+        setPendingStrategy(next);
+        return;
+      }
+      setPendingAssetCount(0);
+      setPendingStrategy(null);
+      await applyStrategy(next);
+    },
+    [applyStrategy, countCurrentAssets, savedAssetsStrategy, setAssetsStrategy],
+  );
+
+  const rejectUnsupportedMigration = useCallback(() => {
+    toast.error(m.storage_migration_unsupported());
+    setAssetsStrategy(savedAssetsStrategy);
+    setPendingAssetCount(0);
+    setPendingStrategy(null);
+  }, [savedAssetsStrategy, setAssetsStrategy]);
+
+  const selectStrategy = useCallback(
+    async (next: AssetsStrategy) => {
+      if (next === savedAssetsStrategy) {
+        setAssetsStrategy(savedAssetsStrategy);
+        setPendingAssetCount(0);
+        setPendingStrategy(null);
+        return;
+      }
+      if (savedAssetsStrategy !== "local") {
+        rejectUnsupportedMigration();
+        return;
+      }
+      if ((next === "lfs-remote" || next === "lfs-s3") && !lfsAvailable) {
+        return;
+      }
+      if (next === "lfs-s3") {
+        setAssetsStrategy("lfs-s3");
+        return;
+      }
+      await confirmOrApplyStrategy(next);
+    },
+    [
+      confirmOrApplyStrategy,
+      lfsAvailable,
+      rejectUnsupportedMigration,
+      savedAssetsStrategy,
+      setAssetsStrategy,
+    ],
+  );
+
+  const saveS3 = useCallback(async () => {
+    if (!canSaveS3) return;
+    if (savedAssetsStrategy !== "local" && savedAssetsStrategy !== "lfs-s3") {
+      rejectUnsupportedMigration();
+      return;
+    }
+    if (savedAssetsStrategy === "lfs-s3") {
+      await applyStrategy("lfs-s3");
+      return;
+    }
+    await confirmOrApplyStrategy("lfs-s3");
+  }, [
+    applyStrategy,
+    canSaveS3,
+    confirmOrApplyStrategy,
+    rejectUnsupportedMigration,
+    savedAssetsStrategy,
+  ]);
 
   const cancelPendingStrategy = useCallback(() => {
     setPendingStrategy(null);

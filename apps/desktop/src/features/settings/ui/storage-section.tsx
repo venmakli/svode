@@ -95,12 +95,21 @@ export function StorageSettingsSection({
         className="gap-3"
       >
         {storageOptions.map((option) => {
+          const migrationDisabled =
+            settings.savedAssetsStrategy !== "local" &&
+            option.value !== settings.savedAssetsStrategy;
           const disabled =
             settings.applyingStrategy ||
+            migrationDisabled ||
             (option.needsLfs && !settings.lfsAvailable);
           return (
             <label
               key={option.value}
+              title={
+                migrationDisabled
+                  ? m.storage_migration_unsupported_hint()
+                  : undefined
+              }
               className={`flex items-start gap-3 rounded-md border p-3 ${
                 disabled
                   ? "opacity-60 cursor-not-allowed"
@@ -154,6 +163,11 @@ export function StorageSettingsSection({
       {!settings.lfsAvailable && (
         <p className="text-xs text-muted-foreground">
           {m.storage_lfs_install_hint()}
+        </p>
+      )}
+      {settings.savedAssetsStrategy !== "local" && (
+        <p className="text-xs text-muted-foreground">
+          {m.storage_migration_unsupported_hint()}
         </p>
       )}
       {settings.assetsStrategy === "lfs-s3" && (

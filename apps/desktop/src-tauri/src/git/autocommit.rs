@@ -64,7 +64,7 @@ impl SystemCommitKind {
     }
 
     /// Paths to stage, relative to the space root.
-    fn paths(self) -> &'static [&'static str] {
+    pub(crate) fn paths(self) -> &'static [&'static str] {
         match self {
             SystemCommitKind::SpaceConfig => &[".svode/config.json"],
             SystemCommitKind::ReorderSpaces => &[".svode/config.json"],

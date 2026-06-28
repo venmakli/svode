@@ -5,12 +5,12 @@ use serde::Serialize;
 use super::s3;
 use crate::error::AppError;
 use crate::git::GitState;
+use crate::git::cli::{GitCli, GitOutput};
 use crate::git::commands::require_cli;
 use crate::space::types::{AssetsS3Config, AssetsStrategy};
 
 /// Non-fatal diagnostics produced by `apply_strategy` — surfaced to the UI so
-/// the user sees e.g. a silent `git lfs migrate import` failure instead of a
-/// misleading "Settings saved" toast.
+/// the user sees setup warnings instead of a misleading "Settings saved" toast.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyStrategyResult {
@@ -112,13 +112,46 @@ fn write_or_remove(path: &Path, contents: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+fn ensure_storage_strategy_git_args_safe(args: &[&str]) -> Result<(), AppError> {
+    let Some(command) = args.first().copied() else {
+        return Ok(());
+    };
+
+    let rewrites_history = match command {
+        "lfs" => args
+            .get(1)
+            .is_some_and(|subcommand| *subcommand == "migrate"),
+        "filter-branch" | "filter-repo" | "rebase" | "reset" | "checkout" | "switch" => true,
+        "commit" => args.iter().any(|arg| *arg == "--amend"),
+        _ => false,
+    };
+
+    if rewrites_history {
+        return Err(AppError::Storage(format!(
+            "history-rewriting git command is forbidden while applying assets strategy: git {}",
+            args.join(" ")
+        )));
+    }
+
+    Ok(())
+}
+
+async fn exec_storage_strategy_git(
+    cli: &GitCli,
+    space_dir: &Path,
+    args: &[&str],
+) -> Result<GitOutput, AppError> {
+    ensure_storage_strategy_git_args_safe(args)?;
+    cli.exec(space_dir, args).await
+}
+
 /// Apply a new assets strategy: update `.gitignore` / `.gitattributes`,
-/// install/track LFS if needed, and best-effort migrate existing history.
+/// install LFS hooks if needed, and wire S3 transfer-agent config.
 /// Does NOT mutate `SpaceConfig` — the caller owns that.
 ///
-/// LFS setup and history migration are best-effort: failures are collected
-/// into `ApplyStrategyResult.warnings` so the UI can surface them, rather
-/// than swallowed into `tracing::warn!` while the user sees a success toast.
+/// LFS setup is best-effort: failures are collected into
+/// `ApplyStrategyResult.warnings` so the UI can surface them rather than
+/// swallowed into `tracing::warn!` while the user sees a success toast.
 pub async fn apply_strategy(
     git_state: &GitState,
     space_dir: &Path,
@@ -173,19 +206,24 @@ pub async fn apply_strategy(
     {
         let current = read_or_empty(&gitattributes_path)?;
         let stripped = strip_block(&current, LFS_START, LFS_END);
+        let without_raw_lfs_body = stripped
+            .lines()
+            .filter(|line| line.trim() != LFS_BODY)
+            .collect::<Vec<_>>()
+            .join("\n");
         let next = if matches!(new, AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3) {
-            append_block(&stripped, LFS_START, LFS_BODY, LFS_END)
+            append_block(&without_raw_lfs_body, LFS_START, LFS_BODY, LFS_END)
         } else {
-            stripped
+            without_raw_lfs_body
         };
         let next = normalize_trailing_newline(next);
         write_or_remove(&gitattributes_path, &next)?;
     }
 
-    // --- LFS setup + history migration (best-effort). ---
+    // --- LFS setup (best-effort, no history migration). ---
     if matches!(new, AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3) {
         // Install LFS hooks in this repo.
-        match cli.exec(space_dir, &["lfs", "install", "--local"]).await {
+        match exec_storage_strategy_git(&cli, space_dir, &["lfs", "install", "--local"]).await {
             Ok(o) if o.exit_code != 0 => {
                 let msg = format!("git lfs install --local failed: {}", o.stderr.trim());
                 tracing::warn!("{msg}");
@@ -198,73 +236,6 @@ pub async fn apply_strategy(
             }
             _ => {}
         }
-
-        // `git lfs track` will rewrite .gitattributes itself — after it runs,
-        // dedupe and re-apply our managed block as the canonical form.
-        match cli.exec(space_dir, &["lfs", "track", ".assets/**"]).await {
-            Ok(o) if o.exit_code != 0 => {
-                let msg = format!("git lfs track failed: {}", o.stderr.trim());
-                tracing::warn!("{msg}");
-                result.warnings.push(msg);
-            }
-            Err(e) => {
-                let msg = format!("git lfs track errored: {e}");
-                tracing::warn!("{msg}");
-                result.warnings.push(msg);
-            }
-            _ => {}
-        }
-
-        // Re-canonicalize .gitattributes: strip any raw LFS_BODY lines that
-        // `git lfs track` added outside our managed block, then re-append.
-        {
-            let current = read_or_empty(&gitattributes_path)?;
-            let stripped = strip_block(&current, LFS_START, LFS_END);
-            let without_raw: String = stripped
-                .lines()
-                .filter(|l| l.trim() != LFS_BODY)
-                .collect::<Vec<_>>()
-                .join("\n");
-            let next = append_block(&without_raw, LFS_START, LFS_BODY, LFS_END);
-            let next = normalize_trailing_newline(next);
-            write_or_remove(&gitattributes_path, &next)?;
-        }
-
-        // Best-effort history migration. If the repo has no commits yet or
-        // migration fails for any reason (dirty tree, etc.), log and continue.
-        match cli
-            .exec(
-                space_dir,
-                &[
-                    "lfs",
-                    "migrate",
-                    "import",
-                    "--include=.assets/**",
-                    "--everything",
-                    "--yes",
-                ],
-            )
-            .await
-        {
-            Ok(o) if o.exit_code != 0 => {
-                let msg = format!(
-                    "git lfs migrate import failed (continuing): {}",
-                    o.stderr.trim()
-                );
-                tracing::warn!("{msg}");
-                result.warnings.push(msg);
-            }
-            Err(e) => {
-                let msg = format!("git lfs migrate import errored (continuing): {e}");
-                tracing::warn!("{msg}");
-                result.warnings.push(msg);
-            }
-            _ => {}
-        }
-    } else {
-        // TODO: lfs migrate export — when switching FROM an LFS strategy TO
-        // InGit, we could run `git lfs migrate export` to inline pointers back
-        // into the tree. Not attempted in this phase.
     }
 
     // --- LFS S3 custom transfer agent (lfs-dal) wiring/teardown. ---
@@ -302,8 +273,7 @@ pub async fn apply_strategy(
             ("lfs.standalonetransferagent", "lfs-dal"),
         ];
         for (key, value) in pairs {
-            match cli
-                .exec(space_dir, &["config", "--local", key, value])
+            match exec_storage_strategy_git(&cli, space_dir, &["config", "--local", key, value])
                 .await
             {
                 Ok(o) if o.exit_code != 0 => {
@@ -329,8 +299,7 @@ pub async fn apply_strategy(
             "lfs.customtransfer.lfs-dal.concurrent",
         ];
         for key in unset_keys {
-            match cli
-                .exec(space_dir, &["config", "--local", "--unset", key])
+            match exec_storage_strategy_git(&cli, space_dir, &["config", "--local", "--unset", key])
                 .await
             {
                 Ok(o) if o.exit_code != 0 && o.exit_code != 5 => {
@@ -357,4 +326,188 @@ pub async fn apply_strategy(
     // done by the caller via `AutocommitService::commit_system_now` with
     // `SystemCommitKind::AssetsStrategy` — see `storage::commands`.
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::{apply_strategy, ensure_storage_strategy_git_args_safe};
+    use crate::AppError;
+    use crate::git::GitState;
+    use crate::git::cli::GitCli;
+    use crate::space::types::AssetsStrategy;
+
+    #[test]
+    fn storage_strategy_git_guard_blocks_history_rewrites() {
+        for args in [
+            &["lfs", "migrate", "import"][..],
+            &["filter-branch"][..],
+            &["filter-repo"][..],
+            &["rebase"][..],
+            &["reset", "--hard"][..],
+            &["checkout", "main"][..],
+            &["switch", "main"][..],
+            &["commit", "--amend"][..],
+        ] {
+            assert!(ensure_storage_strategy_git_args_safe(args).is_err());
+        }
+    }
+
+    #[test]
+    fn storage_strategy_git_guard_allows_setup_commands() {
+        for args in [
+            &["lfs", "install", "--local"][..],
+            &[
+                "config",
+                "--local",
+                "lfs.standalonetransferagent",
+                "lfs-dal",
+            ][..],
+            &[
+                "config",
+                "--local",
+                "--unset",
+                "lfs.standalonetransferagent",
+            ][..],
+        ] {
+            assert!(ensure_storage_strategy_git_args_safe(args).is_ok());
+        }
+    }
+
+    #[tokio::test]
+    async fn in_git_apply_keeps_head_on_remote_tracking_history() -> Result<(), AppError> {
+        let Some((git_state, _temp, repo)) = setup_remote_tracking_repo().await? else {
+            return Ok(());
+        };
+
+        let cli = git_state.cli.as_ref().expect("checked above");
+        let head_before = git_stdout(cli, &repo, &["rev-parse", "HEAD"]).await?;
+        let origin_head = git_stdout(cli, &repo, &["rev-parse", "origin/main"]).await?;
+
+        apply_strategy(&git_state, &repo, AssetsStrategy::InGit, None, None).await?;
+
+        let head_after = git_stdout(cli, &repo, &["rev-parse", "HEAD"]).await?;
+        let merge_base = git_stdout(cli, &repo, &["merge-base", "HEAD", "origin/main"]).await?;
+        assert_eq!(head_after, head_before);
+        assert_eq!(merge_base, origin_head);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn in_git_apply_removes_raw_svode_lfs_rule_without_moving_head() -> Result<(), AppError> {
+        let Some((git_state, _temp, repo)) = setup_remote_tracking_repo().await? else {
+            return Ok(());
+        };
+
+        let cli = git_state.cli.as_ref().expect("checked above");
+        let head_before = git_stdout(cli, &repo, &["rev-parse", "HEAD"]).await?;
+        std::fs::write(
+            repo.join(".gitattributes"),
+            ".assets/** filter=lfs diff=lfs merge=lfs -text\n",
+        )?;
+
+        apply_strategy(&git_state, &repo, AssetsStrategy::InGit, None, None).await?;
+
+        let head_after = git_stdout(cli, &repo, &["rev-parse", "HEAD"]).await?;
+        assert_eq!(head_after, head_before);
+        assert!(!repo.join(".gitattributes").exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn lfs_remote_apply_keeps_head_on_remote_tracking_history_when_lfs_available()
+    -> Result<(), AppError> {
+        let Some((git_state, _temp, repo)) = setup_remote_tracking_repo().await? else {
+            return Ok(());
+        };
+        let cli = git_state.cli.as_ref().expect("checked above");
+        if !cli.lfs_available() {
+            return Ok(());
+        }
+
+        let head_before = git_stdout(cli, &repo, &["rev-parse", "HEAD"]).await?;
+        let origin_head = git_stdout(cli, &repo, &["rev-parse", "origin/main"]).await?;
+
+        apply_strategy(&git_state, &repo, AssetsStrategy::LfsRemote, None, None).await?;
+
+        let head_after = git_stdout(cli, &repo, &["rev-parse", "HEAD"]).await?;
+        let merge_base = git_stdout(cli, &repo, &["merge-base", "HEAD", "origin/main"]).await?;
+        assert_eq!(head_after, head_before);
+        assert_eq!(merge_base, origin_head);
+        Ok(())
+    }
+
+    async fn setup_remote_tracking_repo()
+    -> Result<Option<(GitState, tempfile::TempDir, PathBuf)>, AppError> {
+        let git_state = GitState::new();
+        let Some(cli) = git_state.cli.as_ref() else {
+            return Ok(None);
+        };
+
+        let temp = tempfile::tempdir()?;
+        let root = temp.path();
+        let remote = root.join("remote.git");
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo)?;
+
+        git_ok_no_dir(cli, &["init", "--bare", path_str(&remote)?]).await?;
+        git_ok(cli, &repo, &["init"]).await?;
+        git_ok(cli, &repo, &["config", "user.email", "test@example.com"]).await?;
+        git_ok(cli, &repo, &["config", "user.name", "Svode Test"]).await?;
+        git_ok(cli, &repo, &["branch", "-M", "main"]).await?;
+
+        std::fs::write(repo.join("README.md"), "# Project\n")?;
+        git_ok(cli, &repo, &["add", "README.md"]).await?;
+        git_ok(cli, &repo, &["commit", "-m", "Initial commit"]).await?;
+        git_ok(cli, &repo, &["remote", "add", "origin", path_str(&remote)?]).await?;
+        git_ok(cli, &repo, &["push", "-u", "origin", "main"]).await?;
+
+        std::fs::write(repo.join("local.md"), "local\n")?;
+        git_ok(cli, &repo, &["add", "local.md"]).await?;
+        git_ok(cli, &repo, &["commit", "-m", "Local work"]).await?;
+
+        Ok(Some((git_state, temp, repo)))
+    }
+
+    async fn git_ok(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<(), AppError> {
+        let out = cli.exec(repo, args).await?;
+        if out.exit_code != 0 {
+            return Err(AppError::GitCommandFailed(format!(
+                "git {} failed: {}",
+                args.join(" "),
+                out.stderr
+            )));
+        }
+        Ok(())
+    }
+
+    async fn git_ok_no_dir(cli: &GitCli, args: &[&str]) -> Result<(), AppError> {
+        let out = cli.exec_no_dir(args).await?;
+        if out.exit_code != 0 {
+            return Err(AppError::GitCommandFailed(format!(
+                "git {} failed: {}",
+                args.join(" "),
+                out.stderr
+            )));
+        }
+        Ok(())
+    }
+
+    async fn git_stdout(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<String, AppError> {
+        let out = cli.exec(repo, args).await?;
+        if out.exit_code != 0 {
+            return Err(AppError::GitCommandFailed(format!(
+                "git {} failed: {}",
+                args.join(" "),
+                out.stderr
+            )));
+        }
+        Ok(out.stdout.trim().to_string())
+    }
+
+    fn path_str(path: &Path) -> Result<&str, AppError> {
+        path.to_str()
+            .ok_or_else(|| AppError::PathNotAccessible(path.display().to_string()))
+    }
 }

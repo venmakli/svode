@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use tauri::{AppHandle, Manager, State};
 
 use super::assets::{self, Asset};
@@ -12,10 +11,13 @@ use super::strategy::ApplyStrategyResult;
 use crate::error::AppError;
 use crate::git::GitState;
 use crate::git::autocommit::{AutocommitService, StructuralOp, SystemCommitKind};
+use crate::git::cli::GitCli;
 use crate::git::commands::require_cli;
 use crate::index::IndexState;
 use crate::space::config::{read_space_config, write_space_config};
-use crate::space::types::{AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, SpaceGitType};
+use crate::space::types::{
+    AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, SpaceConfig, SpaceGitType,
+};
 
 /// File data returned to the frontend after reading a user-selected path.
 /// Used to construct a `File` object on the JS side so Plate's media
@@ -166,6 +168,78 @@ pub struct S3CredentialInput {
     pub secret_key: String,
 }
 
+fn is_sync_strategy(strategy: AssetsStrategy) -> bool {
+    !matches!(strategy, AssetsStrategy::Local)
+}
+
+fn ensure_supported_strategy_transition(
+    current: AssetsStrategy,
+    next: AssetsStrategy,
+) -> Result<(), AppError> {
+    if current == next || !is_sync_strategy(current) {
+        return Ok(());
+    }
+
+    Err(AppError::Storage(
+        "Changing an active assets storage strategy is not supported yet. Use the future migration flow to move existing assets between storage strategies.".into(),
+    ))
+}
+
+fn system_autocommit_enabled(config: &SpaceConfig) -> bool {
+    config
+        .git
+        .as_ref()
+        .and_then(|git| git.auto_commit_system)
+        .unwrap_or(false)
+}
+
+async fn system_paths_dirty_before_strategy_apply(
+    cli: &GitCli,
+    repo: &Path,
+    paths: &[&str],
+) -> Result<bool, AppError> {
+    let mut args = vec!["status", "--porcelain=v1", "-z", "--"];
+    args.extend_from_slice(paths);
+    let out = cli.exec(repo, &args).await?;
+    if out.exit_code != 0 {
+        return Err(AppError::GitCommandFailed(format!(
+            "git status failed: {}",
+            out.stderr
+        )));
+    }
+    Ok(!out.stdout.is_empty())
+}
+
+async fn has_staged_changes(cli: &GitCli, repo: &Path) -> Result<bool, AppError> {
+    let out = cli.exec(repo, &["diff", "--cached", "--quiet"]).await?;
+    match out.exit_code {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(AppError::GitCommandFailed(format!(
+            "git diff --cached failed: {}",
+            out.stderr
+        ))),
+    }
+}
+
+async fn strategy_autocommit_blocker(
+    cli: &GitCli,
+    repo: &Path,
+    paths: &[&str],
+) -> Result<Option<&'static str>, AppError> {
+    if system_paths_dirty_before_strategy_apply(cli, repo, paths).await? {
+        return Ok(Some(
+            "Storage strategy files were already dirty, so Svode left the strategy changes pending instead of creating a background commit.",
+        ));
+    }
+    if has_staged_changes(cli, repo).await? {
+        return Ok(Some(
+            "The repository already had staged changes, so Svode left the strategy changes pending instead of creating a background commit.",
+        ));
+    }
+    Ok(None)
+}
+
 #[tauri::command]
 pub async fn set_assets_strategy(
     app: AppHandle,
@@ -183,11 +257,11 @@ pub async fn set_assets_strategy(
         .key_for_project_space_id(&project, space_id.as_deref())
         .await?;
     let target_dir = index_state.dir_for_key(&key).await?;
+    let cli = require_cli(&git_state)?;
 
     // Inline spaces inherit their assets strategy from the root project —
     // we refuse to write a child-space override that would silently be ignored.
     if space_id.is_some() {
-        let cli = require_cli(&git_state)?;
         let git_type = crate::git::ops::detect_space_git_type(&cli, &project, &target_dir).await?;
         if matches!(git_type, SpaceGitType::Inline) {
             return Err(AppError::StrategyInherited);
@@ -195,6 +269,20 @@ pub async fn set_assets_strategy(
     }
 
     let mut config = read_space_config(&target_dir)?;
+    let current_strategy = config
+        .assets
+        .as_ref()
+        .map(|assets| assets.strategy)
+        .unwrap_or_default();
+    ensure_supported_strategy_transition(current_strategy, strategy)?;
+
+    let should_autocommit_strategy = system_autocommit_enabled(&config);
+    let autocommit_blocker = if should_autocommit_strategy {
+        strategy_autocommit_blocker(&cli, &target_dir, SystemCommitKind::AssetsStrategy.paths())
+            .await?
+    } else {
+        None
+    };
 
     // For LfsS3 we need to (1) stash credentials in keychain and (2) resolve
     // the bundled lfs-dal binary. Both happen *before* apply_strategy so any
@@ -219,7 +307,7 @@ pub async fn set_assets_strategy(
         None
     };
 
-    let result = super::strategy::apply_strategy(
+    let mut result = super::strategy::apply_strategy(
         &git_state,
         &target_dir,
         strategy,
@@ -251,22 +339,30 @@ pub async fn set_assets_strategy(
     // independent/submodule → space) under a single "Update assets strategy"
     // commit. This replaces the bare `git add` that previously lived inside
     // `apply_strategy`.
-    if let Err(e) = autocommit
-        .commit_system_now(
-            project.clone(),
-            target_dir.clone(),
-            SystemCommitKind::AssetsStrategy,
-        )
-        .await
-    {
-        tracing::warn!("commit_system_now (AssetsStrategy) failed: {e}");
+    if should_autocommit_strategy {
+        if let Some(message) = autocommit_blocker {
+            result.warnings.push(message.to_string());
+        } else if has_staged_changes(&cli, &target_dir).await? {
+            result.warnings.push(
+                "The repository gained staged changes during storage strategy apply, so Svode left the strategy changes pending instead of creating a background commit.".to_string(),
+            );
+        } else if let Err(e) = autocommit
+            .commit_system_now(
+                project.clone(),
+                target_dir.clone(),
+                SystemCommitKind::AssetsStrategy,
+            )
+            .await
+        {
+            tracing::warn!("commit_system_now (AssetsStrategy) failed: {e}");
+        }
     }
     Ok(result)
 }
 
-/// Count the assets registered in this pool's SQLite index. Used by the
-/// storage confirmation dialog to warn users that existing assets will NOT be
-/// automatically migrated on strategy switch.
+/// Count real files under this pool's `.assets/` directory. Used by the
+/// storage confirmation dialog before turning existing local bytes into
+/// syncable pending changes.
 #[tauri::command]
 pub async fn count_assets(
     project_path: String,
@@ -277,11 +373,8 @@ pub async fn count_assets(
     let key = index_state
         .key_for_project_space_id(&project, space_id.as_deref())
         .await?;
-    let pool = index_state.get_or_create(&key).await?;
-    let row = sqlx::query("SELECT COUNT(*) as n FROM assets")
-        .fetch_one(&pool)
-        .await?;
-    Ok(row.try_get::<i64, _>("n")?)
+    let target_dir = index_state.dir_for_key(&key).await?;
+    assets::count_existing_asset_files(&target_dir)
 }
 
 #[tauri::command]
@@ -427,4 +520,132 @@ fn normalize_abs_path(path: &Path) -> Option<PathBuf> {
         }
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::{ensure_supported_strategy_transition, strategy_autocommit_blocker};
+    use crate::AppError;
+    use crate::git::autocommit::SystemCommitKind;
+    use crate::git::cli::GitCli;
+    use crate::space::types::AssetsStrategy;
+
+    #[test]
+    fn strategy_transition_guard_allows_only_local_enrollment_or_same_strategy() {
+        for next in [
+            AssetsStrategy::Local,
+            AssetsStrategy::InGit,
+            AssetsStrategy::LfsRemote,
+            AssetsStrategy::LfsS3,
+        ] {
+            assert!(ensure_supported_strategy_transition(AssetsStrategy::Local, next).is_ok());
+        }
+
+        assert!(
+            ensure_supported_strategy_transition(AssetsStrategy::LfsS3, AssetsStrategy::LfsS3)
+                .is_ok()
+        );
+        assert!(
+            ensure_supported_strategy_transition(AssetsStrategy::InGit, AssetsStrategy::LfsRemote)
+                .is_err()
+        );
+        assert!(
+            ensure_supported_strategy_transition(AssetsStrategy::LfsRemote, AssetsStrategy::Local)
+                .is_err()
+        );
+        assert!(
+            ensure_supported_strategy_transition(AssetsStrategy::LfsRemote, AssetsStrategy::LfsS3)
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn strategy_autocommit_blocker_detects_dirty_strategy_files() -> Result<(), AppError> {
+        let Some((cli, _temp, repo)) = setup_clean_repo().await? else {
+            return Ok(());
+        };
+
+        std::fs::write(repo.join(".gitignore"), "dirty\n")?;
+
+        let blocker =
+            strategy_autocommit_blocker(&cli, &repo, SystemCommitKind::AssetsStrategy.paths())
+                .await?;
+        assert!(blocker.is_some_and(|message| message.contains("already dirty")));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn strategy_autocommit_blocker_detects_preexisting_staged_changes() -> Result<(), AppError>
+    {
+        let Some((cli, _temp, repo)) = setup_clean_repo().await? else {
+            return Ok(());
+        };
+
+        std::fs::write(repo.join("README.md"), "# Project\n\nstaged\n")?;
+        git_ok(&cli, &repo, &["add", "README.md"]).await?;
+
+        let blocker =
+            strategy_autocommit_blocker(&cli, &repo, SystemCommitKind::AssetsStrategy.paths())
+                .await?;
+        assert!(blocker.is_some_and(|message| message.contains("staged changes")));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn strategy_autocommit_blocker_allows_clean_repo() -> Result<(), AppError> {
+        let Some((cli, _temp, repo)) = setup_clean_repo().await? else {
+            return Ok(());
+        };
+
+        let blocker =
+            strategy_autocommit_blocker(&cli, &repo, SystemCommitKind::AssetsStrategy.paths())
+                .await?;
+        assert!(blocker.is_none());
+        Ok(())
+    }
+
+    async fn setup_clean_repo()
+    -> Result<Option<(GitCli, tempfile::TempDir, std::path::PathBuf)>, AppError> {
+        let cli = match GitCli::detect() {
+            Ok(cli) => cli,
+            Err(_) => return Ok(None),
+        };
+        let temp = tempfile::tempdir()?;
+        let repo = temp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".svode"))?;
+
+        git_ok(&cli, &repo, &["init"]).await?;
+        git_ok(&cli, &repo, &["config", "user.email", "test@example.com"]).await?;
+        git_ok(&cli, &repo, &["config", "user.name", "Svode Test"]).await?;
+
+        std::fs::write(repo.join(".gitignore"), "# ignore\n")?;
+        std::fs::write(
+            repo.join(".svode").join("config.json"),
+            r#"{"name":"Project"}"#,
+        )?;
+        std::fs::write(repo.join("README.md"), "# Project\n")?;
+        git_ok(
+            &cli,
+            &repo,
+            &["add", ".gitignore", ".svode/config.json", "README.md"],
+        )
+        .await?;
+        git_ok(&cli, &repo, &["commit", "-m", "Initial commit"]).await?;
+
+        Ok(Some((cli, temp, repo)))
+    }
+
+    async fn git_ok(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<(), AppError> {
+        let out = cli.exec(repo, args).await?;
+        if out.exit_code != 0 {
+            return Err(AppError::GitCommandFailed(format!(
+                "git {} failed: {}",
+                args.join(" "),
+                out.stderr
+            )));
+        }
+        Ok(())
+    }
 }

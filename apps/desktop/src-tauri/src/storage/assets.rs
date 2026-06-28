@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
@@ -186,6 +186,34 @@ pub async fn list(pool: &SqlitePool) -> Result<Vec<Asset>, AppError> {
     Ok(out)
 }
 
+/// Count real files currently present under `.assets/`.
+///
+/// This intentionally does not rely on the SQLite assets table: DF-019 needs
+/// confirmation for bytes that already exist on disk, including files created
+/// by older builds, manual copies, or repaired LFS pulls.
+pub fn count_existing_asset_files(target_dir: &Path) -> Result<i64, AppError> {
+    let assets_dir = target_dir.join(".assets");
+    if !assets_dir.exists() {
+        return Ok(0);
+    }
+
+    let mut count = 0_i64;
+    let mut stack = vec![assets_dir];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let path: PathBuf = entry.path();
+            let file_type = entry.file_type()?;
+            if file_type.is_dir() {
+                stack.push(path);
+            } else if file_type.is_file() || file_type.is_symlink() {
+                count += 1;
+            }
+        }
+    }
+    Ok(count)
+}
+
 /// UPSERT or DELETE a single asset row by absolute path. Used by the file
 /// watcher when something inside `.assets/` changes outside the upload IPC
 /// (e.g. an LFS pull populates a previously-pointer file). Wiring from the
@@ -245,4 +273,28 @@ pub async fn update_asset(
     .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::count_existing_asset_files;
+
+    #[test]
+    fn count_existing_asset_files_counts_real_files_recursively() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let assets = temp.path().join(".assets");
+        std::fs::create_dir_all(assets.join("nested")).expect("assets dir");
+        std::fs::write(assets.join("one.png"), b"one").expect("asset");
+        std::fs::write(assets.join("nested").join("two.png"), b"two").expect("nested asset");
+        std::fs::create_dir_all(assets.join("empty")).expect("empty dir");
+
+        assert_eq!(count_existing_asset_files(temp.path()).unwrap(), 2);
+    }
+
+    #[test]
+    fn count_existing_asset_files_returns_zero_when_assets_dir_is_missing() {
+        let temp = tempfile::tempdir().expect("temp dir");
+
+        assert_eq!(count_existing_asset_files(temp.path()).unwrap(), 0);
+    }
 }
