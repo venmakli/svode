@@ -35,6 +35,12 @@ export interface AssetsSpaceConfigDto {
   s3?: AssetsS3ConfigDto;
 }
 
+export interface EffectiveAssetsConfigDto extends AssetsSpaceConfigDto {
+  inheritedFromProject: boolean;
+  ownerSpaceId: string | null;
+  gitType: SpaceGitTypeDto | null;
+}
+
 export interface SpaceRefDto {
   id: string;
   path: string;

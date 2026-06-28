@@ -7,6 +7,7 @@ use tauri::{AppHandle, Manager, State};
 
 use super::assets::{self, Asset};
 use super::s3::{self, AgentSecrets};
+use super::scope::{resolve_effective_storage_scope, resolve_effective_storage_scope_for_key};
 use super::strategy::ApplyStrategyResult;
 use crate::error::AppError;
 use crate::git::GitState;
@@ -14,6 +15,7 @@ use crate::git::autocommit::{AutocommitService, StructuralOp, SystemCommitKind};
 use crate::git::cli::GitCli;
 use crate::git::commands::require_cli;
 use crate::index::IndexState;
+use crate::repo_path::{RootMode, repo_relative_from_base};
 use crate::space::config::{read_space_config, write_space_config};
 use crate::space::types::{
     AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, SpaceConfig, SpaceGitType,
@@ -92,33 +94,33 @@ pub async fn upload_asset(
     // Resolve the owning pool (root or child space) for the document path.
     // We only use the IndexKey from this — the asset path is computed below.
     let (key, _rel_doc) = index_state.resolve(&project, &doc_abs).await?;
-    let target_dir = index_state.dir_for_key(&key).await?;
-    let pool = index_state.get_or_create(&key).await?;
+    let scope = resolve_effective_storage_scope_for_key(&index_state, &project, key).await?;
+    let pool = index_state.get_or_create(&scope.pool_key).await?;
+    let scoped_document_id =
+        document_id_for_scope(&doc_abs, &scope.pool_dir, document_id.as_deref());
 
     let result = assets::upload(
         &pool,
-        &target_dir,
+        &scope.pool_dir,
         &bytes,
         &file_name,
-        document_id.as_deref(),
+        scoped_document_id.as_deref(),
     )
     .await?;
 
     // Stage via autocommit unless the active strategy keeps assets out of git
     // entirely (Local strategy). All other strategies need the file tracked
     // so it shows up in `Changes` and ends up in the next commit.
-    let cfg = read_space_config(&target_dir)?;
-    let strategy = cfg.assets.as_ref().map(|a| a.strategy).unwrap_or_default();
-    if !matches!(strategy, AssetsStrategy::Local) {
+    if !matches!(scope.config.strategy, AssetsStrategy::Local) {
         autocommit.schedule_structural_paths(
             project.clone(),
-            target_dir.clone(),
+            scope.repo_dir.clone(),
             StructuralOp::Create(result.rel_path.clone()),
-            vec![target_dir.join(&result.rel_path)],
+            vec![scope.pool_dir.join(&result.rel_path)],
         );
     }
 
-    let space_id = IndexState::space_id_for_key(&key);
+    let space_id = IndexState::space_id_for_key(&scope.pool_key);
     Ok(UploadResponse {
         space_id,
         rel_path: result.rel_path,
@@ -135,11 +137,21 @@ pub async fn list_assets(
     index_state: State<'_, IndexState>,
 ) -> Result<Vec<Asset>, AppError> {
     let project = PathBuf::from(&project_path);
-    let key = index_state
-        .key_for_project_space_id(&project, space_id.as_deref())
-        .await?;
-    let pool = index_state.get_or_create(&key).await?;
+    let scope =
+        resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
+    let pool = index_state.get_or_create(&scope.pool_key).await?;
     assets::list(&pool).await
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EffectiveAssetsConfig {
+    pub strategy: AssetsStrategy,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s3: Option<AssetsS3Config>,
+    pub inherited_from_project: bool,
+    pub owner_space_id: Option<String>,
+    pub git_type: Option<SpaceGitType>,
 }
 
 #[tauri::command]
@@ -147,14 +159,17 @@ pub async fn get_assets_config(
     project_path: String,
     space_id: Option<String>,
     index_state: State<'_, IndexState>,
-) -> Result<AssetsSpaceConfig, AppError> {
+) -> Result<EffectiveAssetsConfig, AppError> {
     let project = PathBuf::from(&project_path);
-    let key = index_state
-        .key_for_project_space_id(&project, space_id.as_deref())
-        .await?;
-    let target_dir = index_state.dir_for_key(&key).await?;
-    let config = read_space_config(&target_dir)?;
-    Ok(config.assets.unwrap_or_default())
+    let scope =
+        resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
+    Ok(EffectiveAssetsConfig {
+        strategy: scope.config.strategy,
+        s3: scope.config.s3,
+        inherited_from_project: scope.inherited_from_project,
+        owner_space_id: IndexState::space_id_for_key(&scope.pool_key),
+        git_type: scope.git_type,
+    })
 }
 
 /// Optional S3 credentials supplied alongside `set_assets_strategy` when the
@@ -191,6 +206,16 @@ fn system_autocommit_enabled(config: &SpaceConfig) -> bool {
         .as_ref()
         .and_then(|git| git.auto_commit_system)
         .unwrap_or(false)
+}
+
+fn document_id_for_scope(
+    document_abs_path: &Path,
+    pool_dir: &Path,
+    fallback: Option<&str>,
+) -> Option<String> {
+    repo_relative_from_base(pool_dir, document_abs_path, RootMode::Reject)
+        .ok()
+        .or_else(|| fallback.map(ToString::to_string))
 }
 
 async fn system_paths_dirty_before_strategy_apply(
@@ -253,22 +278,17 @@ pub async fn set_assets_strategy(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<ApplyStrategyResult, AppError> {
     let project = PathBuf::from(&project_path);
-    let key = index_state
-        .key_for_project_space_id(&project, space_id.as_deref())
-        .await?;
-    let target_dir = index_state.dir_for_key(&key).await?;
+    let scope =
+        resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
     let cli = require_cli(&git_state)?;
 
     // Inline spaces inherit their assets strategy from the root project —
     // we refuse to write a child-space override that would silently be ignored.
-    if space_id.is_some() {
-        let git_type = crate::git::ops::detect_space_git_type(&cli, &project, &target_dir).await?;
-        if matches!(git_type, SpaceGitType::Inline) {
-            return Err(AppError::StrategyInherited);
-        }
+    if scope.inherited_from_project {
+        return Err(AppError::StrategyInherited);
     }
 
-    let mut config = read_space_config(&target_dir)?;
+    let mut config = read_space_config(&scope.config_dir)?;
     let current_strategy = config
         .assets
         .as_ref()
@@ -278,8 +298,12 @@ pub async fn set_assets_strategy(
 
     let should_autocommit_strategy = system_autocommit_enabled(&config);
     let autocommit_blocker = if should_autocommit_strategy {
-        strategy_autocommit_blocker(&cli, &target_dir, SystemCommitKind::AssetsStrategy.paths())
-            .await?
+        strategy_autocommit_blocker(
+            &cli,
+            &scope.repo_dir,
+            SystemCommitKind::AssetsStrategy.paths(),
+        )
+        .await?
     } else {
         None
     };
@@ -309,7 +333,7 @@ pub async fn set_assets_strategy(
 
     let mut result = super::strategy::apply_strategy(
         &git_state,
-        &target_dir,
+        &scope.repo_dir,
         strategy,
         s3_config.as_ref(),
         lfs_dal_path.as_deref(),
@@ -332,7 +356,7 @@ pub async fn set_assets_strategy(
         strategy,
         s3: s3_config,
     });
-    write_space_config(&target_dir, &config)?;
+    write_space_config(&scope.config_dir, &config)?;
 
     // Commit `.gitattributes` + `.gitignore` + `.svode/config.json` via the
     // system-commit pipeline so it routes to the correct repo (inline → root,
@@ -342,14 +366,14 @@ pub async fn set_assets_strategy(
     if should_autocommit_strategy {
         if let Some(message) = autocommit_blocker {
             result.warnings.push(message.to_string());
-        } else if has_staged_changes(&cli, &target_dir).await? {
+        } else if has_staged_changes(&cli, &scope.repo_dir).await? {
             result.warnings.push(
                 "The repository gained staged changes during storage strategy apply, so Svode left the strategy changes pending instead of creating a background commit.".to_string(),
             );
         } else if let Err(e) = autocommit
             .commit_system_now(
                 project.clone(),
-                target_dir.clone(),
+                scope.repo_dir.clone(),
                 SystemCommitKind::AssetsStrategy,
             )
             .await
@@ -370,11 +394,9 @@ pub async fn count_assets(
     index_state: State<'_, IndexState>,
 ) -> Result<i64, AppError> {
     let project = PathBuf::from(&project_path);
-    let key = index_state
-        .key_for_project_space_id(&project, space_id.as_deref())
-        .await?;
-    let target_dir = index_state.dir_for_key(&key).await?;
-    assets::count_existing_asset_files(&target_dir)
+    let scope =
+        resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
+    assets::count_existing_asset_files(&scope.pool_dir)
 }
 
 #[tauri::command]
@@ -398,12 +420,9 @@ pub async fn has_s3_credentials(
     index_state: State<'_, IndexState>,
 ) -> Result<bool, AppError> {
     let project = PathBuf::from(&project_path);
-    let key = index_state
-        .key_for_project_space_id(&project, space_id.as_deref())
-        .await?;
-    let target_dir = index_state.dir_for_key(&key).await?;
-    let cfg = read_space_config(&target_dir)?;
-    let Some(s3_cfg) = cfg.assets.and_then(|a| a.s3) else {
+    let scope =
+        resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
+    let Some(s3_cfg) = scope.config.s3 else {
         return Ok(false);
     };
     let account = s3::keychain_account(&s3_cfg);
@@ -526,7 +545,9 @@ fn normalize_abs_path(path: &Path) -> Option<PathBuf> {
 mod tests {
     use std::path::Path;
 
-    use super::{ensure_supported_strategy_transition, strategy_autocommit_blocker};
+    use super::{
+        document_id_for_scope, ensure_supported_strategy_transition, strategy_autocommit_blocker,
+    };
     use crate::AppError;
     use crate::git::autocommit::SystemCommitKind;
     use crate::git::cli::GitCli;
@@ -558,6 +579,28 @@ mod tests {
         assert!(
             ensure_supported_strategy_transition(AssetsStrategy::LfsRemote, AssetsStrategy::LfsS3)
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn document_id_for_scope_uses_effective_pool_relative_path() {
+        let pool = Path::new("/project");
+        let document = Path::new("/project/child/README.md");
+
+        assert_eq!(
+            document_id_for_scope(document, pool, Some("README.md")),
+            Some("child/README.md".to_string())
+        );
+    }
+
+    #[test]
+    fn document_id_for_scope_falls_back_when_document_is_outside_pool() {
+        let pool = Path::new("/project");
+        let document = Path::new("/other/README.md");
+
+        assert_eq!(
+            document_id_for_scope(document, pool, Some("README.md")),
+            Some("README.md".to_string())
         );
     }
 

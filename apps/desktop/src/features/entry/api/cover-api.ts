@@ -2,18 +2,17 @@ import type { EntryCover } from "../model/types";
 import { toWebviewAssetUrl } from "@/platform/assets/assets-api";
 import { pickMediaFiles } from "@/platform/filesystem/native-file-picker";
 import { uploadAsset } from "@/platform/upload/upload-api";
+import {
+  coverImageAbsPath,
+  coverPathForUploadedAsset,
+  joinAbs,
+} from "../lib/cover-paths";
 
 interface UploadCoverImageInput {
   file: File;
   projectPath: string;
   spacePath: string;
   documentPath: string;
-}
-
-function joinAbs(base: string, rel: string): string {
-  if (!rel) return base;
-  if (rel.startsWith("/")) return rel;
-  return `${base.replace(/\/+$/, "")}/${rel.replace(/^\/+/, "")}`;
 }
 
 export async function uploadCoverImage({
@@ -34,10 +33,15 @@ export async function uploadCoverImage({
     bytes,
     documentId: documentPath,
   });
+  const assetOwnerPath = result.spaceId ? spacePath : projectPath;
 
   return {
     type: "image",
-    path: result.relPath,
+    path: coverPathForUploadedAsset({
+      spacePath,
+      assetOwnerPath,
+      assetRelPath: result.relPath,
+    }),
     position: 50,
   };
 }
@@ -48,5 +52,5 @@ export async function pickCoverImageFile(): Promise<File | null> {
 }
 
 export function getCoverImageSrc(spacePath: string, coverPath: string): string {
-  return toWebviewAssetUrl(joinAbs(spacePath, coverPath));
+  return toWebviewAssetUrl(coverImageAbsPath(spacePath, coverPath));
 }

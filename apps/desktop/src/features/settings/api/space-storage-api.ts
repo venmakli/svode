@@ -2,6 +2,7 @@ import {
   applyAssetsStrategy as applyPlatformAssetsStrategy,
   checkS3Connection as checkPlatformS3Connection,
   countAssets as countPlatformAssets,
+  getAssetsConfig as getPlatformAssetsConfig,
   getLfsState as getPlatformLfsState,
   hasS3Credentials as hasPlatformS3Credentials,
   listenLfsStateChanged as listenPlatformLfsStateChanged,
@@ -12,6 +13,7 @@ import type {
   AssetsS3Config,
   AssetsStrategy,
   LfsState,
+  SpaceGitType,
 } from "@/features/space";
 
 export interface SpacePoolInput extends Record<string, unknown> {
@@ -40,6 +42,14 @@ export interface SetAssetsStrategyResult {
   warnings: string[];
 }
 
+export interface EffectiveAssetsConfig {
+  strategy: AssetsStrategy;
+  s3?: AssetsS3Config;
+  inheritedFromProject: boolean;
+  ownerSpaceId: string | null;
+  gitType: SpaceGitType | null;
+}
+
 export interface LfsStateChangedEvent {
   projectPath: string;
   spaceId: string | null;
@@ -55,6 +65,12 @@ type SettingsUnlistenFn = () => void;
 
 export function hasS3Credentials(input: SpacePoolInput): Promise<boolean> {
   return hasPlatformS3Credentials(input);
+}
+
+export function getAssetsConfig(
+  input: SpacePoolInput,
+): Promise<EffectiveAssetsConfig> {
+  return getPlatformAssetsConfig(input);
 }
 
 export function getLfsState(input: SpacePoolInput): Promise<LfsState> {

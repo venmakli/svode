@@ -1,6 +1,9 @@
 import type { Entry, EntryCover } from "@/features/entry";
 import type { CollectionSchema } from "@/features/properties";
-import { resolveEntryImageSource } from "../../api";
+import {
+  resolveEntryImageSource,
+  resolveSpaceRelativeImageSource,
+} from "../../api";
 import type { GalleryResolvedCover } from "../../model/gallery-cover-types";
 
 export function resolveGalleryCover({
@@ -18,7 +21,7 @@ export function resolveGalleryCover({
 
   for (const source of cardCover) {
     if (source === "cover") {
-      const cover = resolveSystemCover(entry.meta.cover, spacePath, entry.path);
+      const cover = resolveSystemCover(entry.meta.cover, spacePath);
       if (cover) return cover;
       continue;
     }
@@ -55,7 +58,6 @@ export function resolveGalleryCover({
 function resolveSystemCover(
   cover: EntryCover | null | undefined,
   spacePath: string,
-  entryPath: string,
 ): GalleryResolvedCover | null {
   if (!cover) return null;
   if (cover.type === "color") {
@@ -64,10 +66,9 @@ function resolveSystemCover(
   if (cover.type === "image" && cover.path) {
     return {
       kind: "image",
-      src: resolveEntryImageSource({
+      src: resolveSpaceRelativeImageSource({
         value: cover.path,
         spacePath,
-        entryPath,
       }),
       position: cover.position ?? 50,
     };

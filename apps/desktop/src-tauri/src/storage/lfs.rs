@@ -22,6 +22,7 @@ use crate::space::config::read_space_config;
 use crate::space::types::AssetsStrategy;
 
 use super::s3;
+use super::scope::resolve_effective_storage_scope;
 
 const LFS_POINTER_PREFIX: &str = "version https://git-lfs.github.com/spec/v1";
 const LFS_POINTER_MAX_BYTES: u64 = 200;
@@ -207,21 +208,19 @@ pub async fn repair_lfs(
     index_state: State<'_, IndexState>,
 ) -> Result<LfsState, AppError> {
     let project = PathBuf::from(&project_path);
-    let key = index_state
-        .key_for_project_space_id(&project, space_id.as_deref())
-        .await?;
-    let target_dir = index_state.dir_for_key(&key).await?;
+    let scope =
+        resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
 
     let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
 
     index_state
-        .set_lfs_state_with(&app, &key, LfsState::Pulling)
+        .set_lfs_state_with(&app, &scope.pool_key, LfsState::Pulling)
         .await;
 
-    let lock = git_state.get_lock(&target_dir).await;
+    let lock = git_state.get_lock(&scope.repo_dir).await;
     let _guard = lock.lock().await;
     let out = cli
-        .exec(&target_dir, &["lfs", "pull"])
+        .exec(&scope.repo_dir, &["lfs", "pull"])
         .await
         .map_err(|e| AppError::Storage(format!("git lfs pull errored: {e}")))?;
     drop(_guard);
@@ -229,7 +228,7 @@ pub async fn repair_lfs(
     let new_state = if out.exit_code == 0 {
         // Re-probe to confirm — pull may have succeeded but the underlying
         // strategy could still be in a degraded state (e.g. partial fetch).
-        probe_lfs(&app, &project, &key, &target_dir).await
+        probe_lfs(&app, &project, &scope.pool_key, &scope.repo_dir).await
     } else {
         tracing::warn!(
             "repair_lfs: git lfs pull failed ({}): {}",
@@ -238,7 +237,9 @@ pub async fn repair_lfs(
         );
         LfsState::MissingCreds
     };
-    index_state.set_lfs_state_with(&app, &key, new_state).await;
+    index_state
+        .set_lfs_state_with(&app, &scope.pool_key, new_state)
+        .await;
     Ok(new_state)
 }
 
@@ -253,25 +254,26 @@ pub async fn get_lfs_state(
     index_state: State<'_, IndexState>,
 ) -> Result<LfsState, AppError> {
     let project = PathBuf::from(&project_path);
-    let key = index_state
-        .key_for_project_space_id(&project, space_id.as_deref())
-        .await?;
-    let target_dir = index_state.dir_for_key(&key).await?;
+    let scope =
+        resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
 
-    let cached = index_state.get_lfs_state(&key).await;
+    let cached = index_state.get_lfs_state(&scope.pool_key).await;
     if !matches!(cached, LfsState::NotApplicable) {
         return Ok(cached);
     }
 
     // Only probe if the strategy is LFS-flavoured — otherwise NotApplicable
     // is correct and re-probing would be wasted work.
-    let cfg = read_space_config(&target_dir)?;
-    let strategy = cfg.assets.as_ref().map(|a| a.strategy).unwrap_or_default();
-    if !matches!(strategy, AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3) {
+    if !matches!(
+        scope.config.strategy,
+        AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3
+    ) {
         return Ok(LfsState::NotApplicable);
     }
 
-    let probed = probe_lfs(&app, &project, &key, &target_dir).await;
-    index_state.set_lfs_state_with(&app, &key, probed).await;
+    let probed = probe_lfs(&app, &project, &scope.pool_key, &scope.repo_dir).await;
+    index_state
+        .set_lfs_state_with(&app, &scope.pool_key, probed)
+        .await;
     Ok(probed)
 }

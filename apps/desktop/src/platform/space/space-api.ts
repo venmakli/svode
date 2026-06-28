@@ -7,6 +7,7 @@ import {
 import type {
   AssetsS3ConfigDto,
   AssetsStrategyDto,
+  EffectiveAssetsConfigDto,
   LfsStateDto,
   SpaceDirtyEventDto,
   SpaceFileEventDto,
@@ -146,6 +147,12 @@ export function countAssets(input: SpacePoolInputDto): Promise<number> {
 
 export function hasS3Credentials(input: SpacePoolInputDto): Promise<boolean> {
   return invokeCommand<boolean>("has_s3_credentials", input);
+}
+
+export function getAssetsConfig(
+  input: SpacePoolInputDto,
+): Promise<EffectiveAssetsConfigDto> {
+  return invokeCommand<EffectiveAssetsConfigDto>("get_assets_config", input);
 }
 
 export function checkS3Connection(

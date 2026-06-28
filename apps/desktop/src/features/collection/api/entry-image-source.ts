@@ -10,17 +10,33 @@ export function resolveEntryImageSource({
   entryPath: string;
 }) {
   if (/^(https?:|data:|blob:|asset:|file:)/i.test(value)) return value;
-  if (value.startsWith("/")) return toWebviewAssetUrl(value);
+  if (value.startsWith("/")) return toWebviewAssetUrl(normalizePath(value));
   if (value.startsWith("./") || value.startsWith("../")) {
     return toWebviewAssetUrl(joinEntryPath(spacePath, entryPath, value));
   }
   return toWebviewAssetUrl(joinSpacePath(spacePath, value));
 }
 
+export function resolveSpaceRelativeImageSource({
+  value,
+  spacePath,
+}: {
+  value: string;
+  spacePath: string;
+}) {
+  if (/^(https?:|data:|blob:|asset:|file:)/i.test(value)) return value;
+  return toWebviewAssetUrl(spaceRelativeImageAbsPath(spacePath, value));
+}
+
+export function spaceRelativeImageAbsPath(spacePath: string, value: string) {
+  if (value.startsWith("/")) return normalizePath(value);
+  return joinSpacePath(spacePath, value);
+}
+
 function joinSpacePath(spacePath: string, value: string) {
   const base = spacePath.replace(/\\/g, "/").replace(/\/$/, "");
   const rel = value.replace(/\\/g, "/").replace(/^\.\//, "");
-  return `${base}/${rel}`;
+  return normalizePath(`${base}/${rel}`);
 }
 
 function joinEntryPath(spacePath: string, entryPath: string, value: string) {

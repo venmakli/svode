@@ -3,7 +3,7 @@ import * as m from "@/paraglide/messages.js";
 import type { AssetsStrategy } from "@/features/space";
 import {
   checkS3Connection,
-  getSettingsSpaceConfig,
+  getAssetsConfig,
   hasS3Credentials,
 } from "../api";
 
@@ -49,15 +49,18 @@ export function useSpaceStorageConfig({
     let cancelled = false;
 
     const loadStorageConfig = async () => {
-      const cfg = await getSettingsSpaceConfig(spacePath);
+      const cfg = await getAssetsConfig({
+        projectPath,
+        spaceId: currentSpaceId,
+      });
       const hasCredentials = await hasS3Credentials({
         projectPath,
         spaceId: currentSpaceId,
       }).catch(() => false);
 
       return {
-        strategy: cfg.assets?.strategy ?? "local",
-        s3: cfg.assets?.s3,
+        strategy: cfg.strategy,
+        s3: cfg.s3,
         hasCredentials,
       };
     };
