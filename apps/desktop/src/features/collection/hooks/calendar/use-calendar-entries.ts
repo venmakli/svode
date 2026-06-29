@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   listCollectionInfos,
@@ -11,6 +11,11 @@ import {
   type EntryFieldSavePolicy,
 } from "@/features/entry/field-save";
 import type { Entry } from "@/features/entry";
+import {
+  collectionEntriesTargetKey,
+  mergeStableEntriesByPath,
+  sameStringSet,
+} from "../../lib/entry-refresh";
 import * as m from "@/paraglide/messages.js";
 
 export function useCalendarEntries({
@@ -33,10 +38,23 @@ export function useCalendarEntries({
     Set<string>
   >(new Set());
   const [loading, setLoading] = useState(true);
+  const targetKey = collectionEntriesTargetKey({
+    collectionPath,
+    projectPath,
+    spacePath,
+  });
+  const targetRef = useRef(targetKey);
+  targetRef.current = targetKey;
+  const loadedTargetRef = useRef<string | null>(null);
+  const requestRef = useRef(0);
   const queryArgs = useStableViewQueryArgs(filters, sort);
 
   const loadEntries = useCallback(async () => {
-    setLoading(true);
+    const request = requestRef.current + 1;
+    requestRef.current = request;
+    const requestTarget = targetKey;
+    const initialLoad = loadedTargetRef.current !== requestTarget;
+    if (initialLoad) setLoading(true);
     try {
       const [baseEntries, collections] = await Promise.all([
         queryCalendarEntries({
@@ -48,15 +66,24 @@ export function useCalendarEntries({
         }),
         listCollectionInfos(spacePath).catch(() => []),
       ]);
-      setEntries(baseEntries);
-      setNestedCollectionPaths(new Set(collections.map((item) => item.path)));
+      if (requestRef.current !== request || targetRef.current !== requestTarget)
+        return;
+      setEntries((current) => mergeStableEntriesByPath(current, baseEntries));
+      const collectionPaths = new Set(collections.map((item) => item.path));
+      setNestedCollectionPaths((current) =>
+        sameStringSet(current, collectionPaths) ? current : collectionPaths,
+      );
+      loadedTargetRef.current = requestTarget;
     } catch (error) {
+      if (requestRef.current !== request || targetRef.current !== requestTarget)
+        return;
       console.warn("Failed to load calendar entries:", error);
       toast.error(m.calendar_error_title());
     } finally {
-      setLoading(false);
+      if (requestRef.current === request && targetRef.current === requestTarget)
+        setLoading(false);
     }
-  }, [collectionPath, projectPath, queryArgs, spacePath]);
+  }, [collectionPath, projectPath, queryArgs, spacePath, targetKey]);
 
   useEffect(() => {
     void loadEntries();

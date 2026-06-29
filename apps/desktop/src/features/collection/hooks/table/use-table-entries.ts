@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useStableViewQueryArgs } from "@/features/collection/query/hooks";
 import {
@@ -14,6 +14,11 @@ import {
   queryCollectionEntries,
 } from "../../api";
 import { entryCollectionPath } from "../../lib/entry-tree";
+import {
+  collectionEntriesTargetKey,
+  mergeStableEntriesByPath,
+  sameStringSet,
+} from "../../lib/entry-refresh";
 import { showNestedForView } from "../../lib/view-options";
 import * as m from "@/paraglide/messages.js";
 
@@ -43,11 +48,26 @@ export function useTableEntries({
   >(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const targetKey = collectionEntriesTargetKey({
+    collectionPath,
+    projectPath,
+    spacePath,
+  });
+  const targetRef = useRef(targetKey);
+  targetRef.current = targetKey;
+  const loadedTargetRef = useRef<string | null>(null);
+  const requestRef = useRef(0);
   const queryArgs = useStableViewQueryArgs(filters, sort);
 
   const loadEntries = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+    const request = requestRef.current + 1;
+    requestRef.current = request;
+    const requestTarget = targetKey;
+    const initialLoad = loadedTargetRef.current !== requestTarget;
+    if (initialLoad) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const [baseEntries, collections] = await Promise.all([
         queryCollectionEntries({
@@ -61,7 +81,6 @@ export function useTableEntries({
         listCollectionInfos(spacePath).catch(() => []),
       ]);
       const collectionPaths = new Set(collections.map((item) => item.path));
-      setNestedCollectionPaths(collectionPaths);
       const schemaPairs = await Promise.all(
         collections
           .filter((item) => item.path !== collectionPath)
@@ -107,7 +126,10 @@ export function useTableEntries({
               projectPath,
             });
           } catch (nestedLoadError) {
-            console.warn("Failed to load nested table entries:", nestedLoadError);
+            console.warn(
+              "Failed to load nested table entries:",
+              nestedLoadError,
+            );
             return [];
           }
         }),
@@ -116,16 +138,35 @@ export function useTableEntries({
       [...baseEntries, ...nestedEntryBatches.flat()].forEach((entry) => {
         entriesByPath.set(entry.path, entry);
       });
-      setEntries(Array.from(entriesByPath.values()));
+      if (requestRef.current !== request || targetRef.current !== requestTarget)
+        return;
+      setEntries((current) =>
+        mergeStableEntriesByPath(current, Array.from(entriesByPath.values())),
+      );
       setNestedSchemas(nextNestedSchemas);
+      setNestedCollectionPaths((current) =>
+        sameStringSet(current, collectionPaths) ? current : collectionPaths,
+      );
+      loadedTargetRef.current = requestTarget;
+      setError(null);
     } catch (loadError) {
+      if (requestRef.current !== request || targetRef.current !== requestTarget)
+        return;
       console.warn("Failed to load table entries:", loadError);
       toast.error(m.table_error_title());
-      setError(String(loadError));
+      if (initialLoad) setError(String(loadError));
     } finally {
-      setLoading(false);
+      if (requestRef.current === request && targetRef.current === requestTarget)
+        setLoading(false);
     }
-  }, [collectionPath, includeNested, projectPath, queryArgs, spacePath]);
+  }, [
+    collectionPath,
+    includeNested,
+    projectPath,
+    queryArgs,
+    spacePath,
+    targetKey,
+  ]);
 
   useEffect(() => {
     void loadEntries();
