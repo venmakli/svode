@@ -14,6 +14,10 @@ import {
   saveProjectIdentity,
   saveRepoIdentity,
 } from "../api";
+import {
+  identityDraftFromRepoIdentity,
+  repoIdentityHasOverride,
+} from "../model";
 
 interface UseSpaceSettingsIdentityOptions {
   open: boolean;
@@ -36,7 +40,8 @@ export function useSpaceSettingsIdentity({
   const [identityFormError, setIdentityFormError] = useState<string | null>(
     null,
   );
-  const [fanoutEnabled, setFanoutEnabled] = useState(true);
+  const [identityEditing, setIdentityEditing] = useState(false);
+  const [fanoutEnabled, setFanoutEnabled] = useState(false);
   const [fanoutPreview, setFanoutPreview] = useState<FanoutPreviewEntry[]>([]);
   const [fanoutSelected, setFanoutSelected] = useState<Record<string, boolean>>(
     {},
@@ -47,8 +52,9 @@ export function useSpaceSettingsIdentity({
     try {
       const result = await getRepoIdentity(spacePath);
       setRepoIdentity(result);
-      setIdentityName(result.local?.name ?? "");
-      setIdentityEmail(result.local?.email ?? "");
+      const draft = identityDraftFromRepoIdentity(result);
+      setIdentityName(draft.name);
+      setIdentityEmail(draft.email);
       setIdentityFormError(null);
     } catch (err) {
       console.warn("get_repo_identity failed:", err);
@@ -79,18 +85,44 @@ export function useSpaceSettingsIdentity({
     if (!open || !spacePath) return;
     void loadIdentity();
     void loadFanoutPreview();
-    setFanoutEnabled(true);
+    setIdentityEditing(false);
+    setFanoutEnabled(false);
   }, [open, spacePath, loadIdentity, loadFanoutPreview]);
 
-  async function handleSaveIdentity() {
+  function handleStartIdentityEdit() {
+    const draft = identityDraftFromRepoIdentity(repoIdentity);
+    setIdentityName(draft.name);
+    setIdentityEmail(draft.email);
+    setIdentityFormError(null);
+    setIdentityEditing(true);
+  }
+
+  function handleCancelIdentityEdit() {
+    const draft = identityDraftFromRepoIdentity(repoIdentity);
+    setIdentityName(draft.name);
+    setIdentityEmail(draft.email);
+    setIdentityFormError(null);
+    setIdentityEditing(false);
+    setFanoutEnabled(false);
+  }
+
+  async function persistIdentityDraft(name: string, email: string) {
     if (!spacePath) return;
-    const trimmedName = identityName.trim();
-    const trimmedEmail = identityEmail.trim();
+    const trimmedName = name.trim();
+    const trimmedEmail = email.trim();
     const bothEmpty = !trimmedName && !trimmedEmail;
     const bothFilled = trimmedName && trimmedEmail;
     if (!bothEmpty && !bothFilled) {
       setIdentityFormError(m.settings_git_identity_both_required());
-      return;
+      return false;
+    }
+    if (
+      bothEmpty &&
+      !repoIdentity?.effective &&
+      !repoIdentityHasOverride(repoIdentity)
+    ) {
+      setIdentityFormError(m.settings_git_identity_missing_save_error());
+      return false;
     }
     if (
       bothFilled &&
@@ -101,7 +133,7 @@ export function useSpaceSettingsIdentity({
           ? m.identity_name_empty()
           : m.identity_email_invalid(),
       );
-      return;
+      return false;
     }
 
     setIdentityFormError(null);
@@ -130,11 +162,31 @@ export function useSpaceSettingsIdentity({
       await loadFanoutPreview();
       bumpIdentityVersion();
       toast.success(m.toast_settings_saved());
+      return true;
     } catch (err) {
       console.error("identity save failed:", err);
       toast.error(m.toast_error());
+      return false;
     } finally {
       setSavingIdentity(false);
+    }
+  }
+
+  async function handleSaveIdentity() {
+    const saved = await persistIdentityDraft(identityName, identityEmail);
+    if (saved) {
+      setIdentityEditing(false);
+      setFanoutEnabled(false);
+    }
+  }
+
+  async function handleResetIdentity() {
+    setIdentityName("");
+    setIdentityEmail("");
+    const saved = await persistIdentityDraft("", "");
+    if (saved) {
+      setIdentityEditing(false);
+      setFanoutEnabled(false);
     }
   }
 
@@ -144,13 +196,18 @@ export function useSpaceSettingsIdentity({
     identityEmail,
     identityFormError,
     savingIdentity,
+    identityEditing,
+    canResetIdentity: repoIdentityHasOverride(repoIdentity),
     fanoutEnabled,
     fanoutPreview,
     fanoutSelected,
     setIdentityName,
     setIdentityEmail,
+    handleStartIdentityEdit,
+    handleCancelIdentityEdit,
     setFanoutEnabled,
     setFanoutSelected,
     handleSaveIdentity,
+    handleResetIdentity,
   };
 }

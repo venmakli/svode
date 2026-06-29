@@ -34,7 +34,7 @@ export function ProjectSpacesSection({
   onOpenSpaceDetail,
 }: ProjectSpacesSectionProps) {
   return (
-    <section className="flex max-w-2xl flex-col gap-4">
+    <section className="flex w-full min-w-0 max-w-2xl flex-col gap-4">
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-medium">{m.settings_spaces()}</h2>
@@ -81,12 +81,12 @@ export function ProjectSpacePolicyList({
   const label = section === "git" ? m.git_section() : m.storage_section();
 
   return (
-    <section className="flex max-w-2xl flex-col gap-3">
+    <section className="flex w-full min-w-0 max-w-2xl flex-col gap-3">
       <div className="flex flex-col gap-1">
         <h2 className="text-sm font-medium">
           {m.settings_project_policy_spaces_title()}
         </h2>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           {m.settings_project_policy_spaces_description()}
         </p>
       </div>
@@ -131,7 +131,7 @@ function SpaceSummaryRow({
   const statusLabel = spaceStatusLabel(space.status);
   const content = (
     <>
-      <div className="flex min-w-0 items-start gap-2">
+      <div className="flex min-w-0 flex-1 items-start gap-2">
         <span className="text-base leading-none">{space.icon}</span>
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex min-w-0 items-center gap-2">
@@ -149,14 +149,14 @@ function SpaceSummaryRow({
     return (
       <button
         type="button"
-        className="flex w-full flex-col gap-3 rounded-md border p-3 text-left transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60 sm:flex-row sm:items-start sm:justify-between"
+        className="flex w-full min-w-0 flex-col gap-3 rounded-md border p-3 text-left transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60 sm:flex-row sm:items-start sm:justify-between"
         aria-label={actionLabel ? `${space.name}: ${actionLabel}` : space.name}
         disabled={disabled}
         onClick={onClick}
       >
         {content}
         {actionLabel && (
-          <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground">
+          <span className="flex shrink-0 items-center gap-1 whitespace-nowrap text-xs font-medium text-muted-foreground">
             {actionLabel}
             <ChevronRight className="size-3" />
           </span>
@@ -166,7 +166,7 @@ function SpaceSummaryRow({
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-start sm:justify-between">
+    <div className="flex min-w-0 flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-start sm:justify-between">
       {content}
     </div>
   );

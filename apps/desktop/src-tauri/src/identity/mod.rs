@@ -18,6 +18,13 @@ pub struct GitIdentity {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct IdentityFieldSources {
+    pub name: &'static str,
+    pub email: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GlobalIdentityResult {
     pub global: Option<GitIdentity>,
     pub source: &'static str,
@@ -27,7 +34,10 @@ pub struct GlobalIdentityResult {
 #[serde(rename_all = "camelCase")]
 pub struct RepoIdentityResult {
     pub local: Option<GitIdentity>,
+    pub local_name: Option<String>,
+    pub local_email: Option<String>,
     pub effective: Option<GitIdentity>,
+    pub field_sources: IdentityFieldSources,
     pub source: &'static str,
 }
 
@@ -37,6 +47,9 @@ pub struct FanoutPreviewEntry {
     pub space_path: String,
     pub space_name: String,
     pub current_local: Option<GitIdentity>,
+    pub current_effective: Option<GitIdentity>,
+    pub source: &'static str,
+    pub field_sources: IdentityFieldSources,
     pub will_replace: bool,
 }
 
@@ -107,21 +120,36 @@ pub async fn get_local_identity(
     cli: &GitCli,
     repo_path: &Path,
 ) -> Result<Option<GitIdentity>, AppError> {
+    let (name, email) = get_local_identity_fields(cli, repo_path).await?;
+    match (name, email) {
+        (Some(name), Some(email)) => Ok(Some(GitIdentity { name, email })),
+        _ => Ok(None),
+    }
+}
+
+pub async fn get_local_identity_fields(
+    cli: &GitCli,
+    repo_path: &Path,
+) -> Result<(Option<String>, Option<String>), AppError> {
     let name_out = cli
         .exec(repo_path, &["config", "--local", "--get", "user.name"])
         .await?;
     let email_out = cli
         .exec(repo_path, &["config", "--local", "--get", "user.email"])
         .await?;
-    if name_out.exit_code != 0 || email_out.exit_code != 0 {
-        return Ok(None);
-    }
-    let name = name_out.stdout.trim().to_string();
-    let email = email_out.stdout.trim().to_string();
-    if name.is_empty() || email.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(GitIdentity { name, email }))
+    let name = if name_out.exit_code == 0 {
+        let value = name_out.stdout.trim().to_string();
+        (!value.is_empty()).then_some(value)
+    } else {
+        None
+    };
+    let email = if email_out.exit_code == 0 {
+        let value = email_out.stdout.trim().to_string();
+        (!value.is_empty()).then_some(value)
+    } else {
+        None
+    };
+    Ok((name, email))
 }
 
 pub async fn set_local_identity(
@@ -181,29 +209,95 @@ pub async fn get_effective_identity(
         .exec(repo_path, &["config", "--get", "user.email"])
         .await?;
 
-    let local = get_local_identity(cli, repo_path).await?;
+    let (local_name, local_email) = get_local_identity_fields(cli, repo_path).await?;
+    let local = match (&local_name, &local_email) {
+        (Some(name), Some(email)) => Some(GitIdentity {
+            name: name.clone(),
+            email: email.clone(),
+        }),
+        _ => None,
+    };
 
     if name_out.exit_code != 0 || email_out.exit_code != 0 {
+        let field_sources = IdentityFieldSources {
+            name: if local_name.is_some() {
+                "local"
+            } else {
+                "missing"
+            },
+            email: if local_email.is_some() {
+                "local"
+            } else {
+                "missing"
+            },
+        };
+        let source = if local_name.is_some() || local_email.is_some() {
+            "partial"
+        } else {
+            "missing"
+        };
         return Ok(RepoIdentityResult {
             local,
+            local_name,
+            local_email,
             effective: None,
-            source: "missing",
+            field_sources,
+            source,
         });
     }
     let name = name_out.stdout.trim().to_string();
     let email = email_out.stdout.trim().to_string();
     if name.is_empty() || email.is_empty() {
+        let field_sources = IdentityFieldSources {
+            name: if local_name.is_some() {
+                "local"
+            } else {
+                "missing"
+            },
+            email: if local_email.is_some() {
+                "local"
+            } else {
+                "missing"
+            },
+        };
+        let source = if local_name.is_some() || local_email.is_some() {
+            "partial"
+        } else {
+            "missing"
+        };
         return Ok(RepoIdentityResult {
             local,
+            local_name,
+            local_email,
             effective: None,
-            source: "missing",
+            field_sources,
+            source,
         });
     }
 
-    let source = if local.is_some() { "local" } else { "global" };
+    let field_sources = IdentityFieldSources {
+        name: if local_name.is_some() {
+            "local"
+        } else {
+            "global"
+        },
+        email: if local_email.is_some() {
+            "local"
+        } else {
+            "global"
+        },
+    };
+    let source = match (&local_name, &local_email) {
+        (Some(_), Some(_)) => "local",
+        (Some(_), None) | (None, Some(_)) => "partial",
+        (None, None) => "global",
+    };
     Ok(RepoIdentityResult {
         local,
+        local_name,
+        local_email,
         effective: Some(GitIdentity { name, email }),
+        field_sources,
         source,
     })
 }

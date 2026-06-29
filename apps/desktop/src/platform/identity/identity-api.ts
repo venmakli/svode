@@ -5,6 +5,14 @@ export interface GitIdentityDto {
   email: string;
 }
 
+export type GitIdentityFieldSourceDto = "local" | "global" | "missing";
+export type RepoIdentitySourceDto = "local" | "global" | "missing" | "partial";
+
+export interface IdentityFieldSourcesDto {
+  name: GitIdentityFieldSourceDto;
+  email: GitIdentityFieldSourceDto;
+}
+
 export interface GlobalIdentityResultDto {
   global: GitIdentityDto | null;
   source: "global" | "missing";
@@ -12,14 +20,20 @@ export interface GlobalIdentityResultDto {
 
 export interface RepoIdentityResultDto {
   local: GitIdentityDto | null;
+  localName?: string | null;
+  localEmail?: string | null;
   effective: GitIdentityDto | null;
-  source: "local" | "global" | "missing";
+  fieldSources?: IdentityFieldSourcesDto;
+  source: RepoIdentitySourceDto;
 }
 
 export interface FanoutPreviewEntryDto {
   spacePath: string;
   spaceName: string;
   currentLocal: GitIdentityDto | null;
+  currentEffective?: GitIdentityDto | null;
+  source?: RepoIdentitySourceDto;
+  fieldSources?: IdentityFieldSourcesDto;
   willReplace: boolean;
 }
 
@@ -54,7 +68,9 @@ export function saveGlobalIdentity(
 export function getRepoIdentity(
   repoPath: string,
 ): Promise<RepoIdentityResultDto> {
-  return invokeCommand<RepoIdentityResultDto>("get_repo_identity", { repoPath });
+  return invokeCommand<RepoIdentityResultDto>("get_repo_identity", {
+    repoPath,
+  });
 }
 
 export function getProjectFanoutPreview(

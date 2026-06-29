@@ -13,6 +13,7 @@ import { IdentitySection } from "./identity-section";
 interface SpaceGitSectionProps {
   gitType: SpaceGitType | null;
   activeRootName: string | null;
+  scopeName: string;
   isRoot: boolean;
   submoduleUrl: string | null;
   remoteUrl: string;
@@ -25,6 +26,7 @@ interface SpaceGitSectionProps {
   identityEmail: string;
   identityFormError: string | null;
   savingIdentity: boolean;
+  canResetIdentity: boolean;
   fanoutEnabled: boolean;
   fanoutPreview: FanoutPreviewEntry[];
   fanoutSelected: Record<string, boolean>;
@@ -35,7 +37,10 @@ interface SpaceGitSectionProps {
   onAutoCommitSystemChange: (value: boolean) => void;
   onIdentityNameChange: (value: string) => void;
   onIdentityEmailChange: (value: string) => void;
+  onStartIdentityEdit: () => void;
+  onCancelIdentityEdit: () => void;
   onSaveIdentity: () => void;
+  onResetIdentity: () => void;
   onFanoutEnabledChange: (value: boolean) => void;
   onFanoutSelectedChange: (value: Record<string, boolean>) => void;
 }
@@ -43,6 +48,7 @@ interface SpaceGitSectionProps {
 export function SpaceGitSection({
   gitType,
   activeRootName,
+  scopeName,
   isRoot,
   submoduleUrl,
   remoteUrl,
@@ -55,6 +61,7 @@ export function SpaceGitSection({
   identityEmail,
   identityFormError,
   savingIdentity,
+  canResetIdentity,
   fanoutEnabled,
   fanoutPreview,
   fanoutSelected,
@@ -65,12 +72,15 @@ export function SpaceGitSection({
   onAutoCommitSystemChange,
   onIdentityNameChange,
   onIdentityEmailChange,
+  onStartIdentityEdit,
+  onCancelIdentityEdit,
   onSaveIdentity,
+  onResetIdentity,
   onFanoutEnabledChange,
   onFanoutSelectedChange,
 }: SpaceGitSectionProps) {
   return (
-    <div className="flex max-w-sm flex-col gap-6">
+    <div className="flex w-full min-w-0 max-w-2xl flex-col gap-6">
       {gitType === "inline" && (
         <p className="text-sm text-muted-foreground">
           {m.git_type_inline_note({ name: activeRootName ?? "" })}
@@ -181,7 +191,9 @@ export function SpaceGitSection({
         <>
           <Separator />
           <IdentitySection
+            mode="summary"
             isRoot={isRoot}
+            scopeName={scopeName}
             repoIdentity={repoIdentity}
             identityName={identityName}
             identityEmail={identityEmail}
@@ -189,14 +201,16 @@ export function SpaceGitSection({
             setIdentityEmail={onIdentityEmailChange}
             identityFormError={identityFormError}
             savingIdentity={savingIdentity}
+            canResetIdentity={canResetIdentity}
+            onEdit={onStartIdentityEdit}
+            onCancelEdit={onCancelIdentityEdit}
             onSave={onSaveIdentity}
+            onReset={onResetIdentity}
             fanoutEnabled={fanoutEnabled}
             setFanoutEnabled={onFanoutEnabledChange}
             fanoutPreview={fanoutPreview}
             fanoutSelected={fanoutSelected}
             setFanoutSelected={onFanoutSelectedChange}
-            plannedName={identityName.trim()}
-            plannedEmail={identityEmail.trim()}
           />
         </>
       )}

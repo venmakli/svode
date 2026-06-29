@@ -1,13 +1,13 @@
-export {
-  avatarColorFromEmail,
-  AVATAR_COLORS,
-} from "./lib";
+export { avatarColorFromEmail, AVATAR_COLORS } from "./lib";
 export { IdentityDialog } from "./ui/identity-dialog";
 export type {
   FanoutPreviewEntry,
   GitIdentity,
+  GitIdentityFieldSource,
   GlobalIdentityResult,
+  IdentityFieldSources,
   RepoIdentityResult,
+  RepoIdentitySource,
 } from "./model";
 export {
   getGlobalIdentity,

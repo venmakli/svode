@@ -4,8 +4,7 @@ use tauri::State;
 
 use super::{
     FanoutPreviewEntry, GlobalIdentityResult, RepoIdentityResult, apply_identity_to_project,
-    get_effective_identity, get_global_identity, get_local_identity, set_global_identity,
-    set_local_identity,
+    get_effective_identity, get_global_identity, set_global_identity, set_local_identity,
 };
 use crate::AppError;
 use crate::git::commands::{GitState, require_cli};
@@ -94,13 +93,19 @@ pub async fn get_project_fanout_preview(
                         .unwrap_or_else(|| sp.path.clone())
                 });
 
-            let current_local = get_local_identity(&cli, &space_dir).await.unwrap_or(None);
-            let will_replace = current_local.is_some();
+            let identity = match get_effective_identity(&cli, &space_dir).await {
+                Ok(identity) => identity,
+                Err(_) => continue,
+            };
+            let will_replace = identity.local.is_some() || identity.source == "partial";
 
             out.push(FanoutPreviewEntry {
                 space_path: space_dir.to_string_lossy().to_string(),
                 space_name,
-                current_local,
+                current_local: identity.local,
+                current_effective: identity.effective,
+                source: identity.source,
+                field_sources: identity.field_sources,
                 will_replace,
             });
         }

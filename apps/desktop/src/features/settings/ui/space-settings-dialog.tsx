@@ -62,6 +62,7 @@ import { useProjectSpaceGitTypes } from "../hooks/use-project-space-git-types";
 import { SpaceAgentSection } from "./space-agent-section";
 import { SpaceDefaultsSection } from "./space-defaults-section";
 import { SpaceGeneralSection } from "./space-general-section";
+import { IdentitySection } from "./identity-section";
 import { SpaceGitSection } from "./space-git-section";
 import { SpaceHealthSection } from "./space-health-section";
 import { SpaceInstructionsSection } from "./space-instructions-section";
@@ -89,6 +90,7 @@ type Section =
   | "health"
   | "defaults"
   | "instructions";
+type GitDetail = "identity";
 
 export function SpaceSettingsDialog({
   open,
@@ -101,6 +103,7 @@ export function SpaceSettingsDialog({
 
   const projectPath = activeRootPath ?? inputPath ?? "";
   const [section, setSection] = useState<Section>("general");
+  const [gitDetail, setGitDetail] = useState<GitDetail | null>(null);
   const [createSpaceOpen, setCreateSpaceOpen] = useState(false);
   const [detailSpaceId, setDetailSpaceId] = useState<string | null>(null);
   const detailSpace = detailSpaceId
@@ -172,6 +175,7 @@ export function SpaceSettingsDialog({
     if (!open || !projectPath) return;
     const resetSection = window.setTimeout(() => {
       setSection("general");
+      setGitDetail(null);
       setDetailSpaceId(null);
     }, 0);
     return () => window.clearTimeout(resetSection);
@@ -183,7 +187,11 @@ export function SpaceSettingsDialog({
   }
 
   function handleSectionChange(nextSection: Section) {
+    if (gitDetail === "identity") {
+      identitySettings.handleCancelIdentityEdit();
+    }
     setSection(nextSection);
+    setGitDetail(null);
     setDetailSpaceId(null);
   }
 
@@ -191,13 +199,37 @@ export function SpaceSettingsDialog({
     spaceId: string,
     nextSection: ProjectSpaceDetailSection,
   ) {
+    if (gitDetail === "identity") {
+      identitySettings.handleCancelIdentityEdit();
+    }
+    setGitDetail(null);
     setDetailSpaceId(spaceId);
     setSection(nextSection === "general" ? "spaces" : nextSection);
   }
 
   function handleReturnToProjectSection(event: MouseEvent) {
     event.preventDefault();
+    if (gitDetail === "identity") {
+      identitySettings.handleCancelIdentityEdit();
+    }
+    setGitDetail(null);
     setDetailSpaceId(null);
+  }
+
+  function handleReturnToGitDetailParent(event: MouseEvent) {
+    event.preventDefault();
+    identitySettings.handleCancelIdentityEdit();
+    setGitDetail(null);
+  }
+
+  function handleOpenIdentityDetail() {
+    identitySettings.handleStartIdentityEdit();
+    setGitDetail("identity");
+  }
+
+  function handleCancelIdentityDetail() {
+    identitySettings.handleCancelIdentityEdit();
+    setGitDetail(null);
   }
 
   const navItems: {
@@ -234,6 +266,7 @@ export function SpaceSettingsDialog({
   const visibleNav = navItems.filter((item) => item.show);
   const currentNav =
     visibleNav.find((item) => item.key === section) ?? visibleNav[0];
+  const isGitIdentityDetail = section === "git" && gitDetail === "identity";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -244,7 +277,7 @@ export function SpaceSettingsDialog({
         <DialogDescription className="sr-only">
           {m.sidebar_project_settings()}
         </DialogDescription>
-        <SidebarProvider className="items-start">
+        <SidebarProvider className="min-w-0 items-start">
           <Sidebar collapsible="none" className="hidden md:flex">
             <SidebarContent>
               <SidebarGroup>
@@ -266,7 +299,7 @@ export function SpaceSettingsDialog({
               </SidebarGroup>
             </SidebarContent>
           </Sidebar>
-          <main className="flex h-[480px] flex-1 flex-col overflow-hidden">
+          <main className="flex h-[480px] min-w-0 flex-1 flex-col overflow-hidden">
             <header className="flex h-12 shrink-0 items-center gap-2 border-b">
               <div className="flex items-center gap-2 px-4">
                 <Breadcrumb>
@@ -283,7 +316,7 @@ export function SpaceSettingsDialog({
                     </BreadcrumbItem>
                     <BreadcrumbSeparator className="hidden md:block" />
                     <BreadcrumbItem>
-                      {detailSpace ? (
+                      {detailSpace || isGitIdentityDetail ? (
                         <BreadcrumbLink
                           href="#"
                           onClick={handleReturnToProjectSection}
@@ -298,7 +331,26 @@ export function SpaceSettingsDialog({
                       <>
                         <BreadcrumbSeparator />
                         <BreadcrumbItem>
-                          <BreadcrumbPage>{detailSpace.name}</BreadcrumbPage>
+                          {isGitIdentityDetail ? (
+                            <BreadcrumbLink
+                              href="#"
+                              onClick={handleReturnToGitDetailParent}
+                            >
+                              {detailSpace.name}
+                            </BreadcrumbLink>
+                          ) : (
+                            <BreadcrumbPage>{detailSpace.name}</BreadcrumbPage>
+                          )}
+                        </BreadcrumbItem>
+                      </>
+                    )}
+                    {isGitIdentityDetail && (
+                      <>
+                        <BreadcrumbSeparator />
+                        <BreadcrumbItem>
+                          <BreadcrumbPage>
+                            {m.settings_git_identity_title()}
+                          </BreadcrumbPage>
                         </BreadcrumbItem>
                       </>
                     )}
@@ -306,7 +358,7 @@ export function SpaceSettingsDialog({
                 </Breadcrumb>
               </div>
             </header>
-            <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
+            <div className="flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
               {section === "general" && (
                 <SpaceGeneralSection
                   icon={generalSettings.icon}
@@ -359,11 +411,14 @@ export function SpaceSettingsDialog({
                 />
               )}
 
-              {section === "git" && (
-                <div className="flex flex-col gap-6">
+              {section === "git" && !isGitIdentityDetail && (
+                <div className="flex min-w-0 flex-col gap-6">
                   <SpaceGitSection
                     gitType={gitSettings.gitType}
                     activeRootName={activeRootName}
+                    scopeName={
+                      isRoot ? projectName : (detailSpace?.name ?? projectName)
+                    }
                     isRoot={isRoot}
                     submoduleUrl={gitSettings.submoduleUrl}
                     remoteUrl={gitSettings.remoteUrl}
@@ -376,6 +431,7 @@ export function SpaceSettingsDialog({
                     identityEmail={identitySettings.identityEmail}
                     identityFormError={identitySettings.identityFormError}
                     savingIdentity={identitySettings.savingIdentity}
+                    canResetIdentity={identitySettings.canResetIdentity}
                     fanoutEnabled={identitySettings.fanoutEnabled}
                     fanoutPreview={identitySettings.fanoutPreview}
                     fanoutSelected={identitySettings.fanoutSelected}
@@ -390,7 +446,12 @@ export function SpaceSettingsDialog({
                     }
                     onIdentityNameChange={identitySettings.setIdentityName}
                     onIdentityEmailChange={identitySettings.setIdentityEmail}
+                    onStartIdentityEdit={handleOpenIdentityDetail}
+                    onCancelIdentityEdit={
+                      identitySettings.handleCancelIdentityEdit
+                    }
                     onSaveIdentity={identitySettings.handleSaveIdentity}
+                    onResetIdentity={identitySettings.handleResetIdentity}
                     onFanoutEnabledChange={identitySettings.setFanoutEnabled}
                     onFanoutSelectedChange={identitySettings.setFanoutSelected}
                   />
@@ -405,8 +466,35 @@ export function SpaceSettingsDialog({
                 </div>
               )}
 
+              {section === "git" && isGitIdentityDetail && (
+                <IdentitySection
+                  mode="detail"
+                  isRoot={isRoot}
+                  scopeName={
+                    isRoot ? projectName : (detailSpace?.name ?? projectName)
+                  }
+                  repoIdentity={identitySettings.repoIdentity}
+                  identityName={identitySettings.identityName}
+                  identityEmail={identitySettings.identityEmail}
+                  setIdentityName={identitySettings.setIdentityName}
+                  setIdentityEmail={identitySettings.setIdentityEmail}
+                  identityFormError={identitySettings.identityFormError}
+                  savingIdentity={identitySettings.savingIdentity}
+                  canResetIdentity={identitySettings.canResetIdentity}
+                  onEdit={handleOpenIdentityDetail}
+                  onCancelEdit={handleCancelIdentityDetail}
+                  onSave={identitySettings.handleSaveIdentity}
+                  onReset={identitySettings.handleResetIdentity}
+                  fanoutEnabled={identitySettings.fanoutEnabled}
+                  setFanoutEnabled={identitySettings.setFanoutEnabled}
+                  fanoutPreview={identitySettings.fanoutPreview}
+                  fanoutSelected={identitySettings.fanoutSelected}
+                  setFanoutSelected={identitySettings.setFanoutSelected}
+                />
+              )}
+
               {section === "storage" && (
-                <div className="flex flex-col gap-6">
+                <div className="flex min-w-0 flex-col gap-6">
                   <StorageSettingsSection
                     gitType={gitSettings.gitType}
                     activeRootName={activeRootName}
