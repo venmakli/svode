@@ -120,7 +120,7 @@ export function useFileTreeDragCommand({
       const drag = prepareTreeDrag(tree, input.fromPath, input.projection);
       if (!drag) return;
 
-      const editorSync = createFileTreeEditorSync(spaceId);
+      const editorSync = createFileTreeEditorSync(spaceId, space.path);
 
       await convertProjectedChildTarget({
         space,

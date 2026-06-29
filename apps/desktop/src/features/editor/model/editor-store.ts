@@ -1,31 +1,51 @@
 import { create } from "zustand";
+import { editorFileKey, editorFileKeysForClear } from "./editor-file-keys";
 
 interface EditorState {
-  /** Tracks unsaved user edits per file path */
+  /** Tracks pending editor writes per scoped file key. */
   unsavedChanges: Record<string, boolean>;
   /** Tracks external edits for editor reload/cache behavior. */
   aiModified: Record<string, boolean>;
   /** Cache-invalidation-only flag: forces Plate to re-read from disk on next open. No visual side effect. */
   staleCache: Record<string, boolean>;
   /** Pending title rename from sidebar — editor picks it up and applies */
-  pendingRename: { path: string; title: string; newPath: string | null } | null;
+  pendingRename: {
+    scopePath: string;
+    path: string;
+    title: string;
+    newPath: string | null;
+  } | null;
   /** Set of broken link target paths for the currently open document */
   brokenLinks: Set<string>;
   /** Paths to ignore in file watcher events (structural operations, auto-cleared after timeout) */
   suppressedPaths: Set<string>;
 
-  markUnsaved: (path: string) => void;
-  clearUnsaved: (path: string) => void;
-  markAiModified: (path: string) => void;
-  clearAiModified: (path: string) => void;
-  markStale: (path: string) => void;
-  clearStale: (path: string) => void;
-  hasIndicator: (path: string) => boolean;
+  markUnsaved: (scopePath: string | null | undefined, path: string) => void;
+  clearUnsaved: (scopePath: string | null | undefined, path: string) => void;
+  hasUnsaved: (scopePath: string | null | undefined, path: string) => boolean;
+  markAiModified: (scopePath: string | null | undefined, path: string) => void;
+  clearAiModified: (scopePath: string | null | undefined, path: string) => void;
+  hasAiModified: (
+    scopePath: string | null | undefined,
+    path: string,
+  ) => boolean;
+  markStale: (scopePath: string | null | undefined, path: string) => void;
+  clearStale: (scopePath: string | null | undefined, path: string) => void;
+  hasStale: (scopePath: string | null | undefined, path: string) => boolean;
+  hasIndicator: (scopePath: string | null | undefined, path: string) => boolean;
   /** Suppress file watcher indicators for these paths (auto-cleared after 2s) */
-  suppressPaths: (paths: string[]) => void;
+  suppressPaths: (
+    scopePath: string | null | undefined,
+    paths: string[],
+  ) => void;
   /** Returns true if the path is currently suppressed */
-  isSuppressed: (path: string) => boolean;
-  requestRename: (path: string, title: string, newPath: string | null) => void;
+  isSuppressed: (scopePath: string | null | undefined, path: string) => boolean;
+  requestRename: (
+    scopePath: string | null | undefined,
+    path: string,
+    title: string,
+    newPath: string | null,
+  ) => void;
   clearPendingRename: () => void;
   setBrokenLinks: (links: Set<string>) => void;
 }
@@ -38,63 +58,103 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   brokenLinks: new Set<string>(),
   suppressedPaths: new Set<string>(),
 
-  markUnsaved: (path) =>
+  markUnsaved: (scopePath, path) =>
     set((s) => ({
-      unsavedChanges: { ...s.unsavedChanges, [path]: true },
+      unsavedChanges: {
+        ...s.unsavedChanges,
+        [editorFileKey(scopePath, path)]: true,
+      },
     })),
 
-  clearUnsaved: (path) =>
-    set((s) => {
-      const { [path]: _removed, ...rest } = s.unsavedChanges;
-      return { unsavedChanges: rest };
-    }),
-
-  markAiModified: (path) =>
+  clearUnsaved: (scopePath, path) =>
     set((s) => ({
-      aiModified: { ...s.aiModified, [path]: true },
+      unsavedChanges: removeEditorFileKeys(s.unsavedChanges, scopePath, path),
     })),
 
-  clearAiModified: (path) =>
-    set((s) => {
-      const { [path]: _removed, ...rest } = s.aiModified;
-      return { aiModified: rest };
-    }),
+  hasUnsaved: (scopePath, path) =>
+    !!get().unsavedChanges[editorFileKey(scopePath, path)],
 
-  markStale: (path) =>
+  markAiModified: (scopePath, path) =>
     set((s) => ({
-      staleCache: { ...s.staleCache, [path]: true },
+      aiModified: {
+        ...s.aiModified,
+        [editorFileKey(scopePath, path)]: true,
+      },
     })),
 
-  clearStale: (path) =>
-    set((s) => {
-      const { [path]: _removed, ...rest } = s.staleCache;
-      return { staleCache: rest };
-    }),
+  clearAiModified: (scopePath, path) =>
+    set((s) => ({
+      aiModified: removeEditorFileKeys(s.aiModified, scopePath, path),
+    })),
 
-  hasIndicator: (path) => {
+  hasAiModified: (scopePath, path) =>
+    !!get().aiModified[editorFileKey(scopePath, path)],
+
+  markStale: (scopePath, path) =>
+    set((s) => ({
+      staleCache: { ...s.staleCache, [editorFileKey(scopePath, path)]: true },
+    })),
+
+  clearStale: (scopePath, path) =>
+    set((s) => ({
+      staleCache: removeEditorFileKeys(s.staleCache, scopePath, path),
+    })),
+
+  hasStale: (scopePath, path) =>
+    !!get().staleCache[editorFileKey(scopePath, path)],
+
+  hasIndicator: (scopePath, path) => {
     const { unsavedChanges, aiModified } = get();
-    return !!unsavedChanges[path] || !!aiModified[path];
+    const key = editorFileKey(scopePath, path);
+    return !!unsavedChanges[key] || !!aiModified[key];
   },
 
-  suppressPaths: (paths) => {
+  suppressPaths: (scopePath, paths) => {
     set((s) => {
       const next = new Set(s.suppressedPaths);
-      for (const p of paths) next.add(p);
+      for (const p of paths) next.add(editorFileKey(scopePath, p));
       return { suppressedPaths: next };
     });
     // Auto-clear after 2s to catch all FS events from the operation
     setTimeout(() => {
       set((s) => {
         const next = new Set(s.suppressedPaths);
-        for (const p of paths) next.delete(p);
+        for (const p of paths) {
+          for (const key of editorFileKeysForClear(scopePath, p)) {
+            next.delete(key);
+          }
+        }
         return { suppressedPaths: next };
       });
     }, 2000);
   },
 
-  isSuppressed: (path) => get().suppressedPaths.has(path),
+  isSuppressed: (scopePath, path) =>
+    get().suppressedPaths.has(editorFileKey(scopePath, path)),
 
-  requestRename: (path, title, newPath) => set({ pendingRename: { path, title, newPath } }),
+  requestRename: (scopePath, path, title, newPath) =>
+    set({
+      pendingRename: {
+        scopePath: (scopePath ?? "").replaceAll("\\", "/").replace(/\/+$/g, ""),
+        path,
+        title,
+        newPath,
+      },
+    }),
   clearPendingRename: () => set({ pendingRename: null }),
   setBrokenLinks: (links) => set({ brokenLinks: links }),
 }));
+
+function removeEditorFileKeys(
+  record: Record<string, boolean>,
+  scopePath: string | null | undefined,
+  path: string,
+): Record<string, boolean> {
+  const keys = editorFileKeysForClear(scopePath, path);
+  if (keys.every((key) => record[key] === undefined)) return record;
+  const next = { ...record };
+  for (const key of keys) {
+    delete next[key];
+  }
+  return next;
+}

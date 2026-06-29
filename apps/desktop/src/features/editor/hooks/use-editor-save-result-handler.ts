@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import type { PlateEditor } from "platejs/react";
 
 import type { WriteResult } from "@/features/entry";
-import { getSpaceTreeSyncSnapshot } from "@/features/space";
+import { getSpaceSnapshot, getSpaceTreeSyncSnapshot } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 
 import { clearCommittedReviewMarkers } from "../file-tree-sync";
@@ -20,7 +20,7 @@ interface MutableRef<T> {
 interface UseEditorSaveResultHandlerInput {
   activeRootId: string | null;
   activeWsId: string | null;
-  clearUnsaved: (path: string) => void;
+  clearUnsaved: (scopePath: string | null | undefined, path: string) => void;
   descriptionRef: MutableRef<string>;
   editor: PlateEditor | null;
   iconRef: MutableRef<string | null>;
@@ -55,10 +55,10 @@ export function useEditorSaveResultHandler({
   const clearCommittedMarkers = useCallback(
     (result: { committedPaths: string[] } | null | undefined): void => {
       if (result?.committedPaths.length) {
-        clearCommittedReviewMarkers(result.committedPaths);
+        clearCommittedReviewMarkers(spacePath, result.committedPaths);
       }
     },
-    [],
+    [spacePath],
   );
 
   const handleModifiedSources = useCallback(
@@ -72,11 +72,28 @@ export function useEditorSaveResultHandler({
             }));
       if (sources.length === 0) return;
 
-      const paths = sources.map((source) => source.path);
-      for (const path of paths) {
-        deleteCachedDocumentValue(path);
+      const spaceSnapshot = getSpaceSnapshot();
+      const pathsByScopePath = new Map<string, string[]>();
+      for (const source of sources) {
+        const sourceScopePath = scopePathForModifiedSource({
+          activeRootId,
+          fallbackSpacePath: spacePath,
+          sourceSpaceId: source.spaceId,
+          spaceSnapshot,
+        });
+        if (sourceScopePath) {
+          deleteCachedDocumentValue(source.path, sourceScopePath);
+          pathsByScopePath.set(sourceScopePath, [
+            ...(pathsByScopePath.get(sourceScopePath) ?? []),
+            source.path,
+          ]);
+        } else {
+          deleteCachedDocumentValue(source.path);
+        }
       }
-      useEditorStore.getState().suppressPaths(paths);
+      for (const [sourceScopePath, paths] of pathsByScopePath) {
+        useEditorStore.getState().suppressPaths(sourceScopePath, paths);
+      }
 
       const pathsByTreeId = new Map<string, string[]>();
       for (const source of sources) {
@@ -93,7 +110,7 @@ export function useEditorSaveResultHandler({
         void store.reloadTreePathParents(id, sourcePaths);
       }
     },
-    [activeRootId, activeWsId],
+    [activeRootId, activeWsId, spacePath],
   );
 
   const patchCurrentTreeMeta = useCallback(
@@ -120,9 +137,10 @@ export function useEditorSaveResultHandler({
       if (editor) {
         setCachedDocumentValueByKey(cacheKey, editor.children);
       }
+      clearUnsaved(spacePath, path);
       patchCurrentTreeMeta(result.newPath ?? path);
     },
-    [editor, patchCurrentTreeMeta],
+    [clearUnsaved, editor, patchCurrentTreeMeta, spacePath],
   );
 
   const applySavedDocumentResult = useCallback(
@@ -132,7 +150,7 @@ export function useEditorSaveResultHandler({
       options: { cacheCurrentDocument?: boolean } = {},
     ): string => {
       const { cacheCurrentDocument = true } = options;
-      clearUnsaved(currentDocument);
+      clearUnsaved(spacePath, currentDocument);
 
       if (result.newPath) {
         deleteCachedDocumentValue(currentDocument, spacePath);
@@ -177,4 +195,28 @@ export function useEditorSaveResultHandler({
     applySavedDocumentResult,
     clearCommittedMarkers,
   };
+}
+
+function scopePathForModifiedSource(input: {
+  activeRootId: string | null;
+  fallbackSpacePath: string;
+  sourceSpaceId: string | null;
+  spaceSnapshot: ReturnType<typeof getSpaceSnapshot>;
+}): string | null {
+  if (input.sourceSpaceId === null) {
+    return input.spaceSnapshot.activeRootPath ?? input.fallbackSpacePath;
+  }
+
+  const space =
+    input.spaceSnapshot.spaces.find(
+      (item) => item.id === input.sourceSpaceId,
+    ) ??
+    input.spaceSnapshot.rootSpaces.find(
+      (item) => item.id === input.sourceSpaceId,
+    );
+  if (space) return space.path;
+  if (input.sourceSpaceId === input.activeRootId) {
+    return input.spaceSnapshot.activeRootPath ?? input.fallbackSpacePath;
+  }
+  return input.fallbackSpacePath || null;
 }

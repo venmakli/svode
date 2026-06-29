@@ -3,10 +3,12 @@ import {
   selectFileChangeIndicator,
   selectSpaceRootChangeIndicator,
   selectTreeNodeChangeIndicator,
+  useGitStore,
 } from "./git-store";
 import type { GitStatus } from "./types";
 
 const SPACE_PATH = "/tmp/svode-space";
+const OTHER_SPACE_PATH = "/tmp/other-svode-space";
 
 test("selectFileChangeIndicator marks untracked leaf files", () => {
   const state = gitState([{ path: "drafts/new.md", state: "untracked" }]);
@@ -105,9 +107,7 @@ test("selectSpaceRootChangeIndicator treats README as self and documents as desc
 });
 
 test("selectSpaceRootChangeIndicator treats .svode files as descendants", () => {
-  const state = gitState([
-    { path: ".svode/config.json", state: "modified" },
-  ]);
+  const state = gitState([{ path: ".svode/config.json", state: "modified" }]);
 
   expect(selectSpaceRootChangeIndicator(state, SPACE_PATH)).toEqual({
     kind: "dirty",
@@ -115,6 +115,54 @@ test("selectSpaceRootChangeIndicator treats .svode files as descendants", () => 
     scope: "descendants",
     state: "modified",
   });
+});
+
+test("selectFileChangeIndicator scopes same relative paths by space path", () => {
+  const state = gitStateBySpace({
+    [SPACE_PATH]: [{ path: "AGENTS.md", state: "modified" }],
+    [OTHER_SPACE_PATH]: [],
+  });
+
+  expect(selectFileChangeIndicator(state, SPACE_PATH, "AGENTS.md")).toEqual({
+    kind: "dirty",
+    reason: "git_dirty",
+    scope: "self",
+    state: "modified",
+  });
+  expect(
+    selectFileChangeIndicator(state, OTHER_SPACE_PATH, "AGENTS.md"),
+  ).toEqual({ kind: "clean" });
+});
+
+test("refreshStatus replaces stale dirty files with a clean snapshot", async () => {
+  useGitStore.setState({
+    statuses: {},
+    syncing: {},
+    syncError: {},
+    cloning: {},
+  });
+  const store = useGitStore.getState();
+  store.applyStatus(
+    SPACE_PATH,
+    status([{ path: "AGENTS.md", state: "modified" }]),
+  );
+
+  expect(
+    selectFileChangeIndicator(useGitStore.getState(), SPACE_PATH, "AGENTS.md"),
+  ).toEqual({
+    kind: "dirty",
+    reason: "git_dirty",
+    scope: "self",
+    state: "modified",
+  });
+
+  await useGitStore
+    .getState()
+    .refreshStatus(SPACE_PATH, async () => status([]));
+
+  expect(
+    selectFileChangeIndicator(useGitStore.getState(), SPACE_PATH, "AGENTS.md"),
+  ).toEqual({ kind: "clean" });
 });
 
 test("dirty indicators are referentially stable for React store selectors", () => {
@@ -130,10 +178,17 @@ test("dirty indicators are referentially stable for React store selectors", () =
 });
 
 function gitState(files: GitStatus["files"]) {
+  return gitStateBySpace({ [SPACE_PATH]: files });
+}
+
+function gitStateBySpace(filesBySpace: Record<string, GitStatus["files"]>) {
   return {
-    statuses: {
-      [SPACE_PATH]: status(files),
-    },
+    statuses: Object.fromEntries(
+      Object.entries(filesBySpace).map(([spacePath, files]) => [
+        spacePath,
+        status(files),
+      ]),
+    ),
     syncing: {},
     syncError: {},
     cloning: {},

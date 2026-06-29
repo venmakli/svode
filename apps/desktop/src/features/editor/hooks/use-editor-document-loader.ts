@@ -33,7 +33,7 @@ interface UseEditorDocumentLoaderInput {
   bodyOnly: boolean;
   bodyOnlyMeta: EntryMeta | null;
   cancelDebounce: () => void;
-  clearUnsaved: (path: string) => void;
+  clearUnsaved: (scopePath: string | null | undefined, path: string) => void;
   currentCacheKeyRef: MutableRef<string | null>;
   currentDocument: string | null;
   currentDocumentSpaceId: string | null;
@@ -146,15 +146,18 @@ export function useEditorDocumentLoader({
     [applyMeta],
   );
 
-  const refreshLoadedDocumentKey = useCallback((cacheKey: string | null) => {
-    if (!cacheKey) return;
-    setLoadedDocumentKey(null);
-    window.setTimeout(() => {
-      if (currentCacheKeyRef.current === cacheKey) {
-        setLoadedDocumentKey(cacheKey);
-      }
-    }, 0);
-  }, [currentCacheKeyRef]);
+  const refreshLoadedDocumentKey = useCallback(
+    (cacheKey: string | null) => {
+      if (!cacheKey) return;
+      setLoadedDocumentKey(null);
+      window.setTimeout(() => {
+        if (currentCacheKeyRef.current === cacheKey) {
+          setLoadedDocumentKey(cacheKey);
+        }
+      }, 0);
+    },
+    [currentCacheKeyRef],
+  );
 
   const initialEntryMatchesCurrentDocument =
     Boolean(initialEntry && initialEntry.path === currentDocument) &&
@@ -193,8 +196,8 @@ export function useEditorDocumentLoader({
     const cached = getCachedDocumentValue(spacePath, currentDocument);
     const editorState = useEditorStore.getState();
     const wasExternallyModified =
-      editorState.aiModified[currentDocument] ||
-      editorState.staleCache[currentDocument];
+      editorState.hasAiModified(spacePath, currentDocument) ||
+      editorState.hasStale(spacePath, currentDocument);
     const cachedBody = cached && !wasExternallyModified ? cached : null;
     const initialEntrySpacePathForDocument = initialEntrySpacePathRef.current;
     const initialForDocument =
@@ -247,7 +250,7 @@ export function useEditorDocumentLoader({
           }
           const loadedValue = loadEditorValue(cachedBody);
           setCachedDocumentValue(spacePath, currentDocument, loadedValue);
-          clearUnsaved(currentDocument);
+          clearUnsaved(spacePath, currentDocument);
           finish("ok", true, metaForCachedBody ? "cache" : "cache-meta-read");
         } catch (err) {
           if (sequence !== loadSeqRef.current) return;
@@ -262,7 +265,7 @@ export function useEditorDocumentLoader({
       })();
     } else {
       deleteCachedDocumentValue(currentDocument, spacePath);
-      useEditorStore.getState().clearStale(currentDocument);
+      useEditorStore.getState().clearStale(spacePath, currentDocument);
       void (async () => {
         const source = initialForDocument ? "initial-entry" : "read-entry";
         try {
@@ -275,7 +278,7 @@ export function useEditorDocumentLoader({
           const value = deserializeWithConflicts(editor, entry.body);
           const loadedValue = loadEditorValue(value);
           setCachedDocumentValue(spacePath, currentDocument, loadedValue);
-          clearUnsaved(currentDocument);
+          clearUnsaved(spacePath, currentDocument);
           finish("ok", false, source);
         } catch (err) {
           if (sequence !== loadSeqRef.current) return;

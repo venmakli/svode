@@ -13,6 +13,7 @@ import {
   gitSaveShortcutLabel,
   gitStatusHasDirtyPath,
   getGitSpaceStatus,
+  refreshGitSpaceStatus,
   resolveGitSaveAllScope,
   selfPathsForGitSaveScope,
   type GitSaveScope,
@@ -36,7 +37,7 @@ interface UseEditorDocumentWriterInput {
   activeWsId: string | null;
   bufferTimerRef: MutableRef<ReturnType<typeof setTimeout> | null>;
   cancelDebounce: () => void;
-  clearUnsaved: (path: string) => void;
+  clearUnsaved: (scopePath: string | null | undefined, path: string) => void;
   currentCacheKeyRef: MutableRef<string | null>;
   currentDocument: string | null;
   currentPathRef: MutableRef<string | null>;
@@ -158,6 +159,9 @@ export function useEditorDocumentWriter({
       void performWrite(true)
         .then((result) => {
           applyAutoSaveResult(result, path, cacheKey);
+          if (result) {
+            void refreshGitSpaceStatus(spacePath);
+          }
         })
         .catch((err) => {
           console.error("Auto-save failed:", err);
@@ -185,7 +189,7 @@ export function useEditorDocumentWriter({
 
     const status = getGitSpaceStatus(spacePath);
     const currentSurfaceDirty =
-      useEditorStore.getState().unsavedChanges[currentDocument] ||
+      useEditorStore.getState().hasUnsaved(spacePath, currentDocument) ||
       gitStatusHasDirtyPath(status, currentDocument);
     if (!currentSurfaceDirty) {
       showCurrentSurfaceCleanFeedback(
@@ -256,7 +260,9 @@ export function useEditorDocumentWriter({
       return;
     }
 
-    const isDirty = useEditorStore.getState().unsavedChanges[currentDocument];
+    const isDirty = useEditorStore
+      .getState()
+      .hasUnsaved(spacePath, currentDocument);
     if (!isDirty) {
       void commitSaveScopeAndMaybeSync(
         spacePath,

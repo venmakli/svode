@@ -26,6 +26,7 @@ interface UseFileTreeItemRenameInput {
   bareFolder: boolean;
   activeRootPath: string | null;
   activeDocument: string | null;
+  activeDocumentSpaceId: string | null;
   reloadTreeParents: (
     spaceId: string,
     parentPaths: Array<string | null | undefined>,
@@ -47,6 +48,7 @@ export function useFileTreeItemRename({
   bareFolder,
   activeRootPath,
   activeDocument,
+  activeDocumentSpaceId,
   reloadTreeParents,
   patchEntryTreeMeta,
   removeTreePath,
@@ -87,8 +89,8 @@ export function useFileTreeItemRename({
           projectPath: activeRootPath,
         });
         if (modifiedFiles.length > 0) {
-          markEditorFilesStale(modifiedFiles);
-          suppressEditorFileEvents(modifiedFiles);
+          markEditorFilesStale(space.path, modifiedFiles);
+          suppressEditorFileEvents(space.path, modifiedFiles);
         }
         removeTreePath(spaceId, node.path);
         await reloadTreeParents(spaceId, [parent]);
@@ -99,8 +101,8 @@ export function useFileTreeItemRename({
           title: newName,
           projectPath: activeRootPath,
         });
-        if (activeDocument === node.path) {
-          requestEditorFileRename(node.path, newName, null);
+        if (activeDocument === node.path && activeDocumentSpaceId === spaceId) {
+          requestEditorFileRename(space.path, node.path, newName, null);
         }
         patchEntryTreeMeta(
           spaceId,

@@ -5,12 +5,14 @@ import {
   deleteCachedDocumentValue,
   setCachedDocumentValue,
 } from "../model/plate-document-cache";
+import { editorFileKey } from "../model";
 
 interface MutableRef<T> {
   current: T;
 }
 
 interface PendingRename {
+  scopePath: string;
   path: string;
   title: string;
   newPath: string | null;
@@ -26,7 +28,7 @@ interface UseEditorPendingRenameInput {
   iconRef: MutableRef<string | null>;
   descriptionRef: MutableRef<string>;
   clearPendingRename: () => void;
-  clearUnsaved: (path: string) => void;
+  clearUnsaved: (scopePath: string | null | undefined, path: string) => void;
   setCurrentDocument: (path: string) => void;
   patchEntryTreeMeta: (
     spaceId: string,
@@ -54,7 +56,13 @@ export function useEditorPendingRename({
   setTitle,
 }: UseEditorPendingRenameInput) {
   useEffect(() => {
-    if (!pendingRename || pendingRename.path !== currentDocument || !editor) {
+    const renameMatchesCurrentDocument =
+      pendingRename &&
+      currentDocument &&
+      editorFileKey(pendingRename.scopePath, pendingRename.path) ===
+        editorFileKey(spacePath, currentDocument);
+
+    if (!pendingRename || !renameMatchesCurrentDocument || !editor) {
       return;
     }
 
@@ -69,7 +77,7 @@ export function useEditorPendingRename({
         setCachedDocumentValue(spacePath, newPath, editor.children);
         deleteCachedDocumentValue(pendingRename.path, spacePath);
       }
-      clearUnsaved(pendingRename.path);
+      clearUnsaved(spacePath, pendingRename.path);
       setCurrentDocument(newPath);
       return;
     }

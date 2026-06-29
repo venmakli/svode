@@ -20,28 +20,37 @@ export interface FileTreeEditorSync {
   ) => void;
 }
 
-export function createFileTreeEditorSync(spaceId: string): FileTreeEditorSync {
-  const initialActiveDocument = getActiveEntrySelection().activeDocument;
+export function createFileTreeEditorSync(
+  spaceId: string,
+  spacePath: string,
+): FileTreeEditorSync {
+  const initialSelection = getActiveEntrySelection();
+  const initialActiveDocument = initialSelection.activeDocument;
+  const initialActiveDocumentSpaceId = initialSelection.activeDocumentSpaceId;
+
+  const isInitialDocument = (path: string) =>
+    initialActiveDocumentSpaceId === spaceId && initialActiveDocument === path;
 
   return {
     initialActiveDocument,
     suppressPaths: (paths) => {
-      suppressEditorFileEvents(paths);
+      suppressEditorFileEvents(spacePath, paths);
     },
     clearInitialUnsaved: (path) => {
-      if (initialActiveDocument === path) {
-        clearEditorFileUnsaved(path);
+      if (isInitialDocument(path)) {
+        clearEditorFileUnsaved(spacePath, path);
       }
     },
     reopenInitialDocument: (fromPath, toPath) => {
-      if (initialActiveDocument !== fromPath) return;
-      clearEditorFileUnsaved(fromPath);
+      if (!isInitialDocument(fromPath)) return;
+      clearEditorFileUnsaved(spacePath, fromPath);
       openEntryDocument(toPath, spaceId);
     },
     activeDocument: () => getActiveEntrySelection().activeDocument,
     reopenDocumentSnapshot: (activeDocument, fromPath, toPath) => {
       if (activeDocument !== fromPath) return;
-      clearEditorFileUnsaved(fromPath);
+      if (getActiveEntrySelection().activeDocumentSpaceId !== spaceId) return;
+      clearEditorFileUnsaved(spacePath, fromPath);
       openEntryDocument(toPath, spaceId);
     },
   };

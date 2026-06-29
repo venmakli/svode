@@ -251,11 +251,11 @@ export function usePlateDocumentSession({
         (op) => op.type !== "set_selection",
       );
       if (hasContentChange) {
-        markUnsaved(currentPath);
+        markUnsaved(spacePath, currentPath);
         scheduleAutoSave();
       }
     },
-    [editor, markUnsaved, scheduleAutoSave],
+    [editor, markUnsaved, scheduleAutoSave, spacePath],
   );
 
   const deserializeToolbarMarkdown = useCallback(

@@ -93,7 +93,7 @@ export function useFileWatcher({
       }
 
       // Ignore events from structural operations (nest/move/unnest)
-      if (useEditorStore.getState().isSuppressed(changedPath)) {
+      if (useEditorStore.getState().isSuppressed(spacePath, changedPath)) {
         return;
       }
 
@@ -111,6 +111,7 @@ export function useFileWatcher({
               const value = deserializeWithConflicts(editor, entry.body);
               const loadedValue = onEditorValueReload(changedPath, value);
               setCachedDocumentValue(spacePath, changedPath, loadedValue);
+              useEditorStore.getState().clearUnsaved(spacePath, changedPath);
               onEntryReloaded?.(entry);
             } finally {
               isLoadingRef.current = false;
@@ -119,7 +120,7 @@ export function useFileWatcher({
           .catch((err) => console.error("Failed to reload document:", err));
       } else {
         // Document not currently open — mark cache stale until it is opened.
-        markAiModified(changedPath);
+        markAiModified(spacePath, changedPath);
       }
     }).then(trackUnlisten);
 
@@ -168,7 +169,7 @@ export function useFileWatcher({
   // Clear external-edit reload flag when opening a document.
   useEffect(() => {
     if (activeDocument) {
-      clearAiModified(activeDocument);
+      clearAiModified(spacePath, activeDocument);
     }
-  }, [activeDocument, clearAiModified]);
+  }, [activeDocument, clearAiModified, spacePath]);
 }

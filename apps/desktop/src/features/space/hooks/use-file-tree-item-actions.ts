@@ -35,7 +35,6 @@ export function useFileTreeItemActions({
 }: UseFileTreeItemActionsInput) {
   const openDocument = useOpenEntryDocument();
   const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
-  const isUnsaved = useEditorFilePendingWrite(node.path);
   const {
     expandedPaths,
     treeParentLoading,
@@ -52,6 +51,11 @@ export function useFileTreeItemActions({
     activeRootPath,
   } = useSpaceStore();
 
+  const space =
+    spaces.find((item) => item.id === spaceId) ??
+    rootSpaces.find((item) => item.id === spaceId);
+  const spacePath =
+    space?.path ?? (spaceId === activeRootId ? activeRootPath : null);
   const bareFolder = isBareFolder(node);
   const knownChildren = treeNodeHasChildren(node);
   const expandable = bareFolder || knownChildren;
@@ -59,13 +63,11 @@ export function useFileTreeItemActions({
   const childLoading = childParentKey
     ? (treeParentLoading[spaceId]?.[childParentKey] ?? false)
     : false;
+  const isUnsaved = useEditorFilePendingWrite(spacePath, node.path);
   const isActive =
     !bareFolder &&
     activeDocument === node.path &&
     activeDocumentSpaceId === spaceId;
-  const space =
-    spaces.find((item) => item.id === spaceId) ??
-    rootSpaces.find((item) => item.id === spaceId);
   const expanded = expandedPaths[spaceId]?.includes(node.path) ?? false;
 
   const rename = useFileTreeItemRename({
@@ -75,6 +77,7 @@ export function useFileTreeItemActions({
     bareFolder,
     activeRootPath,
     activeDocument,
+    activeDocumentSpaceId,
     reloadTreeParents,
     patchEntryTreeMeta,
     removeTreePath,
