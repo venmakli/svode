@@ -8,14 +8,19 @@
       "commit": "1661562935253267f707f798c193e70077d52398",
       "sourceRef": "main",
       "runId": 28371425447,
-      "publishedAt": "2026-06-29T12:31:53.126Z",
-      "expiresAt": "2026-07-02T12:31:53.126Z",
+      "publishedAt": "2026-06-29T12:41:21.866Z",
+      "expiresAt": "2026-07-02T12:41:21.866Z",
       "reason": "fix sync, scrollbar, collection and over",
       "platforms": {
         "linux": {
           "url": "https://github.com/venmakli/svode/actions/runs/28371425447/artifacts/7951877924",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28371425447",
           "artifactName": "Svode-linux-deb"
+        },
+        "windows": {
+          "url": "https://github.com/venmakli/svode/actions/runs/28371425447/artifacts/7952099963",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28371425447",
+          "artifactName": "Svode-windows-nsis"
         }
       }
     },
