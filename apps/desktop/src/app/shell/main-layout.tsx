@@ -81,10 +81,10 @@ export function MainLayout() {
           onOpenSearch={() => setCommandPaletteOpen(true)}
           onOpenAppSettings={openAppSettings}
         />
-        <SidebarInset className="min-h-0 overflow-hidden md:peer-data-[state=expanded]:rounded-l-xl md:peer-data-[state=expanded]:border-l md:peer-data-[state=expanded]:border-sidebar-border">
+        <SidebarInset className="min-h-0 overflow-hidden [--svode-main-fixed-left:1.5rem] md:peer-data-[state=expanded]:[--svode-main-fixed-left:calc(var(--sidebar-width)+1.5rem)] md:peer-data-[state=expanded]:rounded-l-xl md:peer-data-[state=expanded]:border-l md:peer-data-[state=expanded]:border-sidebar-border">
           <WindowHeader />
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <div className="min-h-0 flex-1 overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-hidden pb-6">
               {mainSurface === "inbox" ? (
                 <InboxSurface />
               ) : mainSurface === "sessions" ? (

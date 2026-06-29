@@ -17,6 +17,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import { BoardCardContent } from "./board-card";
 import { BoardColumn } from "./board-column";
@@ -165,65 +166,73 @@ export function BoardView(props: BoardViewProps) {
       onDragEnd={(event) => void runtime.handleDragEnd(event)}
       onDragCancel={runtime.handleDragCancel}
     >
-      <div
-        className={`scrollbar-hide overflow-x-auto ${detailPageViewRowClassName}`}
-      >
-        <div className="flex min-w-max items-start gap-3">
-          {runtime.renderedColumns.map((column) => {
-            const groupEntries = entriesForGroup(
-              runtime.filteredEntries,
-              groupColumn,
-              column.key,
-            );
-            const cards = groupEntries.map((entry) => ({
-              entry,
-              groupKey: column.key,
-            }));
-            return (
-              <BoardColumn
-                key={column.key}
-                group={column}
-                cards={cards}
-                count={groupEntries.length}
-                activeEntryPath={runtime.activeModel?.entry.path ?? null}
-                overGroupKey={runtime.overGroupKey}
-                draftOpen={runtime.draftGroupKey === column.key}
-                draftAsFolder={runtime.draftAsFolder}
-                onPointerEnter={() => {
-                  runtime.markActiveGroup(column.key);
-                }}
-                onOpenDraft={(asFolder) => {
-                  runtime.openDraftForGroup(column.key, asFolder);
-                }}
-                onCancelDraft={runtime.cancelDraft}
-                onCreateDraft={(title, asFolder) =>
-                  void runtime.createDraftForGroup(title, column.key, asFolder)
-                }
-                cardProps={{
-                  groupColumn,
-                  cardFields: runtime.cardFields,
-                  customColumns: runtime.customColumns,
-                  nestedCollectionPaths: runtime.nestedCollectionPaths,
-                  disabledReorder: runtime.hasSort,
-                  overlay: false,
-                  spacePath,
-                  projectPath,
-                  actors: runtime.actors,
-                  onRequestActors: runtime.loadActors,
-                  onUpdateField: (entry, column, value) =>
-                    void runtime.commitField(entry, column, value),
-                  onOpen: onOpenEntry,
-                  onOpenNestedPeek,
-                  onOpenNestedCollection,
-                  onOpenFullPage,
-                  onOpenPath,
-                  onDuplicate: onDuplicateEntry,
-                  onDelete: onDeleteEntry,
-                }}
-              />
-            );
-          })}
-        </div>
+      <div className={detailPageViewRowClassName}>
+        <ScrollArea>
+          <div className="flex min-w-max items-start gap-3 pb-4">
+            {runtime.renderedColumns.map((column) => {
+              const groupEntries = entriesForGroup(
+                runtime.filteredEntries,
+                groupColumn,
+                column.key,
+              );
+              const cards = groupEntries.map((entry) => ({
+                entry,
+                groupKey: column.key,
+              }));
+              return (
+                <BoardColumn
+                  key={column.key}
+                  group={column}
+                  cards={cards}
+                  count={groupEntries.length}
+                  activeEntryPath={runtime.activeModel?.entry.path ?? null}
+                  overGroupKey={runtime.overGroupKey}
+                  draftOpen={runtime.draftGroupKey === column.key}
+                  draftAsFolder={runtime.draftAsFolder}
+                  onPointerEnter={() => {
+                    runtime.markActiveGroup(column.key);
+                  }}
+                  onOpenDraft={(asFolder) => {
+                    runtime.openDraftForGroup(column.key, asFolder);
+                  }}
+                  onCancelDraft={runtime.cancelDraft}
+                  onCreateDraft={(title, asFolder) =>
+                    void runtime.createDraftForGroup(
+                      title,
+                      column.key,
+                      asFolder,
+                    )
+                  }
+                  cardProps={{
+                    groupColumn,
+                    cardFields: runtime.cardFields,
+                    customColumns: runtime.customColumns,
+                    nestedCollectionPaths: runtime.nestedCollectionPaths,
+                    disabledReorder: runtime.hasSort,
+                    overlay: false,
+                    spacePath,
+                    projectPath,
+                    actors: runtime.actors,
+                    onRequestActors: runtime.loadActors,
+                    onUpdateField: (entry, column, value) =>
+                      void runtime.commitField(entry, column, value),
+                    onOpen: onOpenEntry,
+                    onOpenNestedPeek,
+                    onOpenNestedCollection,
+                    onOpenFullPage,
+                    onOpenPath,
+                    onDuplicate: onDuplicateEntry,
+                    onDelete: onDeleteEntry,
+                  }}
+                />
+              );
+            })}
+          </div>
+          <ScrollBar
+            orientation="horizontal"
+            className="fixed! bottom-2! left-(--svode-main-fixed-left)! right-6! z-30"
+          />
+        </ScrollArea>
       </div>
       <DragOverlay>
         {runtime.activeModel ? (
