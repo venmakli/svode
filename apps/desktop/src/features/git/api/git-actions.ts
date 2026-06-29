@@ -208,6 +208,12 @@ export async function commitSaveScopeAndMaybeSync(
   projectPath?: string,
   options?: GitAutoSyncOptions,
 ): Promise<GitCommitResult | null> {
+  try {
+    await refreshGitStatus(spacePath);
+  } catch (err) {
+    console.error("git_status before scoped save failed:", err);
+  }
+
   const filePaths = dirtyPathsForGitSaveScope(
     useGitStore.getState().statuses[spacePath],
     scope,

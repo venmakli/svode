@@ -8,6 +8,9 @@ export {
   dirtyPathsForGitSaveScope,
   getGitSpaceStatus,
   gitSaveShortcutLabel,
+  refreshGitSpaceStatus,
+  resolveGitSaveAllScope,
   type GitSaveScope,
   type GitSaveScopeLabel,
+  type GitSaveScopeTreeNode,
 } from "./editor";

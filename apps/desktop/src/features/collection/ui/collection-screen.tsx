@@ -11,7 +11,8 @@ import { detailPageToolbarClassName } from "@/shared/ui/page-layout";
 import { useOpenEntryDocument } from "@/features/entry/selection";
 import type { Entry } from "@/features/entry";
 import { EntryDetailActions } from "@/features/entry/detail";
-import { useSpaceTreeSync } from "@/features/space";
+import type { GitSaveScopeTreeNode } from "@/features/git/app-shell";
+import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { useViewQuery } from "@/features/collection/query/hooks";
 import { DeleteDialogs } from "./delete-dialogs";
 import {
@@ -29,6 +30,7 @@ import {
   useCollectionEntryActions,
   useCollectionActiveTab,
   useCollectionKeyboardShortcuts,
+  useCollectionSaveShortcuts,
   useCollectionRefreshEvents,
   useCollectionSchemaState,
   useCollectionTemplates,
@@ -60,6 +62,8 @@ interface CollectionScreenProps {
   headerActions?: ReactNode;
 }
 
+const EMPTY_SAVE_SCOPE_TREE: readonly GitSaveScopeTreeNode[] = [];
+
 export function CollectionScreen({
   spacePath,
   projectPath,
@@ -78,6 +82,9 @@ export function CollectionScreen({
   const openPath = useCallback(
     (path: string) => openDocument(path, spaceId),
     [openDocument, spaceId],
+  );
+  const saveScopeTree = useSpace(
+    (state) => state.fileTrees[spaceId] ?? EMPTY_SAVE_SCOPE_TREE,
   );
   const reloadTreePathParents = useSpaceTreeSync(
     (state) => state.reloadTreePathParents,
@@ -241,6 +248,13 @@ export function CollectionScreen({
     moveActive,
     focusActiveViewCreate,
     createEntry,
+  });
+  useCollectionSaveShortcuts({
+    activeTab,
+    projectPath,
+    readmePath,
+    saveScopeTree,
+    spacePath,
   });
 
   if (loading) {
