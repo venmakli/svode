@@ -31,10 +31,10 @@ export interface UnpushedCommitDto {
 }
 
 export type SyncResultDto =
-  | { type: "Success" }
-  | { type: "Conflict"; files: string[] }
-  | { type: "NoRemote" }
-  | { type: "AuthRequired" };
+  | { type: "success" }
+  | { type: "conflict"; files: string[] }
+  | { type: "noRemote" }
+  | { type: "authRequired" };
 
 export interface CloneProgressDto {
   spacePath: string;

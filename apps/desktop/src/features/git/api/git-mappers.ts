@@ -32,11 +32,15 @@ export function toGitStatus(dto: GitStatusDto): GitStatus {
 
 export function toSyncResult(dto: SyncResultDto): SyncResult {
   switch (dto.type) {
-    case "Conflict":
+    case "conflict":
       return { type: "Conflict", files: [...dto.files] };
-    case "Success":
-    case "NoRemote":
-    case "AuthRequired":
-      return { type: dto.type };
+    case "success":
+      return { type: "Success" };
+    case "noRemote":
+      return { type: "NoRemote" };
+    case "authRequired":
+      return { type: "AuthRequired" };
+    default:
+      throw new Error(`Unknown git sync result: ${JSON.stringify(dto)}`);
   }
 }
