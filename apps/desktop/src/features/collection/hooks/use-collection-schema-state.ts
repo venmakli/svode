@@ -79,8 +79,9 @@ export function useCollectionSchemaState({
     },
   });
 
-  const reload = useCallback(async () => {
-    setLoading(true);
+  const reload = useCallback(async (options?: { background?: boolean }) => {
+    const background = Boolean(options?.background);
+    if (!background) setLoading(true);
     setSchemaError(null);
     try {
       const nextSchema = await getCollectionSchema({
@@ -114,13 +115,18 @@ export function useCollectionSchemaState({
       console.error("Failed to load collection:", error);
       setSchemaError(String(error));
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   }, [collectionPath, hasReadme, readmePath, spacePath]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  const refreshSchema = useCallback(
+    () => reload({ background: true }),
+    [reload],
+  );
 
   useEffect(() => {
     setDocumentLabel(schema?.document?.label ?? m.collection_document_tab());
@@ -210,6 +216,7 @@ export function useCollectionSchemaState({
     schemaError,
     documentLabel,
     setDocumentLabel,
+    refreshSchema,
     updateReadmeProperty,
     createReadmeForIdentity,
     updateIdentity,

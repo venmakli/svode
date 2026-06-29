@@ -5,14 +5,10 @@ import {
 } from "@/platform/filesystem/file-events-api";
 import { listenSpaceSynced } from "@/platform/space/space-events-api";
 import type { UnlistenFn } from "@/platform/filesystem/file-events-api";
-
-function isMarkdownEntryPath(path: string) {
-  return path.replace(/\\/g, "/").toLowerCase().endsWith(".md");
-}
-
-function isSchemaPath(path: string) {
-  return path.split("/").pop() === "schema.yaml";
-}
+import {
+  collectionFileChangeKind,
+  type CollectionFileChangeKind,
+} from "../lib/file-refresh-events";
 
 function combineUnlisteners(unlisteners: UnlistenFn[]): UnlistenFn {
   return () => {
@@ -27,15 +23,37 @@ export async function listenCollectionEntryChanges({
   spacePath: string;
   onEntriesChanged: () => void;
 }): Promise<UnlistenFn> {
+  return listenCollectionDataChanges({
+    spacePath,
+    onDataChanged: (kind) => {
+      if (kind === "entries") onEntriesChanged();
+    },
+  });
+}
+
+export async function listenCollectionDataChanges({
+  spacePath,
+  onDataChanged,
+}: {
+  spacePath: string;
+  onDataChanged: (kind: CollectionFileChangeKind) => void;
+}): Promise<UnlistenFn> {
   const unlisteners = await Promise.all(
-    [listenFileCreated, listenFileChanged, listenFileDeleted].map(
-      (listenFile) =>
-        listenFile((payload) => {
-          if (payload.space && payload.space !== spacePath) return;
-          if (!isMarkdownEntryPath(payload.path)) return;
-          onEntriesChanged();
-        }),
-    ),
+    [
+      ...[listenFileCreated, listenFileChanged, listenFileDeleted].map(
+        (listenFile) =>
+          listenFile((payload) => {
+            if (payload.space && payload.space !== spacePath) return;
+            const kind = collectionFileChangeKind(payload.path);
+            if (kind) onDataChanged(kind);
+          }),
+      ),
+      listenSpaceSynced((payload) => {
+        if (!payload.spacePath || payload.spacePath === spacePath) {
+          onDataChanged("schema");
+        }
+      }),
+    ],
   );
 
   return combineUnlisteners(unlisteners);
@@ -48,19 +66,12 @@ export async function listenCollectionQueryInvalidations({
   spacePath: string;
   onQueryInvalidated: () => void;
 }): Promise<UnlistenFn> {
-  const unlisteners = await Promise.all([
-    listenFileChanged((payload) => {
-      if (payload.space && payload.space !== spacePath) return;
-      if (isSchemaPath(payload.path)) {
+  return listenCollectionDataChanges({
+    spacePath,
+    onDataChanged: (kind) => {
+      if (kind === "schema") {
         onQueryInvalidated();
       }
-    }),
-    listenSpaceSynced((payload) => {
-      if (!payload.spacePath || payload.spacePath === spacePath) {
-        onQueryInvalidated();
-      }
-    }),
-  ]);
-
-  return combineUnlisteners(unlisteners);
+    },
+  });
 }

@@ -11,7 +11,6 @@ import type { CollectionSchema } from "@/features/properties";
 import { useSpaceTreeSync } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 import { instantiateTemplate } from "../api";
-import { useCollectionEntryEvents } from "./use-collection-entry-events";
 
 function isMissingTemplateError(error: unknown) {
   const message = String(error).toLowerCase();
@@ -40,8 +39,6 @@ export function useCollectionEntryActions({
   const refreshEntries = useCallback(() => {
     setEntriesVersion((version) => version + 1);
   }, []);
-
-  useCollectionEntryEvents({ spacePath, onEntriesChanged: refreshEntries });
 
   async function createEntry(
     asFolder = false,

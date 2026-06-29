@@ -29,6 +29,7 @@ import {
   useCollectionEntryActions,
   useCollectionActiveTab,
   useCollectionKeyboardShortcuts,
+  useCollectionRefreshEvents,
   useCollectionSchemaState,
   useCollectionTemplates,
   useCollectionViewActions,
@@ -91,6 +92,7 @@ export function CollectionScreen({
     schemaError,
     documentLabel,
     setDocumentLabel,
+    refreshSchema,
     updateReadmeProperty,
     createReadmeForIdentity,
     updateIdentity,
@@ -129,6 +131,11 @@ export function CollectionScreen({
     collectionPath,
     spaceId,
     openDocument,
+  });
+  useCollectionRefreshEvents({
+    spacePath,
+    refreshSchema,
+    refreshEntries,
   });
 
   const views = useMemo(
