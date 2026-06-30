@@ -5,6 +5,7 @@ export type {
   GitAvailability,
   GitCloneProgress,
   GitStatus,
+  GitUserPolicy,
   GitUnpushedCommit,
   SyncResult,
 } from "./model/types";

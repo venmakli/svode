@@ -183,6 +183,8 @@ pub fn run() {
             git::commands::git_publish,
             git::commands::git_enable_auto_sync,
             git::commands::git_set_auto_sync,
+            git::commands::git_get_user_policy,
+            git::commands::git_set_user_policy,
             identity::commands::get_git_identity,
             identity::commands::set_git_identity,
             identity::commands::get_repo_identity,

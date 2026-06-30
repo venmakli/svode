@@ -1,17 +1,18 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
+import type { GitUserPolicy } from "@/features/git";
 import type { SpaceGitType, SpaceInfo } from "@/features/space";
 import {
   getGitSubmoduleUrl,
+  getSettingsGitUserPolicy,
   getSettingsGitRemote,
   getSettingsGitStatus,
-  getSettingsSpaceConfig,
   getSpaceGitType,
   listenGitCommitted,
+  setSettingsGitUserPolicy,
   setGitRemote,
 } from "../api";
-import type { SaveSpaceGitConfig } from "./use-space-settings-config-actions";
 
 interface UseSpaceSettingsGitOptions {
   open: boolean;
@@ -19,7 +20,6 @@ interface UseSpaceSettingsGitOptions {
   activeRootPath: string | null;
   isRoot: boolean;
   spaces: Pick<SpaceInfo, "id" | "path">[];
-  saveGitConfig: SaveSpaceGitConfig;
 }
 
 export function useSpaceSettingsGit({
@@ -28,7 +28,6 @@ export function useSpaceSettingsGit({
   activeRootPath,
   isRoot,
   spaces,
-  saveGitConfig,
 }: UseSpaceSettingsGitOptions) {
   const [gitType, setGitType] = useState<SpaceGitType | null>(null);
   const [submoduleUrl, setSubmoduleUrl] = useState<string | null>(null);
@@ -39,18 +38,31 @@ export function useSpaceSettingsGit({
   const [autoCommitStructural, setAutoCommitStructural] = useState(false);
   const [autoCommitSystem, setAutoCommitSystem] = useState(false);
   const [pendingRemote, setPendingRemote] = useState<string | null>(null);
+  const gitPolicyRef = useRef<GitUserPolicy>({
+    autoSync: false,
+    autoCommitStructural: false,
+    autoCommitSystem: false,
+  });
+
+  const applyGitPolicyState = useCallback((policy: GitUserPolicy) => {
+    gitPolicyRef.current = policy;
+    setAutoSync(policy.autoSync);
+    setAutoCommitStructural(policy.autoCommitStructural);
+    setAutoCommitSystem(policy.autoCommitSystem);
+  }, []);
 
   const loadGitConfig = useCallback(async () => {
     if (!spacePath) return;
     try {
-      const cfg = await getSettingsSpaceConfig(spacePath);
-      setAutoSync(cfg.git?.autoSync === true);
-      setAutoCommitStructural(cfg.git?.autoCommitStructural === true);
-      setAutoCommitSystem(cfg.git?.autoCommitSystem === true);
+      const policy = await getSettingsGitUserPolicy({
+        spacePath,
+        projectPath: activeRootPath,
+      });
+      applyGitPolicyState(policy);
     } catch (err) {
       console.error("Failed to load git config:", err);
     }
-  }, [spacePath]);
+  }, [activeRootPath, applyGitPolicyState, spacePath]);
 
   const loadGitInfo = useCallback(async () => {
     if (!spacePath) return;
@@ -157,18 +169,63 @@ export function useSpaceSettingsGit({
   }
 
   async function handleAutoSyncChange(value: boolean) {
-    setAutoSync(value);
-    await saveGitConfig({ autoSync: value });
+    const previous = gitPolicyRef.current;
+    const next = { ...previous, autoSync: value };
+    gitPolicyRef.current = next;
+    setAutoSync(next.autoSync);
+    try {
+      await setSettingsGitUserPolicy({
+        spacePath,
+        projectPath: activeRootPath,
+        policy: next,
+      });
+    } catch (err) {
+      console.error("Failed to save git auto-sync policy:", err);
+      if (gitPolicyRef.current === next) {
+        applyGitPolicyState(previous);
+      }
+      toast.error(m.toast_error());
+    }
   }
 
   async function handleAutoCommitStructuralChange(value: boolean) {
-    setAutoCommitStructural(value);
-    await saveGitConfig({ autoCommitStructural: value });
+    const previous = gitPolicyRef.current;
+    const next = { ...previous, autoCommitStructural: value };
+    gitPolicyRef.current = next;
+    setAutoCommitStructural(next.autoCommitStructural);
+    try {
+      await setSettingsGitUserPolicy({
+        spacePath,
+        projectPath: activeRootPath,
+        policy: next,
+      });
+    } catch (err) {
+      console.error("Failed to save git structural autocommit policy:", err);
+      if (gitPolicyRef.current === next) {
+        applyGitPolicyState(previous);
+      }
+      toast.error(m.toast_error());
+    }
   }
 
   async function handleAutoCommitSystemChange(value: boolean) {
-    setAutoCommitSystem(value);
-    await saveGitConfig({ autoCommitSystem: value });
+    const previous = gitPolicyRef.current;
+    const next = { ...previous, autoCommitSystem: value };
+    gitPolicyRef.current = next;
+    setAutoCommitSystem(next.autoCommitSystem);
+    try {
+      await setSettingsGitUserPolicy({
+        spacePath,
+        projectPath: activeRootPath,
+        policy: next,
+      });
+    } catch (err) {
+      console.error("Failed to save git system autocommit policy:", err);
+      if (gitPolicyRef.current === next) {
+        applyGitPolicyState(previous);
+      }
+      toast.error(m.toast_error());
+    }
   }
 
   function cancelPendingRemote() {

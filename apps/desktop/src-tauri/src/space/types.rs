@@ -153,15 +153,12 @@ pub struct AssetsS3Config {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitSpaceConfig {
-    /// Whether ⌘S/⌘⇧S should auto-sync after committing. Default: false.
+    /// Legacy per-user policy fields. Kept for backward-compatible parsing of
+    /// older shared `.svode/config.json` files, but ignored as effective policy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_sync: Option<bool>,
-    /// Whether repo/space lifecycle automation may create background commits.
-    /// Default: false.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_commit_structural: Option<bool>,
-    /// Whether config/system automation may create background commits.
-    /// Default: false.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_commit_system: Option<bool>,
 }
@@ -206,8 +203,21 @@ pub struct SpaceDefaults {
 pub struct LocalConfig {
     #[serde(default)]
     pub agent: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git: Option<GitUserPolicy>,
     #[serde(default)]
     pub expanded_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitUserPolicy {
+    #[serde(default)]
+    pub auto_sync: bool,
+    #[serde(default)]
+    pub auto_commit_structural: bool,
+    #[serde(default)]
+    pub auto_commit_system: bool,
 }
 
 // --- Git type & status ---
@@ -278,7 +288,7 @@ mod tests {
     }
 
     #[test]
-    fn git_config_accepts_split_autocommit_flags() {
+    fn git_config_accepts_legacy_personal_policy_fields() {
         let config: SpaceConfig = serde_json::from_str(
             r#"{
                 "name": "Docs",
@@ -295,5 +305,28 @@ mod tests {
         assert_eq!(git.auto_sync, Some(true));
         assert_eq!(git.auto_commit_structural, Some(true));
         assert_eq!(git.auto_commit_system, Some(false));
+    }
+
+    #[test]
+    fn local_config_accepts_git_user_policy() {
+        let config: LocalConfig = serde_json::from_str(
+            r#"{
+                "git": {
+                    "autoSync": true,
+                    "autoCommitStructural": true,
+                    "autoCommitSystem": false
+                }
+            }"#,
+        )
+        .expect("deserialize local config");
+
+        assert_eq!(
+            config.git,
+            Some(GitUserPolicy {
+                auto_sync: true,
+                auto_commit_structural: true,
+                auto_commit_system: false,
+            })
+        );
     }
 }

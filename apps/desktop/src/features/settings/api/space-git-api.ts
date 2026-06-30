@@ -1,9 +1,11 @@
 import {
   getGitRemote,
   getGitSubmoduleUrl as getPlatformGitSubmoduleUrl,
+  getGitUserPolicy,
   getSpaceGitType as getPlatformSpaceGitType,
   listenGitCommitted as listenPlatformGitCommitted,
   setGitRemote as setPlatformGitRemote,
+  setGitUserPolicy,
 } from "@/platform/git/git-api";
 
 import {
@@ -11,6 +13,7 @@ import {
   getGitStatusSnapshot,
   type GitAvailability,
   type GitStatus,
+  type GitUserPolicy,
 } from "@/features/git";
 import type { SpaceGitType } from "@/features/space";
 
@@ -29,6 +32,15 @@ export interface SetGitRemoteInput extends Record<string, unknown> {
   url: string;
   projectPath?: string | null;
   spaceId?: string | null;
+}
+
+export interface GitUserPolicyInput extends Record<string, unknown> {
+  spacePath: string;
+  projectPath?: string | null;
+}
+
+export interface SetGitUserPolicyInput extends GitUserPolicyInput {
+  policy: GitUserPolicy;
 }
 
 export interface GitCommittedEvent {
@@ -70,6 +82,18 @@ export function getSettingsGitAvailability(): Promise<GitAvailability> {
 
 export function setGitRemote(input: SetGitRemoteInput): Promise<void> {
   return setPlatformGitRemote(input);
+}
+
+export function getSettingsGitUserPolicy(
+  input: GitUserPolicyInput,
+): Promise<GitUserPolicy> {
+  return getGitUserPolicy(input);
+}
+
+export function setSettingsGitUserPolicy(
+  input: SetGitUserPolicyInput,
+): Promise<void> {
+  return setGitUserPolicy(input);
 }
 
 export function listenGitCommitted(

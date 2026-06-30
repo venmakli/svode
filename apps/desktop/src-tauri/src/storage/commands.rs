@@ -17,9 +17,7 @@ use crate::git::commands::require_cli;
 use crate::index::IndexState;
 use crate::repo_path::{RootMode, repo_relative_from_base};
 use crate::space::config::{read_space_config, write_space_config};
-use crate::space::types::{
-    AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, SpaceConfig, SpaceGitType,
-};
+use crate::space::types::{AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, SpaceGitType};
 
 /// File data returned to the frontend after reading a user-selected path.
 /// Used to construct a `File` object on the JS side so Plate's media
@@ -202,12 +200,8 @@ fn ensure_supported_strategy_transition(
     ))
 }
 
-fn system_autocommit_enabled(config: &SpaceConfig) -> bool {
-    config
-        .git
-        .as_ref()
-        .and_then(|git| git.auto_commit_system)
-        .unwrap_or(false)
+fn system_autocommit_enabled(config_dir: &Path) -> bool {
+    crate::space::config::effective_git_user_policy(config_dir).auto_commit_system
 }
 
 fn document_id_for_scope(
@@ -303,7 +297,7 @@ pub async fn set_assets_strategy(
         config
     });
 
-    let should_autocommit_strategy = system_autocommit_enabled(&config);
+    let should_autocommit_strategy = system_autocommit_enabled(&scope.config_dir);
     let autocommit_blocker = if should_autocommit_strategy {
         strategy_autocommit_blocker(
             &cli,

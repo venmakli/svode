@@ -12,7 +12,7 @@ use crate::AppError;
 use crate::index::{IndexKey, IndexState};
 use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_base};
 use crate::space::project;
-use crate::space::types::SpaceGitType;
+use crate::space::types::{GitUserPolicy, SpaceGitType};
 use crate::system_path;
 
 /// Emit `space:synced` after a successful `git_sync(space)` finishes (and any
@@ -54,16 +54,50 @@ async fn stage_pending_paths(cli: &GitCli, repo: &Path, paths: &[PathBuf]) {
 }
 
 pub(crate) fn auto_commit_structural_enabled(space_path: &Path) -> bool {
-    crate::space::config::read_space_config(space_path)
-        .ok()
-        .and_then(|config| config.git)
-        .and_then(|git| git.auto_commit_structural)
-        .unwrap_or(false)
+    crate::space::config::effective_git_user_policy(space_path).auto_commit_structural
 }
 
 pub(crate) async fn init_repo_with_policy(cli: &GitCli, path: &Path) -> Result<(), AppError> {
     super::ops::init_with_optional_scaffold_commit(cli, path, auto_commit_structural_enabled(path))
         .await
+}
+
+async fn resolve_git_user_policy_target(
+    state: &GitState,
+    space: &Path,
+    project_path: Option<&str>,
+) -> Result<PathBuf, AppError> {
+    let Some(proj) = project_path.filter(|proj| !proj.is_empty()) else {
+        return Ok(space.to_path_buf());
+    };
+
+    let project = PathBuf::from(proj);
+    if project == space {
+        return Ok(project);
+    }
+
+    let cli = state.cli()?;
+    let git_type = super::ops::detect_space_git_type(cli, &project, space).await?;
+    Ok(match git_type {
+        SpaceGitType::Inline => project,
+        SpaceGitType::Independent | SpaceGitType::Submodule => space.to_path_buf(),
+    })
+}
+
+fn drop_legacy_shared_git_policy(config_target: &Path) {
+    if !config_target.join(".svode").join("config.json").exists() {
+        return;
+    }
+
+    match crate::space::config::read_space_config(config_target) {
+        Ok(config) if config.git.is_some() => {
+            if let Err(e) = crate::space::config::write_space_config(config_target, &config) {
+                tracing::warn!("failed to drop legacy shared git policy: {e}");
+            }
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("failed to read shared config for policy migration: {e}"),
+    }
 }
 
 pub struct GitState {
@@ -575,56 +609,52 @@ pub async fn git_publish(
 #[tauri::command]
 pub async fn git_enable_auto_sync(
     state: State<'_, GitState>,
-    autocommit: State<'_, Arc<AutocommitService>>,
     space_path: String,
     project_path: Option<String>,
 ) -> Result<(), AppError> {
-    git_set_auto_sync(state, autocommit, space_path, project_path, true).await
+    git_set_auto_sync(state, space_path, project_path, true).await
 }
 
 #[tauri::command]
 pub async fn git_set_auto_sync(
     state: State<'_, GitState>,
-    autocommit: State<'_, Arc<AutocommitService>>,
     space_path: String,
     project_path: Option<String>,
     enabled: bool,
 ) -> Result<(), AppError> {
     let space = PathBuf::from(&space_path);
+    let config_target =
+        resolve_git_user_policy_target(&state, &space, project_path.as_deref()).await?;
+    let mut policy = crate::space::config::read_git_user_policy(&config_target)?;
+    policy.auto_sync = enabled;
+    crate::space::config::write_git_user_policy(&config_target, &policy)?;
+    drop_legacy_shared_git_policy(&config_target);
+    Ok(())
+}
 
-    // For inline spaces autoSync lives in the root project config (inline has
-    // no repo of its own). For independent/submodule — the space's own config.
-    let config_target: PathBuf = match project_path.as_deref() {
-        Some(proj) if !proj.is_empty() => {
-            let project = PathBuf::from(proj);
-            let cli = state.cli()?;
-            let git_type = super::ops::detect_space_git_type(cli, &project, &space).await?;
-            match git_type {
-                crate::space::types::SpaceGitType::Inline => project,
-                _ => space.clone(),
-            }
-        }
-        _ => space.clone(),
-    };
+#[tauri::command]
+pub async fn git_get_user_policy(
+    state: State<'_, GitState>,
+    space_path: String,
+    project_path: Option<String>,
+) -> Result<GitUserPolicy, AppError> {
+    let space = PathBuf::from(&space_path);
+    let config_target =
+        resolve_git_user_policy_target(&state, &space, project_path.as_deref()).await?;
+    crate::space::config::read_git_user_policy(&config_target)
+}
 
-    let mut cfg = crate::space::config::read_space_config(&config_target)?;
-    let mut git_cfg = cfg.git.clone().unwrap_or_default();
-    git_cfg.auto_sync = Some(enabled);
-    cfg.git = Some(git_cfg);
-    crate::space::config::write_space_config(&config_target, &cfg)?;
-
-    if let Some(proj_path) = project_path.filter(|p| !p.is_empty()) {
-        if let Err(e) = autocommit
-            .commit_system_now(
-                PathBuf::from(&proj_path),
-                space,
-                SystemCommitKind::SpaceConfig,
-            )
-            .await
-        {
-            tracing::warn!("commit_system_now (enable_auto_sync) failed: {e}");
-        }
-    }
-
+#[tauri::command]
+pub async fn git_set_user_policy(
+    state: State<'_, GitState>,
+    space_path: String,
+    project_path: Option<String>,
+    policy: GitUserPolicy,
+) -> Result<(), AppError> {
+    let space = PathBuf::from(&space_path);
+    let config_target =
+        resolve_git_user_policy_target(&state, &space, project_path.as_deref()).await?;
+    crate::space::config::write_git_user_policy(&config_target, &policy)?;
+    drop_legacy_shared_git_policy(&config_target);
     Ok(())
 }

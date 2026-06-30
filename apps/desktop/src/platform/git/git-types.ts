@@ -36,6 +36,12 @@ export type SyncResultDto =
   | { type: "noRemote" }
   | { type: "authRequired" };
 
+export interface GitUserPolicyDto {
+  autoSync: boolean;
+  autoCommitStructural: boolean;
+  autoCommitSystem: boolean;
+}
+
 export interface CloneProgressDto {
   spacePath: string;
   phase: string;

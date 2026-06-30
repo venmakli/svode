@@ -1,10 +1,10 @@
 import {
   getGitRemote,
+  getGitUserPolicy,
   getUnpushedCommits,
   listenGitCommitted,
   setGitAutoSync as setPlatformGitAutoSync,
 } from "@/platform/git/git-api";
-import { getSpaceConfig } from "@/platform/space/space-api";
 import type { UnpushedCommitDto } from "@/platform/git/git-types";
 import type { GitSyncOutcome, GitUnpushedCommit } from "../model";
 import { syncSpace } from "./git-actions";
@@ -35,12 +35,13 @@ function toGitUnpushedCommit(commit: UnpushedCommitDto): GitUnpushedCommit {
 
 export async function getGitSyncWidgetConfig(
   spacePath: string,
+  projectPath?: string | null,
 ): Promise<GitSyncWidgetConfig> {
-  const cfg = await getSpaceConfig(spacePath);
+  const policy = await getGitUserPolicy({ spacePath, projectPath });
   const remote = await getGitRemote(spacePath);
   return {
     hasRemote: !!remote && remote.trim().length > 0,
-    autoSync: cfg.git?.autoSync === true,
+    autoSync: policy.autoSync === true,
   };
 }
 

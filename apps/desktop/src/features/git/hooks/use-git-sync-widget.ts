@@ -81,7 +81,7 @@ export function useGitSyncWidget(): GitSyncWidget {
     }
 
     try {
-      const config = await getGitSyncWidgetConfig(spacePath);
+      const config = await getGitSyncWidgetConfig(spacePath, activeRootPath);
       setHasRemote(config.hasRemote);
       setAutoSyncState(config.autoSync);
       if (config.hasRemote) {
@@ -97,7 +97,7 @@ export function useGitSyncWidget(): GitSyncWidget {
       setRemoteChecked(false);
       setCommits([]);
     }
-  }, [refreshRemote, spacePath]);
+  }, [activeRootPath, refreshRemote, spacePath]);
 
   useEffect(() => {
     void loadConfig();

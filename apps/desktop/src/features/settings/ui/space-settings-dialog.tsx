@@ -115,7 +115,7 @@ export function SpaceSettingsDialog({
   const currentSpaceId: string | null = detailSpace?.id ?? null;
   const projectName = activeRootName || "Project";
 
-  const { saveConfig, saveGitConfig } = useSpaceSettingsConfigActions({
+  const { saveConfig } = useSpaceSettingsConfigActions({
     spacePath,
     projectPath: activeRootPath,
   });
@@ -143,7 +143,6 @@ export function SpaceSettingsDialog({
     activeRootPath,
     isRoot,
     spaces,
-    saveGitConfig,
   });
   const identitySettings = useSpaceSettingsIdentity({
     open,

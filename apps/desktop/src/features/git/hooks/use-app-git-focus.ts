@@ -19,6 +19,7 @@ import {
  */
 export function useAppGitFocus() {
   const activePath = useSpace((s) => selectActiveSpacePath(s));
+  const activeRootPath = useSpace((s) => s.activeRootPath);
   const lastSynced = useRef<string | null>(null);
 
   // Silent sync-on-open for the active space only.
@@ -26,16 +27,17 @@ export function useAppGitFocus() {
     if (!activePath) return;
     if (lastSynced.current === activePath) return;
     lastSynced.current = activePath;
-    void syncGitOnActiveSpaceOpen(activePath);
-  }, [activePath]);
+    void syncGitOnActiveSpaceOpen(activePath, activeRootPath);
+  }, [activePath, activeRootPath]);
 
   // Single window-focus listener that refreshes status for the active space.
   // Background network writes obey the same auto-sync policy as commit paths.
   useEffect(() => {
     const onFocus = async () => {
       const path = selectActiveSpacePath(getSpaceSnapshot());
+      const projectPath = getSpaceSnapshot().activeRootPath;
       if (!path) return;
-      await refreshGitOnWindowFocus(path);
+      await refreshGitOnWindowFocus(path, projectPath);
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);

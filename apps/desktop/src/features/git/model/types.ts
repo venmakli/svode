@@ -33,6 +33,12 @@ export type GitSyncOutcome =
   | SyncResult
   | { type: "Failed"; message: string };
 
+export interface GitUserPolicy {
+  autoSync: boolean;
+  autoCommitStructural: boolean;
+  autoCommitSystem: boolean;
+}
+
 export interface CloneProgress {
   spacePath: string;
   phase: string;

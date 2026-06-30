@@ -281,7 +281,8 @@ impl AutocommitService {
         let git_state = self.app.state::<GitState>();
         let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
         let git_type = ops::detect_space_git_type(&cli, &project_path, &space_path).await?;
-        if !background_commit_allowed(&space_path, CommitIntent::SystemConfig) {
+        let policy_path = policy_path_for_git_type(&project_path, &space_path, git_type);
+        if !background_commit_allowed(policy_path, CommitIntent::SystemConfig) {
             return Ok(());
         }
 
@@ -348,7 +349,8 @@ impl AutocommitService {
         let git_state = self.app.state::<GitState>();
         let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
         let git_type = ops::detect_space_git_type(&cli, &project_path, &space_path).await?;
-        if !background_commit_allowed(&space_path, CommitIntent::StructuralLifecycle) {
+        let policy_path = policy_path_for_git_type(&project_path, &space_path, git_type);
+        if !background_commit_allowed(policy_path, CommitIntent::StructuralLifecycle) {
             return Ok(());
         }
 
@@ -394,7 +396,8 @@ impl AutocommitService {
         let git_state = self.app.state::<GitState>();
         let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
         let git_type = ops::detect_space_git_type(&cli, &project_path, &space_path).await?;
-        if !background_commit_allowed(&space_path, CommitIntent::StructuralLifecycle) {
+        let policy_path = policy_path_for_git_type(&project_path, &space_path, git_type);
+        if !background_commit_allowed(policy_path, CommitIntent::StructuralLifecycle) {
             return Ok(());
         }
 
@@ -475,7 +478,7 @@ async fn do_commit_paths(
             emit_committed(app, space_path, project_path);
         }
 
-        if is_auto_sync_enabled(space_path) {
+        if is_auto_sync_enabled(repo) {
             let cli_sync = cli.clone();
             let sync_target = repo.to_path_buf();
             tauri::async_runtime::spawn(async move {
@@ -577,7 +580,7 @@ async fn do_commit_system(
     };
 
     if created {
-        if is_auto_sync_enabled(space_path) {
+        if is_auto_sync_enabled(&target_repo) {
             let cli_sync = cli.clone();
             let sync_target = target_repo.clone();
             tauri::async_runtime::spawn(async move {
@@ -638,7 +641,7 @@ async fn do_commit_scaffold(
                 ops::ensure_inline_gitignore(project_path)?;
                 format!("{}/.svode", space_folder)
             };
-            if !background_commit_allowed(space_path, CommitIntent::StructuralLifecycle) {
+            if !background_commit_allowed(project_path, CommitIntent::StructuralLifecycle) {
                 return Ok(());
             }
             ops::add(&cli, project_path, ".gitignore").await?;
@@ -713,27 +716,30 @@ fn emit_committed(app: &AppHandle, space_path: &Path, repo_path: &Path) {
 }
 
 fn is_auto_sync_enabled(repo_path: &Path) -> bool {
-    crate::space::config::read_space_config(repo_path)
-        .ok()
-        .and_then(|c| c.git)
-        .and_then(|g| g.auto_sync)
-        .unwrap_or(false)
+    crate::space::config::effective_git_user_policy(repo_path).auto_sync
 }
 
 fn background_commit_allowed(config_path: &Path, intent: CommitIntent) -> bool {
     match intent {
         CommitIntent::ContentWorkspace => false,
         CommitIntent::ManualExplicit => true,
-        CommitIntent::StructuralLifecycle => crate::space::config::read_space_config(config_path)
-            .ok()
-            .and_then(|c| c.git)
-            .and_then(|g| g.auto_commit_structural)
-            .unwrap_or(false),
-        CommitIntent::SystemConfig => crate::space::config::read_space_config(config_path)
-            .ok()
-            .and_then(|c| c.git)
-            .and_then(|g| g.auto_commit_system)
-            .unwrap_or(false),
+        CommitIntent::StructuralLifecycle => {
+            crate::space::config::effective_git_user_policy(config_path).auto_commit_structural
+        }
+        CommitIntent::SystemConfig => {
+            crate::space::config::effective_git_user_policy(config_path).auto_commit_system
+        }
+    }
+}
+
+fn policy_path_for_git_type<'a>(
+    project_path: &'a Path,
+    space_path: &'a Path,
+    git_type: SpaceGitType,
+) -> &'a Path {
+    match git_type {
+        SpaceGitType::Inline => project_path,
+        SpaceGitType::Independent | SpaceGitType::Submodule => space_path,
     }
 }
 
@@ -1091,8 +1097,8 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::space::config::write_space_config;
-    use crate::space::types::{GitSpaceConfig, SpaceConfig};
+    use crate::space::config::{write_git_user_policy, write_space_config};
+    use crate::space::types::{GitSpaceConfig, GitUserPolicy, SpaceConfig};
 
     fn s(x: &str) -> String {
         x.to_string()
@@ -1116,8 +1122,12 @@ mod tests {
         .expect("write space config");
     }
 
+    fn write_local_git_policy(path: &Path, policy: GitUserPolicy) {
+        write_git_user_policy(path, &policy).expect("write local git policy");
+    }
+
     #[test]
-    fn background_policy_reads_operation_space_config() {
+    fn background_policy_reads_local_git_user_policy() {
         let temp = tempfile::tempdir().expect("temp dir");
         let project = temp.path().join("project");
         let inline_space = project.join("docs");
@@ -1125,9 +1135,9 @@ mod tests {
         write_git_config(
             &project,
             GitSpaceConfig {
-                auto_sync: Some(false),
-                auto_commit_structural: Some(false),
-                auto_commit_system: Some(false),
+                auto_sync: Some(true),
+                auto_commit_structural: Some(true),
+                auto_commit_system: Some(true),
             },
         );
         write_git_config(
@@ -1136,6 +1146,14 @@ mod tests {
                 auto_sync: Some(true),
                 auto_commit_structural: Some(true),
                 auto_commit_system: Some(true),
+            },
+        );
+        write_local_git_policy(
+            &inline_space,
+            GitUserPolicy {
+                auto_sync: true,
+                auto_commit_structural: true,
+                auto_commit_system: true,
             },
         );
 

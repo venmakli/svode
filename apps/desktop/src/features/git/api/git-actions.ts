@@ -4,9 +4,9 @@ import {
   commitGitFile,
   commitGitPaths,
   continueGitResolve as continuePlatformGitResolve,
+  getGitUserPolicy,
   syncGit,
 } from "@/platform/git/git-api";
-import { getSpaceConfig } from "@/platform/space/space-api";
 import {
   dirtyPathsForGitSaveScope,
   normalizeGitStatusPath,
@@ -33,12 +33,15 @@ function runAutoSync(spacePath: string, options?: GitAutoSyncOptions): void {
 }
 
 /**
- * Read the per-space `git.autoSync` setting (default: false).
+ * Read the local per-user auto-sync policy (default: false).
  */
-export async function isAutoSyncEnabled(spacePath: string): Promise<boolean> {
+export async function isAutoSyncEnabled(
+  spacePath: string,
+  projectPath?: string | null,
+): Promise<boolean> {
   try {
-    const cfg = await getSpaceConfig(spacePath);
-    return cfg.git?.autoSync === true;
+    const policy = await getGitUserPolicy({ spacePath, projectPath });
+    return policy.autoSync === true;
   } catch {
     return false;
   }
@@ -112,7 +115,7 @@ export async function commitFileAndMaybeSync(
     console.error("git_commit_file failed:", err);
     return null;
   }
-  if (await isAutoSyncEnabled(spacePath)) {
+  if (await isAutoSyncEnabled(spacePath, projectPath)) {
     runAutoSync(spacePath, options);
   }
   return result;
@@ -152,7 +155,7 @@ export async function commitAllSpace(
     console.error("git_commit_all failed:", err);
     return null;
   }
-  if (await isAutoSyncEnabled(spacePath)) {
+  if (await isAutoSyncEnabled(spacePath, projectPath)) {
     runAutoSync(spacePath, options);
   }
   return result;
@@ -195,7 +198,7 @@ export async function commitPathsAndMaybeSync(
     console.error("git_commit_paths failed:", err);
     return null;
   }
-  if (await isAutoSyncEnabled(spacePath)) {
+  if (await isAutoSyncEnabled(spacePath, projectPath)) {
     runAutoSync(spacePath, options);
   }
   return result;
@@ -234,8 +237,11 @@ export async function continueGitResolve(
 /**
  * Sync on space open. Silent on failure (no remote / offline / auth).
  */
-export async function syncOnOpen(spacePath: string): Promise<void> {
-  if (!(await isAutoSyncEnabled(spacePath))) return;
+export async function syncOnOpen(
+  spacePath: string,
+  projectPath?: string | null,
+): Promise<void> {
+  if (!(await isAutoSyncEnabled(spacePath, projectPath))) return;
   const git = useGitStore.getState();
   git.setSyncing(spacePath, true);
   // Clear any stuck error from a previous session — a fresh open should

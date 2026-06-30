@@ -8,6 +8,7 @@ import type {
   CloneProgressDto,
   GitAvailabilityDto,
   GitStatusDto,
+  GitUserPolicyDto,
   SyncResultDto,
   UnpushedCommitDto,
 } from "./git-types";
@@ -115,6 +116,28 @@ export function setGitAutoSync(input: {
     spacePath: input.spacePath,
     projectPath: input.projectPath ?? null,
     enabled: input.enabled,
+  });
+}
+
+export function getGitUserPolicy(input: {
+  spacePath: string;
+  projectPath?: string | null;
+}): Promise<GitUserPolicyDto> {
+  return invokeCommand<GitUserPolicyDto>("git_get_user_policy", {
+    spacePath: input.spacePath,
+    projectPath: input.projectPath ?? null,
+  });
+}
+
+export function setGitUserPolicy(input: {
+  spacePath: string;
+  projectPath?: string | null;
+  policy: GitUserPolicyDto;
+}): Promise<void> {
+  return invokeCommand<void>("git_set_user_policy", {
+    spacePath: input.spacePath,
+    projectPath: input.projectPath ?? null,
+    policy: input.policy,
   });
 }
 

@@ -441,7 +441,8 @@ pub async fn create_space(
     let folder_name = project::normalize_space_folder(&folder_name)?;
     let info = project::create_space(parent, &name, &icon, &folder_name)?;
     let space_dir = parent.join(&folder_name);
-    let structural_autocommit = auto_commit_structural_enabled(parent);
+    let root_structural_autocommit = auto_commit_structural_enabled(parent);
+    let space_structural_autocommit = auto_commit_structural_enabled(&space_dir);
 
     // Unified root-commit message — `Add <type> space <folder>`. Type is
     // visible in history without reading the diff.
@@ -455,7 +456,7 @@ pub async fn create_space(
     match git_type {
         SpaceGitType::Inline => {
             ops::ensure_inline_gitignore(parent)?;
-            if structural_autocommit {
+            if root_structural_autocommit {
                 if let Some(cli) = &git_state.cli {
                     let lock = git_state.get_lock(parent).await;
                     let _guard = lock.lock().await;
@@ -477,13 +478,13 @@ pub async fn create_space(
                         "scaffold_space_git_identity failed for new independent space: {e}"
                     );
                 }
-                if structural_autocommit {
+                if space_structural_autocommit {
                     ops::add_all(&cli, &space_dir).await?;
                     let _ = ops::commit(&cli, &space_dir, "Scaffold .svode").await?;
                 }
             }
             ops::add_independent_gitignore(parent, &folder_name)?;
-            if structural_autocommit {
+            if root_structural_autocommit {
                 let root_lock = git_state.get_lock(parent).await;
                 let _root_guard = root_lock.lock().await;
                 ops::add_all(&cli, parent).await?;
@@ -503,7 +504,7 @@ pub async fn create_space(
                         "scaffold_space_git_identity failed for new submodule space: {e}"
                     );
                 }
-                if structural_autocommit {
+                if space_structural_autocommit {
                     ops::add_all(&cli, &space_dir).await?;
                     let _ = ops::commit(&cli, &space_dir, "Scaffold .svode").await?;
                 }
@@ -511,7 +512,7 @@ pub async fn create_space(
             {
                 let parent_lock = git_state.get_lock(parent).await;
                 let _parent_guard = parent_lock.lock().await;
-                if structural_autocommit {
+                if root_structural_autocommit && space_structural_autocommit {
                     let out = cli
                         .exec(parent, &["submodule", "add", &format!("./{folder_name}")])
                         .await?;
@@ -525,6 +526,11 @@ pub async fn create_space(
                     let _ = ops::commit(&cli, parent, &root_message).await?;
                 } else {
                     ops::register_local_submodule_metadata(&cli, parent, &folder_name).await?;
+                    if root_structural_autocommit {
+                        let _ = ops::add(&cli, parent, ".svode/config.json").await;
+                        let _ = ops::add(&cli, parent, ".gitmodules").await;
+                        let _ = ops::commit(&cli, parent, &root_message).await?;
+                    }
                 }
             }
         }
