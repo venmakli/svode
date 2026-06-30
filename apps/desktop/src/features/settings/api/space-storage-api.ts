@@ -2,6 +2,7 @@ import {
   applyAssetsStrategy as applyPlatformAssetsStrategy,
   checkS3Connection as checkPlatformS3Connection,
   countAssets as countPlatformAssets,
+  diagnoseLfsRemote as diagnosePlatformLfsRemote,
   getAssetsConfig as getPlatformAssetsConfig,
   getLfsState as getPlatformLfsState,
   hasS3Credentials as hasPlatformS3Credentials,
@@ -59,6 +60,24 @@ export interface LfsStateChangedEvent {
   state: LfsState;
 }
 
+export type LfsRemoteDiagnosticReason =
+  | "ready"
+  | "git-lfs-missing"
+  | "remote-missing"
+  | "auth-required"
+  | "lfs-unavailable"
+  | "probe-failed";
+export type LfsRemoteAuthMethod = "https" | "ssh" | "unknown";
+
+export interface LfsRemoteDiagnostic {
+  state: LfsState;
+  reason: LfsRemoteDiagnosticReason;
+  authMethod: LfsRemoteAuthMethod;
+  remoteUrl: string | null;
+  terminalCommand: string | null;
+  detail: string | null;
+}
+
 interface SettingsEvent<T> {
   payload: T;
 }
@@ -78,6 +97,12 @@ export function getAssetsConfig(
 
 export function getLfsState(input: SpacePoolInput): Promise<LfsState> {
   return getPlatformLfsState(input);
+}
+
+export function diagnoseLfsRemote(
+  input: SpacePoolInput,
+): Promise<LfsRemoteDiagnostic> {
+  return diagnosePlatformLfsRemote(input);
 }
 
 export function repairLfs(input: SpacePoolInput): Promise<LfsState> {

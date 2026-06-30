@@ -4,6 +4,25 @@ export type SpaceStatusDto = "ready" | "missing" | "broken";
 
 export type LfsStateDto = "n/a" | "ready" | "missing-creds" | "pulling";
 
+export type LfsRemoteDiagnosticReasonDto =
+  | "ready"
+  | "git-lfs-missing"
+  | "remote-missing"
+  | "auth-required"
+  | "lfs-unavailable"
+  | "probe-failed";
+
+export type LfsRemoteAuthMethodDto = "https" | "ssh" | "unknown";
+
+export interface LfsRemoteDiagnosticDto {
+  state: LfsStateDto;
+  reason: LfsRemoteDiagnosticReasonDto;
+  authMethod: LfsRemoteAuthMethodDto;
+  remoteUrl: string | null;
+  terminalCommand: string | null;
+  detail: string | null;
+}
+
 export interface SpaceInfoDto {
   id: string;
   name: string;

@@ -8,6 +8,7 @@ import type {
   AssetsS3ConfigDto,
   AssetsStrategyDto,
   EffectiveAssetsConfigDto,
+  LfsRemoteDiagnosticDto,
   LfsStateDto,
   SpaceDirtyEventDto,
   SpaceFileEventDto,
@@ -170,6 +171,12 @@ export function applyAssetsStrategy(
 
 export function getLfsState(input: SpacePoolInputDto): Promise<LfsStateDto> {
   return invokeCommand<LfsStateDto>("get_lfs_state", input);
+}
+
+export function diagnoseLfsRemote(
+  input: SpacePoolInputDto,
+): Promise<LfsRemoteDiagnosticDto> {
+  return invokeCommand<LfsRemoteDiagnosticDto>("diagnose_lfs_remote", input);
 }
 
 export function repairLfs(input: SpacePoolInputDto): Promise<LfsStateDto> {

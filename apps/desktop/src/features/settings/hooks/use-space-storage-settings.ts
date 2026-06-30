@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { applyAssetsStrategy, countAssets, getAssetsConfig } from "../api";
+import type { LfsRemoteDiagnostic } from "../api";
 import type {
   AssetsS3Config,
   AssetsStrategy,
@@ -55,6 +56,8 @@ export interface UseSpaceStorageSettingsResult {
   s3TestError: string | null;
   lfsState: LfsState;
   lfsRepairInFlight: boolean;
+  lfsRemoteDiagnostic: LfsRemoteDiagnostic | null;
+  lfsRemoteDiagnosticInFlight: boolean;
   inlineSpaceNames: string[];
   canTestS3: boolean;
   canSaveS3: boolean;
@@ -69,6 +72,7 @@ export interface UseSpaceStorageSettingsResult {
   useProjectStorageSetting: () => Promise<void>;
   testS3: () => Promise<void>;
   saveS3: () => Promise<void>;
+  diagnoseLfsRemote: () => Promise<void>;
   repairLfs: () => Promise<void>;
   cancelPendingStrategy: () => void;
   confirmPendingStrategy: () => Promise<void>;
@@ -92,6 +96,7 @@ export function useSpaceStorageSettings({
     open,
     projectPath,
     currentSpaceId,
+    lfsRemoteEnabled: storageConfig.savedAssetsStrategy === "lfs-remote",
   });
   const {
     assetsStrategy,
@@ -130,7 +135,10 @@ export function useSpaceStorageSettings({
     lfsVersion,
     lfsState,
     lfsRepairInFlight,
+    lfsRemoteDiagnostic,
+    lfsRemoteDiagnosticInFlight,
     loadLfsState,
+    diagnoseLfsRemote,
     repairLfs,
   } = lfs;
   const { inlineSpaceNames } = useSpaceStorageInlineSpaces({
@@ -445,6 +453,8 @@ export function useSpaceStorageSettings({
     s3TestError,
     lfsState,
     lfsRepairInFlight,
+    lfsRemoteDiagnostic,
+    lfsRemoteDiagnosticInFlight,
     inlineSpaceNames,
     canTestS3,
     canSaveS3,
@@ -459,6 +469,7 @@ export function useSpaceStorageSettings({
     useProjectStorageSetting,
     testS3,
     saveS3,
+    diagnoseLfsRemote,
     repairLfs,
     cancelPendingStrategy,
     confirmPendingStrategy,

@@ -333,6 +333,9 @@ export function StorageSettingsSection({
           state={settings.lfsState}
           strategy={settings.savedAssetsStrategy}
           repairing={settings.lfsRepairInFlight}
+          remoteDiagnostic={settings.lfsRemoteDiagnostic}
+          remoteChecking={settings.lfsRemoteDiagnosticInFlight}
+          onDiagnoseRemote={settings.diagnoseLfsRemote}
           onRepair={settings.repairLfs}
         />
       )}
@@ -490,22 +493,35 @@ function LfsStatePanel({
   state,
   strategy,
   repairing,
+  remoteDiagnostic,
+  remoteChecking,
+  onDiagnoseRemote,
   onRepair,
 }: {
   state: LfsState;
   strategy: "lfs-remote" | "lfs-s3";
   repairing: boolean;
+  remoteDiagnostic: UseSpaceStorageSettingsResult["lfsRemoteDiagnostic"];
+  remoteChecking: boolean;
+  onDiagnoseRemote: () => void;
   onRepair: () => void;
 }) {
   if (state === "n/a") return null;
+  if (strategy === "lfs-remote") {
+    return (
+      <RemoteLfsStatePanel
+        state={state}
+        diagnostic={remoteDiagnostic}
+        checking={remoteChecking}
+        repairing={repairing}
+        onDiagnose={onDiagnoseRemote}
+        onRepair={onRepair}
+      />
+    );
+  }
   const missingTitle =
-    strategy === "lfs-s3"
-      ? m.storage_lfs_banner_missing_s3_title()
-      : m.storage_lfs_banner_missing_remote_title();
-  const missingDesc =
-    strategy === "lfs-s3"
-      ? m.storage_lfs_banner_missing_s3_desc()
-      : m.storage_lfs_banner_missing_remote_desc();
+    m.storage_lfs_banner_missing_s3_title();
+  const missingDesc = m.storage_lfs_banner_missing_s3_desc();
 
   if (state === "pulling") {
     return (
@@ -550,4 +566,191 @@ function LfsStatePanel({
       </Button>
     </div>
   );
+}
+
+function RemoteLfsStatePanel({
+  state,
+  diagnostic,
+  checking,
+  repairing,
+  onDiagnose,
+  onRepair,
+}: {
+  state: LfsState;
+  diagnostic: UseSpaceStorageSettingsResult["lfsRemoteDiagnostic"];
+  checking: boolean;
+  repairing: boolean;
+  onDiagnose: () => void;
+  onRepair: () => void;
+}) {
+  if (state === "pulling") {
+    return (
+      <div className="rounded-md border border-primary/40 bg-primary/5 p-3 text-sm flex items-center gap-2">
+        <Loader2 className="size-4 animate-spin text-primary" />
+        <span>{m.storage_repair_lfs_pulling()}</span>
+      </div>
+    );
+  }
+
+  const ready = state === "ready";
+  const message =
+    ready && !diagnostic
+      ? m.storage_lfs_remote_ready_desc()
+      : remoteDiagnosticMessage(diagnostic);
+  const borderClass = ready
+    ? "border-primary/40 bg-primary/5"
+    : "border-destructive/40 bg-destructive/5";
+
+  return (
+    <div className={`rounded-md border p-3 space-y-3 ${borderClass}`}>
+      <div className="space-y-1">
+        <p className="text-sm font-medium">
+          {ready
+            ? m.storage_lfs_remote_ready_title()
+            : m.storage_lfs_remote_setup_title()}
+        </p>
+        <p className="text-xs text-muted-foreground">{message}</p>
+      </div>
+
+      <div className="space-y-1 text-xs">
+        <RemoteRequirement
+          checked={
+            ready && !diagnostic
+              ? true
+              : remoteRequirementState(diagnostic, "remote")
+          }
+          label={m.storage_lfs_remote_req_remote()}
+        />
+        <RemoteRequirement
+          checked={
+            ready && !diagnostic
+              ? true
+              : remoteRequirementState(diagnostic, "provider")
+          }
+          label={m.storage_lfs_remote_req_provider()}
+        />
+        <RemoteRequirement
+          checked={
+            ready && !diagnostic
+              ? true
+              : remoteRequirementState(diagnostic, "auth")
+          }
+          label={m.storage_lfs_remote_req_auth()}
+        />
+      </div>
+
+      {diagnostic?.remoteUrl && (
+        <p className="text-xs text-muted-foreground break-all">
+          {diagnostic.remoteUrl}
+        </p>
+      )}
+
+      {checking && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="size-3 animate-spin" />
+          <span>{m.storage_lfs_remote_checking()}</span>
+        </div>
+      )}
+
+      {diagnostic?.terminalCommand && (
+        <div className="space-y-1">
+          <p className="text-xs font-medium">
+            {m.storage_lfs_remote_command_label()}
+          </p>
+          <code className="block rounded border bg-background px-2 py-1 text-xs break-all">
+            {diagnostic.terminalCommand}
+          </code>
+        </div>
+      )}
+
+      {diagnostic?.detail && (
+        <div className="space-y-1">
+          <p className="text-xs font-medium">
+            {m.storage_lfs_remote_error_label()}
+          </p>
+          <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded border bg-background px-2 py-1 text-xs">
+            {diagnostic.detail}
+          </pre>
+        </div>
+      )}
+
+      <div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={ready ? onRepair : onDiagnose}
+          disabled={ready ? repairing : checking}
+        >
+          {(ready ? repairing : checking) && (
+            <Loader2 className="mr-1 size-3 animate-spin" />
+          )}
+          {ready ? m.storage_repair_lfs() : m.storage_lfs_retry()}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function RemoteRequirement({
+  checked,
+  label,
+}: {
+  checked: boolean | null;
+  label: string;
+}) {
+  return (
+    <div className="flex items-center gap-2 text-muted-foreground">
+      {checked === true ? (
+        <CheckCircle2 className="size-3 text-green-600" />
+      ) : checked === false ? (
+        <span className="flex size-3 items-center justify-center text-destructive">
+          x
+        </span>
+      ) : (
+        <span className="size-3 rounded-full border" />
+      )}
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function remoteRequirementState(
+  diagnostic: UseSpaceStorageSettingsResult["lfsRemoteDiagnostic"],
+  requirement: "remote" | "provider" | "auth",
+): boolean | null {
+  if (!diagnostic) return null;
+  if (diagnostic.reason === "ready") return true;
+  if (requirement === "remote") {
+    if (diagnostic.reason === "remote-missing") return false;
+    return diagnostic.remoteUrl ? true : null;
+  }
+  if (requirement === "provider") {
+    if (diagnostic.reason === "lfs-unavailable") return false;
+    return null;
+  }
+  if (diagnostic.reason === "auth-required") return false;
+  return null;
+}
+
+function remoteDiagnosticMessage(
+  diagnostic: UseSpaceStorageSettingsResult["lfsRemoteDiagnostic"],
+): string {
+  if (!diagnostic) return m.storage_lfs_remote_setup_desc();
+  switch (diagnostic.reason) {
+    case "ready":
+      return m.storage_lfs_remote_ready_desc();
+    case "git-lfs-missing":
+      return m.storage_lfs_remote_git_lfs_missing();
+    case "remote-missing":
+      return m.storage_lfs_remote_missing_remote();
+    case "auth-required":
+      return diagnostic.authMethod === "ssh"
+        ? m.storage_lfs_remote_auth_required_ssh()
+        : m.storage_lfs_remote_auth_required_https();
+    case "lfs-unavailable":
+      return m.storage_lfs_remote_lfs_unavailable();
+    case "probe-failed":
+      return m.storage_lfs_remote_probe_failed();
+  }
 }
