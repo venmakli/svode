@@ -18,3 +18,8 @@ export {
   type IdentitySummary,
   type IdentitySummarySource,
 } from "./git-identity";
+export {
+  canApplyStorageStrategyDraft,
+  isStorageStrategyDraftChanged,
+  type StorageStrategyDraftState,
+} from "./storage-strategy";

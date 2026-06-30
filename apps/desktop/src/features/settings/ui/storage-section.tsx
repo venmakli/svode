@@ -84,6 +84,10 @@ export function StorageSettingsSection({
       needsLfs: true,
     },
   ];
+  const canSaveVisibleS3 =
+    settings.savedAssetsStrategy === "lfs-s3"
+      ? !settings.applyingStrategy && settings.canSaveS3
+      : settings.canApplyStrategy;
 
   const storageControls = (
     <div className="space-y-4 max-w-md">
@@ -173,6 +177,22 @@ export function StorageSettingsSection({
           {m.storage_migration_unsupported_hint()}
         </p>
       )}
+      {settings.assetsStrategy !== settings.savedAssetsStrategy &&
+        settings.assetsStrategy !== "lfs-s3" && (
+          <div>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void settings.applySelectedStrategy()}
+              disabled={!settings.canApplyStrategy}
+            >
+              {settings.applyingStrategy && (
+                <Loader2 className="mr-1 size-3 animate-spin" />
+              )}
+              {m.storage_apply_action()}
+            </Button>
+          </div>
+        )}
       {settings.assetsStrategy === "lfs-s3" && (
         <div className="space-y-3 rounded-md border p-3">
           <div className="space-y-1">
@@ -280,7 +300,7 @@ export function StorageSettingsSection({
               type="button"
               size="sm"
               onClick={() => void settings.saveS3()}
-              disabled={settings.applyingStrategy || !settings.canSaveS3}
+              disabled={!canSaveVisibleS3}
             >
               {settings.applyingStrategy &&
                 settings.strategyInFlight === "lfs-s3" && (
@@ -419,10 +439,11 @@ export function StorageStrategyConfirmDialog({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{m.storage_confirm_title()}</AlertDialogTitle>
-          <AlertDialogDescription>
+          <AlertDialogDescription className="space-y-2">
             {m.storage_confirm_description({
-              strategy: settings.pendingStrategy ?? "",
+              strategy: storageStrategyTitle(settings.pendingStrategy),
             })}
+            <span className="block">{m.storage_confirm_files()}</span>
             {settings.pendingAssetCount > 0 && (
               <span className="mt-2 block text-destructive">
                 {m.storage_confirm_existing_assets({
@@ -430,6 +451,7 @@ export function StorageStrategyConfirmDialog({
                 })}
               </span>
             )}
+            <span className="block">{m.storage_confirm_locked()}</span>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -439,12 +461,29 @@ export function StorageStrategyConfirmDialog({
           <AlertDialogAction
             onClick={() => void settings.confirmPendingStrategy()}
           >
-            {m.storage_confirm_action()}
+            {settings.pendingAssetCount > 0
+              ? m.storage_confirm_existing_assets_action()
+              : m.storage_confirm_action()}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
   );
+}
+
+function storageStrategyTitle(strategy: AssetsStrategy | null) {
+  switch (strategy) {
+    case "in-git":
+      return m.storage_strategy_in_git_title();
+    case "lfs-remote":
+      return m.storage_strategy_lfs_remote_title();
+    case "lfs-s3":
+      return m.storage_strategy_lfs_s3_title();
+    case "local":
+      return m.storage_strategy_local_title();
+    default:
+      return "";
+  }
 }
 
 function LfsStatePanel({
