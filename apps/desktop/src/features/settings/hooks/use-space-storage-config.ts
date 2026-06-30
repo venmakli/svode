@@ -30,9 +30,11 @@ export function useSpaceStorageConfig({
   );
   const [inheritedFromProject, setInheritedFromProject] = useState(false);
   const [ownerSpaceId, setOwnerSpaceId] = useState<string | null>(null);
+  const [defaultS3Prefix, setDefaultS3Prefix] = useState("");
   const [s3Endpoint, setS3Endpoint] = useState("");
   const [s3Bucket, setS3Bucket] = useState("");
   const [s3Region, setS3Region] = useState("");
+  const [s3Prefix, setS3Prefix] = useState("");
   const [s3AccessKey, setS3AccessKey] = useState("");
   const [s3SecretKey, setS3SecretKey] = useState("");
   const [hasSavedS3Credentials, setHasSavedS3Credentials] = useState(false);
@@ -46,13 +48,15 @@ export function useSpaceStorageConfig({
     endpoint: s3Endpoint.trim(),
     bucket: s3Bucket.trim(),
     region: s3Region.trim(),
+    prefix: s3Prefix.trim(),
   };
   const canUseSavedS3Credentials =
-    hasSavedS3Credentials && sameS3Config(currentS3Config, savedS3Config);
+    hasSavedS3Credentials && sameS3Connection(currentS3Config, savedS3Config);
   const canSaveS3 = Boolean(
     currentS3Config.endpoint &&
       currentS3Config.bucket &&
       currentS3Config.region &&
+      currentS3Config.prefix &&
       (canUseSavedS3Credentials ||
         (s3AccessKey.trim() && s3SecretKey.trim())),
   );
@@ -74,6 +78,7 @@ export function useSpaceStorageConfig({
       return {
         strategy: cfg.strategy,
         s3: cfg.s3,
+        defaultS3Prefix: cfg.defaultS3Prefix,
         inheritedFromProject: cfg.inheritedFromProject,
         ownerSpaceId: cfg.ownerSpaceId,
         hasCredentials,
@@ -85,6 +90,7 @@ export function useSpaceStorageConfig({
         ({
           strategy,
           s3,
+          defaultS3Prefix,
           inheritedFromProject,
           ownerSpaceId,
           hasCredentials,
@@ -93,11 +99,13 @@ export function useSpaceStorageConfig({
           setAssetsStrategy(strategy);
           setSavedAssetsStrategy(strategy);
           setSavedS3Config(s3 ?? null);
+          setDefaultS3Prefix(defaultS3Prefix);
           setInheritedFromProject(inheritedFromProject);
           setOwnerSpaceId(ownerSpaceId);
           setS3Endpoint(s3?.endpoint ?? "");
           setS3Bucket(s3?.bucket ?? "");
           setS3Region(s3?.region ?? "");
+          setS3Prefix(s3?.prefix?.trim() || defaultS3Prefix);
           setS3AccessKey("");
           setS3SecretKey("");
           setS3TestState("idle");
@@ -147,7 +155,7 @@ export function useSpaceStorageConfig({
       const keepSavedCredentials =
         next === "lfs-s3" &&
         hasSavedS3Credentials &&
-        sameS3Config(nextS3Config, savedS3Config);
+        sameS3Connection(nextS3Config, savedS3Config);
       setAssetsStrategy(next);
       setSavedAssetsStrategy(next);
       setSavedS3Config(nextS3Config);
@@ -170,11 +178,13 @@ export function useSpaceStorageConfig({
     assetsStrategy,
     savedAssetsStrategy,
     savedS3Config,
+    defaultS3Prefix,
     inheritedFromProject,
     ownerSpaceId,
     s3Endpoint,
     s3Bucket,
     s3Region,
+    s3Prefix,
     s3AccessKey,
     s3SecretKey,
     hasSavedS3Credentials,
@@ -186,6 +196,7 @@ export function useSpaceStorageConfig({
     setS3Endpoint,
     setS3Bucket,
     setS3Region,
+    setS3Prefix,
     setS3AccessKey,
     setS3SecretKey,
     testS3,
@@ -193,7 +204,7 @@ export function useSpaceStorageConfig({
   };
 }
 
-function sameS3Config(
+function sameS3Connection(
   left: AssetsS3Config | null,
   right: AssetsS3Config | null,
 ) {

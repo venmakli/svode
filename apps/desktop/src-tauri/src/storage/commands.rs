@@ -149,6 +149,7 @@ pub struct EffectiveAssetsConfig {
     pub strategy: AssetsStrategy,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub s3: Option<AssetsS3Config>,
+    pub default_s3_prefix: String,
     pub inherited_from_project: bool,
     pub owner_space_id: Option<String>,
     pub git_type: Option<SpaceGitType>,
@@ -166,6 +167,7 @@ pub async fn get_assets_config(
     Ok(EffectiveAssetsConfig {
         strategy: scope.config.strategy,
         s3: scope.config.s3,
+        default_s3_prefix: scope.default_s3_prefix,
         inherited_from_project: scope.inherited_from_project,
         owner_space_id: IndexState::space_id_for_key(&scope.pool_key),
         git_type: scope.git_type,
@@ -295,6 +297,11 @@ pub async fn set_assets_strategy(
         .map(|assets| assets.strategy)
         .unwrap_or_default();
     ensure_supported_strategy_transition(current_strategy, strategy)?;
+
+    let s3_config = s3_config.map(|mut config| {
+        config.prefix = s3::normalize_prefix_path(&config.prefix, &scope.default_s3_prefix);
+        config
+    });
 
     let should_autocommit_strategy = system_autocommit_enabled(&config);
     let autocommit_blocker = if should_autocommit_strategy {

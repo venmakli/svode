@@ -28,6 +28,7 @@ export interface AssetsS3ConfigDto {
   endpoint: string;
   bucket: string;
   region: string;
+  prefix: string;
 }
 
 export interface AssetsSpaceConfigDto {
@@ -36,6 +37,7 @@ export interface AssetsSpaceConfigDto {
 }
 
 export interface EffectiveAssetsConfigDto extends AssetsSpaceConfigDto {
+  defaultS3Prefix: string;
   inheritedFromProject: boolean;
   ownerSpaceId: string | null;
   gitType: SpaceGitTypeDto | null;

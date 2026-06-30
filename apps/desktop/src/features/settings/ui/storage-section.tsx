@@ -214,6 +214,23 @@ export function StorageSettingsSection({
             </div>
           </div>
           <div className="space-y-1">
+            <Label htmlFor="s3-prefix" className="text-xs">
+              {m.storage_s3_prefix()}
+            </Label>
+            <Input
+              id="s3-prefix"
+              value={settings.s3Prefix}
+              onChange={(event) => settings.setS3Prefix(event.target.value)}
+              placeholder="bigquest/root"
+              className="h-8 text-sm font-mono"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <p className="text-xs text-muted-foreground">
+              {m.storage_s3_prefix_hint()}
+            </p>
+          </div>
+          <div className="space-y-1">
             <Label htmlFor="s3-access" className="text-xs">
               {m.storage_s3_access_key()}
             </Label>

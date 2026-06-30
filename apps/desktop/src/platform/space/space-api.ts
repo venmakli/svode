@@ -26,9 +26,10 @@ export interface S3CredentialsInputDto extends Record<string, unknown> {
   secretKey: string;
 }
 
-export interface CheckS3ConnectionInputDto
-  extends AssetsS3ConfigDto,
-    Record<string, unknown> {
+export interface CheckS3ConnectionInputDto extends Record<string, unknown> {
+  endpoint: string;
+  bucket: string;
+  region: string;
   accessKey: string;
   secretKey: string;
 }

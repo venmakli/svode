@@ -436,6 +436,8 @@
   "storage_s3_endpoint": "Endpoint",
   "storage_s3_bucket": "Bucket",
   "storage_s3_region": "Region",
+  "storage_s3_prefix": "Prefix",
+  "storage_s3_prefix_hint": "Генерируется один раз для этого репозитория и не меняется при переименовании проекта или пространства.",
   "storage_s3_access_key": "Access Key",
   "storage_s3_secret_key": "Secret Key",
   "storage_s3_check": "Проверить подключение",

@@ -144,6 +144,8 @@ pub struct AssetsS3Config {
     pub endpoint: String,
     pub bucket: String,
     pub region: String,
+    #[serde(default)]
+    pub prefix: String,
     // NOTE: access/secret keys intentionally NOT stored here — they belong in
     // OS keychain (deferred to Phase 4.3).
 }

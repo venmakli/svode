@@ -253,7 +253,7 @@ pub async fn apply_strategy(
             bucket: cfg.bucket.clone(),
             region: cfg.region.clone(),
             keychain_account: s3::keychain_account(cfg),
-            prefix: None,
+            prefix: Some(cfg.prefix.clone()),
         };
         s3::write_agent_config(space_dir, &agent_cfg)?;
 

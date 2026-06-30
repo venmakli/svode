@@ -54,6 +54,7 @@ export interface AssetsS3Config {
   endpoint: string;
   bucket: string;
   region: string;
+  prefix: string;
 }
 
 export interface AssetsSpaceConfig {

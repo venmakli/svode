@@ -67,6 +67,90 @@ pub fn keychain_account(cfg: &AssetsS3Config) -> String {
     format!("{}@{}", cfg.bucket, host)
 }
 
+fn slug_source(source: &str) -> String {
+    let mut out = String::new();
+    let mut pending_separator = false;
+
+    for ch in source.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            if pending_separator && !out.is_empty() {
+                out.push('-');
+            }
+            out.push(ch.to_ascii_lowercase());
+            pending_separator = false;
+        } else if ch.is_whitespace() || matches!(ch, '-' | '_' | '.' | '/' | '\\' | ':' | '+' | '&')
+        {
+            pending_separator = !out.is_empty();
+        }
+    }
+
+    out.trim_matches('-').to_string()
+}
+
+pub fn normalize_prefix_part(source: &str, fallback: &str) -> String {
+    let normalized = slug_source(source);
+    if !normalized.is_empty() {
+        return normalized;
+    }
+
+    let fallback = slug_source(fallback);
+    if fallback.is_empty() {
+        "project".to_string()
+    } else {
+        fallback
+    }
+}
+
+fn project_prefix(project: &Path, project_name: Option<&str>) -> String {
+    let path_name = project
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    let from_path = slug_source(path_name);
+    if !from_path.is_empty() {
+        return from_path;
+    }
+
+    project_name
+        .map(|name| normalize_prefix_part(name, "project"))
+        .unwrap_or_else(|| "project".to_string())
+}
+
+pub fn default_root_prefix(project: &Path, project_name: Option<&str>) -> String {
+    format!("{}/root", project_prefix(project, project_name))
+}
+
+pub fn default_repo_space_prefix(
+    project: &Path,
+    project_name: Option<&str>,
+    space_dir: &Path,
+) -> String {
+    let raw_space = space_dir
+        .strip_prefix(project)
+        .ok()
+        .and_then(|path| path.to_str())
+        .or_else(|| space_dir.file_name().and_then(|name| name.to_str()))
+        .unwrap_or("");
+    let space_prefix = normalize_prefix_part(raw_space, "space");
+    format!("{}/{}", project_prefix(project, project_name), space_prefix)
+}
+
+pub fn normalize_prefix_path(prefix: &str, fallback: &str) -> String {
+    let segments = prefix
+        .trim()
+        .trim_matches('/')
+        .split(['/', '\\'])
+        .map(|segment| slug_source(segment))
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+
+    if segments.is_empty() {
+        fallback.trim_matches('/').to_string()
+    } else {
+        segments.join("/")
+    }
+}
+
 /// Save credentials to the OS keychain. Runs on a blocking thread because
 /// `keyring` is sync.
 pub async fn save_credentials(account: String, secrets: AgentSecrets) -> Result<(), AppError> {
@@ -356,6 +440,63 @@ pub async fn check_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prefix_part_normalization_builds_path_safe_slugs() {
+        assert_eq!(normalize_prefix_part(" Big Quest ", "project"), "big-quest");
+        assert_eq!(
+            normalize_prefix_part("Marketing Docs/2026", "space"),
+            "marketing-docs-2026"
+        );
+        assert_eq!(normalize_prefix_part("!!!", "space"), "space");
+    }
+
+    #[test]
+    fn default_prefixes_use_project_root_and_repo_space_layout() {
+        let project = Path::new("/tmp/Big Quest");
+        assert_eq!(
+            default_root_prefix(project, Some("Ignored")),
+            "big-quest/root"
+        );
+        assert_eq!(
+            default_repo_space_prefix(
+                project,
+                Some("Ignored"),
+                Path::new("/tmp/Big Quest/Marketing")
+            ),
+            "big-quest/marketing"
+        );
+    }
+
+    #[test]
+    fn prefix_path_normalization_preserves_safe_segments() {
+        assert_eq!(
+            normalize_prefix_path(" / Big Quest // Marketing Docs / ", "fallback/root"),
+            "big-quest/marketing-docs"
+        );
+        assert_eq!(
+            normalize_prefix_path("///", "fallback/root"),
+            "fallback/root"
+        );
+    }
+
+    #[test]
+    fn agent_config_write_persists_prefix() -> Result<(), AppError> {
+        let temp = tempfile::tempdir()?;
+        let cfg = AgentConfigFile {
+            endpoint: "https://s3.example.test".to_string(),
+            bucket: "assets".to_string(),
+            region: "us-east-1".to_string(),
+            keychain_account: "assets@s3.example.test".to_string(),
+            prefix: Some("bigquest/root".to_string()),
+        };
+
+        write_agent_config(temp.path(), &cfg)?;
+
+        let saved = read_agent_config(temp.path())?.expect("agent config");
+        assert_eq!(saved.prefix.as_deref(), Some("bigquest/root"));
+        Ok(())
+    }
 
     #[test]
     fn lfs_dal_names_include_windows_exe_fallbacks() {

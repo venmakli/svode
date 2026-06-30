@@ -45,6 +45,7 @@ export interface UseSpaceStorageSettingsResult {
   s3Endpoint: string;
   s3Bucket: string;
   s3Region: string;
+  s3Prefix: string;
   s3AccessKey: string;
   s3SecretKey: string;
   hasSavedS3Credentials: boolean;
@@ -58,6 +59,7 @@ export interface UseSpaceStorageSettingsResult {
   setS3Endpoint: (value: string) => void;
   setS3Bucket: (value: string) => void;
   setS3Region: (value: string) => void;
+  setS3Prefix: (value: string) => void;
   setS3AccessKey: (value: string) => void;
   setS3SecretKey: (value: string) => void;
   selectStrategy: (next: AssetsStrategy) => Promise<void>;
@@ -92,11 +94,13 @@ export function useSpaceStorageSettings({
     assetsStrategy,
     savedAssetsStrategy,
     savedS3Config,
+    defaultS3Prefix,
     inheritedFromProject,
     ownerSpaceId,
     s3Endpoint,
     s3Bucket,
     s3Region,
+    s3Prefix,
     s3AccessKey,
     s3SecretKey,
     hasSavedS3Credentials,
@@ -108,6 +112,7 @@ export function useSpaceStorageSettings({
     setS3Endpoint,
     setS3Bucket,
     setS3Region,
+    setS3Prefix,
     setS3AccessKey,
     setS3SecretKey,
     testS3,
@@ -179,11 +184,7 @@ export function useSpaceStorageSettings({
       setApplyingStrategy(true);
       setStrategyInFlight(next);
       try {
-        let s3Config: {
-          endpoint: string;
-          bucket: string;
-          region: string;
-        } | null = null;
+        let s3Config: AssetsS3Config | null = null;
         let s3Credentials: {
           accessKey: string;
           secretKey: string;
@@ -193,6 +194,7 @@ export function useSpaceStorageSettings({
             endpoint: s3Endpoint.trim(),
             bucket: s3Bucket.trim(),
             region: s3Region.trim(),
+            prefix: s3Prefix.trim(),
           };
           if (s3AccessKey.trim() && s3SecretKey.trim()) {
             s3Credentials = {
@@ -243,6 +245,7 @@ export function useSpaceStorageSettings({
       s3AccessKey,
       s3Bucket,
       s3Endpoint,
+      s3Prefix,
       s3Region,
       s3SecretKey,
       savedAssetsStrategy,
@@ -343,7 +346,8 @@ export function useSpaceStorageSettings({
   const projectDefaultApplied =
     savedAssetsStrategy === projectAssetsStrategy &&
     (projectAssetsStrategy !== "lfs-s3" ||
-      sameS3Config(savedS3Config, projectS3Config));
+      (sameS3Connection(savedS3Config, projectS3Config) &&
+        savedS3Config?.prefix === defaultS3Prefix));
 
   const useProjectStorageSetting = useCallback(async () => {
     if (projectAssetsStrategy === "lfs-s3") {
@@ -360,6 +364,7 @@ export function useSpaceStorageSettings({
       setS3Endpoint(projectS3Config.endpoint);
       setS3Bucket(projectS3Config.bucket);
       setS3Region(projectS3Config.region);
+      setS3Prefix(defaultS3Prefix);
       setS3AccessKey("");
       setS3SecretKey("");
       toast(m.storage_project_setting_loaded());
@@ -369,6 +374,7 @@ export function useSpaceStorageSettings({
   }, [
     projectAssetsStrategy,
     projectS3Config,
+    defaultS3Prefix,
     lfsAvailable,
     rejectUnsupportedMigration,
     savedAssetsStrategy,
@@ -377,6 +383,7 @@ export function useSpaceStorageSettings({
     setAssetsStrategy,
     setS3Bucket,
     setS3Endpoint,
+    setS3Prefix,
     setS3Region,
     setS3SecretKey,
   ]);
@@ -402,6 +409,7 @@ export function useSpaceStorageSettings({
     s3Endpoint,
     s3Bucket,
     s3Region,
+    s3Prefix,
     s3AccessKey,
     s3SecretKey,
     hasSavedS3Credentials,
@@ -415,6 +423,7 @@ export function useSpaceStorageSettings({
     setS3Endpoint,
     setS3Bucket,
     setS3Region,
+    setS3Prefix,
     setS3AccessKey,
     setS3SecretKey,
     selectStrategy,
@@ -427,7 +436,7 @@ export function useSpaceStorageSettings({
   };
 }
 
-function sameS3Config(
+function sameS3Connection(
   left: AssetsS3Config | null,
   right: AssetsS3Config | null,
 ) {

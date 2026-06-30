@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use super::s3;
 use crate::error::AppError;
 use crate::index::{IndexKey, IndexState};
 use crate::space::config::read_space_config;
@@ -12,6 +13,7 @@ pub struct AssetsStorageScope {
     pub repo_dir: PathBuf,
     pub config_dir: PathBuf,
     pub config: AssetsSpaceConfig,
+    pub default_s3_prefix: String,
     pub git_type: Option<SpaceGitType>,
     pub inherited_from_project: bool,
 }
@@ -75,7 +77,14 @@ fn build_effective_storage_scope(
             }
         };
 
-    let config = read_space_config(&config_dir)?.assets.unwrap_or_default();
+    let owner_config = read_space_config(&config_dir)?;
+    let project_name = read_space_config(project).ok().map(|config| config.name);
+    let default_s3_prefix = if matches!(&pool_key, IndexKey::Root(_)) || inherited_from_project {
+        s3::default_root_prefix(project, project_name.as_deref())
+    } else {
+        s3::default_repo_space_prefix(project, project_name.as_deref(), &repo_dir)
+    };
+    let config = owner_config.assets.unwrap_or_default();
 
     Ok(AssetsStorageScope {
         pool_key,
@@ -83,6 +92,7 @@ fn build_effective_storage_scope(
         repo_dir,
         config_dir,
         config,
+        default_s3_prefix,
         git_type,
         inherited_from_project,
     })
@@ -185,30 +195,31 @@ mod tests {
     #[test]
     fn effective_scope_ignores_stale_inline_child_assets_config() {
         let temp = tempfile::tempdir().expect("temp dir");
-        let project = temp.path();
+        let project = temp.path().join("Project");
         let child = project.join("child");
         std::fs::create_dir_all(&child).expect("child dir");
-        write_config(project, "in-git");
+        write_config(&project, "in-git");
         write_config(&child, "lfs-s3");
 
-        let scope = child_scope(project);
+        let scope = child_scope(&project);
 
         assert!(scope.inherited_from_project);
         assert_eq!(scope.pool_key, IndexKey::Root(project.to_path_buf()));
         assert_eq!(scope.config.strategy, AssetsStrategy::InGit);
+        assert_eq!(scope.default_s3_prefix, "project/root");
         assert_eq!(scope.git_type, Some(SpaceGitType::Inline));
     }
 
     #[test]
     fn effective_scope_uses_repo_owned_child_assets_config() {
         let temp = tempfile::tempdir().expect("temp dir");
-        let project = temp.path();
+        let project = temp.path().join("Project");
         let child = project.join("child");
         std::fs::create_dir_all(child.join(".git")).expect("git dir");
-        write_config(project, "in-git");
+        write_config(&project, "in-git");
         write_config(&child, "lfs-remote");
 
-        let scope = child_scope(project);
+        let scope = child_scope(&project);
 
         assert!(!scope.inherited_from_project);
         assert_eq!(
@@ -219,6 +230,7 @@ mod tests {
             }
         );
         assert_eq!(scope.config.strategy, AssetsStrategy::LfsRemote);
+        assert_eq!(scope.default_s3_prefix, "project/child");
         assert_eq!(scope.git_type, Some(SpaceGitType::Independent));
     }
 }

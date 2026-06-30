@@ -26,8 +26,10 @@ export interface S3CredentialsInput extends Record<string, unknown> {
   secretKey: string;
 }
 
-export interface CheckS3ConnectionInput
-  extends AssetsS3Config, Record<string, unknown> {
+export interface CheckS3ConnectionInput extends Record<string, unknown> {
+  endpoint: string;
+  bucket: string;
+  region: string;
   accessKey: string;
   secretKey: string;
 }
@@ -45,6 +47,7 @@ export interface SetAssetsStrategyResult {
 export interface EffectiveAssetsConfig {
   strategy: AssetsStrategy;
   s3?: AssetsS3Config;
+  defaultS3Prefix: string;
   inheritedFromProject: boolean;
   ownerSpaceId: string | null;
   gitType: SpaceGitType | null;
