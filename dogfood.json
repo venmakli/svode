@@ -8,14 +8,19 @@
       "commit": "3c4f7f5631acd365829717588ff81ec661e1d0b2",
       "sourceRef": "main",
       "runId": 28435270617,
-      "publishedAt": "2026-06-30T09:58:14.036Z",
-      "expiresAt": "2026-07-03T09:58:14.036Z",
+      "publishedAt": "2026-06-30T10:06:24.229Z",
+      "expiresAt": "2026-07-03T10:06:24.229Z",
       "reason": "add s3 prefix",
       "platforms": {
         "linux": {
           "url": "https://github.com/venmakli/svode/actions/runs/28435270617/artifacts/7977088654",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28435270617",
           "artifactName": "Svode-linux-deb"
+        },
+        "darwin": {
+          "url": "https://github.com/venmakli/svode/actions/runs/28435270617/artifacts/7977271563",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28435270617",
+          "artifactName": "Svode-macos-dmg"
         }
       }
     },
