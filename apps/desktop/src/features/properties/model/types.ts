@@ -130,6 +130,15 @@ export interface RelationContext {
   spaceId?: string | null;
   currentFilePath?: string | null;
   onOpenPath?: (path: string, spaceId?: string | null) => void;
+  onOpenRelationTarget?: (target: RelationOpenTarget) => void;
+}
+
+export interface RelationOpenTarget {
+  path: string;
+  title: string;
+  icon?: string | null;
+  spaceId?: string | null;
+  spacePath?: string | null;
 }
 
 export interface ResolvedRelationEntry {

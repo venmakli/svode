@@ -92,11 +92,13 @@ export function PropertyValue({
   value,
   actors = [],
   relationContext,
+  relationPresentation = "default",
 }: {
   column: Column;
   value: unknown;
   actors?: ActorCandidate[];
   relationContext?: RelationContext;
+  relationPresentation?: "default" | "table";
 }) {
   if (column.type === "unique_id") {
     const display = uniqueIdDisplay(column, value);
@@ -118,7 +120,12 @@ export function PropertyValue({
   }
   if (column.type === "relation") {
     return (
-      <RelationValue column={column} value={value} context={relationContext} />
+      <RelationValue
+        column={column}
+        value={value}
+        context={relationContext}
+        presentation={relationPresentation}
+      />
     );
   }
   if (column.type === "select" || column.type === "status") {

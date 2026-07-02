@@ -6,7 +6,10 @@ import {
   type ReactNode,
 } from "react";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
-import { normalizeSchema } from "@/features/properties";
+import {
+  normalizeSchema,
+  type RelationOpenTarget,
+} from "@/features/properties";
 import { detailPageToolbarClassName } from "@/shared/ui/page-layout";
 import { useOpenEntryDocument } from "@/features/entry/selection";
 import type { Entry } from "@/features/entry";
@@ -236,10 +239,34 @@ export function CollectionScreen({
     setPeekTarget({ entry: entryToOpen, nested });
   }
 
-  function openFullPage(entryToOpen: Entry) {
+  function openFullPage(entryToOpen: Entry, targetSpaceId?: string | null) {
     setPeekTarget(null);
-    openDocument(entryToOpen.path, spaceId);
+    openDocument(entryToOpen.path, targetSpaceId ?? spaceId);
   }
+
+  const openRelationPeek = useCallback(
+    (target: RelationOpenTarget) => {
+      const title = target.title.trim() || target.path;
+      setPeekTarget({
+        entry: {
+          path: target.path,
+          body: "",
+          meta: {
+            title,
+            icon: target.icon ?? null,
+            created: "",
+            updated: "",
+            extra: {},
+          },
+        },
+        nested: false,
+        spaceId: target.spaceId ?? spaceId,
+        spacePath: target.spacePath ?? spacePath,
+        projectPath,
+      });
+    },
+    [projectPath, spaceId, spacePath],
+  );
 
   useCollectionKeyboardShortcuts({
     activeTab,
@@ -410,9 +437,7 @@ export function CollectionScreen({
             projectPath={projectPath}
             entry={entry}
             onDocumentPathChange={(path) => {
-              setEntry((current) =>
-                current ? { ...current, path } : current,
-              );
+              setEntry((current) => (current ? { ...current, path } : current));
               openDocument(path, spaceId);
             }}
           />
@@ -438,6 +463,7 @@ export function CollectionScreen({
               }
               onOpenFullPage={openFullPage}
               onOpenPath={openPath}
+              onOpenRelationTarget={openRelationPeek}
               onDuplicateEntry={(entryToDuplicate) =>
                 void duplicateRow(entryToDuplicate).catch(handleError)
               }

@@ -35,6 +35,7 @@ export function TableView(props: TableViewProps) {
     onOpenNestedCollection,
     onOpenFullPage,
     onOpenPath,
+    onOpenRelationTarget,
     onDuplicateEntry,
     onDeleteEntry,
     onSchemaChange,
@@ -67,6 +68,7 @@ export function TableView(props: TableViewProps) {
     onOpenNestedCollection,
     onOpenFullPage,
     onOpenPath,
+    onOpenRelationTarget,
     onRequestActors: runtime.loadActors,
     onCommitField: (entry, column, value) =>
       void runtime.commitField(entry, column, value),
@@ -139,6 +141,7 @@ export function TableView(props: TableViewProps) {
               onOpenNestedPeek={onOpenNestedPeek ?? onOpenEntry}
               onOpenFullPage={onOpenFullPage}
               onOpenPath={onOpenPath}
+              onOpenRelationTarget={onOpenRelationTarget}
               onDuplicateEntry={onDuplicateEntry}
               onDeleteEntry={onDeleteEntry}
               onDragEnd={(event) => void runtime.handleDragEnd(event)}

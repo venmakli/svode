@@ -59,7 +59,10 @@ export function PropertyCell({
   if (editing) {
     return (
       <div
-        className="w-full"
+        className={cn(
+          "w-full min-w-0",
+          column.type === "relation" && "h-7 overflow-hidden",
+        )}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.stopPropagation();
@@ -98,6 +101,9 @@ export function PropertyCell({
             autoOpen
             actors={actors}
             relationContext={relationContext}
+            relationPresentation={
+              column.type === "relation" ? "table" : "default"
+            }
             onChange={(next) =>
               onCommit(next, {
                 close: shouldClosePropertyEditorOnChange(column.type),
@@ -115,26 +121,36 @@ export function PropertyCell({
 
   return (
     <div
-      role="button"
+      data-table-property-cell
+      role={column.type === "relation" ? undefined : "button"}
       tabIndex={0}
+      aria-invalid={validation.invalid || undefined}
       className={cn(
-        "group/cell flex h-7 w-full items-center gap-1 rounded px-1 text-left text-[13px] hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        validation.invalid && "border border-destructive",
+        "group/cell flex h-7 w-full min-w-0 items-center gap-1 rounded px-1 text-left text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        validation.invalid && "ring-1 ring-destructive",
       )}
       onClick={onEdit}
       onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
+        if (event.key === "Enter" || event.key === " " || event.key === "F2") {
           event.preventDefault();
           onEdit();
         }
       }}
     >
-      <span className="min-w-0 flex-1 truncate">
+      <span
+        className={cn(
+          "min-w-0 flex-1",
+          column.type === "relation" ? "overflow-hidden" : "truncate",
+        )}
+      >
         <PropertyValue
           column={column}
           value={value}
           actors={actors}
           relationContext={relationContext}
+          relationPresentation={
+            column.type === "relation" ? "table" : "default"
+          }
         />
       </span>
       <PropertyValueActions column={column} value={value} />

@@ -4,7 +4,10 @@ import type {
   ViewType,
 } from "@/features/collection/query/model";
 import type { Entry } from "@/features/entry";
-import type { CollectionSchema } from "@/features/properties";
+import type {
+  CollectionSchema,
+  RelationOpenTarget,
+} from "@/features/properties";
 import type { CalendarScope } from "../model/calendar-types";
 import type { ViewCreateRequest } from "../hooks";
 import { viewType } from "../lib/utils";
@@ -32,6 +35,7 @@ interface CollectionViewContentProps {
   onOpenNestedCollection: (entry: Entry) => void;
   onOpenFullPage: (entry: Entry) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
+  onOpenRelationTarget: (target: RelationOpenTarget) => void;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
   onSchemaChange: (schema: CollectionSchema) => void;
@@ -64,6 +68,7 @@ export function CollectionViewContent({
   onOpenNestedCollection,
   onOpenFullPage,
   onOpenPath,
+  onOpenRelationTarget,
   onDuplicateEntry,
   onDeleteEntry,
   onSchemaChange,
@@ -100,6 +105,7 @@ export function CollectionViewContent({
       <TableView
         {...commonProps}
         query={query}
+        onOpenRelationTarget={onOpenRelationTarget}
         onSchemaChange={onSchemaChange}
         onUpdateView={onUpdateView}
         onCreateEntry={(title, asFolder) => onCreateEntry(title, asFolder)}

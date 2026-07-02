@@ -114,6 +114,7 @@ function shouldIgnoreRowOpen(target: EventTarget | null) {
         "[role='checkbox']",
         "[contenteditable='true']",
         "[data-radix-collection-item]",
+        "[data-table-property-cell]",
       ].join(","),
     ),
   );

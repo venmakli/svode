@@ -5,7 +5,10 @@ import type {
   UseViewQueryResult,
 } from "@/features/collection/query/model";
 import type { Entry } from "@/features/entry";
-import type { CollectionSchema } from "@/features/properties";
+import type {
+  CollectionSchema,
+  RelationOpenTarget,
+} from "@/features/properties";
 
 export interface CollectionTableRow {
   entry: Entry;
@@ -49,6 +52,7 @@ export interface TableViewProps {
   onOpenNestedCollection: (entry: Entry) => void;
   onOpenFullPage: (entry: Entry) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
+  onOpenRelationTarget: (target: RelationOpenTarget) => void;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
   onSchemaChange: (schema: CollectionSchema) => void;

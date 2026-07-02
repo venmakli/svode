@@ -11,10 +11,7 @@ import {
 } from "@/components/ui/sheet";
 import { cn } from "@/shared/lib/utils";
 import type { Entry } from "@/features/entry";
-import {
-  EntryDetailActions,
-  EntryPeekSurface,
-} from "@/features/entry/detail";
+import { EntryDetailActions, EntryPeekSurface } from "@/features/entry/detail";
 import { handleError } from "../hooks/error-feedback";
 import { useEntryPeekLoader } from "../hooks";
 import type { EntryPeekTarget } from "../model";
@@ -26,7 +23,7 @@ interface EntryPeekSheetProps {
   projectPath?: string | null;
   spaceId: string;
   onOpenChange: (open: boolean) => void;
-  onOpenFullPage: (entry: Entry) => void;
+  onOpenFullPage: (entry: Entry, spaceId?: string | null) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
@@ -52,10 +49,15 @@ export function EntryPeekSheet({
   renderNested,
 }: EntryPeekSheetProps) {
   const open = Boolean(target);
-  const { entry, setEntry, schemaResult, setSchemaResult } = useEntryPeekLoader({
-    target,
-    spacePath,
-  });
+  const effectiveSpacePath = target?.spacePath ?? spacePath;
+  const effectiveProjectPath = target?.projectPath ?? projectPath;
+  const effectiveSpaceId = target?.spaceId ?? spaceId;
+  const { entry, setEntry, schemaResult, setSchemaResult } = useEntryPeekLoader(
+    {
+      target,
+      spacePath: effectiveSpacePath,
+    },
+  );
 
   const contentClassName = useMemo(
     () =>
@@ -71,16 +73,18 @@ export function EntryPeekSheet({
   const actionMenu = currentEntry ? (
     <EntryPeekActions
       entry={currentEntry}
-      onOpenFullPage={onOpenFullPage}
+      onOpenFullPage={(entryToOpen) =>
+        onOpenFullPage(entryToOpen, effectiveSpaceId)
+      }
       onDuplicateEntry={onDuplicateEntry}
       onDeleteEntry={onDeleteEntry}
       onConvertedEntry={onConvertedEntry}
       template={target?.template}
       onSetTemplateDefault={onSetTemplateDefault}
       onDuplicateTemplate={onDuplicateTemplate}
-      spacePath={spacePath}
-      projectPath={projectPath}
-      spaceId={spaceId}
+      spacePath={effectiveSpacePath}
+      projectPath={effectiveProjectPath}
+      spaceId={effectiveSpaceId}
     />
   ) : null;
   const actions =
@@ -115,9 +119,9 @@ export function EntryPeekSheet({
             <EntryPeekSurface
               entry={currentEntry}
               schemaResult={schemaResult}
-              spacePath={spacePath}
-              projectPath={projectPath}
-              spaceId={spaceId}
+              spacePath={effectiveSpacePath}
+              projectPath={effectiveProjectPath}
+              spaceId={effectiveSpaceId}
               actions={actions}
               metadataBefore={
                 target?.template ? (
@@ -159,7 +163,7 @@ function EntryPeekActions({
   spaceId,
 }: {
   entry: Entry;
-  onOpenFullPage: (entry: Entry) => void;
+  onOpenFullPage: (entry: Entry, spaceId?: string | null) => void;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
   onConvertedEntry: (entry: Entry, nested: boolean) => void;
@@ -198,7 +202,7 @@ function EntryPeekActions({
         variant="ghost"
         size="sm"
         className="h-7 rounded-lg px-2 text-xs text-muted-foreground hover:text-foreground"
-        onClick={() => onOpenFullPage(entry)}
+        onClick={() => onOpenFullPage(entry, spaceId)}
       >
         <Maximize2 data-icon="inline-start" />
         Full page

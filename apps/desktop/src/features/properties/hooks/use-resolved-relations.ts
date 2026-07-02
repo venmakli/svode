@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSpace } from "@/features/space";
 import { resolveRelationsBatch } from "../api/relation-api";
 import {
@@ -30,13 +30,18 @@ export function useResolvedRelations(
   const [resolved, setResolved] = useState<
     Map<string, ResolvedRelationEntry | null>
   >(() => new Map());
-  const lookup = useSpace<RelationSpaceLookup>((state) => ({
-    activeRootPath: state.activeRootPath,
-    spaces: state.spaces.map((space) => ({
-      id: space.id,
-      path: space.path,
-    })),
-  }));
+  const activeRootPath = useSpace((state) => state.activeRootPath);
+  const spaces = useSpace((state) => state.spaces);
+  const lookup = useMemo<RelationSpaceLookup>(
+    () => ({
+      activeRootPath,
+      spaces: spaces.map((space) => ({
+        id: space.id,
+        path: space.path,
+      })),
+    }),
+    [activeRootPath, spaces],
+  );
   const targetSpacePath = relationTargetSpacePath(
     context,
     relationScope,

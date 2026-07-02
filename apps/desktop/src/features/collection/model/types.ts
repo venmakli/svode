@@ -27,6 +27,9 @@ export type SettingsPane =
 export interface EntryPeekTarget {
   entry: Entry;
   nested: boolean;
+  spaceId?: string | null;
+  spacePath?: string | null;
+  projectPath?: string | null;
   template?: {
     slug: string;
     collectionPath: string;

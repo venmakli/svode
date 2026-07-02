@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { FileText, Link2Off, X } from "lucide-react";
 import { useSpace } from "@/features/space";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +17,9 @@ import {
 import { cn } from "@/shared/lib/utils";
 import {
   normalizeRelationRoot,
+  relationTargetSpacePath,
   relationTargetSpaceId,
+  type RelationSpaceLookup,
   resolvedRelationPath,
 } from "../lib/relation";
 import type { Column, RelationContext, ResolvedRelationEntry } from "../model";
@@ -30,16 +32,30 @@ export function RelationValue({
   value,
   context,
   onRemove,
+  presentation = "default",
 }: {
   column: Column;
   value: unknown;
   context?: RelationContext;
   onRemove?: (value: string) => void;
+  presentation?: RelationValuePresentation;
 }) {
   const values = useRelationValues(column, value);
   const relation = normalizeRelationRoot(column.relation);
   const relationScope = column.relationScope ?? null;
-  const projectSpaceId = useSpace((state) => state.activeRootId);
+  const activeRootId = useSpace((state) => state.activeRootId);
+  const activeRootPath = useSpace((state) => state.activeRootPath);
+  const spaces = useSpace((state) => state.spaces);
+  const lookup = useMemo<RelationSpaceLookup>(
+    () => ({
+      activeRootPath,
+      spaces: spaces.map((space) => ({
+        id: space.id,
+        path: space.path,
+      })),
+    }),
+    [activeRootPath, spaces],
+  );
   const resolved = useResolvedRelations(
     context,
     relation,
@@ -52,15 +68,29 @@ export function RelationValue({
   }
 
   const openPath = context?.onOpenPath;
+  const openRelationTarget = context?.onOpenRelationTarget;
   const targetSpaceId = relationTargetSpaceId(
     context?.spaceId,
-    context?.projectSpaceId ?? projectSpaceId,
+    context?.projectSpaceId ?? activeRootId,
     relationScope,
   );
+  const targetSpacePath = relationTargetSpacePath(
+    context,
+    relationScope,
+    lookup,
+  );
+  const maxVisible = presentation === "table" ? 2 : values.length;
+  const visibleValues = values.slice(0, maxVisible);
+  const hiddenCount = values.length - visibleValues.length;
 
   return (
-    <span className="flex min-w-0 flex-wrap items-center gap-1">
-      {values.map((item) => {
+    <span
+      className={cn(
+        "flex min-w-0 items-center gap-1",
+        presentation === "table" ? "flex-nowrap overflow-hidden" : "flex-wrap",
+      )}
+    >
+      {visibleValues.map((item) => {
         const hasResolution = resolved.has(item);
         const target = hasResolution ? resolved.get(item) : undefined;
         const status = relationStatus({
@@ -76,17 +106,40 @@ export function RelationValue({
             target={target}
             status={status}
             onOpen={
-              target && openPath
-                ? () => openPath(resolvedRelationPath(target), targetSpaceId)
+              target && (openRelationTarget || openPath)
+                ? () => {
+                    const path = resolvedRelationPath(target);
+                    if (!path) return;
+                    if (openRelationTarget) {
+                      openRelationTarget({
+                        path,
+                        title: target.title,
+                        icon: target.icon,
+                        spaceId: targetSpaceId,
+                        spacePath: targetSpacePath,
+                      });
+                      return;
+                    }
+                    openPath?.(path, targetSpaceId);
+                  }
                 : undefined
             }
             onRemove={onRemove}
+            presentation={presentation}
           />
         );
       })}
+      {hiddenCount > 0 ? (
+        <RelationOverflowCount
+          count={hiddenCount}
+          presentation={presentation}
+        />
+      ) : null}
     </span>
   );
 }
+
+type RelationValuePresentation = "default" | "table";
 
 function RelationChip({
   value,
@@ -94,18 +147,22 @@ function RelationChip({
   status,
   onOpen,
   onRemove,
+  presentation,
 }: {
   value: string;
   target: ResolvedRelationEntry | null | undefined;
   status: RelationChipStatus;
   onOpen?: () => void;
   onRemove?: (value: string) => void;
+  presentation: RelationValuePresentation;
 }) {
   const broken = status === "orphan" || status === "out-of-scope";
   const pending = status === "loading" || status === "unresolved";
+  const table = presentation === "table";
   const label = target?.title ?? compactRelationPath(value);
   const triggerClassName = cn(
     "inline-flex min-w-0 items-center gap-1 py-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3",
+    table && "max-w-full",
     onRemove ? "pl-1.5 pr-1" : "px-1.5",
   );
   const icon = broken ? (
@@ -132,6 +189,7 @@ function RelationChip({
       variant={broken || pending ? "outline" : "secondary"}
       className={cn(
         "max-w-56 gap-0 rounded-full px-0",
+        table && "max-w-[9rem] shrink",
         broken && "text-muted-foreground",
         pending && "text-muted-foreground",
       )}
@@ -222,6 +280,26 @@ function RelationChip({
       {icon}
       <span className="min-w-0 truncate">{label}</span>
     </button>,
+  );
+}
+
+function RelationOverflowCount({
+  count,
+  presentation,
+}: {
+  count: number;
+  presentation: RelationValuePresentation;
+}) {
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "rounded-full px-1.5 text-muted-foreground",
+        presentation === "table" && "shrink-0",
+      )}
+    >
+      +{count}
+    </Badge>
   );
 }
 

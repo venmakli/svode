@@ -9,6 +9,7 @@ import type {
   CollectionSchema,
   Column,
   ActorCandidate,
+  RelationOpenTarget,
 } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
 import { ColumnMenuPopover } from "./column-menu";
@@ -50,6 +51,7 @@ export function useTableColumns({
   onOpenNestedCollection,
   onOpenFullPage,
   onOpenPath,
+  onOpenRelationTarget,
   onRequestActors,
   onCommitField,
 }: {
@@ -78,6 +80,7 @@ export function useTableColumns({
   onOpenNestedCollection: (entry: Entry) => void;
   onOpenFullPage: (entry: Entry) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
+  onOpenRelationTarget: (target: RelationOpenTarget) => void;
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   onCommitField: (
     entry: Entry,
@@ -212,6 +215,7 @@ export function useTableColumns({
                   projectPath,
                   currentFilePath: row.original.entry.path,
                   onOpenPath,
+                  onOpenRelationTarget,
                 }}
                 value={row.original.entry.meta.extra?.[property.name] ?? null}
                 editing={
@@ -247,6 +251,7 @@ export function useTableColumns({
     onCommitField,
     onOpenEntry,
     onOpenFullPage,
+    onOpenRelationTarget,
     onOpenNestedPeek,
     onOpenNestedCollection,
     onOpenPath,

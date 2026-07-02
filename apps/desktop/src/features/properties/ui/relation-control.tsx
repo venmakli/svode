@@ -38,6 +38,7 @@ interface RelationControlProps {
   disabled?: boolean;
   autoOpen?: boolean;
   context?: RelationContext;
+  presentation?: "default" | "table";
   onChange: (value: unknown) => void | Promise<void>;
   onOpenChange?: (open: boolean) => void;
 }
@@ -49,6 +50,7 @@ export function RelationControl({
   disabled,
   autoOpen,
   context,
+  presentation = "default",
   onChange,
   onOpenChange,
 }: RelationControlProps) {
@@ -108,12 +110,18 @@ export function RelationControl({
   );
 
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-1">
+    <div
+      className={cn(
+        "flex min-w-0 items-center gap-1",
+        presentation === "table" ? "h-7 overflow-hidden" : "flex-wrap",
+      )}
+    >
       <RelationValue
         column={column}
         value={value}
         context={context}
         onRemove={disabled ? undefined : removeValue}
+        presentation={presentation}
       />
       {(!limitOne || values.length === 0) && !disabled ? (
         <Popover open={open} onOpenChange={setOpen}>

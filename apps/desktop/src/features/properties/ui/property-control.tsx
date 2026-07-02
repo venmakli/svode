@@ -29,6 +29,7 @@ export function PropertyControl({
   autoOpen,
   actors = [],
   relationContext,
+  relationPresentation,
   onRequestActors,
   onChange,
   onOpenChange,
@@ -121,6 +122,7 @@ export function PropertyControl({
           disabled={disabled}
           autoOpen={autoOpen}
           context={relationContext}
+          presentation={relationPresentation}
           onChange={onChange}
           onOpenChange={onOpenChange}
         />

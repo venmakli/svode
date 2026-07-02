@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSpace } from "@/features/space";
 import { queryRelationTargets } from "../api/relation-api";
 import {
@@ -26,13 +26,18 @@ export function useRelationTargets({
 }: UseRelationTargetsInput) {
   const [targets, setTargets] = useState<RelationTarget[]>([]);
   const [loading, setLoading] = useState(false);
-  const lookup = useSpace<RelationSpaceLookup>((state) => ({
-    activeRootPath: state.activeRootPath,
-    spaces: state.spaces.map((space) => ({
-      id: space.id,
-      path: space.path,
-    })),
-  }));
+  const activeRootPath = useSpace((state) => state.activeRootPath);
+  const spaces = useSpace((state) => state.spaces);
+  const lookup = useMemo<RelationSpaceLookup>(
+    () => ({
+      activeRootPath,
+      spaces: spaces.map((space) => ({
+        id: space.id,
+        path: space.path,
+      })),
+    }),
+    [activeRootPath, spaces],
+  );
   const targetSpacePath = relationTargetSpacePath(
     spacePath ? { spacePath, projectPath } : undefined,
     relationScope,

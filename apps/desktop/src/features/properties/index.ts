@@ -16,6 +16,7 @@ export type {
   RelationDriftKind,
   RelationDriftRow,
   RelationDriftSummary,
+  RelationOpenTarget,
   RelationRepairStrategy,
   RelationTarget,
   RelationTwoWayDiagnostics,

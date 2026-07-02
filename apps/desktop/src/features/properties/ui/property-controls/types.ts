@@ -12,6 +12,7 @@ export interface PropertyControlProps {
   autoOpen?: boolean;
   actors?: ActorCandidate[];
   relationContext?: RelationContext;
+  relationPresentation?: "default" | "table";
   onRequestActors?: (allTime: boolean) => Promise<ActorCandidate[]>;
   onChange: (value: unknown) => void | Promise<void>;
   onOpenChange?: (open: boolean) => void;

@@ -16,6 +16,7 @@ import type {
   CollectionSchema,
   Column,
   ActorCandidate,
+  RelationOpenTarget,
 } from "@/features/properties";
 import { SortableTableRow } from "./table-row";
 import type { CollectionTableRow } from "./types";
@@ -35,6 +36,7 @@ export function TableRowsBody({
   onOpenNestedPeek,
   onOpenFullPage,
   onOpenPath,
+  onOpenRelationTarget,
   onDuplicateEntry,
   onDeleteEntry,
   onDragEnd,
@@ -52,6 +54,7 @@ export function TableRowsBody({
   onOpenNestedPeek: (entry: Entry) => void;
   onOpenFullPage: (entry: Entry) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
+  onOpenRelationTarget: (target: RelationOpenTarget) => void;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
   onDragEnd: (event: DragEndEvent) => void;
@@ -109,6 +112,7 @@ export function TableRowsBody({
                       spacePath={spacePath}
                       projectPath={projectPath}
                       onOpenPath={onOpenPath}
+                      onOpenRelationTarget={onOpenRelationTarget}
                     />
                   </TableCell>
                 ) : (
@@ -144,6 +148,7 @@ function NestedSchemaPreview({
   spacePath,
   projectPath,
   onOpenPath,
+  onOpenRelationTarget,
 }: {
   row: CollectionTableRow;
   schema: CollectionSchema;
@@ -151,6 +156,7 @@ function NestedSchemaPreview({
   spacePath: string;
   projectPath?: string | null;
   onOpenPath: (path: string, spaceId?: string | null) => void;
+  onOpenRelationTarget: (target: RelationOpenTarget) => void;
 }) {
   const values = nestedPreviewFields(schema)
     .filter((field) => field !== "title")
@@ -200,6 +206,7 @@ function NestedSchemaPreview({
                   projectPath,
                   currentFilePath: row.entry.path,
                   onOpenPath,
+                  onOpenRelationTarget,
                 }}
               />
             </span>
