@@ -34,7 +34,7 @@ interface UsePropertyPanelStateInput {
   filePath: string;
   schemaResult: EntrySchemaResult;
   values: Record<string, unknown>;
-  onOpenPath?: (path: string) => void;
+  onOpenPath?: (path: string, spaceId?: string | null) => void;
   onSchemaChange?: (result: EntrySchemaResult | null) => void;
 }
 

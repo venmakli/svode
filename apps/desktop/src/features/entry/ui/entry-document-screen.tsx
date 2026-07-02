@@ -53,7 +53,8 @@ export function EntryDocumentScreen({
 }: EntryDocumentScreenProps) {
   const openDocument = useOpenEntryDocument();
   const openPath = useCallback(
-    (path: string) => openDocument(path, spaceId),
+    (path: string, targetSpaceId?: string | null) =>
+      openDocument(path, targetSpaceId ?? spaceId),
     [openDocument, spaceId],
   );
   const openScopeHome = useOpenEntryScopeHome();

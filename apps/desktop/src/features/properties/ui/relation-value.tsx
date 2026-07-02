@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { FileText, Link2Off, X } from "lucide-react";
+import { useSpace } from "@/features/space";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,7 +15,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/shared/lib/utils";
-import { normalizeRelationRoot, resolvedRelationPath } from "../lib/relation";
+import {
+  normalizeRelationRoot,
+  relationTargetSpaceId,
+  resolvedRelationPath,
+} from "../lib/relation";
 import type { Column, RelationContext, ResolvedRelationEntry } from "../model";
 import { useResolvedRelations } from "../hooks/use-resolved-relations";
 import { useRelationValues } from "../hooks/use-relation-values";
@@ -33,13 +38,25 @@ export function RelationValue({
 }) {
   const values = useRelationValues(column, value);
   const relation = normalizeRelationRoot(column.relation);
-  const resolved = useResolvedRelations(context, relation, values);
+  const relationScope = column.relationScope ?? null;
+  const projectSpaceId = useSpace((state) => state.activeRootId);
+  const resolved = useResolvedRelations(
+    context,
+    relation,
+    relationScope,
+    values,
+  );
 
   if (values.length === 0) {
     return <span className="text-muted-foreground">-</span>;
   }
 
   const openPath = context?.onOpenPath;
+  const targetSpaceId = relationTargetSpaceId(
+    context?.spaceId,
+    context?.projectSpaceId ?? projectSpaceId,
+    relationScope,
+  );
 
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-1">
@@ -60,7 +77,7 @@ export function RelationValue({
             status={status}
             onOpen={
               target && openPath
-                ? () => openPath(resolvedRelationPath(target))
+                ? () => openPath(resolvedRelationPath(target), targetSpaceId)
                 : undefined
             }
             onRemove={onRemove}

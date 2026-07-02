@@ -772,6 +772,8 @@
   "property_relation_orphan_tooltip": "Связанная запись не найдена. Цель могла быть удалена или перемещена внешним инструментом.",
   "property_relation_out_of_scope_tooltip": "Связанная запись находится вне связанной коллекции.",
   "property_relation_linked_collection": "Коллекция",
+  "property_relation_scope_project": "Проект",
+  "property_relation_scope_current": "Текущее пространство",
   "property_relation_limit_one": "Ограничить 1 элементом",
   "property_relation_show_related": "Показывать в связанной коллекции",
   "property_relation_reverse_name": "Обратно",

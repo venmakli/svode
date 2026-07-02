@@ -68,7 +68,9 @@ export async function assignEntryUniqueId(input: {
 export async function normalizeUniqueIdCounter(
   input: SchemaMutationInput,
 ): Promise<CollectionSchema> {
-  return normalizeSchema(await propertiesPlatform.normalizeUniqueIdCounter(input));
+  return normalizeSchema(
+    await propertiesPlatform.normalizeUniqueIdCounter(input),
+  );
 }
 
 export async function changeSchemaType(input: {
@@ -212,7 +214,14 @@ function toActorCandidate(actor: ActorCandidateDto): ActorCandidate {
 }
 
 function toColumnDto(column: Column): ColumnDto {
-  const { timeByDefault, rangeByDefault, twoWay, options, ...rest } = column;
+  const {
+    timeByDefault,
+    rangeByDefault,
+    relationScope,
+    twoWay,
+    options,
+    ...rest
+  } = column;
   return {
     ...rest,
     options: options?.map(toPropertyOptionDto) ?? options,
@@ -220,12 +229,20 @@ function toColumnDto(column: Column): ColumnDto {
     ...(rangeByDefault !== undefined
       ? { range_by_default: rangeByDefault }
       : {}),
+    ...(relationScope !== undefined ? { relation_scope: relationScope } : {}),
     ...(twoWay !== undefined ? { two_way: twoWay } : {}),
   };
 }
 
 function toColumnPatchDto(patch: ColumnPatch): Record<string, unknown> {
-  const { timeByDefault, rangeByDefault, twoWay, options, ...rest } = patch;
+  const {
+    timeByDefault,
+    rangeByDefault,
+    relationScope,
+    twoWay,
+    options,
+    ...rest
+  } = patch;
   return {
     ...rest,
     ...(options !== undefined
@@ -235,6 +252,7 @@ function toColumnPatchDto(patch: ColumnPatch): Record<string, unknown> {
     ...(rangeByDefault !== undefined
       ? { range_by_default: rangeByDefault }
       : {}),
+    ...(relationScope !== undefined ? { relation_scope: relationScope } : {}),
     ...(twoWay !== undefined ? { two_way: twoWay } : {}),
   };
 }

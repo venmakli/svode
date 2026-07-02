@@ -772,6 +772,8 @@
   "property_relation_orphan_tooltip": "Linked entry not found. The target may have been deleted or moved externally.",
   "property_relation_out_of_scope_tooltip": "Linked entry is outside the related collection.",
   "property_relation_linked_collection": "Collection",
+  "property_relation_scope_project": "Project",
+  "property_relation_scope_current": "Current space",
   "property_relation_limit_one": "Limit to 1 item",
   "property_relation_show_related": "Show on related collection",
   "property_relation_reverse_name": "Reverse",

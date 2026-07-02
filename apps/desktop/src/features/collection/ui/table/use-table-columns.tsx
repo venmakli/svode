@@ -77,7 +77,7 @@ export function useTableColumns({
   onOpenNestedPeek: (entry: Entry) => void;
   onOpenNestedCollection: (entry: Entry) => void;
   onOpenFullPage: (entry: Entry) => void;
-  onOpenPath: (path: string) => void;
+  onOpenPath: (path: string, spaceId?: string | null) => void;
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   onCommitField: (
     entry: Entry,

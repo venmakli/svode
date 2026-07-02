@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use chrono::{Duration, Local, NaiveDate, NaiveDateTime};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_yml::{Mapping, Value};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 
@@ -15,6 +16,7 @@ use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
 use crate::files::{entry, frontmatter};
 use crate::git::cli::GitCli;
 use crate::repo_path::{RootMode, normalize_repo_relative};
+use crate::space::config;
 
 const SCHEMA_FILE: &str = "schema.yaml";
 const RESERVED_FIELDS: &[&str] = &[
@@ -55,6 +57,67 @@ pub enum ColumnSensitivity {
 #[serde(rename_all = "snake_case")]
 pub enum RelationLimit {
     One,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelationScope {
+    Root,
+    Space { id: String },
+}
+
+impl Serialize for RelationScope {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            RelationScope::Root => serializer.serialize_str("root"),
+            RelationScope::Space { id } => {
+                let mut map = serializer.serialize_map(Some(2))?;
+                map.serialize_entry("type", "space")?;
+                map.serialize_entry("id", id)?;
+                map.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for RelationScope {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        match value {
+            Value::String(value) if value == "root" => Ok(Self::Root),
+            Value::Mapping(mapping) => {
+                let type_ = mapping
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| serde::de::Error::custom("relation_scope.type is required"))?;
+                match type_ {
+                    "root" => Ok(Self::Root),
+                    "space" => {
+                        let id = mapping
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|id| !id.is_empty())
+                            .ok_or_else(|| {
+                                serde::de::Error::custom("relation_scope.id is required")
+                            })?;
+                        Ok(Self::Space { id: id.to_string() })
+                    }
+                    other => Err(serde::de::Error::custom(format!(
+                        "unsupported relation_scope.type '{other}'"
+                    ))),
+                }
+            }
+            _ => Err(serde::de::Error::custom(
+                "relation_scope must be 'root' or an object",
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,6 +205,8 @@ pub struct Column {
     pub range_by_default: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relation_scope: Option<RelationScope>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<RelationLimit>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -717,6 +782,87 @@ fn normalize_collection_path(path: &str) -> Result<String, AppError> {
         .map(|rel| if rel.is_empty() { ".".to_string() } else { rel })
 }
 
+fn normalize_relation_scope(
+    scope: Option<RelationScope>,
+) -> Result<Option<RelationScope>, AppError> {
+    match scope {
+        Some(RelationScope::Root) => Ok(Some(RelationScope::Root)),
+        Some(RelationScope::Space { id }) => {
+            let id = id.trim();
+            if id.is_empty() {
+                return Err(schema_error("relation_scope.id cannot be empty"));
+            }
+            Ok(Some(RelationScope::Space { id: id.to_string() }))
+        }
+        None => Ok(None),
+    }
+}
+
+fn relation_target_space_path(
+    space: &str,
+    project_path: Option<&str>,
+    scope: Option<&RelationScope>,
+) -> Result<Option<String>, AppError> {
+    match scope {
+        None => Ok(Some(space.to_string())),
+        Some(RelationScope::Root) => Ok(project_path
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(ToOwned::to_owned)),
+        Some(RelationScope::Space { id }) => {
+            let project = project_path
+                .map(str::trim)
+                .filter(|path| !path.is_empty())
+                .unwrap_or(space);
+            let config = match config::read_space_config(Path::new(project)) {
+                Ok(config) => config,
+                Err(error) if project_path.is_none() => {
+                    tracing::warn!(
+                        "relation target scope space '{}' could not read project config: {error}",
+                        id
+                    );
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            };
+            let Some(space_ref) = config
+                .spaces
+                .as_deref()
+                .unwrap_or(&[])
+                .iter()
+                .find(|space_ref| space_ref.id == *id)
+            else {
+                if project_path.is_none() {
+                    return Ok(None);
+                }
+                return Err(schema_error(format!(
+                    "relation target space '{}' is not registered",
+                    id
+                )));
+            };
+            Ok(Some(
+                Path::new(project)
+                    .join(&space_ref.path)
+                    .to_string_lossy()
+                    .to_string(),
+            ))
+        }
+    }
+}
+
+fn required_relation_target_space_path(
+    space: &str,
+    project_path: Option<&str>,
+    scope: Option<&RelationScope>,
+) -> Result<String, AppError> {
+    relation_target_space_path(space, project_path, scope)?
+        .ok_or_else(|| schema_error("project_path is required to resolve relation target scope"))
+}
+
+fn relation_is_current_scope(column: &Column) -> bool {
+    column.relation_scope.is_none()
+}
+
 fn join_collection_value(collection_path: &str, value: &str) -> String {
     let collection = collection_root_for_fs(collection_path);
     if collection.is_empty() {
@@ -747,13 +893,13 @@ fn value_relative_to_collection(
 }
 
 fn canonicalize_relation_target_value(
-    space: &str,
+    target_space: &str,
     relation: &str,
     raw_value: &str,
 ) -> Result<String, AppError> {
     let value = normalize_relation_value_shape(raw_value)?;
     let full = join_collection_value(relation, &value);
-    let abs = Path::new(space).join(&full);
+    let abs = Path::new(target_space).join(&full);
     let (target_abs, target_rel) = if abs.is_dir() {
         let readme = abs.join("README.md");
         if !readme.is_file() {
@@ -770,7 +916,7 @@ fn canonicalize_relation_target_value(
         return Err(AppError::FileNotFound(target_rel));
     }
     let expected = collection_rel(relation);
-    let actual = find_collection_root(Path::new(space), &target_rel).ok_or_else(|| {
+    let actual = find_collection_root(Path::new(target_space), &target_rel).ok_or_else(|| {
         schema_error(format!(
             "relation target '{}' is not in a collection",
             target_rel
@@ -868,10 +1014,19 @@ fn write_schema(
     collection_path: &str,
     schema: &CollectionSchema,
 ) -> Result<(), AppError> {
+    write_schema_with_project(space, collection_path, schema, None)
+}
+
+fn write_schema_with_project(
+    space: &str,
+    collection_path: &str,
+    schema: &CollectionSchema,
+    project_path: Option<&str>,
+) -> Result<(), AppError> {
     let mut schema = schema.clone();
     normalize_schema(&mut schema);
     validate_schema(&schema)?;
-    validate_schema_relations_in_space(space, collection_path, &schema)?;
+    validate_schema_relations_in_space(space, project_path, collection_path, &schema)?;
     let dir = collection_dir(space, collection_path);
     fs::create_dir_all(&dir)?;
     let yaml = serde_yml::to_string(&schema)
@@ -890,6 +1045,7 @@ pub fn write_collection_schema(
 
 fn validate_schema_relations_in_space(
     space: &str,
+    project_path: Option<&str>,
     _collection_path: &str,
     schema: &CollectionSchema,
 ) -> Result<(), AppError> {
@@ -904,7 +1060,12 @@ fn validate_schema_relations_in_space(
             ))
         })?;
         let relation = normalize_collection_path(relation)?;
-        let target = collection_dir(space, &relation);
+        let Some(target_space) =
+            relation_target_space_path(space, project_path, column.relation_scope.as_ref())?
+        else {
+            continue;
+        };
+        let target = collection_dir(&target_space, &relation);
         if !target.is_dir() || !target.join(SCHEMA_FILE).is_file() {
             return Err(schema_error(format!(
                 "relation column '{}' points to missing collection '{}'",
@@ -964,7 +1125,10 @@ fn extend_relation_side_effect_paths(
     column: &Column,
     paths: &mut Vec<PathBuf>,
 ) -> Result<(), AppError> {
-    if column.type_ != PropertyType::Relation || column.two_way.is_none() {
+    if column.type_ != PropertyType::Relation
+        || column.two_way.is_none()
+        || !relation_is_current_scope(column)
+    {
         return Ok(());
     }
     let Some(relation) = column.relation.as_deref() else {
@@ -980,6 +1144,7 @@ fn extend_relation_side_effect_paths(
 fn normalize_column_relation_paths(column: &mut Column) -> Result<(), AppError> {
     if column.type_ != PropertyType::Relation {
         column.relation = None;
+        column.relation_scope = None;
         column.limit = None;
         column.two_way = None;
         return Ok(());
@@ -990,10 +1155,14 @@ fn normalize_column_relation_paths(column: &mut Column) -> Result<(), AppError> 
     if let Some(relation) = column.relation.take() {
         column.relation = Some(normalize_collection_path(&relation)?);
     }
+    column.relation_scope = normalize_relation_scope(column.relation_scope.take())?;
     column.two_way = column.two_way.take().and_then(|value| {
         let trimmed = value.trim().to_string();
         (!trimmed.is_empty()).then_some(trimmed)
     });
+    if column.relation_scope.is_some() {
+        column.two_way = None;
+    }
     Ok(())
 }
 
@@ -1037,6 +1206,7 @@ fn ensure_two_way_schema_and_values(
             time_by_default: None,
             range_by_default: None,
             relation: Some(source_collection.clone()),
+            relation_scope: None,
             limit: None,
             two_way: Some(column.name.clone()),
             prefix: None,
@@ -1192,7 +1362,9 @@ pub fn cascade_clean_deleted_entries(
             let relation_columns: Vec<Column> = schema
                 .columns
                 .iter()
-                .filter(|column| column.type_ == PropertyType::Relation)
+                .filter(|column| {
+                    column.type_ == PropertyType::Relation && relation_is_current_scope(column)
+                })
                 .cloned()
                 .collect();
             if relation_columns.is_empty() {
@@ -1374,7 +1546,7 @@ pub fn rewrite_internal_relation_refs_for_copy(
         rewrite_copied_relation_values(space, &file_map)?;
         for collection_path in changed_collections {
             let schema = read_schema_or_default(space, &collection_path)?;
-            validate_schema_relations_in_space(space, &collection_path, &schema)?;
+            validate_schema_relations_in_space(space, None, &collection_path, &schema)?;
         }
         Ok(())
     })
@@ -1466,6 +1638,9 @@ fn rewrite_copied_schema_relation_roots(
             if column.type_ != PropertyType::Relation {
                 continue;
             }
+            if !relation_is_current_scope(column) {
+                continue;
+            }
             let Some(relation) = column.relation.as_deref() else {
                 continue;
             };
@@ -1498,7 +1673,9 @@ fn rewrite_copied_relation_values(
         let columns = schema
             .columns
             .iter()
-            .filter(|column| column.type_ == PropertyType::Relation)
+            .filter(|column| {
+                column.type_ == PropertyType::Relation && relation_is_current_scope(column)
+            })
             .cloned()
             .collect::<Vec<_>>();
         if columns.is_empty() {
@@ -1586,6 +1763,7 @@ fn rewrite_relation_collection_paths(
         let mut changed = false;
         for column in &mut schema.columns {
             if column.type_ == PropertyType::Relation
+                && relation_is_current_scope(column)
                 && column.relation.as_deref() == Some(old_collection.as_str())
             {
                 column.relation = Some(new_collection.clone());
@@ -1612,6 +1790,7 @@ fn rewrite_relation_value_refs(
             .iter()
             .filter(|column| {
                 column.type_ == PropertyType::Relation
+                    && relation_is_current_scope(column)
                     && column.relation.as_deref() == Some(relation)
             })
             .cloned()
@@ -1693,6 +1872,12 @@ pub fn validate_schema(schema: &CollectionSchema) -> Result<(), AppError> {
                     ))
                 })?;
                 validate_relation_path_shape(relation)?;
+                if column.relation_scope.is_some() && column.two_way.is_some() {
+                    return Err(schema_error(format!(
+                        "relation column '{}' cannot be two-way across scopes",
+                        column.name
+                    )));
+                }
                 if let Some(two_way) = column.two_way.as_deref() {
                     validate_relation_column_name(two_way)?;
                 }
@@ -2523,6 +2708,7 @@ fn normalize_property_value_for_write(column: &Column, value: Value) -> Result<V
 
 pub fn update_relation_entry_field(
     space: &str,
+    project_path: Option<&str>,
     file_path: &str,
     field: &str,
     value: Value,
@@ -2544,7 +2730,9 @@ pub fn update_relation_entry_field(
         .relation
         .as_deref()
         .ok_or_else(|| schema_error(format!("relation column '{field}' requires relation")))?;
-    let normalized = normalize_relation_update_value(space, column, relation, &value)?;
+    let target_space =
+        required_relation_target_space_path(space, project_path, column.relation_scope.as_ref())?;
+    let normalized = normalize_relation_update_value(&target_space, column, relation, &value)?;
     let reverse_name = column.two_way.clone();
     let source_collection = rel_path_string(&collection_root);
     let source_value = value_relative_to_collection(&source_collection, &source_path)?;
@@ -2554,7 +2742,7 @@ pub fn update_relation_entry_field(
         let old_values = read_relation_field_values_from_file(&source_abs, column)?;
         let new_values = relation_values_from_value(column, &normalized)?;
         for value in old_values.iter().chain(new_values.iter()) {
-            touched.push(Path::new(space).join(join_collection_value(relation, value)));
+            touched.push(Path::new(&target_space).join(join_collection_value(relation, value)));
         }
     }
 
@@ -2600,7 +2788,7 @@ pub fn update_relation_entry_field(
 }
 
 fn normalize_relation_update_value(
-    space: &str,
+    target_space: &str,
     column: &Column,
     relation: &str,
     value: &Value,
@@ -2615,7 +2803,7 @@ fn normalize_relation_update_value(
                 column.name
             ))
         })?;
-        return canonicalize_relation_target_value(space, relation, raw).map(Value::String);
+        return canonicalize_relation_target_value(target_space, relation, raw).map(Value::String);
     }
 
     let raw_values: Vec<String> = if let Some(raw) = value.as_str() {
@@ -2640,7 +2828,7 @@ fn normalize_relation_update_value(
     let mut seen = HashSet::new();
     let mut normalized = Vec::new();
     for raw in raw_values {
-        let value = canonicalize_relation_target_value(space, relation, &raw)?;
+        let value = canonicalize_relation_target_value(target_space, relation, &raw)?;
         if seen.insert(value.clone()) {
             normalized.push(Value::String(value));
         }
@@ -3604,7 +3792,16 @@ fn dedupe_paths(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>, AppError> {
 pub fn add_schema_column(
     space: &str,
     collection_path: &str,
+    column: Column,
+) -> Result<CollectionSchema, AppError> {
+    add_schema_column_with_project(space, collection_path, column, None)
+}
+
+pub fn add_schema_column_with_project(
+    space: &str,
+    collection_path: &str,
     mut column: Column,
+    project_path: Option<&str>,
 ) -> Result<CollectionSchema, AppError> {
     if column.type_ == PropertyType::Status && column.options.is_none() {
         column.options = Some(default_status_options());
@@ -3636,7 +3833,7 @@ pub fn add_schema_column(
         normalize_column_relation_paths(&mut column)?;
         schema.columns.push(column.clone());
         validate_schema(&schema)?;
-        write_schema(space, collection_path, &schema)?;
+        write_schema_with_project(space, collection_path, &schema, project_path)?;
         if column.type_ == PropertyType::UniqueId {
             materialize_unique_id_column(space, collection_path, &column.name)?;
             schema = read_schema_or_default(space, collection_path)?;
@@ -3670,6 +3867,24 @@ pub fn change_schema_type_with_warnings(
     column_name: &str,
     new_type: PropertyType,
     conversion_strategy: Option<Value>,
+) -> Result<(CollectionSchema, Vec<SchemaMutationWarning>), AppError> {
+    change_schema_type_with_warnings_and_project(
+        space,
+        collection_path,
+        column_name,
+        new_type,
+        conversion_strategy,
+        None,
+    )
+}
+
+pub fn change_schema_type_with_warnings_and_project(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+    new_type: PropertyType,
+    conversion_strategy: Option<Value>,
+    project_path: Option<&str>,
 ) -> Result<(CollectionSchema, Vec<SchemaMutationWarning>), AppError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     let mut touched = vec![schema_path];
@@ -3705,23 +3920,41 @@ pub fn change_schema_type_with_warnings(
         validate_schema(&schema)?;
 
         let files = collection_markdown_files(space, collection_path)?;
-        let unconverted_relation_field = if column_snapshot.type_ == PropertyType::Relation {
-            Some(unique_extra_field_name(
-                space,
-                collection_path,
-                &schema,
-                &format!("{column_name} (unconverted)"),
-            )?)
-        } else {
-            None
-        };
+        let (unconverted_relation_field, relation_target_space) =
+            if column_snapshot.type_ == PropertyType::Relation {
+                (
+                    Some(unique_extra_field_name(
+                        space,
+                        collection_path,
+                        &schema,
+                        &format!("{column_name} (unconverted)"),
+                    )?),
+                    Some(required_relation_target_space_path(
+                        space,
+                        project_path,
+                        column_snapshot.relation_scope.as_ref(),
+                    )?),
+                )
+            } else {
+                (None, None)
+            };
         let mut unconverted_relation_rows = 0usize;
         for file in &files {
             mutate_frontmatter(file, |meta| {
                 if let Some(value) = meta.extra.remove(column_name) {
                     if let Some(extra_field) = unconverted_relation_field.as_deref() {
-                        let (converted, extra) =
-                            convert_value_for_relation_change(space, &column_snapshot, value)?;
+                        let relation_target_space =
+                            relation_target_space.as_deref().ok_or_else(|| {
+                                schema_error(format!(
+                                    "relation column '{}' requires target space",
+                                    column_snapshot.name
+                                ))
+                            })?;
+                        let (converted, extra) = convert_value_for_relation_change(
+                            relation_target_space,
+                            &column_snapshot,
+                            value,
+                        )?;
                         if let Some(converted) = converted {
                             meta.extra.insert(column_name.to_string(), converted);
                         }
@@ -3754,7 +3987,7 @@ pub fn change_schema_type_with_warnings(
         }
 
         enforce_relation_limit_one_existing_values(space, collection_path, &column_snapshot)?;
-        write_schema(space, collection_path, &schema)?;
+        write_schema_with_project(space, collection_path, &schema, project_path)?;
         if column_snapshot.type_ == PropertyType::UniqueId {
             materialize_unique_id_column(space, collection_path, &column_snapshot.name)?;
             schema = read_schema_or_default(space, collection_path)?;
@@ -3822,6 +4055,16 @@ pub fn update_schema_column(
     column_name: &str,
     patch: Value,
 ) -> Result<CollectionSchema, AppError> {
+    update_schema_column_with_project(space, collection_path, column_name, patch, None)
+}
+
+pub fn update_schema_column_with_project(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+    patch: Value,
+    project_path: Option<&str>,
+) -> Result<CollectionSchema, AppError> {
     let mut touched = vec![collection_dir(space, collection_path).join(SCHEMA_FILE)];
     {
         let schema = read_schema_or_default(space, collection_path)?;
@@ -3853,12 +4096,13 @@ pub fn update_schema_column(
         validate_schema(&schema)?;
         rewrite_actor_cardinality_values(space, collection_path, &old_column, &new_column)?;
         enforce_relation_limit_one_existing_values(space, collection_path, &new_column)?;
-        write_schema(space, collection_path, &schema)?;
+        write_schema_with_project(space, collection_path, &schema, project_path)?;
         if old_column.type_ == PropertyType::Relation
             && old_column.two_way.is_some()
             && (new_column.type_ != PropertyType::Relation
                 || new_column.two_way != old_column.two_way
-                || new_column.relation != old_column.relation)
+                || new_column.relation != old_column.relation
+                || new_column.relation_scope != old_column.relation_scope)
         {
             detach_two_way_relation(space, collection_path, &old_column, true)?;
         }
@@ -3971,10 +4215,11 @@ pub fn delete_schema_column(
         }
 
         write_schema(space, collection_path, &schema)?;
-        if let Some(old_column) = old_column
-            .as_ref()
-            .filter(|column| column.type_ == PropertyType::Relation && column.two_way.is_some())
-        {
+        if let Some(old_column) = old_column.as_ref().filter(|column| {
+            column.type_ == PropertyType::Relation
+                && column.two_way.is_some()
+                && relation_is_current_scope(column)
+        }) {
             detach_two_way_relation(space, collection_path, old_column, true)?;
         }
         Ok(schema)
@@ -5212,6 +5457,7 @@ pub fn query_relation_backlinks(
             .iter()
             .filter(|column| {
                 column.type_ == PropertyType::Relation
+                    && relation_is_current_scope(column)
                     && source_column.is_none_or(|name| name == column.name)
             })
             .cloned()
@@ -5277,7 +5523,9 @@ pub fn diagnose_two_way_relation(
         .map(normalize_collection_path)
         .transpose()?;
     let reverse_column = column.two_way.clone();
-    let choices = if let Some(relation) = relation.as_deref() {
+    let choices = if relation_is_current_scope(&column)
+        && let Some(relation) = relation.as_deref()
+    {
         compatible_reverse_choices(space, &collection_path, column_name, relation)?
     } else {
         Vec::new()
@@ -5349,6 +5597,9 @@ fn compatible_reverse_choices(
     let reverse_schema = read_schema_or_default(space, relation)?;
     for candidate in &reverse_schema.columns {
         if candidate.type_ != PropertyType::Relation {
+            continue;
+        }
+        if !relation_is_current_scope(candidate) {
             continue;
         }
         if candidate.limit == Some(RelationLimit::One) {
@@ -5469,7 +5720,9 @@ pub fn relation_repair_mutation_paths(
         .iter()
         .find(|column| column.name == column_name && column.type_ == PropertyType::Relation)
     {
-        if let Some(relation) = column.relation.as_deref() {
+        if relation_is_current_scope(column)
+            && let Some(relation) = column.relation.as_deref()
+        {
             let relation = normalize_collection_path(relation)?;
             paths.push(collection_dir(space, &relation).join(SCHEMA_FILE));
             paths.extend(collection_markdown_files(space, &relation)?);
@@ -5659,6 +5912,7 @@ fn create_two_way_reverse_column(
         time_by_default: None,
         range_by_default: None,
         relation: Some(source_collection),
+        relation_scope: None,
         limit: None,
         two_way: Some(column_name.to_string()),
         prefix: None,
@@ -6604,6 +6858,7 @@ fn normalize_column_for_new_type(
                 option.group = None;
             }
             column.relation = None;
+            column.relation_scope = None;
             column.limit = None;
             column.two_way = None;
         }
@@ -6620,6 +6875,16 @@ fn normalize_column_for_new_type(
             column.multiple = None;
             if let Some(relation) = strategy.and_then(|value| value.get("relation")) {
                 column.relation = relation.as_str().map(ToOwned::to_owned);
+            }
+            if let Some(scope) = strategy.and_then(|value| value.get("relation_scope")) {
+                column.relation_scope = if scope.is_null() {
+                    None
+                } else {
+                    Some(
+                        serde_yml::from_value(scope.clone())
+                            .map_err(|e| schema_error(format!("invalid relation_scope: {e}")))?,
+                    )
+                };
             }
             if let Some(limit) = strategy.and_then(|value| value.get("limit")) {
                 column.limit = if limit.is_null() {
@@ -6644,6 +6909,7 @@ fn normalize_column_for_new_type(
             column.time_by_default = None;
             column.range_by_default = None;
             column.relation = None;
+            column.relation_scope = None;
             column.limit = None;
             column.two_way = None;
             column.multiple = None;
@@ -6665,6 +6931,7 @@ fn normalize_column_for_new_type(
             column.time_by_default = None;
             column.range_by_default = None;
             column.relation = None;
+            column.relation_scope = None;
             column.limit = None;
             column.two_way = None;
             column.prefix = None;
@@ -6678,6 +6945,7 @@ fn normalize_column_for_new_type(
         _ => {
             column.options = None;
             column.relation = None;
+            column.relation_scope = None;
             column.limit = None;
             column.two_way = None;
             column.prefix = None;
@@ -7184,6 +7452,9 @@ fn apply_column_patch(column: &mut Column, patch: Value) -> Result<(), AppError>
     if mapping.contains_key("relation") {
         column.relation = nullable_from_mapping(mapping, "relation")?;
     }
+    if mapping.contains_key("relation_scope") {
+        column.relation_scope = nullable_from_mapping(mapping, "relation_scope")?;
+    }
     if mapping.contains_key("limit") {
         column.limit = nullable_from_mapping(mapping, "limit")?;
     }
@@ -7392,6 +7663,7 @@ fn infer_column(field: &str, value: &Value) -> Column {
         time_by_default: None,
         range_by_default: None,
         relation: None,
+        relation_scope: None,
         limit: None,
         two_way: None,
         prefix: None,
@@ -7636,6 +7908,7 @@ mod tests {
             time_by_default: None,
             range_by_default: None,
             relation: None,
+            relation_scope: None,
             limit: None,
             two_way: None,
             prefix: None,
@@ -7719,6 +7992,127 @@ views: []
         assert!(serialized.contains("relation: sprints"));
         assert!(serialized.contains("limit: one"));
         assert!(serialized.contains("two_way: Tasks"));
+    }
+
+    #[test]
+    fn scoped_relation_schema_roundtrips_yaml_shape() {
+        let raw = r#"
+columns:
+  - name: Project task
+    type: relation
+    relation: tasks
+    relation_scope: root
+  - name: Space decision
+    type: relation
+    relation: decisions
+    relation_scope:
+      type: space
+      id: design
+views: []
+"#;
+        let schema: CollectionSchema = serde_yml::from_str(raw).unwrap();
+        validate_schema(&schema).unwrap();
+        assert_eq!(schema.columns[0].relation_scope, Some(RelationScope::Root));
+        assert_eq!(
+            schema.columns[1].relation_scope,
+            Some(RelationScope::Space {
+                id: "design".to_string()
+            })
+        );
+
+        let serialized = serde_yml::to_string(&schema).unwrap();
+        assert!(serialized.contains("relation_scope: root"));
+        assert!(serialized.contains("type: space"));
+        assert!(serialized.contains("id: design"));
+    }
+
+    #[test]
+    fn scoped_relation_update_validates_targets_in_root_and_space() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let child = root.join("spaces/design");
+        fs::create_dir_all(root.join("tasks")).unwrap();
+        fs::create_dir_all(root.join("roadmap")).unwrap();
+        fs::create_dir_all(child.join("decisions")).unwrap();
+        write_test_space_config(
+            root,
+            Some(vec![SpaceRef {
+                id: "design".to_string(),
+                path: "spaces/design".to_string(),
+                repo: None,
+            }]),
+            None,
+        );
+        write_test_space_config(&child, None, None);
+        fs::write(root.join("tasks/schema.yaml"), "columns: []\nviews: []\n").unwrap();
+        fs::write(root.join("roadmap/schema.yaml"), "columns:\n  - name: Decision\n    type: relation\n    relation: decisions\n    relation_scope:\n      type: space\n      id: design\nviews: []\n").unwrap();
+        fs::write(child.join("decisions/schema.yaml"), "columns:\n  - name: Task\n    type: relation\n    relation: tasks\n    relation_scope: root\nviews: []\n").unwrap();
+        fs::write(
+            root.join("tasks/task-1.md"),
+            "---\ntitle: Task 1\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("roadmap/item-1.md"),
+            "---\ntitle: Roadmap item\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            child.join("decisions/decision-1.md"),
+            "---\ntitle: Decision 1\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+
+        let updated_child = update_relation_entry_field(
+            child.to_str().unwrap(),
+            Some(root.to_str().unwrap()),
+            "decisions/decision-1.md",
+            "Task",
+            Value::String("task-1.md".to_string()),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            updated_child
+                .meta
+                .extra
+                .get("Task")
+                .and_then(Value::as_sequence)
+                .and_then(|values| values.first())
+                .and_then(Value::as_str),
+            Some("task-1.md")
+        );
+
+        let updated_root = update_relation_entry_field(
+            root.to_str().unwrap(),
+            Some(root.to_str().unwrap()),
+            "roadmap/item-1.md",
+            "Decision",
+            Value::String("decision-1.md".to_string()),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            updated_root
+                .meta
+                .extra
+                .get("Decision")
+                .and_then(Value::as_sequence)
+                .and_then(|values| values.first())
+                .and_then(Value::as_str),
+            Some("decision-1.md")
+        );
+
+        assert!(
+            update_relation_entry_field(
+                child.to_str().unwrap(),
+                Some(root.to_str().unwrap()),
+                "decisions/decision-1.md",
+                "Task",
+                Value::String("missing.md".to_string()),
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -7881,6 +8275,7 @@ views: []
             time_by_default: None,
             range_by_default: None,
             relation: Some("tasks".into()),
+            relation_scope: None,
             limit: None,
             two_way: None,
             prefix: None,
@@ -8163,6 +8558,70 @@ views: []
     }
 
     #[test]
+    fn change_schema_type_to_scoped_relation_converts_against_target_space() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let child = root.join("spaces/design");
+        fs::create_dir_all(root.join("tasks")).unwrap();
+        fs::create_dir_all(child.join("decisions")).unwrap();
+        write_test_space_config(
+            root,
+            Some(vec![SpaceRef {
+                id: "design".to_string(),
+                path: "spaces/design".to_string(),
+                repo: None,
+            }]),
+            None,
+        );
+        write_test_space_config(&child, None, None);
+        fs::write(root.join("tasks/schema.yaml"), "columns: []\nviews: []\n").unwrap();
+        fs::write(
+            child.join("decisions/schema.yaml"),
+            "columns:\n  - name: Task\n    type: text\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("tasks/task-1.md"),
+            "---\ntitle: Task 1\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            child.join("decisions/decision-1.md"),
+            "---\ntitle: Decision 1\ncreated: now\nupdated: now\nTask: task-1.md\n---\n",
+        )
+        .unwrap();
+
+        let strategy: Value =
+            serde_yml::from_str("relation: tasks\nrelation_scope: root\n").unwrap();
+        let (schema, warnings) = change_schema_type_with_warnings_and_project(
+            child.to_str().unwrap(),
+            "decisions",
+            "Task",
+            PropertyType::Relation,
+            Some(strategy),
+            Some(root.to_str().unwrap()),
+        )
+        .unwrap();
+
+        assert_eq!(schema.columns[0].type_, PropertyType::Relation);
+        assert_eq!(schema.columns[0].relation.as_deref(), Some("tasks"));
+        assert_eq!(schema.columns[0].relation_scope, Some(RelationScope::Root));
+        assert!(warnings.is_empty());
+
+        let raw = fs::read_to_string(child.join("decisions/decision-1.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        assert_eq!(
+            meta.extra
+                .get("Task")
+                .and_then(Value::as_sequence)
+                .and_then(|values| values.first())
+                .and_then(Value::as_str),
+            Some("task-1.md")
+        );
+        assert!(!meta.extra.contains_key("Task (unconverted)"));
+    }
+
+    #[test]
     fn two_way_relation_rejects_limit_one_reverse_column() {
         let tmp = TempDir::new().unwrap();
         let space = tmp.path();
@@ -8188,6 +8647,7 @@ views: []
             time_by_default: None,
             range_by_default: None,
             relation: Some("sprints".into()),
+            relation_scope: None,
             limit: None,
             two_way: Some("Tasks".into()),
             prefix: None,
@@ -8389,6 +8849,7 @@ views: []
 
         update_relation_entry_field(
             space.to_str().unwrap(),
+            None,
             "sprints/sprint-1.md",
             "Tasks",
             serde_yml::to_value(vec!["a.md"]).unwrap(),
@@ -8404,6 +8865,7 @@ views: []
 
         let conflict = update_relation_entry_field(
             space.to_str().unwrap(),
+            None,
             "sprints/sprint-2.md",
             "Tasks",
             serde_yml::to_value(vec!["a.md"]).unwrap(),
@@ -8695,6 +9157,7 @@ views: []
         assert!(
             entry::update_field(
                 space.to_str().unwrap(),
+                None,
                 &created.path,
                 "Key",
                 serde_json::json!(99),
@@ -8704,6 +9167,7 @@ views: []
 
         let updated = entry::update_field(
             space.to_str().unwrap(),
+            None,
             &created.path,
             "Owner",
             serde_json::json!(" ME@EXAMPLE.COM "),
@@ -8716,6 +9180,7 @@ views: []
 
         let updated = entry::update_field(
             space.to_str().unwrap(),
+            None,
             &created.path,
             "Reviewers",
             serde_json::json!(["A@Example.com", "a@example.com", "bad value"]),
@@ -8896,6 +9361,7 @@ views: []
             time_by_default: None,
             range_by_default: None,
             relation: None,
+            relation_scope: None,
             limit: None,
             two_way: None,
             prefix: None,

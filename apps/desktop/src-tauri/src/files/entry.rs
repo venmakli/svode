@@ -1268,6 +1268,7 @@ pub(crate) fn apply_entry_field_update(
 
 pub fn update_field(
     space: &str,
+    project_path: Option<&str>,
     path: &str,
     field: &str,
     value: serde_json::Value,
@@ -1280,9 +1281,13 @@ pub fn update_field(
         crate::properties::ensure_entry_field_writable(space, path, field)?;
         let yaml_value = serde_yml::to_value(value.clone())
             .map_err(|e| invalid_entry_field(format!("{field}: {e}")))?;
-        if let Some(entry) =
-            crate::properties::update_relation_entry_field(space, path, field, yaml_value)?
-        {
+        if let Some(entry) = crate::properties::update_relation_entry_field(
+            space,
+            project_path,
+            path,
+            field,
+            yaml_value,
+        )? {
             return Ok(entry);
         }
     }
@@ -2468,6 +2473,7 @@ mod tests {
 
         let updated = update_field(
             ws,
+            None,
             &entry.path,
             "id",
             serde_json::Value::String("obsidian-id".into()),
@@ -2510,6 +2516,7 @@ mod tests {
         .unwrap();
         update_field(
             ws,
+            None,
             "old-title.md",
             "title",
             serde_json::Value::String("New title".into()),

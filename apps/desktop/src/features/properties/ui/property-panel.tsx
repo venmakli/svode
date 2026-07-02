@@ -56,7 +56,7 @@ interface PropertyPanelProps {
   schemaResult: EntrySchemaResult;
   values: Record<string, unknown>;
   mode?: "peek" | "full";
-  onOpenPath?: (path: string) => void;
+  onOpenPath?: (path: string, spaceId?: string | null) => void;
   onValueChange: (field: string, value: unknown) => Promise<void>;
   onSchemaChange?: (result: EntrySchemaResult | null) => void;
 }

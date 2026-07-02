@@ -15,6 +15,7 @@ type ColumnInput = Omit<Column, "type"> & {
   type_?: PropertyType;
   time_by_default?: boolean | null;
   range_by_default?: boolean | null;
+  relation_scope?: Column["relationScope"] | null;
   two_way?: string | null;
 };
 
@@ -70,6 +71,7 @@ export function normalizeColumn(column: ColumnInput): Column {
     type_: _type,
     time_by_default: _timeByDefault,
     range_by_default: _rangeByDefault,
+    relation_scope: _relationScope,
     two_way: _twoWay,
     ...rest
   } = column;
@@ -78,6 +80,7 @@ export function normalizeColumn(column: ColumnInput): Column {
     type,
     timeByDefault: column.timeByDefault ?? column.time_by_default ?? false,
     rangeByDefault: column.rangeByDefault ?? column.range_by_default ?? false,
+    relationScope: column.relationScope ?? column.relation_scope ?? null,
     twoWay: column.twoWay ?? column.two_way ?? null,
     multiple: type === "actor" ? Boolean(column.multiple) : column.multiple,
     prefix:
@@ -202,7 +205,10 @@ export function normalizeActorValues(value: unknown): string[] {
   return values;
 }
 
-export function resolveActorCandidate(email: string, actors: ActorCandidate[]): ActorCandidate {
+export function resolveActorCandidate(
+  email: string,
+  actors: ActorCandidate[],
+): ActorCandidate {
   return (
     actors.find(
       (actor) => actor.email.toLowerCase() === email.toLowerCase(),

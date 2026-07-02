@@ -752,7 +752,7 @@ pub async fn update_entry_field(
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
 ) -> Result<Entry, AppError> {
-    let updated = entry::update_field(&space, &file_path, &field, value)?;
+    let updated = entry::update_field(&space, project_path.as_deref(), &file_path, &field, value)?;
 
     update_index_entry_or_reindex(
         &index_state,
@@ -1034,7 +1034,12 @@ pub async fn add_schema_column(
         materializes_unique_id,
     )?;
     let snapshot = snapshot_paths(&paths)?;
-    let schema = properties::add_schema_column(&space, &collection_path, column)?;
+    let schema = properties::add_schema_column_with_project(
+        &space,
+        &collection_path,
+        column,
+        project_path.as_deref(),
+    )?;
     let paths = changed_paths(snapshot)?;
     let message = schema_commit_message(&schema, default_message, "Update collection field");
     maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
@@ -1065,12 +1070,13 @@ pub async fn change_schema_type(
     let snapshotted = paths.clone();
     let snapshot = snapshot_paths(&snapshotted)?;
     let conversion_strategy = conversion_strategy.map(json_to_yaml_value).transpose()?;
-    let (schema, warnings) = properties::change_schema_type_with_warnings(
+    let (schema, warnings) = properties::change_schema_type_with_warnings_and_project(
         &space,
         &collection_path,
         &column_name,
         new_type,
         conversion_strategy,
+        project_path.as_deref(),
     )?;
     if let Some(column) = schema
         .columns
@@ -1198,7 +1204,13 @@ pub async fn update_schema_column(
     let snapshotted = paths.clone();
     let snapshot = snapshot_paths(&snapshotted)?;
     let patch = json_to_yaml_value(patch)?;
-    let schema = properties::update_schema_column(&space, &collection_path, &column_name, patch)?;
+    let schema = properties::update_schema_column_with_project(
+        &space,
+        &collection_path,
+        &column_name,
+        patch,
+        project_path.as_deref(),
+    )?;
     if let Some(column) = schema
         .columns
         .iter()

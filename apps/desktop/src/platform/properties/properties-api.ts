@@ -42,6 +42,8 @@ export interface PropertyOptionDto {
   group?: StatusGroupDto | null;
 }
 
+export type RelationScopeDto = "root" | { type: "space"; id: string };
+
 export interface ColumnDto {
   name: string;
   type?: PropertyTypeDto;
@@ -57,6 +59,8 @@ export interface ColumnDto {
   rangeByDefault?: boolean | null;
   range_by_default?: boolean | null;
   relation?: string | null;
+  relationScope?: RelationScopeDto | null;
+  relation_scope?: RelationScopeDto | null;
   limit?: "one" | null;
   twoWay?: string | null;
   two_way?: string | null;
@@ -303,10 +307,14 @@ export function updateSchemaColumn(
     patch: Record<string, unknown>;
   },
 ) {
-  return invokeSchemaMutation<CollectionSchemaDto>("update_schema_column", input, {
-    columnName: input.columnName,
-    patch: input.patch,
-  });
+  return invokeSchemaMutation<CollectionSchemaDto>(
+    "update_schema_column",
+    input,
+    {
+      columnName: input.columnName,
+      patch: input.patch,
+    },
+  );
 }
 
 export function renameSchemaColumn(
@@ -327,10 +335,14 @@ export function deleteSchemaColumn(
     deleteValues: boolean;
   },
 ) {
-  return invokeSchemaMutation<CollectionSchemaDto>("delete_schema_column", input, {
-    columnName: input.columnName,
-    deleteValues: input.deleteValues,
-  });
+  return invokeSchemaMutation<CollectionSchemaDto>(
+    "delete_schema_column",
+    input,
+    {
+      columnName: input.columnName,
+      deleteValues: input.deleteValues,
+    },
+  );
 }
 
 export function addOption(
@@ -433,11 +445,14 @@ export function diagnoseTwoWayRelation(input: {
   collectionPath: string;
   column: string;
 }) {
-  return invokeCommand<RelationTwoWayDiagnosticsDto>("diagnose_two_way_relation", {
-    space: input.spacePath,
-    collectionPath: input.collectionPath,
-    column: input.column,
-  });
+  return invokeCommand<RelationTwoWayDiagnosticsDto>(
+    "diagnose_two_way_relation",
+    {
+      space: input.spacePath,
+      collectionPath: input.collectionPath,
+      column: input.column,
+    },
+  );
 }
 
 export function repairTwoWayRelation(input: {

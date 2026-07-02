@@ -55,6 +55,7 @@ export function RelationControl({
   const [open, setOpen] = useState(Boolean(autoOpen));
   const [query, setQuery] = useState("");
   const relation = normalizeRelationRoot(column.relation);
+  const relationScope = column.relationScope ?? null;
   const values = useRelationValues(column, value);
   const limitOne = column.limit === "one";
   const { targets, loading } = useRelationTargets({
@@ -62,6 +63,7 @@ export function RelationControl({
     spacePath: context?.spacePath,
     projectPath: context?.projectPath,
     relation,
+    relationScope,
     query,
   });
 

@@ -25,7 +25,7 @@ interface CollectionDocumentHeaderProps {
   entry: Entry | null;
   propertiesSchema: EntrySchemaResult | null;
   actions: ReactNode;
-  onOpenPath: (path: string) => void;
+  onOpenPath: (path: string, spaceId?: string | null) => void;
   onCreateReadmeForIdentity: () => void;
   onUpdateIdentity: (
     field: "title" | "icon" | "description",

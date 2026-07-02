@@ -27,7 +27,7 @@ interface EntryPeekSheetProps {
   spaceId: string;
   onOpenChange: (open: boolean) => void;
   onOpenFullPage: (entry: Entry) => void;
-  onOpenPath: (path: string) => void;
+  onOpenPath: (path: string, spaceId?: string | null) => void;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
   onConvertedEntry: (entry: Entry, nested: boolean) => void;

@@ -1,10 +1,4 @@
-import {
-  AlertTriangle,
-  Link2,
-  RefreshCcw,
-  Unlink,
-  Wrench,
-} from "lucide-react";
+import { AlertTriangle, Link2, RefreshCcw, Unlink, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -45,6 +39,7 @@ export function RelationSettingsPane({
     relation,
     options,
     twoWay,
+    twoWayAvailable,
     reverseName,
     setReverseName,
     diagnostics,
@@ -53,6 +48,7 @@ export function RelationSettingsPane({
     setSelectedReverse,
     repairing,
     patchRelation,
+    patchRelationSelection,
     runRepair,
   } = useRelationSettings({
     column,
@@ -69,23 +65,25 @@ export function RelationSettingsPane({
         label={m.property_relation_linked_collection()}
         value={relation}
         options={options}
-        onChange={(nextRelation) => patchRelation({ relation: nextRelation })}
+        onChange={patchRelationSelection}
       />
       <ToggleRow
         label={m.property_relation_limit_one()}
         checked={column.limit === "one"}
         onChange={(checked) => patchRelation({ limit: checked ? "one" : null })}
       />
-      <ToggleRow
-        label={m.property_relation_show_related()}
-        checked={twoWay}
-        onChange={(checked) => {
-          const fallback =
-            reverseName.trim() || m.property_relation_reverse_default();
-          if (checked) setReverseName(fallback);
-          patchRelation({ twoWay: checked ? fallback : null });
-        }}
-      />
+      {twoWayAvailable ? (
+        <ToggleRow
+          label={m.property_relation_show_related()}
+          checked={twoWay}
+          onChange={(checked) => {
+            const fallback =
+              reverseName.trim() || m.property_relation_reverse_default();
+            if (checked) setReverseName(fallback);
+            patchRelation({ twoWay: checked ? fallback : null });
+          }}
+        />
+      ) : null}
       {twoWay ? (
         <label className="flex items-center gap-2 text-sm">
           <span className="w-20 text-muted-foreground">

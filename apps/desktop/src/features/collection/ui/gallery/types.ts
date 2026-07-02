@@ -23,7 +23,7 @@ export interface GalleryCardProps {
   onOpen: (entry: Entry, nestedCollection: boolean) => void;
   onOpenFullPage: (entry: Entry) => void;
   onOpenNestedCollection: (entry: Entry) => void;
-  onOpenPath: (path: string) => void;
+  onOpenPath: (path: string, spaceId?: string | null) => void;
   onDuplicate: (entry: Entry) => void;
   onDelete: (entry: Entry) => void;
   onFocusCard: (path: string) => void;

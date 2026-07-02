@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import {
-  getCollectionSchema,
-  listCollectionOptions,
-} from "../api/schema-api";
+import { useSpace } from "@/features/space";
+import { getCollectionSchema, listCollectionOptions } from "../api/schema-api";
+import { relationScopesEqual } from "../lib/relation";
 import {
   diagnoseTwoWayRelation,
   repairTwoWayRelation,
@@ -13,6 +12,7 @@ import type {
   ColumnPatch,
   CollectionSchema,
   Column,
+  RelationScope,
   RelationRepairStrategy,
   RelationTwoWayDiagnostics,
 } from "../model/types";
@@ -35,17 +35,19 @@ export function useRelationSettings({
   onSchemaChange,
   onPatchColumn,
 }: UseRelationSettingsInput) {
-  const [collections, setCollections] = useState<
-    Array<{ path: string; title: string }>
-  >([]);
-  const [reverseName, setReverseName] = useState(
-    column.twoWay ?? "",
+  const [collections, setCollections] = useState<RelationCollectionOption[]>(
+    [],
   );
+  const [reverseName, setReverseName] = useState(column.twoWay ?? "");
   const [diagnostics, setDiagnostics] =
     useState<RelationTwoWayDiagnostics | null>(null);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [selectedReverse, setSelectedReverse] = useState("");
   const [repairing, setRepairing] = useState<string | null>(null);
+  const { activeRootPath, spaces } = useSpace((state) => ({
+    activeRootPath: state.activeRootPath,
+    spaces: state.spaces,
+  }));
 
   useEffect(() => {
     setReverseName(column.twoWay ?? "");
@@ -53,7 +55,12 @@ export function useRelationSettings({
 
   useEffect(() => {
     let cancelled = false;
-    void listCollectionOptions(spacePath)
+    void loadRelationCollectionOptions({
+      spacePath,
+      projectPath,
+      activeRootPath,
+      spaces,
+    })
       .then((items) => {
         if (!cancelled) setCollections(items);
       })
@@ -63,27 +70,30 @@ export function useRelationSettings({
     return () => {
       cancelled = true;
     };
-  }, [spacePath]);
+  }, [activeRootPath, projectPath, spacePath, spaces]);
 
   const relation = column.relation || ".";
+  const relationScope = column.relationScope ?? null;
+  const relationOptionValue = relationOptionKey(relation, relationScope);
   const options = useMemo(() => {
     const collectionOptions = collections.map((item) => ({
-      value: item.path,
+      value: relationOptionKey(item.path, item.relationScope),
       label: item.title || item.path,
-      description: item.path,
+      description: `${item.scopeLabel} - ${item.path}`,
     }));
-    return collectionOptions.some((item) => item.value === relation)
+    return collectionOptions.some((item) => item.value === relationOptionValue)
       ? collectionOptions
       : [
           {
-            value: relation,
-            label: collectionLabelForPath(collections, relation),
-            description: relation,
+            value: relationOptionValue,
+            label: collectionLabelForPath(collections, relation, relationScope),
+            description: `${scopeLabelForRelationScope(relationScope, spaces)} - ${relation}`,
           },
           ...collectionOptions,
         ];
-  }, [collections, relation]);
+  }, [collections, relation, relationOptionValue, relationScope, spaces]);
   const twoWay = Boolean(column.twoWay);
+  const twoWayAvailable = relationScope === null;
 
   const loadDiagnostics = useCallback(
     async (cancelled?: () => boolean) => {
@@ -134,6 +144,18 @@ export function useRelationSettings({
     [onPatchColumn],
   );
 
+  const patchRelationSelection = useCallback(
+    (value: string) => {
+      const next = parseRelationOptionKey(value);
+      patchRelation({
+        relation: next.relation,
+        relationScope: next.relationScope,
+        ...(next.relationScope ? { twoWay: null } : {}),
+      });
+    },
+    [patchRelation],
+  );
+
   const runRepair = useCallback(
     async (strategy: RelationRepairStrategy, reverseColumn?: string | null) => {
       setRepairing(strategy);
@@ -172,9 +194,10 @@ export function useRelationSettings({
   );
 
   return {
-    relation,
+    relation: relationOptionValue,
     options,
     twoWay,
+    twoWayAvailable,
     reverseName,
     setReverseName,
     diagnostics,
@@ -183,13 +206,132 @@ export function useRelationSettings({
     setSelectedReverse,
     repairing,
     patchRelation,
+    patchRelationSelection,
     runRepair,
   };
 }
 
-function collectionLabelForPath(
-  collections: Array<{ path: string; title: string }>,
-  path: string,
+interface RelationCollectionOption {
+  path: string;
+  title: string;
+  relationScope: RelationScope | null;
+  scopeLabel: string;
+}
+
+interface RelationOptionKey {
+  relation: string;
+  relationScope: RelationScope | null;
+}
+
+function relationOptionKey(
+  relation: string,
+  relationScope: RelationScope | null,
 ) {
-  return collections.find((item) => item.path === path)?.title || path;
+  return JSON.stringify({ relation, relationScope });
+}
+
+function parseRelationOptionKey(value: string): RelationOptionKey {
+  try {
+    const parsed = JSON.parse(value) as Partial<RelationOptionKey>;
+    if (typeof parsed.relation === "string") {
+      return {
+        relation: parsed.relation || ".",
+        relationScope: parsed.relationScope ?? null,
+      };
+    }
+  } catch {
+    // Legacy select values were raw collection paths.
+  }
+  return { relation: value || ".", relationScope: null };
+}
+
+async function loadRelationCollectionOptions({
+  spacePath,
+  projectPath,
+  activeRootPath,
+  spaces,
+}: {
+  spacePath: string;
+  projectPath?: string | null;
+  activeRootPath?: string | null;
+  spaces: Array<{ id: string; name: string; path: string; status: string }>;
+}): Promise<RelationCollectionOption[]> {
+  const rootPath = projectPath || activeRootPath || null;
+  const currentIsRoot = rootPath
+    ? normalizeFsPath(spacePath) === normalizeFsPath(rootPath)
+    : false;
+  const current = await collectionOptionsForScope(
+    spacePath,
+    null,
+    currentIsRoot
+      ? String(m.property_relation_scope_project())
+      : String(m.property_relation_scope_current()),
+  );
+
+  if (!rootPath) return current;
+
+  if (!currentIsRoot) {
+    const root = await collectionOptionsForScope(
+      rootPath,
+      "root",
+      String(m.property_relation_scope_project()),
+    );
+    return [...current, ...root];
+  }
+
+  const readySpaces = spaces.filter((space) => space.status === "ready");
+  const childCollections = await Promise.all(
+    readySpaces.map((space) =>
+      collectionOptionsForScope(
+        space.path,
+        { type: "space", id: space.id },
+        space.name || space.id,
+      ),
+    ),
+  );
+  return [...current, ...childCollections.flat()];
+}
+
+async function collectionOptionsForScope(
+  spacePath: string,
+  relationScope: RelationScope | null,
+  scopeLabel: string,
+): Promise<RelationCollectionOption[]> {
+  const items = await listCollectionOptions(spacePath);
+  return items.map((item) => ({
+    ...item,
+    relationScope,
+    scopeLabel,
+  }));
+}
+
+function collectionLabelForPath(
+  collections: RelationCollectionOption[],
+  path: string,
+  relationScope: RelationScope | null,
+) {
+  return (
+    collections.find(
+      (item) =>
+        item.path === path &&
+        relationScopesEqual(item.relationScope, relationScope),
+    )?.title || path
+  );
+}
+
+function scopeLabelForRelationScope(
+  relationScope: RelationScope | null,
+  spaces: Array<{ id: string; name: string }>,
+) {
+  if (!relationScope) return String(m.property_relation_scope_current());
+  if (relationScope === "root")
+    return String(m.property_relation_scope_project());
+  return (
+    spaces.find((space) => space.id === relationScope.id)?.name ||
+    relationScope.id
+  );
+}
+
+function normalizeFsPath(path: string) {
+  return path.replace(/\\/g, "/").replace(/\/+$/g, "");
 }

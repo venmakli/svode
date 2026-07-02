@@ -969,7 +969,7 @@ async fn update_entry_fields(
     ensure_inside(Path::new(&space), &path)?;
     let mut updated = None;
     for (field, value) in args.fields {
-        updated = Some(entry::update_field(&space, &path, &field, value)?);
+        updated = Some(entry::update_field(&space, None, &path, &field, value)?);
     }
     let entry = match updated {
         Some(entry) => entry,

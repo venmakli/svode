@@ -39,6 +39,8 @@ export interface PropertyOption {
   group?: StatusGroup | null;
 }
 
+export type RelationScope = "root" | { type: "space"; id: string };
+
 export interface Column {
   name: string;
   type: PropertyType;
@@ -51,6 +53,7 @@ export interface Column {
   timeByDefault?: boolean | null;
   rangeByDefault?: boolean | null;
   relation?: string | null;
+  relationScope?: RelationScope | null;
   limit?: "one" | null;
   twoWay?: string | null;
   prefix?: string | null;
@@ -71,6 +74,7 @@ export type ColumnPatch = Partial<
     | "timeByDefault"
     | "rangeByDefault"
     | "relation"
+    | "relationScope"
     | "limit"
     | "twoWay"
     | "prefix"
@@ -122,9 +126,10 @@ export interface DateRangeValue {
 export interface RelationContext {
   spacePath: string;
   projectPath?: string | null;
+  projectSpaceId?: string | null;
   spaceId?: string | null;
   currentFilePath?: string | null;
-  onOpenPath?: (path: string) => void;
+  onOpenPath?: (path: string, spaceId?: string | null) => void;
 }
 
 export interface ResolvedRelationEntry {

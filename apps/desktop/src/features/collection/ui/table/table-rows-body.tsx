@@ -51,7 +51,7 @@ export function TableRowsBody({
   onOpenEntry: (entry: Entry) => void;
   onOpenNestedPeek: (entry: Entry) => void;
   onOpenFullPage: (entry: Entry) => void;
-  onOpenPath: (path: string) => void;
+  onOpenPath: (path: string, spaceId?: string | null) => void;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
   onDragEnd: (event: DragEndEvent) => void;
@@ -150,7 +150,7 @@ function NestedSchemaPreview({
   actors: ActorCandidate[];
   spacePath: string;
   projectPath?: string | null;
-  onOpenPath: (path: string) => void;
+  onOpenPath: (path: string, spaceId?: string | null) => void;
 }) {
   const values = nestedPreviewFields(schema)
     .filter((field) => field !== "title")

@@ -80,7 +80,8 @@ export function CollectionScreen({
   const readmePath = readmePathFor(collectionPath);
   const openDocument = useOpenEntryDocument();
   const openPath = useCallback(
-    (path: string) => openDocument(path, spaceId),
+    (path: string, targetSpaceId?: string | null) =>
+      openDocument(path, targetSpaceId ?? spaceId),
     [openDocument, spaceId],
   );
   const saveScopeTree = useSpace(

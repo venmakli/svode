@@ -28,7 +28,7 @@ interface EntryPeekSurfaceProps {
   spaceId: string;
   actions: ReactNode;
   metadataBefore?: ReactNode;
-  onOpenPath: (path: string) => void;
+  onOpenPath: (path: string, spaceId?: string | null) => void;
   onEntryChange: Dispatch<SetStateAction<Entry | null>>;
   onSchemaChange: (result: EntrySchemaResult | null) => void;
 }

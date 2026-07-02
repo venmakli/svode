@@ -1,6 +1,15 @@
 import { useEffect, useState } from "react";
+import { useSpace } from "@/features/space";
 import { resolveRelationsBatch } from "../api/relation-api";
-import type { RelationContext, ResolvedRelationEntry } from "../model";
+import {
+  relationTargetSpacePath,
+  type RelationSpaceLookup,
+} from "../lib/relation";
+import type {
+  RelationContext,
+  RelationScope,
+  ResolvedRelationEntry,
+} from "../model";
 
 function deferStateUpdate(update: () => void) {
   let cancelled = false;
@@ -15,20 +24,33 @@ function deferStateUpdate(update: () => void) {
 export function useResolvedRelations(
   context: RelationContext | undefined,
   relation: string,
+  relationScope: RelationScope | null | undefined,
   values: string[],
 ) {
   const [resolved, setResolved] = useState<
     Map<string, ResolvedRelationEntry | null>
   >(() => new Map());
+  const lookup = useSpace<RelationSpaceLookup>((state) => ({
+    activeRootPath: state.activeRootPath,
+    spaces: state.spaces.map((space) => ({
+      id: space.id,
+      path: space.path,
+    })),
+  }));
+  const targetSpacePath = relationTargetSpacePath(
+    context,
+    relationScope,
+    lookup,
+  );
 
   useEffect(() => {
-    if (!context?.spacePath || values.length === 0) {
+    if (!targetSpacePath || values.length === 0) {
       return deferStateUpdate(() => setResolved(new Map()));
     }
     let cancelled = false;
     void resolveRelationsBatch({
-      spacePath: context.spacePath,
-      projectPath: context.projectPath,
+      spacePath: targetSpacePath,
+      projectPath: context?.projectPath,
       relation,
       values,
     })
@@ -46,7 +68,7 @@ export function useResolvedRelations(
     return () => {
       cancelled = true;
     };
-  }, [context?.projectPath, context?.spacePath, relation, values]);
+  }, [context?.projectPath, relation, targetSpacePath, values]);
 
   return resolved;
 }

@@ -16,7 +16,7 @@ interface FrontmatterPanelProps {
   filePath: string | null;
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  onOpenPath?: (path: string) => void;
+  onOpenPath?: (path: string, spaceId?: string | null) => void;
   onPropertyChange: (field: string, value: unknown) => Promise<void>;
 }
 
