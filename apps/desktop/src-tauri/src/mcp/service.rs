@@ -24,6 +24,7 @@ use crate::space::{config as space_config, project};
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 200;
+const MCP_ROOT_SPACE_ID: &str = "root";
 
 #[derive(Debug, Clone, Copy)]
 pub enum MutationOrigin {
@@ -351,6 +352,9 @@ async fn resolve_space(
 ) -> Result<(ActiveProjectContext, String), McpBusinessError> {
     let context = active_context(app)?;
     if let Some(space_id) = requested_space_id {
+        if is_mcp_root_space_id(&space_id) {
+            return Ok((context.clone(), context.project_path.clone()));
+        }
         let state = app.state::<IndexState>();
         let path = state
             .space_path_of(Path::new(&context.project_path), Some(&space_id))
@@ -389,6 +393,73 @@ fn schema_path_rel(collection_path: &str) -> String {
     } else {
         format!("{collection_path}/schema.yaml")
     }
+}
+
+fn is_mcp_root_space_id(space_id: &str) -> bool {
+    space_id == MCP_ROOT_SPACE_ID
+}
+
+fn active_mcp_space_id(context: &ActiveProjectContext) -> String {
+    context
+        .active_space_id
+        .clone()
+        .unwrap_or_else(|| MCP_ROOT_SPACE_ID.to_string())
+}
+
+fn mcp_spaces_payload(project_path: &Path) -> Result<Vec<Value>, McpBusinessError> {
+    let cfg = space_config::read_space_config(project_path)?;
+    let child_spaces = project::list_spaces(project_path)?;
+    let mut spaces = Vec::with_capacity(child_spaces.len() + 1);
+    spaces.push(json!({
+        "id": MCP_ROOT_SPACE_ID,
+        "name": cfg.name,
+        "icon": cfg.icon,
+        "description": cfg.description,
+        "path": project_path.to_string_lossy().to_string(),
+        "kind": "root",
+        "isRoot": true,
+        "spaceId": MCP_ROOT_SPACE_ID,
+        "hasSpaces": !child_spaces.is_empty(),
+        "status": "ready",
+        "capabilities": mcp_space_capabilities("root"),
+        "addressing": {
+            "spaceId": MCP_ROOT_SPACE_ID,
+            "nullBehavior": "active-default"
+        }
+    }));
+    for space in child_spaces {
+        spaces.push(json!({
+            "id": space.id,
+            "name": space.name,
+            "icon": space.icon,
+            "description": space.description,
+            "path": space.path,
+            "kind": "child",
+            "isRoot": false,
+            "spaceId": space.id,
+            "hasSpaces": space.has_spaces,
+            "lastOpened": space.last_opened,
+            "status": space.status,
+            "lfsState": space.lfs_state,
+            "capabilities": mcp_space_capabilities("child"),
+            "addressing": {
+                "spaceId": space.id,
+                "nullBehavior": "active-default"
+            }
+        }));
+    }
+    Ok(spaces)
+}
+
+fn mcp_space_capabilities(kind: &str) -> Value {
+    json!({
+        "kind": kind,
+        "documents": true,
+        "collections": true,
+        "gitStatus": true,
+        "commitChanges": false,
+        "autocommit": false
+    })
 }
 
 fn collection_readme_path(collection_path: &str) -> String {
@@ -500,14 +571,21 @@ fn write_metadata_frontmatter(
 
 async fn get_project_info(app: &AppHandle) -> Result<ToolCallResult, McpBusinessError> {
     let context = active_context(app)?;
-    let spaces = project::list_spaces(Path::new(&context.project_path))?;
+    let project_path = Path::new(&context.project_path);
+    let spaces = mcp_spaces_payload(project_path)?;
     let cfg = space_config::read_space_config(Path::new(&context.project_path))?;
     let structured = json!({
         "projectPath": context.project_path,
+        "rootSpaceId": MCP_ROOT_SPACE_ID,
         "activeSpaceId": context.active_space_id,
+        "activeMcpSpaceId": active_mcp_space_id(&context),
         "activeSpacePath": context.active_space_path,
         "projectName": cfg.name,
         "spaces": spaces,
+        "spaceAddressing": {
+            "root": MCP_ROOT_SPACE_ID,
+            "null": "active/default space"
+        },
         "capabilities": {
             "documents": true,
             "collections": true,
@@ -524,9 +602,15 @@ async fn get_project_info(app: &AppHandle) -> Result<ToolCallResult, McpBusiness
 
 async fn list_spaces(app: &AppHandle) -> Result<ToolCallResult, McpBusinessError> {
     let context = active_context(app)?;
-    let spaces = project::list_spaces(Path::new(&context.project_path))?;
+    let spaces = mcp_spaces_payload(Path::new(&context.project_path))?;
     let structured = json!({
+        "rootSpaceId": MCP_ROOT_SPACE_ID,
         "activeSpaceId": context.active_space_id,
+        "activeMcpSpaceId": active_mcp_space_id(&context),
+        "spaceAddressing": {
+            "root": MCP_ROOT_SPACE_ID,
+            "null": "active/default space"
+        },
         "spaces": spaces
     });
     Ok(ToolCallResult::ok(
@@ -1266,6 +1350,9 @@ async fn apply_indexed_entry_dates(
 
 fn index_key_for_context(context: &ActiveProjectContext, space_id: Option<&str>) -> IndexKey {
     if let Some(space_id) = space_id {
+        if is_mcp_root_space_id(space_id) {
+            return IndexKey::Root(PathBuf::from(&context.project_path));
+        }
         IndexKey::Space {
             project: PathBuf::from(&context.project_path),
             space_id: space_id.to_string(),
@@ -1277,5 +1364,43 @@ fn index_key_for_context(context: &ActiveProjectContext, space_id: Option<&str>)
         }
     } else {
         IndexKey::Root(PathBuf::from(&context.project_path))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn context(active_space_id: Option<&str>) -> ActiveProjectContext {
+        ActiveProjectContext {
+            project_path: "/project".to_string(),
+            active_space_id: active_space_id.map(ToString::to_string),
+            active_space_path: active_space_id
+                .map(|id| format!("/project/spaces/{id}"))
+                .unwrap_or_else(|| "/project".to_string()),
+        }
+    }
+
+    #[test]
+    fn root_space_id_targets_root_even_when_child_space_is_active() {
+        assert_eq!(
+            index_key_for_context(&context(Some("child")), Some(MCP_ROOT_SPACE_ID)),
+            IndexKey::Root(PathBuf::from("/project"))
+        );
+    }
+
+    #[test]
+    fn null_space_id_still_targets_active_default_space() {
+        assert_eq!(
+            index_key_for_context(&context(Some("child")), None),
+            IndexKey::Space {
+                project: PathBuf::from("/project"),
+                space_id: "child".to_string()
+            }
+        );
+        assert_eq!(
+            index_key_for_context(&context(None), None),
+            IndexKey::Root(PathBuf::from("/project"))
+        );
     }
 }

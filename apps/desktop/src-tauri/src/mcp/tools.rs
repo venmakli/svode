@@ -13,14 +13,14 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "list_spaces",
-            "List spaces in the active project.",
+            "List addressable MCP spaces in the active project, including the root project space. Use spaceId \"root\" for the root project; null in other tools means active/default space.",
             obj(vec![]),
             read_only_ann(),
             None,
         ),
         def(
             "list_documents",
-            "List markdown documents in a space. spaceId null uses the active/default space.",
+            "List markdown documents in a space. spaceId \"root\" targets the project root; spaceId null uses the active/default space.",
             schema(
                 &[
                     space_id(),
@@ -391,6 +391,12 @@ Structure choice:
 - If a markdown leaf, folder document, or bare folder already exists and should become structured data, use convert_to_collection in place.
 - Existing custom frontmatter values are user data. Adding a same-name column promotes those values into schema semantics.
 
+Space targeting:
+- Call list_spaces before cross-space work. The result includes the root project space and child spaces.
+- Use spaceId "root" to explicitly target the project root space.
+- Use a child space id from list_spaces to target a child space.
+- Omit spaceId or pass null only when you intentionally want the active/default space; null is not a stable alias for root when a child space is active.
+
 Metadata and fields:
 - System metadata is title, icon, description, cover, created, and updated. Do not create custom columns for these and do not write them through update_entry_fields.
 - Collection identity lives in README.md metadata. Schema.yaml stores columns, views, system field labels, document label, and template settings.
@@ -467,7 +473,7 @@ fn nullable(schema: Value) -> Value {
 fn space_id() -> (&'static str, Value) {
     (
         "spaceId",
-        json!({"type": ["string", "null"], "description": "Svode space id. null uses the active/default space."}),
+        json!({"type": ["string", "null"], "description": "Svode MCP space id. Use \"root\" for the project root, a child id from list_spaces for a child space, or null/omit for the active/default space."}),
     )
 }
 
@@ -921,6 +927,14 @@ mod tests {
             relation_scope["anyOf"][2]["properties"]["type"]["enum"],
             json!(["space"])
         );
+    }
+
+    #[test]
+    fn space_id_schema_documents_root_target() {
+        let (_, schema) = space_id();
+        let description = schema["description"].as_str().expect("description");
+        assert!(description.contains("\"root\""));
+        assert!(description.contains("active/default"));
     }
 
     #[test]
