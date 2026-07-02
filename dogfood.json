@@ -5,6 +5,22 @@
     {
       "kind": "ci-build",
       "version": "0.0.6",
+      "commit": "260ab0fc016b368791e26576ed25ee8d6020f289",
+      "sourceRef": "main",
+      "runId": 28592246087,
+      "publishedAt": "2026-07-02T13:28:36.041Z",
+      "expiresAt": "2026-07-05T13:28:36.041Z",
+      "platforms": {
+        "darwin": {
+          "url": "https://github.com/venmakli/svode/actions/runs/28592246087/artifacts/8040279771",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28592246087",
+          "artifactName": "Svode-macos-dmg"
+        }
+      }
+    },
+    {
+      "kind": "ci-build",
+      "version": "0.0.6",
       "commit": "2ac193e8330f053745c7d71e66463ba1a23a5031",
       "sourceRef": "main",
       "runId": 28579626394,
@@ -107,33 +123,6 @@
           "url": "https://github.com/venmakli/svode/actions/runs/28379554298/artifacts/7955645189",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28379554298",
           "artifactName": "Svode-windows-nsis"
-        }
-      }
-    },
-    {
-      "kind": "ci-build",
-      "version": "0.0.6",
-      "commit": "1661562935253267f707f798c193e70077d52398",
-      "sourceRef": "main",
-      "runId": 28371425447,
-      "publishedAt": "2026-06-29T12:44:52.484Z",
-      "expiresAt": "2026-07-02T12:44:52.484Z",
-      "reason": "fix sync, scrollbar, collection and over",
-      "platforms": {
-        "linux": {
-          "url": "https://github.com/venmakli/svode/actions/runs/28371425447/artifacts/7951877924",
-          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28371425447",
-          "artifactName": "Svode-linux-deb"
-        },
-        "windows": {
-          "url": "https://github.com/venmakli/svode/actions/runs/28371425447/artifacts/7952099963",
-          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28371425447",
-          "artifactName": "Svode-windows-nsis"
-        },
-        "darwin": {
-          "url": "https://github.com/venmakli/svode/actions/runs/28371425447/artifacts/7952183297",
-          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28371425447",
-          "artifactName": "Svode-macos-dmg"
         }
       }
     }
