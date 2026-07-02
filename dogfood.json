@@ -8,14 +8,19 @@
       "commit": "2ac193e8330f053745c7d71e66463ba1a23a5031",
       "sourceRef": "main",
       "runId": 28579626394,
-      "publishedAt": "2026-07-02T09:38:46.951Z",
-      "expiresAt": "2026-07-05T09:38:46.951Z",
+      "publishedAt": "2026-07-02T09:44:54.750Z",
+      "expiresAt": "2026-07-05T09:44:54.750Z",
       "reason": "fix collection relation",
       "platforms": {
         "linux": {
           "url": "https://github.com/venmakli/svode/actions/runs/28579626394/artifacts/8034733035",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28579626394",
           "artifactName": "Svode-linux-deb"
+        },
+        "darwin": {
+          "url": "https://github.com/venmakli/svode/actions/runs/28579626394/artifacts/8034877040",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28579626394",
+          "artifactName": "Svode-macos-dmg"
         }
       }
     },
