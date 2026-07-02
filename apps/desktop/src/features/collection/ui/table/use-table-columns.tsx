@@ -86,9 +86,12 @@ export function useTableColumns({
     options?: { flush?: boolean },
   ) => void;
 }) {
-  return useMemo<ColumnDef<CollectionTableRow>[]>(
-    () =>
-      visibleFields.map((field) => {
+  return useMemo<ColumnDef<CollectionTableRow>[]>(() => {
+    const showTitleIcon = visibleFields.includes("icon");
+
+    return visibleFields
+      .filter((field) => field !== "icon")
+      .map((field) => {
         if (field === "title") {
           const label =
             schema.systemFields?.title?.label || m.collection_field_title();
@@ -127,6 +130,7 @@ export function useTableColumns({
             cell: ({ row }) => (
               <TitleCell
                 row={row.original}
+                showIcon={showTitleIcon}
                 expandable={isExpandable(
                   row.original.entry,
                   entries,
@@ -232,35 +236,34 @@ export function useTableColumns({
               <span className="text-muted-foreground">-</span>
             ),
         };
-      }),
-    [
-      collectionPath,
-      columnSizing,
-      editing,
-      entries,
-      expanded,
-      nestedCollectionPaths,
-      onCommitField,
-      onOpenEntry,
-      onOpenFullPage,
-      onOpenNestedPeek,
-      onOpenNestedCollection,
-      onOpenPath,
-      onRequestActors,
-      onSchemaChange,
-      onUpdateViewPatch,
-      openColumn,
-      actors,
-      projectPath,
-      query,
-      schema,
-      setEditing,
-      setExpanded,
-      setOpenColumn,
-      showNested,
-      spacePath,
-      view,
-      visibleFields,
-    ],
-  );
+      });
+  }, [
+    collectionPath,
+    columnSizing,
+    editing,
+    entries,
+    expanded,
+    nestedCollectionPaths,
+    onCommitField,
+    onOpenEntry,
+    onOpenFullPage,
+    onOpenNestedPeek,
+    onOpenNestedCollection,
+    onOpenPath,
+    onRequestActors,
+    onSchemaChange,
+    onUpdateViewPatch,
+    openColumn,
+    actors,
+    projectPath,
+    query,
+    schema,
+    setEditing,
+    setExpanded,
+    setOpenColumn,
+    showNested,
+    spacePath,
+    view,
+    visibleFields,
+  ]);
 }

@@ -17,6 +17,7 @@ import {
   PropertyValueActions,
 } from "@/features/properties/display";
 import { PropertyControl } from "@/features/properties/control";
+import { EntryTitleIcon } from "../entry-title-icon";
 import type { CollectionTableRow } from "./types";
 import * as m from "@/paraglide/messages.js";
 
@@ -260,6 +261,7 @@ function parseNumberDraft(value: string) {
 
 export function TitleCell({
   row,
+  showIcon,
   expandable,
   expanded,
   nested,
@@ -269,6 +271,7 @@ export function TitleCell({
   onOpenNested,
 }: {
   row: CollectionTableRow;
+  showIcon: boolean;
   expandable: boolean;
   expanded: boolean;
   nested: boolean;
@@ -284,6 +287,7 @@ export function TitleCell({
     >
       <EntryDisclosure
         icon={row.entry.meta.icon}
+        showIcon={showIcon}
         expandable={expandable}
         expanded={expanded}
         onToggle={onToggle}
@@ -321,21 +325,19 @@ export function TitleCell({
 
 function EntryDisclosure({
   icon,
+  showIcon,
   expandable,
   expanded,
   onToggle,
 }: {
   icon: string | null;
+  showIcon: boolean;
   expandable: boolean;
   expanded: boolean;
   onToggle: () => void;
 }) {
   if (!expandable) {
-    return (
-      <span className="flex size-6 shrink-0 items-center justify-center">
-        {icon || "·"}
-      </span>
-    );
+    return showIcon ? <EntryTitleIcon icon={icon} className="size-6" /> : null;
   }
   return (
     <Button
@@ -348,12 +350,15 @@ function EntryDisclosure({
         onToggle();
       }}
     >
-      <span className={cn("group-hover/row:hidden", expanded && "hidden")}>
-        {icon || "·"}
-      </span>
+      {showIcon ? (
+        <EntryTitleIcon
+          icon={icon}
+          className={cn("group-hover/row:hidden", expanded && "hidden")}
+        />
+      ) : null}
       <ChevronRight
         className={cn(
-          "hidden group-hover/row:block",
+          showIcon ? "hidden group-hover/row:block" : "block",
           expanded && "block",
           expanded && "rotate-90",
         )}

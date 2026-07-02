@@ -14,6 +14,7 @@ import { cn } from "@/shared/lib/utils";
 import { isFolderEntry, isNestedCollectionEntry } from "./utils";
 import { BoardPropertyFlow } from "./board-property-flow";
 import type { BoardCardProps } from "./types";
+import { EntryTitleIcon } from "../entry-title-icon";
 import * as m from "@/paraglide/messages.js";
 
 export function SortableBoardCard(props: BoardCardProps) {
@@ -102,9 +103,10 @@ export function BoardCardContent({
           <CardContent className="flex flex-col gap-2 px-2.5">
             <div className="flex min-w-0 items-start gap-1.5">
               {showIcon ? (
-                <span className="mt-px shrink-0 text-sm leading-5">
-                  {entry.meta.icon || "·"}
-                </span>
+                <EntryTitleIcon
+                  icon={entry.meta.icon}
+                  className="mt-px h-5 min-w-4 text-sm leading-5"
+                />
               ) : null}
               <div className="min-w-0 flex-1">
                 <div className="line-clamp-2 text-[13px] font-medium leading-snug">

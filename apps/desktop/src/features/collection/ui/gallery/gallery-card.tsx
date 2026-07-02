@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/context-menu";
 import { cn } from "@/shared/lib/utils";
 import { CardPropertyFlow } from "../card-property-flow";
+import { EntryTitleIcon } from "../entry-title-icon";
 import { GalleryCover } from "./gallery-cover";
 import type { GalleryCardProps } from "./types";
 import * as m from "@/paraglide/messages.js";
@@ -146,18 +147,20 @@ function GalleryCardContent({
             {showTitle ? (
               <div className="flex min-w-0 items-start gap-1.5">
                 {showIcon ? (
-                  <span className="mt-px shrink-0 text-sm leading-5">
-                    {entry.meta.icon || "·"}
-                  </span>
+                  <EntryTitleIcon
+                    icon={entry.meta.icon}
+                    className="mt-px h-5 min-w-4 text-sm leading-5"
+                  />
                 ) : null}
                 <div className="line-clamp-2 min-w-0 text-[13px] font-medium leading-snug">
                   {entry.meta.title}
                 </div>
               </div>
             ) : showIcon ? (
-              <div className="truncate text-sm leading-5">
-                {entry.meta.icon || "·"}
-              </div>
+              <EntryTitleIcon
+                icon={entry.meta.icon}
+                className="h-5 justify-start text-sm leading-5"
+              />
             ) : null}
             {showDescription && entry.meta.description ? (
               <div className="truncate text-[12px] text-muted-foreground">

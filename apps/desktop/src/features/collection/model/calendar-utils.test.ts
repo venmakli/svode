@@ -2,8 +2,10 @@ import { expect, test } from "bun:test";
 import type { Entry } from "@/features/entry";
 import type { Column } from "@/features/properties";
 import {
+  calendarCustomFields,
   dateValueFromSelection,
   hiddenNoDateCount,
+  normalizeCalendarCardFields,
   parseCalendarDateValue,
 } from "./calendar-utils";
 
@@ -44,6 +46,22 @@ test("hiddenNoDateCount ignores entries without date values", () => {
       dateColumn(),
     ),
   ).toBe(1);
+});
+
+test("calendar card fields preserve visible system meta fields", () => {
+  const view = {
+    name: "Calendar",
+    type: "calendar",
+    card_fields: ["icon", "title", "created", "updated", "Due"],
+  } as const;
+  const schema = { columns: [dateColumn()] };
+  const fields = normalizeCalendarCardFields(view, schema);
+
+  expect(fields).toEqual(["icon", "title", "created", "updated", "Due"]);
+  expect(calendarCustomFields(fields, schema, "Due")).toEqual([
+    { name: "created", type: "date", display: "medium" },
+    { name: "updated", type: "date", display: "medium" },
+  ]);
 });
 
 function dateColumn(patch: Partial<Column> = {}): Column {

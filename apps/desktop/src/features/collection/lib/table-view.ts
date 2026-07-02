@@ -32,6 +32,7 @@ export function normalizeVisibleFields(
     : ["title", ...schema.columns.map((column) => column.name)];
   const allowed = new Set([
     "title",
+    "icon",
     ...schema.columns.map((column) => column.name),
   ]);
   const fields = configured.filter((field) => allowed.has(field));

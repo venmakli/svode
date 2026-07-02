@@ -15,6 +15,7 @@ import {
 import type { Entry } from "@/features/entry";
 import { validatePropertyValue, type Column } from "@/features/properties";
 import { PropertyControl } from "@/features/properties/control";
+import { PropertyValue } from "@/features/properties/display";
 import { cn } from "@/shared/lib/utils";
 import { eventColorStyle } from "../../hooks/calendar/calendar-adapter";
 import type {
@@ -22,6 +23,7 @@ import type {
   CalendarPropertyContext,
   CalendarScope,
 } from "../../model/calendar-types";
+import { EntryTitleIcon } from "../entry-title-icon";
 import * as m from "@/paraglide/messages.js";
 
 export function CalendarEventContent({
@@ -76,9 +78,10 @@ export function CalendarEventContent({
               >
                 <span className="svode-calendar-event-color-bar h-3 w-1 shrink-0 rounded-full bg-(--calendar-event-color)" />
                 {model.cardFields.includes("icon") ? (
-                  <span className="svode-calendar-event-icon shrink-0 text-sm leading-none">
-                    {entry.meta.icon || "·"}
-                  </span>
+                  <EntryTitleIcon
+                    icon={entry.meta.icon}
+                    className="svode-calendar-event-icon size-4 text-sm leading-none"
+                  />
                 ) : null}
                 <div className="min-w-0 flex-1">
                   <div className="svode-calendar-event-title-row flex min-w-0 items-center gap-1">
@@ -161,7 +164,7 @@ function CalendarEventTooltip({
     <div className="flex min-w-0 flex-col gap-2">
       <div className="flex min-w-0 items-center gap-2">
         {model.cardFields.includes("icon") ? (
-          <span className="shrink-0">{entry.meta.icon || "·"}</span>
+          <EntryTitleIcon icon={entry.meta.icon} className="size-5" />
         ) : null}
         <div className="min-w-0">
           <div className="truncate font-medium">{entry.meta.title}</div>
@@ -181,7 +184,7 @@ function CalendarEventTooltip({
               className="grid min-w-0 grid-cols-[92px_minmax(0,1fr)] items-center gap-2 text-xs"
             >
               <span className="truncate text-muted-foreground">
-                {column.name}
+                {calendarColumnLabel(column)}
               </span>
               <span className="min-w-0 truncate">
                 <CalendarPropertyControl
@@ -207,8 +210,26 @@ function CalendarPropertyControl({
   column: Column;
   propertyContext: CalendarPropertyContext;
 }) {
-  const value = entry.meta.extra?.[column.name] ?? null;
+  const value = calendarColumnValue(entry, column);
   const validation = validatePropertyValue(column, value);
+
+  if (isReadonlySystemColumn(column)) {
+    return (
+      <span className="inline-flex min-w-0 max-w-full items-center text-xs">
+        <PropertyValue
+          column={column}
+          value={value}
+          actors={propertyContext.actors}
+          relationContext={{
+            spacePath: propertyContext.spacePath,
+            projectPath: propertyContext.projectPath,
+            currentFilePath: entry.path,
+            onOpenPath: propertyContext.onOpenPath,
+          }}
+        />
+      </span>
+    );
+  }
 
   return (
     <span
@@ -238,6 +259,22 @@ function CalendarPropertyControl({
       />
     </span>
   );
+}
+
+function calendarColumnValue(entry: Entry, column: Column) {
+  if (column.name === "created") return entry.meta.created;
+  if (column.name === "updated") return entry.meta.updated;
+  return entry.meta.extra?.[column.name] ?? null;
+}
+
+function calendarColumnLabel(column: Column) {
+  if (column.name === "created") return m.collection_field_created();
+  if (column.name === "updated") return m.collection_field_updated();
+  return column.name;
+}
+
+function isReadonlySystemColumn(column: Column) {
+  return column.name === "created" || column.name === "updated";
 }
 
 function EntryKindMarker({

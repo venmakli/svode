@@ -4,13 +4,14 @@ import type { CollectionSchema, Column } from "@/features/properties";
 import { isDateRangeValue } from "@/features/properties";
 import type { CalendarDateValue, CalendarScope } from "./calendar-types";
 
-const SYSTEM_CARD_FIELDS = new Set([
-  "title",
-  "icon",
-  "description",
-  "created",
-  "updated",
-]);
+const SYSTEM_CARD_FIELDS = new Set(["title", "icon", "description"]);
+
+const SYSTEM_META_COLUMNS: Record<string, Column> = {
+  created: { name: "created", type: "date", display: "medium" },
+  updated: { name: "updated", type: "date", display: "medium" },
+};
+
+const SYSTEM_META_FIELD_NAMES = new Set(["created", "updated"]);
 
 export const calendarScopes: CalendarScope[] = ["month", "week", "day", "list"];
 
@@ -51,6 +52,7 @@ export function normalizeCalendarCardFields(
     "title",
     "icon",
     "description",
+    ...SYSTEM_META_FIELD_NAMES,
     ...schema.columns.map((column) => column.name),
   ]);
   const fields = configured.filter((field) => allowed.has(field));
@@ -64,7 +66,11 @@ export function calendarCustomFields(
 ) {
   return fields
     .filter((field) => !SYSTEM_CARD_FIELDS.has(field) && field !== dateField)
-    .map((field) => schema.columns.find((column) => column.name === field))
+    .map(
+      (field) =>
+        SYSTEM_META_COLUMNS[field] ??
+        schema.columns.find((column) => column.name === field),
+    )
     .filter((column): column is Column => Boolean(column));
 }
 

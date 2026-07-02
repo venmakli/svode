@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/context-menu";
 import { cn } from "@/shared/lib/utils";
 import { CardPropertyFlow } from "../card-property-flow";
+import { EntryTitleIcon } from "../entry-title-icon";
 import type { ListRowProps } from "./types";
 import * as m from "@/paraglide/messages.js";
 
@@ -161,9 +162,10 @@ function ListRowContent({
               </button>
             ) : null}
             {showIcon ? (
-              <span className="grid size-5 shrink-0 place-items-center text-[15px] leading-none">
-                {entry.meta.icon || "·"}
-              </span>
+              <EntryTitleIcon
+                icon={entry.meta.icon}
+                className="size-5 text-[15px] leading-none"
+              />
             ) : null}
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-center gap-1.5">
