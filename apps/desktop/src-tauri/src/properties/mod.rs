@@ -3789,6 +3789,7 @@ fn dedupe_paths(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>, AppError> {
         .collect())
 }
 
+#[allow(dead_code)]
 pub fn add_schema_column(
     space: &str,
     collection_path: &str,
@@ -4049,6 +4050,7 @@ pub fn rename_schema_column(
     })
 }
 
+#[allow(dead_code)]
 pub fn update_schema_column(
     space: &str,
     collection_path: &str,

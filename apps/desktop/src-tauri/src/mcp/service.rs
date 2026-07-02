@@ -902,30 +902,27 @@ async fn create_entry(
     args: CreateEntryArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
-    let (_, space) = resolve_space(app, args.space_id).await?;
+    let (context, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
-    let fields = args
-        .fields
-        .map(|fields| {
-            fields
-                .into_iter()
-                .map(|(key, value)| {
-                    serde_yml::to_value(value)
-                        .map(|value| (key, value))
-                        .map_err(|error| {
-                            McpBusinessError::new("INVALID_FIELD_VALUE", error.to_string())
-                        })
-                })
-                .collect::<Result<HashMap<_, _>, _>>()
-        })
-        .transpose()?;
+    let fields = args.fields;
     let parent = if collection_path.is_empty() {
         None
     } else {
         Some(collection_path.as_str())
     };
-    let mut created = entry::create_with_contextual_defaults(&space, parent, &args.title, fields)?;
+    let mut created = entry::create_with_contextual_defaults(&space, parent, &args.title, None)?;
+    if let Some(fields) = fields {
+        for (field, value) in fields {
+            created = entry::update_field(
+                &space,
+                Some(context.project_path.as_str()),
+                &created.path,
+                &field,
+                value,
+            )?;
+        }
+    }
     if args.icon.is_some() || args.description.is_some() || args.cover.is_some() {
         created = write_metadata_frontmatter(
             &space,
@@ -964,12 +961,18 @@ async fn update_entry_fields(
     args: UpdateFieldsArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
-    let (_, space) = resolve_space(app, args.space_id).await?;
+    let (context, space) = resolve_space(app, args.space_id).await?;
     let path = validate_document_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
     let mut updated = None;
     for (field, value) in args.fields {
-        updated = Some(entry::update_field(&space, None, &path, &field, value)?);
+        updated = Some(entry::update_field(
+            &space,
+            Some(context.project_path.as_str()),
+            &path,
+            &field,
+            value,
+        )?);
     }
     let entry = match updated {
         Some(entry) => entry,
@@ -1028,7 +1031,7 @@ async fn add_collection_column(
     args: AddCollectionColumnArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
-    let (_, space) = resolve_space(app, args.space_id).await?;
+    let (context, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
     let include_markdown = args.column.type_ == PropertyType::UniqueId;
@@ -1038,7 +1041,12 @@ async fn add_collection_column(
         &args.column,
         include_markdown,
     )?;
-    let schema = properties::add_schema_column(&space, &collection_path, args.column)?;
+    let schema = properties::add_schema_column_with_project(
+        &space,
+        &collection_path,
+        args.column,
+        Some(context.project_path.as_str()),
+    )?;
     let changed_paths = rel_paths_from_space(&space, paths);
     Ok(ToolCallResult::ok(
         format!("Added column to collection {collection_path}."),
@@ -1051,7 +1059,7 @@ async fn update_collection_column(
     args: UpdateCollectionColumnArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
-    let (_, space) = resolve_space(app, args.space_id).await?;
+    let (context, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
     let paths = properties::schema_column_name_mutation_paths(
@@ -1060,11 +1068,12 @@ async fn update_collection_column(
         &args.column_name,
         true,
     )?;
-    let schema = properties::update_schema_column(
+    let schema = properties::update_schema_column_with_project(
         &space,
         &collection_path,
         &args.column_name,
         json_to_yaml(args.patch)?,
+        Some(context.project_path.as_str()),
     )?;
     let changed_paths = rel_paths_from_space(&space, paths);
     Ok(ToolCallResult::ok(

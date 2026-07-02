@@ -403,7 +403,8 @@ Property semantics:
 - unique_id is read-only after creation/materialization. Do not write unique_id through update_entry_fields.
 - date is for due dates, events, and calendar views. Calendar views require date_field.
 - email and phone should use typed email/phone fields and sensitivity pii for contact data.
-- relation values are path refs to linked collection entries, not row IDs.
+- relation columns use relation for the target collection path and optional relation_scope for a target outside the current scope. Omit relation_scope or set it null for the same scope; use "root" to target the project root; use {"type":"space","id":"<spaceId>"} to target a registered ready child space. Use list_spaces to discover space ids, and list_collections with that spaceId to discover target collection paths. Cross-scope relations do not support two_way.
+- relation values are path refs inside the target collection, not row IDs. For cross-scope relations the value is still relative to the target collection; the target scope lives in the schema column.
 - gallery views use card_cover. Board group_by should be status, select, or a single actor field.
 - For select/status fields, define options with useful colors/icons when possible."#
 }
@@ -657,7 +658,8 @@ fn column_properties(include_name_type: bool) -> Value {
         "range_by_default".to_string(),
         json!({"type": ["boolean", "null"], "description": "date columns: use ranges by default."}),
     );
-    properties.insert("relation".to_string(), json!({"type": ["string", "null"], "description": "relation target collection path. Relation field values are linked entry paths, not row IDs."}));
+    properties.insert("relation".to_string(), json!({"type": ["string", "null"], "description": "relation target collection path in the target scope. Relation field values are linked entry paths inside this collection, not row IDs."}));
+    properties.insert("relation_scope".to_string(), relation_scope_schema());
     properties.insert(
         "limit".to_string(),
         json!({"type": ["string", "null"], "enum": ["one", null]}),
@@ -670,6 +672,25 @@ fn column_properties(include_name_type: bool) -> Value {
     properties.insert("next".to_string(), json!({"type": ["integer", "null"], "minimum": 1, "description": "unique_id next counter. unique_id values are read-only on entries."}));
     properties.insert("multiple".to_string(), json!({"type": ["boolean", "null"], "description": "actor columns: true allows multiple canonical email values."}));
     Value::Object(properties)
+}
+
+fn relation_scope_schema() -> Value {
+    json!({
+        "description": "Optional relation target scope. Omit or null for the current scope; use \"root\" for the project root; use {\"type\":\"space\",\"id\":\"<spaceId>\"} for a registered ready child space. Cross-scope relations do not support two_way.",
+        "anyOf": [
+            { "type": "null" },
+            { "type": "string", "enum": ["root"] },
+            {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "type": { "type": "string", "enum": ["space"] },
+                    "id": { "type": "string", "description": "Svode child space id from list_spaces." }
+                },
+                "required": ["type", "id"]
+            }
+        ]
+    })
 }
 
 fn option_schema() -> Value {
@@ -890,6 +911,16 @@ mod tests {
     #[test]
     fn unique_id_next_schema_matches_backend_minimum() {
         assert_eq!(column_schema()["properties"]["next"]["minimum"], json!(1));
+    }
+
+    #[test]
+    fn column_schema_documents_relation_scope() {
+        let relation_scope = &column_schema()["properties"]["relation_scope"];
+        assert_eq!(relation_scope["anyOf"][1]["enum"], json!(["root"]));
+        assert_eq!(
+            relation_scope["anyOf"][2]["properties"]["type"]["enum"],
+            json!(["space"])
+        );
     }
 
     #[test]
