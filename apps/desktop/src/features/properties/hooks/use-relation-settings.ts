@@ -93,7 +93,6 @@ export function useRelationSettings({
         ];
   }, [collections, relation, relationOptionValue, relationScope, spaces]);
   const twoWay = Boolean(column.twoWay);
-  const twoWayAvailable = relationScope === null;
 
   const loadDiagnostics = useCallback(
     async (cancelled?: () => boolean) => {
@@ -106,6 +105,7 @@ export function useRelationSettings({
       try {
         const next = await diagnoseTwoWayRelation({
           spacePath,
+          projectPath,
           collectionPath,
           column: column.name,
         });
@@ -123,7 +123,7 @@ export function useRelationSettings({
         if (!cancelled?.()) setDiagnosticsLoading(false);
       }
     },
-    [collectionPath, column.name, spacePath, twoWay],
+    [collectionPath, column.name, projectPath, spacePath, twoWay],
   );
 
   useEffect(() => {
@@ -132,7 +132,7 @@ export function useRelationSettings({
     return () => {
       cancelled = true;
     };
-  }, [loadDiagnostics, column.relation, column.twoWay]);
+  }, [loadDiagnostics, column.relation, column.relationScope, column.twoWay]);
 
   const patchRelation = useCallback(
     (patch: ColumnPatch) => {
@@ -150,7 +150,6 @@ export function useRelationSettings({
       patchRelation({
         relation: next.relation,
         relationScope: next.relationScope,
-        ...(next.relationScope ? { twoWay: null } : {}),
       });
     },
     [patchRelation],
@@ -197,7 +196,6 @@ export function useRelationSettings({
     relation: relationOptionValue,
     options,
     twoWay,
-    twoWayAvailable,
     reverseName,
     setReverseName,
     diagnostics,

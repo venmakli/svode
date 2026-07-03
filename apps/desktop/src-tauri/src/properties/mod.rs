@@ -863,6 +863,131 @@ fn relation_is_current_scope(column: &Column) -> bool {
     column.relation_scope.is_none()
 }
 
+fn same_fs_path(left: &str, right: &str) -> bool {
+    let normalize = |path: &str| {
+        Path::new(path)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(path))
+            .to_string_lossy()
+            .replace('\\', "/")
+            .trim_end_matches('/')
+            .to_string()
+    };
+    normalize(left) == normalize(right)
+}
+
+fn space_scope_from_project(
+    space: &str,
+    project_path: Option<&str>,
+) -> Result<Option<RelationScope>, AppError> {
+    let Some(project) = project_path.map(str::trim).filter(|path| !path.is_empty()) else {
+        return Ok(None);
+    };
+    if same_fs_path(space, project) {
+        return Ok(Some(RelationScope::Root));
+    }
+    let config = config::read_space_config(Path::new(project))?;
+    for space_ref in config.spaces.as_deref().unwrap_or(&[]) {
+        let candidate = Path::new(project).join(&space_ref.path);
+        if same_fs_path(space, &candidate.to_string_lossy()) {
+            return Ok(Some(RelationScope::Space {
+                id: space_ref.id.clone(),
+            }));
+        }
+    }
+    Ok(None)
+}
+
+fn reverse_relation_scope_for_target(
+    space: &str,
+    project_path: Option<&str>,
+    target_scope: Option<&RelationScope>,
+) -> Result<Option<RelationScope>, AppError> {
+    let target_space = required_relation_target_space_path(space, project_path, target_scope)?;
+    if same_fs_path(space, &target_space) {
+        return Ok(None);
+    }
+    match space_scope_from_project(space, project_path)? {
+        Some(RelationScope::Root) => Ok(Some(RelationScope::Root)),
+        Some(RelationScope::Space { id }) => Ok(Some(RelationScope::Space { id })),
+        None => Err(schema_error(
+            "source space is not registered in project; cannot create cross-scope two-way relation",
+        )),
+    }
+}
+
+fn relation_target_pair(
+    space: &str,
+    project_path: Option<&str>,
+    column: &Column,
+) -> Result<Option<(String, String, Option<RelationScope>)>, AppError> {
+    if column.type_ != PropertyType::Relation {
+        return Ok(None);
+    }
+    let Some(relation) = column.relation.as_deref() else {
+        return Ok(None);
+    };
+    let relation = normalize_collection_path(relation)?;
+    let target_space =
+        required_relation_target_space_path(space, project_path, column.relation_scope.as_ref())?;
+    let reverse_scope =
+        reverse_relation_scope_for_target(space, project_path, column.relation_scope.as_ref())?;
+    Ok(Some((target_space, relation, reverse_scope)))
+}
+
+fn project_relation_scan_spaces(
+    space: &str,
+    project_path: Option<&str>,
+) -> Result<Vec<String>, AppError> {
+    let mut spaces = Vec::new();
+    let mut push_space = |candidate: String| {
+        if !spaces
+            .iter()
+            .any(|existing: &String| same_fs_path(existing, &candidate))
+        {
+            spaces.push(candidate);
+        }
+    };
+    push_space(space.to_string());
+    let Some(project) = project_path.map(str::trim).filter(|path| !path.is_empty()) else {
+        return Ok(spaces);
+    };
+    push_space(project.to_string());
+    let config = config::read_space_config(Path::new(project))?;
+    for space_ref in config.spaces.as_deref().unwrap_or(&[]) {
+        push_space(
+            Path::new(project)
+                .join(&space_ref.path)
+                .to_string_lossy()
+                .to_string(),
+        );
+    }
+    Ok(spaces)
+}
+
+fn relation_column_targets_space(
+    source_space: &str,
+    project_path: Option<&str>,
+    column: &Column,
+    target_space: &str,
+) -> Result<Option<String>, AppError> {
+    if column.type_ != PropertyType::Relation {
+        return Ok(None);
+    }
+    let Some(relation) = column.relation.as_deref() else {
+        return Ok(None);
+    };
+    let Some(resolved_target_space) =
+        relation_target_space_path(source_space, project_path, column.relation_scope.as_ref())?
+    else {
+        return Ok(None);
+    };
+    if !same_fs_path(&resolved_target_space, target_space) {
+        return Ok(None);
+    }
+    Ok(Some(normalize_collection_path(relation)?))
+}
+
 fn join_collection_value(collection_path: &str, value: &str) -> String {
     let collection = collection_root_for_fs(collection_path);
     if collection.is_empty() {
@@ -932,17 +1057,35 @@ fn canonicalize_relation_target_value(
     value_relative_to_collection(relation, &target_rel)
 }
 
+#[allow(dead_code)]
 fn ensure_compatible_reverse(
     reverse: &Column,
     current_collection: &str,
     current_column: &str,
 ) -> Result<(), AppError> {
-    ensure_compatible_reverse_with_limit_policy(reverse, current_collection, current_column, false)
+    ensure_compatible_reverse_with_scope(reverse, current_collection, None, current_column, false)
 }
 
+#[allow(dead_code)]
 fn ensure_compatible_reverse_with_limit_policy(
     reverse: &Column,
     current_collection: &str,
+    current_column: &str,
+    allow_limit_one: bool,
+) -> Result<(), AppError> {
+    ensure_compatible_reverse_with_scope(
+        reverse,
+        current_collection,
+        None,
+        current_column,
+        allow_limit_one,
+    )
+}
+
+fn ensure_compatible_reverse_with_scope(
+    reverse: &Column,
+    current_collection: &str,
+    expected_relation_scope: Option<&RelationScope>,
     current_column: &str,
     allow_limit_one: bool,
 ) -> Result<(), AppError> {
@@ -959,6 +1102,12 @@ fn ensure_compatible_reverse_with_limit_policy(
         return Err(schema_error(format!(
             "reverse column '{}' points to '{}', expected '{}'",
             reverse.name, relation, current_collection
+        )));
+    }
+    if reverse.relation_scope.as_ref() != expected_relation_scope {
+        return Err(schema_error(format!(
+            "reverse column '{}' points to a different relation scope",
+            reverse.name
         )));
     }
     if !current_column.is_empty()
@@ -1091,22 +1240,56 @@ pub fn schema_mutation_paths(
     Ok(paths)
 }
 
+#[allow(dead_code)]
 pub fn schema_column_mutation_paths(
     space: &str,
     collection_path: &str,
     column: &Column,
     include_markdown: bool,
 ) -> Result<Vec<PathBuf>, AppError> {
+    schema_column_mutation_paths_with_project(
+        space,
+        collection_path,
+        column,
+        include_markdown,
+        None,
+    )
+}
+
+pub fn schema_column_mutation_paths_with_project(
+    space: &str,
+    collection_path: &str,
+    column: &Column,
+    include_markdown: bool,
+    project_path: Option<&str>,
+) -> Result<Vec<PathBuf>, AppError> {
     let mut paths = schema_mutation_paths(space, collection_path, include_markdown)?;
-    extend_relation_side_effect_paths(space, collection_path, column, &mut paths)?;
+    extend_relation_side_effect_paths(space, project_path, collection_path, column, &mut paths)?;
     Ok(paths)
 }
 
+#[allow(dead_code)]
 pub fn schema_column_name_mutation_paths(
     space: &str,
     collection_path: &str,
     column_name: &str,
     include_markdown: bool,
+) -> Result<Vec<PathBuf>, AppError> {
+    schema_column_name_mutation_paths_with_project(
+        space,
+        collection_path,
+        column_name,
+        include_markdown,
+        None,
+    )
+}
+
+pub fn schema_column_name_mutation_paths_with_project(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+    include_markdown: bool,
+    project_path: Option<&str>,
 ) -> Result<Vec<PathBuf>, AppError> {
     let schema = read_schema_or_default(space, collection_path)?;
     if let Some(column) = schema
@@ -1114,30 +1297,34 @@ pub fn schema_column_name_mutation_paths(
         .iter()
         .find(|column| column.name == column_name)
     {
-        return schema_column_mutation_paths(space, collection_path, column, include_markdown);
+        return schema_column_mutation_paths_with_project(
+            space,
+            collection_path,
+            column,
+            include_markdown,
+            project_path,
+        );
     }
     schema_mutation_paths(space, collection_path, include_markdown)
 }
 
 fn extend_relation_side_effect_paths(
     space: &str,
+    project_path: Option<&str>,
     collection_path: &str,
     column: &Column,
     paths: &mut Vec<PathBuf>,
 ) -> Result<(), AppError> {
-    if column.type_ != PropertyType::Relation
-        || column.two_way.is_none()
-        || !relation_is_current_scope(column)
-    {
+    if column.type_ != PropertyType::Relation || column.two_way.is_none() {
         return Ok(());
     }
-    let Some(relation) = column.relation.as_deref() else {
+    let Some((target_space, relation, _)) = relation_target_pair(space, project_path, column)?
+    else {
         return Ok(());
     };
-    let relation = normalize_collection_path(relation)?;
-    paths.push(collection_dir(space, &relation).join(SCHEMA_FILE));
+    paths.push(collection_dir(&target_space, &relation).join(SCHEMA_FILE));
     paths.extend(collection_markdown_files(space, collection_path)?);
-    paths.extend(collection_markdown_files(space, &relation)?);
+    paths.extend(collection_markdown_files(&target_space, &relation)?);
     Ok(())
 }
 
@@ -1160,16 +1347,23 @@ fn normalize_column_relation_paths(column: &mut Column) -> Result<(), AppError> 
         let trimmed = value.trim().to_string();
         (!trimmed.is_empty()).then_some(trimmed)
     });
-    if column.relation_scope.is_some() {
-        column.two_way = None;
-    }
     Ok(())
 }
 
+#[allow(dead_code)]
 fn ensure_two_way_schema_and_values(
     space: &str,
     collection_path: &str,
     column: &Column,
+) -> Result<(), AppError> {
+    ensure_two_way_schema_and_values_with_project(space, collection_path, column, None)
+}
+
+fn ensure_two_way_schema_and_values_with_project(
+    space: &str,
+    collection_path: &str,
+    column: &Column,
+    project_path: Option<&str>,
 ) -> Result<(), AppError> {
     if column.type_ != PropertyType::Relation {
         return Ok(());
@@ -1177,20 +1371,31 @@ fn ensure_two_way_schema_and_values(
     let Some(reverse_name) = column.two_way.as_deref() else {
         return Ok(());
     };
-    let relation = column.relation.as_deref().ok_or_else(|| {
+    column.relation.as_deref().ok_or_else(|| {
         schema_error(format!(
             "relation column '{}' requires relation",
             column.name
         ))
     })?;
+    let Some((target_space, relation, reverse_scope)) =
+        relation_target_pair(space, project_path, column)?
+    else {
+        return Ok(());
+    };
     let source_collection = collection_root_for_schema(collection_path);
-    let mut reverse_schema = read_schema_or_default(space, relation)?;
+    let mut reverse_schema = read_schema_or_default(&target_space, &relation)?;
     if let Some(existing) = reverse_schema
         .columns
         .iter_mut()
         .find(|existing| existing.name == reverse_name)
     {
-        ensure_compatible_reverse(existing, &source_collection, &column.name)?;
+        ensure_compatible_reverse_with_scope(
+            existing,
+            &source_collection,
+            reverse_scope.as_ref(),
+            &column.name,
+            false,
+        )?;
         existing.two_way = Some(column.name.clone());
     } else {
         reverse_schema.columns.push(Column {
@@ -1206,7 +1411,7 @@ fn ensure_two_way_schema_and_values(
             time_by_default: None,
             range_by_default: None,
             relation: Some(source_collection.clone()),
-            relation_scope: None,
+            relation_scope: reverse_scope.clone(),
             limit: None,
             two_way: Some(column.name.clone()),
             prefix: None,
@@ -1214,28 +1419,61 @@ fn ensure_two_way_schema_and_values(
             multiple: None,
         });
     }
-    write_schema(space, relation, &reverse_schema)?;
-    materialize_two_way_reverse_values(space, collection_path, column)
+    write_schema_with_project(&target_space, &relation, &reverse_schema, project_path)?;
+    materialize_two_way_reverse_values_with_project(space, project_path, collection_path, column)
 }
 
+#[allow(dead_code)]
 fn materialize_two_way_reverse_values(
     space: &str,
     collection_path: &str,
     column: &Column,
 ) -> Result<(), AppError> {
-    materialize_two_way_reverse_values_with_limit_policy(space, collection_path, column, false)
+    materialize_two_way_reverse_values_with_project(space, None, collection_path, column)
 }
 
+fn materialize_two_way_reverse_values_with_project(
+    space: &str,
+    project_path: Option<&str>,
+    collection_path: &str,
+    column: &Column,
+) -> Result<(), AppError> {
+    materialize_two_way_reverse_values_with_limit_policy(
+        space,
+        project_path,
+        collection_path,
+        column,
+        false,
+    )
+}
+
+#[allow(dead_code)]
 fn materialize_two_way_reverse_values_allowing_limit_one_reverse(
     space: &str,
     collection_path: &str,
     column: &Column,
 ) -> Result<(), AppError> {
-    materialize_two_way_reverse_values_with_limit_policy(space, collection_path, column, true)
+    materialize_two_way_reverse_values_with_limit_policy(space, None, collection_path, column, true)
+}
+
+fn materialize_two_way_reverse_values_allowing_limit_one_reverse_with_project(
+    space: &str,
+    project_path: Option<&str>,
+    collection_path: &str,
+    column: &Column,
+) -> Result<(), AppError> {
+    materialize_two_way_reverse_values_with_limit_policy(
+        space,
+        project_path,
+        collection_path,
+        column,
+        true,
+    )
 }
 
 fn materialize_two_way_reverse_values_with_limit_policy(
     space: &str,
+    project_path: Option<&str>,
     collection_path: &str,
     column: &Column,
     allow_limit_one_reverse: bool,
@@ -1243,12 +1481,17 @@ fn materialize_two_way_reverse_values_with_limit_policy(
     let Some(reverse_name) = column.two_way.as_deref() else {
         return Ok(());
     };
-    let relation = column.relation.as_deref().ok_or_else(|| {
+    column.relation.as_deref().ok_or_else(|| {
         schema_error(format!(
             "relation column '{}' requires relation",
             column.name
         ))
     })?;
+    let Some((target_space, relation, reverse_scope)) =
+        relation_target_pair(space, project_path, column)?
+    else {
+        return Ok(());
+    };
     let source_collection = collection_root_for_schema(collection_path);
     for file in collection_markdown_files(space, collection_path)? {
         let rel = file
@@ -1259,11 +1502,12 @@ fn materialize_two_way_reverse_values_with_limit_policy(
         let source_value = value_relative_to_collection(&source_collection, &rel)?;
         let values = read_relation_field_values_from_file(&file, column)?;
         sync_reverse_relation_values_with_limit_policy(
-            space,
-            relation,
+            &target_space,
+            &relation,
             reverse_name,
             &column.name,
             &source_collection,
+            reverse_scope.as_ref(),
             &source_value,
             &[],
             &values,
@@ -1273,8 +1517,19 @@ fn materialize_two_way_reverse_values_with_limit_policy(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn update_reverse_pair_name(
     space: &str,
+    collection_path: &str,
+    old_column: &Column,
+    new_name: &str,
+) -> Result<(), AppError> {
+    update_reverse_pair_name_with_project(space, None, collection_path, old_column, new_name)
+}
+
+fn update_reverse_pair_name_with_project(
+    space: &str,
+    project_path: Option<&str>,
     collection_path: &str,
     old_column: &Column,
     new_name: &str,
@@ -1282,60 +1537,75 @@ fn update_reverse_pair_name(
     let Some(reverse_name) = old_column.two_way.as_deref() else {
         return Ok(());
     };
-    let Some(relation) = old_column.relation.as_deref() else {
+    let Some((target_space, relation, reverse_scope)) =
+        relation_target_pair(space, project_path, old_column)?
+    else {
         return Ok(());
     };
-    let mut reverse_schema = read_schema_or_default(space, relation)?;
+    let mut reverse_schema = read_schema_or_default(&target_space, &relation)?;
     if let Some(reverse) = reverse_schema
         .columns
         .iter_mut()
         .find(|column| column.name == reverse_name && column.type_ == PropertyType::Relation)
     {
-        ensure_compatible_reverse(
+        ensure_compatible_reverse_with_scope(
             reverse,
             &collection_root_for_schema(collection_path),
+            reverse_scope.as_ref(),
             &old_column.name,
+            false,
         )?;
         reverse.two_way = Some(new_name.to_string());
-        write_schema(space, relation, &reverse_schema)?;
+        write_schema_with_project(&target_space, &relation, &reverse_schema, project_path)?;
     }
     Ok(())
 }
 
+#[allow(dead_code)]
 fn detach_two_way_relation(
     space: &str,
     _collection_path: &str,
     column: &Column,
     delete_reverse_column: bool,
 ) -> Result<(), AppError> {
+    detach_two_way_relation_with_project(space, None, column, delete_reverse_column)
+}
+
+fn detach_two_way_relation_with_project(
+    space: &str,
+    project_path: Option<&str>,
+    column: &Column,
+    delete_reverse_column: bool,
+) -> Result<(), AppError> {
     let Some(reverse_name) = column.two_way.as_deref() else {
         return Ok(());
     };
-    let Some(relation) = column.relation.as_deref() else {
+    let Some((target_space, relation, _)) = relation_target_pair(space, project_path, column)?
+    else {
         return Ok(());
     };
     if delete_reverse_column {
-        let mut reverse_schema = read_schema_or_default(space, relation)?;
+        let mut reverse_schema = read_schema_or_default(&target_space, &relation)?;
         let before = reverse_schema.columns.len();
         reverse_schema
             .columns
             .retain(|candidate| candidate.name != reverse_name);
         if reverse_schema.columns.len() != before {
             strip_string_refs_in_views(&mut reverse_schema.views, reverse_name);
-            write_schema(space, relation, &reverse_schema)?;
+            write_schema_with_project(&target_space, &relation, &reverse_schema, project_path)?;
         }
     } else {
-        let mut reverse_schema = read_schema_or_default(space, relation)?;
+        let mut reverse_schema = read_schema_or_default(&target_space, &relation)?;
         if let Some(reverse) = reverse_schema
             .columns
             .iter_mut()
             .find(|candidate| candidate.name == reverse_name)
         {
             reverse.two_way = None;
-            write_schema(space, relation, &reverse_schema)?;
+            write_schema_with_project(&target_space, &relation, &reverse_schema, project_path)?;
         }
     }
-    for file in collection_markdown_files(space, relation)? {
+    for file in collection_markdown_files(&target_space, &relation)? {
         mutate_frontmatter(&file, |meta| {
             meta.extra.remove(reverse_name);
             Ok(())
@@ -1344,7 +1614,92 @@ fn detach_two_way_relation(
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn cascade_clean_deleted_entries(
+    space: &str,
+    deleted_paths: &[String],
+) -> Result<Vec<PathBuf>, AppError> {
+    cascade_clean_deleted_entries_with_project(space, None, deleted_paths)
+}
+
+pub fn cascade_clean_deleted_entries_with_project(
+    space: &str,
+    project_path: Option<&str>,
+    deleted_paths: &[String],
+) -> Result<Vec<PathBuf>, AppError> {
+    if deleted_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut touched = Vec::new();
+    let scan_spaces = project_relation_scan_spaces(space, project_path)?;
+    for source_space in &scan_spaces {
+        for collection in list_collections(source_space)? {
+            touched.extend(collection_markdown_files(source_space, &collection.path)?);
+        }
+    }
+    let mut changed = Vec::new();
+    with_rollback(touched, || {
+        for source_space in &scan_spaces {
+            for collection in list_collections(source_space)? {
+                let schema = read_schema_or_default(source_space, &collection.path)?;
+                let relation_columns: Vec<(Column, String)> = schema
+                    .columns
+                    .iter()
+                    .filter_map(|column| {
+                        relation_column_targets_space(source_space, project_path, column, space)
+                            .transpose()
+                            .map(|relation| relation.map(|relation| (column.clone(), relation)))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                if relation_columns.is_empty() {
+                    continue;
+                }
+                for file in collection_markdown_files(source_space, &collection.path)? {
+                    let did_change = mutate_frontmatter(&file, |meta| {
+                        for (column, relation) in &relation_columns {
+                            let deleted_values = deleted_paths
+                                .iter()
+                                .filter_map(|path| {
+                                    value_relative_to_collection(relation, path).ok()
+                                })
+                                .collect::<HashSet<_>>();
+                            if deleted_values.is_empty() {
+                                continue;
+                            }
+                            let Some(existing) = meta.extra.get(&column.name).cloned() else {
+                                continue;
+                            };
+                            let mut values = relation_values_from_value(column, &existing)?;
+                            let before = values.len();
+                            values.retain(|value| !deleted_values.contains(value));
+                            if values.len() != before {
+                                let next = relation_value_from_values(column, values);
+                                if next.is_null()
+                                    || next
+                                        .as_sequence()
+                                        .is_some_and(|sequence| sequence.is_empty())
+                                {
+                                    meta.extra.remove(&column.name);
+                                } else {
+                                    meta.extra.insert(column.name.clone(), next);
+                                }
+                            }
+                        }
+                        Ok(())
+                    })?;
+                    if did_change {
+                        changed.push(file);
+                    }
+                }
+            }
+        }
+        Ok(())
+    })?;
+    Ok(changed)
+}
+
+#[allow(dead_code)]
+fn cascade_clean_deleted_entries_current_scope(
     space: &str,
     deleted_paths: &[String],
 ) -> Result<Vec<PathBuf>, AppError> {
@@ -1872,12 +2227,6 @@ pub fn validate_schema(schema: &CollectionSchema) -> Result<(), AppError> {
                     ))
                 })?;
                 validate_relation_path_shape(relation)?;
-                if column.relation_scope.is_some() && column.two_way.is_some() {
-                    return Err(schema_error(format!(
-                        "relation column '{}' cannot be two-way across scopes",
-                        column.name
-                    )));
-                }
                 if let Some(two_way) = column.two_way.as_deref() {
                     validate_relation_column_name(two_way)?;
                 }
@@ -2732,6 +3081,8 @@ pub fn update_relation_entry_field(
         .ok_or_else(|| schema_error(format!("relation column '{field}' requires relation")))?;
     let target_space =
         required_relation_target_space_path(space, project_path, column.relation_scope.as_ref())?;
+    let reverse_scope =
+        reverse_relation_scope_for_target(space, project_path, column.relation_scope.as_ref())?;
     let normalized = normalize_relation_update_value(&target_space, column, relation, &value)?;
     let reverse_name = column.two_way.clone();
     let source_collection = rel_path_string(&collection_root);
@@ -2758,11 +3109,12 @@ pub fn update_relation_entry_field(
         let new_values = relation_values_from_value(column, &normalized)?;
         if let Some(reverse_name) = reverse_name.as_deref() {
             sync_reverse_relation_values(
-                space,
+                &target_space,
                 relation,
                 reverse_name,
                 field,
                 &source_collection,
+                reverse_scope.as_ref(),
                 &source_value,
                 &old_values,
                 &new_values,
@@ -2857,6 +3209,7 @@ fn sync_reverse_relation_values(
     reverse_name: &str,
     source_column_name: &str,
     source_collection: &str,
+    expected_reverse_scope: Option<&RelationScope>,
     source_value: &str,
     old_values: &[String],
     new_values: &[String],
@@ -2867,6 +3220,7 @@ fn sync_reverse_relation_values(
         reverse_name,
         source_column_name,
         source_collection,
+        expected_reverse_scope,
         source_value,
         old_values,
         new_values,
@@ -2880,6 +3234,7 @@ fn sync_reverse_relation_values_with_limit_policy(
     reverse_name: &str,
     source_column_name: &str,
     source_collection: &str,
+    expected_reverse_scope: Option<&RelationScope>,
     source_value: &str,
     old_values: &[String],
     new_values: &[String],
@@ -2895,6 +3250,7 @@ fn sync_reverse_relation_values_with_limit_policy(
             reverse_name,
             source_column_name,
             source_collection,
+            expected_reverse_scope,
             source_value,
             false,
             allow_limit_one_reverse,
@@ -2908,6 +3264,7 @@ fn sync_reverse_relation_values_with_limit_policy(
             reverse_name,
             source_column_name,
             source_collection,
+            expected_reverse_scope,
             source_value,
             true,
             allow_limit_one_reverse,
@@ -2922,6 +3279,7 @@ fn mutate_relation_reverse_file_with_limit_policy(
     reverse_name: &str,
     source_column_name: &str,
     source_collection: &str,
+    expected_reverse_scope: Option<&RelationScope>,
     source_value: &str,
     add: bool,
     allow_limit_one_reverse: bool,
@@ -2940,9 +3298,10 @@ fn mutate_relation_reverse_file_with_limit_policy(
     else {
         return Ok(());
     };
-    ensure_compatible_reverse_with_limit_policy(
+    ensure_compatible_reverse_with_scope(
         reverse_column,
         source_collection,
+        expected_reverse_scope,
         source_column_name,
         allow_limit_one_reverse,
     )?;
@@ -3818,7 +4177,7 @@ pub fn add_schema_column_with_project(
     if column.type_ == PropertyType::UniqueId {
         touched.extend(collection_markdown_files(space, collection_path)?);
     }
-    extend_relation_side_effect_paths(space, collection_path, &column, &mut touched)?;
+    extend_relation_side_effect_paths(space, project_path, collection_path, &column, &mut touched)?;
     with_rollback(touched, || {
         let mut schema = read_schema_or_default(space, collection_path)?;
         if schema
@@ -3839,7 +4198,12 @@ pub fn add_schema_column_with_project(
             materialize_unique_id_column(space, collection_path, &column.name)?;
             schema = read_schema_or_default(space, collection_path)?;
         }
-        ensure_two_way_schema_and_values(space, collection_path, &column)?;
+        ensure_two_way_schema_and_values_with_project(
+            space,
+            collection_path,
+            &column,
+            project_path,
+        )?;
         Ok(schema)
     })
 }
@@ -3897,12 +4261,24 @@ pub fn change_schema_type_with_warnings_and_project(
             .iter()
             .find(|column| column.name == column_name)
         {
-            extend_relation_side_effect_paths(space, collection_path, old_column, &mut touched)?;
+            extend_relation_side_effect_paths(
+                space,
+                project_path,
+                collection_path,
+                old_column,
+                &mut touched,
+            )?;
             let mut new_column = old_column.clone();
             new_column.type_ = new_type;
             normalize_column_for_new_type(&mut new_column, conversion_strategy.as_ref())?;
             normalize_column_relation_paths(&mut new_column)?;
-            extend_relation_side_effect_paths(space, collection_path, &new_column, &mut touched)?;
+            extend_relation_side_effect_paths(
+                space,
+                project_path,
+                collection_path,
+                &new_column,
+                &mut touched,
+            )?;
         }
     }
     with_rollback(touched, || {
@@ -3998,18 +4374,39 @@ pub fn change_schema_type_with_warnings_and_project(
             .is_some_and(|old| old.type_ == PropertyType::Relation && old.two_way.is_some())
             && column_snapshot.type_ != PropertyType::Relation
         {
-            detach_two_way_relation(space, collection_path, old_column.as_ref().unwrap(), true)?;
+            detach_two_way_relation_with_project(
+                space,
+                project_path,
+                old_column.as_ref().unwrap(),
+                true,
+            )?;
         }
-        ensure_two_way_schema_and_values(space, collection_path, &column_snapshot)?;
+        ensure_two_way_schema_and_values_with_project(
+            space,
+            collection_path,
+            &column_snapshot,
+            project_path,
+        )?;
         Ok((schema, warnings))
     })
 }
 
+#[allow(dead_code)]
 pub fn rename_schema_column(
     space: &str,
     collection_path: &str,
     old_name: &str,
     new_name: &str,
+) -> Result<CollectionSchema, AppError> {
+    rename_schema_column_with_project(space, collection_path, old_name, new_name, None)
+}
+
+pub fn rename_schema_column_with_project(
+    space: &str,
+    collection_path: &str,
+    old_name: &str,
+    new_name: &str,
+    project_path: Option<&str>,
 ) -> Result<CollectionSchema, AppError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     let mut touched = vec![schema_path];
@@ -4017,7 +4414,13 @@ pub fn rename_schema_column(
     {
         let schema = read_schema_or_default(space, collection_path)?;
         if let Some(old_column) = schema.columns.iter().find(|column| column.name == old_name) {
-            extend_relation_side_effect_paths(space, collection_path, old_column, &mut touched)?;
+            extend_relation_side_effect_paths(
+                space,
+                project_path,
+                collection_path,
+                old_column,
+                &mut touched,
+            )?;
         }
     }
     with_rollback(touched, || {
@@ -4044,7 +4447,13 @@ pub fn rename_schema_column(
 
         write_schema(space, collection_path, &schema)?;
         if old_column.type_ == PropertyType::Relation {
-            update_reverse_pair_name(space, collection_path, &old_column, new_name)?;
+            update_reverse_pair_name_with_project(
+                space,
+                project_path,
+                collection_path,
+                &old_column,
+                new_name,
+            )?;
         }
         Ok(schema)
     })
@@ -4078,14 +4487,26 @@ pub fn update_schema_column_with_project(
             if column.type_ == PropertyType::Relation {
                 touched.extend(collection_markdown_files(space, collection_path)?);
             }
-            extend_relation_side_effect_paths(space, collection_path, column, &mut touched)?;
+            extend_relation_side_effect_paths(
+                space,
+                project_path,
+                collection_path,
+                column,
+                &mut touched,
+            )?;
             let mut patched = column.clone();
             apply_column_patch(&mut patched, patch.clone())?;
             normalize_column_relation_paths(&mut patched)?;
             if is_actor_cardinality_change(column, &patched) {
                 touched.extend(collection_markdown_files(space, collection_path)?);
             }
-            extend_relation_side_effect_paths(space, collection_path, &patched, &mut touched)?;
+            extend_relation_side_effect_paths(
+                space,
+                project_path,
+                collection_path,
+                &patched,
+                &mut touched,
+            )?;
         }
     }
     with_rollback(touched, || {
@@ -4106,9 +4527,14 @@ pub fn update_schema_column_with_project(
                 || new_column.relation != old_column.relation
                 || new_column.relation_scope != old_column.relation_scope)
         {
-            detach_two_way_relation(space, collection_path, &old_column, true)?;
+            detach_two_way_relation_with_project(space, project_path, &old_column, true)?;
         }
-        ensure_two_way_schema_and_values(space, collection_path, &new_column)?;
+        ensure_two_way_schema_and_values_with_project(
+            space,
+            collection_path,
+            &new_column,
+            project_path,
+        )?;
         Ok(schema)
     })
 }
@@ -4170,11 +4596,22 @@ fn actor_value_for_cardinality_toggle(column: &Column, value: Value) -> Result<V
     normalize_actor_value(column, value)
 }
 
+#[allow(dead_code)]
 pub fn delete_schema_column(
     space: &str,
     collection_path: &str,
     column_name: &str,
     delete_values: bool,
+) -> Result<CollectionSchema, AppError> {
+    delete_schema_column_with_project(space, collection_path, column_name, delete_values, None)
+}
+
+pub fn delete_schema_column_with_project(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+    delete_values: bool,
+    project_path: Option<&str>,
 ) -> Result<CollectionSchema, AppError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     let mut touched = vec![schema_path];
@@ -4188,7 +4625,13 @@ pub fn delete_schema_column(
             .iter()
             .find(|column| column.name == column_name)
         {
-            extend_relation_side_effect_paths(space, collection_path, column, &mut touched)?;
+            extend_relation_side_effect_paths(
+                space,
+                project_path,
+                collection_path,
+                column,
+                &mut touched,
+            )?;
         }
     }
     with_rollback(touched, || {
@@ -4217,12 +4660,11 @@ pub fn delete_schema_column(
         }
 
         write_schema(space, collection_path, &schema)?;
-        if let Some(old_column) = old_column.as_ref().filter(|column| {
-            column.type_ == PropertyType::Relation
-                && column.two_way.is_some()
-                && relation_is_current_scope(column)
-        }) {
-            detach_two_way_relation(space, collection_path, old_column, true)?;
+        if let Some(old_column) = old_column
+            .as_ref()
+            .filter(|column| column.type_ == PropertyType::Relation && column.two_way.is_some())
+        {
+            detach_two_way_relation_with_project(space, project_path, old_column, true)?;
         }
         Ok(schema)
     })
@@ -5506,10 +5948,20 @@ pub fn query_relation_backlinks(
     Ok(out)
 }
 
+#[allow(dead_code)]
 pub fn diagnose_two_way_relation(
     space: &str,
     collection_path: &str,
     column_name: &str,
+) -> Result<RelationTwoWayDiagnostics, AppError> {
+    diagnose_two_way_relation_with_project(space, collection_path, column_name, None)
+}
+
+pub fn diagnose_two_way_relation_with_project(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+    project_path: Option<&str>,
 ) -> Result<RelationTwoWayDiagnostics, AppError> {
     let collection_path = collection_root_for_schema(collection_path);
     let schema = read_schema_or_default(space, &collection_path)?;
@@ -5525,10 +5977,19 @@ pub fn diagnose_two_way_relation(
         .map(normalize_collection_path)
         .transpose()?;
     let reverse_column = column.two_way.clone();
-    let choices = if relation_is_current_scope(&column)
-        && let Some(relation) = relation.as_deref()
-    {
-        compatible_reverse_choices(space, &collection_path, column_name, relation)?
+    let target_pair = if relation.is_some() {
+        relation_target_pair(space, project_path, &column)?
+    } else {
+        None
+    };
+    let choices = if let Some((target_space, relation, reverse_scope)) = target_pair.as_ref() {
+        compatible_reverse_choices(
+            target_space,
+            &collection_path,
+            reverse_scope.as_ref(),
+            column_name,
+            relation,
+        )?
     } else {
         Vec::new()
     };
@@ -5537,16 +5998,19 @@ pub fn diagnose_two_way_relation(
     let mut schema_message = None;
     let mut drift = RelationDriftSummary::default();
 
-    if let (Some(relation), Some(reverse_name)) = (relation.as_deref(), reverse_column.as_deref()) {
-        let reverse_schema = read_schema_or_default(space, relation)?;
+    if let (Some((target_space, relation, reverse_scope)), Some(reverse_name)) =
+        (target_pair.as_ref(), reverse_column.as_deref())
+    {
+        let reverse_schema = read_schema_or_default(target_space, relation)?;
         if let Some(reverse) = reverse_schema
             .columns
             .iter()
             .find(|candidate| candidate.name == reverse_name)
         {
-            match ensure_compatible_reverse_with_limit_policy(
+            match ensure_compatible_reverse_with_scope(
                 reverse,
                 &collection_path,
+                reverse_scope.as_ref(),
                 column_name,
                 true,
             ) {
@@ -5556,6 +6020,7 @@ pub fn diagnose_two_way_relation(
                         space,
                         &collection_path,
                         &column,
+                        target_space,
                         relation,
                         reverse,
                     )?;
@@ -5592,6 +6057,7 @@ pub fn diagnose_two_way_relation(
 fn compatible_reverse_choices(
     space: &str,
     collection_path: &str,
+    expected_relation_scope: Option<&RelationScope>,
     column_name: &str,
     relation: &str,
 ) -> Result<Vec<CompatibleReverseChoice>, AppError> {
@@ -5601,7 +6067,7 @@ fn compatible_reverse_choices(
         if candidate.type_ != PropertyType::Relation {
             continue;
         }
-        if !relation_is_current_scope(candidate) {
+        if candidate.relation_scope.as_ref() != expected_relation_scope {
             continue;
         }
         if candidate.limit == Some(RelationLimit::One) {
@@ -5634,14 +6100,15 @@ fn compatible_reverse_choices(
 }
 
 fn detect_relation_value_drift(
-    space: &str,
+    source_space: &str,
     collection_path: &str,
     column: &Column,
+    target_space: &str,
     relation: &str,
     reverse: &Column,
 ) -> Result<RelationDriftSummary, AppError> {
-    let source_edges = relation_edges_for_column(space, collection_path, column)?;
-    let reverse_edges = relation_edges_for_column(space, relation, reverse)?
+    let source_edges = relation_edges_for_column(source_space, collection_path, column)?;
+    let reverse_edges = relation_edges_for_column(target_space, relation, reverse)?
         .into_iter()
         .map(|edge| RelationEdge {
             source_value: edge.target_value,
@@ -5708,10 +6175,20 @@ fn relation_edges_for_column(
     Ok(edges)
 }
 
+#[allow(dead_code)]
 pub fn relation_repair_mutation_paths(
     space: &str,
     collection_path: &str,
     column_name: &str,
+) -> Result<Vec<PathBuf>, AppError> {
+    relation_repair_mutation_paths_with_project(space, collection_path, column_name, None)
+}
+
+pub fn relation_repair_mutation_paths_with_project(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+    project_path: Option<&str>,
 ) -> Result<Vec<PathBuf>, AppError> {
     let mut paths = Vec::new();
     paths.push(collection_dir(space, collection_path).join(SCHEMA_FILE));
@@ -5722,23 +6199,41 @@ pub fn relation_repair_mutation_paths(
         .iter()
         .find(|column| column.name == column_name && column.type_ == PropertyType::Relation)
     {
-        if relation_is_current_scope(column)
-            && let Some(relation) = column.relation.as_deref()
+        if let Some((target_space, relation, _)) =
+            relation_target_pair(space, project_path, column)?
         {
-            let relation = normalize_collection_path(relation)?;
-            paths.push(collection_dir(space, &relation).join(SCHEMA_FILE));
-            paths.extend(collection_markdown_files(space, &relation)?);
+            paths.push(collection_dir(&target_space, &relation).join(SCHEMA_FILE));
+            paths.extend(collection_markdown_files(&target_space, &relation)?);
         }
     }
     dedupe_paths(paths)
 }
 
+#[allow(dead_code)]
 pub fn repair_two_way_relation(
     space: &str,
     collection_path: &str,
     column_name: &str,
     strategy: &str,
     reverse_column: Option<&str>,
+) -> Result<(), AppError> {
+    repair_two_way_relation_with_project(
+        space,
+        collection_path,
+        column_name,
+        strategy,
+        reverse_column,
+        None,
+    )
+}
+
+pub fn repair_two_way_relation_with_project(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+    strategy: &str,
+    reverse_column: Option<&str>,
+    project_path: Option<&str>,
 ) -> Result<(), AppError> {
     let schema = read_schema_or_default(space, collection_path)?;
     let column = schema
@@ -5751,23 +6246,32 @@ pub fn repair_two_way_relation(
         .two_way
         .as_deref()
         .ok_or_else(|| schema_error(format!("relation column '{column_name}' is not two-way")))?;
-    let relation = column.relation.as_deref().ok_or_else(|| {
-        schema_error(format!("relation column '{column_name}' requires relation"))
-    })?;
+    let Some((target_space, relation, _reverse_scope)) =
+        relation_target_pair(space, project_path, &column)?
+    else {
+        return Err(schema_error(format!(
+            "relation column '{column_name}' requires relation"
+        )));
+    };
     let mut touched = Vec::new();
     touched.extend(collection_markdown_files(space, collection_path)?);
-    touched.extend(collection_markdown_files(space, relation)?);
+    touched.extend(collection_markdown_files(&target_space, &relation)?);
     touched.push(collection_dir(space, collection_path).join(SCHEMA_FILE));
-    touched.push(collection_dir(space, relation).join(SCHEMA_FILE));
+    touched.push(collection_dir(&target_space, &relation).join(SCHEMA_FILE));
     with_rollback(touched, || match strategy {
         "from_this_side" => {
-            for file in collection_markdown_files(space, relation)? {
+            for file in collection_markdown_files(&target_space, &relation)? {
                 mutate_frontmatter(&file, |meta| {
                     meta.extra.remove(reverse_name);
                     Ok(())
                 })?;
             }
-            materialize_two_way_reverse_values(space, collection_path, &column)
+            materialize_two_way_reverse_values_with_project(
+                space,
+                project_path,
+                collection_path,
+                &column,
+            )
         }
         "from_related_side" => {
             for file in collection_markdown_files(space, collection_path)? {
@@ -5776,7 +6280,7 @@ pub fn repair_two_way_relation(
                     Ok(())
                 })?;
             }
-            let reverse_schema = read_schema_or_default(space, relation)?;
+            let reverse_schema = read_schema_or_default(&target_space, &relation)?;
             let reverse = reverse_schema
                 .columns
                 .iter()
@@ -5787,18 +6291,36 @@ pub fn repair_two_way_relation(
                 .ok_or_else(|| {
                     schema_error(format!("reverse column '{reverse_name}' not found"))
                 })?;
-            materialize_two_way_reverse_values_allowing_limit_one_reverse(space, relation, &reverse)
+            materialize_two_way_reverse_values_allowing_limit_one_reverse_with_project(
+                &target_space,
+                project_path,
+                &relation,
+                &reverse,
+            )
         }
         "choose_reverse_column" => {
             let reverse_name = required_reverse_repair_column(reverse_column)?;
-            choose_two_way_reverse_column(space, collection_path, column_name, reverse_name)
+            choose_two_way_reverse_column(
+                space,
+                project_path,
+                collection_path,
+                column_name,
+                reverse_name,
+            )
         }
         "create_reverse_column" => {
             let reverse_name = reverse_column.unwrap_or(reverse_name);
-            create_two_way_reverse_column(space, collection_path, column_name, reverse_name)
+            create_two_way_reverse_column(
+                space,
+                project_path,
+                collection_path,
+                column_name,
+                reverse_name,
+            )
         }
         "detach_two_way" => detach_current_two_way_relation(
             space,
+            project_path,
             collection_path,
             column_name,
             reverse_column.or(Some(reverse_name)),
@@ -5820,6 +6342,7 @@ fn required_reverse_repair_column<'a>(
 
 fn choose_two_way_reverse_column(
     space: &str,
+    project_path: Option<&str>,
     collection_path: &str,
     column_name: &str,
     reverse_name: &str,
@@ -5827,45 +6350,52 @@ fn choose_two_way_reverse_column(
     validate_relation_column_name(reverse_name)?;
     let source_collection = collection_root_for_schema(collection_path);
     let mut schema = read_schema_or_default(space, collection_path)?;
-    let relation = {
+    let column_snapshot = {
         let column = find_column_mut(&mut schema, column_name)?;
         if column.type_ != PropertyType::Relation {
             return Err(schema_error(format!(
                 "column '{column_name}' is not a relation"
             )));
         }
-        column
-            .relation
-            .as_deref()
-            .map(normalize_collection_path)
-            .transpose()?
-            .ok_or_else(|| {
-                schema_error(format!("relation column '{column_name}' requires relation"))
-            })?
+        column.clone()
     };
-    let mut reverse_schema = read_schema_or_default(space, &relation)?;
+    let Some((target_space, relation, reverse_scope)) =
+        relation_target_pair(space, project_path, &column_snapshot)?
+    else {
+        return Err(schema_error(format!(
+            "relation column '{column_name}' requires relation"
+        )));
+    };
+    let mut reverse_schema = read_schema_or_default(&target_space, &relation)?;
     let reverse = reverse_schema
         .columns
         .iter_mut()
         .find(|candidate| candidate.name == reverse_name)
         .ok_or_else(|| schema_error(format!("reverse column '{reverse_name}' not found")))?;
-    ensure_compatible_reverse(reverse, &source_collection, column_name)?;
+    ensure_compatible_reverse_with_scope(
+        reverse,
+        &source_collection,
+        reverse_scope.as_ref(),
+        column_name,
+        false,
+    )?;
 
     find_column_mut(&mut schema, column_name)?.two_way = Some(reverse_name.to_string());
     reverse.two_way = Some(column_name.to_string());
-    write_schema(space, collection_path, &schema)?;
-    write_schema(space, &relation, &reverse_schema)?;
+    write_schema_with_project(space, collection_path, &schema, project_path)?;
+    write_schema_with_project(&target_space, &relation, &reverse_schema, project_path)?;
     let column = schema
         .columns
         .iter()
         .find(|column| column.name == column_name)
         .cloned()
         .ok_or_else(|| schema_error(format!("relation column '{column_name}' not found")))?;
-    materialize_two_way_reverse_values(space, collection_path, &column)
+    materialize_two_way_reverse_values_with_project(space, project_path, collection_path, &column)
 }
 
 fn create_two_way_reverse_column(
     space: &str,
+    project_path: Option<&str>,
     collection_path: &str,
     column_name: &str,
     reverse_name: &str,
@@ -5873,23 +6403,23 @@ fn create_two_way_reverse_column(
     validate_relation_column_name(reverse_name)?;
     let source_collection = collection_root_for_schema(collection_path);
     let mut schema = read_schema_or_default(space, collection_path)?;
-    let relation = {
+    let column_snapshot = {
         let column = find_column_mut(&mut schema, column_name)?;
         if column.type_ != PropertyType::Relation {
             return Err(schema_error(format!(
                 "column '{column_name}' is not a relation"
             )));
         }
-        column
-            .relation
-            .as_deref()
-            .map(normalize_collection_path)
-            .transpose()?
-            .ok_or_else(|| {
-                schema_error(format!("relation column '{column_name}' requires relation"))
-            })?
+        column.clone()
     };
-    let mut reverse_schema = read_schema_or_default(space, &relation)?;
+    let Some((target_space, relation, reverse_scope)) =
+        relation_target_pair(space, project_path, &column_snapshot)?
+    else {
+        return Err(schema_error(format!(
+            "relation column '{column_name}' requires relation"
+        )));
+    };
+    let mut reverse_schema = read_schema_or_default(&target_space, &relation)?;
     if reverse_schema
         .columns
         .iter()
@@ -5914,51 +6444,50 @@ fn create_two_way_reverse_column(
         time_by_default: None,
         range_by_default: None,
         relation: Some(source_collection),
-        relation_scope: None,
+        relation_scope: reverse_scope,
         limit: None,
         two_way: Some(column_name.to_string()),
         prefix: None,
         next: None,
         multiple: None,
     });
-    write_schema(space, collection_path, &schema)?;
-    write_schema(space, &relation, &reverse_schema)?;
+    write_schema_with_project(space, collection_path, &schema, project_path)?;
+    write_schema_with_project(&target_space, &relation, &reverse_schema, project_path)?;
     let column = schema
         .columns
         .iter()
         .find(|column| column.name == column_name)
         .cloned()
         .ok_or_else(|| schema_error(format!("relation column '{column_name}' not found")))?;
-    materialize_two_way_reverse_values(space, collection_path, &column)
+    materialize_two_way_reverse_values_with_project(space, project_path, collection_path, &column)
 }
 
 fn detach_current_two_way_relation(
     space: &str,
+    project_path: Option<&str>,
     collection_path: &str,
     column_name: &str,
     reverse_column: Option<&str>,
 ) -> Result<(), AppError> {
     let source_collection = collection_root_for_schema(collection_path);
     let mut schema = read_schema_or_default(space, collection_path)?;
-    let (relation, old_reverse_name) = {
+    let (column_snapshot, old_reverse_name) = {
         let column = find_column_mut(&mut schema, column_name)?;
         if column.type_ != PropertyType::Relation {
             return Err(schema_error(format!(
                 "column '{column_name}' is not a relation"
             )));
         }
-        let relation = column
-            .relation
-            .as_deref()
-            .map(normalize_collection_path)
-            .transpose()?
-            .ok_or_else(|| {
-                schema_error(format!("relation column '{column_name}' requires relation"))
-            })?;
+        let column_snapshot = column.clone();
         let old_reverse_name = column.two_way.take();
-        (relation, old_reverse_name)
+        (column_snapshot, old_reverse_name)
     };
-    write_schema(space, collection_path, &schema)?;
+    write_schema_with_project(space, collection_path, &schema, project_path)?;
+    let Some((target_space, relation, reverse_scope)) =
+        relation_target_pair(space, project_path, &column_snapshot)?
+    else {
+        return Ok(());
+    };
 
     let reverse_name = reverse_column
         .map(str::trim)
@@ -5966,15 +6495,23 @@ fn detach_current_two_way_relation(
         .map(ToOwned::to_owned)
         .or(old_reverse_name);
     if let Some(reverse_name) = reverse_name {
-        let mut reverse_schema = read_schema_or_default(space, &relation)?;
+        let mut reverse_schema = read_schema_or_default(&target_space, &relation)?;
         if let Some(reverse) = reverse_schema
             .columns
             .iter_mut()
             .find(|candidate| candidate.name == reverse_name)
         {
-            if ensure_compatible_reverse(reverse, &source_collection, column_name).is_ok() {
+            if ensure_compatible_reverse_with_scope(
+                reverse,
+                &source_collection,
+                reverse_scope.as_ref(),
+                column_name,
+                true,
+            )
+            .is_ok()
+            {
                 reverse.two_way = None;
-                write_schema(space, &relation, &reverse_schema)?;
+                write_schema_with_project(&target_space, &relation, &reverse_schema, project_path)?;
             }
         }
     }
@@ -8115,6 +8652,219 @@ views: []
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn cross_scope_two_way_root_to_space_materializes_and_syncs_reverse() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let child = root.join("spaces/design");
+        fs::create_dir_all(root.join("tasks")).unwrap();
+        fs::create_dir_all(child.join("decisions")).unwrap();
+        write_test_space_config(
+            root,
+            Some(vec![SpaceRef {
+                id: "design".to_string(),
+                path: "spaces/design".to_string(),
+                repo: None,
+            }]),
+            None,
+        );
+        write_test_space_config(&child, None, None);
+        fs::write(root.join("tasks/schema.yaml"), "columns: []\nviews: []\n").unwrap();
+        fs::write(
+            child.join("decisions/schema.yaml"),
+            "columns: []\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("tasks/a.md"),
+            "---\ntitle: A\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            child.join("decisions/decision-1.md"),
+            "---\ntitle: Decision 1\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+
+        let mut column = test_column("Decision", PropertyType::Relation);
+        column.relation = Some("decisions".to_string());
+        column.relation_scope = Some(RelationScope::Space {
+            id: "design".to_string(),
+        });
+        column.two_way = Some("Tasks".to_string());
+        add_schema_column_with_project(
+            root.to_str().unwrap(),
+            "tasks",
+            column,
+            Some(root.to_str().unwrap()),
+        )
+        .unwrap();
+
+        let reverse_schema = read_collection_schema(child.to_str().unwrap(), "decisions").unwrap();
+        let reverse = reverse_schema
+            .columns
+            .iter()
+            .find(|column| column.name == "Tasks")
+            .unwrap();
+        assert_eq!(reverse.relation.as_deref(), Some("tasks"));
+        assert_eq!(reverse.relation_scope, Some(RelationScope::Root));
+        assert_eq!(reverse.two_way.as_deref(), Some("Decision"));
+
+        update_relation_entry_field(
+            root.to_str().unwrap(),
+            Some(root.to_str().unwrap()),
+            "tasks/a.md",
+            "Decision",
+            Value::String("decision-1.md".to_string()),
+        )
+        .unwrap();
+        let raw = fs::read_to_string(child.join("decisions/decision-1.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        assert_eq!(
+            meta.extra
+                .get("Tasks")
+                .and_then(Value::as_sequence)
+                .and_then(|values| values.first())
+                .and_then(Value::as_str),
+            Some("a.md")
+        );
+
+        let diagnostics = diagnose_two_way_relation_with_project(
+            root.to_str().unwrap(),
+            "tasks",
+            "Decision",
+            Some(root.to_str().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(diagnostics.schema_status, RelationTwoWaySchemaStatus::Ok);
+        assert_eq!(diagnostics.drift.missing_reverse_count, 0);
+        assert_eq!(diagnostics.drift.missing_source_count, 0);
+
+        update_relation_entry_field(
+            child.to_str().unwrap(),
+            Some(root.to_str().unwrap()),
+            "decisions/decision-1.md",
+            "Tasks",
+            serde_yml::to_value(Vec::<String>::new()).unwrap(),
+        )
+        .unwrap();
+        let raw = fs::read_to_string(root.join("tasks/a.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        assert!(!meta.extra.contains_key("Decision"));
+    }
+
+    #[test]
+    fn cross_scope_two_way_space_to_root_materializes_and_syncs_reverse() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let child = root.join("spaces/design");
+        fs::create_dir_all(root.join("tasks")).unwrap();
+        fs::create_dir_all(child.join("decisions")).unwrap();
+        write_test_space_config(
+            root,
+            Some(vec![SpaceRef {
+                id: "design".to_string(),
+                path: "spaces/design".to_string(),
+                repo: None,
+            }]),
+            None,
+        );
+        write_test_space_config(&child, None, None);
+        fs::write(root.join("tasks/schema.yaml"), "columns: []\nviews: []\n").unwrap();
+        fs::write(
+            child.join("decisions/schema.yaml"),
+            "columns: []\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("tasks/a.md"),
+            "---\ntitle: A\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            child.join("decisions/decision-1.md"),
+            "---\ntitle: Decision 1\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+
+        let mut column = test_column("Task", PropertyType::Relation);
+        column.relation = Some("tasks".to_string());
+        column.relation_scope = Some(RelationScope::Root);
+        column.two_way = Some("Decisions".to_string());
+        add_schema_column_with_project(
+            child.to_str().unwrap(),
+            "decisions",
+            column,
+            Some(root.to_str().unwrap()),
+        )
+        .unwrap();
+
+        let reverse_schema = read_collection_schema(root.to_str().unwrap(), "tasks").unwrap();
+        let reverse = reverse_schema
+            .columns
+            .iter()
+            .find(|column| column.name == "Decisions")
+            .unwrap();
+        assert_eq!(reverse.relation.as_deref(), Some("decisions"));
+        assert_eq!(
+            reverse.relation_scope,
+            Some(RelationScope::Space {
+                id: "design".to_string()
+            })
+        );
+        assert_eq!(reverse.two_way.as_deref(), Some("Task"));
+
+        update_relation_entry_field(
+            child.to_str().unwrap(),
+            Some(root.to_str().unwrap()),
+            "decisions/decision-1.md",
+            "Task",
+            Value::String("a.md".to_string()),
+        )
+        .unwrap();
+        let raw = fs::read_to_string(root.join("tasks/a.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        assert_eq!(
+            meta.extra
+                .get("Decisions")
+                .and_then(Value::as_sequence)
+                .and_then(|values| values.first())
+                .and_then(Value::as_str),
+            Some("decision-1.md")
+        );
+
+        update_relation_entry_field(
+            root.to_str().unwrap(),
+            Some(root.to_str().unwrap()),
+            "tasks/a.md",
+            "Decisions",
+            serde_yml::to_value(Vec::<String>::new()).unwrap(),
+        )
+        .unwrap();
+        let raw = fs::read_to_string(child.join("decisions/decision-1.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        assert!(!meta.extra.contains_key("Task"));
+
+        update_relation_entry_field(
+            child.to_str().unwrap(),
+            Some(root.to_str().unwrap()),
+            "decisions/decision-1.md",
+            "Task",
+            Value::String("a.md".to_string()),
+        )
+        .unwrap();
+        entry::delete_with_project(
+            root.to_str().unwrap(),
+            "tasks/a.md",
+            None,
+            Some(root.to_str().unwrap()),
+        )
+        .unwrap();
+        let raw = fs::read_to_string(child.join("decisions/decision-1.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        assert!(!meta.extra.contains_key("Task"));
     }
 
     #[test]

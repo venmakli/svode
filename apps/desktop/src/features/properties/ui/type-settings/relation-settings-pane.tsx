@@ -39,7 +39,6 @@ export function RelationSettingsPane({
     relation,
     options,
     twoWay,
-    twoWayAvailable,
     reverseName,
     setReverseName,
     diagnostics,
@@ -72,18 +71,16 @@ export function RelationSettingsPane({
         checked={column.limit === "one"}
         onChange={(checked) => patchRelation({ limit: checked ? "one" : null })}
       />
-      {twoWayAvailable ? (
-        <ToggleRow
-          label={m.property_relation_show_related()}
-          checked={twoWay}
-          onChange={(checked) => {
-            const fallback =
-              reverseName.trim() || m.property_relation_reverse_default();
-            if (checked) setReverseName(fallback);
-            patchRelation({ twoWay: checked ? fallback : null });
-          }}
-        />
-      ) : null}
+      <ToggleRow
+        label={m.property_relation_show_related()}
+        checked={twoWay}
+        onChange={(checked) => {
+          const fallback =
+            reverseName.trim() || m.property_relation_reverse_default();
+          if (checked) setReverseName(fallback);
+          patchRelation({ twoWay: checked ? fallback : null });
+        }}
+      />
       {twoWay ? (
         <label className="flex items-center gap-2 text-sm">
           <span className="w-20 text-muted-foreground">

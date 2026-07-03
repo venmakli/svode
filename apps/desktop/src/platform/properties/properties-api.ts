@@ -442,6 +442,7 @@ export function queryRelationTargetEntries(input: {
 
 export function diagnoseTwoWayRelation(input: {
   spacePath: string;
+  projectPath?: string | null;
   collectionPath: string;
   column: string;
 }) {
@@ -451,6 +452,7 @@ export function diagnoseTwoWayRelation(input: {
       space: input.spacePath,
       collectionPath: input.collectionPath,
       column: input.column,
+      projectPath: input.projectPath ?? null,
     },
   );
 }

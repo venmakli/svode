@@ -119,6 +119,57 @@ fn rel_changed_path(space: &str, path: &Path) -> String {
         .replace('\\', "/")
 }
 
+fn grouped_abs_paths_by_space(
+    project_path: Option<&str>,
+    fallback_space: &str,
+    paths: &[PathBuf],
+) -> HashMap<PathBuf, Vec<PathBuf>> {
+    let mut spaces = vec![PathBuf::from(fallback_space)];
+    if let Some(project) = project_path.filter(|path| !path.is_empty()) {
+        let project_root = PathBuf::from(project);
+        if !spaces.iter().any(|space| same_path(space, &project_root)) {
+            spaces.push(project_root.clone());
+        }
+        match config::read_space_config(&project_root) {
+            Ok(config) => {
+                for space_ref in config.spaces.as_deref().unwrap_or(&[]) {
+                    let child = project_root.join(&space_ref.path);
+                    if !spaces.iter().any(|space| same_path(space, &child)) {
+                        spaces.push(child);
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::warn!("could not read project config for changed paths: {error}")
+            }
+        }
+    }
+    spaces.sort_by_key(|space| std::cmp::Reverse(space.as_os_str().len()));
+
+    let mut grouped: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+    for path in paths {
+        let owner = spaces
+            .iter()
+            .find(|space| path.starts_with(space))
+            .cloned()
+            .unwrap_or_else(|| PathBuf::from(fallback_space));
+        grouped.entry(owner).or_default().push(path.clone());
+    }
+    grouped
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    let normalize = |path: &Path| {
+        path.canonicalize()
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .replace('\\', "/")
+            .trim_end_matches('/')
+            .to_string()
+    };
+    normalize(left) == normalize(right)
+}
+
 fn push_unique_path(paths: &mut Vec<String>, path: String) {
     if !paths.iter().any(|existing| existing == &path) {
         paths.push(path);
@@ -1027,11 +1078,12 @@ pub async fn add_schema_column(
     } else {
         format!("Add column \"{}\"", column.name)
     };
-    let paths = properties::schema_column_mutation_paths(
+    let paths = properties::schema_column_mutation_paths_with_project(
         &space,
         &collection_path,
         &column,
         materializes_unique_id,
+        project_path.as_deref(),
     )?;
     let snapshot = snapshot_paths(&paths)?;
     let schema = properties::add_schema_column_with_project(
@@ -1061,11 +1113,12 @@ pub async fn change_schema_type(
         "Change column \"{column_name}\" type to {}",
         property_type_message(new_type)
     );
-    let mut paths = properties::schema_column_name_mutation_paths(
+    let mut paths = properties::schema_column_name_mutation_paths_with_project(
         &space,
         &collection_path,
         &column_name,
         true,
+        project_path.as_deref(),
     )?;
     let snapshotted = paths.clone();
     let snapshot = snapshot_paths(&snapshotted)?;
@@ -1086,7 +1139,13 @@ pub async fn change_schema_type(
         append_unsnapshotted_paths(
             &mut paths,
             &snapshotted,
-            properties::schema_column_mutation_paths(&space, &collection_path, column, true)?,
+            properties::schema_column_mutation_paths_with_project(
+                &space,
+                &collection_path,
+                column,
+                true,
+                project_path.as_deref(),
+            )?,
         );
     }
     let mut changed = changed_paths(snapshot)?;
@@ -1170,10 +1229,21 @@ pub async fn rename_schema_column(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
     let was_sensitive = collection_has_sensitive_columns(&space, &collection_path);
-    let paths =
-        properties::schema_column_name_mutation_paths(&space, &collection_path, &old_name, true)?;
+    let paths = properties::schema_column_name_mutation_paths_with_project(
+        &space,
+        &collection_path,
+        &old_name,
+        true,
+        project_path.as_deref(),
+    )?;
     let snapshot = snapshot_paths(&paths)?;
-    let schema = properties::rename_schema_column(&space, &collection_path, &old_name, &new_name)?;
+    let schema = properties::rename_schema_column_with_project(
+        &space,
+        &collection_path,
+        &old_name,
+        &new_name,
+        project_path.as_deref(),
+    )?;
     let paths = changed_paths(snapshot)?;
     let message = schema_commit_message_with_previous(
         &schema,
@@ -1195,11 +1265,12 @@ pub async fn update_schema_column(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
     let was_sensitive = collection_has_sensitive_columns(&space, &collection_path);
-    let mut paths = properties::schema_column_name_mutation_paths(
+    let mut paths = properties::schema_column_name_mutation_paths_with_project(
         &space,
         &collection_path,
         &column_name,
         false,
+        project_path.as_deref(),
     )?;
     let snapshotted = paths.clone();
     let snapshot = snapshot_paths(&snapshotted)?;
@@ -1219,11 +1290,12 @@ pub async fn update_schema_column(
         append_unsnapshotted_paths(
             &mut paths,
             &snapshotted,
-            properties::schema_column_mutation_paths(
+            properties::schema_column_mutation_paths_with_project(
                 &space,
                 &collection_path,
                 column,
                 column.type_ == PropertyType::Relation,
+                project_path.as_deref(),
             )?,
         );
     }
@@ -1259,8 +1331,13 @@ pub async fn delete_schema_column(
     let delete_values = delete_values.unwrap_or(false);
     let paths = properties::schema_mutation_paths(&space, &collection_path, delete_values)?;
     let snapshot = snapshot_paths(&paths)?;
-    let schema =
-        properties::delete_schema_column(&space, &collection_path, &column_name, delete_values)?;
+    let schema = properties::delete_schema_column_with_project(
+        &space,
+        &collection_path,
+        &column_name,
+        delete_values,
+        project_path.as_deref(),
+    )?;
     let paths = changed_paths(snapshot)?;
     let suffix = if delete_values { " and values" } else { "" };
     let message = schema_commit_message_with_previous(
@@ -1901,8 +1978,14 @@ pub fn diagnose_two_way_relation(
     space: String,
     collection_path: String,
     column: String,
+    project_path: Option<String>,
 ) -> Result<RelationTwoWayDiagnostics, AppError> {
-    properties::diagnose_two_way_relation(&space, &collection_path, &column)
+    properties::diagnose_two_way_relation_with_project(
+        &space,
+        &collection_path,
+        &column,
+        project_path.as_deref(),
+    )
 }
 
 #[tauri::command]
@@ -1916,14 +1999,20 @@ pub async fn repair_two_way_relation(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
-    let paths = properties::relation_repair_mutation_paths(&space, &collection_path, &column)?;
+    let paths = properties::relation_repair_mutation_paths_with_project(
+        &space,
+        &collection_path,
+        &column,
+        project_path.as_deref(),
+    )?;
     let snapshot = snapshot_paths(&paths)?;
-    properties::repair_two_way_relation(
+    properties::repair_two_way_relation_with_project(
         &space,
         &collection_path,
         &column,
         &strategy,
         reverse_column.as_deref(),
+        project_path.as_deref(),
     )?;
     let paths = changed_paths(snapshot)?;
     let message = if collection_has_sensitive_columns(&space, &collection_path) {
@@ -2169,7 +2258,14 @@ pub async fn delete_entry_shared(
     autocommit: Option<&AutocommitService>,
 ) -> Result<DeleteEntryCommandResult, AppError> {
     let backlink_index = backlinks_for_space(index_state, space).await;
-    let deleted = entry::delete(space, path, Some(&backlink_index))?;
+    let deleted = entry::delete_with_project(
+        space,
+        path,
+        Some(&backlink_index),
+        project_path.filter(|path| !path.is_empty()),
+    )?;
+    let cascade_touched_by_space =
+        grouped_abs_paths_by_space(project_path, space, &deleted.cascade_touched);
     let cascade_touched = deleted
         .cascade_touched
         .iter()
@@ -2212,29 +2308,40 @@ pub async fn delete_entry_shared(
             tracing::info!("delete_entry: running index.reindex.repair fallback");
             reindex_space_dir(index_state, space).await;
         } else if !deleted.cascade_touched.is_empty() {
-            update_index_paths_or_reindex(
-                index_state,
-                Some(proj),
-                space,
-                deleted.cascade_touched.clone(),
-                "delete_entry",
-            )
-            .await;
+            for (owner_space, paths) in &cascade_touched_by_space {
+                update_index_paths_or_reindex(
+                    index_state,
+                    Some(proj),
+                    &owner_space.to_string_lossy(),
+                    paths.clone(),
+                    "delete_entry",
+                )
+                .await;
+            }
         }
     } else {
         reindex_space_dir(index_state, space).await;
     }
     if let Some(autocommit) = autocommit {
-        let mut paths =
-            entry_paths_with_order(space, [abs_entry_path(space, &deleted.deleted_root)]);
-        paths.extend(deleted.cascade_touched.clone());
-        maybe_autocommit_structural_paths(
-            autocommit,
-            project_path,
-            space,
-            StructuralOp::Delete(entry_commit_name(space, path)),
-            paths,
-        );
+        let current_space = PathBuf::from(space);
+        let mut paths_by_space = cascade_touched_by_space;
+        paths_by_space
+            .entry(current_space.clone())
+            .or_default()
+            .extend(entry_paths_with_order(
+                space,
+                [abs_entry_path(space, &deleted.deleted_root)],
+            ));
+        let op = StructuralOp::Delete(entry_commit_name(space, path));
+        for (owner_space, paths) in paths_by_space {
+            maybe_autocommit_structural_paths(
+                autocommit,
+                project_path,
+                &owner_space.to_string_lossy(),
+                op.clone(),
+                paths,
+            );
+        }
     }
     Ok(DeleteEntryCommandResult {
         deleted_root: deleted.deleted_root,

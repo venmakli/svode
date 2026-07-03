@@ -1119,11 +1119,12 @@ async fn add_collection_column(
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
     let include_markdown = args.column.type_ == PropertyType::UniqueId;
-    let paths = properties::schema_column_mutation_paths(
+    let paths = properties::schema_column_mutation_paths_with_project(
         &space,
         &collection_path,
         &args.column,
         include_markdown,
+        Some(context.project_path.as_str()),
     )?;
     let schema = properties::add_schema_column_with_project(
         &space,
@@ -1146,11 +1147,12 @@ async fn update_collection_column(
     let (context, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
-    let paths = properties::schema_column_name_mutation_paths(
+    let paths = properties::schema_column_name_mutation_paths_with_project(
         &space,
         &collection_path,
         &args.column_name,
         true,
+        Some(context.project_path.as_str()),
     )?;
     let schema = properties::update_schema_column_with_project(
         &space,
@@ -1174,16 +1176,17 @@ async fn delete_collection_column(
     args: DeleteCollectionColumnArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
-    let (_, space) = resolve_space(app, args.space_id).await?;
+    let (context, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
     let delete_values = args.delete_values.unwrap_or(false);
     let paths = properties::schema_mutation_paths(&space, &collection_path, delete_values)?;
-    let schema = properties::delete_schema_column(
+    let schema = properties::delete_schema_column_with_project(
         &space,
         &collection_path,
         &args.column_name,
         delete_values,
+        Some(context.project_path.as_str()),
     )?;
     let changed_paths = rel_paths_from_space(&space, paths);
     Ok(ToolCallResult::ok(

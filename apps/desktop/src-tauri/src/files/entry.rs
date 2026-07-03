@@ -1979,10 +1979,20 @@ fn copy_dir_recursive(source: &Path, dest: &Path) -> Result<(), AppError> {
 }
 
 /// Delete an entry from disk. Removes from backlink index if provided.
+#[allow(dead_code)]
 pub fn delete(
     space: &str,
     path: &str,
     backlink_index: Option<&BacklinkIndex>,
+) -> Result<DeleteResult, AppError> {
+    delete_with_project(space, path, backlink_index, None)
+}
+
+pub fn delete_with_project(
+    space: &str,
+    path: &str,
+    backlink_index: Option<&BacklinkIndex>,
+    project_path: Option<&str>,
 ) -> Result<DeleteResult, AppError> {
     let requested_abs_path = resolve(space, path);
     let space_path = Path::new(space);
@@ -1994,11 +2004,14 @@ pub fn delete(
 
     let deleted_root = rel_from_abs(space_path, &abs_path);
     let deleted_paths = collect_deleted_entry_paths(space_path, &abs_path)?;
-    let cascade_touched =
-        match crate::properties::cascade_clean_deleted_entries(space, &deleted_paths) {
-            Ok(paths) => paths,
-            Err(error) => return Err(error),
-        };
+    let cascade_touched = match crate::properties::cascade_clean_deleted_entries_with_project(
+        space,
+        project_path,
+        &deleted_paths,
+    ) {
+        Ok(paths) => paths,
+        Err(error) => return Err(error),
+    };
 
     let delete_parent = abs_path.parent().unwrap_or(Path::new(space));
     let tombstone = unique_child_path(delete_parent, ".svode-delete", None);

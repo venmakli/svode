@@ -409,7 +409,7 @@ Property semantics:
 - unique_id is read-only after creation/materialization. Do not write unique_id through update_entry_fields.
 - date is for due dates, events, and calendar views. Calendar views require date_field.
 - email and phone should use typed email/phone fields and sensitivity pii for contact data.
-- relation columns use relation for the target collection path and optional relation_scope for a target outside the current scope. Omit relation_scope or set it null for the same scope; use "root" to target the project root; use {"type":"space","id":"<spaceId>"} to target a registered ready child space. Use list_spaces to discover space ids, and list_collections with that spaceId to discover target collection paths. Cross-scope relations do not support two_way.
+- relation columns use relation for the target collection path and optional relation_scope for a target outside the current scope. Omit relation_scope or set it null for the same scope; use "root" to target the project root; use {"type":"space","id":"<spaceId>"} to target a registered ready child space. Use list_spaces to discover space ids, and list_collections with that spaceId to discover target collection paths. two_way is supported for same-scope and root/child-space relations; the reverse column stores the reciprocal relation_scope.
 - relation values are path refs inside the target collection, not row IDs. For cross-scope relations the value is still relative to the target collection; the target scope lives in the schema column.
 - gallery views use card_cover. Board group_by should be status, select, or a single actor field.
 - For select/status fields, define options with useful colors/icons when possible."#
@@ -682,7 +682,7 @@ fn column_properties(include_name_type: bool) -> Value {
 
 fn relation_scope_schema() -> Value {
     json!({
-        "description": "Optional relation target scope. Omit or null for the current scope; use \"root\" for the project root; use {\"type\":\"space\",\"id\":\"<spaceId>\"} for a registered ready child space. Cross-scope relations do not support two_way.",
+        "description": "Optional relation target scope. Omit or null for the current scope; use \"root\" for the project root; use {\"type\":\"space\",\"id\":\"<spaceId>\"} for a registered ready child space. two_way is supported for same-scope and root/child-space relations; reverse columns use the reciprocal relation_scope.",
         "anyOf": [
             { "type": "null" },
             { "type": "string", "enum": ["root"] },

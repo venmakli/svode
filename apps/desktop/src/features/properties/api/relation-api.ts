@@ -91,16 +91,19 @@ export async function queryRelationTargets({
 
 export async function diagnoseTwoWayRelation({
   spacePath,
+  projectPath,
   collectionPath,
   column,
 }: {
   spacePath: string;
+  projectPath?: string | null;
   collectionPath: string;
   column: string;
 }) {
   return toRelationTwoWayDiagnostics(
     await propertiesPlatform.diagnoseTwoWayRelation({
       spacePath,
+      projectPath,
       collectionPath,
       column,
     }),
