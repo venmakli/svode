@@ -15,7 +15,10 @@ import {
 } from "./use-space-storage-config";
 import { useSpaceStorageInlineSpaces } from "./use-space-storage-inline-spaces";
 import { useSpaceStorageLfs } from "./use-space-storage-lfs";
-import { canApplyStorageStrategyDraft } from "../model/storage-strategy";
+import {
+  canApplyStorageStrategyDraft,
+  canRunLfsRemoteDiagnostic,
+} from "../model/storage-strategy";
 
 interface UseSpaceStorageSettingsOptions {
   open: boolean;
@@ -29,6 +32,7 @@ interface UseSpaceStorageSettingsOptions {
 export interface UseSpaceStorageSettingsResult {
   assetsStrategy: AssetsStrategy;
   savedAssetsStrategy: AssetsStrategy;
+  storageConfigLoaded: boolean;
   savedS3Config: AssetsS3Config | null;
   projectAssetsStrategy: AssetsStrategy;
   projectS3Config: AssetsS3Config | null;
@@ -92,15 +96,20 @@ export function useSpaceStorageSettings({
     projectPath,
     currentSpaceId,
   });
+  const lfsRemoteEnabled = canRunLfsRemoteDiagnostic({
+    configLoaded: storageConfig.loadedForCurrentTarget,
+    strategy: storageConfig.savedAssetsStrategy,
+  });
   const lfs = useSpaceStorageLfs({
     open,
     projectPath,
     currentSpaceId,
-    lfsRemoteEnabled: storageConfig.savedAssetsStrategy === "lfs-remote",
+    lfsRemoteEnabled,
   });
   const {
     assetsStrategy,
     savedAssetsStrategy,
+    loadedForCurrentTarget,
     savedS3Config,
     defaultS3Prefix,
     inheritedFromProject,
@@ -128,8 +137,9 @@ export function useSpaceStorageSettings({
   } = storageConfig;
   const [projectAssetsStrategy, setProjectAssetsStrategy] =
     useState<AssetsStrategy>("local");
-  const [projectS3Config, setProjectS3Config] =
-    useState<AssetsS3Config | null>(null);
+  const [projectS3Config, setProjectS3Config] = useState<AssetsS3Config | null>(
+    null,
+  );
   const {
     lfsAvailable,
     lfsVersion,
@@ -426,6 +436,7 @@ export function useSpaceStorageSettings({
   return {
     assetsStrategy,
     savedAssetsStrategy,
+    storageConfigLoaded: loadedForCurrentTarget,
     savedS3Config,
     projectAssetsStrategy,
     projectS3Config,

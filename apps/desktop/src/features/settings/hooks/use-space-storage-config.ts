@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import * as m from "@/paraglide/messages.js";
 import type { AssetsS3Config, AssetsStrategy } from "@/features/space";
-import {
-  checkS3Connection,
-  getAssetsConfig,
-  hasS3Credentials,
-} from "../api";
+import { checkS3Connection, getAssetsConfig, hasS3Credentials } from "../api";
 
 export type S3TestState = "idle" | "testing" | "ok" | "fail";
 
@@ -22,9 +18,11 @@ export function useSpaceStorageConfig({
   projectPath,
   currentSpaceId,
 }: UseSpaceStorageConfigOptions) {
+  const targetKey = storageTargetKey(projectPath, currentSpaceId);
   const [assetsStrategy, setAssetsStrategy] = useState<AssetsStrategy>("local");
   const [savedAssetsStrategy, setSavedAssetsStrategy] =
     useState<AssetsStrategy>("local");
+  const [loadedTargetKey, setLoadedTargetKey] = useState<string | null>(null);
   const [savedS3Config, setSavedS3Config] = useState<AssetsS3Config | null>(
     null,
   );
@@ -54,11 +52,10 @@ export function useSpaceStorageConfig({
     hasSavedS3Credentials && sameS3Connection(currentS3Config, savedS3Config);
   const canSaveS3 = Boolean(
     currentS3Config.endpoint &&
-      currentS3Config.bucket &&
-      currentS3Config.region &&
-      currentS3Config.prefix &&
-      (canUseSavedS3Credentials ||
-        (s3AccessKey.trim() && s3SecretKey.trim())),
+    currentS3Config.bucket &&
+    currentS3Config.region &&
+    currentS3Config.prefix &&
+    (canUseSavedS3Credentials || (s3AccessKey.trim() && s3SecretKey.trim())),
   );
 
   useEffect(() => {
@@ -98,6 +95,7 @@ export function useSpaceStorageConfig({
           if (cancelled) return;
           setAssetsStrategy(strategy);
           setSavedAssetsStrategy(strategy);
+          setLoadedTargetKey(targetKey);
           setSavedS3Config(s3 ?? null);
           setDefaultS3Prefix(defaultS3Prefix);
           setInheritedFromProject(inheritedFromProject);
@@ -115,12 +113,13 @@ export function useSpaceStorageConfig({
       )
       .catch((err) => {
         console.error("Failed to load storage settings:", err);
+        if (!cancelled) setLoadedTargetKey(null);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [open, spacePath, projectPath, currentSpaceId]);
+  }, [open, spacePath, projectPath, currentSpaceId, targetKey]);
 
   const testS3 = useCallback(async () => {
     if (!canTestS3) return;
@@ -177,6 +176,7 @@ export function useSpaceStorageConfig({
   return {
     assetsStrategy,
     savedAssetsStrategy,
+    loadedForCurrentTarget: loadedTargetKey === targetKey,
     savedS3Config,
     defaultS3Prefix,
     inheritedFromProject,
@@ -202,6 +202,10 @@ export function useSpaceStorageConfig({
     testS3,
     markStrategyApplied,
   };
+}
+
+function storageTargetKey(projectPath: string, spaceId: string | null) {
+  return `${projectPath}\u0000${spaceId ?? ""}`;
 }
 
 function sameS3Connection(

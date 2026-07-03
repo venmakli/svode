@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { CheckCircle2, Loader2 } from "lucide-react";
 import type { AssetsStrategy, LfsState, SpaceGitType } from "@/features/space";
+import { isLfsStorageStrategy } from "../model/storage-strategy";
 import type { UseSpaceStorageSettingsResult } from "../hooks/use-space-storage-settings";
 
 interface StorageSettingsSectionProps {
@@ -88,6 +89,11 @@ export function StorageSettingsSection({
     settings.savedAssetsStrategy === "lfs-s3"
       ? !settings.applyingStrategy && settings.canSaveS3
       : settings.canApplyStrategy;
+  const lfsStatePanelStrategy =
+    settings.storageConfigLoaded &&
+    isLfsStorageStrategy(settings.savedAssetsStrategy)
+      ? settings.savedAssetsStrategy
+      : null;
 
   const storageControls = (
     <div className="space-y-4 max-w-md">
@@ -327,11 +333,10 @@ export function StorageSettingsSection({
         </div>
       )}
 
-      {(settings.savedAssetsStrategy === "lfs-s3" ||
-        settings.savedAssetsStrategy === "lfs-remote") && (
+      {lfsStatePanelStrategy && (
         <LfsStatePanel
           state={settings.lfsState}
-          strategy={settings.savedAssetsStrategy}
+          strategy={lfsStatePanelStrategy}
           repairing={settings.lfsRepairInFlight}
           remoteDiagnostic={settings.lfsRemoteDiagnostic}
           remoteChecking={settings.lfsRemoteDiagnosticInFlight}
@@ -519,8 +524,7 @@ function LfsStatePanel({
       />
     );
   }
-  const missingTitle =
-    m.storage_lfs_banner_missing_s3_title();
+  const missingTitle = m.storage_lfs_banner_missing_s3_title();
   const missingDesc = m.storage_lfs_banner_missing_s3_desc();
 
   if (state === "pulling") {

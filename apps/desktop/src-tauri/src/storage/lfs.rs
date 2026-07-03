@@ -18,11 +18,12 @@ use crate::error::AppError;
 use crate::git::{GitState, ops};
 use crate::index::{IndexKey, IndexState};
 use crate::repo_path::{RootMode, normalize_repo_relative};
-use crate::space::config::read_space_config;
-use crate::space::types::AssetsStrategy;
+use crate::space::types::{AssetsSpaceConfig, AssetsStrategy};
 
 use super::s3;
-use super::scope::resolve_effective_storage_scope;
+use super::scope::{
+    AssetsStorageScope, resolve_effective_storage_scope, resolve_effective_storage_scope_for_key,
+};
 
 const LFS_POINTER_PREFIX: &str = "version https://git-lfs.github.com/spec/v1";
 const LFS_POINTER_MAX_BYTES: u64 = 200;
@@ -37,6 +38,14 @@ pub enum LfsState {
     Ready,
     MissingCreds,
     Pulling,
+}
+
+fn strategy_uses_lfs_runtime(strategy: AssetsStrategy) -> bool {
+    matches!(strategy, AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3)
+}
+
+fn strategy_supports_lfs_remote_diagnostic(strategy: AssetsStrategy) -> bool {
+    matches!(strategy, AssetsStrategy::LfsRemote)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -100,8 +109,7 @@ pub fn is_lfs_pointer(path: &Path) -> bool {
     first_line == LFS_POINTER_PREFIX
 }
 
-/// Probe the LFS state of the pool whose data lives in `target_dir`. The
-/// strategy is read from `target_dir`'s `.svode/config.json`:
+/// Probe the LFS state of the effective storage scope for `key`:
 /// - Local / InGit → NotApplicable (no LFS in play).
 /// - LfsS3 → Ready iff the keychain entry exists, else MissingCreds.
 /// - LfsRemote → run `git lfs pull --dry-run`; success → Ready,
@@ -109,26 +117,35 @@ pub fn is_lfs_pointer(path: &Path) -> bool {
 ///   affordance instead of pretending everything is fine).
 pub async fn probe_lfs(
     app: &AppHandle,
-    _project: &Path,
-    _key: &IndexKey,
-    target_dir: &Path,
+    project: &Path,
+    key: &IndexKey,
+    _target_dir: &Path,
 ) -> LfsState {
-    let cfg = match read_space_config(target_dir) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!(
-                "probe_lfs: read_space_config failed for {}: {e}",
-                target_dir.display()
-            );
-            return LfsState::NotApplicable;
-        }
-    };
-    let strategy = cfg.assets.as_ref().map(|a| a.strategy).unwrap_or_default();
+    let index_state = app.state::<IndexState>();
+    let scope =
+        match resolve_effective_storage_scope_for_key(&index_state, project, key.clone()).await {
+            Ok(scope) => scope,
+            Err(e) => {
+                tracing::warn!("probe_lfs: effective storage scope resolution failed: {e}");
+                return LfsState::NotApplicable;
+            }
+        };
+    probe_lfs_scope(app, &scope).await
+}
 
-    match strategy {
+async fn probe_lfs_scope(app: &AppHandle, scope: &AssetsStorageScope) -> LfsState {
+    probe_lfs_config(app, &scope.repo_dir, &scope.config).await
+}
+
+async fn probe_lfs_config(
+    app: &AppHandle,
+    repo_dir: &Path,
+    config: &AssetsSpaceConfig,
+) -> LfsState {
+    match config.strategy {
         AssetsStrategy::Local | AssetsStrategy::InGit => LfsState::NotApplicable,
         AssetsStrategy::LfsS3 => {
-            let Some(s3_cfg) = cfg.assets.as_ref().and_then(|a| a.s3.as_ref()) else {
+            let Some(s3_cfg) = config.s3.as_ref() else {
                 return LfsState::MissingCreds;
             };
             let account = s3::keychain_account(s3_cfg);
@@ -151,7 +168,7 @@ pub async fn probe_lfs(
             let Some(cli) = git_state.cli.clone() else {
                 return LfsState::MissingCreds;
             };
-            match cli.exec(target_dir, &["lfs", "pull", "--dry-run"]).await {
+            match cli.exec(repo_dir, &["lfs", "pull", "--dry-run"]).await {
                 Ok(out) if out.exit_code == 0 => LfsState::Ready,
                 _ => LfsState::MissingCreds,
             }
@@ -173,6 +190,17 @@ pub async fn diagnose_lfs_remote(
     let project = PathBuf::from(&project_path);
     let scope =
         resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
+    if !strategy_supports_lfs_remote_diagnostic(scope.config.strategy) {
+        reset_lfs_state_if_needed(&app, &index_state, &scope.pool_key).await;
+        return Ok(LfsRemoteDiagnostic {
+            state: LfsState::NotApplicable,
+            reason: LfsRemoteDiagnosticReason::Ready,
+            auth_method: LfsRemoteAuthMethod::Unknown,
+            remote_url: None,
+            terminal_command: None,
+            detail: None,
+        });
+    }
 
     let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
     let diagnostic = if !cli.lfs_available() {
@@ -394,28 +422,42 @@ pub fn maybe_auto_pull_after_sync(
 
     let app = app.clone();
     let key = key.clone();
-    let target_dir = target_dir.to_path_buf();
     let project = key.project().to_path_buf();
     tauri::async_runtime::spawn(async move {
         let state = app.state::<IndexState>();
-        let probed = probe_lfs(&app, &project, &key, &target_dir).await;
+        let scope =
+            match resolve_effective_storage_scope_for_key(&state, &project, key.clone()).await {
+                Ok(scope) => scope,
+                Err(e) => {
+                    tracing::warn!("auto-pull (post-sync): effective storage scope failed: {e}");
+                    return;
+                }
+            };
+        if !strategy_uses_lfs_runtime(scope.config.strategy) {
+            reset_lfs_state_if_needed(&app, &state, &scope.pool_key).await;
+            return;
+        }
+
+        let probed = probe_lfs_scope(&app, &scope).await;
         if !matches!(probed, LfsState::Ready) {
-            state.set_lfs_state_with(&app, &key, probed).await;
+            state
+                .set_lfs_state_with(&app, &scope.pool_key, probed)
+                .await;
             return;
         }
         let git_state = app.state::<GitState>();
         let Some(cli) = git_state.cli.clone() else {
             state
-                .set_lfs_state_with(&app, &key, LfsState::MissingCreds)
+                .set_lfs_state_with(&app, &scope.pool_key, LfsState::MissingCreds)
                 .await;
             return;
         };
         state
-            .set_lfs_state_with(&app, &key, LfsState::Pulling)
+            .set_lfs_state_with(&app, &scope.pool_key, LfsState::Pulling)
             .await;
-        let lock = git_state.get_lock(&target_dir).await;
+        let lock = git_state.get_lock(&scope.repo_dir).await;
         let _guard = lock.lock().await;
-        let result = cli.exec(&target_dir, &["lfs", "pull"]).await;
+        let result = cli.exec(&scope.repo_dir, &["lfs", "pull"]).await;
         drop(_guard);
         let next = match result {
             Ok(out) if out.exit_code == 0 => LfsState::Ready,
@@ -432,7 +474,7 @@ pub fn maybe_auto_pull_after_sync(
                 LfsState::MissingCreds
             }
         };
-        state.set_lfs_state_with(&app, &key, next).await;
+        state.set_lfs_state_with(&app, &scope.pool_key, next).await;
     });
 }
 
@@ -450,6 +492,10 @@ pub async fn repair_lfs(
     let project = PathBuf::from(&project_path);
     let scope =
         resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
+    if !strategy_uses_lfs_runtime(scope.config.strategy) {
+        reset_lfs_state_if_needed(&app, &index_state, &scope.pool_key).await;
+        return Ok(LfsState::NotApplicable);
+    }
 
     let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
 
@@ -468,7 +514,7 @@ pub async fn repair_lfs(
     let new_state = if out.exit_code == 0 {
         // Re-probe to confirm — pull may have succeeded but the underlying
         // strategy could still be in a degraded state (e.g. partial fetch).
-        probe_lfs(&app, &project, &scope.pool_key, &scope.repo_dir).await
+        probe_lfs_scope(&app, &scope).await
     } else {
         tracing::warn!(
             "repair_lfs: git lfs pull failed ({}): {}",
@@ -497,30 +543,61 @@ pub async fn get_lfs_state(
     let scope =
         resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
 
+    // Only probe if the strategy is LFS-flavoured — otherwise NotApplicable
+    // is correct and re-probing would be wasted work.
+    if !strategy_uses_lfs_runtime(scope.config.strategy) {
+        reset_lfs_state_if_needed(&app, &index_state, &scope.pool_key).await;
+        return Ok(LfsState::NotApplicable);
+    }
+
     let cached = index_state.get_lfs_state(&scope.pool_key).await;
     if !matches!(cached, LfsState::NotApplicable) {
         return Ok(cached);
     }
 
-    // Only probe if the strategy is LFS-flavoured — otherwise NotApplicable
-    // is correct and re-probing would be wasted work.
-    if !matches!(
-        scope.config.strategy,
-        AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3
-    ) {
-        return Ok(LfsState::NotApplicable);
-    }
-
-    let probed = probe_lfs(&app, &project, &scope.pool_key, &scope.repo_dir).await;
+    let probed = probe_lfs_scope(&app, &scope).await;
     index_state
         .set_lfs_state_with(&app, &scope.pool_key, probed)
         .await;
     Ok(probed)
 }
 
+async fn reset_lfs_state_if_needed(app: &AppHandle, index_state: &IndexState, key: &IndexKey) {
+    let cached = index_state.get_lfs_state(key).await;
+    if !matches!(cached, LfsState::NotApplicable) {
+        index_state
+            .set_lfs_state_with(app, key, LfsState::NotApplicable)
+            .await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lfs_runtime_is_used_only_by_lfs_strategies() {
+        assert!(!strategy_uses_lfs_runtime(AssetsStrategy::Local));
+        assert!(!strategy_uses_lfs_runtime(AssetsStrategy::InGit));
+        assert!(strategy_uses_lfs_runtime(AssetsStrategy::LfsRemote));
+        assert!(strategy_uses_lfs_runtime(AssetsStrategy::LfsS3));
+    }
+
+    #[test]
+    fn lfs_remote_diagnostic_is_only_for_lfs_remote_strategy() {
+        assert!(!strategy_supports_lfs_remote_diagnostic(
+            AssetsStrategy::Local
+        ));
+        assert!(!strategy_supports_lfs_remote_diagnostic(
+            AssetsStrategy::InGit
+        ));
+        assert!(strategy_supports_lfs_remote_diagnostic(
+            AssetsStrategy::LfsRemote
+        ));
+        assert!(!strategy_supports_lfs_remote_diagnostic(
+            AssetsStrategy::LfsS3
+        ));
+    }
 
     #[test]
     fn classifies_auth_errors_before_remote_errors() {
