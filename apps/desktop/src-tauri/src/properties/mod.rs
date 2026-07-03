@@ -1774,6 +1774,15 @@ pub fn rewrite_relation_paths_for_move(
     old_path: &str,
     new_path: &str,
 ) -> Result<(), AppError> {
+    rewrite_relation_paths_for_move_with_project(space, None, old_path, new_path)
+}
+
+pub fn rewrite_relation_paths_for_move_with_project(
+    space: &str,
+    project_path: Option<&str>,
+    old_path: &str,
+    new_path: &str,
+) -> Result<(), AppError> {
     let old_path = normalize_rel_path(old_path);
     let new_path = normalize_rel_path(new_path);
     if old_path == new_path {
@@ -1787,14 +1796,21 @@ pub fn rewrite_relation_paths_for_move(
     let new_collection_path = new_path.clone();
     let moved_paths = moved_markdown_path_pairs(space_path, &old_path, &new_path, &new_abs)?;
     let mut touched = Vec::new();
-    for collection in list_collections(space)? {
-        touched.push(collection_dir(space, &collection.path).join(SCHEMA_FILE));
-        touched.extend(collection_markdown_files(space, &collection.path)?);
+    for source_space in project_relation_scan_spaces(space, project_path)? {
+        for collection in list_collections(&source_space)? {
+            touched.push(collection_dir(&source_space, &collection.path).join(SCHEMA_FILE));
+            touched.extend(collection_markdown_files(&source_space, &collection.path)?);
+        }
     }
 
     with_rollback(touched, || {
         if collection_rename {
-            rewrite_relation_collection_paths(space, &old_collection_path, &new_collection_path)?;
+            rewrite_relation_collection_paths_for_target_space(
+                space,
+                project_path,
+                &old_collection_path,
+                &new_collection_path,
+            )?;
         }
 
         for (old_file, new_file) in &moved_paths {
@@ -1805,7 +1821,13 @@ pub fn rewrite_relation_paths_for_move(
             if let Some(old_root) = old_root.as_ref().filter(|old_root| *old_root != &new_root) {
                 let relation = rel_path_string(old_root);
                 if let Ok(old_value) = value_relative_to_collection(&relation, old_file) {
-                    rewrite_relation_value_refs(space, &relation, &old_value, new_file)?;
+                    rewrite_relation_value_refs_for_target_space(
+                        space,
+                        project_path,
+                        &relation,
+                        &old_value,
+                        new_file,
+                    )?;
                 }
                 continue;
             }
@@ -1815,7 +1837,13 @@ pub fn rewrite_relation_paths_for_move(
                 Err(_) => continue,
             };
             let new_value = value_relative_to_collection(&relation, new_file)?;
-            rewrite_relation_value_refs(space, &relation, &old_value, &new_value)?;
+            rewrite_relation_value_refs_for_target_space(
+                space,
+                project_path,
+                &relation,
+                &old_value,
+                &new_value,
+            )?;
         }
         Ok(())
     })
@@ -2106,78 +2134,124 @@ fn copy_rel_from_abs(space: &Path, path: &Path) -> String {
     if rel.is_empty() { ".".to_string() } else { rel }
 }
 
+#[allow(dead_code)]
 fn rewrite_relation_collection_paths(
     space: &str,
     old_collection: &str,
     new_collection: &str,
 ) -> Result<(), AppError> {
+    rewrite_relation_collection_paths_for_target_space(space, None, old_collection, new_collection)
+}
+
+fn rewrite_relation_collection_paths_for_target_space(
+    target_space: &str,
+    project_path: Option<&str>,
+    old_collection: &str,
+    new_collection: &str,
+) -> Result<(), AppError> {
     let old_collection = collection_root_for_schema(old_collection);
     let new_collection = collection_root_for_schema(new_collection);
-    for collection in list_collections(space)? {
-        let mut schema = read_schema_or_default(space, &collection.path)?;
-        let mut changed = false;
-        for column in &mut schema.columns {
-            if column.type_ == PropertyType::Relation
-                && relation_is_current_scope(column)
-                && column.relation.as_deref() == Some(old_collection.as_str())
-            {
-                column.relation = Some(new_collection.clone());
-                changed = true;
+    for source_space in project_relation_scan_spaces(target_space, project_path)? {
+        for collection in list_collections(&source_space)? {
+            let mut schema = read_schema_or_default(&source_space, &collection.path)?;
+            let mut changed = false;
+            for column in &mut schema.columns {
+                let Some(relation) = relation_column_targets_space(
+                    &source_space,
+                    project_path,
+                    column,
+                    target_space,
+                )?
+                else {
+                    continue;
+                };
+                if relation == old_collection {
+                    column.relation = Some(new_collection.clone());
+                    changed = true;
+                }
             }
-        }
-        if changed {
-            write_schema(space, &collection.path, &schema)?;
+            if changed {
+                write_schema_with_project(&source_space, &collection.path, &schema, project_path)?;
+            }
         }
     }
     Ok(())
 }
 
+#[allow(dead_code)]
 fn rewrite_relation_value_refs(
     space: &str,
     relation: &str,
     old_value: &str,
     new_value: &str,
 ) -> Result<(), AppError> {
-    for collection in list_collections(space)? {
-        let schema = read_schema_or_default(space, &collection.path)?;
-        let columns: Vec<Column> = schema
-            .columns
-            .iter()
-            .filter(|column| {
-                column.type_ == PropertyType::Relation
-                    && relation_is_current_scope(column)
-                    && column.relation.as_deref() == Some(relation)
-            })
-            .cloned()
-            .collect();
-        if columns.is_empty() {
-            continue;
-        }
-        for file in collection_markdown_files(space, &collection.path)? {
-            mutate_frontmatter(&file, |meta| {
-                for column in &columns {
-                    let Some(existing) = meta.extra.get(&column.name).cloned() else {
-                        continue;
-                    };
-                    let mut values = relation_values_from_value(column, &existing)?;
-                    let mut changed = false;
-                    for value in &mut values {
-                        if value == old_value {
-                            *value = new_value.to_string();
-                            changed = true;
+    rewrite_relation_value_refs_for_target_space(space, None, relation, old_value, new_value)
+}
+
+fn rewrite_relation_value_refs_for_target_space(
+    target_space: &str,
+    project_path: Option<&str>,
+    relation: &str,
+    old_value: &str,
+    new_value: &str,
+) -> Result<(), AppError> {
+    let relation = normalize_collection_path(relation)?;
+    for source_space in project_relation_scan_spaces(target_space, project_path)? {
+        for collection in list_collections(&source_space)? {
+            let schema = read_schema_or_default(&source_space, &collection.path)?;
+            let columns: Vec<Column> = schema
+                .columns
+                .iter()
+                .filter_map(|column| {
+                    match relation_column_targets_space(
+                        &source_space,
+                        project_path,
+                        column,
+                        target_space,
+                    ) {
+                        Ok(Some(target_relation)) if target_relation == relation => {
+                            Some(Ok(column.clone()))
+                        }
+                        Ok(_) => None,
+                        Err(error) => Some(Err(error)),
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if columns.is_empty() {
+                continue;
+            }
+            for file in collection_markdown_files(&source_space, &collection.path)? {
+                mutate_frontmatter(&file, |meta| {
+                    for column in &columns {
+                        let Some(existing) = meta.extra.get(&column.name).cloned() else {
+                            continue;
+                        };
+                        let mut values = relation_values_from_value(column, &existing)?;
+                        let mut changed = false;
+                        for value in &mut values {
+                            if value == old_value {
+                                *value = new_value.to_string();
+                                changed = true;
+                            }
+                        }
+                        if changed {
+                            let mut seen = HashSet::new();
+                            values.retain(|value| seen.insert(value.clone()));
+                            let next = relation_value_from_values(column, values);
+                            if next.is_null()
+                                || next
+                                    .as_sequence()
+                                    .is_some_and(|sequence| sequence.is_empty())
+                            {
+                                meta.extra.remove(&column.name);
+                            } else {
+                                meta.extra.insert(column.name.clone(), next);
+                            }
                         }
                     }
-                    if changed {
-                        let mut seen = HashSet::new();
-                        values.retain(|value| seen.insert(value.clone()));
-                        meta.extra.insert(
-                            column.name.clone(),
-                            relation_value_from_values(column, values),
-                        );
-                    }
-                }
-                Ok(())
-            })?;
+                    Ok(())
+                })?;
+            }
         }
     }
     Ok(())
@@ -8855,9 +8929,27 @@ views: []
             Value::String("a.md".to_string()),
         )
         .unwrap();
+        fs::rename(root.join("tasks/a.md"), root.join("tasks/b.md")).unwrap();
+        rewrite_relation_paths_for_move_with_project(
+            root.to_str().unwrap(),
+            Some(root.to_str().unwrap()),
+            "tasks/a.md",
+            "tasks/b.md",
+        )
+        .unwrap();
+        let raw = fs::read_to_string(child.join("decisions/decision-1.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        assert_eq!(
+            meta.extra
+                .get("Task")
+                .and_then(Value::as_sequence)
+                .and_then(|values| values.first())
+                .and_then(Value::as_str),
+            Some("b.md")
+        );
         entry::delete_with_project(
             root.to_str().unwrap(),
-            "tasks/a.md",
+            "tasks/b.md",
             None,
             Some(root.to_str().unwrap()),
         )

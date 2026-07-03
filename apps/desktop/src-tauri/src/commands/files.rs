@@ -2382,7 +2382,7 @@ pub async fn rename_entry(
     let backlink_index = backlinks_for_space(&index_state, &space).await;
     let was_dir = Path::new(&space).join(&from).is_dir();
     ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
-    entry::rename(&space, &from, &to)?;
+    entry::rename_with_project(&space, &from, &to, project_path.as_deref())?;
     let modified = if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
         let target_space_id = space_id_for_dir(&index_state, &space).await;
@@ -2497,7 +2497,7 @@ pub async fn move_entry(
     let was_dir = Path::new(&space).join(&from).is_dir();
     let old_abs = Path::new(&space).join(&from);
     ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
-    let new_path = entry::move_entry(
+    let new_path = entry::move_entry_with_project(
         Path::new(&space),
         &from,
         &to_parent,
@@ -2506,6 +2506,7 @@ pub async fn move_entry(
         } else {
             Some(&backlink_index)
         },
+        project_path.as_deref(),
     )?;
     if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
         let project = Path::new(proj);

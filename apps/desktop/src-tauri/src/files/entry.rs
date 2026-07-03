@@ -502,8 +502,20 @@ fn rewrite_relations_after_fs_move(
     old_abs: &Path,
     new_abs: &Path,
 ) -> Result<(), AppError> {
-    if let Err(error) = crate::properties::rewrite_relation_paths_for_move(
+    rewrite_relations_after_fs_move_with_project(space, None, old_rel, new_rel, old_abs, new_abs)
+}
+
+fn rewrite_relations_after_fs_move_with_project(
+    space: &Path,
+    project_path: Option<&str>,
+    old_rel: &str,
+    new_rel: &str,
+    old_abs: &Path,
+    new_abs: &Path,
+) -> Result<(), AppError> {
+    if let Err(error) = crate::properties::rewrite_relation_paths_for_move_with_project(
         &space.to_string_lossy(),
+        project_path,
         old_rel,
         new_rel,
     ) {
@@ -1337,11 +1349,22 @@ pub fn update_field(
 
 /// Move a file or directory to a new parent directory.
 /// Updates backlinks. Returns the new relative path.
+#[allow(dead_code)]
 pub fn move_entry(
     space: &Path,
     from: &str,
     to_parent: &str,
     backlink_index: Option<&BacklinkIndex>,
+) -> Result<String, AppError> {
+    move_entry_with_project(space, from, to_parent, backlink_index, None)
+}
+
+pub fn move_entry_with_project(
+    space: &Path,
+    from: &str,
+    to_parent: &str,
+    backlink_index: Option<&BacklinkIndex>,
+    project_path: Option<&str>,
 ) -> Result<String, AppError> {
     let abs_from = space.join(from);
 
@@ -1375,7 +1398,14 @@ pub fn move_entry(
 
     fs::rename(&abs_from, &abs_to)?;
     crate::properties::apply_schema_defaults_to_entry_tree(space, &new_rel)?;
-    rewrite_relations_after_fs_move(space, from, &new_rel, &abs_from, &abs_to)?;
+    rewrite_relations_after_fs_move_with_project(
+        space,
+        project_path,
+        from,
+        &new_rel,
+        &abs_from,
+        &abs_to,
+    )?;
 
     // Update backlinks. For folder moves, every .md descendant sits under a
     // new path now — rewrite their inbound links too, not just the folder itself
@@ -2096,7 +2126,17 @@ fn cleanup_deleted_order(space: &Path, deleted_root: &str) {
 }
 
 /// Rename/move an entry on disk.
+#[allow(dead_code)]
 pub fn rename(space: &str, from: &str, to: &str) -> Result<(), AppError> {
+    rename_with_project(space, from, to, None)
+}
+
+pub fn rename_with_project(
+    space: &str,
+    from: &str,
+    to: &str,
+    project_path: Option<&str>,
+) -> Result<(), AppError> {
     let abs_from = resolve(space, from);
     let abs_to = resolve(space, to);
 
@@ -2114,7 +2154,14 @@ pub fn rename(space: &str, from: &str, to: &str) -> Result<(), AppError> {
     }
 
     fs::rename(&abs_from, &abs_to)?;
-    rewrite_relations_after_fs_move(Path::new(space), from, to, &abs_from, &abs_to)?;
+    rewrite_relations_after_fs_move_with_project(
+        Path::new(space),
+        project_path,
+        from,
+        to,
+        &abs_from,
+        &abs_to,
+    )?;
 
     // Update order.json: rename entry in parent's order list
     let old_name = Path::new(from)
