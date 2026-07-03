@@ -916,6 +916,34 @@ fn reverse_relation_scope_for_target(
     }
 }
 
+fn validate_physical_two_way_relation_scope(
+    space: &str,
+    project_path: Option<&str>,
+    column: &Column,
+) -> Result<(), AppError> {
+    if column.two_way.is_none() {
+        return Ok(());
+    }
+    let Some(RelationScope::Space {
+        id: target_space_id,
+    }) = column.relation_scope.as_ref()
+    else {
+        return Ok(());
+    };
+    if let Some(RelationScope::Space {
+        id: source_space_id,
+    }) = space_scope_from_project(space, project_path)?
+    {
+        if source_space_id != *target_space_id {
+            return Err(schema_error(format!(
+                "relation column '{}' cannot be two-way between sibling spaces",
+                column.name
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn relation_target_pair(
     space: &str,
     project_path: Option<&str>,
@@ -1223,6 +1251,7 @@ fn validate_schema_relations_in_space(
         }
         if let Some(reverse_name) = column.two_way.as_deref() {
             validate_relation_column_name(reverse_name)?;
+            validate_physical_two_way_relation_scope(space, project_path, column)?;
         }
     }
     Ok(())
@@ -3155,10 +3184,14 @@ pub fn update_relation_entry_field(
         .ok_or_else(|| schema_error(format!("relation column '{field}' requires relation")))?;
     let target_space =
         required_relation_target_space_path(space, project_path, column.relation_scope.as_ref())?;
-    let reverse_scope =
-        reverse_relation_scope_for_target(space, project_path, column.relation_scope.as_ref())?;
     let normalized = normalize_relation_update_value(&target_space, column, relation, &value)?;
     let reverse_name = column.two_way.clone();
+    let reverse_scope = if reverse_name.is_some() {
+        validate_physical_two_way_relation_scope(space, project_path, column)?;
+        reverse_relation_scope_for_target(space, project_path, column.relation_scope.as_ref())?
+    } else {
+        None
+    };
     let source_collection = rel_path_string(&collection_root);
     let source_value = value_relative_to_collection(&source_collection, &source_path)?;
 
@@ -8957,6 +8990,179 @@ views: []
         let raw = fs::read_to_string(child.join("decisions/decision-1.md")).unwrap();
         let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
         assert!(!meta.extra.contains_key("Task"));
+    }
+
+    #[test]
+    fn cross_scope_two_way_rejects_child_to_sibling_space() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let design = root.join("spaces/design");
+        let engineering = root.join("spaces/engineering");
+        fs::create_dir_all(design.join("decisions")).unwrap();
+        fs::create_dir_all(engineering.join("tasks")).unwrap();
+        write_test_space_config(
+            root,
+            Some(vec![
+                SpaceRef {
+                    id: "design".to_string(),
+                    path: "spaces/design".to_string(),
+                    repo: None,
+                },
+                SpaceRef {
+                    id: "engineering".to_string(),
+                    path: "spaces/engineering".to_string(),
+                    repo: None,
+                },
+            ]),
+            None,
+        );
+        write_test_space_config(&design, None, None);
+        write_test_space_config(&engineering, None, None);
+        fs::write(
+            design.join("decisions/schema.yaml"),
+            "columns: []\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            engineering.join("tasks/schema.yaml"),
+            "columns: []\nviews: []\n",
+        )
+        .unwrap();
+
+        let mut column = test_column("Engineering task", PropertyType::Relation);
+        column.relation = Some("tasks".to_string());
+        column.relation_scope = Some(RelationScope::Space {
+            id: "engineering".to_string(),
+        });
+        column.two_way = Some("Decisions".to_string());
+
+        let error = add_schema_column_with_project(
+            design.to_str().unwrap(),
+            "decisions",
+            column,
+            Some(root.to_str().unwrap()),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("sibling spaces"));
+        let source_schema = read_collection_schema(design.to_str().unwrap(), "decisions").unwrap();
+        assert!(source_schema.columns.is_empty());
+        let target_schema = read_collection_schema(engineering.to_str().unwrap(), "tasks").unwrap();
+        assert!(target_schema.columns.is_empty());
+
+        fs::write(
+            design.join("decisions/schema.yaml"),
+            "columns:\n  - name: Engineering task\n    type: relation\n    relation: tasks\n    relation_scope:\n      type: space\n      id: engineering\n    two_way: Decisions\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            design.join("decisions/decision-1.md"),
+            "---\ntitle: Decision 1\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            engineering.join("tasks/task-1.md"),
+            "---\ntitle: Task 1\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+
+        let error = update_relation_entry_field(
+            design.to_str().unwrap(),
+            Some(root.to_str().unwrap()),
+            "decisions/decision-1.md",
+            "Engineering task",
+            Value::String("task-1.md".to_string()),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("sibling spaces"));
+        let raw = fs::read_to_string(engineering.join("tasks/task-1.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        assert!(!meta.extra.contains_key("Decisions"));
+    }
+
+    #[test]
+    fn cross_scope_one_way_child_to_sibling_space_updates_without_reverse_sync() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let design = root.join("spaces/design");
+        let engineering = root.join("spaces/engineering");
+        fs::create_dir_all(design.join("decisions")).unwrap();
+        fs::create_dir_all(engineering.join("tasks")).unwrap();
+        write_test_space_config(
+            root,
+            Some(vec![
+                SpaceRef {
+                    id: "design".to_string(),
+                    path: "spaces/design".to_string(),
+                    repo: None,
+                },
+                SpaceRef {
+                    id: "engineering".to_string(),
+                    path: "spaces/engineering".to_string(),
+                    repo: None,
+                },
+            ]),
+            None,
+        );
+        write_test_space_config(&design, None, None);
+        write_test_space_config(&engineering, None, None);
+        fs::write(
+            design.join("decisions/schema.yaml"),
+            "columns: []\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            engineering.join("tasks/schema.yaml"),
+            "columns: []\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            design.join("decisions/decision-1.md"),
+            "---\ntitle: Decision 1\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            engineering.join("tasks/task-1.md"),
+            "---\ntitle: Task 1\ncreated: now\nupdated: now\n---\n",
+        )
+        .unwrap();
+
+        let mut column = test_column("Engineering task", PropertyType::Relation);
+        column.relation = Some("tasks".to_string());
+        column.relation_scope = Some(RelationScope::Space {
+            id: "engineering".to_string(),
+        });
+        add_schema_column_with_project(
+            design.to_str().unwrap(),
+            "decisions",
+            column,
+            Some(root.to_str().unwrap()),
+        )
+        .unwrap();
+
+        update_relation_entry_field(
+            design.to_str().unwrap(),
+            Some(root.to_str().unwrap()),
+            "decisions/decision-1.md",
+            "Engineering task",
+            Value::String("task-1.md".to_string()),
+        )
+        .unwrap();
+
+        let raw = fs::read_to_string(design.join("decisions/decision-1.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        assert_eq!(
+            meta.extra
+                .get("Engineering task")
+                .and_then(Value::as_sequence)
+                .and_then(|values| values.first())
+                .and_then(Value::as_str),
+            Some("task-1.md")
+        );
+        let raw = fs::read_to_string(engineering.join("tasks/task-1.md")).unwrap();
+        let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        assert!(!meta.extra.contains_key("Decisions"));
     }
 
     #[test]
