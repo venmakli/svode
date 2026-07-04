@@ -1,5 +1,4 @@
 import {
-  ChevronDown,
   ChevronRight,
   MoreHorizontal,
   RefreshCw,
@@ -29,6 +28,8 @@ import {
   SidebarHeader,
   SidebarInput,
   SidebarMenu,
+  SidebarMenuAction,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSkeleton,
@@ -47,14 +48,18 @@ type AgentSessionsController = ReturnType<typeof useAgentSessions>;
 
 interface SessionsListProps {
   controller: AgentSessionsController;
+  rootIcon: string | null;
   rootName: string | null;
+  spaceIcons: Map<string, string>;
   spaceNames: Map<string, string>;
   onOpenAppSettings?: () => void;
 }
 
 export function SessionsList({
   controller,
+  rootIcon,
   rootName,
+  spaceIcons,
   spaceNames,
   onOpenAppSettings,
 }: SessionsListProps) {
@@ -200,6 +205,7 @@ export function SessionsList({
                     key={group.id}
                     group={group}
                     label={groupLabel(group, rootName, spaceNames)}
+                    icon={groupIcon(group, rootIcon, spaceIcons)}
                     collapsible
                     collapsed={controller.collapsedGroupIds.has(group.id)}
                     controller={controller}
@@ -223,6 +229,7 @@ export function SessionsList({
 interface SessionGroupSectionProps {
   group: AgentSessionGroup;
   label: string;
+  icon?: string;
   collapsible?: boolean;
   collapsed?: boolean;
   controller: AgentSessionsController;
@@ -240,6 +247,7 @@ interface SessionGroupSectionProps {
 function SessionGroupSection({
   group,
   label,
+  icon,
   collapsible = false,
   collapsed = false,
   controller,
@@ -251,54 +259,52 @@ function SessionGroupSection({
   revealFile,
 }: SessionGroupSectionProps) {
   const menu = (
-    <SidebarGroupContent>
-      <SidebarMenu>
-        {group.sessions.map((session) => (
-          <SessionRow
-            key={session.id}
-            session={session}
-            groupId={group.id}
-            source={group.kind === "space" ? "space" : group.kind}
-            selected={controller.selectedSessionId === session.id}
-            reentering={controller.reenteringSessionId === session.id}
-            pinning={controller.pinningSessionIds.has(session.id)}
-            rootName={rootName}
-            spaceNames={spaceNames}
-            onSelect={(item, source, groupId) =>
-              void controller.selectSession(item, source, groupId)
-            }
-            onTogglePinned={(item) =>
-              void runAction(
-                () => controller.togglePinned(item),
-                m.sessions_toast_pin_failed(),
-              )
-            }
-            onCloseTerminal={() =>
-              void runAction(() => {
-                const ptyId = session.runtime?.ptyId;
-                return ptyId
-                  ? controller.closeTerminal(session.id, ptyId)
-                  : Promise.resolve();
-              }, m.sessions_toast_close_terminal_failed())
-            }
-            onCopyCommand={copyCommand}
-            onOpenExternalTerminal={openExternalTerminal}
-            onRevealFile={revealFile}
-          />
-        ))}
-        {group.hasMore && (
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              className="text-sidebar-foreground/70"
-              onClick={() => controller.showMore(group.id)}
-            >
-              <MoreHorizontal />
-              <span>{m.sessions_more()}</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        )}
-      </SidebarMenu>
-    </SidebarGroupContent>
+    <SidebarMenu>
+      {group.sessions.map((session) => (
+        <SessionRow
+          key={session.id}
+          session={session}
+          groupId={group.id}
+          source={group.kind === "space" ? "space" : group.kind}
+          selected={controller.selectedSessionId === session.id}
+          reentering={controller.reenteringSessionId === session.id}
+          pinning={controller.pinningSessionIds.has(session.id)}
+          rootName={rootName}
+          spaceNames={spaceNames}
+          onSelect={(item, source, groupId) =>
+            void controller.selectSession(item, source, groupId)
+          }
+          onTogglePinned={(item) =>
+            void runAction(
+              () => controller.togglePinned(item),
+              m.sessions_toast_pin_failed(),
+            )
+          }
+          onCloseTerminal={() =>
+            void runAction(() => {
+              const ptyId = session.runtime?.ptyId;
+              return ptyId
+                ? controller.closeTerminal(session.id, ptyId)
+                : Promise.resolve();
+            }, m.sessions_toast_close_terminal_failed())
+          }
+          onCopyCommand={copyCommand}
+          onOpenExternalTerminal={openExternalTerminal}
+          onRevealFile={revealFile}
+        />
+      ))}
+      {group.hasMore && (
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            className="text-sidebar-foreground/70"
+            onClick={() => controller.showMore(group.id)}
+          >
+            <MoreHorizontal />
+            <span>{m.sessions_more()}</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      )}
+    </SidebarMenu>
   );
 
   if (!collapsible) {
@@ -307,7 +313,7 @@ function SessionGroupSection({
         <SidebarGroupLabel>
           <span className="truncate">{label}</span>
         </SidebarGroupLabel>
-        {menu}
+        <SidebarGroupContent>{menu}</SidebarGroupContent>
       </SidebarGroup>
     );
   }
@@ -321,18 +327,35 @@ function SessionGroupSection({
       className="group/collapsible"
     >
       <SidebarGroup className="pt-1">
-        <SidebarGroupLabel asChild>
-          <CollapsibleTrigger>
-            {collapsed ? <ChevronRight /> : <ChevronDown />}
-            <span className="min-w-0 flex-1 truncate">{label}</span>
-            {collapsed && (
-              <span className="ml-auto text-sidebar-foreground/70 normal-case">
+        <SidebarGroupContent>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                type="button"
+                aria-expanded={!collapsed}
+                className="pr-20 group-has-data-[sidebar=menu-action]/menu-item:pr-20"
+                onClick={() => controller.toggleGroupCollapsed(group.id)}
+              >
+                <span className="shrink-0" aria-hidden>
+                  {icon || "\u{1F4C1}"}
+                </span>
+                <span className="min-w-0 flex-1 truncate">{label}</span>
+              </SidebarMenuButton>
+              <CollapsibleTrigger asChild>
+                <SidebarMenuAction
+                  className="left-2 bg-sidebar-accent text-sidebar-accent-foreground data-[state=open]:rotate-90"
+                  showOnHover
+                >
+                  <ChevronRight />
+                </SidebarMenuAction>
+              </CollapsibleTrigger>
+              <SidebarMenuBadge className="right-1 font-normal text-sidebar-foreground/70">
                 {m.sessions_group_count({ count: group.total })}
-              </span>
-            )}
-          </CollapsibleTrigger>
-        </SidebarGroupLabel>
-        <CollapsibleContent>{menu}</CollapsibleContent>
+              </SidebarMenuBadge>
+            </SidebarMenuItem>
+          </SidebarMenu>
+          <CollapsibleContent>{menu}</CollapsibleContent>
+        </SidebarGroupContent>
       </SidebarGroup>
     </Collapsible>
   );
@@ -347,6 +370,21 @@ function groupLabel(
   return first
     ? scopeLabel(first, rootName, spaceNames)
     : m.sessions_group_space();
+}
+
+function groupIcon(
+  group: AgentSessionGroup,
+  rootIcon: string | null,
+  spaceIcons: Map<string, string>,
+): string {
+  const first = group.sessions[0];
+  if (!first) return "\u{1F4C1}";
+  if (first.scopeKind === "project") return rootIcon || "\u{1F4C1}";
+  return (
+    (first.spaceId ? spaceIcons.get(first.spaceId) : undefined) ??
+    (first.spacePath ? spaceIcons.get(first.spacePath) : undefined) ??
+    "\u{1F4C1}"
+  );
 }
 
 function SessionsListSkeleton() {

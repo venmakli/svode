@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/tooltip";
 import {
   SidebarMenuAction,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
@@ -78,15 +79,14 @@ export function SessionRow({
           <SidebarMenuButton
             type="button"
             isActive={selected}
-            className={cn(reentering && "pl-3")}
+            className={cn(
+              "pr-16 group-has-data-[sidebar=menu-action]/menu-item:pr-16",
+              reentering && "pl-3",
+            )}
             onClick={() => onSelect(session, source, groupId)}
           >
             <span className="min-w-0 flex-1 truncate font-medium">
               {session.title}
-            </span>
-            <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-sidebar-foreground/70 group-hover/menu-item:hidden group-focus-within/menu-item:hidden">
-              <SessionStatusMarker session={session} />
-              <span>{time}</span>
             </span>
           </SidebarMenuButton>
         </TooltipTrigger>
@@ -118,6 +118,10 @@ export function SessionRow({
           </span>
         </TooltipContent>
       </Tooltip>
+      <SidebarMenuBadge className="gap-1.5 font-normal text-sidebar-foreground/70 transition-opacity group-hover/menu-item:opacity-0 group-focus-within/menu-item:opacity-0 [&_svg]:size-3 [&_svg]:shrink-0">
+        <SessionStatusMarker session={session} />
+        <span>{time}</span>
+      </SidebarMenuBadge>
       <Tooltip>
         <TooltipTrigger asChild>
           <SidebarMenuAction

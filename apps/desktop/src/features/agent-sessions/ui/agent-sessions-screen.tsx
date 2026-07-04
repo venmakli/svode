@@ -45,7 +45,7 @@ interface AgentSessionsScreenProps {
 export function AgentSessionsScreen({
   onOpenAppSettings,
 }: AgentSessionsScreenProps) {
-  const { activeRootName, activeRootPath, spaces } = useSpace();
+  const { activeRootIcon, activeRootName, activeRootPath, spaces } = useSpace();
   const sessions = useAgentSessions(activeRootPath);
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [sessionsSidebarOpen, setSessionsSidebarOpen] = useState(true);
@@ -56,6 +56,14 @@ export function AgentSessionsScreen({
       names.set(space.path, space.name);
     });
     return names;
+  }, [spaces]);
+  const spaceIcons = useMemo(() => {
+    const icons = new Map<string, string>();
+    spaces.forEach((space) => {
+      icons.set(space.id, space.icon);
+      icons.set(space.path, space.icon);
+    });
+    return icons;
   }, [spaces]);
 
   async function runAction(action: () => Promise<void>, errorMessage: string) {
@@ -131,7 +139,9 @@ export function AgentSessionsScreen({
         {sessionsSidebarOpen && (
           <SessionsList
             controller={sessions}
+            rootIcon={activeRootIcon}
             rootName={activeRootName}
+            spaceIcons={spaceIcons}
             spaceNames={spaceNames}
             onOpenAppSettings={onOpenAppSettings}
           />

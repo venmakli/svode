@@ -4,6 +4,34 @@ import { hasActionableWait, type AgentSession } from "../model";
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
+const WEEK_MS = 7 * DAY_MS;
+const MONTH_MS = 30 * DAY_MS;
+const YEAR_MS = 365 * DAY_MS;
+
+type AppLocale = "en" | "ru";
+type CompactTimeUnit = "minute" | "hour" | "day" | "week" | "month" | "year";
+
+const COMPACT_TIME_SUFFIXES: Record<
+  AppLocale,
+  Record<CompactTimeUnit, string>
+> = {
+  en: {
+    minute: "m",
+    hour: "h",
+    day: "d",
+    week: "w",
+    month: "m",
+    year: "y",
+  },
+  ru: {
+    minute: "м",
+    hour: "ч",
+    day: "д",
+    week: "н",
+    month: "мес",
+    year: "г",
+  },
+};
 
 export function sourceLabel(source: AgentSession["source"]): string {
   return source === "claude-code" ? "Claude Code" : "Codex";
@@ -68,22 +96,36 @@ function shortRelativeTime(value: string): string {
   if (!Number.isFinite(then)) return "";
 
   const diffMs = Math.max(0, Date.now() - then);
-  if (diffMs < MINUTE_MS) return "now";
-  if (diffMs < HOUR_MS) return `${Math.floor(diffMs / MINUTE_MS)}m`;
-  if (diffMs < DAY_MS) return `${Math.floor(diffMs / HOUR_MS)}h`;
-  if (diffMs < 7 * DAY_MS) return `${Math.floor(diffMs / DAY_MS)}d`;
-
-  return new Intl.DateTimeFormat(getLocale(), {
-    month: "short",
-    day: "numeric",
-  }).format(new Date(then));
+  return compactElapsedTime(diffMs);
 }
 
 function shortDuration(durationMs: number): string {
-  if (durationMs < MINUTE_MS) return "now";
-  if (durationMs < HOUR_MS) return `${Math.floor(durationMs / MINUTE_MS)}m`;
-  if (durationMs < DAY_MS) return `${Math.floor(durationMs / HOUR_MS)}h`;
-  return `${Math.floor(durationMs / DAY_MS)}d`;
+  return compactElapsedTime(Math.max(0, durationMs));
+}
+
+function compactElapsedTime(elapsedMs: number): string {
+  if (elapsedMs < MINUTE_MS) return "now";
+  if (elapsedMs < HOUR_MS) {
+    return compactTimeLabel(Math.floor(elapsedMs / MINUTE_MS), "minute");
+  }
+  if (elapsedMs < DAY_MS) {
+    return compactTimeLabel(Math.floor(elapsedMs / HOUR_MS), "hour");
+  }
+  if (elapsedMs < WEEK_MS) {
+    return compactTimeLabel(Math.floor(elapsedMs / DAY_MS), "day");
+  }
+  if (elapsedMs < MONTH_MS) {
+    return compactTimeLabel(Math.floor(elapsedMs / WEEK_MS), "week");
+  }
+  if (elapsedMs < YEAR_MS) {
+    return compactTimeLabel(Math.floor(elapsedMs / MONTH_MS), "month");
+  }
+  return compactTimeLabel(Math.floor(elapsedMs / YEAR_MS), "year");
+}
+
+function compactTimeLabel(value: number, unit: CompactTimeUnit): string {
+  const locale = getLocale() as AppLocale;
+  return `${value}${COMPACT_TIME_SUFFIXES[locale][unit]}`;
 }
 
 function pathBasename(path: string | undefined): string | null {

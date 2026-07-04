@@ -206,6 +206,8 @@
   "sessions_reentry_error_title": "Не удалось открыть сессию",
   "sessions_reentry_error_description": "Используйте команду resume вручную во внешнем терминале.",
   "sessions_status_waiting": "Ожидает",
+  "sessions_status_waiting_approval": "Ждёт подтверждения",
+  "sessions_status_waiting_input": "Ждёт ответа",
   "sessions_status_active": "Активна",
   "sessions_status_terminal_open": "Терминал открыт",
   "sessions_status_done": "Завершена",
