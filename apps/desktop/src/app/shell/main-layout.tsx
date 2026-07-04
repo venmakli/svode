@@ -61,6 +61,7 @@ interface DesktopResizableShellProps {
   sidebarProviderRef: RefObject<HTMLDivElement | null>;
   sidebar: ReactNode;
   mainSurface: "content" | "inbox" | "sessions";
+  onOpenAppSettings: () => void;
 }
 
 export function MainLayout() {
@@ -183,7 +184,10 @@ function ShellLayoutContent({
       <>
         <ShellChrome />
         {sidebar}
-        <ShellMainInset mainSurface={mainSurface} />
+        <ShellMainInset
+          mainSurface={mainSurface}
+          onOpenAppSettings={onOpenAppSettings}
+        />
       </>
     );
   }
@@ -195,6 +199,7 @@ function ShellLayoutContent({
         sidebarProviderRef={sidebarProviderRef}
         sidebar={sidebar}
         mainSurface={mainSurface}
+        onOpenAppSettings={onOpenAppSettings}
       />
     </>
   );
@@ -204,6 +209,7 @@ function DesktopResizableShell({
   sidebarProviderRef,
   sidebar,
   mainSurface,
+  onOpenAppSettings,
 }: DesktopResizableShellProps) {
   const [initialSidebarWidth] = useState(
     () => useShellStore.getState().sidebarWidth,
@@ -268,7 +274,11 @@ function DesktopResizableShell({
         minSize={360}
         style={{ overflow: "hidden" }}
       >
-        <ShellMainInset mainSurface={mainSurface} resizable />
+        <ShellMainInset
+          mainSurface={mainSurface}
+          resizable
+          onOpenAppSettings={onOpenAppSettings}
+        />
       </ResizablePanel>
     </ResizablePanelGroup>
   );
@@ -277,9 +287,11 @@ function DesktopResizableShell({
 function ShellMainInset({
   mainSurface,
   resizable = false,
+  onOpenAppSettings,
 }: {
   mainSurface: "content" | "inbox" | "sessions";
   resizable?: boolean;
+  onOpenAppSettings?: () => void;
 }) {
   return (
     <SidebarInset
@@ -296,7 +308,7 @@ function ShellMainInset({
           {mainSurface === "inbox" ? (
             <InboxSurface />
           ) : mainSurface === "sessions" ? (
-            <SessionsSurface />
+            <SessionsSurface onOpenAppSettings={onOpenAppSettings} />
           ) : (
             <ActiveSpaceContent />
           )}

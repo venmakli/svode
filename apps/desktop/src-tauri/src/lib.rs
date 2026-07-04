@@ -49,7 +49,7 @@ pub fn run() {
         .manage(mcp::active::ActiveProjectState::new())
         .manage(properties::ActorCatalogState::new())
         .manage(terminal::TerminalManager::new())
-        .menu(app_windows::build_app_menu)
+        .menu(app_windows::build_initial_app_menu)
         .on_menu_event(|app, event| {
             app_windows::handle_menu_event(app, event.id().as_ref());
         })
@@ -62,6 +62,9 @@ pub fn run() {
                 app.handle().clone(),
             ));
             app.manage(service);
+            if let Err(error) = app_windows::rebuild_app_menu(app.handle()) {
+                tracing::warn!("failed to rebuild app menu during setup: {error}");
+            }
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(error) = mcp::ipc::start_desktop_ipc(handle).await {

@@ -39,6 +39,7 @@ const allowedFeatureSubpathExceptions = new Set([
   "@/features/properties/panel",
   "@/features/search/app-shell",
   "@/features/space/app-shell",
+  "@/features/terminal/session-surface",
 ]);
 
 function srcRelativePath(filename) {

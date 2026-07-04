@@ -1,4 +1,4 @@
-import { Inbox, MessageSquare } from "lucide-react";
+import { Inbox } from "lucide-react";
 import {
   Empty,
   EmptyDescription,
@@ -6,6 +6,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { AgentSessionsScreen } from "@/features/agent-sessions";
 import * as m from "@/paraglide/messages.js";
 
 export function InboxSurface() {
@@ -22,16 +23,10 @@ export function InboxSurface() {
   );
 }
 
-export function SessionsSurface() {
-  return (
-    <Empty className="h-full border-0">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <MessageSquare />
-        </EmptyMedia>
-        <EmptyTitle>{m.sessions_empty_title()}</EmptyTitle>
-        <EmptyDescription>{m.sessions_empty_description()}</EmptyDescription>
-      </EmptyHeader>
-    </Empty>
-  );
+export function SessionsSurface({
+  onOpenAppSettings,
+}: {
+  onOpenAppSettings?: () => void;
+}) {
+  return <AgentSessionsScreen onOpenAppSettings={onOpenAppSettings} />;
 }

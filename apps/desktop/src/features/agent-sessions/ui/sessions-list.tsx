@@ -1,0 +1,426 @@
+import {
+  ChevronDown,
+  ChevronRight,
+  MoreHorizontal,
+  RefreshCw,
+  Search,
+} from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInput,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSkeleton,
+} from "@/components/ui/sidebar";
+import { cn } from "@/shared/lib/utils";
+import { getNativeErrorMessage } from "@/platform/native/errors";
+import type { useAgentSessions } from "../hooks";
+import { openSessionCwdInExternalTerminal, revealSessionFile } from "../api";
+import { scopeLabel } from "../lib";
+import type { AgentSessionGroup } from "../model";
+import type { AgentSession } from "../api";
+import { SessionRow } from "./session-row";
+import * as m from "@/paraglide/messages.js";
+
+type AgentSessionsController = ReturnType<typeof useAgentSessions>;
+
+interface SessionsListProps {
+  controller: AgentSessionsController;
+  rootName: string | null;
+  spaceNames: Map<string, string>;
+  onOpenAppSettings?: () => void;
+}
+
+export function SessionsList({
+  controller,
+  rootName,
+  spaceNames,
+  onOpenAppSettings,
+}: SessionsListProps) {
+  const sourceUnavailable =
+    controller.error ??
+    (controller.result?.status === "error" ? "source" : null);
+  const totalSessions = controller.result?.sessions.length ?? 0;
+
+  async function runAction(action: () => Promise<void>, errorMessage: string) {
+    try {
+      await action();
+    } catch (error) {
+      toast.error(errorMessage, {
+        description: getNativeErrorMessage(error),
+      });
+    }
+  }
+
+  function copyCommand(session: AgentSession) {
+    const command = session.resumeCommand?.display;
+    if (!command) return;
+    void navigator.clipboard
+      .writeText(command)
+      .then(() => toast.success(m.sessions_toast_command_copied()))
+      .catch((error) => {
+        toast.error(m.sessions_toast_command_copy_failed(), {
+          description: getNativeErrorMessage(error),
+        });
+      });
+  }
+
+  function openExternalTerminal(session: AgentSession) {
+    const cwd = session.resumeCommand?.cwd ?? session.cwd;
+    if (!cwd) return;
+    void runAction(
+      () => openSessionCwdInExternalTerminal(cwd),
+      m.sessions_toast_external_terminal_failed(),
+    );
+  }
+
+  function revealFile(session: AgentSession) {
+    if (!session.sourceFile) return;
+    const sourceFilePath = session.sourceFile.path;
+    void runAction(
+      () => revealSessionFile(sourceFilePath),
+      m.sessions_toast_reveal_failed(),
+    );
+  }
+
+  return (
+    <Sidebar
+      variant="floating"
+      collapsible="none"
+      className="m-2 mr-0 h-[calc(100%-1rem)] w-80 shrink-0 rounded-lg border border-sidebar-border shadow-sm"
+    >
+      <SidebarHeader className="gap-2 border-b">
+        <div className="flex h-8 shrink-0 items-center gap-2 px-2">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold">{m.sessions_title()}</div>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={m.sessions_action_refresh()}
+            disabled={controller.refreshing || controller.loading}
+            onClick={() =>
+              void runAction(
+                controller.refresh,
+                m.sessions_toast_refresh_failed(),
+              )
+            }
+          >
+            <RefreshCw
+              className={cn(controller.refreshing && "animate-spin")}
+            />
+          </Button>
+        </div>
+        <div className="relative">
+          <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <SidebarInput
+            value={controller.searchQuery}
+            placeholder={m.sessions_search_placeholder()}
+            className="h-7 pl-7 text-sm"
+            onChange={(event) => controller.setSearchQuery(event.target.value)}
+          />
+        </div>
+      </SidebarHeader>
+      <SidebarContent>
+        {controller.loading ? (
+          <SessionsListSkeleton />
+        ) : sourceUnavailable ? (
+          <SourceUnavailableState
+            onRetry={() =>
+              void runAction(
+                controller.refresh,
+                m.sessions_toast_refresh_failed(),
+              )
+            }
+            onOpenAppSettings={onOpenAppSettings}
+          />
+        ) : totalSessions === 0 ? (
+          <NoSessionsState />
+        ) : controller.groups.visibleSessionIds.size === 0 ? (
+          <NoResultsState />
+        ) : (
+          <>
+            {controller.groups.pinned && (
+              <SessionGroupSection
+                group={controller.groups.pinned}
+                label={m.sessions_group_pinned()}
+                controller={controller}
+                rootName={rootName}
+                spaceNames={spaceNames}
+                runAction={runAction}
+                copyCommand={copyCommand}
+                openExternalTerminal={openExternalTerminal}
+                revealFile={revealFile}
+              />
+            )}
+            {controller.groups.now && (
+              <SessionGroupSection
+                group={controller.groups.now}
+                label={m.sessions_group_now()}
+                controller={controller}
+                rootName={rootName}
+                spaceNames={spaceNames}
+                runAction={runAction}
+                copyCommand={copyCommand}
+                openExternalTerminal={openExternalTerminal}
+                revealFile={revealFile}
+              />
+            )}
+            {controller.groups.spaces.length > 0 && (
+              <>
+                <SidebarGroup className="pb-0">
+                  <SidebarGroupLabel>
+                    <span className="truncate">
+                      {m.sessions_group_spaces()}
+                    </span>
+                  </SidebarGroupLabel>
+                </SidebarGroup>
+                {controller.groups.spaces.map((group) => (
+                  <SessionGroupSection
+                    key={group.id}
+                    group={group}
+                    label={groupLabel(group, rootName, spaceNames)}
+                    collapsible
+                    collapsed={controller.collapsedGroupIds.has(group.id)}
+                    controller={controller}
+                    rootName={rootName}
+                    spaceNames={spaceNames}
+                    runAction={runAction}
+                    copyCommand={copyCommand}
+                    openExternalTerminal={openExternalTerminal}
+                    revealFile={revealFile}
+                  />
+                ))}
+              </>
+            )}
+          </>
+        )}
+      </SidebarContent>
+    </Sidebar>
+  );
+}
+
+interface SessionGroupSectionProps {
+  group: AgentSessionGroup;
+  label: string;
+  collapsible?: boolean;
+  collapsed?: boolean;
+  controller: AgentSessionsController;
+  rootName: string | null;
+  spaceNames: Map<string, string>;
+  runAction: (
+    action: () => Promise<void>,
+    errorMessage: string,
+  ) => Promise<void>;
+  copyCommand: (session: AgentSession) => void;
+  openExternalTerminal: (session: AgentSession) => void;
+  revealFile: (session: AgentSession) => void;
+}
+
+function SessionGroupSection({
+  group,
+  label,
+  collapsible = false,
+  collapsed = false,
+  controller,
+  rootName,
+  spaceNames,
+  runAction,
+  copyCommand,
+  openExternalTerminal,
+  revealFile,
+}: SessionGroupSectionProps) {
+  const menu = (
+    <SidebarGroupContent>
+      <SidebarMenu>
+        {group.sessions.map((session) => (
+          <SessionRow
+            key={session.id}
+            session={session}
+            groupId={group.id}
+            source={group.kind === "space" ? "space" : group.kind}
+            selected={controller.selectedSessionId === session.id}
+            reentering={controller.reenteringSessionId === session.id}
+            pinning={controller.pinningSessionIds.has(session.id)}
+            rootName={rootName}
+            spaceNames={spaceNames}
+            onSelect={(item, source, groupId) =>
+              void controller.selectSession(item, source, groupId)
+            }
+            onTogglePinned={(item) =>
+              void runAction(
+                () => controller.togglePinned(item),
+                m.sessions_toast_pin_failed(),
+              )
+            }
+            onCloseTerminal={() =>
+              void runAction(() => {
+                const ptyId = session.runtime?.ptyId;
+                return ptyId
+                  ? controller.closeTerminal(session.id, ptyId)
+                  : Promise.resolve();
+              }, m.sessions_toast_close_terminal_failed())
+            }
+            onCopyCommand={copyCommand}
+            onOpenExternalTerminal={openExternalTerminal}
+            onRevealFile={revealFile}
+          />
+        ))}
+        {group.hasMore && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              className="text-sidebar-foreground/70"
+              onClick={() => controller.showMore(group.id)}
+            >
+              <MoreHorizontal />
+              <span>{m.sessions_more()}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
+      </SidebarMenu>
+    </SidebarGroupContent>
+  );
+
+  if (!collapsible) {
+    return (
+      <SidebarGroup>
+        <SidebarGroupLabel>
+          <span className="truncate">{label}</span>
+        </SidebarGroupLabel>
+        {menu}
+      </SidebarGroup>
+    );
+  }
+
+  return (
+    <Collapsible
+      open={!collapsed}
+      onOpenChange={(open) => {
+        if (open === collapsed) controller.toggleGroupCollapsed(group.id);
+      }}
+      className="group/collapsible"
+    >
+      <SidebarGroup className="pt-1">
+        <SidebarGroupLabel asChild>
+          <CollapsibleTrigger>
+            {collapsed ? <ChevronRight /> : <ChevronDown />}
+            <span className="min-w-0 flex-1 truncate">{label}</span>
+            {collapsed && (
+              <span className="ml-auto text-sidebar-foreground/70 normal-case">
+                {m.sessions_group_count({ count: group.total })}
+              </span>
+            )}
+          </CollapsibleTrigger>
+        </SidebarGroupLabel>
+        <CollapsibleContent>{menu}</CollapsibleContent>
+      </SidebarGroup>
+    </Collapsible>
+  );
+}
+
+function groupLabel(
+  group: AgentSessionGroup,
+  rootName: string | null,
+  spaceNames: Map<string, string>,
+): string {
+  const first = group.sessions[0];
+  return first
+    ? scopeLabel(first, rootName, spaceNames)
+    : m.sessions_group_space();
+}
+
+function SessionsListSkeleton() {
+  return (
+    <SidebarGroup>
+      <SidebarGroupContent>
+        <SidebarMenu>
+          {Array.from({ length: 8 }, (_, index) => (
+            <SidebarMenuItem key={index}>
+              <SidebarMenuSkeleton />
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  );
+}
+
+function SourceUnavailableState({
+  onRetry,
+  onOpenAppSettings,
+}: {
+  onRetry: () => void;
+  onOpenAppSettings?: () => void;
+}) {
+  return (
+    <Empty className="min-h-72 border-0 p-3">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <RefreshCw />
+        </EmptyMedia>
+        <EmptyTitle>{m.sessions_source_unavailable_title()}</EmptyTitle>
+        <EmptyDescription>
+          {m.sessions_source_unavailable_description()}
+        </EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent className="flex-row justify-center">
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          {m.sessions_action_retry()}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={!onOpenAppSettings}
+          onClick={onOpenAppSettings}
+        >
+          {m.sessions_action_open_settings()}
+        </Button>
+      </EmptyContent>
+    </Empty>
+  );
+}
+
+function NoSessionsState() {
+  return (
+    <Empty className="min-h-72 border-0 p-3">
+      <EmptyHeader>
+        <EmptyTitle>{m.sessions_empty_title()}</EmptyTitle>
+        <EmptyDescription>{m.sessions_empty_description()}</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+  );
+}
+
+function NoResultsState() {
+  return (
+    <Empty className="min-h-72 border-0 p-3">
+      <EmptyHeader>
+        <EmptyTitle>{m.sessions_no_results_title()}</EmptyTitle>
+        <EmptyDescription>
+          {m.sessions_no_results_description()}
+        </EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+  );
+}

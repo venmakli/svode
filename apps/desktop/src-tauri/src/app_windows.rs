@@ -162,10 +162,17 @@ pub fn release_current_project_window(state: tauri::State<'_, AppWindowState>, w
     state.release_window_project(window.label());
 }
 
-pub fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+pub fn build_initial_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    build_app_menu(app, RecentProjectsMode::Skip)
+}
+
+fn build_app_menu(
+    app: &AppHandle,
+    recent_projects_mode: RecentProjectsMode,
+) -> tauri::Result<Menu<tauri::Wry>> {
     let default_menu = Menu::default(app)?;
     let menu = Menu::new(app)?;
-    let file = build_file_menu(app)?;
+    let file = build_file_menu(app, recent_projects_mode)?;
     let mut file_inserted = false;
 
     for item in default_menu.items()? {
@@ -184,7 +191,16 @@ pub fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     Ok(menu)
 }
 
-fn build_file_menu(app: &AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
+#[derive(Debug, Clone, Copy)]
+enum RecentProjectsMode {
+    Load,
+    Skip,
+}
+
+fn build_file_menu(
+    app: &AppHandle,
+    recent_projects_mode: RecentProjectsMode,
+) -> tauri::Result<Submenu<tauri::Wry>> {
     let file = Submenu::new(app, "File", true)?;
 
     file.append(&MenuItem::with_id(
@@ -204,10 +220,13 @@ fn build_file_menu(app: &AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
     file.append(&PredefinedMenuItem::separator(app)?)?;
 
     let open_recent = Submenu::new(app, "Open Recent", true)?;
-    let recent_projects = recent_projects(app).unwrap_or_else(|error| {
-        tracing::warn!("failed to read recent projects for app menu: {error}");
-        Vec::new()
-    });
+    let recent_projects = match recent_projects_mode {
+        RecentProjectsMode::Load => recent_projects(app).unwrap_or_else(|error| {
+            tracing::warn!("failed to read recent projects for app menu: {error}");
+            Vec::new()
+        }),
+        RecentProjectsMode::Skip => Vec::new(),
+    };
     if recent_projects.is_empty() {
         open_recent.append(&MenuItem::with_id(
             app,
@@ -247,7 +266,8 @@ fn is_file_submenu(item: &MenuItemKind<tauri::Wry>) -> bool {
 }
 
 pub fn rebuild_app_menu(app: &AppHandle) -> Result<(), AppError> {
-    let menu = build_app_menu(app).map_err(|error| AppError::General(error.to_string()))?;
+    let menu = build_app_menu(app, RecentProjectsMode::Load)
+        .map_err(|error| AppError::General(error.to_string()))?;
     app.set_menu(menu)
         .map(|_| ())
         .map_err(|error| AppError::General(error.to_string()))
