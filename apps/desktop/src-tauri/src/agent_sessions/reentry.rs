@@ -127,6 +127,24 @@ where
         }
     };
     let scope_dir = scope_config_dir(session, project);
+    if is_external_active_unattachable(session) {
+        let command = resolve_cli(session, &scope_dir)
+            .map(|program| resolved_resume_command(session, program, cwd.clone()))
+            .unwrap_or_else(|| fallback_resume_command(session, Some(cwd.clone())));
+        return Ok(AgentSessionReentryResult {
+            mode: AgentSessionReentryMode::ExternalActiveUnattachable,
+            session_id: session.id.clone(),
+            pty_id: None,
+            command: Some(command),
+            cwd: Some(cwd),
+            error: Some(AgentSessionReentryError {
+                code: AgentSessionReentryErrorCode::ExternalProcessUnattachable,
+                message: "Agent session is active in an external process that Svode cannot attach"
+                    .to_string(),
+            }),
+        });
+    }
+
     let Some(program) = resolve_cli(session, &scope_dir) else {
         let command = fallback_resume_command(session, Some(cwd.clone()));
         return Ok(error_result(
@@ -141,21 +159,6 @@ where
         ));
     };
     let command = resolved_resume_command(session, program, cwd.clone());
-
-    if is_external_active_unattachable(session) {
-        return Ok(AgentSessionReentryResult {
-            mode: AgentSessionReentryMode::ExternalActiveUnattachable,
-            session_id: session.id.clone(),
-            pty_id: None,
-            command: Some(command),
-            cwd: Some(cwd),
-            error: Some(AgentSessionReentryError {
-                code: AgentSessionReentryErrorCode::ExternalProcessUnattachable,
-                message: "Agent session is active in an external process that Svode cannot attach"
-                    .to_string(),
-            }),
-        });
-    }
 
     let spawn = AgentTerminalSpawn {
         agent_session_id: session.id.clone(),
@@ -572,6 +575,28 @@ mod tests {
             result.command.as_ref().expect("command").args,
             vec!["resume", "external"]
         );
+    }
+
+    #[test]
+    fn agent_sessions_reentry_external_active_does_not_require_cli_resolution() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        let session = base_session(&project);
+
+        let result = reenter_scoped_session(
+            &session,
+            &project,
+            |_, _| None,
+            |_| panic!("spawn should not run for external process"),
+        )
+        .expect("reenter");
+
+        assert_eq!(
+            result.mode,
+            AgentSessionReentryMode::ExternalActiveUnattachable
+        );
+        assert_eq!(result.command.as_ref().expect("command").program, "codex");
     }
 
     #[test]
