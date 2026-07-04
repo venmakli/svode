@@ -90,7 +90,13 @@ export function useAgentSessions(
     () => new Set(),
   );
   const requestIdRef = useRef(0);
+  const selectionRequestIdRef = useRef(0);
+  const projectPathRef = useRef(projectPath);
   const resultRef = useRef<AgentSessionsListResult | null>(null);
+
+  useEffect(() => {
+    projectPathRef.current = projectPath;
+  }, [projectPath]);
 
   useEffect(() => {
     resultRef.current = result;
@@ -107,6 +113,9 @@ export function useAgentSessions(
       }
 
       const requestId = ++requestIdRef.current;
+      const isCurrentRequest = () =>
+        requestIdRef.current === requestId &&
+        projectPathRef.current === projectPath;
       if (forceRefresh) {
         setRefreshing(true);
       } else {
@@ -120,13 +129,13 @@ export function useAgentSessions(
         const next = forceRefresh
           ? await refreshAgentSessions(projectPath)
           : await listAgentSessions(projectPath);
-        if (requestIdRef.current !== requestId) return;
+        if (!isCurrentRequest()) return;
         setResult(next);
       } catch (err) {
-        if (requestIdRef.current !== requestId) return;
+        if (!isCurrentRequest()) return;
         setError(getNativeErrorMessage(err));
       } finally {
-        if (requestIdRef.current === requestId) {
+        if (isCurrentRequest()) {
           setLoading(false);
           setRefreshing(false);
         }
@@ -136,11 +145,14 @@ export function useAgentSessions(
   );
 
   useEffect(() => {
+    selectionRequestIdRef.current += 1;
     resultRef.current = null;
     setResult(null);
     setSelectedSessionId(null);
     setSelectedStableGroupId(null);
     setSelectedReentryResult(null);
+    setReenteringSessionId(null);
+    setPinningSessionIds(new Set());
     setTerminalsBySession({});
     setVisibleLimits({});
     setCollapsedGroupIds(new Set());
@@ -164,14 +176,21 @@ export function useAgentSessions(
         selectedSessionId,
         selectedStableGroupId,
       }),
-    [result?.sessions, searchQuery, selectedSessionId, selectedStableGroupId, visibleLimits],
+    [
+      result?.sessions,
+      searchQuery,
+      selectedSessionId,
+      selectedStableGroupId,
+      visibleLimits,
+    ],
   );
 
   const selectedSession =
     result?.sessions.find((session) => session.id === selectedSessionId) ??
     null;
-  const selectedTerminal =
-    selectedSessionId ? terminalsBySession[selectedSessionId] : undefined;
+  const selectedTerminal = selectedSessionId
+    ? terminalsBySession[selectedSessionId]
+    : undefined;
   const selectedPtyId =
     selectedSession?.runtime?.ptyId ??
     selectedTerminal?.ptyId ??
@@ -192,6 +211,7 @@ export function useAgentSessions(
     ) => {
       if (!projectPath) return;
 
+      const selectionRequestId = ++selectionRequestIdRef.current;
       setSelectedSessionId(session.id);
       setSelectedStableGroupId(source === "space" ? groupId : null);
       setSelectedReentryResult(null);
@@ -199,20 +219,33 @@ export function useAgentSessions(
 
       try {
         const reentry = await reenterAgentSession(projectPath, session.id);
-        setSelectedReentryResult(reentry);
         const ptyId = reentry.ptyId;
-        if (ptyId) {
+        const projectUnchanged = projectPathRef.current === projectPath;
+        const selectionCurrent =
+          projectUnchanged &&
+          selectionRequestIdRef.current === selectionRequestId;
+
+        if (ptyId && projectUnchanged) {
           setTerminalsBySession((current) => ({
             ...current,
             [session.id]: {
               ptyId,
-              command: reentry.command?.display ?? session.resumeCommand?.display,
+              command:
+                reentry.command?.display ?? session.resumeCommand?.display,
               cwd: reentry.cwd ?? reentry.command?.cwd ?? session.cwd,
             },
           }));
         }
+        if (!selectionCurrent) return;
+        setSelectedReentryResult(reentry);
         await load(false);
       } catch (err) {
+        if (
+          projectPathRef.current !== projectPath ||
+          selectionRequestIdRef.current !== selectionRequestId
+        ) {
+          return;
+        }
         setSelectedReentryResult({
           mode: "error",
           sessionId: session.id,
@@ -224,7 +257,12 @@ export function useAgentSessions(
           },
         });
       } finally {
-        setReenteringSessionId(null);
+        if (
+          projectPathRef.current === projectPath &&
+          selectionRequestIdRef.current === selectionRequestId
+        ) {
+          setReenteringSessionId(null);
+        }
       }
     },
     [load, projectPath],
@@ -234,9 +272,15 @@ export function useAgentSessions(
     async (session: AgentSession) => {
       if (!projectPath || pinningSessionIds.has(session.id)) return;
 
+      const pinnedProjectPath = projectPath;
       setPinningSessionIds((current) => new Set(current).add(session.id));
       try {
-        await setAgentSessionPinned(projectPath, session.id, !session.pinned);
+        await setAgentSessionPinned(
+          pinnedProjectPath,
+          session.id,
+          !session.pinned,
+        );
+        if (projectPathRef.current !== pinnedProjectPath) return;
         setResult((current) =>
           current
             ? {
@@ -251,11 +295,13 @@ export function useAgentSessions(
         );
         await load(false);
       } finally {
-        setPinningSessionIds((current) => {
-          const next = new Set(current);
-          next.delete(session.id);
-          return next;
-        });
+        if (projectPathRef.current === pinnedProjectPath) {
+          setPinningSessionIds((current) => {
+            const next = new Set(current);
+            next.delete(session.id);
+            return next;
+          });
+        }
       }
     },
     [load, pinningSessionIds, projectPath],
