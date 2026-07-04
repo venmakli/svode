@@ -198,7 +198,7 @@
   "sessions_source_unavailable_title": "Не удалось загрузить сессии агентов",
   "sessions_source_unavailable_description": "Один или несколько поддерживаемых CLI-источников недоступны.",
   "sessions_select_title": "Выберите сессию",
-  "sessions_select_description": "Сессии агентов из поддерживаемых CLI откроются здесь.",
+  "sessions_select_description": "Сессии Codex и Claude Code откроются здесь.",
   "sessions_missing_title": "Сессия больше не найдена",
   "sessions_missing_description": "Обновите список или возобновите её из исходного CLI.",
   "sessions_resuming_title": "Открываю сессию",

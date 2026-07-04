@@ -198,7 +198,7 @@
   "sessions_source_unavailable_title": "Could not load agent sessions",
   "sessions_source_unavailable_description": "One or more supported CLI sources are unavailable.",
   "sessions_select_title": "Select a session",
-  "sessions_select_description": "Agent sessions from supported CLI tools will open here.",
+  "sessions_select_description": "Codex and Claude Code sessions will open here.",
   "sessions_missing_title": "Session no longer found",
   "sessions_missing_description": "Refresh the list or resume it again from the source CLI.",
   "sessions_resuming_title": "Opening session",
