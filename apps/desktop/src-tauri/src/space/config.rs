@@ -68,7 +68,7 @@ pub fn write_git_user_policy(path: &Path, policy: &GitUserPolicy) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::space::types::GitSpaceConfig;
+    use crate::space::types::{AgentSessionsLocalConfig, GitSpaceConfig};
 
     fn config_with_git() -> SpaceConfig {
         SpaceConfig {
@@ -128,6 +128,27 @@ mod tests {
             std::fs::read_to_string(temp.path().join(".svode/local.json"))
                 .expect("read local")
                 .contains("autoSync")
+        );
+    }
+
+    #[test]
+    fn agent_sessions_local_overlay_round_trips_through_local_config() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let local = LocalConfig {
+            agent_sessions: Some(AgentSessionsLocalConfig {
+                pinned_session_ids: vec!["codex:one".to_string(), "claude-code:two".to_string()],
+            }),
+            ..LocalConfig::default()
+        };
+
+        write_local_config(temp.path(), &local).expect("write local config");
+        let read_back = read_local_config(temp.path()).expect("read local config");
+
+        assert_eq!(read_back.agent_sessions, local.agent_sessions);
+        assert!(
+            std::fs::read_to_string(temp.path().join(".svode/local.json"))
+                .expect("read local")
+                .contains("pinnedSessionIds")
         );
     }
 }

@@ -204,9 +204,18 @@ pub struct LocalConfig {
     #[serde(default)]
     pub agent: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_sessions: Option<AgentSessionsLocalConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git: Option<GitUserPolicy>,
     #[serde(default)]
     pub expanded_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionsLocalConfig {
+    #[serde(default)]
+    pub pinned_session_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -326,6 +335,25 @@ mod tests {
                 auto_sync: true,
                 auto_commit_structural: true,
                 auto_commit_system: false,
+            })
+        );
+    }
+
+    #[test]
+    fn local_config_accepts_agent_sessions_overlay() {
+        let config: LocalConfig = serde_json::from_str(
+            r#"{
+                "agentSessions": {
+                    "pinnedSessionIds": ["codex:one", "claude-code:two"]
+                }
+            }"#,
+        )
+        .expect("deserialize local config");
+
+        assert_eq!(
+            config.agent_sessions,
+            Some(AgentSessionsLocalConfig {
+                pinned_session_ids: vec!["codex:one".to_string(), "claude-code:two".to_string()],
             })
         );
     }

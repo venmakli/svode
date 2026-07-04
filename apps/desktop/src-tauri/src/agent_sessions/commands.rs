@@ -4,31 +4,49 @@ use super::AgentSessionsState;
 use super::read_model;
 use super::types::{AgentSessionsListResult, AgentSessionsPinResult};
 use crate::error::AppError;
+use crate::terminal::TerminalManager;
 
 #[tauri::command]
 pub fn agent_sessions_list(
     state: State<'_, AgentSessionsState>,
+    terminal_manager: State<'_, TerminalManager>,
     project_path: String,
 ) -> Result<AgentSessionsListResult, AppError> {
-    read_model::list_sessions(state.inner(), project_path, false)
+    read_model::list_sessions_with_surfaces(
+        state.inner(),
+        project_path,
+        false,
+        terminal_manager.list_agent_surfaces()?,
+    )
 }
 
 #[tauri::command]
 pub fn agent_sessions_refresh(
     state: State<'_, AgentSessionsState>,
+    terminal_manager: State<'_, TerminalManager>,
     project_path: String,
 ) -> Result<AgentSessionsListResult, AppError> {
-    read_model::list_sessions(state.inner(), project_path, true)
+    read_model::list_sessions_with_surfaces(
+        state.inner(),
+        project_path,
+        true,
+        terminal_manager.list_agent_surfaces()?,
+    )
 }
 
 #[tauri::command]
 pub fn agent_sessions_set_pinned(
-    _state: State<'_, AgentSessionsState>,
-    _project_path: String,
-    _session_id: String,
-    _pinned: bool,
+    state: State<'_, AgentSessionsState>,
+    terminal_manager: State<'_, TerminalManager>,
+    project_path: String,
+    session_id: String,
+    pinned: bool,
 ) -> Result<AgentSessionsPinResult, AppError> {
-    Err(AppError::General(
-        "agent_sessions_set_pinned is deferred to Stage 7 Phase 1.2.5".to_string(),
-    ))
+    read_model::set_pinned(
+        state.inner(),
+        project_path,
+        session_id,
+        pinned,
+        terminal_manager.list_agent_surfaces()?,
+    )
 }

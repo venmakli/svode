@@ -6,10 +6,14 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use chrono::{SecondsFormat, Utc};
 use portable_pty::{Child as PtyChild, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
+use crate::agent_sessions::types::{
+    AgentSessionActiveFlag, AgentSessionSource, AgentSessionStatus,
+};
 use crate::error::AppError;
 use crate::system_path;
 
@@ -54,15 +58,59 @@ struct TerminalProcess {
     writer: Box<dyn Write + Send>,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentTerminalSurface {
+    pub pty_id: String,
+    pub agent_session_id: String,
+    pub source: AgentSessionSource,
+    pub source_session_id: String,
+    pub initial_agent_argv: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_agent_cwd: Option<String>,
+    pub shell_cwd: String,
+    pub created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_output_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_input_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_evidence: Option<AgentTerminalStatusEvidence>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentTerminalStatusEvidence {
+    pub status: AgentSessionStatus,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub active_flags: Vec<AgentSessionActiveFlag>,
+    pub reason: String,
+    pub observed_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AgentTerminalStatusSignal {
+    active_flags: Vec<AgentSessionActiveFlag>,
+    reason: &'static str,
+}
+
 #[derive(Clone)]
 pub struct TerminalManager {
     sessions: Arc<Mutex<HashMap<String, TerminalProcess>>>,
+    agent_surfaces: Arc<Mutex<HashMap<String, AgentTerminalSurface>>>,
 }
 
 impl TerminalManager {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            agent_surfaces: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -124,7 +172,13 @@ impl TerminalManager {
             .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?
             .insert(pty_id.clone(), process);
 
-        if let Err(e) = spawn_reader_loop(app, self.sessions.clone(), pty_id.clone(), reader) {
+        if let Err(e) = spawn_reader_loop(
+            app,
+            self.sessions.clone(),
+            self.agent_surfaces.clone(),
+            pty_id.clone(),
+            reader,
+        ) {
             if let Some(mut process) = self
                 .sessions
                 .lock()
@@ -150,6 +204,15 @@ impl TerminalManager {
 
         process.writer.write_all(data.as_bytes())?;
         process.writer.flush()?;
+        if let Some(surface) = self
+            .agent_surfaces
+            .lock()
+            .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?
+            .get_mut(pty_id)
+        {
+            surface.last_input_at = Some(now_rfc3339());
+            clear_waiting_status_after_input(surface);
+        }
         Ok(())
     }
 
@@ -179,15 +242,21 @@ impl TerminalManager {
             .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?
             .remove(pty_id);
 
-        if let Some(mut process) = process {
-            process
+        let kill_result = if let Some(mut process) = process {
+            let result = process
                 .child
                 .kill()
-                .map_err(|e| AppError::General(format!("Failed to kill terminal: {e}")))?;
+                .map_err(|e| AppError::General(format!("Failed to kill terminal: {e}")));
             let _ = process.child.wait();
+            result
+        } else {
+            Ok(())
+        };
+        if let Ok(mut surfaces) = self.agent_surfaces.lock() {
+            surfaces.remove(pty_id);
         }
 
-        Ok(())
+        kill_result
     }
 
     pub fn kill_all(&self) {
@@ -208,6 +277,9 @@ impl TerminalManager {
             }
             let _ = process.child.wait();
         }
+        if let Ok(mut surfaces) = self.agent_surfaces.lock() {
+            surfaces.clear();
+        }
     }
 
     pub fn list(&self) -> Result<Vec<TerminalSession>, AppError> {
@@ -221,6 +293,47 @@ impl TerminalManager {
             .map(|process| process.session.clone())
             .collect())
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn register_agent_surface(
+        &self,
+        surface: AgentTerminalSurface,
+    ) -> Result<(), AppError> {
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?;
+        if !sessions.contains_key(&surface.pty_id) {
+            return Err(AppError::General(format!(
+                "Terminal session not found: {}",
+                surface.pty_id
+            )));
+        }
+        drop(sessions);
+
+        self.agent_surfaces
+            .lock()
+            .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?
+            .insert(surface.pty_id.clone(), surface);
+        Ok(())
+    }
+
+    pub(crate) fn list_agent_surfaces(&self) -> Result<Vec<AgentTerminalSurface>, AppError> {
+        let surfaces = self
+            .agent_surfaces
+            .lock()
+            .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?;
+
+        Ok(surfaces.values().cloned().collect())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_agent_surface_for_test(&self, surface: AgentTerminalSurface) {
+        self.agent_surfaces
+            .lock()
+            .expect("agent surfaces lock")
+            .insert(surface.pty_id.clone(), surface);
+    }
 }
 
 impl Default for TerminalManager {
@@ -232,6 +345,7 @@ impl Default for TerminalManager {
 fn spawn_reader_loop(
     app: AppHandle,
     sessions: Arc<Mutex<HashMap<String, TerminalProcess>>>,
+    agent_surfaces: Arc<Mutex<HashMap<String, AgentTerminalSurface>>>,
     pty_id: String,
     mut reader: Box<dyn Read + Send>,
 ) -> Result<(), AppError> {
@@ -246,6 +360,7 @@ fn spawn_reader_loop(
                     Ok(0) => break,
                     Ok(n) => {
                         let data = String::from_utf8_lossy(&buffer[..n]).to_string();
+                        update_agent_surface_output(&agent_surfaces, &pty_id, &data);
                         let payload = TerminalOutputEvent {
                             pty_id: pty_id.clone(),
                             data,
@@ -273,6 +388,9 @@ fn spawn_reader_loop(
             if let Some(mut process) = process {
                 let _ = process.child.wait();
             }
+            if let Ok(mut surfaces) = agent_surfaces.lock() {
+                surfaces.remove(&pty_id);
+            }
 
             let _ = app.emit(
                 EXIT_EVENT,
@@ -283,6 +401,141 @@ fn spawn_reader_loop(
         })
         .map(|_| ())
         .map_err(|e| AppError::General(format!("Failed to spawn terminal reader thread: {e}")))
+}
+
+fn update_agent_surface_output(
+    agent_surfaces: &Arc<Mutex<HashMap<String, AgentTerminalSurface>>>,
+    pty_id: &str,
+    data: &str,
+) {
+    let observed_at = now_rfc3339();
+    let mut surfaces = match agent_surfaces.lock() {
+        Ok(surfaces) => surfaces,
+        Err(_) => {
+            tracing::warn!("Failed to update agent terminal surface: state lock poisoned");
+            return;
+        }
+    };
+    let Some(surface) = surfaces.get_mut(pty_id) else {
+        return;
+    };
+
+    surface.last_output_at = Some(observed_at.clone());
+    if let Some(signal) = classify_agent_terminal_output(surface.source, data) {
+        surface.status_evidence = Some(AgentTerminalStatusEvidence {
+            status: AgentSessionStatus::Active,
+            active_flags: signal.active_flags,
+            reason: signal.reason.to_string(),
+            observed_at,
+        });
+    }
+}
+
+fn clear_waiting_status_after_input(surface: &mut AgentTerminalSurface) {
+    let should_clear = surface
+        .status_evidence
+        .as_ref()
+        .map(|evidence| {
+            matches!(evidence.status, AgentSessionStatus::Active)
+                && !evidence.active_flags.is_empty()
+        })
+        .unwrap_or(false);
+    if should_clear {
+        surface.status_evidence = None;
+    }
+}
+
+fn now_rfc3339() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+fn classify_agent_terminal_output(
+    source: AgentSessionSource,
+    data: &str,
+) -> Option<AgentTerminalStatusSignal> {
+    let normalized = normalize_terminal_text(data);
+    if normalized.trim().is_empty() {
+        return None;
+    }
+
+    match source {
+        AgentSessionSource::Codex => classify_codex_terminal_output(&normalized),
+        AgentSessionSource::ClaudeCode => classify_claude_terminal_output(&normalized),
+    }
+}
+
+fn classify_codex_terminal_output(text: &str) -> Option<AgentTerminalStatusSignal> {
+    if text.contains("approval required")
+        || text.contains("requires approval")
+        || text.contains("approve command")
+        || text.contains("allow this command")
+        || (text.contains("do you want to allow")
+            && (text.contains("command") || text.contains("operation")))
+    {
+        return Some(AgentTerminalStatusSignal {
+            active_flags: vec![AgentSessionActiveFlag::WaitingOnApproval],
+            reason: "codex approval prompt",
+        });
+    }
+
+    if text.contains("waiting for user input")
+        || text.contains("waiting on user input")
+        || text.contains("please enter your response")
+        || text.contains("please respond in the terminal")
+    {
+        return Some(AgentTerminalStatusSignal {
+            active_flags: vec![AgentSessionActiveFlag::WaitingOnUserInput],
+            reason: "codex user input prompt",
+        });
+    }
+
+    None
+}
+
+fn classify_claude_terminal_output(text: &str) -> Option<AgentTerminalStatusSignal> {
+    if text.contains("permission required")
+        || text.contains("allow this tool")
+        || text.contains("approve tool")
+        || text.contains("do you want to proceed")
+    {
+        return Some(AgentTerminalStatusSignal {
+            active_flags: vec![AgentSessionActiveFlag::WaitingOnApproval],
+            reason: "claude approval prompt",
+        });
+    }
+
+    if text.contains("waiting for your input")
+        || text.contains("waiting on your input")
+        || text.contains("please enter your response")
+        || text.contains("please respond in the terminal")
+    {
+        return Some(AgentTerminalStatusSignal {
+            active_flags: vec![AgentSessionActiveFlag::WaitingOnUserInput],
+            reason: "claude user input prompt",
+        });
+    }
+
+    None
+}
+
+fn normalize_terminal_text(data: &str) -> String {
+    let mut out = String::new();
+    let mut chars = data.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                for next in chars.by_ref() {
+                    if ('@'..='~').contains(&next) {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        out.push(ch);
+    }
+    out.to_ascii_lowercase()
 }
 
 fn pty_size(cols: u16, rows: u16) -> PtySize {
@@ -392,6 +645,29 @@ fn command_exists(command: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn test_surface() -> AgentTerminalSurface {
+        AgentTerminalSurface {
+            pty_id: "pty-agent".to_string(),
+            agent_session_id: "codex:session".to_string(),
+            source: AgentSessionSource::Codex,
+            source_session_id: "session".to_string(),
+            initial_agent_argv: vec![
+                "codex".to_string(),
+                "resume".to_string(),
+                "session".to_string(),
+            ],
+            initial_agent_cwd: Some("/tmp/project".to_string()),
+            shell_cwd: "/tmp/project".to_string(),
+            created_at: "2026-07-04T10:00:00Z".to_string(),
+            last_output_at: None,
+            last_input_at: None,
+            finished_at: None,
+            exit_code: None,
+            failure_reason: None,
+            status_evidence: None,
+        }
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn unix_shell_prefers_valid_shell_env() {
@@ -434,5 +710,81 @@ mod tests {
                 args: Vec::new(),
             }
         );
+    }
+
+    #[test]
+    fn terminal_agent_classifier_detects_codex_approval_prompt() {
+        let signal = classify_agent_terminal_output(
+            AgentSessionSource::Codex,
+            "\u{1b}[33mApproval required: approve command?\u{1b}[0m",
+        )
+        .expect("approval signal");
+
+        assert_eq!(
+            signal.active_flags,
+            vec![AgentSessionActiveFlag::WaitingOnApproval]
+        );
+    }
+
+    #[test]
+    fn terminal_agent_classifier_detects_claude_user_input_prompt() {
+        let signal = classify_agent_terminal_output(
+            AgentSessionSource::ClaudeCode,
+            "Claude is waiting for your input. Please enter your response.",
+        )
+        .expect("input signal");
+
+        assert_eq!(
+            signal.active_flags,
+            vec![AgentSessionActiveFlag::WaitingOnUserInput]
+        );
+    }
+
+    #[test]
+    fn terminal_agent_classifier_ignores_weak_waiting_hints() {
+        assert!(
+            classify_agent_terminal_output(
+                AgentSessionSource::Codex,
+                "The task may require approval later, continuing for now.",
+            )
+            .is_none()
+        );
+        assert!(
+            classify_agent_terminal_output(
+                AgentSessionSource::ClaudeCode,
+                "Waiting can happen when a tool asks permission.",
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn terminal_agent_surfaces_do_not_change_generic_terminal_list() {
+        let manager = TerminalManager::new();
+        manager.insert_agent_surface_for_test(test_surface());
+
+        assert!(manager.list().expect("list terminals").is_empty());
+        assert_eq!(
+            manager
+                .list_agent_surfaces()
+                .expect("list agent surfaces")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn terminal_agent_input_clears_waiting_status_evidence() {
+        let mut surface = test_surface();
+        surface.status_evidence = Some(AgentTerminalStatusEvidence {
+            status: AgentSessionStatus::Active,
+            active_flags: vec![AgentSessionActiveFlag::WaitingOnUserInput],
+            reason: "input prompt".to_string(),
+            observed_at: "2026-07-04T10:01:00Z".to_string(),
+        });
+
+        clear_waiting_status_after_input(&mut surface);
+
+        assert!(surface.status_evidence.is_none());
     }
 }

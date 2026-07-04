@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
@@ -10,14 +10,18 @@ use super::sources::{
     CandidateCwdSource, PersistedAgentSessionCandidate, SourceScan, claude_code, codex, short_id,
 };
 use super::types::{
-    AgentSession, AgentSessionCapabilities, AgentSessionResumeCommand, AgentSessionRuntime,
-    AgentSessionScope, AgentSessionScopeConfidence, AgentSessionScopeKind, AgentSessionScopeStatus,
-    AgentSessionSource, AgentSessionSourceReport, AgentSessionSourceStatus, AgentSessionStatus,
-    AgentSessionStatusConfidence, AgentSessionStatusSource, AgentSessionTitleSource,
-    AgentSessionsCacheMode, AgentSessionsCacheReport, AgentSessionsListResult,
-    AgentSessionsListStatus, AgentSessionsSummary,
+    AgentSession, AgentSessionActiveFlag, AgentSessionCapabilities, AgentSessionResumeCommand,
+    AgentSessionRuntime, AgentSessionScope, AgentSessionScopeConfidence, AgentSessionScopeKind,
+    AgentSessionScopeStatus, AgentSessionSource, AgentSessionSourceReport,
+    AgentSessionSourceStatus, AgentSessionStatus, AgentSessionStatusConfidence,
+    AgentSessionStatusSource, AgentSessionTitleSource, AgentSessionsCacheMode,
+    AgentSessionsCacheReport, AgentSessionsListResult, AgentSessionsListStatus,
+    AgentSessionsSummary,
 };
 use crate::error::AppError;
+use crate::space::types::{AgentSessionsLocalConfig, SpaceInfo, SpaceStatus};
+use crate::space::{config as space_config, project as space_project};
+use crate::terminal::AgentTerminalSurface;
 
 #[derive(Debug, Default)]
 pub(crate) struct AgentSessionsReadCache {
@@ -38,12 +42,24 @@ struct SourceRead {
     cache_hit: bool,
 }
 
+#[cfg(test)]
 pub(crate) fn list_sessions(
     state: &AgentSessionsState,
     project_path: String,
     force_refresh: bool,
 ) -> Result<AgentSessionsListResult, AppError> {
+    list_sessions_with_surfaces(state, project_path, force_refresh, Vec::new())
+}
+
+pub(crate) fn list_sessions_with_surfaces(
+    state: &AgentSessionsState,
+    project_path: String,
+    force_refresh: bool,
+    terminal_surfaces: Vec<AgentTerminalSurface>,
+) -> Result<AgentSessionsListResult, AppError> {
     let project = normalize_project_path(&project_path)?;
+    let scope_index = ScopeIndex::new(&project, load_child_spaces(&project)?)?;
+    let pinned_ids = read_pinned_session_ids(&project)?;
     let generated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
 
     let mut cache = state
@@ -74,7 +90,7 @@ pub(crate) fn list_sessions(
         summary.source_errors += read.report.counts.source_errors;
 
         for candidate in read.candidates {
-            let Some(scope) = resolve_scope(&project, &candidate, &state.home_dir) else {
+            let Some(scope) = resolve_scope(&scope_index, &candidate, &state.home_dir) else {
                 read.report.counts.unresolved_candidates += 1;
                 summary.unresolved_candidates += 1;
                 continue;
@@ -85,7 +101,9 @@ pub(crate) fn list_sessions(
                 continue;
             };
 
-            let session = map_candidate(candidate, scope, last_activity_at);
+            let mut session = map_candidate(candidate, scope, last_activity_at);
+            apply_terminal_status_overlay(&mut session, &terminal_surfaces);
+            session.pinned = pinned_ids.contains(&session.id);
             read.report.counts.returned_sessions += 1;
             sessions.push(session);
         }
@@ -219,9 +237,7 @@ fn map_candidate(
         active_flags: Vec::new(),
         status_source: AgentSessionStatusSource::Fallback,
         status_confidence: AgentSessionStatusConfidence::Weak,
-        status_reason: Some(
-            "persisted session; live status is not checked in Phase 1.1".to_string(),
-        ),
+        status_reason: Some("persisted session without live status evidence".to_string()),
         runtime: Some(AgentSessionRuntime::default()),
         project_id: None,
         project_path: Some(scope.project_path.clone()),
@@ -251,32 +267,280 @@ fn map_candidate(
     }
 }
 
+#[derive(Debug, Clone)]
+struct ScopeIndex {
+    entries: Vec<ScopeEntry>,
+}
+
+#[derive(Debug, Clone)]
+struct ScopeEntry {
+    kind: AgentSessionScopeKind,
+    status: AgentSessionScopeStatus,
+    path: PathBuf,
+    project_path: String,
+    space_id: Option<String>,
+    space_path: Option<String>,
+}
+
+impl ScopeIndex {
+    fn new(project: &Path, child_spaces: Vec<SpaceInfo>) -> Result<Self, AppError> {
+        let project_path = project.to_string_lossy().into_owned();
+        let mut entries = vec![ScopeEntry {
+            kind: AgentSessionScopeKind::Project,
+            status: AgentSessionScopeStatus::Ready,
+            path: project.to_path_buf(),
+            project_path: project_path.clone(),
+            space_id: None,
+            space_path: None,
+        }];
+
+        for space in child_spaces {
+            let raw_path = PathBuf::from(&space.path);
+            let Some(path) = normalize_existing_or_lexical(&raw_path) else {
+                continue;
+            };
+            entries.push(ScopeEntry {
+                kind: AgentSessionScopeKind::Space,
+                status: scope_status(space.status),
+                project_path: project_path.clone(),
+                space_id: Some(space.id),
+                space_path: Some(path.to_string_lossy().into_owned()),
+                path,
+            });
+        }
+
+        entries.sort_by(|a, b| {
+            b.path
+                .components()
+                .count()
+                .cmp(&a.path.components().count())
+        });
+        Ok(Self { entries })
+    }
+
+    fn resolve(&self, cwd: &Path, cwd_source: CandidateCwdSource) -> Option<AgentSessionScope> {
+        let entry = self
+            .entries
+            .iter()
+            .find(|entry| cwd == entry.path || cwd.starts_with(&entry.path))?;
+        let confidence = match cwd_source {
+            CandidateCwdSource::WorktreeOriginal => AgentSessionScopeConfidence::WorktreeOriginal,
+            CandidateCwdSource::Cwd if cwd == entry.path => AgentSessionScopeConfidence::Exact,
+            CandidateCwdSource::Cwd => AgentSessionScopeConfidence::CwdPrefix,
+        };
+
+        Some(AgentSessionScope {
+            kind: entry.kind,
+            status: entry.status,
+            confidence,
+            project_path: entry.project_path.clone(),
+            space_id: entry.space_id.clone(),
+            space_path: entry.space_path.clone(),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+        })
+    }
+}
+
+fn scope_status(status: SpaceStatus) -> AgentSessionScopeStatus {
+    match status {
+        SpaceStatus::Ready => AgentSessionScopeStatus::Ready,
+        SpaceStatus::Missing => AgentSessionScopeStatus::Missing,
+        SpaceStatus::Broken => AgentSessionScopeStatus::Broken,
+    }
+}
+
+fn load_child_spaces(project: &Path) -> Result<Vec<SpaceInfo>, AppError> {
+    match space_project::list_spaces(project) {
+        Ok(spaces) => Ok(spaces),
+        Err(AppError::FileNotFound(_)) => Ok(Vec::new()),
+        Err(error) => Err(error),
+    }
+}
+
 fn resolve_scope(
-    project: &Path,
+    scope_index: &ScopeIndex,
     candidate: &PersistedAgentSessionCandidate,
     home: &Path,
 ) -> Option<AgentSessionScope> {
     let cwd_raw = candidate.cwd.as_ref()?;
     let expanded = expand_home(cwd_raw, home);
     let cwd = normalize_existing_or_lexical(&expanded)?;
-    if !cwd.starts_with(project) {
-        return None;
+    scope_index.resolve(&cwd, candidate.cwd_source)
+}
+
+fn apply_terminal_status_overlay(
+    session: &mut AgentSession,
+    terminal_surfaces: &[AgentTerminalSurface],
+) {
+    let matching = terminal_surfaces
+        .iter()
+        .filter(|surface| {
+            surface.agent_session_id == session.id
+                || (surface.source == session.source
+                    && surface.source_session_id == session.source_session_id)
+        })
+        .collect::<Vec<_>>();
+    if matching.is_empty() {
+        return;
     }
 
-    let confidence = match candidate.cwd_source {
-        CandidateCwdSource::WorktreeOriginal => AgentSessionScopeConfidence::WorktreeOriginal,
-        CandidateCwdSource::Cwd if cwd == project => AgentSessionScopeConfidence::Exact,
-        CandidateCwdSource::Cwd => AgentSessionScopeConfidence::CwdPrefix,
-    };
+    let runtime_surface = matching
+        .iter()
+        .max_by(|a, b| surface_activity_key(a).cmp(&surface_activity_key(b)))
+        .expect("matching surface");
+    session.runtime = Some(AgentSessionRuntime {
+        pty_id: Some(runtime_surface.pty_id.clone()),
+        pid: None,
+        live: true,
+        last_output_at: runtime_surface.last_output_at.clone(),
+        last_input_at: runtime_surface.last_input_at.clone(),
+    });
 
-    Some(AgentSessionScope {
-        kind: AgentSessionScopeKind::Project,
-        status: AgentSessionScopeStatus::Ready,
-        confidence,
-        project_path: project.to_string_lossy().into_owned(),
-        space_id: None,
-        space_path: None,
-        cwd: Some(cwd.to_string_lossy().into_owned()),
+    let evidences = matching
+        .iter()
+        .filter_map(|surface| surface_status_evidence(surface))
+        .collect::<Vec<_>>();
+    if evidences.is_empty() {
+        return;
+    }
+
+    let first_status = evidences[0].status;
+    if evidences
+        .iter()
+        .any(|evidence| evidence.status != first_status)
+    {
+        session.status = AgentSessionStatus::Unknown;
+        session.active_flags.clear();
+        session.waiting_since = None;
+        session.status_source = AgentSessionStatusSource::EmbeddedTerminal;
+        session.status_confidence = AgentSessionStatusConfidence::Unknown;
+        session.status_reason = Some("conflicting embedded terminal status evidence".to_string());
+        return;
+    }
+
+    let evidence = evidences
+        .iter()
+        .max_by(|a, b| a.observed_at.cmp(&b.observed_at))
+        .expect("status evidence");
+    session.status = evidence.status;
+    session.status_source = AgentSessionStatusSource::EmbeddedTerminal;
+    session.status_confidence = AgentSessionStatusConfidence::Strong;
+    session.status_reason = Some(evidence.reason.clone());
+
+    if matches!(evidence.status, AgentSessionStatus::Active) {
+        session.active_flags = merged_active_flags(&evidences);
+        session.waiting_since =
+            (!session.active_flags.is_empty()).then(|| evidence.observed_at.clone());
+    } else {
+        session.active_flags.clear();
+        session.waiting_since = None;
+    }
+}
+
+fn surface_status_evidence(
+    surface: &AgentTerminalSurface,
+) -> Option<crate::terminal::AgentTerminalStatusEvidence> {
+    if let Some(evidence) = &surface.status_evidence {
+        return Some(evidence.clone());
+    }
+
+    let finished_at = surface.finished_at.as_ref()?;
+    let exit_code = surface.exit_code?;
+    let status = if exit_code == 0 {
+        AgentSessionStatus::Done
+    } else {
+        AgentSessionStatus::Failed
+    };
+    let reason = surface.failure_reason.clone().unwrap_or_else(|| {
+        if exit_code == 0 {
+            "initial agent command exited successfully".to_string()
+        } else {
+            format!("initial agent command exited with code {exit_code}")
+        }
+    });
+
+    Some(crate::terminal::AgentTerminalStatusEvidence {
+        status,
+        active_flags: Vec::new(),
+        reason,
+        observed_at: finished_at.clone(),
+    })
+}
+
+fn surface_activity_key(surface: &AgentTerminalSurface) -> &str {
+    let mut key = surface.created_at.as_str();
+    if let Some(last_output_at) = surface.last_output_at.as_deref()
+        && last_output_at > key
+    {
+        key = last_output_at;
+    }
+    if let Some(last_input_at) = surface.last_input_at.as_deref()
+        && last_input_at > key
+    {
+        key = last_input_at;
+    }
+    key
+}
+
+fn merged_active_flags(
+    evidences: &[crate::terminal::AgentTerminalStatusEvidence],
+) -> Vec<AgentSessionActiveFlag> {
+    let mut flags = Vec::new();
+    for evidence in evidences {
+        for flag in &evidence.active_flags {
+            if !flags.contains(flag) {
+                flags.push(*flag);
+            }
+        }
+    }
+    flags
+}
+
+fn read_pinned_session_ids(project: &Path) -> Result<HashSet<String>, AppError> {
+    Ok(space_config::read_local_config(project)?
+        .agent_sessions
+        .map(|config| config.pinned_session_ids.into_iter().collect())
+        .unwrap_or_default())
+}
+
+pub(crate) fn set_pinned(
+    state: &AgentSessionsState,
+    project_path: String,
+    session_id: String,
+    pinned: bool,
+    terminal_surfaces: Vec<AgentTerminalSurface>,
+) -> Result<crate::agent_sessions::types::AgentSessionsPinResult, AppError> {
+    let project = normalize_project_path(&project_path)?;
+    let current = list_sessions_with_surfaces(state, project_path, false, terminal_surfaces)?;
+    let scoped_ids = current
+        .sessions
+        .iter()
+        .map(|session| session.id.clone())
+        .collect::<HashSet<_>>();
+    if !scoped_ids.contains(&session_id) {
+        return Err(AppError::General(format!(
+            "agent session is not scoped to current project: {session_id}"
+        )));
+    }
+
+    let mut local = space_config::read_local_config(&project)?;
+    let overlay = local
+        .agent_sessions
+        .get_or_insert_with(AgentSessionsLocalConfig::default);
+    overlay
+        .pinned_session_ids
+        .retain(|id| scoped_ids.contains(id) && id != &session_id);
+    if pinned {
+        overlay.pinned_session_ids.push(session_id.clone());
+    }
+    let pinned_session_ids = overlay.pinned_session_ids.clone();
+    space_config::write_local_config(&project, &local)?;
+
+    Ok(crate::agent_sessions::types::AgentSessionsPinResult {
+        session_id,
+        pinned,
+        pinned_session_ids,
+        updated_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
     })
 }
 
@@ -401,12 +665,109 @@ fn list_status(reports: &[AgentSessionSourceReport], no_sessions: bool) -> Agent
 mod tests {
     use super::*;
     use crate::agent_sessions::AgentSessionsState;
+    use crate::agent_sessions::types::AgentSessionsPinResult;
+    use crate::terminal::{AgentTerminalStatusEvidence, AgentTerminalSurface};
 
     fn write(path: &Path, data: &str) {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).expect("create parent");
         }
         fs::write(path, data).expect("write fixture");
+    }
+
+    fn write_root_config(project: &Path, spaces: Vec<serde_json::Value>) {
+        write(
+            &project.join(".svode/config.json"),
+            &serde_json::json!({
+                "name": "Project",
+                "spaces": spaces,
+            })
+            .to_string(),
+        );
+    }
+
+    fn space_ref(id: &str, path: &str, repo: Option<&str>) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "path": path,
+            "repo": repo,
+        })
+    }
+
+    fn write_codex_history(home: &Path, source_session_id: &str, cwd: &Path, timestamp: i64) {
+        write(
+            &home.join(".codex/history.jsonl"),
+            &serde_json::json!({
+                "sessionId": source_session_id,
+                "cwd": cwd.to_string_lossy(),
+                "timestamp": timestamp,
+                "text": source_session_id,
+            })
+            .to_string(),
+        );
+    }
+
+    fn append_codex_history(home: &Path, rows: Vec<serde_json::Value>) {
+        write(
+            &home.join(".codex/history.jsonl"),
+            &rows
+                .into_iter()
+                .map(|row| row.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+    }
+
+    fn surface(
+        pty_id: &str,
+        source: AgentSessionSource,
+        source_session_id: &str,
+        evidence: Option<AgentTerminalStatusEvidence>,
+    ) -> AgentTerminalSurface {
+        AgentTerminalSurface {
+            pty_id: pty_id.to_string(),
+            agent_session_id: format!("{}:{source_session_id}", source.as_str()),
+            source,
+            source_session_id: source_session_id.to_string(),
+            initial_agent_argv: source.resume_argv(source_session_id),
+            initial_agent_cwd: Some("/tmp/project".to_string()),
+            shell_cwd: "/tmp/project".to_string(),
+            created_at: "2026-07-04T10:00:00Z".to_string(),
+            last_output_at: Some("2026-07-04T10:01:00Z".to_string()),
+            last_input_at: None,
+            finished_at: None,
+            exit_code: None,
+            failure_reason: None,
+            status_evidence: evidence,
+        }
+    }
+
+    fn evidence(
+        status: AgentSessionStatus,
+        active_flags: Vec<AgentSessionActiveFlag>,
+        reason: &str,
+    ) -> AgentTerminalStatusEvidence {
+        AgentTerminalStatusEvidence {
+            status,
+            active_flags,
+            reason: reason.to_string(),
+            observed_at: "2026-07-04T10:01:00Z".to_string(),
+        }
+    }
+
+    fn pin(
+        state: &AgentSessionsState,
+        project: &Path,
+        session_id: &str,
+        pinned: bool,
+    ) -> Result<AgentSessionsPinResult, AppError> {
+        set_pinned(
+            state,
+            project.to_string_lossy().into_owned(),
+            session_id.to_string(),
+            pinned,
+            Vec::new(),
+        )
     }
 
     #[test]
@@ -442,6 +803,189 @@ mod tests {
 
         assert_eq!(result.sessions.len(), 1);
         assert_eq!(result.sessions[0].source_session_id, "inside");
+        assert_eq!(result.summary.unresolved_candidates, 1);
+    }
+
+    #[test]
+    fn agent_sessions_scope_resolves_root_exact_match() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_codex_history(&home, "root", &project, 1_700_000_000);
+
+        let state = AgentSessionsState::with_home(home);
+        let result = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("list sessions");
+
+        assert_eq!(result.sessions.len(), 1);
+        assert_eq!(
+            result.sessions[0].scope_kind,
+            AgentSessionScopeKind::Project
+        );
+        assert_eq!(
+            result.sessions[0].scope_confidence,
+            AgentSessionScopeConfidence::Exact
+        );
+    }
+
+    #[test]
+    fn agent_sessions_scope_resolves_child_exact_match() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        let child = project.join("dev");
+        fs::create_dir_all(&child).expect("child");
+        write_root_config(&project, vec![space_ref("dev-space", "dev", None)]);
+        write_codex_history(&home, "child-exact", &child, 1_700_000_000);
+
+        let state = AgentSessionsState::with_home(home);
+        let result = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("list sessions");
+
+        assert_eq!(result.sessions.len(), 1);
+        let session = &result.sessions[0];
+        assert_eq!(session.scope_kind, AgentSessionScopeKind::Space);
+        assert_eq!(session.scope_status, AgentSessionScopeStatus::Ready);
+        assert_eq!(session.space_id.as_deref(), Some("dev-space"));
+        assert_eq!(session.scope_confidence, AgentSessionScopeConfidence::Exact);
+    }
+
+    #[test]
+    fn agent_sessions_scope_resolves_child_prefix_match() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        let child = project.join("dev");
+        let nested = child.join("feature");
+        fs::create_dir_all(&child).expect("child");
+        write_root_config(&project, vec![space_ref("dev-space", "dev", None)]);
+        write_codex_history(&home, "child-prefix", &nested, 1_700_000_000);
+
+        let state = AgentSessionsState::with_home(home);
+        let result = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("list sessions");
+
+        assert_eq!(result.sessions.len(), 1);
+        assert_eq!(result.sessions[0].scope_kind, AgentSessionScopeKind::Space);
+        assert_eq!(result.sessions[0].space_id.as_deref(), Some("dev-space"));
+        assert_eq!(
+            result.sessions[0].scope_confidence,
+            AgentSessionScopeConfidence::CwdPrefix
+        );
+    }
+
+    #[test]
+    fn agent_sessions_scope_rejects_sibling_prefix_false_positive() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        let child = project.join("dev");
+        let sibling = project.join("develop");
+        fs::create_dir_all(&child).expect("child");
+        fs::create_dir_all(&sibling).expect("sibling");
+        write_root_config(&project, vec![space_ref("dev-space", "dev", None)]);
+        write_codex_history(&home, "sibling", &sibling, 1_700_000_000);
+
+        let state = AgentSessionsState::with_home(home);
+        let result = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("list sessions");
+
+        assert_eq!(result.sessions.len(), 1);
+        assert_eq!(
+            result.sessions[0].scope_kind,
+            AgentSessionScopeKind::Project
+        );
+        assert_eq!(result.sessions[0].space_id, None);
+    }
+
+    #[test]
+    fn agent_sessions_scope_keeps_missing_and_broken_child_status() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_root_config(
+            &project,
+            vec![
+                space_ref(
+                    "missing-space",
+                    "missing",
+                    Some("https://example.com/missing.git"),
+                ),
+                space_ref("broken-space", "broken", None),
+            ],
+        );
+        append_codex_history(
+            &home,
+            vec![
+                serde_json::json!({
+                    "sessionId": "missing",
+                    "cwd": project.join("missing/sub").to_string_lossy(),
+                    "timestamp": 1_700_000_000,
+                    "text": "missing"
+                }),
+                serde_json::json!({
+                    "sessionId": "broken",
+                    "cwd": project.join("broken/sub").to_string_lossy(),
+                    "timestamp": 1_700_000_001,
+                    "text": "broken"
+                }),
+            ],
+        );
+
+        let state = AgentSessionsState::with_home(home);
+        let result = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("list sessions");
+
+        let missing = result
+            .sessions
+            .iter()
+            .find(|session| session.source_session_id == "missing")
+            .expect("missing session");
+        let broken = result
+            .sessions
+            .iter()
+            .find(|session| session.source_session_id == "broken")
+            .expect("broken session");
+
+        assert_eq!(missing.space_id.as_deref(), Some("missing-space"));
+        assert_eq!(missing.scope_status, AgentSessionScopeStatus::Missing);
+        assert_eq!(broken.space_id.as_deref(), Some("broken-space"));
+        assert_eq!(broken.scope_status, AgentSessionScopeStatus::Broken);
+    }
+
+    #[test]
+    fn agent_sessions_scope_filters_unknown_external_worktree() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        let external = temp.path().join("external-worktree");
+        fs::create_dir_all(&project).expect("project");
+        fs::create_dir_all(&external).expect("external");
+        write(
+            &home.join(".claude/projects/-project/external.jsonl"),
+            &format!(
+                "{}\n{}",
+                serde_json::json!({
+                    "type": "worktree-state",
+                    "worktreeSession": {"originalCwd": external.to_string_lossy()},
+                    "timestamp": "2026-07-04T09:00:00Z"
+                }),
+                serde_json::json!({
+                    "type": "user",
+                    "message": {"role": "user", "content": "external worktree"},
+                    "cwd": external.to_string_lossy(),
+                    "timestamp": "2026-07-04T09:01:00Z"
+                })
+            ),
+        );
+
+        let state = AgentSessionsState::with_home(home);
+        let result = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("list sessions");
+
+        assert!(result.sessions.is_empty());
         assert_eq!(result.summary.unresolved_candidates, 1);
     }
 
@@ -495,6 +1039,229 @@ mod tests {
         assert_eq!(second.cache.mode, AgentSessionsCacheMode::FingerprintHit);
         assert!(second.cache.hit);
         assert_eq!(refresh.cache.mode, AgentSessionsCacheMode::ForceRefresh);
+    }
+
+    #[test]
+    fn agent_sessions_open_managed_shell_keeps_persisted_done_status() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_codex_history(&home, "live-shell", &project, 1_700_000_000);
+
+        let state = AgentSessionsState::with_home(home);
+        let result = list_sessions_with_surfaces(
+            &state,
+            project.to_string_lossy().into_owned(),
+            false,
+            vec![surface(
+                "pty-live",
+                AgentSessionSource::Codex,
+                "live-shell",
+                None,
+            )],
+        )
+        .expect("list sessions");
+
+        let session = &result.sessions[0];
+        assert_eq!(session.status, AgentSessionStatus::Done);
+        assert_eq!(session.status_source, AgentSessionStatusSource::Fallback);
+        assert!(session.runtime.as_ref().expect("runtime").live);
+    }
+
+    #[test]
+    fn agent_sessions_terminal_waiting_evidence_overlays_active_status() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_codex_history(&home, "needs-approval", &project, 1_700_000_000);
+
+        let state = AgentSessionsState::with_home(home);
+        let result = list_sessions_with_surfaces(
+            &state,
+            project.to_string_lossy().into_owned(),
+            false,
+            vec![surface(
+                "pty-approval",
+                AgentSessionSource::Codex,
+                "needs-approval",
+                Some(evidence(
+                    AgentSessionStatus::Active,
+                    vec![AgentSessionActiveFlag::WaitingOnApproval],
+                    "approval prompt",
+                )),
+            )],
+        )
+        .expect("list sessions");
+
+        let session = &result.sessions[0];
+        assert_eq!(session.status, AgentSessionStatus::Active);
+        assert_eq!(
+            session.active_flags,
+            vec![AgentSessionActiveFlag::WaitingOnApproval]
+        );
+        assert_eq!(
+            session.status_source,
+            AgentSessionStatusSource::EmbeddedTerminal
+        );
+        assert_eq!(
+            session.status_confidence,
+            AgentSessionStatusConfidence::Strong
+        );
+    }
+
+    #[test]
+    fn agent_sessions_terminal_completion_exit_code_overlays_failed_status() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_codex_history(&home, "exit-failed", &project, 1_700_000_000);
+
+        let mut failed_surface =
+            surface("pty-exit", AgentSessionSource::Codex, "exit-failed", None);
+        failed_surface.finished_at = Some("2026-07-04T10:02:00Z".to_string());
+        failed_surface.exit_code = Some(2);
+        failed_surface.failure_reason = Some("initial command failed".to_string());
+
+        let state = AgentSessionsState::with_home(home);
+        let result = list_sessions_with_surfaces(
+            &state,
+            project.to_string_lossy().into_owned(),
+            false,
+            vec![failed_surface],
+        )
+        .expect("list sessions");
+
+        let session = &result.sessions[0];
+        assert_eq!(session.status, AgentSessionStatus::Failed);
+        assert_eq!(
+            session.status_source,
+            AgentSessionStatusSource::EmbeddedTerminal
+        );
+        assert_eq!(
+            session.status_reason.as_deref(),
+            Some("initial command failed")
+        );
+    }
+
+    #[test]
+    fn agent_sessions_terminal_stopped_and_failed_evidence_is_explicit() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        append_codex_history(
+            &home,
+            vec![
+                serde_json::json!({
+                    "sessionId": "failed",
+                    "cwd": project.to_string_lossy(),
+                    "timestamp": 1_700_000_000,
+                    "text": "failed"
+                }),
+                serde_json::json!({
+                    "sessionId": "stopped",
+                    "cwd": project.to_string_lossy(),
+                    "timestamp": 1_700_000_001,
+                    "text": "stopped"
+                }),
+            ],
+        );
+
+        let state = AgentSessionsState::with_home(home);
+        let result = list_sessions_with_surfaces(
+            &state,
+            project.to_string_lossy().into_owned(),
+            false,
+            vec![
+                surface(
+                    "pty-failed",
+                    AgentSessionSource::Codex,
+                    "failed",
+                    Some(evidence(
+                        AgentSessionStatus::Failed,
+                        Vec::new(),
+                        "agent failed",
+                    )),
+                ),
+                surface(
+                    "pty-stopped",
+                    AgentSessionSource::Codex,
+                    "stopped",
+                    Some(evidence(
+                        AgentSessionStatus::Stopped,
+                        Vec::new(),
+                        "agent stopped",
+                    )),
+                ),
+            ],
+        )
+        .expect("list sessions");
+
+        let failed = result
+            .sessions
+            .iter()
+            .find(|session| session.source_session_id == "failed")
+            .expect("failed session");
+        let stopped = result
+            .sessions
+            .iter()
+            .find(|session| session.source_session_id == "stopped")
+            .expect("stopped session");
+
+        assert_eq!(failed.status, AgentSessionStatus::Failed);
+        assert_eq!(failed.active_flags, Vec::<AgentSessionActiveFlag>::new());
+        assert_eq!(stopped.status, AgentSessionStatus::Stopped);
+        assert_eq!(stopped.active_flags, Vec::<AgentSessionActiveFlag>::new());
+    }
+
+    #[test]
+    fn agent_sessions_conflicting_terminal_evidence_becomes_unknown() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_codex_history(&home, "conflict", &project, 1_700_000_000);
+
+        let state = AgentSessionsState::with_home(home);
+        let result = list_sessions_with_surfaces(
+            &state,
+            project.to_string_lossy().into_owned(),
+            false,
+            vec![
+                surface(
+                    "pty-active",
+                    AgentSessionSource::Codex,
+                    "conflict",
+                    Some(evidence(
+                        AgentSessionStatus::Active,
+                        vec![AgentSessionActiveFlag::WaitingOnUserInput],
+                        "input prompt",
+                    )),
+                ),
+                surface(
+                    "pty-failed",
+                    AgentSessionSource::Codex,
+                    "conflict",
+                    Some(evidence(AgentSessionStatus::Failed, Vec::new(), "failed")),
+                ),
+            ],
+        )
+        .expect("list sessions");
+
+        let session = &result.sessions[0];
+        assert_eq!(session.status, AgentSessionStatus::Unknown);
+        assert_eq!(
+            session.status_source,
+            AgentSessionStatusSource::EmbeddedTerminal
+        );
+        assert_eq!(
+            session.status_confidence,
+            AgentSessionStatusConfidence::Unknown
+        );
+        assert!(session.active_flags.is_empty());
     }
 
     #[test]
@@ -590,6 +1357,94 @@ mod tests {
         );
         assert_eq!(codex.truncated_diagnostics, 10);
         assert_eq!(codex.counts.malformed_lines, 60);
+    }
+
+    #[test]
+    fn agent_sessions_pin_known_session_round_trips_local_config() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_codex_history(&home, "pin-me", &project, 1_700_000_000);
+
+        let state = AgentSessionsState::with_home(home);
+        let result = pin(&state, &project, "codex:pin-me", true).expect("pin session");
+        assert!(result.pinned);
+        assert_eq!(result.pinned_session_ids, vec!["codex:pin-me"]);
+
+        let local = space_config::read_local_config(&project).expect("read local config");
+        assert_eq!(
+            local
+                .agent_sessions
+                .expect("agent sessions overlay")
+                .pinned_session_ids,
+            vec!["codex:pin-me"]
+        );
+
+        let listed = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("list sessions");
+        assert!(listed.sessions[0].pinned);
+        assert_eq!(listed.summary.pinned_sessions, 1);
+    }
+
+    #[test]
+    fn agent_sessions_pin_rejects_unknown_or_unscoped_session_id() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        let unrelated = temp.path().join("unrelated");
+        fs::create_dir_all(&project).expect("project");
+        fs::create_dir_all(&unrelated).expect("unrelated");
+        append_codex_history(
+            &home,
+            vec![serde_json::json!({
+                "sessionId": "outside",
+                "cwd": unrelated.to_string_lossy(),
+                "timestamp": 1_700_000_000,
+                "text": "outside"
+            })],
+        );
+
+        let state = AgentSessionsState::with_home(home);
+        assert!(pin(&state, &project, "codex:missing", true).is_err());
+        assert!(pin(&state, &project, "codex:outside", true).is_err());
+        assert!(!project.join(".svode/local.json").exists());
+    }
+
+    #[test]
+    fn agent_sessions_stale_pinned_ids_are_ignored_and_cleaned_on_write() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_codex_history(&home, "known", &project, 1_700_000_000);
+        write(
+            &project.join(".svode/local.json"),
+            &serde_json::json!({
+                "agentSessions": {
+                    "pinnedSessionIds": ["codex:stale", "codex:known"]
+                }
+            })
+            .to_string(),
+        );
+
+        let state = AgentSessionsState::with_home(home);
+        let listed = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("list sessions");
+        assert_eq!(listed.sessions.len(), 1);
+        assert!(listed.sessions[0].pinned);
+        assert_eq!(listed.summary.pinned_sessions, 1);
+
+        let result = pin(&state, &project, "codex:known", false).expect("unpin known session");
+        assert!(result.pinned_session_ids.is_empty());
+        let local = space_config::read_local_config(&project).expect("read local config");
+        assert!(
+            local
+                .agent_sessions
+                .expect("agent sessions overlay")
+                .pinned_session_ids
+                .is_empty()
+        );
     }
 
     #[test]
