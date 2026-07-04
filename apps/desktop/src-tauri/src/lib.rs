@@ -1,4 +1,5 @@
 mod agent;
+mod agent_sessions;
 mod app_windows;
 mod commands;
 mod error;
@@ -40,6 +41,7 @@ pub fn run() {
         }))
         .manage(files::FileWatcher::new())
         .manage(agent::AgentSessions::new())
+        .manage(agent_sessions::AgentSessionsState::new())
         .manage(Arc::new(files::WriteNonceRegistry::new()))
         .manage(git::GitState::new())
         .manage(index::IndexState::new())
@@ -179,6 +181,9 @@ pub fn run() {
             agent::commands::agent_list_available,
             agent::commands::agent_list_models,
             agent::commands::agent_respond_permission,
+            agent_sessions::commands::agent_sessions_list,
+            agent_sessions::commands::agent_sessions_refresh,
+            agent_sessions::commands::agent_sessions_set_pinned,
             git::commands::git_check_availability,
             git::commands::git_init_space,
             git::commands::git_clone_space,
