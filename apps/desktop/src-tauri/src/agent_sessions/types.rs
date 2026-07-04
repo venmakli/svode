@@ -17,21 +17,24 @@ impl AgentSessionSource {
         }
     }
 
-    pub(crate) fn resume_argv(self, source_session_id: &str) -> Vec<String> {
+    pub(crate) fn resume_program(self) -> &'static str {
         match self {
-            Self::Codex => vec![
-                "codex".to_string(),
-                "resume".to_string(),
-                source_session_id.to_string(),
-            ],
-            Self::ClaudeCode => {
-                vec![
-                    "claude".to_string(),
-                    "--resume".to_string(),
-                    source_session_id.to_string(),
-                ]
-            }
+            Self::Codex => "codex",
+            Self::ClaudeCode => "claude",
         }
+    }
+
+    pub(crate) fn resume_args(self, source_session_id: &str) -> Vec<String> {
+        match self {
+            Self::Codex => vec!["resume".to_string(), source_session_id.to_string()],
+            Self::ClaudeCode => vec!["--resume".to_string(), source_session_id.to_string()],
+        }
+    }
+
+    pub(crate) fn resume_argv(self, source_session_id: &str) -> Vec<String> {
+        let mut argv = vec![self.resume_program().to_string()];
+        argv.extend(self.resume_args(source_session_id));
+        argv
     }
 }
 
@@ -406,4 +409,46 @@ pub struct AgentSessionsPinResult {
     pub pinned: bool,
     pub pinned_session_ids: Vec<String>,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentSessionReentryMode {
+    FocusedManagedPty,
+    SpawnedResumePty,
+    ExternalActiveUnattachable,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentSessionReentryErrorCode {
+    TerminalUnavailable,
+    CliNotFound,
+    CwdNotAccessible,
+    ResumeUnavailable,
+    ExternalProcessUnattachable,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionReentryError {
+    pub code: AgentSessionReentryErrorCode,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionReentryResult {
+    pub mode: AgentSessionReentryMode,
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pty_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<AgentSessionResumeCommand>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<AgentSessionReentryError>,
 }

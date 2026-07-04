@@ -1,5 +1,6 @@
 pub mod commands;
 mod read_model;
+mod reentry;
 mod sources;
 pub mod types;
 

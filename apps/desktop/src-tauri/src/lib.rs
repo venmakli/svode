@@ -184,6 +184,7 @@ pub fn run() {
             agent_sessions::commands::agent_sessions_list,
             agent_sessions::commands::agent_sessions_refresh,
             agent_sessions::commands::agent_sessions_set_pinned,
+            agent_sessions::commands::agent_sessions_reenter,
             git::commands::git_check_availability,
             git::commands::git_init_space,
             git::commands::git_clone_space,

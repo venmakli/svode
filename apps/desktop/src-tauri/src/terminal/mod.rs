@@ -12,7 +12,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::agent_sessions::types::{
-    AgentSessionActiveFlag, AgentSessionSource, AgentSessionStatus,
+    AgentSessionActiveFlag, AgentSessionResumeCommand, AgentSessionSource, AgentSessionStatus,
 };
 use crate::error::AppError;
 use crate::system_path;
@@ -20,6 +20,8 @@ use crate::system_path;
 const OUTPUT_EVENT: &str = "terminal:output";
 const EXIT_EVENT: &str = "terminal:exit";
 const ERROR_EVENT: &str = "terminal:error";
+const DEFAULT_AGENT_TERMINAL_COLS: u16 = 120;
+const DEFAULT_AGENT_TERMINAL_ROWS: u16 = 30;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +58,15 @@ struct TerminalProcess {
     child: Box<dyn PtyChild + Send>,
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AgentTerminalSpawn {
+    pub agent_session_id: String,
+    pub source: AgentSessionSource,
+    pub source_session_id: String,
+    pub command: AgentSessionResumeCommand,
+    pub cwd: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -188,6 +199,40 @@ impl TerminalManager {
                 let _ = process.child.kill();
             }
             return Err(e);
+        }
+
+        Ok(session)
+    }
+
+    pub(crate) fn spawn_agent_shell_session(
+        &self,
+        app: AppHandle,
+        spawn: AgentTerminalSpawn,
+    ) -> Result<TerminalSession, AppError> {
+        let session = self.spawn(
+            app,
+            spawn.cwd.clone(),
+            DEFAULT_AGENT_TERMINAL_COLS,
+            DEFAULT_AGENT_TERMINAL_ROWS,
+        )?;
+        let surface = agent_surface_from_spawn(
+            session.pty_id.clone(),
+            session.cwd.clone(),
+            spawn.clone(),
+            now_rfc3339(),
+        );
+
+        if let Err(error) = self.register_agent_surface(surface) {
+            let _ = self.kill(&session.pty_id);
+            return Err(error);
+        }
+
+        if let Err(error) = self.write(
+            &session.pty_id,
+            &agent_initial_shell_input(&spawn.command.program, &spawn.command.args),
+        ) {
+            let _ = self.kill(&session.pty_id);
+            return Err(error);
         }
 
         Ok(session)
@@ -449,6 +494,118 @@ fn now_rfc3339() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
+fn agent_surface_from_spawn(
+    pty_id: String,
+    shell_cwd: String,
+    spawn: AgentTerminalSpawn,
+    created_at: String,
+) -> AgentTerminalSurface {
+    let mut initial_agent_argv = vec![spawn.command.program.clone()];
+    initial_agent_argv.extend(spawn.command.args.clone());
+
+    AgentTerminalSurface {
+        pty_id,
+        agent_session_id: spawn.agent_session_id,
+        source: spawn.source,
+        source_session_id: spawn.source_session_id,
+        initial_agent_argv,
+        initial_agent_cwd: spawn.command.cwd,
+        shell_cwd,
+        created_at,
+        last_output_at: None,
+        last_input_at: None,
+        finished_at: None,
+        exit_code: None,
+        failure_reason: None,
+        status_evidence: None,
+    }
+}
+
+fn agent_initial_shell_input(program: &str, args: &[String]) -> String {
+    format!("{}\n", quote_agent_shell_command(program, args))
+}
+
+pub(crate) fn quote_agent_shell_command(program: &str, args: &[String]) -> String {
+    std::iter::once(program)
+        .chain(args.iter().map(String::as_str))
+        .map(shell_quote_arg)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[cfg(not(windows))]
+fn shell_quote_arg(arg: &str) -> String {
+    if arg.is_empty() {
+        return "''".to_string();
+    }
+    if arg.bytes().all(is_safe_unix_shell_byte) {
+        return arg.to_string();
+    }
+    format!("'{}'", arg.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(not(windows))]
+fn is_safe_unix_shell_byte(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'a'..=b'z'
+            | b'A'..=b'Z'
+            | b'0'..=b'9'
+            | b'_'
+            | b'@'
+            | b'%'
+            | b'+'
+            | b'='
+            | b':'
+            | b','
+            | b'.'
+            | b'/'
+            | b'-'
+    )
+}
+
+#[cfg(windows)]
+fn shell_quote_arg(arg: &str) -> String {
+    if arg.is_empty() {
+        return "\"\"".to_string();
+    }
+    if arg.bytes().all(is_safe_windows_shell_byte) {
+        return arg.to_string();
+    }
+
+    let mut quoted = String::from("\"");
+    for ch in arg.chars() {
+        match ch {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            _ => quoted.push(ch),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
+#[cfg(windows)]
+fn is_safe_windows_shell_byte(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'a'..=b'z'
+            | b'A'..=b'Z'
+            | b'0'..=b'9'
+            | b'_'
+            | b'@'
+            | b'%'
+            | b'+'
+            | b'='
+            | b':'
+            | b','
+            | b'.'
+            | b'/'
+            | b'\\'
+            | b'-'
+    )
+}
+
 fn classify_agent_terminal_output(
     source: AgentSessionSource,
     data: &str,
@@ -668,6 +825,21 @@ mod tests {
         }
     }
 
+    fn test_spawn() -> AgentTerminalSpawn {
+        AgentTerminalSpawn {
+            agent_session_id: "codex:session".to_string(),
+            source: AgentSessionSource::Codex,
+            source_session_id: "session".to_string(),
+            command: AgentSessionResumeCommand {
+                display: "codex resume session".to_string(),
+                program: "/usr/local/bin/codex".to_string(),
+                args: vec!["resume".to_string(), "session".to_string()],
+                cwd: Some("/tmp/project".to_string()),
+            },
+            cwd: "/tmp/project".to_string(),
+        }
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn unix_shell_prefers_valid_shell_env() {
@@ -786,5 +958,52 @@ mod tests {
         clear_waiting_status_after_input(&mut surface);
 
         assert!(surface.status_evidence.is_none());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn terminal_agent_shell_input_quotes_structured_resume_command() {
+        let input = agent_initial_shell_input(
+            "/tmp/my codex",
+            &[
+                "resume".to_string(),
+                "session with spaces".to_string(),
+                "quote'and;separator".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            input,
+            "'/tmp/my codex' resume 'session with spaces' 'quote'\"'\"'and;separator'\n"
+        );
+    }
+
+    #[test]
+    fn terminal_agent_shell_resume_input_does_not_exec_initial_command() {
+        let input =
+            agent_initial_shell_input("codex", &["resume".to_string(), "session".to_string()]);
+
+        assert_eq!(input, "codex resume session\n");
+        assert!(!input.starts_with("exec "));
+    }
+
+    #[test]
+    fn terminal_agent_spawn_metadata_includes_initial_command_and_shell_cwd() {
+        let surface = agent_surface_from_spawn(
+            "pty-spawn".to_string(),
+            "/tmp/project".to_string(),
+            test_spawn(),
+            "2026-07-04T10:00:00Z".to_string(),
+        );
+
+        assert_eq!(surface.pty_id, "pty-spawn");
+        assert_eq!(surface.agent_session_id, "codex:session");
+        assert_eq!(
+            surface.initial_agent_argv,
+            vec!["/usr/local/bin/codex", "resume", "session"]
+        );
+        assert_eq!(surface.initial_agent_cwd.as_deref(), Some("/tmp/project"));
+        assert_eq!(surface.shell_cwd, "/tmp/project");
+        assert!(surface.finished_at.is_none());
     }
 }
