@@ -17,10 +17,13 @@ import {
   ensureAssetsScope,
   ensureSpaceScaffold,
   getLastActiveProject,
+  getWindowOpenIntent,
   listProjects,
   listSpaces,
+  openProjectWindow,
   openProject,
   openProjectFolder,
+  releaseCurrentProjectWindow,
   reorderSpaces,
 } from "@/platform/space/space-api";
 import type { SpaceGitType } from "../model/types";
@@ -33,6 +36,18 @@ export function listRootSpaces() {
 
 export function openRootProject(id: string) {
   return openProject(id);
+}
+
+export function openRootProjectWindow(id: string) {
+  return openProjectWindow(id);
+}
+
+export function getCurrentWindowOpenIntent() {
+  return getWindowOpenIntent();
+}
+
+export function releaseCurrentRootProjectWindow() {
+  return releaseCurrentProjectWindow();
 }
 
 export function createRootSpace(input: {

@@ -9,8 +9,12 @@ import type { SpaceGitType, SpaceInfo } from "../model";
 
 export function useSpaceActions() {
   const openRootAction = useSpaceStore((state) => state.openRoot);
+  const openRootWindowAction = useSpaceStore((state) => state.openRootWindow);
   const openLastActiveRootAction = useSpaceStore(
     (state) => state.openLastActiveRoot,
+  );
+  const getWindowOpenIntentAction = useSpaceStore(
+    (state) => state.getWindowOpenIntent,
   );
   const createRootAction = useSpaceStore((state) => state.createRoot);
   const deleteRootAction = useSpaceStore((state) => state.deleteRoot);
@@ -46,6 +50,18 @@ export function useSpaceActions() {
     }
     return opened;
   }, [openLastActiveRootAction, selectRootHome]);
+
+  const openRootWindow = useCallback(
+    async (id: string): Promise<void> => {
+      await openRootWindowAction(id);
+    },
+    [openRootWindowAction],
+  );
+
+  const getWindowOpenIntent = useCallback(
+    () => getWindowOpenIntentAction(),
+    [getWindowOpenIntentAction],
+  );
 
   const createRoot = useCallback(
     async (
@@ -122,7 +138,9 @@ export function useSpaceActions() {
     createSpace,
     deleteRoot,
     deleteSpace,
+    getWindowOpenIntent,
     openLastActiveRoot,
     openRoot,
+    openRootWindow,
   };
 }

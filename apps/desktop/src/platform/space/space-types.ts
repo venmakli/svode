@@ -91,6 +91,10 @@ export interface SpaceConfigDto {
   assets?: AssetsSpaceConfigDto;
 }
 
+export type WindowOpenIntentDto =
+  | { kind: "home" }
+  | { kind: "project"; projectId: string };
+
 export interface TreeNodeDto {
   name: string;
   path: string;

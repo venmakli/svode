@@ -12,7 +12,7 @@ import {
   shouldValidateSpaceTree,
   type SpaceTreeState,
 } from "./space-tree-state";
-import type { SpaceGitType, SpaceInfo } from "./types";
+import type { SpaceGitType, SpaceInfo, WindowOpenIntent } from "./types";
 
 export interface SpaceState extends SpaceTreeState {
   // Root spaces (projects on the home page)
@@ -34,6 +34,7 @@ export interface SpaceState extends SpaceTreeState {
   // Root (project) methods
   loadRootSpaces: () => Promise<SpaceInfo[]>;
   openRoot: (id: string) => Promise<boolean>;
+  openRootWindow: (id: string) => Promise<void>;
   openLastActiveRoot: () => Promise<boolean>;
   createRoot: (
     name: string,
@@ -44,6 +45,7 @@ export interface SpaceState extends SpaceTreeState {
   openRootFolder: (path: string) => Promise<SpaceInfo>;
   deleteRoot: (id: string, deleteFiles?: boolean) => Promise<void>;
   getLastActiveRootId: () => Promise<string | null>;
+  getWindowOpenIntent: () => Promise<WindowOpenIntent | null>;
   goHome: () => void;
 
   // Space methods
@@ -171,6 +173,10 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     }
   },
 
+  openRootWindow: async (id: string) => {
+    await spaceActions.openRootProjectWindow(id);
+  },
+
   openLastActiveRoot: async () => {
     const projects = get().rootsLoaded
       ? get().rootSpaces
@@ -235,6 +241,14 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     }
   },
 
+  getWindowOpenIntent: async () => {
+    try {
+      return await spaceActions.getCurrentWindowOpenIntent();
+    } catch {
+      return null;
+    }
+  },
+
   goHome: () => {
     set({
       activeRootId: null,
@@ -249,6 +263,11 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     spaceActions
       .clearActiveMcpContext()
       .catch((err) => console.warn("mcp_clear_active_context failed:", err));
+    spaceActions
+      .releaseCurrentRootProjectWindow()
+      .catch((err) =>
+        console.warn("release_current_project_window failed:", err),
+      );
   },
 
   loadSpaces: async (rootPath: string) => {

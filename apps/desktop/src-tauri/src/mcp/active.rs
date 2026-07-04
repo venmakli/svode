@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -16,7 +17,14 @@ pub struct ActiveProjectContext {
 
 #[derive(Default)]
 pub struct ActiveProjectState {
-    inner: Mutex<Option<ActiveProjectContext>>,
+    inner: Mutex<ActiveProjectStateInner>,
+}
+
+#[derive(Default)]
+struct ActiveProjectStateInner {
+    contexts_by_window: HashMap<String, ActiveProjectContext>,
+    last_focused_window: Option<String>,
+    fallback_context: Option<ActiveProjectContext>,
 }
 
 impl ActiveProjectState {
@@ -25,18 +33,57 @@ impl ActiveProjectState {
     }
 
     pub fn set(&self, context: ActiveProjectContext) {
-        *self.inner.lock().expect("active project mutex poisoned") = Some(context);
+        let mut inner = self.inner.lock().expect("active project mutex poisoned");
+        inner.fallback_context = Some(context);
+    }
+
+    pub fn set_for_window(&self, window_label: impl Into<String>, context: ActiveProjectContext) {
+        let window_label = window_label.into();
+        let mut inner = self.inner.lock().expect("active project mutex poisoned");
+        inner
+            .contexts_by_window
+            .insert(window_label.clone(), context.clone());
+        inner.last_focused_window = Some(window_label);
+        inner.fallback_context = Some(context);
     }
 
     pub fn clear(&self) {
-        *self.inner.lock().expect("active project mutex poisoned") = None;
+        let mut inner = self.inner.lock().expect("active project mutex poisoned");
+        inner.fallback_context = None;
+        if let Some(window_label) = inner.last_focused_window.clone() {
+            inner.contexts_by_window.remove(&window_label);
+        }
+    }
+
+    pub fn clear_window(&self, window_label: &str) {
+        let mut inner = self.inner.lock().expect("active project mutex poisoned");
+        inner.contexts_by_window.remove(window_label);
+        if inner.last_focused_window.as_deref() == Some(window_label) {
+            inner.last_focused_window = None;
+        }
+        inner.fallback_context = inner.contexts_by_window.values().next().cloned();
+    }
+
+    pub fn focus_window(&self, window_label: impl Into<String>) {
+        let mut inner = self.inner.lock().expect("active project mutex poisoned");
+        inner.last_focused_window = Some(window_label.into());
+    }
+
+    pub fn remove_window(&self, window_label: &str) {
+        self.clear_window(window_label);
     }
 
     pub fn get(&self) -> Option<ActiveProjectContext> {
-        self.inner
-            .lock()
-            .expect("active project mutex poisoned")
-            .clone()
+        let inner = self.inner.lock().expect("active project mutex poisoned");
+        if let Some(window_label) = inner.last_focused_window.as_deref() {
+            return inner.contexts_by_window.get(window_label).cloned();
+        }
+        inner
+            .contexts_by_window
+            .values()
+            .next()
+            .cloned()
+            .or_else(|| inner.fallback_context.clone())
     }
 }
 

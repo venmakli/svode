@@ -30,6 +30,7 @@ import {
 } from "@/features/git/app-shell";
 import { avatarColorFromEmail } from "@/features/identity";
 import { useEffectiveIdentity } from "@/features/identity/app-shell";
+import { setCurrentAppWindowTitle } from "@/platform/native/window";
 import {
   SHELL_SIDEBAR_WIDTH_DEFAULT,
   SHELL_SIDEBAR_WIDTH_MAX,
@@ -66,7 +67,8 @@ export function MainLayout() {
   const navigate = useNavigate();
   useKeyboardShortcuts();
   useAppGitFocus();
-  const { activeRootId, activeRootPath, explicitHome } = useSpace();
+  const { activeRootId, activeRootName, activeRootPath, explicitHome } =
+    useSpace();
   const { openLastActiveRoot } = useSpaceActions();
   const { available, recheck } = useGitAvailability();
   const { name: identityName, email: identityEmail } = useEffectiveIdentity();
@@ -91,6 +93,13 @@ export function MainLayout() {
   useEffect(() => {
     openContentSurface();
   }, [openContentSurface]);
+
+  useEffect(() => {
+    const title = activeRootName ? `${activeRootName} - Svode` : "Svode";
+    void setCurrentAppWindowTitle(title).catch((err) =>
+      console.warn("set window title failed:", err),
+    );
+  }, [activeRootName]);
 
   useEffect(() => {
     if (activeRootId || bootstrapAttempted.current) return;

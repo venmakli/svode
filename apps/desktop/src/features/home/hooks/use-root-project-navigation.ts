@@ -10,27 +10,55 @@ export function useRootProjectNavigation({
   onRootOpened,
 }: UseRootProjectNavigationInput = {}) {
   const navigate = useNavigate();
-  const { openLastActiveRoot, openRoot } = useSpaceActions();
+  const {
+    getWindowOpenIntent,
+    openLastActiveRoot,
+    openRoot,
+    openRootWindow,
+  } = useSpaceActions();
 
   const enterRoot = useCallback(() => {
     onRootOpened?.();
     navigate({ to: "/space" });
   }, [navigate, onRootOpened]);
 
-  const openProject = useCallback(
+  const openProjectInCurrentWindow = useCallback(
     async (id: string) => {
       if (await openRoot(id)) {
         enterRoot();
+        return true;
       }
+      return false;
     },
     [enterRoot, openRoot],
   );
 
+  const openProject = useCallback(
+    async (id: string) => {
+      await openRootWindow(id);
+    },
+    [openRootWindow],
+  );
+
   const openLastProject = useCallback(async () => {
+    const intent = await getWindowOpenIntent();
+    if (intent?.kind === "home") return false;
+    if (intent?.kind === "project") {
+      return openProjectInCurrentWindow(intent.projectId);
+    }
+
     if (await openLastActiveRoot()) {
       enterRoot();
+      return true;
     }
-  }, [enterRoot, openLastActiveRoot]);
+
+    return false;
+  }, [
+    enterRoot,
+    getWindowOpenIntent,
+    openLastActiveRoot,
+    openProjectInCurrentWindow,
+  ]);
 
   return {
     openLastProject,

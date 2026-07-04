@@ -1,4 +1,5 @@
 mod agent;
+mod app_windows;
 mod commands;
 mod error;
 mod files;
@@ -34,14 +35,26 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            app_windows::handle_single_instance(app, args, cwd);
+        }))
         .manage(files::FileWatcher::new())
         .manage(agent::AgentSessions::new())
         .manage(Arc::new(files::WriteNonceRegistry::new()))
         .manage(git::GitState::new())
         .manage(index::IndexState::new())
+        .manage(app_windows::AppWindowState::new())
         .manage(mcp::active::ActiveProjectState::new())
         .manage(properties::ActorCatalogState::new())
         .manage(terminal::TerminalManager::new())
+        .menu(app_windows::build_app_menu)
+        .on_menu_event(|app, event| {
+            app_windows::handle_menu_event(app, event.id().as_ref());
+        })
+        .on_window_event(|window, event| {
+            let app = window.app_handle();
+            app_windows::handle_window_event(app, window, event);
+        })
         .setup(|app| {
             let service = Arc::new(git::autocommit::AutocommitService::new(
                 app.handle().clone(),
@@ -148,6 +161,10 @@ pub fn run() {
             commands::space::ensure_space_scaffold,
             commands::space::get_space_config,
             commands::space::save_space_config,
+            app_windows::new_project_window,
+            app_windows::open_project_window,
+            app_windows::get_window_open_intent,
+            app_windows::release_current_project_window,
             commands::space::setup_cli_symlinks_cmd,
             commands::space::teardown_cli_symlinks_cmd,
             commands::space::check_symlink_health,

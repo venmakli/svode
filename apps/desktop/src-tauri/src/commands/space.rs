@@ -2,7 +2,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, Window};
 
 use crate::error::AppError;
 use crate::git::autocommit::{AutocommitService, SystemCommitKind};
@@ -87,6 +87,12 @@ fn emit_space_status_changed(
     );
 }
 
+fn refresh_recent_projects_menu(app: &AppHandle) {
+    if let Err(error) = crate::app_windows::rebuild_app_menu(app) {
+        tracing::warn!("failed to rebuild recent projects menu: {error}");
+    }
+}
+
 // --- App Settings ---
 
 #[tauri::command]
@@ -166,6 +172,7 @@ pub async fn create_project(
         description.as_deref().unwrap_or(""),
         sp_path,
     )?;
+    refresh_recent_projects_menu(&app);
 
     if let Some(cli) = &git_state.cli {
         let lock = git_state.get_lock(sp_path).await;
@@ -208,6 +215,7 @@ pub async fn open_project_folder(
 
     let had_git_before = sp_path.join(".git").exists();
     let (id, mut cfg) = project::open_project_folder(&config_dir, sp_path)?;
+    refresh_recent_projects_menu(&app);
     let gitignore_changed = if had_git_before {
         ops::ensure_svode_gitignore(sp_path)?
     } else {
@@ -307,7 +315,9 @@ pub async fn delete_project(
         index_state.close_project(Path::new(&sp_ref.path)).await;
     }
 
-    project::delete_project(&config_dir, &id, delete_files.unwrap_or(false))
+    project::delete_project(&config_dir, &id, delete_files.unwrap_or(false))?;
+    refresh_recent_projects_menu(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -323,6 +333,7 @@ pub fn get_last_active_project(app: AppHandle) -> Result<Option<String>, AppErro
 #[tauri::command]
 pub async fn open_project(
     app: AppHandle,
+    window: Window,
     git_state: State<'_, GitState>,
     autocommit: State<'_, Arc<AutocommitService>>,
     index_state: State<'_, IndexState>,
@@ -383,6 +394,8 @@ pub async fn open_project(
     }
     registry::update_last_active(&config_dir, &id)?;
     registry::update_last_opened(&config_dir, &id)?;
+    crate::app_windows::register_current_project_window(&app, &id, window.label());
+    refresh_recent_projects_menu(&app);
 
     // Open root + every ready child-space pool, spawn full_reindex per pool
     // (under reindex lock + bounded concurrency). Failure is logged but does
@@ -686,6 +699,7 @@ pub async fn project_clone(
     let readme_existed_before = path.join("README.md").exists();
 
     let (id, mut cfg) = project::open_project_folder(&config_dir, &path)?;
+    refresh_recent_projects_menu(&app);
     let gitignore_changed = ops::ensure_svode_gitignore(&path)?;
     let imported_submodules = import_existing_submodules_if_possible(&git_state, &path).await;
     if imported_submodules > 0 {

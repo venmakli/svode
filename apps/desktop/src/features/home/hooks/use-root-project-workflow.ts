@@ -27,7 +27,10 @@ export function useRootProjectWorkflow({
       return;
     }
 
-    await openLastProject();
+    const opened = await openLastProject();
+    if (!opened) {
+      await loadRootSpaces();
+    }
   }, [explicitHome, loadRootSpaces, openLastProject]);
   const handleCreateProject = useCreateRootProject({
     openProject,

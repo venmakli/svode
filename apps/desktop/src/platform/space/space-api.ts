@@ -15,6 +15,7 @@ import type {
   SpaceConfigDto,
   SpaceGitTypeDto,
   SpaceInfoDto,
+  WindowOpenIntentDto,
 } from "./space-types";
 
 export interface SpacePoolInputDto extends Record<string, unknown> {
@@ -62,6 +63,22 @@ export function listProjects(): Promise<SpaceInfoDto[]> {
 
 export function openProject(id: string): Promise<SpaceConfigDto> {
   return invokeCommand<SpaceConfigDto>("open_project", { id });
+}
+
+export function openProjectWindow(projectId: string): Promise<void> {
+  return invokeCommand<void>("open_project_window", { projectId });
+}
+
+export function newProjectWindow(): Promise<void> {
+  return invokeCommand<void>("new_project_window");
+}
+
+export function getWindowOpenIntent(): Promise<WindowOpenIntentDto | null> {
+  return invokeCommand<WindowOpenIntentDto | null>("get_window_open_intent");
+}
+
+export function releaseCurrentProjectWindow(): Promise<void> {
+  return invokeCommand<void>("release_current_project_window");
 }
 
 export interface CreateProjectInput {

@@ -13,6 +13,7 @@ export type {
   SpaceRef,
   SpaceStatus,
   TreeNode,
+  WindowOpenIntent,
 } from "./model/types";
 export {
   getSpaceSnapshot,

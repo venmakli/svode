@@ -7,6 +7,7 @@ import { ProjectList } from "./project-list";
 import { EmptyState } from "./empty-state";
 import { RootProjectDialogs } from "./root-project-dialogs";
 import { useRootProjectWorkflow } from "../hooks/use-root-project-workflow";
+import { useRootProjectWindowTitle } from "../hooks/use-root-project-window-title";
 
 export function HomePage() {
   const version = useAppVersion();
@@ -27,6 +28,8 @@ export function HomePage() {
     setCloneDialogOpen,
     setCreateDialogOpen,
   } = useRootProjectWorkflow();
+
+  useRootProjectWindowTitle();
 
   useEffect(() => {
     if (autoOpenAttempted.current) return;

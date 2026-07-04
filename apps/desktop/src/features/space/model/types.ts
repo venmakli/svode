@@ -4,6 +4,10 @@ export type SpaceStatus = "ready" | "missing" | "broken";
 
 export type LfsState = "n/a" | "ready" | "missing-creds" | "pulling";
 
+export type WindowOpenIntent =
+  | { kind: "home" }
+  | { kind: "project"; projectId: string };
+
 export interface SpaceInfo {
   id: string;
   name: string;

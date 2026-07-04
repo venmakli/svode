@@ -1,4 +1,4 @@
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, State, Window};
 
 use super::active::{self, ActiveProjectContext, ActiveProjectState};
 use super::config::{self, DoctorReport, ManualConfig, McpClient, McpStatus};
@@ -12,19 +12,20 @@ pub fn mcp_get_active_context(
 }
 
 #[tauri::command]
-pub fn mcp_clear_active_context(state: State<'_, ActiveProjectState>) {
-    state.clear();
+pub fn mcp_clear_active_context(state: State<'_, ActiveProjectState>, window: Window) {
+    state.clear_window(window.label());
 }
 
 #[tauri::command]
 pub fn mcp_set_active_context(
     state: State<'_, ActiveProjectState>,
+    window: Window,
     project_path: String,
     active_space_id: Option<String>,
     active_space_path: Option<String>,
 ) -> Result<ActiveProjectContext, AppError> {
     let context = active::build_context(project_path, active_space_id, active_space_path)?;
-    state.set(context.clone());
+    state.set_for_window(window.label(), context.clone());
     Ok(context)
 }
 
