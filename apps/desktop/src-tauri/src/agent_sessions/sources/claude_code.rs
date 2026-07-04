@@ -10,6 +10,7 @@ use super::{
     SourceScan, build_fingerprint, collect_optional_file, collect_recursive_dirs,
     collect_recursive_files, metadata_mtime, nested_string_field, read_jsonl, short_id,
     source_file_ref, string_field, timestamp_from_fields, title_from_text,
+    user_prompt_title_from_text,
 };
 use crate::agent_sessions::types::{
     AgentSessionCounts, AgentSessionDiagnosticSeverity, AgentSessionSource,
@@ -162,8 +163,12 @@ fn parse_history(
         builder.candidate.source_meta.history_present = true;
         builder.candidate.source_meta.history_line_count += 1;
         builder.set_source_file(source_file_ref(path, "history", Some(line)), 2);
-        if let Some(title) = string_field(&value, &["display", "displayText", "title", "summary"])
+        if let Some(title) = string_field(&value, &["title", "summary"])
             .and_then(title_from_text)
+            .or_else(|| {
+                string_field(&value, &["display", "displayText"])
+                    .and_then(user_prompt_title_from_text)
+            })
         {
             builder.set_title(title, AgentSessionTitleSource::CliTitle, 1);
         }
@@ -364,7 +369,7 @@ fn extract_claude_user_text(value: &Value) -> Option<String> {
     }
     let message = value.get("message").unwrap_or(value);
     if let Some(content) = message.get("content") {
-        if let Some(text) = content.as_str().and_then(title_from_text) {
+        if let Some(text) = content.as_str().and_then(user_prompt_title_from_text) {
             return Some(text);
         }
         if let Some(items) = content.as_array() {
@@ -372,13 +377,15 @@ fn extract_claude_user_text(value: &Value) -> Option<String> {
                 if string_field(item, &["type"]).is_some_and(|kind| kind != "text") {
                     continue;
                 }
-                if let Some(text) = string_field(item, &["text"]).and_then(title_from_text) {
+                if let Some(text) =
+                    string_field(item, &["text"]).and_then(user_prompt_title_from_text)
+                {
                     return Some(text);
                 }
             }
         }
     }
-    string_field(message, &["text", "prompt"]).and_then(title_from_text)
+    string_field(message, &["text", "prompt"]).and_then(user_prompt_title_from_text)
 }
 
 fn builder_for<'a>(
@@ -655,5 +662,27 @@ mod tests {
 
         let scan = scan_root(&root);
         assert_eq!(scan.candidates[0].title.as_deref(), Some("real prompt"));
+    }
+
+    #[test]
+    fn agent_sessions_claude_parser_skips_context_wrapper_first_prompt() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().join(".claude");
+        write(
+            &root.join("projects/-tmp-project/claude-7.jsonl"),
+            r##"{"type":"user","message":{"role":"user","content":"# CLAUDE.md instructions for /tmp/project\n\n<INSTRUCTIONS>ignore this</INSTRUCTIONS>"},"cwd":"/tmp/project","timestamp":1700000000}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"real claude prompt"}]},"cwd":"/tmp/project","timestamp":1700000001}"##,
+        );
+
+        let scan = scan_root(&root);
+        assert_eq!(scan.candidates.len(), 1);
+        assert_eq!(
+            scan.candidates[0].title.as_deref(),
+            Some("real claude prompt")
+        );
+        assert_eq!(
+            scan.candidates[0].title_source,
+            AgentSessionTitleSource::FirstUserPrompt
+        );
     }
 }

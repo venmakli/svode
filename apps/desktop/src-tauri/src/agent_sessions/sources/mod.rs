@@ -102,6 +102,15 @@ pub(crate) fn title_from_text(text: &str) -> Option<String> {
     Some(trim_chars(trimmed, 80))
 }
 
+pub(crate) fn user_prompt_title_from_text(text: &str) -> Option<String> {
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = collapsed.trim();
+    if trimmed.is_empty() || is_command_only_text(trimmed) || is_context_wrapper_text(trimmed) {
+        return None;
+    }
+    Some(trim_chars(trimmed, 80))
+}
+
 pub(crate) fn trim_chars(value: &str, max: usize) -> String {
     let mut out = String::new();
     for (idx, ch) in value.chars().enumerate() {
@@ -126,6 +135,37 @@ pub(crate) fn is_command_only_text(text: &str) -> bool {
         || lower == "/quit"
         || lower.starts_with("<command-")
         || lower.starts_with("<local-command")
+}
+
+fn is_context_wrapper_text(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    if (starts_with_ascii_case_insensitive(trimmed, "# AGENTS.md instructions for ")
+        || starts_with_ascii_case_insensitive(trimmed, "# CLAUDE.md instructions for "))
+        && contains_ascii_case_insensitive(trimmed, "<INSTRUCTIONS>")
+    {
+        return true;
+    }
+
+    starts_with_ascii_case_insensitive(trimmed, "<environment_context>")
+        || starts_with_ascii_case_insensitive(trimmed, "<system-reminder>")
+        || starts_with_ascii_case_insensitive(trimmed, "<instructions>")
+}
+
+fn starts_with_ascii_case_insensitive(value: &str, prefix: &str) -> bool {
+    let bytes = value.as_bytes();
+    let prefix = prefix.as_bytes();
+    bytes.len() >= prefix.len() && bytes[..prefix.len()].eq_ignore_ascii_case(prefix)
+}
+
+fn contains_ascii_case_insensitive(value: &str, needle: &str) -> bool {
+    let needle = needle.as_bytes();
+    if needle.is_empty() {
+        return true;
+    }
+    value
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
 }
 
 pub(crate) fn string_field<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
@@ -546,5 +586,23 @@ mod tests {
     fn agent_sessions_timestamp_parser_accepts_iso() {
         let parsed = parse_timestamp_value(&json!("2026-07-04T10:11:12Z")).expect("iso timestamp");
         assert_eq!(parsed.to_rfc3339(), "2026-07-04T10:11:12+00:00");
+    }
+
+    #[test]
+    fn agent_sessions_prompt_title_rejects_context_wrappers() {
+        assert_eq!(
+            user_prompt_title_from_text(
+                "# AGENTS.md instructions for /tmp/project\n\n<INSTRUCTIONS>noise</INSTRUCTIONS>"
+            ),
+            None
+        );
+        assert_eq!(
+            user_prompt_title_from_text("<environment_context><cwd>/tmp/project</cwd>"),
+            None
+        );
+        assert_eq!(
+            user_prompt_title_from_text("fix session title"),
+            Some("fix session title".to_string())
+        );
     }
 }

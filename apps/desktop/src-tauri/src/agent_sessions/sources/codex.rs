@@ -11,6 +11,7 @@ use super::{
     SourceScan, build_fingerprint, collect_optional_file, collect_recursive_dirs,
     collect_recursive_files, metadata_mtime, nested_string_field, read_jsonl, short_id,
     source_file_ref, string_field, timestamp_from_fields, title_from_text,
+    user_prompt_title_from_text,
 };
 use crate::agent_sessions::types::{
     AgentSessionCounts, AgentSessionDiagnosticSeverity, AgentSessionSource,
@@ -401,16 +402,18 @@ fn history_title(value: &Value) -> Option<(String, AgentSessionTitleSource)> {
         return Some((title, AgentSessionTitleSource::CliTitle));
     }
     string_field(value, &["text", "prompt", "message"])
-        .and_then(title_from_text)
+        .and_then(user_prompt_title_from_text)
         .map(|title| (title, AgentSessionTitleSource::FirstUserPrompt))
 }
 
 fn extract_codex_user_text(payload: &Value) -> Option<String> {
-    if let Some(text) = string_field(payload, &["text", "prompt"]).and_then(title_from_text) {
+    if let Some(text) =
+        string_field(payload, &["text", "prompt"]).and_then(user_prompt_title_from_text)
+    {
         return Some(text);
     }
     if let Some(content) = payload.get("content") {
-        if let Some(text) = content.as_str().and_then(title_from_text) {
+        if let Some(text) = content.as_str().and_then(user_prompt_title_from_text) {
             return Some(text);
         }
         if let Some(items) = content.as_array() {
@@ -418,8 +421,8 @@ fn extract_codex_user_text(payload: &Value) -> Option<String> {
                 if is_tool_or_function_payload(item) {
                     continue;
                 }
-                if let Some(text) =
-                    string_field(item, &["text", "input_text"]).and_then(title_from_text)
+                if let Some(text) = string_field(item, &["text", "input_text"])
+                    .and_then(user_prompt_title_from_text)
                 {
                     return Some(text);
                 }
@@ -430,7 +433,7 @@ fn extract_codex_user_text(payload: &Value) -> Option<String> {
         .get("message")
         .and_then(|message| message.get("content"))
         .and_then(Value::as_str)
-        .and_then(title_from_text)
+        .and_then(user_prompt_title_from_text)
 }
 
 fn is_function_call(value: &Value) -> bool {
@@ -747,6 +750,52 @@ not-json"#,
                 .notes
                 .iter()
                 .any(|note| note == "id-from-filename")
+        );
+    }
+
+    #[test]
+    fn agent_sessions_codex_parser_skips_injected_context_for_first_prompt() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().join(".codex");
+        write(
+            &root.join("sessions/2026/07/04/a/rollout-codex-context.jsonl"),
+            r##"{"type":"session_meta","payload":{"id":"codex-context","cwd":"/tmp/project"},"timestamp":"2026-07-04T10:00:00Z"}
+{"type":"response_item","payload":{"role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /tmp/project\n\n<INSTRUCTIONS>ignore this</INSTRUCTIONS>"}]},"timestamp":"2026-07-04T10:01:00Z"}
+{"type":"response_item","payload":{"role":"user","content":[{"type":"input_text","text":"real user prompt"}]},"timestamp":"2026-07-04T10:02:00Z"}"##,
+        );
+
+        let scan = scan_root(&root);
+        assert_eq!(scan.candidates.len(), 1);
+        assert_eq!(
+            scan.candidates[0].title.as_deref(),
+            Some("real user prompt")
+        );
+        assert_eq!(
+            scan.candidates[0].title_source,
+            AgentSessionTitleSource::FirstUserPrompt
+        );
+    }
+
+    #[test]
+    fn agent_sessions_codex_parser_falls_back_to_history_when_detail_prompt_is_context() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().join(".codex");
+        write(
+            &root.join("history.jsonl"),
+            r#"{"sessionId":"codex-history-fallback","cwd":"/tmp/project","timestamp":1700000000,"text":"history prompt"}"#,
+        );
+        write(
+            &root.join("sessions/2026/07/04/a/rollout-codex-history-fallback.jsonl"),
+            r##"{"type":"session_meta","payload":{"id":"codex-history-fallback","cwd":"/tmp/project"},"timestamp":"2026-07-04T10:00:00Z"}
+{"type":"response_item","payload":{"role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /tmp/project\n\n<INSTRUCTIONS>ignore this</INSTRUCTIONS>"}]},"timestamp":"2026-07-04T10:01:00Z"}"##,
+        );
+
+        let scan = scan_root(&root);
+        assert_eq!(scan.candidates.len(), 1);
+        assert_eq!(scan.candidates[0].title.as_deref(), Some("history prompt"));
+        assert_eq!(
+            scan.candidates[0].title_source,
+            AgentSessionTitleSource::FirstUserPrompt
         );
     }
 }
