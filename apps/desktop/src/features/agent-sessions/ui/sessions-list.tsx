@@ -108,12 +108,20 @@ export function SessionsList({
     <Sidebar
       variant="floating"
       collapsible="none"
-      className="m-2 mr-0 h-[calc(100%-1rem)] w-80 shrink-0 rounded-lg border border-sidebar-border shadow-sm"
+      className="mt-0 mr-2 mb-2 ml-0 h-[calc(100%-0.5rem)] w-80 shrink-0 rounded-lg border border-sidebar-border shadow-sm"
     >
-      <SidebarHeader className="gap-2 border-b">
+      <SidebarHeader className="border-b">
         <div className="flex h-8 shrink-0 items-center gap-2 px-2">
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold">{m.sessions_title()}</div>
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <SidebarInput
+              value={controller.searchQuery}
+              placeholder={m.sessions_search_placeholder()}
+              className="h-7 pl-7 text-sm"
+              onChange={(event) =>
+                controller.setSearchQuery(event.target.value)
+              }
+            />
           </div>
           <Button
             variant="ghost"
@@ -131,15 +139,6 @@ export function SessionsList({
               className={cn(controller.refreshing && "animate-spin")}
             />
           </Button>
-        </div>
-        <div className="relative">
-          <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <SidebarInput
-            value={controller.searchQuery}
-            placeholder={m.sessions_search_placeholder()}
-            className="h-7 pl-7 text-sm"
-            onChange={(event) => controller.setSearchQuery(event.target.value)}
-          />
         </div>
       </SidebarHeader>
       <SidebarContent>

@@ -293,6 +293,8 @@ function ShellMainInset({
   resizable?: boolean;
   onOpenAppSettings?: () => void;
 }) {
+  const isSessionsSurface = mainSurface === "sessions";
+
   return (
     <SidebarInset
       className={cn(
@@ -302,12 +304,17 @@ function ShellMainInset({
           : "md:peer-data-[state=expanded]:[--svode-main-fixed-left:calc(var(--sidebar-width)+1.5rem)] md:peer-data-[state=expanded]:rounded-l-xl md:peer-data-[state=expanded]:border-l md:peer-data-[state=expanded]:border-sidebar-border",
       )}
     >
-      <WindowHeader />
+      {!isSessionsSurface && <WindowHeader />}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="min-h-0 flex-1 overflow-hidden pb-6">
+        <div
+          className={cn(
+            "min-h-0 flex-1 overflow-hidden",
+            !isSessionsSurface && "pb-6",
+          )}
+        >
           {mainSurface === "inbox" ? (
             <InboxSurface />
-          ) : mainSurface === "sessions" ? (
+          ) : isSessionsSurface ? (
             <SessionsSurface onOpenAppSettings={onOpenAppSettings} />
           ) : (
             <ActiveSpaceContent />
