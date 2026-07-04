@@ -5,13 +5,14 @@ mod sources;
 pub mod types;
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use read_model::AgentSessionsReadCache;
 
+#[derive(Clone)]
 pub struct AgentSessionsState {
     pub(crate) home_dir: PathBuf,
-    pub(crate) cache: Mutex<AgentSessionsReadCache>,
+    pub(crate) cache: Arc<Mutex<AgentSessionsReadCache>>,
 }
 
 impl AgentSessionsState {
@@ -22,7 +23,7 @@ impl AgentSessionsState {
     pub(crate) fn with_home(home_dir: PathBuf) -> Self {
         Self {
             home_dir,
-            cache: Mutex::new(AgentSessionsReadCache::default()),
+            cache: Arc::new(Mutex::new(AgentSessionsReadCache::default())),
         }
     }
 }

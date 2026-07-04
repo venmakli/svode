@@ -62,16 +62,10 @@ pub(crate) fn list_sessions_with_surfaces(
     let pinned_ids = read_pinned_session_ids(&project)?;
     let generated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
 
-    let mut cache = state
-        .cache
-        .lock()
-        .map_err(|_| AppError::General("Agent sessions cache lock poisoned".to_string()))?;
-
     let mut reads = Vec::new();
     for source in [AgentSessionSource::Codex, AgentSessionSource::ClaudeCode] {
-        reads.push(read_source(state, &mut cache, source, force_refresh));
+        reads.push(read_source(state, source, force_refresh)?);
     }
-    drop(cache);
 
     let mut sessions = Vec::new();
     let mut reports = Vec::new();
@@ -144,10 +138,9 @@ pub(crate) fn list_sessions_with_surfaces(
 
 fn read_source(
     state: &AgentSessionsState,
-    cache: &mut AgentSessionsReadCache,
     source: AgentSessionSource,
     force_refresh: bool,
-) -> SourceRead {
+) -> Result<SourceRead, AppError> {
     let started = Instant::now();
     let root = match source {
         AgentSessionSource::Codex => state.home_dir.join(".codex"),
@@ -159,18 +152,8 @@ fn read_source(
     };
 
     if !force_refresh {
-        if let Some(cached) = cache.sources.get(&source)
-            && cached.fingerprint == fingerprint.value
-        {
-            let mut report = cached.report.clone();
-            report.cache_hit = true;
-            report.fingerprint = Some(cached.fingerprint.clone());
-            report.duration_ms = Some(started.elapsed().as_millis());
-            return SourceRead {
-                candidates: cached.candidates.clone(),
-                report,
-                cache_hit: true,
-            };
+        if let Some(read) = cached_source_read(state, source, &fingerprint.value, started)? {
+            return Ok(read);
         }
     }
 
@@ -181,6 +164,47 @@ fn read_source(
     let mut scan = scan;
     scan.report.cache_hit = false;
     scan.report.duration_ms = Some(started.elapsed().as_millis());
+    cache_source_scan(state, source, &scan)?;
+    Ok(source_read_from_scan(scan))
+}
+
+fn cached_source_read(
+    state: &AgentSessionsState,
+    source: AgentSessionSource,
+    fingerprint: &str,
+    started: Instant,
+) -> Result<Option<SourceRead>, AppError> {
+    let cache = state
+        .cache
+        .lock()
+        .map_err(|_| AppError::General("Agent sessions cache lock poisoned".to_string()))?;
+    let Some(cached) = cache.sources.get(&source) else {
+        return Ok(None);
+    };
+    if cached.fingerprint != fingerprint {
+        return Ok(None);
+    }
+
+    let mut report = cached.report.clone();
+    report.cache_hit = true;
+    report.fingerprint = Some(cached.fingerprint.clone());
+    report.duration_ms = Some(started.elapsed().as_millis());
+    Ok(Some(SourceRead {
+        candidates: cached.candidates.clone(),
+        report,
+        cache_hit: true,
+    }))
+}
+
+fn cache_source_scan(
+    state: &AgentSessionsState,
+    source: AgentSessionSource,
+    scan: &SourceScan,
+) -> Result<(), AppError> {
+    let mut cache = state
+        .cache
+        .lock()
+        .map_err(|_| AppError::General("Agent sessions cache lock poisoned".to_string()))?;
     cache.sources.insert(
         source,
         CachedSourceScan {
@@ -189,7 +213,7 @@ fn read_source(
             report: scan.report.clone(),
         },
     );
-    source_read_from_scan(scan)
+    Ok(())
 }
 
 fn source_read_from_scan(scan: SourceScan) -> SourceRead {

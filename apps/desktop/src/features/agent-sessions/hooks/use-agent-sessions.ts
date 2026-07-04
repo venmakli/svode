@@ -93,6 +93,11 @@ export function useAgentSessions(
   const selectionRequestIdRef = useRef(0);
   const projectPathRef = useRef(projectPath);
   const resultRef = useRef<AgentSessionsListResult | null>(null);
+  const loadInFlightRef = useRef<{
+    projectPath: string;
+    requestId: number;
+    promise: Promise<void>;
+  } | null>(null);
 
   useEffect(() => {
     projectPathRef.current = projectPath;
@@ -105,11 +110,17 @@ export function useAgentSessions(
   const load = useCallback(
     async (forceRefresh: boolean) => {
       if (!projectPath) {
+        loadInFlightRef.current = null;
         setResult(null);
         setError(null);
         setLoading(false);
         setRefreshing(false);
         return;
+      }
+
+      const inFlight = loadInFlightRef.current;
+      if (inFlight?.projectPath === projectPath) {
+        return inFlight.promise;
       }
 
       const requestId = ++requestIdRef.current;
@@ -125,21 +136,28 @@ export function useAgentSessions(
       }
       setError(null);
 
-      try {
-        const next = forceRefresh
-          ? await refreshAgentSessions(projectPath)
-          : await listAgentSessions(projectPath);
-        if (!isCurrentRequest()) return;
-        setResult(next);
-      } catch (err) {
-        if (!isCurrentRequest()) return;
-        setError(getNativeErrorMessage(err));
-      } finally {
-        if (isCurrentRequest()) {
-          setLoading(false);
-          setRefreshing(false);
+      const promise = (async () => {
+        try {
+          const next = forceRefresh
+            ? await refreshAgentSessions(projectPath)
+            : await listAgentSessions(projectPath);
+          if (!isCurrentRequest()) return;
+          setResult(next);
+        } catch (err) {
+          if (!isCurrentRequest()) return;
+          setError(getNativeErrorMessage(err));
+        } finally {
+          if (isCurrentRequest()) {
+            setLoading(false);
+            setRefreshing(false);
+          }
+          if (loadInFlightRef.current?.requestId === requestId) {
+            loadInFlightRef.current = null;
+          }
         }
-      }
+      })();
+      loadInFlightRef.current = { projectPath, requestId, promise };
+      return promise;
     },
     [projectPath],
   );
@@ -238,7 +256,7 @@ export function useAgentSessions(
         }
         if (!selectionCurrent) return;
         setSelectedReentryResult(reentry);
-        await load(false);
+        void load(false);
       } catch (err) {
         if (
           projectPathRef.current !== projectPath ||

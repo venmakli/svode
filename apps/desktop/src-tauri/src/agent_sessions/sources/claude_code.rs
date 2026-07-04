@@ -6,10 +6,10 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::{
-    CandidateCwdSource, PersistedAgentSessionCandidate, SourceFingerprint, SourceScan,
-    build_fingerprint, collect_optional_file, collect_recursive_files, metadata_mtime,
-    nested_string_field, read_jsonl, short_id, source_file_ref, string_field,
-    timestamp_from_fields, title_from_text,
+    CandidateCwdSource, PersistedAgentSessionCandidate, SourceFingerprint, SourceInputFile,
+    SourceScan, build_fingerprint, collect_optional_file, collect_recursive_dirs,
+    collect_recursive_files, metadata_mtime, nested_string_field, read_jsonl, short_id,
+    source_file_ref, string_field, timestamp_from_fields, title_from_text,
 };
 use crate::agent_sessions::types::{
     AgentSessionCounts, AgentSessionDiagnosticSeverity, AgentSessionSource,
@@ -24,7 +24,6 @@ pub(crate) fn collect_fingerprint(root: &Path) -> (SourceFingerprint, AgentSessi
         report.status = AgentSessionSourceStatus::MissingRoot;
         let fingerprint = SourceFingerprint {
             value: format!("missing-root:{}", root.to_string_lossy()),
-            files: Vec::new(),
         };
         report.fingerprint = Some(fingerprint.value.clone());
         return (fingerprint, report);
@@ -40,7 +39,6 @@ pub(crate) fn collect_fingerprint(root: &Path) -> (SourceFingerprint, AgentSessi
         );
         let fingerprint = SourceFingerprint {
             value: format!("unreadable-root:{}", root.to_string_lossy()),
-            files: Vec::new(),
         };
         report.fingerprint = Some(fingerprint.value.clone());
         return (fingerprint, report);
@@ -52,10 +50,10 @@ pub(crate) fn collect_fingerprint(root: &Path) -> (SourceFingerprint, AgentSessi
     }
     let projects_root = root.join("projects");
     if projects_root.is_dir() {
-        files.extend(collect_recursive_files(
+        files.extend(collect_recursive_dirs(
             &projects_root,
-            "detail",
-            &|path| path.extension().and_then(|ext| ext.to_str()) == Some("jsonl"),
+            "project-partition",
+            1,
             &mut report,
         ));
     }
@@ -81,9 +79,10 @@ pub(crate) fn scan(
         };
     }
 
-    report.counts.files_scanned = fingerprint.files.len();
+    let inputs = collect_scan_inputs(root, &mut report);
+    report.counts.files_scanned = inputs.len();
     let mut builders: HashMap<String, SessionBuilder> = HashMap::new();
-    for input in &fingerprint.files {
+    for input in &inputs {
         match input.kind {
             "history" => parse_history(&input.path, &mut report, &mut builders),
             "detail" => parse_detail(root, &input.path, &mut report, &mut builders),
@@ -106,6 +105,23 @@ pub(crate) fn scan(
         report,
         fingerprint: fingerprint.value,
     }
+}
+
+fn collect_scan_inputs(root: &Path, report: &mut AgentSessionSourceReport) -> Vec<SourceInputFile> {
+    let mut files = Vec::new();
+    if let Some(file) = collect_optional_file(root, "history.jsonl", "history") {
+        files.push(file);
+    }
+    let projects_root = root.join("projects");
+    if projects_root.is_dir() {
+        files.extend(collect_recursive_files(
+            &projects_root,
+            "detail",
+            &|path| path.extension().and_then(|ext| ext.to_str()) == Some("jsonl"),
+            report,
+        ));
+    }
+    files
 }
 
 fn parse_history(

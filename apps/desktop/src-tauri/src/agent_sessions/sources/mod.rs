@@ -63,7 +63,6 @@ pub(crate) struct SourceInputFile {
 #[derive(Debug, Clone)]
 pub(crate) struct SourceFingerprint {
     pub value: String,
-    pub files: Vec<SourceInputFile>,
 }
 
 #[derive(Debug, Clone)]
@@ -282,7 +281,6 @@ pub(crate) fn build_fingerprint(
 
     SourceFingerprint {
         value: parts.join("|"),
-        files: sorted,
     }
 }
 
@@ -308,6 +306,17 @@ pub(crate) fn collect_recursive_files(
     let mut files = Vec::new();
     collect_recursive_files_inner(root, kind, accept, report, &mut files);
     files
+}
+
+pub(crate) fn collect_recursive_dirs(
+    root: &Path,
+    kind: &'static str,
+    max_depth: usize,
+    report: &mut AgentSessionSourceReport,
+) -> Vec<SourceInputFile> {
+    let mut dirs = Vec::new();
+    collect_recursive_dirs_inner(root, kind, max_depth, 0, report, &mut dirs);
+    dirs
 }
 
 fn collect_recursive_files_inner(
@@ -370,6 +379,77 @@ fn collect_recursive_files_inner(
             collect_recursive_files_inner(&path, kind, accept, report, files);
         } else if file_type.is_file() && accept(&path) {
             files.push(SourceInputFile { path, kind });
+        }
+    }
+}
+
+fn collect_recursive_dirs_inner(
+    dir: &Path,
+    kind: &'static str,
+    max_depth: usize,
+    depth: usize,
+    report: &mut AgentSessionSourceReport,
+    dirs: &mut Vec<SourceInputFile>,
+) {
+    dirs.push(SourceInputFile {
+        path: dir.to_path_buf(),
+        kind,
+    });
+    if depth >= max_depth {
+        return;
+    }
+
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) => {
+            if dir == Path::new(&report.root_path) {
+                report.status = AgentSessionSourceStatus::Unreadable;
+            } else {
+                report.mark_partial_if_ok();
+            }
+            report.push_diagnostic(
+                AgentSessionDiagnosticSeverity::Error,
+                "source-read-dir",
+                format!("source directory unreadable: {error}"),
+                Some(dir.to_string_lossy().into_owned()),
+                None,
+            );
+            return;
+        }
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                report.mark_partial_if_ok();
+                report.push_diagnostic(
+                    AgentSessionDiagnosticSeverity::Error,
+                    "source-dir-entry",
+                    format!("source directory entry unreadable: {error}"),
+                    Some(dir.to_string_lossy().into_owned()),
+                    None,
+                );
+                continue;
+            }
+        };
+        let path = entry.path();
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                report.mark_partial_if_ok();
+                report.push_diagnostic(
+                    AgentSessionDiagnosticSeverity::Error,
+                    "source-entry-type",
+                    format!("source entry type unavailable: {error}"),
+                    Some(path.to_string_lossy().into_owned()),
+                    None,
+                );
+                continue;
+            }
+        };
+        if file_type.is_dir() {
+            collect_recursive_dirs_inner(&path, kind, max_depth, depth + 1, report, dirs);
         }
     }
 }
