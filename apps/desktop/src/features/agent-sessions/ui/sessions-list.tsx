@@ -1,9 +1,13 @@
+import type { ReactNode } from "react";
 import {
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   MoreHorizontal,
   RefreshCw,
   Search,
   SquareTerminal,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -24,6 +28,7 @@ import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
+  SidebarGroupAction,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
@@ -43,7 +48,7 @@ import {
 import { cn } from "@/shared/lib/utils";
 import { getNativeErrorMessage } from "@/platform/native/errors";
 import type { useAgentSessions } from "../hooks";
-import { openSessionCwdInExternalTerminal, revealSessionFile } from "../api";
+import { openSessionCwdInExternalTerminal } from "../api";
 import { scopeLabel } from "../lib";
 import type { AgentSession, AgentSessionGroup } from "../model";
 import { SessionRow } from "./session-row";
@@ -104,14 +109,18 @@ export function SessionsList({
     );
   }
 
-  function revealFile(session: AgentSession) {
-    if (!session.sourceFile) return;
-    const sourceFilePath = session.sourceFile.path;
-    void runAction(
-      () => revealSessionFile(sourceFilePath),
-      m.sessions_toast_reveal_failed(),
-    );
-  }
+  const collapsibleSpaceGroups = controller.groups.spaces.filter(
+    (group) => group.total > 0,
+  );
+  const shouldCollapseSpaces = collapsibleSpaceGroups.some(
+    (group) => !controller.collapsedGroupIds.has(group.id),
+  );
+  const spacesExpansionLabel = shouldCollapseSpaces
+    ? m.sidebar_collapse_all()
+    : m.sidebar_expand_all();
+  const nowHasOpenTerminals = Boolean(
+    controller.groups.now?.sessions.some((session) => session.runtime?.ptyId),
+  );
 
   return (
     <Sidebar
@@ -178,49 +187,67 @@ export function SessionsList({
                 runAction={runAction}
                 copyCommand={copyCommand}
                 openExternalTerminal={openExternalTerminal}
-                revealFile={revealFile}
               />
             )}
             {controller.groups.now && (
               <SessionGroupSection
                 group={controller.groups.now}
                 label={m.sessions_group_now()}
+                headerAction={
+                  <CloseAllTerminalsAction
+                    disabled={!nowHasOpenTerminals}
+                    onCloseAll={() =>
+                      void runAction(
+                        controller.closeAllTerminals,
+                        m.sessions_toast_close_terminal_failed(),
+                      )
+                    }
+                  />
+                }
                 controller={controller}
                 rootName={rootName}
                 spaceNames={spaceNames}
                 runAction={runAction}
                 copyCommand={copyCommand}
                 openExternalTerminal={openExternalTerminal}
-                revealFile={revealFile}
               />
             )}
             {controller.groups.spaces.length > 0 && (
-              <>
-                <SidebarGroup className="pb-0">
-                  <SidebarGroupLabel>
-                    <span className="truncate">
-                      {m.sessions_group_spaces()}
-                    </span>
-                  </SidebarGroupLabel>
-                </SidebarGroup>
-                {controller.groups.spaces.map((group) => (
-                  <SessionGroupSection
-                    key={group.id}
-                    group={group}
-                    label={groupLabel(group, rootName, spaceNames)}
-                    icon={groupIcon(group, rootIcon, spaceIcons)}
-                    collapsible
-                    collapsed={controller.collapsedGroupIds.has(group.id)}
-                    controller={controller}
-                    rootName={rootName}
-                    spaceNames={spaceNames}
-                    runAction={runAction}
-                    copyCommand={copyCommand}
-                    openExternalTerminal={openExternalTerminal}
-                    revealFile={revealFile}
+              <SidebarGroup className="pt-2">
+                <SidebarGroupLabel className="group/sessions-past-header pr-8">
+                  <span className="truncate">{m.sessions_group_spaces()}</span>
+                  <SpaceGroupsExpansionAction
+                    disabled={collapsibleSpaceGroups.length === 0}
+                    label={spacesExpansionLabel}
+                    action={shouldCollapseSpaces ? "collapse" : "expand"}
+                    onToggle={() =>
+                      controller.setGroupsCollapsed(
+                        collapsibleSpaceGroups.map((group) => group.id),
+                        shouldCollapseSpaces,
+                      )
+                    }
                   />
-                ))}
-              </>
+                </SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    {controller.groups.spaces.map((group) => (
+                      <SessionSpaceGroupItem
+                        key={group.id}
+                        group={group}
+                        label={groupLabel(group, rootName, spaceNames)}
+                        icon={groupIcon(group, rootIcon, spaceIcons)}
+                        collapsed={controller.collapsedGroupIds.has(group.id)}
+                        controller={controller}
+                        rootName={rootName}
+                        spaceNames={spaceNames}
+                        runAction={runAction}
+                        copyCommand={copyCommand}
+                        openExternalTerminal={openExternalTerminal}
+                      />
+                    ))}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </SidebarGroup>
             )}
           </>
         )}
@@ -232,9 +259,7 @@ export function SessionsList({
 interface SessionGroupSectionProps {
   group: AgentSessionGroup;
   label: string;
-  icon?: string;
-  collapsible?: boolean;
-  collapsed?: boolean;
+  headerAction?: ReactNode;
   controller: AgentSessionsController;
   rootName: string | null;
   spaceNames: Map<string, string>;
@@ -244,24 +269,182 @@ interface SessionGroupSectionProps {
   ) => Promise<void>;
   copyCommand: (session: AgentSession) => void;
   openExternalTerminal: (session: AgentSession) => void;
-  revealFile: (session: AgentSession) => void;
 }
 
 function SessionGroupSection({
   group,
   label,
-  icon,
-  collapsible = false,
-  collapsed = false,
+  headerAction,
   controller,
   rootName,
   spaceNames,
   runAction,
   copyCommand,
   openExternalTerminal,
-  revealFile,
 }: SessionGroupSectionProps) {
+  return (
+    <SidebarGroup>
+      <SidebarGroupLabel
+        className={cn(headerAction && "group/sessions-group-header pr-8")}
+      >
+        <span className="truncate">{label}</span>
+        {headerAction}
+      </SidebarGroupLabel>
+      <SidebarGroupContent>
+        <SessionGroupMenu
+          group={group}
+          controller={controller}
+          rootName={rootName}
+          spaceNames={spaceNames}
+          runAction={runAction}
+          copyCommand={copyCommand}
+          openExternalTerminal={openExternalTerminal}
+        />
+      </SidebarGroupContent>
+    </SidebarGroup>
+  );
+}
+
+interface SessionSpaceGroupItemProps {
+  group: AgentSessionGroup;
+  label: string;
+  icon?: string;
+  collapsed: boolean;
+  controller: AgentSessionsController;
+  rootName: string | null;
+  spaceNames: Map<string, string>;
+  runAction: (
+    action: () => Promise<void>,
+    errorMessage: string,
+  ) => Promise<void>;
+  copyCommand: (session: AgentSession) => void;
+  openExternalTerminal: (session: AgentSession) => void;
+}
+
+function SessionSpaceGroupItem({
+  group,
+  label,
+  icon,
+  collapsed,
+  controller,
+  rootName,
+  spaceNames,
+  runAction,
+  copyCommand,
+  openExternalTerminal,
+}: SessionSpaceGroupItemProps) {
+  const hasSessions = group.total > 0;
+  const scope = group.scope;
+  const terminalDisabled = !scope || scope.status !== "ready";
   const menu = (
+    <SessionGroupMenu
+      group={group}
+      controller={controller}
+      rootName={rootName}
+      spaceNames={spaceNames}
+      runAction={runAction}
+      copyCommand={copyCommand}
+      openExternalTerminal={openExternalTerminal}
+    />
+  );
+  const row = (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        type="button"
+        aria-expanded={hasSessions ? !collapsed : undefined}
+        className="pr-20 group-has-data-[sidebar=menu-action]/menu-item:pr-20"
+        onClick={
+          hasSessions
+            ? () => controller.toggleGroupCollapsed(group.id)
+            : undefined
+        }
+      >
+        <span className="shrink-0" aria-hidden>
+          {icon || "\u{1F4C1}"}
+        </span>
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+      </SidebarMenuButton>
+      {hasSessions && (
+        <CollapsibleTrigger asChild>
+          <SidebarMenuAction
+            className="left-2 bg-sidebar-accent text-sidebar-accent-foreground data-[state=open]:rotate-90"
+            showOnHover
+          >
+            <ChevronRight />
+          </SidebarMenuAction>
+        </CollapsibleTrigger>
+      )}
+      <SidebarMenuBadge className="right-1 font-normal text-sidebar-foreground/70 transition-opacity group-hover/menu-item:opacity-0 group-focus-within/menu-item:opacity-0">
+        {m.sessions_group_count({ count: group.total })}
+      </SidebarMenuBadge>
+      {scope && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <SidebarMenuAction
+              type="button"
+              showOnHover
+              disabled={terminalDisabled}
+              className="right-1 disabled:pointer-events-none disabled:opacity-50"
+              aria-label={m.sessions_action_open_terminal()}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                void runAction(
+                  () => controller.openNewSessionTerminal(scope),
+                  m.sessions_toast_open_terminal_failed(),
+                );
+              }}
+            >
+              <SquareTerminal />
+            </SidebarMenuAction>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            {m.sessions_action_open_terminal()}
+          </TooltipContent>
+        </Tooltip>
+      )}
+      {hasSessions && <CollapsibleContent>{menu}</CollapsibleContent>}
+    </SidebarMenuItem>
+  );
+
+  if (!hasSessions) return row;
+
+  return (
+    <Collapsible
+      asChild
+      open={!collapsed}
+      onOpenChange={(open) => {
+        if (open === collapsed) controller.toggleGroupCollapsed(group.id);
+      }}
+    >
+      {row}
+    </Collapsible>
+  );
+}
+
+interface SessionGroupMenuProps {
+  group: AgentSessionGroup;
+  controller: AgentSessionsController;
+  rootName: string | null;
+  spaceNames: Map<string, string>;
+  runAction: (
+    action: () => Promise<void>,
+    errorMessage: string,
+  ) => Promise<void>;
+  copyCommand: (session: AgentSession) => void;
+  openExternalTerminal: (session: AgentSession) => void;
+}
+
+function SessionGroupMenu({
+  group,
+  controller,
+  rootName,
+  spaceNames,
+  runAction,
+  copyCommand,
+  openExternalTerminal,
+}: SessionGroupMenuProps) {
+  return (
     <SidebarMenu>
       {group.sessions.map((session) => (
         <SessionRow
@@ -293,7 +476,6 @@ function SessionGroupSection({
           }
           onCopyCommand={copyCommand}
           onOpenExternalTerminal={openExternalTerminal}
-          onRevealFile={revealFile}
         />
       ))}
       {group.hasMore && (
@@ -309,87 +491,59 @@ function SessionGroupSection({
       )}
     </SidebarMenu>
   );
+}
 
-  if (!collapsible) {
-    return (
-      <SidebarGroup>
-        <SidebarGroupLabel>
-          <span className="truncate">{label}</span>
-        </SidebarGroupLabel>
-        <SidebarGroupContent>{menu}</SidebarGroupContent>
-      </SidebarGroup>
-    );
-  }
-
-  const scope = group.scope;
-  const terminalDisabled = !scope || scope.status !== "ready";
-
+function CloseAllTerminalsAction({
+  disabled,
+  onCloseAll,
+}: {
+  disabled: boolean;
+  onCloseAll: () => void;
+}) {
   return (
-    <Collapsible
-      open={!collapsed}
-      onOpenChange={(open) => {
-        if (open === collapsed) controller.toggleGroupCollapsed(group.id);
-      }}
-      className="group/collapsible"
-    >
-      <SidebarGroup className="pt-1">
-        <SidebarGroupContent>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                type="button"
-                aria-expanded={!collapsed}
-                className="pr-20 group-has-data-[sidebar=menu-action]/menu-item:pr-20"
-                onClick={() => controller.toggleGroupCollapsed(group.id)}
-              >
-                <span className="shrink-0" aria-hidden>
-                  {icon || "\u{1F4C1}"}
-                </span>
-                <span className="min-w-0 flex-1 truncate">{label}</span>
-              </SidebarMenuButton>
-              <CollapsibleTrigger asChild>
-                <SidebarMenuAction
-                  className="left-2 bg-sidebar-accent text-sidebar-accent-foreground data-[state=open]:rotate-90"
-                  showOnHover
-                >
-                  <ChevronRight />
-                </SidebarMenuAction>
-              </CollapsibleTrigger>
-              <SidebarMenuBadge className="right-1 font-normal text-sidebar-foreground/70 transition-opacity group-hover/menu-item:opacity-0 group-focus-within/menu-item:opacity-0">
-                {m.sessions_group_count({ count: group.total })}
-              </SidebarMenuBadge>
-              {scope && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <SidebarMenuAction
-                      type="button"
-                      showOnHover
-                      disabled={terminalDisabled}
-                      className="right-1 disabled:pointer-events-none disabled:opacity-50"
-                      aria-label={m.sessions_action_open_terminal()}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        void runAction(
-                          () => controller.openNewSessionTerminal(scope),
-                          m.sessions_toast_open_terminal_failed(),
-                        );
-                      }}
-                    >
-                      <SquareTerminal />
-                    </SidebarMenuAction>
-                  </TooltipTrigger>
-                  <TooltipContent side="top">
-                    {m.sessions_action_open_terminal()}
-                  </TooltipContent>
-                </Tooltip>
-              )}
-            </SidebarMenuItem>
-          </SidebarMenu>
-          <CollapsibleContent>{menu}</CollapsibleContent>
-        </SidebarGroupContent>
-      </SidebarGroup>
-    </Collapsible>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <SidebarGroupAction
+          aria-label={m.sessions_action_close_all_terminals()}
+          disabled={disabled}
+          className="size-5 text-sidebar-foreground/70 opacity-0 transition-opacity hover:bg-transparent hover:text-sidebar-foreground/70 disabled:pointer-events-none disabled:opacity-40 group-hover/sessions-group-header:opacity-100 group-focus-within/sessions-group-header:opacity-100 focus-visible:opacity-100 [&>svg]:size-3"
+          onClick={onCloseAll}
+        >
+          <X />
+        </SidebarGroupAction>
+      </TooltipTrigger>
+      <TooltipContent side="right">
+        {m.sessions_action_close_all_terminals()}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function SpaceGroupsExpansionAction({
+  disabled,
+  label,
+  action,
+  onToggle,
+}: {
+  disabled: boolean;
+  label: string;
+  action: "collapse" | "expand";
+  onToggle: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <SidebarGroupAction
+          aria-label={label}
+          disabled={disabled}
+          className="size-5 text-sidebar-foreground/70 opacity-0 transition-opacity hover:bg-transparent hover:text-sidebar-foreground/70 disabled:pointer-events-none disabled:opacity-40 group-hover/sessions-past-header:opacity-100 group-focus-within/sessions-past-header:opacity-100 focus-visible:opacity-100 [&>svg]:size-3"
+          onClick={onToggle}
+        >
+          {action === "collapse" ? <ChevronsDownUp /> : <ChevronsUpDown />}
+        </SidebarGroupAction>
+      </TooltipTrigger>
+      <TooltipContent side="right">{label}</TooltipContent>
+    </Tooltip>
   );
 }
 

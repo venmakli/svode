@@ -4,7 +4,6 @@ import {
   openSessionCwdInExternalTerminal,
   reenterAgentSession,
   refreshAgentSessions,
-  revealSessionFile,
   setAgentSessionPinned,
   type AgentSessionReentryResult,
   type AgentSessionsListResult,
@@ -65,11 +64,12 @@ interface UseAgentSessionsResult {
   togglePinned: (session: AgentSession) => Promise<void>;
   showMore: (groupId: string) => void;
   toggleGroupCollapsed: (groupId: string) => void;
+  setGroupsCollapsed: (groupIds: string[], collapsed: boolean) => void;
   openNewSessionTerminal: (scope: AgentSessionScopeGroup) => Promise<void>;
   closeSelectedTerminal: () => Promise<void>;
   closeTerminal: (sessionId: string, ptyId: string) => Promise<void>;
+  closeAllTerminals: () => Promise<void>;
   openSelectedExternalTerminal: () => Promise<void>;
-  revealSelectedSourceFile: () => Promise<void>;
 }
 
 export function useAgentSessions(
@@ -318,8 +318,7 @@ export function useAgentSessions(
   );
 
   const selectedSession =
-    sessionsForUi.find((session) => session.id === selectedSessionId) ??
-    null;
+    sessionsForUi.find((session) => session.id === selectedSessionId) ?? null;
   const selectedTerminal = selectedSessionId
     ? terminalsBySession[selectedSessionId]
     : undefined;
@@ -472,6 +471,25 @@ export function useAgentSessions(
     });
   }, []);
 
+  const setGroupsCollapsed = useCallback(
+    (groupIds: string[], collapsed: boolean) => {
+      if (groupIds.length === 0) return;
+
+      setCollapsedGroupIds((current) => {
+        const next = new Set(current);
+        groupIds.forEach((groupId) => {
+          if (collapsed) {
+            next.add(groupId);
+          } else {
+            next.delete(groupId);
+          }
+        });
+        return next;
+      });
+    },
+    [],
+  );
+
   const openNewSessionTerminal = useCallback(
     async (scope: AgentSessionScopeGroup) => {
       if (!projectPath || scope.status !== "ready") return;
@@ -539,6 +557,65 @@ export function useAgentSessions(
     await closeTerminal(selectedSessionId, selectedPtyId);
   }, [closeTerminal, selectedPtyId, selectedSessionId]);
 
+  const closeAllTerminals = useCallback(async () => {
+    const ptyIds = new Set<string>();
+
+    sessionsForUi.forEach((session) => {
+      if (session.runtime?.ptyId) {
+        ptyIds.add(session.runtime.ptyId);
+      }
+    });
+    Object.values(terminalsBySession).forEach((terminal) => {
+      ptyIds.add(terminal.ptyId);
+    });
+    if (selectedReentryResult?.ptyId) {
+      ptyIds.add(selectedReentryResult.ptyId);
+    }
+
+    if (ptyIds.size === 0) return;
+
+    const results = await Promise.allSettled(
+      Array.from(ptyIds, async (ptyId) => {
+        await closeManagedTerminalSurface(ptyId);
+        return ptyId;
+      }),
+    );
+    const closedPtyIds = new Set(
+      results
+        .filter(
+          (result): result is PromiseFulfilledResult<string> =>
+            result.status === "fulfilled",
+        )
+        .map((result) => result.value),
+    );
+
+    if (closedPtyIds.size > 0) {
+      setPendingTerminals((current) => {
+        const next = current.filter(
+          (pending) => !closedPtyIds.has(pending.ptyId),
+        );
+        pendingTerminalsRef.current = next;
+        return next;
+      });
+      setTerminalsBySession((current) =>
+        Object.fromEntries(
+          Object.entries(current).filter(
+            ([, terminal]) => !closedPtyIds.has(terminal.ptyId),
+          ),
+        ),
+      );
+      setSelectedReentryResult((current) =>
+        current?.ptyId && closedPtyIds.has(current.ptyId) ? null : current,
+      );
+      await load(false);
+    }
+
+    const failed = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failed) throw failed.reason;
+  }, [load, selectedReentryResult, sessionsForUi, terminalsBySession]);
+
   const openSelectedExternalTerminal = useCallback(async () => {
     const cwd =
       selectedReentryResult?.cwd ??
@@ -548,12 +625,6 @@ export function useAgentSessions(
     if (!cwd) return;
     await openSessionCwdInExternalTerminal(cwd);
   }, [selectedReentryResult, selectedSession]);
-
-  const revealSelectedSourceFile = useCallback(async () => {
-    const sourceFile = selectedSession?.sourceFile;
-    if (!sourceFile) return;
-    await revealSessionFile(sourceFile.path);
-  }, [selectedSession]);
 
   return {
     result,
@@ -576,10 +647,11 @@ export function useAgentSessions(
     togglePinned,
     showMore,
     toggleGroupCollapsed,
+    setGroupsCollapsed,
     openNewSessionTerminal,
     closeSelectedTerminal,
     closeTerminal,
+    closeAllTerminals,
     openSelectedExternalTerminal,
-    revealSelectedSourceFile,
   };
 }

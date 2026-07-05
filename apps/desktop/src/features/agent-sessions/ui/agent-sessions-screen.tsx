@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import {
   Copy,
   ExternalLink,
-  FileSearch,
   Info,
   MoreVertical,
   PanelRight,
@@ -144,12 +143,6 @@ export function AgentSessionsScreen({
           )
         }
         onOpenExternalTerminal={openSelectedExternalTerminal}
-        onRevealFile={() =>
-          void runAction(
-            sessions.revealSelectedSourceFile,
-            m.sessions_toast_reveal_failed(),
-          )
-        }
       />
       <div className="flex min-h-0 flex-1 pb-2">
         <SessionTerminalPane
@@ -231,7 +224,6 @@ function AgentSessionsHeader({
   onCopyCommand,
   onCloseTerminal,
   onOpenExternalTerminal,
-  onRevealFile,
 }: {
   session: AgentSession | null;
   ptyId: string | null;
@@ -244,7 +236,6 @@ function AgentSessionsHeader({
   onCopyCommand: () => void;
   onCloseTerminal: () => void;
   onOpenExternalTerminal: () => void;
-  onRevealFile: () => void;
 }) {
   const { state } = useSidebar();
   const sidebarHidden = state === "collapsed";
@@ -281,7 +272,6 @@ function AgentSessionsHeader({
             onCopyCommand={onCopyCommand}
             onCloseTerminal={onCloseTerminal}
             onOpenExternalTerminal={onOpenExternalTerminal}
-            onRevealFile={onRevealFile}
           />
         )}
         <Tooltip>
@@ -319,7 +309,6 @@ function SessionActionsMenu({
   onCopyCommand,
   onCloseTerminal,
   onOpenExternalTerminal,
-  onRevealFile,
 }: {
   session: AgentSession | null;
   ptyId: string | null;
@@ -328,7 +317,6 @@ function SessionActionsMenu({
   onCopyCommand: () => void;
   onCloseTerminal: () => void;
   onOpenExternalTerminal: () => void;
-  onRevealFile: () => void;
 }) {
   return (
     <DropdownMenu>
@@ -368,15 +356,6 @@ function SessionActionsMenu({
             {metadataOpen
               ? m.sessions_action_hide_metadata()
               : m.sessions_action_view_metadata()}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            disabled={
-              !session?.sourceFile || !session?.capabilities.canRevealFile
-            }
-            onSelect={onRevealFile}
-          >
-            <FileSearch />
-            {m.sessions_action_reveal_file()}
           </DropdownMenuItem>
         </DropdownMenuGroup>
       </DropdownMenuContent>

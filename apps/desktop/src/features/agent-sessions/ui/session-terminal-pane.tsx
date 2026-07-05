@@ -57,7 +57,12 @@ export function SessionTerminalPane({
       );
     }
 
-    return <SelectSessionState />;
+    return (
+      <SelectSessionState
+        rootScope={rootScope}
+        onOpenScopeTerminal={onOpenScopeTerminal}
+      />
+    );
   }
 
   if (controller.selectedMissing) {
@@ -135,7 +140,15 @@ function SessionMetadata({
   );
 }
 
-function SelectSessionState() {
+function SelectSessionState({
+  rootScope,
+  onOpenScopeTerminal,
+}: {
+  rootScope: AgentSessionScopeGroup | null;
+  onOpenScopeTerminal: (scope: AgentSessionScopeGroup) => Promise<void>;
+}) {
+  const terminalDisabled = !rootScope || rootScope.status !== "ready";
+
   return (
     <div className="min-w-0 flex-1">
       <Empty className="h-full border-0">
@@ -146,6 +159,19 @@ function SelectSessionState() {
           <EmptyTitle>{m.sessions_select_title()}</EmptyTitle>
           <EmptyDescription>{m.sessions_select_description()}</EmptyDescription>
         </EmptyHeader>
+        <EmptyContent>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={terminalDisabled}
+            onClick={() =>
+              rootScope ? void onOpenScopeTerminal(rootScope) : undefined
+            }
+          >
+            <SquareTerminal data-icon="inline-start" />
+            {m.sessions_action_open_terminal()}
+          </Button>
+        </EmptyContent>
       </Empty>
     </div>
   );

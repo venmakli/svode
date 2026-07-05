@@ -1,4 +1,12 @@
-import { MoreHorizontal, Pin, PinOff, SquareTerminal } from "lucide-react";
+import { useState } from "react";
+import {
+  Copy,
+  ExternalLink,
+  MoreHorizontal,
+  Pin,
+  PinOff,
+  X,
+} from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -50,7 +58,6 @@ interface SessionRowProps {
   onCloseTerminal: () => void;
   onCopyCommand: (session: AgentSession) => void;
   onOpenExternalTerminal: (session: AgentSession) => void;
-  onRevealFile: (session: AgentSession) => void;
 }
 
 export function SessionRow({
@@ -67,14 +74,15 @@ export function SessionRow({
   onCloseTerminal,
   onCopyCommand,
   onOpenExternalTerminal,
-  onRevealFile,
 }: SessionRowProps) {
+  const [actionsOpen, setActionsOpen] = useState(false);
   const time = sessionTimeLabel(session);
   const hasOpenTerminal = session.runtime?.live === true;
-  const canPin = session.source !== "unknown" && !isPendingSessionId(session.id);
+  const canPin =
+    session.source !== "unknown" && !isPendingSessionId(session.id);
 
   return (
-    <SidebarMenuItem>
+    <SidebarMenuItem data-actions-open={actionsOpen}>
       {reentering && (
         <span className="pointer-events-none absolute inset-y-1 left-0 w-0.5 rounded-full bg-primary" />
       )}
@@ -122,7 +130,7 @@ export function SessionRow({
           </span>
         </TooltipContent>
       </Tooltip>
-      <SidebarMenuBadge className="gap-1.5 font-normal text-sidebar-foreground/70 transition-opacity group-hover/menu-item:opacity-0 group-focus-within/menu-item:opacity-0 [&_svg]:size-3 [&_svg]:shrink-0">
+      <SidebarMenuBadge className="gap-1.5 font-normal text-sidebar-foreground/70 transition-opacity group-hover/menu-item:opacity-0 group-focus-within/menu-item:opacity-0 group-data-[actions-open=true]/menu-item:opacity-0 [&_svg]:size-3 [&_svg]:shrink-0">
         <SessionStatusMarker session={session} />
         <span>{time}</span>
       </SidebarMenuBadge>
@@ -132,7 +140,7 @@ export function SessionRow({
             type="button"
             showOnHover
             disabled={pinning || !canPin}
-            className="right-7 disabled:pointer-events-none disabled:opacity-50"
+            className="right-7 disabled:pointer-events-none disabled:opacity-50 group-data-[actions-open=true]/menu-item:opacity-100"
             aria-label={
               session.pinned
                 ? m.sessions_action_unpin()
@@ -147,11 +155,12 @@ export function SessionRow({
           {session.pinned ? m.sessions_action_unpin() : m.sessions_action_pin()}
         </TooltipContent>
       </Tooltip>
-      <DropdownMenu>
+      <DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
         <DropdownMenuTrigger asChild>
           <SidebarMenuAction
             type="button"
             showOnHover
+            className="group-data-[actions-open=true]/menu-item:opacity-100"
             aria-label={m.sessions_action_more()}
           >
             <MoreHorizontal />
@@ -161,7 +170,7 @@ export function SessionRow({
           <DropdownMenuGroup>
             {hasOpenTerminal && (
               <DropdownMenuItem onSelect={onCloseTerminal}>
-                <SquareTerminal />
+                <X />
                 {m.sessions_action_close_terminal()}
               </DropdownMenuItem>
             )}
@@ -169,21 +178,15 @@ export function SessionRow({
               disabled={!session.resumeCommand}
               onSelect={() => onCopyCommand(session)}
             >
+              <Copy />
               {m.sessions_action_copy_resume_command()}
             </DropdownMenuItem>
             <DropdownMenuItem
               disabled={!session.resumeCommand?.cwd && !session.cwd}
               onSelect={() => onOpenExternalTerminal(session)}
             >
+              <ExternalLink />
               {m.sessions_action_open_external_terminal()}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={
-                !session.sourceFile || !session.capabilities.canRevealFile
-              }
-              onSelect={() => onRevealFile(session)}
-            >
-              {m.sessions_action_reveal_file()}
             </DropdownMenuItem>
           </DropdownMenuGroup>
         </DropdownMenuContent>
