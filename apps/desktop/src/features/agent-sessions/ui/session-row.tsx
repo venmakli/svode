@@ -40,6 +40,12 @@ import {
 import { SessionStatusMarker, statusLabel } from "./session-status";
 import * as m from "@/paraglide/messages.js";
 
+const sessionRowActionVisibility =
+  "opacity-0 transition-opacity disabled:opacity-0 focus-visible:opacity-100 data-[state=open]:opacity-100 group-hover/session-row:opacity-100 group-has-[[data-sidebar=menu-action]:focus-visible]/session-row:opacity-100 group-data-[actions-open=true]/session-row:opacity-100 group-hover/session-row:disabled:opacity-50 group-has-[[data-sidebar=menu-action]:focus-visible]/session-row:disabled:opacity-50 group-data-[actions-open=true]/session-row:disabled:opacity-50";
+
+const sessionRowBadgeVisibility =
+  "group-hover/session-row:opacity-0 group-has-[[data-sidebar=menu-action]:focus-visible]/session-row:opacity-0 group-data-[actions-open=true]/session-row:opacity-0";
+
 interface SessionRowProps {
   session: AgentSession;
   groupId: string;
@@ -82,7 +88,10 @@ export function SessionRow({
     session.source !== "unknown" && !isPendingSessionId(session.id);
 
   return (
-    <SidebarMenuItem data-actions-open={actionsOpen}>
+    <SidebarMenuItem
+      className="group/session-row"
+      data-actions-open={actionsOpen}
+    >
       {reentering && (
         <span className="pointer-events-none absolute inset-y-1 left-0 w-0.5 rounded-full bg-primary" />
       )}
@@ -130,7 +139,12 @@ export function SessionRow({
           </span>
         </TooltipContent>
       </Tooltip>
-      <SidebarMenuBadge className="gap-1.5 font-normal text-sidebar-foreground/70 transition-opacity group-hover/menu-item:opacity-0 group-focus-within/menu-item:opacity-0 group-data-[actions-open=true]/menu-item:opacity-0 [&_svg]:size-3 [&_svg]:shrink-0">
+      <SidebarMenuBadge
+        className={cn(
+          "gap-1.5 font-normal text-sidebar-foreground/70 transition-opacity [&_svg]:size-3 [&_svg]:shrink-0",
+          sessionRowBadgeVisibility,
+        )}
+      >
         <SessionStatusMarker session={session} />
         <span>{time}</span>
       </SidebarMenuBadge>
@@ -138,9 +152,11 @@ export function SessionRow({
         <TooltipTrigger asChild>
           <SidebarMenuAction
             type="button"
-            showOnHover
             disabled={pinning || !canPin}
-            className="right-7 disabled:pointer-events-none disabled:opacity-50 group-data-[actions-open=true]/menu-item:opacity-100"
+            className={cn(
+              "right-7 disabled:pointer-events-none",
+              sessionRowActionVisibility,
+            )}
             aria-label={
               session.pinned
                 ? m.sessions_action_unpin()
@@ -159,8 +175,7 @@ export function SessionRow({
         <DropdownMenuTrigger asChild>
           <SidebarMenuAction
             type="button"
-            showOnHover
-            className="group-data-[actions-open=true]/menu-item:opacity-100"
+            className={sessionRowActionVisibility}
             aria-label={m.sessions_action_more()}
           >
             <MoreHorizontal />

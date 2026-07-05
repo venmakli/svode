@@ -54,6 +54,12 @@ import type { AgentSession, AgentSessionGroup } from "../model";
 import { SessionRow } from "./session-row";
 import * as m from "@/paraglide/messages.js";
 
+const scopeRowActionVisibility =
+  "opacity-0 transition-[opacity,transform] disabled:opacity-0 focus-visible:opacity-100 aria-expanded:opacity-100 data-[state=open]:opacity-100 group-hover/session-scope-row:opacity-100 group-has-[[data-sidebar=menu-action]:focus-visible]/session-scope-row:opacity-100 group-hover/session-scope-row:disabled:opacity-50 group-has-[[data-sidebar=menu-action]:focus-visible]/session-scope-row:disabled:opacity-50";
+
+const scopeRowBadgeVisibility =
+  "group-hover/session-scope-row:opacity-0 group-has-[[data-sidebar=menu-action]:focus-visible]/session-scope-row:opacity-0";
+
 type AgentSessionsController = ReturnType<typeof useAgentSessions>;
 
 interface SessionsListProps {
@@ -349,60 +355,71 @@ function SessionSpaceGroupItem({
   );
   const row = (
     <SidebarMenuItem>
-      <SidebarMenuButton
-        type="button"
-        aria-expanded={hasSessions ? !collapsed : undefined}
-        className="pr-20 group-has-data-[sidebar=menu-action]/menu-item:pr-20"
-        onClick={
-          hasSessions
-            ? () => controller.toggleGroupCollapsed(group.id)
-            : undefined
-        }
-      >
-        <span className="shrink-0" aria-hidden>
-          {icon || "\u{1F4C1}"}
-        </span>
-        <span className="min-w-0 flex-1 truncate">{label}</span>
-      </SidebarMenuButton>
-      {hasSessions && (
-        <CollapsibleTrigger asChild>
-          <SidebarMenuAction
-            className="left-2 bg-sidebar-accent text-sidebar-accent-foreground data-[state=open]:rotate-90"
-            showOnHover
-          >
-            <ChevronRight />
-          </SidebarMenuAction>
-        </CollapsibleTrigger>
-      )}
-      <SidebarMenuBadge className="right-1 font-normal text-sidebar-foreground/70 transition-opacity group-hover/menu-item:opacity-0 group-focus-within/menu-item:opacity-0">
-        {m.sessions_group_count({ count: group.total })}
-      </SidebarMenuBadge>
-      {scope && (
-        <Tooltip>
-          <TooltipTrigger asChild>
+      <div className="group/session-scope-row relative">
+        <SidebarMenuButton
+          type="button"
+          aria-expanded={hasSessions ? !collapsed : undefined}
+          className="pr-20 group-has-data-[sidebar=menu-action]/menu-item:pr-20"
+          onClick={
+            hasSessions
+              ? () => controller.toggleGroupCollapsed(group.id)
+              : undefined
+          }
+        >
+          <span className="shrink-0" aria-hidden>
+            {icon || "\u{1F4C1}"}
+          </span>
+          <span className="min-w-0 flex-1 truncate">{label}</span>
+        </SidebarMenuButton>
+        {hasSessions && (
+          <CollapsibleTrigger asChild>
             <SidebarMenuAction
-              type="button"
-              showOnHover
-              disabled={terminalDisabled}
-              className="right-1 disabled:pointer-events-none disabled:opacity-50"
-              aria-label={m.sessions_action_open_terminal()}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                void runAction(
-                  () => controller.openNewSessionTerminal(scope),
-                  m.sessions_toast_open_terminal_failed(),
-                );
-              }}
+              className={cn(
+                "left-2 bg-sidebar-accent text-sidebar-accent-foreground data-[state=open]:rotate-90",
+                scopeRowActionVisibility,
+              )}
             >
-              <SquareTerminal />
+              <ChevronRight />
             </SidebarMenuAction>
-          </TooltipTrigger>
-          <TooltipContent side="top">
-            {m.sessions_action_open_terminal()}
-          </TooltipContent>
-        </Tooltip>
-      )}
+          </CollapsibleTrigger>
+        )}
+        <SidebarMenuBadge
+          className={cn(
+            "right-1 font-normal text-sidebar-foreground/70 transition-opacity",
+            scopeRowBadgeVisibility,
+          )}
+        >
+          {m.sessions_group_count({ count: group.total })}
+        </SidebarMenuBadge>
+        {scope && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <SidebarMenuAction
+                type="button"
+                disabled={terminalDisabled}
+                className={cn(
+                  "right-1 disabled:pointer-events-none",
+                  scopeRowActionVisibility,
+                )}
+                aria-label={m.sessions_action_open_terminal()}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void runAction(
+                    () => controller.openNewSessionTerminal(scope),
+                    m.sessions_toast_open_terminal_failed(),
+                  );
+                }}
+              >
+                <SquareTerminal />
+              </SidebarMenuAction>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              {m.sessions_action_open_terminal()}
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </div>
       {hasSessions && <CollapsibleContent>{menu}</CollapsibleContent>}
     </SidebarMenuItem>
   );
