@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import {
@@ -15,8 +15,13 @@ interface UseTerminalPaneRuntimeOptions {
 }
 
 type Disposable = { dispose: () => void };
+interface FitRequestOptions {
+  focus?: boolean;
+  scrollToBottom?: boolean;
+}
 
 const SHIFT_ENTER_SEQUENCE = "\x1b[13;2u";
+const STABILIZED_FIT_DELAYS_MS = [50, 150];
 
 function readCssVar(name: string): string {
   return getComputedStyle(document.documentElement)
@@ -45,6 +50,13 @@ export function useTerminalPaneRuntime({
   const ptyIdRef = useRef<string | null>(tab.ptyId);
   const activeRef = useRef(active);
   const panelOpenRef = useRef(panelOpen);
+  const fitFrameRef = useRef<number | null>(null);
+  const fitTimerRefs = useRef<number[]>([]);
+  const pendingFitOptionsRef = useRef<Required<FitRequestOptions>>({
+    focus: false,
+    scrollToBottom: false,
+  });
+  const firstWriteParsedFitRef = useRef(false);
 
   useEffect(() => {
     ptyIdRef.current = tab.ptyId;
@@ -60,10 +72,75 @@ export function useTerminalPaneRuntime({
     tab.status === "ready" ||
     tab.status === "exited";
 
+  const fitTerminal = useCallback((options: FitRequestOptions = {}) => {
+    const container = containerRef.current;
+    const fitAddon = fitAddonRef.current;
+    const terminal = terminalRef.current;
+    if (!container || !fitAddon || !terminal) return;
+    if (container.clientWidth <= 0 || container.clientHeight <= 0) return;
+
+    fitAddon.fit();
+    if (options.scrollToBottom) terminal.scrollToBottom();
+    if (options.focus && activeRef.current && panelOpenRef.current) {
+      terminal.focus();
+    }
+  }, []);
+
+  const requestTerminalFit = useCallback(
+    (options: FitRequestOptions = {}) => {
+      pendingFitOptionsRef.current = {
+        focus: pendingFitOptionsRef.current.focus || Boolean(options.focus),
+        scrollToBottom:
+          pendingFitOptionsRef.current.scrollToBottom ||
+          Boolean(options.scrollToBottom),
+      };
+
+      if (fitFrameRef.current !== null) return;
+      fitFrameRef.current = window.requestAnimationFrame(() => {
+        fitFrameRef.current = null;
+        const nextOptions = pendingFitOptionsRef.current;
+        pendingFitOptionsRef.current = {
+          focus: false,
+          scrollToBottom: false,
+        };
+        fitTerminal(nextOptions);
+      });
+    },
+    [fitTerminal],
+  );
+
+  const scheduleStabilizedFit = useCallback(
+    (options: FitRequestOptions = {}) => {
+      requestTerminalFit(options);
+      STABILIZED_FIT_DELAYS_MS.forEach((delay) => {
+        const timerId = window.setTimeout(() => {
+          requestTerminalFit(options);
+        }, delay);
+        fitTimerRefs.current.push(timerId);
+      });
+    },
+    [requestTerminalFit],
+  );
+
+  const cancelPendingFits = useCallback(() => {
+    if (fitFrameRef.current !== null) {
+      window.cancelAnimationFrame(fitFrameRef.current);
+      fitFrameRef.current = null;
+    }
+    fitTimerRefs.current.forEach((timerId) => {
+      window.clearTimeout(timerId);
+    });
+    fitTimerRefs.current = [];
+    pendingFitOptionsRef.current = { focus: false, scrollToBottom: false };
+  }, []);
+
+  useEffect(() => cancelPendingFits, [cancelPendingFits]);
+
   useEffect(() => {
     if (!terminalVisible) return;
     const container = containerRef.current;
     if (!container || terminalRef.current) return;
+    firstWriteParsedFitRef.current = false;
 
     const terminal = new Terminal({
       cursorBlink: true,
@@ -120,6 +197,11 @@ export function useTerminalPaneRuntime({
           console.warn("Failed to resize terminal:", error);
         });
       }),
+      terminal.onWriteParsed(() => {
+        if (firstWriteParsedFitRef.current) return;
+        firstWriteParsedFitRef.current = true;
+        scheduleStabilizedFit({ scrollToBottom: true });
+      }),
     ];
 
     terminal.loadAddon(fitAddon);
@@ -127,18 +209,19 @@ export function useTerminalPaneRuntime({
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
 
-    requestAnimationFrame(() => {
-      fitAddon.fit();
-      if (activeRef.current && panelOpenRef.current) terminal.focus();
+    scheduleStabilizedFit({
+      focus: true,
+      scrollToBottom: true,
     });
 
     return () => {
+      cancelPendingFits();
       disposables.forEach((disposable) => disposable.dispose());
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [terminalVisible]);
+  }, [cancelPendingFits, scheduleStabilizedFit, terminalVisible]);
 
   useEffect(() => {
     if (!tab.ptyId) return;
@@ -165,11 +248,11 @@ export function useTerminalPaneRuntime({
 
   useEffect(() => {
     if (!active || !panelOpen) return;
-    requestAnimationFrame(() => {
-      fitAddonRef.current?.fit();
-      terminalRef.current?.focus();
+    scheduleStabilizedFit({
+      focus: true,
+      scrollToBottom: true,
     });
-  }, [active, panelOpen]);
+  }, [active, panelOpen, scheduleStabilizedFit]);
 
   useEffect(() => {
     if (!active || !panelOpen) return;
@@ -177,11 +260,11 @@ export function useTerminalPaneRuntime({
     if (!container) return;
 
     const resizeObserver = new ResizeObserver(() => {
-      fitAddonRef.current?.fit();
+      requestTerminalFit({ scrollToBottom: true });
     });
     resizeObserver.observe(container);
     return () => resizeObserver.disconnect();
-  }, [active, panelOpen]);
+  }, [active, panelOpen, requestTerminalFit]);
 
   return { containerRef, terminalVisible };
 }
