@@ -115,7 +115,7 @@ export function SessionsList({
       collapsible="none"
       className="mt-0 mr-2 ml-0 h-full w-80 shrink-0 rounded-lg border border-sidebar-border shadow-sm"
     >
-      <SidebarHeader className="border-b">
+      <SidebarHeader>
         <div className="flex h-8 shrink-0 items-center gap-2 px-2">
           <div className="relative min-w-0 flex-1">
             <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
