@@ -59,6 +59,7 @@ export function SessionTerminalPane({
           <ManagedTerminalSurface
             ptyId={ptyId}
             title={session?.title ?? m.sessions_title()}
+            containerClassName="pb-0"
           />
         ) : controller.reenteringSessionId ? (
           <TerminalPendingState />

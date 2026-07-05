@@ -127,7 +127,7 @@ export function AgentSessionsScreen({
           )
         }
       />
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 pb-2">
         <SessionTerminalPane
           controller={sessions}
           rootName={activeRootName}

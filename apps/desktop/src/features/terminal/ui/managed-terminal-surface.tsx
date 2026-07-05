@@ -16,6 +16,7 @@ interface ManagedTerminalSurfaceProps {
   title?: string;
   active?: boolean;
   className?: string;
+  containerClassName?: string;
 }
 
 interface ManagedTerminalSurfaceInstanceProps {
@@ -23,6 +24,7 @@ interface ManagedTerminalSurfaceInstanceProps {
   title: string;
   active: boolean;
   className?: string;
+  containerClassName?: string;
 }
 
 export function ManagedTerminalSurface({
@@ -30,6 +32,7 @@ export function ManagedTerminalSurface({
   title = "Agent session",
   active = true,
   className,
+  containerClassName,
 }: ManagedTerminalSurfaceProps) {
   return (
     <ManagedTerminalSurfaceInstance
@@ -38,6 +41,7 @@ export function ManagedTerminalSurface({
       title={title}
       active={active}
       className={className}
+      containerClassName={containerClassName}
     />
   );
 }
@@ -52,6 +56,7 @@ function ManagedTerminalSurfaceInstance({
   title,
   active,
   className,
+  containerClassName,
 }: ManagedTerminalSurfaceInstanceProps) {
   const [status, setStatus] = useState<TerminalTab["status"]>("ready");
   const [error, setError] = useState<string | null>(null);
@@ -116,7 +121,10 @@ function ManagedTerminalSurfaceInstance({
         <>
           <div
             ref={containerRef}
-            className="h-full overflow-hidden px-2 py-1"
+            className={cn(
+              "h-full overflow-hidden px-2 pt-1 pb-1",
+              containerClassName,
+            )}
           />
           {status === "exited" && (
             <div className="pointer-events-none absolute right-3 bottom-2 rounded-md border bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-sm">

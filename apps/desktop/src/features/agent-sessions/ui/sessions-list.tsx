@@ -113,7 +113,7 @@ export function SessionsList({
     <Sidebar
       variant="floating"
       collapsible="none"
-      className="mt-0 mr-2 mb-2 ml-0 h-[calc(100%-0.5rem)] w-80 shrink-0 rounded-lg border border-sidebar-border shadow-sm"
+      className="mt-0 mr-2 ml-0 h-full w-80 shrink-0 rounded-lg border border-sidebar-border shadow-sm"
     >
       <SidebarHeader className="border-b">
         <div className="flex h-8 shrink-0 items-center gap-2 px-2">
