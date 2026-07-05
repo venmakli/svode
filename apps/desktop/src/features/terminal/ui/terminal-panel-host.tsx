@@ -8,6 +8,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/shared/lib/utils";
+import { useTerminalAgentSessionSync } from "@/features/terminal/hooks/use-terminal-agent-session-sync";
 import { useTerminalEventBridge } from "@/features/terminal/hooks/use-terminal-event-bridge";
 import { useTerminalRootLifecycle } from "@/features/terminal/hooks/use-terminal-root-lifecycle";
 import { useTerminalStore } from "@/features/terminal/hooks/use-terminal-store";
@@ -29,6 +30,7 @@ export function TerminalPanelHost() {
   const activeTabId = useTerminalStore((state) => state.activeTabId);
   const closePanel = useTerminalStore((state) => state.closePanel);
   const { projectTarget, spaceTargets } = useTerminalTargets();
+  useTerminalAgentSessionSync(projectTarget?.path ?? null);
 
   function handleResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
     if (!panelOpen) return;

@@ -72,6 +72,7 @@ function ManagedTerminalSurfaceInstance({
 }: ManagedTerminalSurfaceInstanceProps) {
   const [status, setStatus] = useState<TerminalTab["status"]>("ready");
   const [error, setError] = useState<string | null>(null);
+  const [createdAt] = useState(() => new Date().toISOString());
   const tab = useMemo<TerminalTab>(
     () => ({
       id: ptyId,
@@ -82,8 +83,10 @@ function ManagedTerminalSurfaceInstance({
       ptyId,
       status,
       error,
+      origin: "agent-session",
+      createdAt,
     }),
-    [error, ptyId, status, title],
+    [createdAt, error, ptyId, status, title],
   );
   const { containerRef, terminalVisible } = useTerminalPaneRuntime({
     tab,

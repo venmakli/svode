@@ -751,6 +751,7 @@ mod tests {
         AgentTerminalSurface {
             pty_id: pty_id.to_string(),
             agent_session_id: format!("{}:{source_session_id}", source.as_str()),
+            title: Some(format!("Session {source_session_id}")),
             source,
             source_session_id: source_session_id.to_string(),
             initial_agent_argv: source.resume_argv(source_session_id),

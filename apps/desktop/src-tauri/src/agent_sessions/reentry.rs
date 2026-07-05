@@ -162,6 +162,7 @@ where
 
     let spawn = AgentTerminalSpawn {
         agent_session_id: session.id.clone(),
+        title: Some(session.title.clone()),
         source: session.source,
         source_session_id: session.source_session_id.clone(),
         command: command.clone(),
@@ -421,6 +422,7 @@ mod tests {
         AgentTerminalSurface {
             pty_id: pty_id.to_string(),
             agent_session_id: format!("codex:{source_session_id}"),
+            title: Some(format!("Session {source_session_id}")),
             source: AgentSessionSource::Codex,
             source_session_id: source_session_id.to_string(),
             initial_agent_argv: vec![

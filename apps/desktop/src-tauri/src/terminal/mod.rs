@@ -63,6 +63,7 @@ struct TerminalProcess {
 #[derive(Debug, Clone)]
 pub(crate) struct AgentTerminalSpawn {
     pub agent_session_id: String,
+    pub title: Option<String>,
     pub source: AgentSessionSource,
     pub source_session_id: String,
     pub command: AgentSessionResumeCommand,
@@ -74,6 +75,8 @@ pub(crate) struct AgentTerminalSpawn {
 pub(crate) struct AgentTerminalSurface {
     pub pty_id: String,
     pub agent_session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     pub source: AgentSessionSource,
     pub source_session_id: String,
     pub initial_agent_argv: Vec<String>,
@@ -236,6 +239,42 @@ impl TerminalManager {
         }
 
         Ok(session)
+    }
+
+    pub(crate) fn register_existing_agent_session(
+        &self,
+        pty_id: String,
+        agent_session_id: String,
+        title: Option<String>,
+        source: AgentSessionSource,
+        source_session_id: String,
+        shell_cwd: Option<String>,
+        created_at: Option<String>,
+    ) -> Result<(), AppError> {
+        let session_cwd = {
+            let sessions = self
+                .sessions
+                .lock()
+                .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?;
+            sessions
+                .get(&pty_id)
+                .ok_or_else(|| AppError::General(format!("Terminal session not found: {pty_id}")))?
+                .session
+                .cwd
+                .clone()
+        };
+
+        let surface = agent_surface_from_existing_session(
+            pty_id,
+            agent_session_id,
+            title,
+            source,
+            source_session_id,
+            shell_cwd.unwrap_or(session_cwd),
+            created_at.unwrap_or_else(now_rfc3339),
+        );
+
+        self.register_agent_surface(surface)
     }
 
     pub fn write(&self, pty_id: &str, data: &str) -> Result<(), AppError> {
@@ -506,10 +545,39 @@ fn agent_surface_from_spawn(
     AgentTerminalSurface {
         pty_id,
         agent_session_id: spawn.agent_session_id,
+        title: spawn.title,
         source: spawn.source,
         source_session_id: spawn.source_session_id,
         initial_agent_argv,
         initial_agent_cwd: spawn.command.cwd,
+        shell_cwd,
+        created_at,
+        last_output_at: None,
+        last_input_at: None,
+        finished_at: None,
+        exit_code: None,
+        failure_reason: None,
+        status_evidence: None,
+    }
+}
+
+fn agent_surface_from_existing_session(
+    pty_id: String,
+    agent_session_id: String,
+    title: Option<String>,
+    source: AgentSessionSource,
+    source_session_id: String,
+    shell_cwd: String,
+    created_at: String,
+) -> AgentTerminalSurface {
+    AgentTerminalSurface {
+        pty_id,
+        agent_session_id,
+        title,
+        source,
+        source_session_id: source_session_id.clone(),
+        initial_agent_argv: source.resume_argv(&source_session_id),
+        initial_agent_cwd: None,
         shell_cwd,
         created_at,
         last_output_at: None,
@@ -806,6 +874,7 @@ mod tests {
         AgentTerminalSurface {
             pty_id: "pty-agent".to_string(),
             agent_session_id: "codex:session".to_string(),
+            title: Some("Test session".to_string()),
             source: AgentSessionSource::Codex,
             source_session_id: "session".to_string(),
             initial_agent_argv: vec![
@@ -828,6 +897,7 @@ mod tests {
     fn test_spawn() -> AgentTerminalSpawn {
         AgentTerminalSpawn {
             agent_session_id: "codex:session".to_string(),
+            title: Some("Test session".to_string()),
             source: AgentSessionSource::Codex,
             source_session_id: "session".to_string(),
             command: AgentSessionResumeCommand {
@@ -1005,5 +1075,32 @@ mod tests {
         assert_eq!(surface.initial_agent_cwd.as_deref(), Some("/tmp/project"));
         assert_eq!(surface.shell_cwd, "/tmp/project");
         assert!(surface.finished_at.is_none());
+    }
+
+    #[test]
+    fn terminal_existing_agent_session_metadata_uses_source_resume_argv() {
+        let surface = agent_surface_from_existing_session(
+            "pty-existing".to_string(),
+            "codex:session".to_string(),
+            Some("Existing session".to_string()),
+            AgentSessionSource::Codex,
+            "session".to_string(),
+            "/tmp/project".to_string(),
+            "2026-07-04T10:00:00Z".to_string(),
+        );
+
+        assert_eq!(surface.pty_id, "pty-existing");
+        assert_eq!(surface.agent_session_id, "codex:session");
+        assert_eq!(surface.title.as_deref(), Some("Existing session"));
+        assert_eq!(
+            surface.initial_agent_argv,
+            vec![
+                "codex".to_string(),
+                "resume".to_string(),
+                "session".to_string()
+            ]
+        );
+        assert_eq!(surface.initial_agent_cwd, None);
+        assert_eq!(surface.shell_cwd, "/tmp/project");
     }
 }

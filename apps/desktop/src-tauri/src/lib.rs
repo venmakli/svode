@@ -240,6 +240,8 @@ pub fn run() {
             terminal::commands::terminal_resize,
             terminal::commands::terminal_kill,
             terminal::commands::terminal_list,
+            terminal::commands::terminal_list_agent_surfaces,
+            terminal::commands::terminal_register_agent_session,
             mcp::commands::mcp_set_active_context,
             mcp::commands::mcp_clear_active_context,
             mcp::commands::mcp_get_active_context,

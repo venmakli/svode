@@ -9,6 +9,20 @@ export interface TerminalTarget {
 }
 
 export type TerminalTabStatus = "spawning" | "ready" | "error" | "exited";
+export type TerminalTabOrigin = "shell" | "agent-session";
+export type TerminalAgentSessionSource = "codex" | "claude-code";
+
+export interface TerminalAgentSurface {
+  ptyId: string;
+  agentSessionId: string;
+  title?: string | null;
+  source: TerminalAgentSessionSource;
+  sourceSessionId: string;
+  shellCwd: string;
+  createdAt: string;
+  lastOutputAt?: string | null;
+  lastInputAt?: string | null;
+}
 
 export interface TerminalTab {
   id: string;
@@ -19,4 +33,9 @@ export interface TerminalTab {
   ptyId: string | null;
   status: TerminalTabStatus;
   error: string | null;
+  origin: TerminalTabOrigin;
+  createdAt: string;
+  agentSessionId?: string;
+  agentSessionSource?: TerminalAgentSessionSource;
+  agentSourceSessionId?: string;
 }
