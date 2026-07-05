@@ -23,16 +23,21 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useSpace } from "@/features/space";
+import { type SpaceInfo, useSpace } from "@/features/space";
 import { getNativeErrorMessage } from "@/platform/native/errors";
 import { useAgentSessions } from "../hooks";
+import {
+  childSpaceScopeGroupId,
+  projectScopeGroupId,
+  type AgentSession,
+  type AgentSessionScopeGroup,
+} from "../model";
 import {
   commandDisplay,
   scopeLabel,
   sessionTimeLabel,
   sourceLabel,
 } from "../lib";
-import type { AgentSession } from "../api";
 import { SessionsList } from "./sessions-list";
 import { SessionTerminalPane } from "./session-terminal-pane";
 import { statusLabel } from "./session-status";
@@ -45,8 +50,27 @@ interface AgentSessionsScreenProps {
 export function AgentSessionsScreen({
   onOpenAppSettings,
 }: AgentSessionsScreenProps) {
-  const { activeRootIcon, activeRootName, activeRootPath, spaces } = useSpace();
-  const sessions = useAgentSessions(activeRootPath);
+  const {
+    activeRootIcon,
+    activeRootId,
+    activeRootName,
+    activeRootPath,
+    spaces,
+  } = useSpace();
+  const spaceScopes = useMemo(
+    () =>
+      buildSessionSpaceScopes({
+        activeRootIcon,
+        activeRootId,
+        activeRootName,
+        activeRootPath,
+        spaces,
+      }),
+    [activeRootIcon, activeRootId, activeRootName, activeRootPath, spaces],
+  );
+  const rootScope =
+    spaceScopes.find((scope) => scope.kind === "project") ?? null;
+  const sessions = useAgentSessions(activeRootPath, spaceScopes);
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [sessionsSidebarOpen, setSessionsSidebarOpen] = useState(true);
   const spaceNames = useMemo(() => {
@@ -135,6 +159,8 @@ export function AgentSessionsScreen({
           metadataOpen={metadataOpen}
           onCopyCommand={copySelectedCommand}
           onOpenExternalTerminal={openSelectedExternalTerminal}
+          rootScope={rootScope}
+          onOpenScopeTerminal={sessions.openNewSessionTerminal}
         />
         {sessionsSidebarOpen && (
           <SessionsList
@@ -149,6 +175,48 @@ export function AgentSessionsScreen({
       </div>
     </div>
   );
+}
+
+function buildSessionSpaceScopes({
+  activeRootIcon,
+  activeRootId,
+  activeRootName,
+  activeRootPath,
+  spaces,
+}: {
+  activeRootIcon: string | null;
+  activeRootId: string | null;
+  activeRootName: string | null;
+  activeRootPath: string | null;
+  spaces: SpaceInfo[];
+}): AgentSessionScopeGroup[] {
+  const scopes: AgentSessionScopeGroup[] = [];
+
+  if (activeRootId && activeRootPath) {
+    scopes.push({
+      id: projectScopeGroupId(activeRootPath),
+      kind: "project",
+      scopeId: activeRootId,
+      name: activeRootName?.trim() || "Project",
+      icon: activeRootIcon,
+      path: activeRootPath,
+      status: "ready",
+    });
+  }
+
+  spaces.forEach((space) => {
+    scopes.push({
+      id: childSpaceScopeGroupId(space.id),
+      kind: "space",
+      scopeId: space.id,
+      name: space.name,
+      icon: space.icon,
+      path: space.path,
+      status: space.status,
+    });
+  });
+
+  return scopes;
 }
 
 function AgentSessionsHeader({

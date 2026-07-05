@@ -3,6 +3,7 @@ import {
   MoreHorizontal,
   RefreshCw,
   Search,
+  SquareTerminal,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -34,13 +35,17 @@ import {
   SidebarMenuItem,
   SidebarMenuSkeleton,
 } from "@/components/ui/sidebar";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/shared/lib/utils";
 import { getNativeErrorMessage } from "@/platform/native/errors";
 import type { useAgentSessions } from "../hooks";
 import { openSessionCwdInExternalTerminal, revealSessionFile } from "../api";
 import { scopeLabel } from "../lib";
-import type { AgentSessionGroup } from "../model";
-import type { AgentSession } from "../api";
+import type { AgentSession, AgentSessionGroup } from "../model";
 import { SessionRow } from "./session-row";
 import * as m from "@/paraglide/messages.js";
 
@@ -66,7 +71,6 @@ export function SessionsList({
   const sourceUnavailable =
     controller.error ??
     (controller.result?.status === "error" ? "source" : null);
-  const totalSessions = controller.result?.sessions.length ?? 0;
 
   async function runAction(action: () => Promise<void>, errorMessage: string) {
     try {
@@ -159,9 +163,8 @@ export function SessionsList({
             }
             onOpenAppSettings={onOpenAppSettings}
           />
-        ) : totalSessions === 0 ? (
-          <NoSessionsState />
-        ) : controller.groups.visibleSessionIds.size === 0 ? (
+        ) : controller.groups.visibleSessionIds.size === 0 &&
+          controller.groups.spaces.length === 0 ? (
           <NoResultsState />
         ) : (
           <>
@@ -318,6 +321,9 @@ function SessionGroupSection({
     );
   }
 
+  const scope = group.scope;
+  const terminalDisabled = !scope || scope.status !== "ready";
+
   return (
     <Collapsible
       open={!collapsed}
@@ -349,9 +355,35 @@ function SessionGroupSection({
                   <ChevronRight />
                 </SidebarMenuAction>
               </CollapsibleTrigger>
-              <SidebarMenuBadge className="right-1 font-normal text-sidebar-foreground/70">
+              <SidebarMenuBadge className="right-1 font-normal text-sidebar-foreground/70 transition-opacity group-hover/menu-item:opacity-0 group-focus-within/menu-item:opacity-0">
                 {m.sessions_group_count({ count: group.total })}
               </SidebarMenuBadge>
+              {scope && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <SidebarMenuAction
+                      type="button"
+                      showOnHover
+                      disabled={terminalDisabled}
+                      className="right-1 disabled:pointer-events-none disabled:opacity-50"
+                      aria-label={m.sessions_action_open_terminal()}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void runAction(
+                          () => controller.openNewSessionTerminal(scope),
+                          m.sessions_toast_open_terminal_failed(),
+                        );
+                      }}
+                    >
+                      <SquareTerminal />
+                    </SidebarMenuAction>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    {m.sessions_action_open_terminal()}
+                  </TooltipContent>
+                </Tooltip>
+              )}
             </SidebarMenuItem>
           </SidebarMenu>
           <CollapsibleContent>{menu}</CollapsibleContent>
@@ -366,6 +398,8 @@ function groupLabel(
   rootName: string | null,
   spaceNames: Map<string, string>,
 ): string {
+  if (group.scope) return group.scope.name;
+
   const first = group.sessions[0];
   return first
     ? scopeLabel(first, rootName, spaceNames)
@@ -377,6 +411,8 @@ function groupIcon(
   rootIcon: string | null,
   spaceIcons: Map<string, string>,
 ): string {
+  if (group.scope) return group.scope.icon || "\u{1F4C1}";
+
   const first = group.sessions[0];
   if (!first) return "\u{1F4C1}";
   if (first.scopeKind === "project") return rootIcon || "\u{1F4C1}";
@@ -434,17 +470,6 @@ function SourceUnavailableState({
           {m.sessions_action_open_settings()}
         </Button>
       </EmptyContent>
-    </Empty>
-  );
-}
-
-function NoSessionsState() {
-  return (
-    <Empty className="min-h-72 border-0 p-3">
-      <EmptyHeader>
-        <EmptyTitle>{m.sessions_empty_title()}</EmptyTitle>
-        <EmptyDescription>{m.sessions_empty_description()}</EmptyDescription>
-      </EmptyHeader>
     </Empty>
   );
 }

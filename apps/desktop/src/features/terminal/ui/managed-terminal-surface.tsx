@@ -4,12 +4,16 @@ import {
   killTerminal,
   onTerminalError,
   onTerminalExit,
+  spawnTerminal,
 } from "@/features/terminal/api/terminal";
 import { useTerminalPaneRuntime } from "@/features/terminal/hooks/use-terminal-pane-runtime";
 import { clearTerminalOutput } from "@/features/terminal/lib/output-bus";
 import type { TerminalTab } from "@/features/terminal/model/types";
 import { cn } from "@/shared/lib/utils";
 import * as m from "@/paraglide/messages.js";
+
+const DEFAULT_MANAGED_TERMINAL_COLS = 120;
+const DEFAULT_MANAGED_TERMINAL_ROWS = 30;
 
 interface ManagedTerminalSurfaceProps {
   ptyId: string;
@@ -49,6 +53,14 @@ export function ManagedTerminalSurface({
 export async function closeManagedTerminalSurface(ptyId: string) {
   clearTerminalOutput(ptyId);
   await killTerminal(ptyId);
+}
+
+export function spawnManagedTerminalSurface(cwd: string) {
+  return spawnTerminal(
+    cwd,
+    DEFAULT_MANAGED_TERMINAL_COLS,
+    DEFAULT_MANAGED_TERMINAL_ROWS,
+  );
 }
 
 function ManagedTerminalSurfaceInstance({

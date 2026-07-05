@@ -1,5 +1,6 @@
 import { getLocale } from "@/paraglide/runtime.js";
 import { hasActionableWait, type AgentSession } from "../model";
+import * as m from "@/paraglide/messages.js";
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -34,7 +35,9 @@ const COMPACT_TIME_SUFFIXES: Record<
 };
 
 export function sourceLabel(source: AgentSession["source"]): string {
-  return source === "claude-code" ? "Claude Code" : "Codex";
+  if (source === "claude-code") return "Claude Code";
+  if (source === "codex") return "Codex";
+  return m.sessions_source_unknown();
 }
 
 export function shortSessionId(session: AgentSession): string {

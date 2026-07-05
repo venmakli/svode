@@ -11,7 +11,7 @@ import {
 import { ManagedTerminalSurface } from "@/features/terminal/session-surface";
 import type { useAgentSessions } from "../hooks";
 import { scopeLabel, sourceLabel, tooltipDateTime } from "../lib";
-import type { AgentSession } from "../api";
+import type { AgentSession, AgentSessionScopeGroup } from "../model";
 import { statusLabel } from "./session-status";
 import * as m from "@/paraglide/messages.js";
 
@@ -24,6 +24,8 @@ interface SessionTerminalPaneProps {
   metadataOpen: boolean;
   onCopyCommand: () => void;
   onOpenExternalTerminal: () => void;
+  rootScope: AgentSessionScopeGroup | null;
+  onOpenScopeTerminal: (scope: AgentSessionScopeGroup) => Promise<void>;
 }
 
 export function SessionTerminalPane({
@@ -33,11 +35,28 @@ export function SessionTerminalPane({
   metadataOpen,
   onCopyCommand,
   onOpenExternalTerminal,
+  rootScope,
+  onOpenScopeTerminal,
 }: SessionTerminalPaneProps) {
   const session = controller.selectedSession;
   const ptyId = controller.selectedPtyId;
 
   if (!controller.selectedSessionId) {
+    if (
+      !controller.loading &&
+      !controller.error &&
+      controller.result &&
+      controller.result.status !== "error" &&
+      controller.result.sessions.length === 0
+    ) {
+      return (
+        <NoSessionsState
+          rootScope={rootScope}
+          onOpenScopeTerminal={onOpenScopeTerminal}
+        />
+      );
+    }
+
     return <SelectSessionState />;
   }
 
@@ -127,6 +146,43 @@ function SelectSessionState() {
           <EmptyTitle>{m.sessions_select_title()}</EmptyTitle>
           <EmptyDescription>{m.sessions_select_description()}</EmptyDescription>
         </EmptyHeader>
+      </Empty>
+    </div>
+  );
+}
+
+function NoSessionsState({
+  rootScope,
+  onOpenScopeTerminal,
+}: {
+  rootScope: AgentSessionScopeGroup | null;
+  onOpenScopeTerminal: (scope: AgentSessionScopeGroup) => Promise<void>;
+}) {
+  const terminalDisabled = !rootScope || rootScope.status !== "ready";
+
+  return (
+    <div className="min-w-0 flex-1">
+      <Empty className="h-full border-0">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <SquareTerminal />
+          </EmptyMedia>
+          <EmptyTitle>{m.sessions_empty_title()}</EmptyTitle>
+          <EmptyDescription>{m.sessions_empty_description()}</EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={terminalDisabled}
+            onClick={() =>
+              rootScope ? void onOpenScopeTerminal(rootScope) : undefined
+            }
+          >
+            <SquareTerminal data-icon="inline-start" />
+            {m.sessions_action_open_terminal()}
+          </Button>
+        </EmptyContent>
       </Empty>
     </div>
   );

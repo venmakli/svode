@@ -24,8 +24,11 @@ import {
   sourceLabel,
   tooltipDateTime,
 } from "../lib";
-import type { AgentSessionSelectionSource } from "../model";
-import type { AgentSession } from "../api";
+import {
+  isPendingSessionId,
+  type AgentSession,
+  type AgentSessionSelectionSource,
+} from "../model";
 import { SessionStatusMarker, statusLabel } from "./session-status";
 import * as m from "@/paraglide/messages.js";
 
@@ -68,6 +71,7 @@ export function SessionRow({
 }: SessionRowProps) {
   const time = sessionTimeLabel(session);
   const hasOpenTerminal = session.runtime?.live === true;
+  const canPin = session.source !== "unknown" && !isPendingSessionId(session.id);
 
   return (
     <SidebarMenuItem>
@@ -127,7 +131,7 @@ export function SessionRow({
           <SidebarMenuAction
             type="button"
             showOnHover
-            disabled={pinning}
+            disabled={pinning || !canPin}
             className="right-7 disabled:pointer-events-none disabled:opacity-50"
             aria-label={
               session.pinned

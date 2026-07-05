@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test";
 import {
   buildAgentSessionGroups,
+  childSpaceScopeGroupId,
   filterAgentSessions,
   isNowSession,
+  projectScopeGroupId,
 } from "./grouping";
-import type { AgentSession } from "./types";
+import type { AgentSession, AgentSessionScopeGroup } from "./types";
 
 const baseTime = "2026-07-04T05:00:00Z";
 
@@ -147,6 +149,72 @@ test("space pagination uses per-group visible limits", () => {
   expect(expanded.spaces[0]?.hasMore).toBe(false);
 });
 
+test("includes known spaces in sidebar order with zero counts", () => {
+  const rootScope = scope({
+    id: projectScopeGroupId("/repo"),
+    kind: "project",
+    scopeId: "root",
+    name: "Root",
+    path: "/repo",
+  });
+  const complianceScope = scope({
+    id: childSpaceScopeGroupId("compliance"),
+    scopeId: "compliance",
+    name: "Compliance",
+    path: "/repo/compliance",
+  });
+  const developScope = scope({
+    id: childSpaceScopeGroupId("develop"),
+    scopeId: "develop",
+    name: "Develop",
+    path: "/repo/develop",
+  });
+  const developSession = session({
+    id: "codex:develop",
+    scopeKind: "space",
+    spaceId: "develop",
+    spacePath: "/repo/develop",
+  });
+
+  const groups = buildAgentSessionGroups({
+    sessions: [developSession],
+    spaceScopes: [rootScope, complianceScope, developScope],
+  });
+
+  expect(groups.spaces.map((group) => group.id)).toEqual([
+    "space:project:/repo",
+    "space:compliance",
+    "space:develop",
+  ]);
+  expect(groups.spaces.map((group) => group.total)).toEqual([0, 0, 1]);
+  expect(groups.spaces[2]?.sessions.map((item) => item.id)).toEqual([
+    "codex:develop",
+  ]);
+});
+
+test("matches known space group by path when session space id is missing", () => {
+  const developScope = scope({
+    id: childSpaceScopeGroupId("develop"),
+    scopeId: "develop",
+    name: "Develop",
+    path: "/repo/develop",
+  });
+  const developSession = session({
+    id: "codex:path-only",
+    scopeKind: "space",
+    spacePath: "/repo/develop",
+  });
+
+  const groups = buildAgentSessionGroups({
+    sessions: [developSession],
+    spaceScopes: [developScope],
+  });
+
+  expect(groups.spaces.length).toBe(1);
+  expect(groups.spaces[0]?.id).toBe("space:develop");
+  expect(groups.spaces[0]?.sessions[0]?.id).toBe("codex:path-only");
+});
+
 test("search uses normalized metadata only", () => {
   const sessions = [
     session({
@@ -171,3 +239,18 @@ test("search uses normalized metadata only", () => {
   expect(filterAgentSessions(sessions, "develop")).toEqual([sessions[0]]);
   expect(filterAgentSessions(sessions, "secret transcript")).toEqual([]);
 });
+
+function scope(
+  overrides: Partial<AgentSessionScopeGroup> &
+    Pick<AgentSessionScopeGroup, "id" | "scopeId" | "name" | "path">,
+): AgentSessionScopeGroup {
+  return {
+    id: overrides.id,
+    kind: overrides.kind ?? "space",
+    scopeId: overrides.scopeId,
+    name: overrides.name,
+    icon: overrides.icon ?? null,
+    path: overrides.path,
+    status: overrides.status ?? "ready",
+  };
+}

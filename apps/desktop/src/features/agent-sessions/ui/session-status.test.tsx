@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { AgentSession } from "../api";
+import type { AgentSession } from "../model";
 import {
   SessionStatusMarker,
   statusLabel,

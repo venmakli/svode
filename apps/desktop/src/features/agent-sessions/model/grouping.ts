@@ -4,6 +4,7 @@ import {
   type AgentSessionGroup,
   type AgentSessionGroupingInput,
   type AgentSessionGroupingResult,
+  type AgentSessionScopeGroup,
 } from "./types";
 
 const PINNED_GROUP_ID = "pinned";
@@ -11,12 +12,14 @@ const NOW_GROUP_ID = "now";
 
 export function buildAgentSessionGroups({
   sessions,
+  spaceScopes = [],
   searchQuery = "",
   visibleLimits = {},
   selectedSessionId = null,
   selectedStableGroupId = null,
 }: AgentSessionGroupingInput): AgentSessionGroupingResult {
   const filteredSessions = filterAgentSessions(sessions, searchQuery);
+  const scopeIndex = createScopeIndex(spaceScopes);
   const assigned = new Set<string>();
   const visibleSessionIds = new Set<string>();
   const pinnedSessions: AgentSession[] = [];
@@ -28,7 +31,7 @@ export function buildAgentSessionGroups({
           (session) =>
             session.id === selectedSessionId &&
             !session.pinned &&
-            selectedStableGroupId === scopeGroupId(session),
+            selectedStableGroupId === resolveScopeGroupId(session, scopeIndex),
         )
       : null;
 
@@ -39,7 +42,7 @@ export function buildAgentSessionGroups({
   }
 
   if (stableSpaceSession && !assigned.has(stableSpaceSession.id)) {
-    addToSpaceBucket(spaceBuckets, stableSpaceSession);
+    addToSpaceBucket(spaceBuckets, stableSpaceSession, scopeIndex);
     assigned.add(stableSpaceSession.id);
   }
 
@@ -53,7 +56,7 @@ export function buildAgentSessionGroups({
 
   for (const session of filteredSessions) {
     if (assigned.has(session.id)) continue;
-    addToSpaceBucket(spaceBuckets, session);
+    addToSpaceBucket(spaceBuckets, session, scopeIndex);
     assigned.add(session.id);
   }
 
@@ -61,16 +64,14 @@ export function buildAgentSessionGroups({
     ? group(PINNED_GROUP_ID, "pinned", pinnedSessions)
     : null;
   const now = nowSessions.length ? group(NOW_GROUP_ID, "now", nowSessions) : null;
-  const spaces = Array.from(spaceBuckets.entries()).map(([id, items]) => {
-    const visibleLimit = visibleLimits[id] ?? DEFAULT_SPACE_GROUP_LIMIT;
-    const visibleSessions = items.slice(0, visibleLimit);
-    return {
-      ...group(id, "space", visibleSessions),
-      total: items.length,
-      visibleLimit,
-      hasMore: items.length > visibleLimit,
-    };
-  });
+  const knownSpaceIds = new Set(spaceScopes.map((scope) => scope.id));
+  const knownSpaces = spaceScopes.map((scope) =>
+    spaceGroup(scope.id, spaceBuckets.get(scope.id) ?? [], visibleLimits, scope),
+  );
+  const unknownSpaces = Array.from(spaceBuckets.entries())
+    .filter(([id]) => !knownSpaceIds.has(id))
+    .map(([id, items]) => spaceGroup(id, items, visibleLimits));
+  const spaces = [...knownSpaces, ...unknownSpaces];
 
   const all = [
     ...(pinned ? [pinned] : []),
@@ -111,11 +112,25 @@ export function hasActionableWait(session: AgentSession): boolean {
 }
 
 export function scopeGroupId(session: AgentSession): string {
+  return sessionDefaultScopeGroupId(session);
+}
+
+export function projectScopeGroupId(projectPath: string | undefined): string {
+  return `space:project:${projectPath ?? "root"}`;
+}
+
+export function childSpaceScopeGroupId(
+  spaceIdOrPath: string | undefined,
+): string {
+  return `space:${spaceIdOrPath ?? "unknown"}`;
+}
+
+function sessionDefaultScopeGroupId(session: AgentSession): string {
   if (session.scopeKind === "space") {
-    return `space:${session.spaceId ?? session.spacePath ?? "unknown"}`;
+    return childSpaceScopeGroupId(session.spaceId ?? session.spacePath);
   }
 
-  return `space:project:${session.projectPath ?? "root"}`;
+  return projectScopeGroupId(session.projectPath);
 }
 
 export function isSpaceGroupId(groupId: string | null | undefined): boolean {
@@ -125,24 +140,91 @@ export function isSpaceGroupId(groupId: string | null | undefined): boolean {
 function addToSpaceBucket(
   buckets: Map<string, AgentSession[]>,
   session: AgentSession,
+  scopeIndex: ScopeIndex,
 ): void {
-  const id = scopeGroupId(session);
+  const id = resolveScopeGroupId(session, scopeIndex);
   const current = buckets.get(id) ?? [];
   current.push(session);
   buckets.set(id, current);
+}
+
+function resolveScopeGroupId(
+  session: AgentSession,
+  scopeIndex: ScopeIndex,
+): string {
+  if (session.scopeKind === "project") {
+    if (session.projectPath) {
+      const scope = scopeIndex.byPath.get(session.projectPath);
+      if (scope) return scope.id;
+    }
+    return scopeIndex.project?.id ?? sessionDefaultScopeGroupId(session);
+  }
+
+  if (session.spaceId) {
+    const scope = scopeIndex.byScopeId.get(session.spaceId);
+    if (scope) return scope.id;
+  }
+  if (session.spacePath) {
+    const scope = scopeIndex.byPath.get(session.spacePath);
+    if (scope) return scope.id;
+  }
+  return sessionDefaultScopeGroupId(session);
 }
 
 function group(
   id: string,
   kind: AgentSessionGroup["kind"],
   sessions: AgentSession[],
+  scope?: AgentSessionScopeGroup,
 ): AgentSessionGroup {
-  return {
+  const result: AgentSessionGroup = {
     id,
     kind,
     sessions,
     total: sessions.length,
   };
+  if (scope) {
+    result.scope = scope;
+  }
+  return result;
+}
+
+function spaceGroup(
+  id: string,
+  items: AgentSession[],
+  visibleLimits: Record<string, number>,
+  scope?: AgentSessionScopeGroup,
+): AgentSessionGroup {
+  const visibleLimit = visibleLimits[id] ?? DEFAULT_SPACE_GROUP_LIMIT;
+  const visibleSessions = items.slice(0, visibleLimit);
+  return {
+    ...group(id, "space", visibleSessions, scope),
+    total: items.length,
+    visibleLimit,
+    hasMore: items.length > visibleLimit,
+  };
+}
+
+interface ScopeIndex {
+  project: AgentSessionScopeGroup | null;
+  byScopeId: Map<string, AgentSessionScopeGroup>;
+  byPath: Map<string, AgentSessionScopeGroup>;
+}
+
+function createScopeIndex(scopes: AgentSessionScopeGroup[]): ScopeIndex {
+  const byScopeId = new Map<string, AgentSessionScopeGroup>();
+  const byPath = new Map<string, AgentSessionScopeGroup>();
+  let project: AgentSessionScopeGroup | null = null;
+
+  scopes.forEach((scope) => {
+    byScopeId.set(scope.scopeId, scope);
+    byPath.set(scope.path, scope);
+    if (scope.kind === "project") {
+      project = scope;
+    }
+  });
+
+  return { project, byScopeId, byPath };
 }
 
 function compareNowSessions(

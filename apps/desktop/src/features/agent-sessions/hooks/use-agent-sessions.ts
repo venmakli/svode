@@ -6,25 +6,38 @@ import {
   refreshAgentSessions,
   revealSessionFile,
   setAgentSessionPinned,
-  type AgentSession,
   type AgentSessionReentryResult,
   type AgentSessionsListResult,
 } from "../api";
 import {
   DEFAULT_SPACE_GROUP_LIMIT,
+  applyLocalTerminalRuntime,
   buildAgentSessionGroups,
+  buildPendingAgentSession,
+  findMatchingSessionForPendingTerminal,
+  isPendingSessionId,
+  pendingSessionId,
+  type AgentSession,
   type AgentSessionGroupingResult,
   type AgentSessionSelectionSource,
+  type AgentSessionScopeGroup,
+  type PendingAgentSessionTerminal,
 } from "../model";
-import { closeManagedTerminalSurface } from "@/features/terminal/session-surface";
+import {
+  closeManagedTerminalSurface,
+  spawnManagedTerminalSurface,
+} from "@/features/terminal/session-surface";
 import { getNativeErrorMessage } from "@/platform/native/errors";
+import * as m from "@/paraglide/messages.js";
 
 const POLL_INTERVAL_MS = 45_000;
+const PENDING_POLL_INTERVAL_MS = 5_000;
 
 interface SelectedTerminalState {
   ptyId: string;
   command?: string;
   cwd?: string;
+  createdAt?: string;
 }
 
 interface UseAgentSessionsResult {
@@ -52,6 +65,7 @@ interface UseAgentSessionsResult {
   togglePinned: (session: AgentSession) => Promise<void>;
   showMore: (groupId: string) => void;
   toggleGroupCollapsed: (groupId: string) => void;
+  openNewSessionTerminal: (scope: AgentSessionScopeGroup) => Promise<void>;
   closeSelectedTerminal: () => Promise<void>;
   closeTerminal: (sessionId: string, ptyId: string) => Promise<void>;
   openSelectedExternalTerminal: () => Promise<void>;
@@ -60,6 +74,7 @@ interface UseAgentSessionsResult {
 
 export function useAgentSessions(
   projectPath: string | null,
+  spaceScopes: AgentSessionScopeGroup[] = [],
 ): UseAgentSessionsResult {
   const [result, setResult] = useState<AgentSessionsListResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -81,6 +96,9 @@ export function useAgentSessions(
   const [terminalsBySession, setTerminalsBySession] = useState<
     Record<string, SelectedTerminalState>
   >({});
+  const [pendingTerminals, setPendingTerminals] = useState<
+    PendingAgentSessionTerminal[]
+  >([]);
   const [selectedReentryResult, setSelectedReentryResult] =
     useState<AgentSessionReentryResult | null>(null);
   const [reenteringSessionId, setReenteringSessionId] = useState<string | null>(
@@ -93,6 +111,8 @@ export function useAgentSessions(
   const selectionRequestIdRef = useRef(0);
   const projectPathRef = useRef(projectPath);
   const resultRef = useRef<AgentSessionsListResult | null>(null);
+  const selectedSessionIdRef = useRef<string | null>(null);
+  const pendingTerminalsRef = useRef<PendingAgentSessionTerminal[]>([]);
   const loadInFlightRef = useRef<{
     projectPath: string;
     requestId: number;
@@ -106,6 +126,78 @@ export function useAgentSessions(
   useEffect(() => {
     resultRef.current = result;
   }, [result]);
+
+  useEffect(() => {
+    selectedSessionIdRef.current = selectedSessionId;
+  }, [selectedSessionId]);
+
+  useEffect(() => {
+    pendingTerminalsRef.current = pendingTerminals;
+  }, [pendingTerminals]);
+
+  const reconcilePendingTerminals = useCallback((sessions: AgentSession[]) => {
+    const pending = pendingTerminalsRef.current;
+    if (pending.length === 0) return;
+
+    const usedSessionIds = new Set<string>();
+    const matches: Array<{
+      pending: PendingAgentSessionTerminal;
+      session: AgentSession;
+    }> = [];
+    const remaining: PendingAgentSessionTerminal[] = [];
+
+    pending.forEach((item) => {
+      const match = findMatchingSessionForPendingTerminal(
+        item,
+        sessions,
+        usedSessionIds,
+      );
+      if (!match) {
+        remaining.push(item);
+        return;
+      }
+      usedSessionIds.add(match.id);
+      matches.push({ pending: item, session: match });
+    });
+
+    if (matches.length === 0) return;
+
+    const selectedBeforeReconcile = selectedSessionIdRef.current;
+    pendingTerminalsRef.current = remaining;
+    setPendingTerminals(remaining);
+    setTerminalsBySession((current) => {
+      const next = { ...current };
+      matches.forEach(({ pending, session }) => {
+        delete next[pending.id];
+        next[session.id] = {
+          ptyId: pending.ptyId,
+          cwd: pending.cwd,
+          createdAt: pending.createdAt,
+        };
+      });
+      return next;
+    });
+    setSelectedSessionId((current) => {
+      const match = matches.find(({ pending }) => pending.id === current);
+      if (match) {
+        selectedSessionIdRef.current = match.session.id;
+      }
+      return match?.session.id ?? current;
+    });
+    setSelectedStableGroupId((current) => {
+      const selectedWasPending = matches.some(
+        ({ pending }) => pending.id === selectedBeforeReconcile,
+      );
+      return selectedWasPending ? null : current;
+    });
+    setSelectedReentryResult((current) => {
+      if (!current || !isPendingSessionId(current.sessionId)) return current;
+      const match = matches.find(
+        ({ pending }) => pending.id === current.sessionId,
+      );
+      return match ? null : current;
+    });
+  }, []);
 
   const load = useCallback(
     async (forceRefresh: boolean) => {
@@ -142,6 +234,7 @@ export function useAgentSessions(
             ? await refreshAgentSessions(projectPath)
             : await listAgentSessions(projectPath);
           if (!isCurrentRequest()) return;
+          reconcilePendingTerminals(next.sessions);
           setResult(next);
         } catch (err) {
           if (!isCurrentRequest()) return;
@@ -159,19 +252,22 @@ export function useAgentSessions(
       loadInFlightRef.current = { projectPath, requestId, promise };
       return promise;
     },
-    [projectPath],
+    [projectPath, reconcilePendingTerminals],
   );
 
   useEffect(() => {
     selectionRequestIdRef.current += 1;
     resultRef.current = null;
     setResult(null);
+    selectedSessionIdRef.current = null;
     setSelectedSessionId(null);
     setSelectedStableGroupId(null);
     setSelectedReentryResult(null);
     setReenteringSessionId(null);
     setPinningSessionIds(new Set());
     setTerminalsBySession({});
+    setPendingTerminals([]);
+    pendingTerminalsRef.current = [];
     setVisibleLimits({});
     setCollapsedGroupIds(new Set());
     void load(false);
@@ -185,26 +281,44 @@ export function useAgentSessions(
     return () => window.clearInterval(interval);
   }, [load, projectPath]);
 
+  useEffect(() => {
+    if (!projectPath || pendingTerminals.length === 0) return;
+    const interval = window.setInterval(() => {
+      void load(true);
+    }, PENDING_POLL_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [load, pendingTerminals.length, projectPath]);
+
+  const sessionsForUi = useMemo(() => {
+    const backendSessions = (result?.sessions ?? []).map((session) =>
+      applyLocalTerminalRuntime(session, terminalsBySession[session.id]),
+    );
+    const pendingSessions = pendingTerminals.map(buildPendingAgentSession);
+    return [...backendSessions, ...pendingSessions];
+  }, [pendingTerminals, result?.sessions, terminalsBySession]);
+
   const groups = useMemo(
     () =>
       buildAgentSessionGroups({
-        sessions: result?.sessions ?? [],
+        sessions: sessionsForUi,
+        spaceScopes,
         searchQuery,
         visibleLimits,
         selectedSessionId,
         selectedStableGroupId,
       }),
     [
-      result?.sessions,
       searchQuery,
       selectedSessionId,
       selectedStableGroupId,
+      sessionsForUi,
+      spaceScopes,
       visibleLimits,
     ],
   );
 
   const selectedSession =
-    result?.sessions.find((session) => session.id === selectedSessionId) ??
+    sessionsForUi.find((session) => session.id === selectedSessionId) ??
     null;
   const selectedTerminal = selectedSessionId
     ? terminalsBySession[selectedSessionId]
@@ -230,9 +344,16 @@ export function useAgentSessions(
       if (!projectPath) return;
 
       const selectionRequestId = ++selectionRequestIdRef.current;
+      selectedSessionIdRef.current = session.id;
       setSelectedSessionId(session.id);
       setSelectedStableGroupId(source === "space" ? groupId : null);
       setSelectedReentryResult(null);
+
+      if (isPendingSessionId(session.id)) {
+        setReenteringSessionId(null);
+        return;
+      }
+
       setReenteringSessionId(session.id);
 
       try {
@@ -288,7 +409,14 @@ export function useAgentSessions(
 
   const togglePinned = useCallback(
     async (session: AgentSession) => {
-      if (!projectPath || pinningSessionIds.has(session.id)) return;
+      if (
+        !projectPath ||
+        pinningSessionIds.has(session.id) ||
+        isPendingSessionId(session.id) ||
+        session.source === "unknown"
+      ) {
+        return;
+      }
 
       const pinnedProjectPath = projectPath;
       setPinningSessionIds((current) => new Set(current).add(session.id));
@@ -344,9 +472,55 @@ export function useAgentSessions(
     });
   }, []);
 
+  const openNewSessionTerminal = useCallback(
+    async (scope: AgentSessionScopeGroup) => {
+      if (!projectPath || scope.status !== "ready") return;
+
+      const openedAt = new Date().toISOString();
+      const terminal = await spawnManagedTerminalSurface(scope.path);
+      if (projectPathRef.current !== projectPath) {
+        await closeManagedTerminalSurface(terminal.ptyId);
+        return;
+      }
+
+      const pending: PendingAgentSessionTerminal = {
+        id: pendingSessionId(terminal.ptyId),
+        ptyId: terminal.ptyId,
+        title: m.sessions_new_title(),
+        scope,
+        cwd: terminal.cwd || scope.path,
+        createdAt: openedAt,
+      };
+      pendingTerminalsRef.current = [...pendingTerminalsRef.current, pending];
+      setPendingTerminals((current) => [...current, pending]);
+      setTerminalsBySession((current) => ({
+        ...current,
+        [pending.id]: {
+          ptyId: pending.ptyId,
+          cwd: pending.cwd,
+          createdAt: pending.createdAt,
+        },
+      }));
+      setSelectedSessionId(pending.id);
+      selectedSessionIdRef.current = pending.id;
+      setSelectedStableGroupId(null);
+      setSelectedReentryResult(null);
+      setReenteringSessionId(null);
+      void load(true);
+    },
+    [load, projectPath],
+  );
+
   const closeTerminal = useCallback(
     async (sessionId: string, ptyId: string) => {
       await closeManagedTerminalSurface(ptyId);
+      setPendingTerminals((current) => {
+        const next = current.filter(
+          (pending) => pending.id !== sessionId && pending.ptyId !== ptyId,
+        );
+        pendingTerminalsRef.current = next;
+        return next;
+      });
       setTerminalsBySession((current) => {
         const next = { ...current };
         delete next[sessionId];
@@ -402,6 +576,7 @@ export function useAgentSessions(
     togglePinned,
     showMore,
     toggleGroupCollapsed,
+    openNewSessionTerminal,
     closeSelectedTerminal,
     closeTerminal,
     openSelectedExternalTerminal,
