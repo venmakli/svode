@@ -8,14 +8,19 @@
       "commit": "ed3559ae78616fd1710708d4a788869f1d15055a",
       "sourceRef": "main",
       "runId": 28730449617,
-      "publishedAt": "2026-07-05T05:31:20.071Z",
-      "expiresAt": "2026-07-08T05:31:20.071Z",
+      "publishedAt": "2026-07-05T05:33:51.754Z",
+      "expiresAt": "2026-07-08T05:33:51.754Z",
       "reason": "added agent sessions",
       "platforms": {
         "linux": {
           "url": "https://github.com/venmakli/svode/actions/runs/28730449617/artifacts/8088660775",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28730449617",
           "artifactName": "Svode-linux-deb"
+        },
+        "darwin": {
+          "url": "https://github.com/venmakli/svode/actions/runs/28730449617/artifacts/8088675424",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28730449617",
+          "artifactName": "Svode-macos-dmg"
         }
       }
     },
