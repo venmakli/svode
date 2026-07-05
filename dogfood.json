@@ -5,6 +5,23 @@
     {
       "kind": "ci-build",
       "version": "0.0.6",
+      "commit": "d35cc09df82553035b5c0b03302d97e65f10780b",
+      "sourceRef": "main",
+      "runId": 28736370034,
+      "publishedAt": "2026-07-05T09:47:53.199Z",
+      "expiresAt": "2026-07-08T09:47:53.199Z",
+      "reason": "added agent sessions",
+      "platforms": {
+        "linux": {
+          "url": "https://github.com/venmakli/svode/actions/runs/28736370034/artifacts/8090565314",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28736370034",
+          "artifactName": "Svode-linux-deb"
+        }
+      }
+    },
+    {
+      "kind": "ci-build",
+      "version": "0.0.6",
       "commit": "ed3559ae78616fd1710708d4a788869f1d15055a",
       "sourceRef": "main",
       "runId": 28730449617,
@@ -37,33 +54,6 @@
           "url": "https://github.com/venmakli/svode/actions/runs/28592246087/artifacts/8040279771",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28592246087",
           "artifactName": "Svode-macos-dmg"
-        }
-      }
-    },
-    {
-      "kind": "ci-build",
-      "version": "0.0.6",
-      "commit": "2ac193e8330f053745c7d71e66463ba1a23a5031",
-      "sourceRef": "main",
-      "runId": 28579626394,
-      "publishedAt": "2026-07-02T09:47:34.275Z",
-      "expiresAt": "2026-07-05T09:47:34.275Z",
-      "reason": "fix collection relation",
-      "platforms": {
-        "linux": {
-          "url": "https://github.com/venmakli/svode/actions/runs/28579626394/artifacts/8034733035",
-          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28579626394",
-          "artifactName": "Svode-linux-deb"
-        },
-        "darwin": {
-          "url": "https://github.com/venmakli/svode/actions/runs/28579626394/artifacts/8034877040",
-          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28579626394",
-          "artifactName": "Svode-macos-dmg"
-        },
-        "windows": {
-          "url": "https://github.com/venmakli/svode/actions/runs/28579626394/artifacts/8034938392",
-          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28579626394",
-          "artifactName": "Svode-windows-nsis"
         }
       }
     }
