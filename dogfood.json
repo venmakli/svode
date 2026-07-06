@@ -8,8 +8,8 @@
       "commit": "02b07b166883e1dcfaf7292cb83d1a7073a7eda1",
       "sourceRef": "main",
       "runId": 28791674287,
-      "publishedAt": "2026-07-06T12:56:44.504Z",
-      "expiresAt": "2026-07-09T12:56:44.504Z",
+      "publishedAt": "2026-07-06T12:57:34.303Z",
+      "expiresAt": "2026-07-09T12:57:34.303Z",
       "reason": "fix window switching",
       "platforms": {
         "linux": {
@@ -21,6 +21,11 @@
           "url": "https://github.com/venmakli/svode/actions/runs/28791674287/artifacts/8109575812",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28791674287",
           "artifactName": "Svode-windows-nsis"
+        },
+        "darwin": {
+          "url": "https://github.com/venmakli/svode/actions/runs/28791674287/artifacts/8109594273",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28791674287",
+          "artifactName": "Svode-macos-dmg"
         }
       }
     },
