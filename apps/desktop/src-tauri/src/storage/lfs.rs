@@ -27,6 +27,7 @@ use super::scope::{
 
 const LFS_POINTER_PREFIX: &str = "version https://git-lfs.github.com/spec/v1";
 const LFS_POINTER_MAX_BYTES: u64 = 200;
+const LFS_REMOTE_PROBE_ARGS: &[&str] = &["lfs", "fetch", "--dry-run", "origin"];
 
 /// Per-pool LFS runtime state. Serialized in kebab-case (`n/a` for
 /// `NotApplicable`).
@@ -112,7 +113,7 @@ pub fn is_lfs_pointer(path: &Path) -> bool {
 /// Probe the LFS state of the effective storage scope for `key`:
 /// - Local / InGit → NotApplicable (no LFS in play).
 /// - LfsS3 → Ready iff the keychain entry exists, else MissingCreds.
-/// - LfsRemote → run `git lfs pull --dry-run`; success → Ready,
+/// - LfsRemote → run `git lfs fetch --dry-run origin`; success → Ready,
 ///   any failure → MissingCreds (conservative: we surface the repair
 ///   affordance instead of pretending everything is fine).
 pub async fn probe_lfs(
@@ -168,7 +169,7 @@ async fn probe_lfs_config(
             let Some(cli) = git_state.cli.clone() else {
                 return LfsState::MissingCreds;
             };
-            match cli.exec(repo_dir, &["lfs", "pull", "--dry-run"]).await {
+            match cli.exec(repo_dir, LFS_REMOTE_PROBE_ARGS).await {
                 Ok(out) if out.exit_code == 0 => LfsState::Ready,
                 _ => LfsState::MissingCreds,
             }
@@ -239,7 +240,7 @@ async fn diagnose_lfs_remote_with_cli(
 
     let auth_method = lfs_remote_auth_method(&remote_url);
     let safe_remote_url = redact_url_credentials(&remote_url);
-    let out = cli.exec(repo_dir, &["lfs", "pull", "--dry-run"]).await?;
+    let out = cli.exec(repo_dir, LFS_REMOTE_PROBE_ARGS).await?;
     if out.exit_code == 0 {
         return Ok(LfsRemoteDiagnostic {
             state: LfsState::Ready,
@@ -597,6 +598,14 @@ mod tests {
         assert!(!strategy_supports_lfs_remote_diagnostic(
             AssetsStrategy::LfsS3
         ));
+    }
+
+    #[test]
+    fn lfs_remote_probe_uses_supported_fetch_dry_run_command() {
+        assert_eq!(
+            LFS_REMOTE_PROBE_ARGS,
+            &["lfs", "fetch", "--dry-run", "origin"]
+        );
     }
 
     #[test]
