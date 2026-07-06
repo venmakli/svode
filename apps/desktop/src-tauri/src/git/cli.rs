@@ -164,23 +164,38 @@ impl GitCli {
 }
 
 fn apply_common_git_env(cmd: &mut Command) {
-    cmd.env("GIT_TERMINAL_PROMPT", "0").env("LC_ALL", "C.UTF-8");
+    // Do not inherit editor askpass helpers into backend IPC commands. Svode
+    // needs git to fail fast with AuthRequired instead of waiting on another UI.
+    cmd.env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ASKPASS", "")
+        .env("SSH_ASKPASS", "")
+        .env("SSH_ASKPASS_REQUIRE", "never")
+        .env("GCM_INTERACTIVE", "never")
+        .env("LC_ALL", "C.UTF-8");
     if let Some(path) = git_subprocess_path_env() {
         cmd.env("PATH", path);
     }
 }
 
 fn apply_common_std_git_env(cmd: &mut StdCommand) {
-    cmd.env("GIT_TERMINAL_PROMPT", "0").env("LC_ALL", "C.UTF-8");
+    // Keep sync and blocking detection paths consistent with async git calls.
+    cmd.env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ASKPASS", "")
+        .env("SSH_ASKPASS", "")
+        .env("SSH_ASKPASS_REQUIRE", "never")
+        .env("GCM_INTERACTIVE", "never")
+        .env("LC_ALL", "C.UTF-8");
     if let Some(path) = git_subprocess_path_env() {
         cmd.env("PATH", path);
     }
 }
 
 fn args_with_quote_path<'a>(args: &'a [&'a str]) -> Vec<&'a str> {
-    let mut out = Vec::with_capacity(args.len() + 2);
+    let mut out = Vec::with_capacity(args.len() + 4);
     out.push("-c");
     out.push("core.quotePath=false");
+    out.push("-c");
+    out.push("core.askPass=");
     out.extend_from_slice(args);
     out
 }
@@ -380,7 +395,7 @@ fn git_lfs_fallback_candidates() -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_lfs_version;
+    use super::{args_with_quote_path, parse_lfs_version};
 
     #[test]
     fn parses_git_lfs_version_prefix() {
@@ -395,6 +410,21 @@ mod tests {
         assert_eq!(
             parse_lfs_version("git-lfs version custom").as_deref(),
             Some("git-lfs version custom")
+        );
+    }
+
+    #[test]
+    fn git_args_disable_core_askpass() {
+        assert_eq!(
+            args_with_quote_path(&["credential", "fill"]),
+            vec![
+                "-c",
+                "core.quotePath=false",
+                "-c",
+                "core.askPass=",
+                "credential",
+                "fill",
+            ]
         );
     }
 }

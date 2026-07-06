@@ -73,11 +73,13 @@ pub async fn get_remote(cli: &GitCli, space_dir: &Path) -> Result<Option<String>
 }
 
 pub(crate) fn is_git_auth_error(stderr: &str) -> bool {
-    stderr.contains("Authentication")
-        || stderr.contains("Authentication failed")
-        || stderr.contains("could not read Username")
+    let stderr = stderr.to_ascii_lowercase();
+    stderr.contains("authentication")
+        || stderr.contains("could not read username")
         || stderr.contains("terminal prompts disabled")
-        || stderr.contains("Permission denied")
+        || stderr.contains("permission denied")
+        || stderr.contains("missing credentials")
+        || stderr.contains("missing or invalid credentials")
 }
 
 pub(crate) fn is_git_no_remote_error(stderr: &str) -> bool {
@@ -1509,6 +1511,16 @@ mod tests {
         let err = git_remote_command_error(
             "git fetch",
             "Permission denied (publickey).\nfatal: Could not read from remote repository.",
+        );
+
+        assert!(matches!(err, AppError::GitAuthRequired(_)));
+    }
+
+    #[test]
+    fn classifies_missing_credentials_as_auth_required() {
+        let err = git_remote_command_error(
+            "git push",
+            "Missing or invalid credentials.\nfatal: Authentication failed",
         );
 
         assert!(matches!(err, AppError::GitAuthRequired(_)));
