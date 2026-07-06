@@ -24,13 +24,14 @@ export function useRootProjectWorkflow({
   const initializeHome = useCallback(async () => {
     if (explicitHome) {
       await loadRootSpaces();
-      return;
+      return false;
     }
 
     const opened = await openLastProject();
     if (!opened) {
       await loadRootSpaces();
     }
+    return opened;
   }, [explicitHome, loadRootSpaces, openLastProject]);
   const handleCreateProject = useCreateRootProject({
     openProject,
@@ -47,6 +48,7 @@ export function useRootProjectWorkflow({
     cloneDialogOpen,
     cloningProject,
     createDialogOpen,
+    explicitHome,
     handleCloneProject,
     handleCreateProject,
     handleDeleteProject,

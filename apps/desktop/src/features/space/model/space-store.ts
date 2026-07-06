@@ -135,21 +135,20 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
 
   openRoot: async (id: string) => {
     try {
-      if (!get().rootsLoaded) {
-        await get().loadRootSpaces();
-      }
-
-      const ws = get().rootSpaces.find((w) => w.id === id);
-      if (!ws) {
-        throw new Error("Project not found");
-      }
-
-      const config = await spaceActions.openRootProject(id);
+      const { config, project } = await spaceActions.openRootProject(id);
+      const projects = get().rootsLoaded
+        ? get().rootSpaces
+        : await get().loadRootSpaces();
+      const activeProject = projects.find((w) => w.id === id) ?? project;
       set({
+        rootSpaces: projects.some((w) => w.id === id)
+          ? projects
+          : [...projects, project],
+        rootsLoaded: true,
         activeRootId: id,
         activeRootName: config.name,
         activeRootIcon: config.icon,
-        activeRootPath: ws.path,
+        activeRootPath: activeProject.path,
         activeSpaceId: null,
         spaces: [],
         ...createEmptyLoadedSpaceTreeState(),
@@ -161,11 +160,11 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       // Tauri asset protocol. Scope is per-app-session and the call is
       // idempotent — safe to repeat on every project open.
       spaceActions
-        .ensureSpaceAssetsScope(ws.path)
+        .ensureSpaceAssetsScope(activeProject.path)
         .catch((err) => console.warn("ensure_assets_scope failed:", err));
       await get().loadTreeChildren(id);
       await get().loadExpandedPaths(id);
-      await get().loadSpaces(ws.path);
+      await get().loadSpaces(activeProject.path);
       return true;
     } catch (err) {
       console.error("Failed to open project:", err);

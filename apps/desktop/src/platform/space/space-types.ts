@@ -91,6 +91,11 @@ export interface SpaceConfigDto {
   assets?: AssetsSpaceConfigDto;
 }
 
+export interface OpenProjectResultDto {
+  config: SpaceConfigDto;
+  project: SpaceInfoDto;
+}
+
 export type WindowOpenIntentDto =
   | { kind: "home" }
   | { kind: "project"; projectId: string };

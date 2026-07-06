@@ -10,6 +10,7 @@ import type {
   EffectiveAssetsConfigDto,
   LfsRemoteDiagnosticDto,
   LfsStateDto,
+  OpenProjectResultDto,
   SpaceDirtyEventDto,
   SpaceFileEventDto,
   SpaceConfigDto,
@@ -61,8 +62,8 @@ export function listProjects(): Promise<SpaceInfoDto[]> {
   return invokeCommand<SpaceInfoDto[]>("list_projects");
 }
 
-export function openProject(id: string): Promise<SpaceConfigDto> {
-  return invokeCommand<SpaceConfigDto>("open_project", { id });
+export function openProject(id: string): Promise<OpenProjectResultDto> {
+  return invokeCommand<OpenProjectResultDto>("open_project", { id });
 }
 
 export function openProjectWindow(projectId: string): Promise<void> {

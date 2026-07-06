@@ -21,7 +21,10 @@ const EVENT_OPEN_FOLDER: &str = "app-menu:open-folder";
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum WindowOpenIntent {
     Home,
-    Project { project_id: String },
+    Project {
+        #[serde(rename = "projectId")]
+        project_id: String,
+    },
 }
 
 #[derive(Default)]
@@ -500,5 +503,22 @@ mod tests {
             state.intent_for_window("project-project-a"),
             Some(WindowOpenIntent::Home)
         ));
+    }
+
+    #[test]
+    fn serializes_project_intent_with_camel_case_project_id() {
+        let intent = WindowOpenIntent::Project {
+            project_id: "project-a".to_string(),
+        };
+
+        let value = serde_json::to_value(intent).expect("serialize intent");
+
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "kind": "project",
+                "projectId": "project-a"
+            })
+        );
     }
 }

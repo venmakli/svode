@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { useSpaceActions } from "@/features/space";
+import { useSpace, useSpaceActions } from "@/features/space";
 
 interface UseRootProjectNavigationInput {
   onRootOpened?: () => void;
@@ -10,6 +10,7 @@ export function useRootProjectNavigation({
   onRootOpened,
 }: UseRootProjectNavigationInput = {}) {
   const navigate = useNavigate();
+  const activeRootId = useSpace((state) => state.activeRootId);
   const {
     getWindowOpenIntent,
     openLastActiveRoot,
@@ -35,9 +36,19 @@ export function useRootProjectNavigation({
 
   const openProject = useCallback(
     async (id: string) => {
+      const intent = await getWindowOpenIntent();
+      if (!activeRootId || intent?.kind === "home") {
+        await openProjectInCurrentWindow(id);
+        return;
+      }
       await openRootWindow(id);
     },
-    [openRootWindow],
+    [
+      activeRootId,
+      getWindowOpenIntent,
+      openProjectInCurrentWindow,
+      openRootWindow,
+    ],
   );
 
   const openLastProject = useCallback(async () => {

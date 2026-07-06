@@ -15,6 +15,13 @@ use crate::space::{config, project, registry, settings, symlinks, types::*};
 use crate::storage::lfs::LfsState;
 use crate::system_path;
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenProjectResult {
+    pub config: SpaceConfig,
+    pub project: SpaceInfo,
+}
+
 fn detect_status_for_ref(parent: &Path, sp_ref: &SpaceRef) -> SpaceStatus {
     project::space_ref_status(parent, sp_ref)
 }
@@ -93,6 +100,25 @@ fn refresh_recent_projects_menu(app: &AppHandle) {
     }
 }
 
+fn root_project_info(
+    id: String,
+    path: &Path,
+    cfg: &SpaceConfig,
+    last_opened: Option<String>,
+) -> SpaceInfo {
+    SpaceInfo {
+        id,
+        name: cfg.name.clone(),
+        icon: cfg.icon.clone(),
+        description: cfg.description.clone(),
+        path: system_path::user_facing_path(path),
+        has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
+        last_opened,
+        status: SpaceStatus::Ready,
+        lfs_state: LfsState::NotApplicable,
+    }
+}
+
 // --- App Settings ---
 
 #[tauri::command]
@@ -127,17 +153,12 @@ pub fn list_projects(app: AppHandle) -> Result<Vec<SpaceInfo>, AppError> {
         let sp_path = Path::new(&sp_ref.path);
         match config::read_space_config(sp_path) {
             Ok(cfg) => {
-                projects.push(SpaceInfo {
-                    id: sp_ref.id.clone(),
-                    name: cfg.name,
-                    icon: cfg.icon,
-                    description: cfg.description,
-                    path: sp_ref.path.clone(),
-                    has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
-                    last_opened: sp_ref.last_opened.clone(),
-                    status: SpaceStatus::Ready,
-                    lfs_state: LfsState::NotApplicable,
-                });
+                projects.push(root_project_info(
+                    sp_ref.id.clone(),
+                    sp_path,
+                    &cfg,
+                    sp_ref.last_opened.clone(),
+                ));
             }
             Err(_) => continue,
         }
@@ -338,7 +359,7 @@ pub async fn open_project(
     autocommit: State<'_, Arc<AutocommitService>>,
     index_state: State<'_, IndexState>,
     id: String,
-) -> Result<SpaceConfig, AppError> {
+) -> Result<OpenProjectResult, AppError> {
     let config_dir = app
         .path()
         .app_config_dir()
@@ -409,7 +430,11 @@ pub async fn open_project(
         );
     }
 
-    Ok(cfg)
+    let project = root_project_info(id, &project_path, &cfg, sp_ref.last_opened);
+    Ok(OpenProjectResult {
+        config: cfg,
+        project,
+    })
 }
 
 // --- Spaces ---
