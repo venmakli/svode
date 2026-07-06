@@ -1,7 +1,7 @@
 {
   "identifier": "default",
   "description": "Default capability set for Svode desktop",
-  "windows": ["main"],
+  "windows": ["main", "launcher-*", "project-*"],
   "permissions": [
     "core:default",
     "core:window:default",

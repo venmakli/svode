@@ -55,11 +55,15 @@ export async function closeManagedTerminalSurface(ptyId: string) {
   await killTerminal(ptyId);
 }
 
-export function spawnManagedTerminalSurface(cwd: string) {
+export function spawnManagedTerminalSurface(
+  cwd: string,
+  mcpProjectPath?: string | null,
+) {
   return spawnTerminal(
     cwd,
     DEFAULT_MANAGED_TERMINAL_COLS,
     DEFAULT_MANAGED_TERMINAL_ROWS,
+    mcpProjectPath,
   );
 }
 

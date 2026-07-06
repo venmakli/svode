@@ -149,6 +149,7 @@ where
         source_session_id: session.source_session_id.clone(),
         command: command.clone(),
         cwd: cwd.clone(),
+        mcp_project_path: Some(system_path::user_facing_path(project)),
     };
     match spawn_shell(spawn) {
         Ok(pty_id) => Ok(AgentSessionReentryResult {

@@ -10,7 +10,7 @@ use tokio::net::{TcpListener, TcpStream};
 
 use super::MCP_VERSION;
 use super::error::McpBusinessError;
-use super::protocol::{IpcRequest, IpcResponse};
+use super::protocol::{IpcContextOverride, IpcRequest, IpcResponse};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -177,7 +177,8 @@ async fn dispatch(app: AppHandle, request: IpcRequest) -> IpcResponse {
                 .get("arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            let tool_result = super::service::call_tool(app, name, args).await;
+            let tool_result =
+                super::service::call_tool_with_context(app, name, args, request.context).await;
             IpcResponse {
                 result: None,
                 tool_result: Some(tool_result),
@@ -214,6 +215,7 @@ pub async fn desktop_request(method: &str, params: Value) -> Result<IpcResponse,
         token: discovery.token,
         method: method.to_string(),
         params,
+        context: process_context_override(),
     };
     stream
         .write_all(serde_json::to_string(&request)?.as_bytes())
@@ -229,6 +231,26 @@ pub async fn desktop_request(method: &str, params: Value) -> Result<IpcResponse,
         ));
     }
     Ok(serde_json::from_str(&line)?)
+}
+
+fn process_context_override() -> Option<IpcContextOverride> {
+    let project_path = std::env::var(super::MCP_PROJECT_PATH_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let caller_cwd = std::env::current_dir()
+        .ok()
+        .map(|path| path.to_string_lossy().to_string())
+        .filter(|value| !value.is_empty());
+
+    if project_path.is_none() && caller_cwd.is_none() {
+        return None;
+    }
+
+    Some(IpcContextOverride {
+        project_path,
+        caller_cwd,
+    })
 }
 
 pub fn discovery_exists() -> bool {
@@ -254,7 +276,7 @@ fn read_discovery() -> Result<DiscoveryFile, McpBusinessError> {
 }
 
 fn read_discovery_path() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("SVODE_MCP_DISCOVERY") {
+    if let Ok(path) = std::env::var(super::MCP_DISCOVERY_ENV) {
         let path = PathBuf::from(path);
         if path.exists() {
             return Some(path);

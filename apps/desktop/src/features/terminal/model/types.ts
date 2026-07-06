@@ -6,6 +6,7 @@ export interface TerminalTarget {
   name: string;
   path: string;
   secondaryPath: string;
+  mcpProjectPath?: string | null;
 }
 
 export type TerminalTabStatus = "spawning" | "ready" | "error" | "exited";

@@ -495,7 +495,7 @@ export function useAgentSessions(
       if (!projectPath || scope.status !== "ready") return;
 
       const openedAt = new Date().toISOString();
-      const terminal = await spawnManagedTerminalSurface(scope.path);
+      const terminal = await spawnManagedTerminalSurface(scope.path, projectPath);
       if (projectPathRef.current !== projectPath) {
         await closeManagedTerminalSurface(terminal.ptyId);
         return;

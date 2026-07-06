@@ -13,11 +13,13 @@ export function buildProjectTerminalTarget(project: {
     name: project.name?.trim() || "Project",
     path: project.path,
     secondaryPath: project.path,
+    mcpProjectPath: project.path,
   };
 }
 
 export function buildSpaceTerminalTargets(
   spaces: SpaceInfo[],
+  projectPath: string | null,
 ): TerminalTarget[] {
   return spaces
     .filter((space) => space.status === "ready")
@@ -27,5 +29,6 @@ export function buildSpaceTerminalTargets(
       name: space.name,
       path: space.path,
       secondaryPath: space.path,
+      mcpProjectPath: projectPath,
     }));
 }

@@ -142,6 +142,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         target.path,
         DEFAULT_COLS,
         DEFAULT_ROWS,
+        target.mcpProjectPath ?? target.path,
       );
       if (!get().tabs.some((item) => item.id === tabId)) {
         disposeTerminalSession(session.ptyId, "orphaned terminal session");

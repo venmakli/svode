@@ -24,10 +24,11 @@ pub fn terminal_spawn(
     app: AppHandle,
     manager: State<'_, TerminalManager>,
     cwd: String,
+    mcp_project_path: Option<String>,
     cols: u16,
     rows: u16,
 ) -> Result<TerminalSession, AppError> {
-    manager.spawn(app, cwd, cols, rows)
+    manager.spawn(app, cwd, mcp_project_path, cols, rows)
 }
 
 #[tauri::command]

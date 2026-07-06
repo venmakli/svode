@@ -33,8 +33,9 @@ export function spawnTerminal(
   cwd: string,
   cols: number,
   rows: number,
+  mcpProjectPath?: string | null,
 ): Promise<TerminalSession> {
-  return spawnTerminalSession(cwd, cols, rows);
+  return spawnTerminalSession(cwd, cols, rows, mcpProjectPath);
 }
 
 export function writeTerminal(ptyId: string, data: string): Promise<void> {

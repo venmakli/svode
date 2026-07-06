@@ -49,8 +49,14 @@ export function spawnTerminal(
   cwd: string,
   cols: number,
   rows: number,
+  mcpProjectPath?: string | null,
 ): Promise<TerminalSession> {
-  return invoke<TerminalSession>("terminal_spawn", { cwd, cols, rows });
+  return invoke<TerminalSession>("terminal_spawn", {
+    cwd,
+    cols,
+    rows,
+    mcpProjectPath: mcpProjectPath ?? null,
+  });
 }
 
 export function writeTerminal(ptyId: string, data: string): Promise<void> {

@@ -6,12 +6,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tauri::{AppHandle, Manager};
 
-use super::active::{ActiveProjectContext, ActiveProjectState};
+use super::active::{self, ActiveProjectContext, ActiveProjectState};
 use super::error::McpBusinessError;
 use super::path::{
     ensure_inside, normalize_create_document_path, validate_document_path, validate_public_rel_path,
 };
-use super::protocol::ToolCallResult;
+use super::protocol::{IpcContextOverride, ToolCallResult};
 use crate::commands::files as files_commands;
 use crate::files::{entry, tree};
 use crate::git::{self, commands::GitState};
@@ -20,11 +20,15 @@ use crate::properties::{
     self, CollectionSchema, Column, DocumentConfig, Filter, PropertyType, Sort, View,
 };
 use crate::repo_path::{RootMode, normalize_repo_relative};
-use crate::space::{config as space_config, project};
+use crate::space::{config as space_config, project, registry};
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 200;
 const MCP_ROOT_SPACE_ID: &str = "root";
+
+tokio::task_local! {
+    static MCP_CONTEXT_OVERRIDE: Option<ActiveProjectContext>;
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum MutationOrigin {
@@ -286,6 +290,30 @@ struct ListActorsArgs {
 }
 
 pub async fn call_tool(app: AppHandle, name: &str, args: Value) -> ToolCallResult {
+    call_tool_with_context(app, name, args, None).await
+}
+
+pub async fn call_tool_with_context(
+    app: AppHandle,
+    name: &str,
+    args: Value,
+    context_override: Option<IpcContextOverride>,
+) -> ToolCallResult {
+    let resolved_context = match resolve_context_override(&app, context_override.as_ref()) {
+        Ok(context) => context,
+        Err(error) => return ToolCallResult::business_error(error),
+    };
+
+    if let Some(context) = resolved_context {
+        return match MCP_CONTEXT_OVERRIDE
+            .scope(Some(context), call_tool_inner(app, name, args))
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => ToolCallResult::business_error(error),
+        };
+    }
+
     match call_tool_inner(app, name, args).await {
         Ok(result) => result,
         Err(error) => ToolCallResult::business_error(error),
@@ -341,9 +369,128 @@ fn json_to_yaml(value: Value) -> Result<serde_yml::Value, McpBusinessError> {
 }
 
 fn active_context(app: &AppHandle) -> Result<ActiveProjectContext, McpBusinessError> {
+    if let Ok(Some(context)) = MCP_CONTEXT_OVERRIDE.try_with(Clone::clone) {
+        return Ok(context);
+    }
+
     app.state::<ActiveProjectState>()
         .get()
         .ok_or_else(McpBusinessError::no_active_project)
+}
+
+fn resolve_context_override(
+    app: &AppHandle,
+    context_override: Option<&IpcContextOverride>,
+) -> Result<Option<ActiveProjectContext>, McpBusinessError> {
+    let Some(context_override) = context_override else {
+        return Ok(None);
+    };
+
+    if let Some(project_path) = context_override
+        .project_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(Some(root_context(Path::new(project_path))?));
+    }
+
+    let Some(caller_cwd) = context_override
+        .caller_cwd
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    let cwd = PathBuf::from(caller_cwd).canonicalize().map_err(|error| {
+        McpBusinessError::new(
+            "CALLER_CWD_NOT_ACCESSIBLE",
+            format!("caller cwd '{caller_cwd}' is not accessible: {error}"),
+        )
+    })?;
+    let config_dir = app.path().app_data_dir().ok();
+    let root = match resolve_project_root_for_cwd(config_dir.as_deref(), &cwd) {
+        Ok(root) => root,
+        Err(error) if error.code == "PROJECT_CONTEXT_NOT_FOUND" => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Ok(Some(root_context(&root)?))
+}
+
+fn root_context(project_path: &Path) -> Result<ActiveProjectContext, McpBusinessError> {
+    let project = project_path.canonicalize().map_err(|error| {
+        McpBusinessError::new(
+            "PROJECT_PATH_NOT_ACCESSIBLE",
+            format!(
+                "project path '{}' is not accessible: {error}",
+                project_path.display()
+            ),
+        )
+    })?;
+    active::build_context(
+        project.to_string_lossy().to_string(),
+        None,
+        Some(project.to_string_lossy().to_string()),
+    )
+    .map_err(Into::into)
+}
+
+fn resolve_project_root_for_cwd(
+    config_dir: Option<&Path>,
+    cwd: &Path,
+) -> Result<PathBuf, McpBusinessError> {
+    if let Some(config_dir) = config_dir
+        && let Some(root) = registry_project_root_for_cwd(config_dir, cwd)?
+    {
+        return Ok(root);
+    }
+
+    ancestor_svode_project_root(cwd).ok_or_else(|| {
+        McpBusinessError::new(
+            "PROJECT_CONTEXT_NOT_FOUND",
+            format!(
+                "could not resolve a Svode project root from caller cwd '{}'",
+                cwd.display()
+            ),
+        )
+    })
+}
+
+fn registry_project_root_for_cwd(
+    config_dir: &Path,
+    cwd: &Path,
+) -> Result<Option<PathBuf>, McpBusinessError> {
+    let registry = registry::read_registry(config_dir)?;
+    let mut best: Option<PathBuf> = None;
+
+    for entry in registry.spaces {
+        let Ok(root) = PathBuf::from(entry.path).canonicalize() else {
+            continue;
+        };
+        if !cwd.starts_with(&root) || space_config::read_space_config(&root).is_err() {
+            continue;
+        }
+        let replace = best
+            .as_ref()
+            .is_none_or(|current| root.components().count() > current.components().count());
+        if replace {
+            best = Some(root);
+        }
+    }
+
+    Ok(best)
+}
+
+fn ancestor_svode_project_root(cwd: &Path) -> Option<PathBuf> {
+    let mut root = None;
+    for candidate in cwd.ancestors() {
+        if space_config::read_space_config(candidate).is_ok() {
+            root = Some(candidate.to_path_buf());
+        }
+    }
+    root
 }
 
 async fn resolve_space(
@@ -1374,6 +1521,10 @@ fn index_key_for_context(context: &ActiveProjectContext, space_id: Option<&str>)
 mod tests {
     use super::*;
 
+    fn scaffold_test_space(path: &Path, name: &str) {
+        crate::space::scaffold::scaffold_space(path, name, "", "").expect("scaffold space");
+    }
+
     fn context(active_space_id: Option<&str>) -> ActiveProjectContext {
         ActiveProjectContext {
             project_path: "/project".to_string(),
@@ -1405,5 +1556,42 @@ mod tests {
             index_key_for_context(&context(None), None),
             IndexKey::Root(PathBuf::from("/project"))
         );
+    }
+
+    #[test]
+    fn registry_context_resolution_uses_registered_root_for_child_space_cwd() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let config_dir = temp.path().join("app-data");
+        let project = temp.path().join("project");
+        let child = project.join("child");
+        let nested = child.join("nested");
+        std::fs::create_dir_all(&nested).expect("nested dir");
+        scaffold_test_space(&project, "Project");
+        scaffold_test_space(&child, "Child");
+        registry::add_space(&config_dir, "project", &project.to_string_lossy())
+            .expect("register project");
+
+        let root =
+            resolve_project_root_for_cwd(Some(&config_dir), &nested).expect("resolve project root");
+
+        assert_eq!(
+            root.canonicalize().expect("root canonical"),
+            project.canonicalize().expect("project canonical")
+        );
+    }
+
+    #[test]
+    fn ancestor_context_resolution_uses_highest_svode_space_without_registry() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let project = temp.path().join("project");
+        let child = project.join("child");
+        let nested = child.join("nested");
+        std::fs::create_dir_all(&nested).expect("nested dir");
+        scaffold_test_space(&project, "Project");
+        scaffold_test_space(&child, "Child");
+
+        let root = resolve_project_root_for_cwd(None, &nested).expect("resolve project root");
+
+        assert_eq!(root, project);
     }
 }

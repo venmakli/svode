@@ -80,11 +80,22 @@ pub struct ToolAnnotations {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct IpcContextOverride {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller_cwd: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IpcRequest {
     pub token: String,
     pub method: String,
     #[serde(default)]
     pub params: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<IpcContextOverride>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -21,8 +21,8 @@ export function useTerminalTargets() {
     [activeRootId, activeRootName, activeRootPath],
   );
   const spaceTargets = useMemo(
-    () => buildSpaceTerminalTargets(spaces),
-    [spaces],
+    () => buildSpaceTerminalTargets(spaces, activeRootPath),
+    [activeRootPath, spaces],
   );
 
   return { projectTarget, spaceTargets };

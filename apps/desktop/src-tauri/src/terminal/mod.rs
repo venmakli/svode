@@ -68,6 +68,7 @@ pub(crate) struct AgentTerminalSpawn {
     pub source_session_id: String,
     pub command: AgentSessionResumeCommand,
     pub cwd: String,
+    pub mcp_project_path: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -132,11 +133,18 @@ impl TerminalManager {
         &self,
         app: AppHandle,
         cwd: String,
+        mcp_project_path: Option<String>,
         cols: u16,
         rows: u16,
     ) -> Result<TerminalSession, AppError> {
         let cwd_path = canonical_cwd(&cwd)?;
         let cwd_display = system_path::user_facing_path(&cwd_path);
+        let mcp_project_path = mcp_project_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(canonical_cwd)
+            .transpose()?;
         let size = pty_size(cols, rows);
         let shell = default_shell();
 
@@ -151,6 +159,18 @@ impl TerminalManager {
         cmd.cwd(&cwd_path);
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        if let Ok(discovery_path) = crate::mcp::ipc::discovery_path_for_app(&app) {
+            cmd.env(
+                crate::mcp::MCP_DISCOVERY_ENV,
+                system_path::user_facing_path(&discovery_path),
+            );
+        }
+        if let Some(path) = mcp_project_path {
+            cmd.env(
+                crate::mcp::MCP_PROJECT_PATH_ENV,
+                system_path::user_facing_path(&path),
+            );
+        }
 
         let child = pair
             .slave
@@ -215,6 +235,7 @@ impl TerminalManager {
         let session = self.spawn(
             app,
             spawn.cwd.clone(),
+            spawn.mcp_project_path.clone(),
             DEFAULT_AGENT_TERMINAL_COLS,
             DEFAULT_AGENT_TERMINAL_ROWS,
         )?;
@@ -907,6 +928,7 @@ mod tests {
                 cwd: Some("/tmp/project".to_string()),
             },
             cwd: "/tmp/project".to_string(),
+            mcp_project_path: Some("/tmp/project".to_string()),
         }
     }
 
