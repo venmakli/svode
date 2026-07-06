@@ -829,6 +829,7 @@ fn is_codex_tool_call(payload: &Value) -> bool {
 
 fn codex_wait_flag(payload: &Value) -> Option<AgentSessionActiveFlag> {
     match string_field(payload, &["name"]) {
+        Some("apply_patch") => Some(AgentSessionActiveFlag::WaitingOnApproval),
         Some("request_user_input") => Some(AgentSessionActiveFlag::WaitingOnUserInput),
         Some("exec_command") => exec_command_wait_flag(payload),
         _ => None,

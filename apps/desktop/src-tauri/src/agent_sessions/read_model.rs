@@ -7,7 +7,8 @@ use chrono::{SecondsFormat, Utc};
 
 use super::AgentSessionsState;
 use super::sources::{
-    CandidateCwdSource, PersistedAgentSessionCandidate, SourceScan, claude_code, codex, short_id,
+    CandidateCwdSource, PersistedAgentSessionCandidate, PersistedAgentSessionStatus, SourceScan,
+    claude_code, codex, short_id,
 };
 use super::types::{
     AgentSession, AgentSessionActiveFlag, AgentSessionCapabilities, AgentSessionResumeCommand,
@@ -22,6 +23,8 @@ use crate::error::AppError;
 use crate::space::types::{AgentSessionsLocalConfig, SpaceInfo, SpaceStatus};
 use crate::space::{config as space_config, project as space_project};
 use crate::terminal::AgentTerminalSurface;
+
+const SOURCE_LOG_ACTIVE_STALE_AFTER_SECS: i64 = 6 * 60 * 60;
 
 #[derive(Debug, Default)]
 pub(crate) struct AgentSessionsReadCache {
@@ -253,6 +256,21 @@ fn map_candidate(
     let status_evidence = candidate.status;
     let (status, active_flags, status_source, status_confidence, status_reason, waiting_since) =
         match status_evidence {
+            Some(evidence)
+                if source_log_active_is_stale(&evidence, last_activity_at, Utc::now()) =>
+            {
+                (
+                    AgentSessionStatus::Done,
+                    Vec::new(),
+                    AgentSessionStatusSource::Fallback,
+                    AgentSessionStatusConfidence::Weak,
+                    Some(format!(
+                        "stale source-log active evidence ignored: {}",
+                        evidence.reason
+                    )),
+                    None,
+                )
+            }
             Some(evidence) => (
                 evidence.status,
                 evidence.active_flags,
@@ -311,6 +329,19 @@ fn map_candidate(
         pinned: false,
         source_meta: candidate.source_meta,
     }
+}
+
+fn source_log_active_is_stale(
+    evidence: &PersistedAgentSessionStatus,
+    last_activity_at: chrono::DateTime<Utc>,
+    now: chrono::DateTime<Utc>,
+) -> bool {
+    if !matches!(evidence.status, AgentSessionStatus::Active) {
+        return false;
+    }
+
+    let observed_at = evidence.observed_at.unwrap_or(last_activity_at);
+    now.signed_duration_since(observed_at).num_seconds() > SOURCE_LOG_ACTIVE_STALE_AFTER_SECS
 }
 
 #[derive(Debug, Clone)]
@@ -780,6 +811,20 @@ mod tests {
         );
     }
 
+    fn recent_source_log_timestamp() -> String {
+        timestamp_offset(chrono::Duration::minutes(-1))
+    }
+
+    fn stale_source_log_timestamp() -> String {
+        timestamp_offset(chrono::Duration::seconds(
+            -(SOURCE_LOG_ACTIVE_STALE_AFTER_SECS + 60),
+        ))
+    }
+
+    fn timestamp_offset(offset: chrono::Duration) -> String {
+        (Utc::now() + offset).to_rfc3339_opts(SecondsFormat::Secs, true)
+    }
+
     fn surface(
         pty_id: &str,
         source: AgentSessionSource,
@@ -1180,6 +1225,9 @@ mod tests {
         let home = temp.path().join("home");
         let project = temp.path().join("project");
         fs::create_dir_all(&project).expect("project");
+        let meta_ts = recent_source_log_timestamp();
+        let started_ts = recent_source_log_timestamp();
+        let waiting_ts = recent_source_log_timestamp();
         write_codex_detail(
             &home,
             "needs-approval",
@@ -1190,12 +1238,12 @@ mod tests {
                         "id": "needs-approval",
                         "cwd": project.to_string_lossy()
                     },
-                    "timestamp": "2026-07-04T10:00:00Z"
+                    "timestamp": meta_ts
                 }),
                 serde_json::json!({
                     "type": "event_msg",
                     "payload": { "type": "task_started" },
-                    "timestamp": "2026-07-04T10:01:00Z"
+                    "timestamp": started_ts
                 }),
                 serde_json::json!({
                     "type": "response_item",
@@ -1205,7 +1253,7 @@ mod tests {
                         "call_id": "call-approval",
                         "arguments": "{\"cmd\":\"date\",\"sandbox_permissions\":\"require_escalated\"}"
                     },
-                    "timestamp": "2026-07-04T10:02:00Z"
+                    "timestamp": waiting_ts.clone()
                 }),
             ],
         );
@@ -1221,10 +1269,61 @@ mod tests {
             vec![AgentSessionActiveFlag::WaitingOnApproval]
         );
         assert_eq!(session.status_source, AgentSessionStatusSource::SourceLog);
-        assert_eq!(
-            session.waiting_since.as_deref(),
-            Some("2026-07-04T10:02:00Z")
+        assert_eq!(session.waiting_since.as_deref(), Some(waiting_ts.as_str()));
+    }
+
+    #[test]
+    fn agent_sessions_codex_tail_apply_patch_sets_source_log_waiting_status() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        let meta_ts = recent_source_log_timestamp();
+        let started_ts = recent_source_log_timestamp();
+        let waiting_ts = recent_source_log_timestamp();
+        write_codex_detail(
+            &home,
+            "needs-edit-approval",
+            vec![
+                serde_json::json!({
+                    "type": "session_meta",
+                    "payload": {
+                        "id": "needs-edit-approval",
+                        "cwd": project.to_string_lossy()
+                    },
+                    "timestamp": meta_ts
+                }),
+                serde_json::json!({
+                    "type": "event_msg",
+                    "payload": { "type": "task_started" },
+                    "timestamp": started_ts
+                }),
+                serde_json::json!({
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call",
+                        "name": "apply_patch",
+                        "call_id": "call-edit-approval",
+                        "input": "*** Begin Patch\n*** Update File: file.txt\n@@\n-old\n+new\n*** End Patch",
+                        "status": "completed"
+                    },
+                    "timestamp": waiting_ts.clone()
+                }),
+            ],
         );
+
+        let state = AgentSessionsState::with_home(home);
+        let result = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("list sessions");
+
+        let session = &result.sessions[0];
+        assert_eq!(session.status, AgentSessionStatus::Active);
+        assert_eq!(
+            session.active_flags,
+            vec![AgentSessionActiveFlag::WaitingOnApproval]
+        );
+        assert_eq!(session.status_source, AgentSessionStatusSource::SourceLog);
+        assert_eq!(session.waiting_since.as_deref(), Some(waiting_ts.as_str()));
     }
 
     #[test]
@@ -1233,6 +1332,9 @@ mod tests {
         let home = temp.path().join("home");
         let project = temp.path().join("project");
         fs::create_dir_all(&project).expect("project");
+        let meta_ts = recent_source_log_timestamp();
+        let started_ts = recent_source_log_timestamp();
+        let waiting_ts = recent_source_log_timestamp();
         write_codex_detail(
             &home,
             "needs-input",
@@ -1243,12 +1345,12 @@ mod tests {
                         "id": "needs-input",
                         "cwd": project.to_string_lossy()
                     },
-                    "timestamp": "2026-07-04T10:00:00Z"
+                    "timestamp": meta_ts
                 }),
                 serde_json::json!({
                     "type": "event_msg",
                     "payload": { "type": "task_started" },
-                    "timestamp": "2026-07-04T10:01:00Z"
+                    "timestamp": started_ts
                 }),
                 serde_json::json!({
                     "type": "response_item",
@@ -1258,7 +1360,7 @@ mod tests {
                         "call_id": "call-input",
                         "arguments": "{}"
                     },
-                    "timestamp": "2026-07-04T10:02:00Z"
+                    "timestamp": waiting_ts
                 }),
             ],
         );
@@ -1274,6 +1376,49 @@ mod tests {
             vec![AgentSessionActiveFlag::WaitingOnUserInput]
         );
         assert_eq!(session.status_source, AgentSessionStatusSource::SourceLog);
+    }
+
+    #[test]
+    fn agent_sessions_stale_source_log_active_falls_back_to_done() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        let stale_ts = stale_source_log_timestamp();
+        write_codex_detail(
+            &home,
+            "stale-active",
+            vec![
+                serde_json::json!({
+                    "type": "session_meta",
+                    "payload": {
+                        "id": "stale-active",
+                        "cwd": project.to_string_lossy()
+                    },
+                    "timestamp": stale_ts.clone()
+                }),
+                serde_json::json!({
+                    "type": "event_msg",
+                    "payload": { "type": "task_started" },
+                    "timestamp": stale_ts
+                }),
+            ],
+        );
+
+        let state = AgentSessionsState::with_home(home);
+        let result = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("list sessions");
+
+        let session = &result.sessions[0];
+        assert_eq!(session.status, AgentSessionStatus::Done);
+        assert!(session.active_flags.is_empty());
+        assert_eq!(session.status_source, AgentSessionStatusSource::Fallback);
+        assert!(
+            session
+                .status_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("stale source-log active evidence ignored"))
+        );
     }
 
     #[test]
