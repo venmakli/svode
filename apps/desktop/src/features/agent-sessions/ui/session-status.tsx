@@ -49,7 +49,7 @@ export function SessionStatusMarker({ session }: SessionStatusMarkerProps) {
     return <OctagonX aria-label={label} className="size-3 text-destructive" />;
   }
 
-  if (session.runtime?.live) {
+  if (session.runtime?.ptyId) {
     return (
       <SquareTerminal
         aria-label={label}
@@ -88,7 +88,7 @@ export function statusLabel(session: AgentSession): string {
 
 export function statusMarkerLabel(session: AgentSession): string {
   if (
-    session.runtime?.live &&
+    session.runtime?.ptyId &&
     !hasActionableWait(session) &&
     session.status !== "active" &&
     session.status !== "failed"

@@ -10,9 +10,10 @@ use chrono::{DateTime, TimeZone, Utc};
 use serde_json::Value;
 
 use crate::agent_sessions::types::{
-    AgentSessionCounts, AgentSessionDiagnosticSeverity, AgentSessionSource,
+    AgentSessionActiveFlag, AgentSessionCounts, AgentSessionDiagnosticSeverity, AgentSessionSource,
     AgentSessionSourceFileRef, AgentSessionSourceMeta, AgentSessionSourceReport,
-    AgentSessionSourceStatus, AgentSessionTitleSource,
+    AgentSessionSourceStatus, AgentSessionStatus, AgentSessionStatusConfidence,
+    AgentSessionTitleSource,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +33,7 @@ pub(crate) struct PersistedAgentSessionCandidate {
     pub created_at: Option<DateTime<Utc>>,
     pub last_activity_at: Option<DateTime<Utc>>,
     pub source_file: Option<AgentSessionSourceFileRef>,
+    pub status: Option<PersistedAgentSessionStatus>,
     pub counts: AgentSessionCounts,
     pub source_meta: AgentSessionSourceMeta,
 }
@@ -48,10 +50,21 @@ impl PersistedAgentSessionCandidate {
             created_at: None,
             last_activity_at: None,
             source_file: None,
+            status: None,
             counts: AgentSessionCounts::default(),
             source_meta: AgentSessionSourceMeta::default(),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PersistedAgentSessionStatus {
+    pub status: AgentSessionStatus,
+    pub active_flags: Vec<AgentSessionActiveFlag>,
+    pub confidence: AgentSessionStatusConfidence,
+    pub reason: String,
+    pub observed_at: Option<DateTime<Utc>>,
+    pub waiting_since: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone)]

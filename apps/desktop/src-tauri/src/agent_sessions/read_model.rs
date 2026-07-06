@@ -250,6 +250,28 @@ fn map_candidate(
         .join(" ");
     let mut counts = candidate.counts;
     counts.messages = Some(counts.user_messages + counts.assistant_messages);
+    let status_evidence = candidate.status;
+    let (status, active_flags, status_source, status_confidence, status_reason, waiting_since) =
+        match status_evidence {
+            Some(evidence) => (
+                evidence.status,
+                evidence.active_flags,
+                AgentSessionStatusSource::SourceLog,
+                evidence.confidence,
+                Some(evidence.reason),
+                evidence
+                    .waiting_since
+                    .map(|ts| ts.to_rfc3339_opts(SecondsFormat::Secs, true)),
+            ),
+            None => (
+                AgentSessionStatus::Done,
+                Vec::new(),
+                AgentSessionStatusSource::Fallback,
+                AgentSessionStatusConfidence::Weak,
+                Some("persisted session without live status evidence".to_string()),
+                None,
+            ),
+        };
 
     AgentSession {
         id,
@@ -257,11 +279,11 @@ fn map_candidate(
         source_session_id: candidate.source_session_id,
         title,
         title_source,
-        status: AgentSessionStatus::Done,
-        active_flags: Vec::new(),
-        status_source: AgentSessionStatusSource::Fallback,
-        status_confidence: AgentSessionStatusConfidence::Weak,
-        status_reason: Some("persisted session without live status evidence".to_string()),
+        status,
+        active_flags,
+        status_source,
+        status_confidence,
+        status_reason,
         runtime: Some(AgentSessionRuntime::default()),
         project_id: None,
         project_path: Some(scope.project_path.clone()),
@@ -275,7 +297,7 @@ fn map_candidate(
             .created_at
             .map(|ts| ts.to_rfc3339_opts(SecondsFormat::Secs, true)),
         last_activity_at: last_activity_at.to_rfc3339_opts(SecondsFormat::Secs, true),
-        waiting_since: None,
+        waiting_since,
         duration_ms: None,
         resume_command: Some(AgentSessionResumeCommand {
             display,
@@ -425,6 +447,9 @@ fn apply_terminal_status_overlay(
         .filter_map(|surface| surface_status_evidence(surface))
         .collect::<Vec<_>>();
     if evidences.is_empty() {
+        return;
+    }
+    if matches!(session.status_source, AgentSessionStatusSource::SourceLog) {
         return;
     }
 
@@ -728,6 +753,19 @@ mod tests {
                 "text": source_session_id,
             })
             .to_string(),
+        );
+    }
+
+    fn write_codex_detail(home: &Path, source_session_id: &str, rows: Vec<serde_json::Value>) {
+        write(
+            &home
+                .join(".codex/sessions/2026/07/04")
+                .join(format!("rollout-{source_session_id}.jsonl")),
+            &rows
+                .into_iter()
+                .map(|row| row.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
         );
     }
 
@@ -1133,6 +1171,167 @@ mod tests {
         assert_eq!(
             session.status_confidence,
             AgentSessionStatusConfidence::Strong
+        );
+    }
+
+    #[test]
+    fn agent_sessions_codex_tail_approval_sets_source_log_waiting_status() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_codex_detail(
+            &home,
+            "needs-approval",
+            vec![
+                serde_json::json!({
+                    "type": "session_meta",
+                    "payload": {
+                        "id": "needs-approval",
+                        "cwd": project.to_string_lossy()
+                    },
+                    "timestamp": "2026-07-04T10:00:00Z"
+                }),
+                serde_json::json!({
+                    "type": "event_msg",
+                    "payload": { "type": "task_started" },
+                    "timestamp": "2026-07-04T10:01:00Z"
+                }),
+                serde_json::json!({
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "name": "exec_command",
+                        "call_id": "call-approval",
+                        "arguments": "{\"cmd\":\"date\",\"sandbox_permissions\":\"require_escalated\"}"
+                    },
+                    "timestamp": "2026-07-04T10:02:00Z"
+                }),
+            ],
+        );
+
+        let state = AgentSessionsState::with_home(home);
+        let result = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("list sessions");
+
+        let session = &result.sessions[0];
+        assert_eq!(session.status, AgentSessionStatus::Active);
+        assert_eq!(
+            session.active_flags,
+            vec![AgentSessionActiveFlag::WaitingOnApproval]
+        );
+        assert_eq!(session.status_source, AgentSessionStatusSource::SourceLog);
+        assert_eq!(
+            session.waiting_since.as_deref(),
+            Some("2026-07-04T10:02:00Z")
+        );
+    }
+
+    #[test]
+    fn agent_sessions_codex_tail_request_user_input_sets_source_log_waiting_status() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_codex_detail(
+            &home,
+            "needs-input",
+            vec![
+                serde_json::json!({
+                    "type": "session_meta",
+                    "payload": {
+                        "id": "needs-input",
+                        "cwd": project.to_string_lossy()
+                    },
+                    "timestamp": "2026-07-04T10:00:00Z"
+                }),
+                serde_json::json!({
+                    "type": "event_msg",
+                    "payload": { "type": "task_started" },
+                    "timestamp": "2026-07-04T10:01:00Z"
+                }),
+                serde_json::json!({
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "name": "request_user_input",
+                        "call_id": "call-input",
+                        "arguments": "{}"
+                    },
+                    "timestamp": "2026-07-04T10:02:00Z"
+                }),
+            ],
+        );
+
+        let state = AgentSessionsState::with_home(home);
+        let result = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("list sessions");
+
+        let session = &result.sessions[0];
+        assert_eq!(session.status, AgentSessionStatus::Active);
+        assert_eq!(
+            session.active_flags,
+            vec![AgentSessionActiveFlag::WaitingOnUserInput]
+        );
+        assert_eq!(session.status_source, AgentSessionStatusSource::SourceLog);
+    }
+
+    #[test]
+    fn agent_sessions_source_log_done_overrides_terminal_waiting_evidence() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_codex_detail(
+            &home,
+            "answered",
+            vec![
+                serde_json::json!({
+                    "type": "session_meta",
+                    "payload": {
+                        "id": "answered",
+                        "cwd": project.to_string_lossy()
+                    },
+                    "timestamp": "2026-07-04T10:00:00Z"
+                }),
+                serde_json::json!({
+                    "type": "event_msg",
+                    "payload": { "type": "task_started" },
+                    "timestamp": "2026-07-04T10:01:00Z"
+                }),
+                serde_json::json!({
+                    "type": "event_msg",
+                    "payload": { "type": "task_complete" },
+                    "timestamp": "2026-07-04T10:02:00Z"
+                }),
+            ],
+        );
+
+        let state = AgentSessionsState::with_home(home);
+        let result = list_sessions_with_surfaces(
+            &state,
+            project.to_string_lossy().into_owned(),
+            false,
+            vec![surface(
+                "pty-answered",
+                AgentSessionSource::Codex,
+                "answered",
+                Some(evidence(
+                    AgentSessionStatus::Active,
+                    vec![AgentSessionActiveFlag::WaitingOnApproval],
+                    "stale approval prompt",
+                )),
+            )],
+        )
+        .expect("list sessions");
+
+        let session = &result.sessions[0];
+        assert_eq!(session.status, AgentSessionStatus::Done);
+        assert!(session.active_flags.is_empty());
+        assert_eq!(session.status_source, AgentSessionStatusSource::SourceLog);
+        assert_eq!(
+            session.runtime.as_ref().expect("runtime").pty_id.as_deref(),
+            Some("pty-answered")
         );
     }
 

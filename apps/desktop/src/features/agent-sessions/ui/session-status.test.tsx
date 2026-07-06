@@ -57,6 +57,23 @@ test("status label stays normalized when a terminal is open", () => {
   );
 });
 
+test("pid-only runtime without managed pty is not a terminal-open marker", () => {
+  const doneWithPidOnlyRuntime = session({
+    status: "done",
+    runtime: { live: true, pid: 4242 },
+  });
+
+  expect(statusLabel(doneWithPidOnlyRuntime)).toBe(m.sessions_status_done());
+  expect(statusMarkerLabel(doneWithPidOnlyRuntime)).toBe(
+    m.sessions_status_done(),
+  );
+  expect(
+    renderToStaticMarkup(
+      <SessionStatusMarker session={doneWithPidOnlyRuntime} />,
+    ),
+  ).toBe("");
+});
+
 test("stronger status markers are not replaced by terminal-open marker", () => {
   const failedWithOpenTerminal = session({
     status: "failed",

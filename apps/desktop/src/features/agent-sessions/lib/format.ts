@@ -68,7 +68,7 @@ export function sessionTimeLabel(session: AgentSession): string {
     return shortDuration(session.durationMs);
   }
 
-  if (session.runtime?.live) {
+  if (session.runtime?.ptyId) {
     return shortRelativeTime(
       session.runtime.lastOutputAt ?? session.lastActivityAt,
     );

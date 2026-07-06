@@ -6,15 +6,16 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::{
-    CandidateCwdSource, PersistedAgentSessionCandidate, SourceFingerprint, SourceInputFile,
-    SourceScan, build_fingerprint, collect_optional_file, collect_recursive_dirs,
-    collect_recursive_files, metadata_mtime, nested_string_field, read_jsonl, short_id,
-    source_file_ref, string_field, timestamp_from_fields, title_from_text,
+    CandidateCwdSource, PersistedAgentSessionCandidate, PersistedAgentSessionStatus,
+    SourceFingerprint, SourceInputFile, SourceScan, build_fingerprint, collect_optional_file,
+    collect_recursive_dirs, collect_recursive_files, metadata_mtime, nested_string_field,
+    read_jsonl, short_id, source_file_ref, string_field, timestamp_from_fields, title_from_text,
     user_prompt_title_from_text,
 };
 use crate::agent_sessions::types::{
     AgentSessionCounts, AgentSessionDiagnosticSeverity, AgentSessionSource,
-    AgentSessionSourceReport, AgentSessionSourceStatus, AgentSessionTitleSource,
+    AgentSessionSourceReport, AgentSessionSourceStatus, AgentSessionStatus,
+    AgentSessionStatusConfidence, AgentSessionTitleSource,
 };
 
 const SOURCE: AgentSessionSource = AgentSessionSource::ClaudeCode;
@@ -217,6 +218,7 @@ fn parse_detail(
             parsed.non_cli_entrypoint = true;
             return;
         }
+        parsed.tail.observe(&value);
 
         let line_type = string_field(&value, &["type"]).unwrap_or_default();
         match line_type {
@@ -315,6 +317,9 @@ fn parse_detail(
         {
             builder.observe_timestamp(ts, 2);
         }
+    }
+    if let Some(status) = parsed.tail.finish() {
+        builder.set_status(status);
     }
 }
 
@@ -497,6 +502,18 @@ impl SessionBuilder {
         }
     }
 
+    fn set_status(&mut self, status: PersistedAgentSessionStatus) {
+        let should_replace = self
+            .candidate
+            .status
+            .as_ref()
+            .and_then(|current| current.observed_at)
+            .is_none_or(|current| status.observed_at.is_some_and(|next| next >= current));
+        if should_replace {
+            self.candidate.status = Some(status);
+        }
+    }
+
     fn finish(mut self) -> PersistedAgentSessionCandidate {
         if self.candidate.title.is_none() {
             self.candidate.title = Some(short_id(&self.candidate.source_session_id));
@@ -518,6 +535,7 @@ struct DetailParse {
     line_count: u32,
     first_line: Option<u64>,
     non_cli_entrypoint: bool,
+    tail: ClaudeTailState,
 }
 
 impl DetailParse {
@@ -538,6 +556,120 @@ impl DetailParse {
             self.last_timestamp = Some(timestamp);
         }
     }
+}
+
+#[derive(Debug, Default)]
+struct ClaudeTailState {
+    status: Option<PersistedAgentSessionStatus>,
+    open_tool_ids: Vec<String>,
+}
+
+impl ClaudeTailState {
+    fn observe(&mut self, value: &Value) {
+        let observed_at = timestamp_from_fields(value);
+        match string_field(value, &["type"]) {
+            Some("assistant") => self.observe_assistant(value, observed_at),
+            Some("user") => self.observe_user(value, observed_at),
+            Some("progress") => {
+                if !self.open_tool_ids.is_empty() {
+                    self.set_active(observed_at, "claude tool progress");
+                }
+            }
+            Some("system") => {
+                if matches!(
+                    self.status.as_ref().map(|status| status.status),
+                    Some(AgentSessionStatus::Done)
+                ) {
+                    return;
+                }
+                if !self.open_tool_ids.is_empty() {
+                    self.set_active(observed_at, "claude task in progress");
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn finish(self) -> Option<PersistedAgentSessionStatus> {
+        self.status
+    }
+
+    fn observe_assistant(&mut self, value: &Value, observed_at: Option<DateTime<Utc>>) {
+        let tool_ids = assistant_tool_use_ids(value);
+        if !tool_ids.is_empty() {
+            self.open_tool_ids.extend(tool_ids);
+            self.set_active(observed_at, "claude tool call in progress");
+            return;
+        }
+
+        let stop_reason = nested_string_field(value, &["message", "stop_reason"]);
+        if matches!(stop_reason, Some("end_turn" | "stop_sequence")) {
+            self.open_tool_ids.clear();
+            self.status = Some(PersistedAgentSessionStatus {
+                status: AgentSessionStatus::Done,
+                active_flags: Vec::new(),
+                confidence: AgentSessionStatusConfidence::Strong,
+                reason: "claude turn complete".to_string(),
+                observed_at,
+                waiting_since: None,
+            });
+            return;
+        }
+
+        if !self.open_tool_ids.is_empty() {
+            self.set_active(observed_at, "claude task in progress");
+        }
+    }
+
+    fn observe_user(&mut self, value: &Value, observed_at: Option<DateTime<Utc>>) {
+        let result_ids = user_tool_result_ids(value);
+        if !result_ids.is_empty() {
+            self.open_tool_ids
+                .retain(|id| !result_ids.iter().any(|result_id| result_id == id));
+            self.set_active(observed_at, "claude tool result received");
+            return;
+        }
+
+        self.open_tool_ids.clear();
+        self.set_active(observed_at, "claude user prompt submitted");
+    }
+
+    fn set_active(&mut self, observed_at: Option<DateTime<Utc>>, reason: &str) {
+        self.status = Some(PersistedAgentSessionStatus {
+            status: AgentSessionStatus::Active,
+            active_flags: Vec::new(),
+            confidence: AgentSessionStatusConfidence::Strong,
+            reason: reason.to_string(),
+            observed_at,
+            waiting_since: None,
+        });
+    }
+}
+
+fn assistant_tool_use_ids(value: &Value) -> Vec<String> {
+    message_content_items(value)
+        .into_iter()
+        .filter(|item| string_field(item, &["type"]).is_some_and(|kind| kind == "tool_use"))
+        .filter_map(|item| string_field(item, &["id"]).map(str::to_string))
+        .collect()
+}
+
+fn user_tool_result_ids(value: &Value) -> Vec<String> {
+    message_content_items(value)
+        .into_iter()
+        .filter(|item| string_field(item, &["type"]).is_some_and(|kind| kind == "tool_result"))
+        .filter_map(|item| string_field(item, &["tool_use_id"]).map(str::to_string))
+        .collect()
+}
+
+fn message_content_items(value: &Value) -> Vec<&Value> {
+    value
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .or_else(|| value.get("content"))
+        .and_then(Value::as_array)
+        .map(|items| items.iter().collect())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -605,6 +737,40 @@ mod tests {
                 .to_rfc3339(),
             "2026-07-04T09:03:00+00:00"
         );
+    }
+
+    #[test]
+    fn agent_sessions_claude_tail_tool_use_sets_active_status() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().join(".claude");
+        write(
+            &root.join("projects/-tmp-project/claude-active.jsonl"),
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"date"}}],"stop_reason":"tool_use"},"timestamp":"2026-07-04T09:00:00Z"}"#,
+        );
+
+        let scan = scan_root(&root);
+        assert_eq!(scan.candidates.len(), 1);
+        let status = scan.candidates[0].status.as_ref().expect("status");
+        assert_eq!(status.status, AgentSessionStatus::Active);
+        assert!(status.active_flags.is_empty());
+        assert_eq!(status.reason, "claude tool call in progress");
+    }
+
+    #[test]
+    fn agent_sessions_claude_tail_end_turn_sets_done_status() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().join(".claude");
+        write(
+            &root.join("projects/-tmp-project/claude-done.jsonl"),
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"},"timestamp":"2026-07-04T09:00:00Z"}"#,
+        );
+
+        let scan = scan_root(&root);
+        assert_eq!(scan.candidates.len(), 1);
+        let status = scan.candidates[0].status.as_ref().expect("status");
+        assert_eq!(status.status, AgentSessionStatus::Done);
+        assert!(status.active_flags.is_empty());
+        assert_eq!(status.reason, "claude turn complete");
     }
 
     #[test]

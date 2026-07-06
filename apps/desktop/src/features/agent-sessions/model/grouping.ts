@@ -102,7 +102,7 @@ export function filterAgentSessions(
 export function isNowSession(session: AgentSession): boolean {
   return (
     session.status === "active" ||
-    session.runtime?.live === true ||
+    Boolean(session.runtime?.ptyId) ||
     hasActionableWait(session)
   );
 }
@@ -240,7 +240,7 @@ function compareNowSessions(
 function nowPriority(session: AgentSession): number {
   if (hasActionableWait(session)) return 3;
   if (session.status === "active") return 2;
-  if (session.runtime?.live) return 1;
+  if (session.runtime?.ptyId) return 1;
   return 0;
 }
 

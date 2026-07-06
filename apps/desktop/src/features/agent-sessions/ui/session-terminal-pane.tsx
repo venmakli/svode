@@ -87,9 +87,7 @@ export function SessionTerminalPane({
           />
         ) : controller.reenteringSessionId ? (
           <TerminalPendingState />
-        ) : controller.selectedReentryResult?.mode ===
-            "external-active-unattachable" ||
-          controller.selectedReentryResult?.mode === "error" ? (
+        ) : controller.selectedReentryResult?.mode === "error" ? (
           <ReentryErrorState
             result={controller.selectedReentryResult}
             onCopyCommand={onCopyCommand}

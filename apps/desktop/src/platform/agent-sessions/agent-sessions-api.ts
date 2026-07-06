@@ -26,7 +26,6 @@ export type AgentSessionStatusSource =
   | "svode-agent-runtime"
   | "source-log"
   | "source-index"
-  | "process-scan"
   | "fallback";
 export type AgentSessionStatusConfidence =
   | "strong"
@@ -195,7 +194,6 @@ export interface AgentSessionsPinResult {
 export type AgentSessionReentryMode =
   | "focused-managed-pty"
   | "spawned-resume-pty"
-  | "external-active-unattachable"
   | "error";
 
 export type AgentSessionReentryErrorCode =
@@ -203,7 +201,6 @@ export type AgentSessionReentryErrorCode =
   | "cli-not-found"
   | "cwd-not-accessible"
   | "resume-unavailable"
-  | "external-process-unattachable"
   | "unknown";
 
 export interface AgentSessionReentryError {

@@ -7,15 +7,16 @@ use regex::Regex;
 use serde_json::Value;
 
 use super::{
-    CandidateCwdSource, PersistedAgentSessionCandidate, SourceFingerprint, SourceInputFile,
-    SourceScan, build_fingerprint, collect_optional_file, collect_recursive_dirs,
-    collect_recursive_files, metadata_mtime, nested_string_field, read_jsonl, short_id,
-    source_file_ref, string_field, timestamp_from_fields, title_from_text,
+    CandidateCwdSource, PersistedAgentSessionCandidate, PersistedAgentSessionStatus,
+    SourceFingerprint, SourceInputFile, SourceScan, build_fingerprint, collect_optional_file,
+    collect_recursive_dirs, collect_recursive_files, metadata_mtime, nested_string_field,
+    read_jsonl, short_id, source_file_ref, string_field, timestamp_from_fields, title_from_text,
     user_prompt_title_from_text,
 };
 use crate::agent_sessions::types::{
-    AgentSessionCounts, AgentSessionDiagnosticSeverity, AgentSessionSource,
-    AgentSessionSourceReport, AgentSessionSourceStatus, AgentSessionTitleSource,
+    AgentSessionActiveFlag, AgentSessionCounts, AgentSessionDiagnosticSeverity, AgentSessionSource,
+    AgentSessionSourceReport, AgentSessionSourceStatus, AgentSessionStatus,
+    AgentSessionStatusConfidence, AgentSessionTitleSource,
 };
 
 const SOURCE: AgentSessionSource = AgentSessionSource::Codex;
@@ -282,6 +283,7 @@ fn parse_detail(
     let (line_count, malformed_count) = read_jsonl(path, report, |line, value| {
         parsed.line_count += 1;
         parsed.observe_timestamp(timestamp_from_fields(&value));
+        parsed.tail.observe(&value);
 
         let event_type = string_field(&value, &["type"]).unwrap_or_default();
         if event_type == "session_meta" {
@@ -377,6 +379,9 @@ fn parse_detail(
     if parsed.id_from_filename {
         builder.add_note("id-from-filename");
     }
+    if let Some(status) = parsed.tail.finish() {
+        builder.set_status(status);
+    }
 }
 
 fn codex_history_id(value: &Value) -> Option<String> {
@@ -439,6 +444,11 @@ fn extract_codex_user_text(payload: &Value) -> Option<String> {
 fn is_function_call(value: &Value) -> bool {
     string_field(value, &["type"]).is_some_and(|kind| kind == "function_call")
         || value.get("function_call").is_some()
+}
+
+fn is_function_call_output(value: &Value) -> bool {
+    string_field(value, &["type"])
+        .is_some_and(|kind| matches!(kind, "function_call_output" | "custom_tool_call_output"))
 }
 
 fn is_tool_or_function_payload(value: &Value) -> bool {
@@ -583,6 +593,18 @@ impl SessionBuilder {
         }
     }
 
+    fn set_status(&mut self, status: PersistedAgentSessionStatus) {
+        let should_replace = self
+            .candidate
+            .status
+            .as_ref()
+            .and_then(|current| current.observed_at)
+            .is_none_or(|current| status.observed_at.is_some_and(|next| next >= current));
+        if should_replace {
+            self.candidate.status = Some(status);
+        }
+    }
+
     fn finish(mut self) -> PersistedAgentSessionCandidate {
         if self.candidate.title.is_none() {
             self.candidate.title = Some(short_id(&self.candidate.source_session_id));
@@ -604,6 +626,7 @@ struct DetailParse {
     line_count: u32,
     first_line: Option<u64>,
     id_from_filename: bool,
+    tail: CodexTailState,
 }
 
 impl DetailParse {
@@ -624,6 +647,200 @@ impl DetailParse {
             self.last_timestamp = Some(timestamp);
         }
     }
+}
+
+#[derive(Debug, Default)]
+struct CodexTailState {
+    status: Option<PersistedAgentSessionStatus>,
+    turn_open: bool,
+    open_calls: HashMap<String, CodexOpenCall>,
+}
+
+#[derive(Debug, Clone)]
+struct CodexOpenCall {
+    flag: Option<AgentSessionActiveFlag>,
+    observed_at: Option<DateTime<Utc>>,
+}
+
+impl CodexTailState {
+    fn observe(&mut self, value: &Value) {
+        let event_type = string_field(value, &["type"]).unwrap_or_default();
+        let payload = value.get("payload").unwrap_or(value);
+        let payload_type = string_field(payload, &["type"]).unwrap_or_default();
+        let observed_at = timestamp_from_fields(payload).or_else(|| timestamp_from_fields(value));
+
+        if event_type == "event_msg" {
+            match payload_type {
+                "task_started" => {
+                    self.turn_open = true;
+                    self.open_calls.clear();
+                    self.set_active(Vec::new(), None, observed_at, "codex task started");
+                }
+                "task_complete" => {
+                    self.turn_open = false;
+                    self.open_calls.clear();
+                    self.status = Some(PersistedAgentSessionStatus {
+                        status: AgentSessionStatus::Done,
+                        active_flags: Vec::new(),
+                        confidence: AgentSessionStatusConfidence::Strong,
+                        reason: "codex task complete".to_string(),
+                        observed_at,
+                        waiting_since: None,
+                    });
+                }
+                "turn_aborted" => {
+                    self.turn_open = false;
+                    self.open_calls.clear();
+                    let reason = string_field(payload, &["reason"])
+                        .map(|reason| format!("codex turn aborted: {reason}"))
+                        .unwrap_or_else(|| "codex turn aborted".to_string());
+                    self.status = Some(PersistedAgentSessionStatus {
+                        status: AgentSessionStatus::Stopped,
+                        active_flags: Vec::new(),
+                        confidence: AgentSessionStatusConfidence::Strong,
+                        reason,
+                        observed_at,
+                        waiting_since: None,
+                    });
+                }
+                _ => {
+                    if self.turn_open {
+                        self.refresh_active(observed_at);
+                    }
+                }
+            }
+            return;
+        }
+
+        if event_type != "response_item" {
+            return;
+        }
+
+        if is_codex_tool_call(payload) {
+            self.turn_open = true;
+            if let Some(call_id) = string_field(payload, &["call_id"]) {
+                self.open_calls.insert(
+                    call_id.to_string(),
+                    CodexOpenCall {
+                        flag: codex_wait_flag(payload),
+                        observed_at,
+                    },
+                );
+            }
+            self.refresh_active(observed_at);
+            return;
+        }
+
+        if is_function_call_output(payload) {
+            if let Some(call_id) = string_field(payload, &["call_id"]) {
+                self.open_calls.remove(call_id);
+            }
+            if self.turn_open {
+                self.refresh_active(observed_at);
+            }
+            return;
+        }
+
+        if self.turn_open {
+            self.refresh_active(observed_at);
+        }
+    }
+
+    fn finish(self) -> Option<PersistedAgentSessionStatus> {
+        self.status
+    }
+
+    fn refresh_active(&mut self, observed_at: Option<DateTime<Utc>>) {
+        let mut approval_since: Option<DateTime<Utc>> = None;
+        let mut input_since: Option<DateTime<Utc>> = None;
+        let mut has_approval = false;
+        let mut has_input = false;
+        for call in self.open_calls.values() {
+            match call.flag {
+                Some(AgentSessionActiveFlag::WaitingOnApproval) => {
+                    has_approval = true;
+                    approval_since = earliest_timestamp(approval_since, call.observed_at);
+                }
+                Some(AgentSessionActiveFlag::WaitingOnUserInput) => {
+                    has_input = true;
+                    input_since = earliest_timestamp(input_since, call.observed_at);
+                }
+                None => {}
+            }
+        }
+
+        let (flags, waiting_since) = if has_approval {
+            (
+                vec![AgentSessionActiveFlag::WaitingOnApproval],
+                approval_since,
+            )
+        } else if has_input {
+            (
+                vec![AgentSessionActiveFlag::WaitingOnUserInput],
+                input_since,
+            )
+        } else {
+            (Vec::new(), None)
+        };
+
+        let reason = if flags.contains(&AgentSessionActiveFlag::WaitingOnApproval) {
+            "codex task waiting for approval"
+        } else if flags.contains(&AgentSessionActiveFlag::WaitingOnUserInput) {
+            "codex task waiting for user input"
+        } else {
+            "codex task in progress"
+        };
+        self.set_active(flags, waiting_since, observed_at, reason);
+    }
+
+    fn set_active(
+        &mut self,
+        active_flags: Vec<AgentSessionActiveFlag>,
+        waiting_since: Option<DateTime<Utc>>,
+        observed_at: Option<DateTime<Utc>>,
+        reason: &str,
+    ) {
+        self.status = Some(PersistedAgentSessionStatus {
+            status: AgentSessionStatus::Active,
+            active_flags,
+            confidence: AgentSessionStatusConfidence::Strong,
+            reason: reason.to_string(),
+            observed_at,
+            waiting_since,
+        });
+    }
+}
+
+fn earliest_timestamp(
+    current: Option<DateTime<Utc>>,
+    next: Option<DateTime<Utc>>,
+) -> Option<DateTime<Utc>> {
+    match (current, next) {
+        (Some(current), Some(next)) => Some(current.min(next)),
+        (None, Some(next)) => Some(next),
+        (current, None) => current,
+    }
+}
+
+fn is_codex_tool_call(payload: &Value) -> bool {
+    string_field(payload, &["type"])
+        .is_some_and(|kind| matches!(kind, "function_call" | "custom_tool_call"))
+}
+
+fn codex_wait_flag(payload: &Value) -> Option<AgentSessionActiveFlag> {
+    match string_field(payload, &["name"]) {
+        Some("request_user_input") => Some(AgentSessionActiveFlag::WaitingOnUserInput),
+        Some("exec_command") => exec_command_wait_flag(payload),
+        _ => None,
+    }
+}
+
+fn exec_command_wait_flag(payload: &Value) -> Option<AgentSessionActiveFlag> {
+    let args = string_field(payload, &["arguments"])
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())?;
+    string_field(&args, &["sandbox_permissions"])
+        .is_some_and(|value| value == "require_escalated")
+        .then_some(AgentSessionActiveFlag::WaitingOnApproval)
 }
 
 #[cfg(test)]

@@ -127,6 +127,19 @@ test("now sorting puts actionable waiting above active and live terminals", () =
   expect(isNowSession(live)).toBe(true);
 });
 
+test("process-only runtime evidence does not make a session current", () => {
+  const processOnly = session({
+    id: "codex:process-only",
+    runtime: { live: true, pid: 4242 },
+  });
+
+  const groups = buildAgentSessionGroups({ sessions: [processOnly] });
+
+  expect(isNowSession(processOnly)).toBe(false);
+  expect(groups.now).toBeNull();
+  expect(groups.spaces[0]?.sessions[0]?.id).toBe(processOnly.id);
+});
+
 test("space pagination uses per-group visible limits", () => {
   const sessions = Array.from({ length: 12 }, (_, index) =>
     session({

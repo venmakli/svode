@@ -94,7 +94,6 @@ pub enum AgentSessionStatusSource {
     SvodeAgentRuntime,
     SourceLog,
     SourceIndex,
-    ProcessScan,
     Fallback,
 }
 
@@ -416,7 +415,6 @@ pub struct AgentSessionsPinResult {
 pub enum AgentSessionReentryMode {
     FocusedManagedPty,
     SpawnedResumePty,
-    ExternalActiveUnattachable,
     Error,
 }
 
@@ -427,7 +425,6 @@ pub enum AgentSessionReentryErrorCode {
     CliNotFound,
     CwdNotAccessible,
     ResumeUnavailable,
-    ExternalProcessUnattachable,
     Unknown,
 }
 

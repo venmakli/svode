@@ -83,7 +83,7 @@ export function SessionRow({
 }: SessionRowProps) {
   const [actionsOpen, setActionsOpen] = useState(false);
   const time = sessionTimeLabel(session);
-  const hasOpenTerminal = session.runtime?.live === true;
+  const hasOpenTerminal = Boolean(session.runtime?.ptyId);
   const canPin =
     session.source !== "unknown" && !isPendingSessionId(session.id);
 

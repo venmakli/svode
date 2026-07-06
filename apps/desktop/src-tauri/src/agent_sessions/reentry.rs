@@ -6,7 +6,7 @@ use super::read_model;
 use super::types::{
     AgentSession, AgentSessionReentryError, AgentSessionReentryErrorCode, AgentSessionReentryMode,
     AgentSessionReentryResult, AgentSessionResumeCommand, AgentSessionScopeKind,
-    AgentSessionScopeStatus, AgentSessionSource, AgentSessionStatus, AgentSessionStatusSource,
+    AgentSessionScopeStatus, AgentSessionSource,
 };
 use crate::agent::types::load_space_agent_config;
 use crate::error::AppError;
@@ -127,24 +127,6 @@ where
         }
     };
     let scope_dir = scope_config_dir(session, project);
-    if is_external_active_unattachable(session) {
-        let command = resolve_cli(session, &scope_dir)
-            .map(|program| resolved_resume_command(session, program, cwd.clone()))
-            .unwrap_or_else(|| fallback_resume_command(session, Some(cwd.clone())));
-        return Ok(AgentSessionReentryResult {
-            mode: AgentSessionReentryMode::ExternalActiveUnattachable,
-            session_id: session.id.clone(),
-            pty_id: None,
-            command: Some(command),
-            cwd: Some(cwd),
-            error: Some(AgentSessionReentryError {
-                code: AgentSessionReentryErrorCode::ExternalProcessUnattachable,
-                message: "Agent session is active in an external process that Svode cannot attach"
-                    .to_string(),
-            }),
-        });
-    }
-
     let Some(program) = resolve_cli(session, &scope_dir) else {
         let command = fallback_resume_command(session, Some(cwd.clone()));
         return Ok(error_result(
@@ -200,11 +182,6 @@ fn live_managed_pty_id(session: &AgentSession) -> Option<String> {
         .as_ref()
         .filter(|runtime| runtime.live)
         .and_then(|runtime| runtime.pty_id.clone())
-}
-
-fn is_external_active_unattachable(session: &AgentSession) -> bool {
-    matches!(session.status, AgentSessionStatus::Active)
-        && matches!(session.status_source, AgentSessionStatusSource::ProcessScan)
 }
 
 fn resolved_resume_command(
@@ -376,11 +353,6 @@ fn common_cli_paths(source: AgentSessionSource, home_dir: &Path) -> Vec<PathBuf>
 mod tests {
     use super::*;
     use crate::agent_sessions::AgentSessionsState;
-    use crate::agent_sessions::types::{
-        AgentSessionActiveFlag, AgentSessionCapabilities, AgentSessionRuntime,
-        AgentSessionScopeConfidence, AgentSessionSourceMeta, AgentSessionStatusConfidence,
-        AgentSessionTitleSource,
-    };
     use crate::terminal::AgentTerminalSurface;
 
     fn write(path: &Path, data: &str) {
@@ -439,45 +411,6 @@ mod tests {
             exit_code: None,
             failure_reason: None,
             status_evidence: None,
-        }
-    }
-
-    fn base_session(project: &Path) -> AgentSession {
-        AgentSession {
-            id: "codex:external".to_string(),
-            source: AgentSessionSource::Codex,
-            source_session_id: "external".to_string(),
-            title: "external".to_string(),
-            title_source: AgentSessionTitleSource::SessionId,
-            status: AgentSessionStatus::Active,
-            active_flags: vec![AgentSessionActiveFlag::WaitingOnUserInput],
-            status_source: AgentSessionStatusSource::ProcessScan,
-            status_confidence: AgentSessionStatusConfidence::Medium,
-            status_reason: None,
-            runtime: Some(AgentSessionRuntime::default()),
-            project_id: None,
-            project_path: Some(project.to_string_lossy().into_owned()),
-            scope_kind: AgentSessionScopeKind::Project,
-            scope_status: AgentSessionScopeStatus::Ready,
-            space_id: None,
-            space_path: None,
-            scope_confidence: AgentSessionScopeConfidence::Exact,
-            cwd: Some(project.to_string_lossy().into_owned()),
-            started_at: None,
-            last_activity_at: "2026-07-04T10:00:00Z".to_string(),
-            waiting_since: None,
-            duration_ms: None,
-            resume_command: Some(AgentSessionResumeCommand {
-                display: "codex resume external".to_string(),
-                program: "codex".to_string(),
-                args: vec!["resume".to_string(), "external".to_string()],
-                cwd: Some(project.to_string_lossy().into_owned()),
-            }),
-            source_file: None,
-            counts: None,
-            capabilities: AgentSessionCapabilities::default(),
-            pinned: false,
-            source_meta: AgentSessionSourceMeta::default(),
         }
     }
 
@@ -548,57 +481,6 @@ mod tests {
             result.command.as_ref().expect("command").program,
             canonical_display(&bin)
         );
-    }
-
-    #[test]
-    fn agent_sessions_reentry_returns_external_active_unattachable() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let project = temp.path().join("project");
-        fs::create_dir_all(&project).expect("project");
-        let session = base_session(&project);
-
-        let result = reenter_scoped_session(
-            &session,
-            &project,
-            |_, _| Some("/usr/local/bin/codex".to_string()),
-            |_| panic!("spawn should not run for external process"),
-        )
-        .expect("reenter");
-
-        assert_eq!(
-            result.mode,
-            AgentSessionReentryMode::ExternalActiveUnattachable
-        );
-        assert_eq!(
-            result.error.as_ref().expect("error").code,
-            AgentSessionReentryErrorCode::ExternalProcessUnattachable
-        );
-        assert_eq!(
-            result.command.as_ref().expect("command").args,
-            vec!["resume", "external"]
-        );
-    }
-
-    #[test]
-    fn agent_sessions_reentry_external_active_does_not_require_cli_resolution() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let project = temp.path().join("project");
-        fs::create_dir_all(&project).expect("project");
-        let session = base_session(&project);
-
-        let result = reenter_scoped_session(
-            &session,
-            &project,
-            |_, _| None,
-            |_| panic!("spawn should not run for external process"),
-        )
-        .expect("reenter");
-
-        assert_eq!(
-            result.mode,
-            AgentSessionReentryMode::ExternalActiveUnattachable
-        );
-        assert_eq!(result.command.as_ref().expect("command").program, "codex");
     }
 
     #[test]
