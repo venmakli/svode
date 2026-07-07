@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
+import {
+  gitAuthChallengeFromRemoteUrl,
+  saveGitRemoteCredentials,
+  type GitAuthChallenge,
+} from "@/features/git";
 import type { LfsState } from "@/features/space";
 import {
   diagnoseLfsRemote as diagnoseLfsRemoteApi,
@@ -32,6 +37,13 @@ export function useSpaceStorageLfs({
     useState<LfsRemoteDiagnostic | null>(null);
   const [lfsRemoteDiagnosticInFlight, setLfsRemoteDiagnosticInFlight] =
     useState(false);
+  const [lfsRemoteAuthOpen, setLfsRemoteAuthOpen] = useState(false);
+  const [lfsRemoteAuthChallenge, setLfsRemoteAuthChallenge] =
+    useState<GitAuthChallenge | null>(null);
+  const [lfsRemoteAuthSaving, setLfsRemoteAuthSaving] = useState(false);
+  const [lfsRemoteAuthError, setLfsRemoteAuthError] = useState<string | null>(
+    null,
+  );
   const lfsRemoteDiagnosticInFlightRef = useRef(false);
 
   const loadLfsState = useCallback(async () => {
@@ -65,34 +77,50 @@ export function useSpaceStorageLfs({
     void loadLfsState();
   }, [open, loadLfsAvailability, loadLfsState]);
 
+  const runLfsRemoteDiagnostic = useCallback(
+    async (promptForAuth: boolean) => {
+      if (!projectPath || lfsRemoteDiagnosticInFlightRef.current) return null;
+      lfsRemoteDiagnosticInFlightRef.current = true;
+      setLfsRemoteDiagnosticInFlight(true);
+      setLfsRemoteDiagnostic(null);
+      try {
+        const diagnostic = await diagnoseLfsRemoteApi({
+          projectPath,
+          spaceId: currentSpaceId,
+        });
+        setLfsRemoteDiagnostic(diagnostic);
+        setLfsState(diagnostic.state);
+        const authChallenge = authChallengeFromLfsDiagnostic(diagnostic);
+        setLfsRemoteAuthChallenge(authChallenge);
+        if (promptForAuth && authChallenge) {
+          setLfsRemoteAuthError(null);
+          setLfsRemoteAuthOpen(true);
+        }
+        return diagnostic;
+      } catch (err) {
+        console.error("diagnose_lfs_remote failed:", err);
+        toast.error(m.toast_error());
+        return null;
+      } finally {
+        lfsRemoteDiagnosticInFlightRef.current = false;
+        setLfsRemoteDiagnosticInFlight(false);
+      }
+    },
+    [projectPath, currentSpaceId],
+  );
+
   const diagnoseLfsRemote = useCallback(async () => {
-    if (!projectPath || lfsRemoteDiagnosticInFlightRef.current) return;
-    lfsRemoteDiagnosticInFlightRef.current = true;
-    setLfsRemoteDiagnosticInFlight(true);
-    setLfsRemoteDiagnostic(null);
-    try {
-      const diagnostic = await diagnoseLfsRemoteApi({
-        projectPath,
-        spaceId: currentSpaceId,
-      });
-      setLfsRemoteDiagnostic(diagnostic);
-      setLfsState(diagnostic.state);
-    } catch (err) {
-      console.error("diagnose_lfs_remote failed:", err);
-      toast.error(m.toast_error());
-    } finally {
-      lfsRemoteDiagnosticInFlightRef.current = false;
-      setLfsRemoteDiagnosticInFlight(false);
-    }
-  }, [projectPath, currentSpaceId]);
+    await runLfsRemoteDiagnostic(true);
+  }, [runLfsRemoteDiagnostic]);
 
   useEffect(() => {
     if (!open || !lfsRemoteEnabled) {
       setLfsRemoteDiagnostic(null);
+      setLfsRemoteAuthChallenge(null);
       return;
     }
-    void diagnoseLfsRemote();
-  }, [open, lfsRemoteEnabled, diagnoseLfsRemote]);
+    void runLfsRemoteDiagnostic(false);
+  }, [open, lfsRemoteEnabled, runLfsRemoteDiagnostic]);
 
   useEffect(() => {
     if (!open || !projectPath) return;
@@ -127,13 +155,65 @@ export function useSpaceStorageLfs({
         spaceId: currentSpaceId,
       });
       setLfsState(next);
+      if (next === "missing-creds" && lfsRemoteEnabled) {
+        await runLfsRemoteDiagnostic(true);
+      }
     } catch (err) {
       console.error("repair_lfs failed:", err);
       toast.error(m.toast_error());
     } finally {
       setLfsRepairInFlight(false);
     }
-  }, [projectPath, currentSpaceId, lfsRepairInFlight]);
+  }, [
+    projectPath,
+    currentSpaceId,
+    lfsRepairInFlight,
+    lfsRemoteEnabled,
+    runLfsRemoteDiagnostic,
+  ]);
+
+  const setLfsRemoteAuthDialogOpen = useCallback((nextOpen: boolean) => {
+    setLfsRemoteAuthOpen(nextOpen);
+    if (!nextOpen) {
+      setLfsRemoteAuthError(null);
+    }
+  }, []);
+
+  const saveLfsRemoteAuthAndRetry = useCallback(
+    async (credentials: { username: string; password: string }) => {
+      if (!lfsRemoteAuthChallenge?.remoteUrl || lfsRemoteAuthSaving) return;
+      setLfsRemoteAuthSaving(true);
+      setLfsRemoteAuthError(null);
+      try {
+        await saveGitRemoteCredentials({
+          remoteUrl: lfsRemoteAuthChallenge.remoteUrl,
+          username: credentials.username,
+          password: credentials.password,
+        });
+        const diagnostic = await runLfsRemoteDiagnostic(false);
+        if (!diagnostic) {
+          setLfsRemoteAuthError(m.git_remote_auth_save_failed());
+          return;
+        }
+        if (diagnostic?.reason === "auth-required") {
+          setLfsRemoteAuthChallenge(
+            authChallengeFromLfsDiagnostic(diagnostic) ??
+              lfsRemoteAuthChallenge,
+          );
+          setLfsRemoteAuthError(m.git_remote_auth_invalid_error());
+          return;
+        }
+        setLfsRemoteAuthOpen(false);
+        setLfsRemoteAuthChallenge(null);
+      } catch (err) {
+        console.error("git lfs credential save/retry failed:", err);
+        setLfsRemoteAuthError(m.git_remote_auth_save_failed());
+      } finally {
+        setLfsRemoteAuthSaving(false);
+      }
+    },
+    [lfsRemoteAuthChallenge, lfsRemoteAuthSaving, runLfsRemoteDiagnostic],
+  );
 
   return {
     lfsAvailable,
@@ -142,8 +222,26 @@ export function useSpaceStorageLfs({
     lfsRepairInFlight,
     lfsRemoteDiagnostic,
     lfsRemoteDiagnosticInFlight,
+    lfsRemoteAuthOpen,
+    lfsRemoteAuthChallenge,
+    lfsRemoteAuthSaving,
+    lfsRemoteAuthError,
     loadLfsState,
     diagnoseLfsRemote,
     repairLfs,
+    setLfsRemoteAuthDialogOpen,
+    saveLfsRemoteAuthAndRetry,
   };
+}
+
+function authChallengeFromLfsDiagnostic(
+  diagnostic: LfsRemoteDiagnostic,
+): GitAuthChallenge | null {
+  if (diagnostic.reason !== "auth-required") return null;
+  if (!diagnostic.remoteUrl) return null;
+  return gitAuthChallengeFromRemoteUrl({
+    remoteUrl: diagnostic.remoteUrl,
+    operation: "lfs-diagnostics",
+    detail: diagnostic.detail,
+  });
 }

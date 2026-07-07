@@ -120,10 +120,7 @@ pub async fn clone_with_progress(
 
     if !status.success() {
         let trimmed = stderr_text.trim().to_string();
-        if trimmed.contains("Authentication")
-            || trimmed.contains("could not read Username")
-            || trimmed.contains("terminal prompts disabled")
-        {
+        if super::ops::is_git_auth_error(&trimmed) {
             return Err(AppError::GitAuthRequired(trimmed));
         }
         return Err(AppError::GitCommandFailed(format!(
@@ -236,10 +233,7 @@ pub async fn submodule_add_with_progress(
 
     if !status.success() {
         let trimmed = stderr_text.trim().to_string();
-        if trimmed.contains("Authentication")
-            || trimmed.contains("could not read Username")
-            || trimmed.contains("terminal prompts disabled")
-        {
+        if super::ops::is_git_auth_error(&trimmed) {
             return Err(AppError::GitAuthRequired(trimmed));
         }
         return Err(AppError::GitCommandFailed(format!(

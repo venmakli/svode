@@ -1,8 +1,9 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Command as StdCommand;
+use std::process::{Command as StdCommand, Stdio};
 
 use serde::Serialize;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::{AppError, process};
@@ -135,6 +136,55 @@ impl GitCli {
         };
 
         Ok(result)
+    }
+
+    /// Execute a git command without a working directory and write a payload to
+    /// stdin. Used for `git credential approve`; callers must keep secrets out
+    /// of args and tracing.
+    pub async fn exec_no_dir_with_stdin(
+        &self,
+        args: &[&str],
+        stdin_payload: &str,
+    ) -> Result<GitOutput, AppError> {
+        tracing::debug!("git {}", args.join(" "));
+
+        let git_args = args_with_quote_path(args);
+        let mut cmd = Command::new(&self.git_path);
+        process::hide_tokio_window(&mut cmd);
+        apply_common_git_env(&mut cmd);
+        cmd.args(&git_args)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("LC_ALL", "C.UTF-8")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| AppError::GitCommandFailed(format!("Failed to spawn git: {e}")))?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(stdin_payload.as_bytes())
+                .await
+                .map_err(|e| {
+                    AppError::GitCommandFailed(format!("Failed to write git stdin: {e}"))
+                })?;
+            stdin.flush().await.map_err(|e| {
+                AppError::GitCommandFailed(format!("Failed to flush git stdin: {e}"))
+            })?;
+        }
+
+        let output = child
+            .wait_with_output()
+            .await
+            .map_err(|e| AppError::GitCommandFailed(format!("Failed to wait for git: {e}")))?;
+
+        Ok(GitOutput {
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            exit_code: output.status.code().unwrap_or(-1),
+        })
     }
 
     /// Check git and git-lfs availability with version info.

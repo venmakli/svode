@@ -198,6 +198,7 @@ pub fn run() {
             git::commands::git_commit_all,
             git::commands::git_commit_paths,
             git::commands::git_sync,
+            git::commands::git_save_http_credentials,
             git::commands::git_conflict_files,
             git::commands::git_resolve_continue,
             git::commands::git_merge_abort,

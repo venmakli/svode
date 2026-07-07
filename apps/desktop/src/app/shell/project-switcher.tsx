@@ -56,12 +56,18 @@ export function ProjectSwitcher({
     useShellStore.getState().openContentSurface();
   }, []);
   const {
+    cloneAuthChallenge,
+    cloneAuthError,
+    cloneAuthOpen,
+    cloneAuthSaving,
     cloneDialogOpen,
     createDialogOpen,
     handleCloneProject,
     handleCreateProject,
     handleOpenProjectFolder,
     openProject,
+    saveCloneAuthAndRetry,
+    setCloneAuthOpen,
     setCloneDialogOpen,
     setCreateDialogOpen,
   } = useRootProjectWorkflow({ onRootOpened: openContentSurface });
@@ -155,8 +161,14 @@ export function ProjectSwitcher({
       </div>
 
       <RootProjectDialogs
+        cloneAuthChallenge={cloneAuthChallenge}
+        cloneAuthError={cloneAuthError}
+        cloneAuthOpen={cloneAuthOpen}
+        cloneAuthSaving={cloneAuthSaving}
         cloneOpen={cloneDialogOpen}
         createOpen={createDialogOpen}
+        onCloneAuthOpenChange={setCloneAuthOpen}
+        onCloneAuthSaveAndRetry={saveCloneAuthAndRetry}
         onCloneOpenChange={setCloneDialogOpen}
         onCloneProject={handleCloneProject}
         onCreateOpenChange={setCreateDialogOpen}

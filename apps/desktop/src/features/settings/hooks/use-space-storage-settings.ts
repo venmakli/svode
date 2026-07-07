@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { applyAssetsStrategy, countAssets, getAssetsConfig } from "../api";
 import type { LfsRemoteDiagnostic } from "../api";
+import type { GitAuthChallenge } from "@/features/git";
 import type {
   AssetsS3Config,
   AssetsStrategy,
@@ -62,6 +63,10 @@ export interface UseSpaceStorageSettingsResult {
   lfsRepairInFlight: boolean;
   lfsRemoteDiagnostic: LfsRemoteDiagnostic | null;
   lfsRemoteDiagnosticInFlight: boolean;
+  lfsRemoteAuthOpen: boolean;
+  lfsRemoteAuthChallenge: GitAuthChallenge | null;
+  lfsRemoteAuthSaving: boolean;
+  lfsRemoteAuthError: string | null;
   inlineSpaceNames: string[];
   canTestS3: boolean;
   canSaveS3: boolean;
@@ -78,6 +83,11 @@ export interface UseSpaceStorageSettingsResult {
   saveS3: () => Promise<void>;
   diagnoseLfsRemote: () => Promise<void>;
   repairLfs: () => Promise<void>;
+  setLfsRemoteAuthDialogOpen: (open: boolean) => void;
+  saveLfsRemoteAuthAndRetry: (credentials: {
+    username: string;
+    password: string;
+  }) => Promise<void>;
   cancelPendingStrategy: () => void;
   confirmPendingStrategy: () => Promise<void>;
 }
@@ -147,9 +157,15 @@ export function useSpaceStorageSettings({
     lfsRepairInFlight,
     lfsRemoteDiagnostic,
     lfsRemoteDiagnosticInFlight,
+    lfsRemoteAuthOpen,
+    lfsRemoteAuthChallenge,
+    lfsRemoteAuthSaving,
+    lfsRemoteAuthError,
     loadLfsState,
     diagnoseLfsRemote,
     repairLfs,
+    setLfsRemoteAuthDialogOpen,
+    saveLfsRemoteAuthAndRetry,
   } = lfs;
   const { inlineSpaceNames } = useSpaceStorageInlineSpaces({
     open,
@@ -466,6 +482,10 @@ export function useSpaceStorageSettings({
     lfsRepairInFlight,
     lfsRemoteDiagnostic,
     lfsRemoteDiagnosticInFlight,
+    lfsRemoteAuthOpen,
+    lfsRemoteAuthChallenge,
+    lfsRemoteAuthSaving,
+    lfsRemoteAuthError,
     inlineSpaceNames,
     canTestS3,
     canSaveS3,
@@ -482,6 +502,8 @@ export function useSpaceStorageSettings({
     saveS3,
     diagnoseLfsRemote,
     repairLfs,
+    setLfsRemoteAuthDialogOpen,
+    saveLfsRemoteAuthAndRetry,
     cancelPendingStrategy,
     confirmPendingStrategy,
   };

@@ -309,9 +309,10 @@ fn terminal_command_for(
         {
             Some(ssh_probe_command(remote_url).unwrap_or_else(|| "ssh -T <git-host>".to_string()))
         }
-        LfsRemoteDiagnosticReason::AuthRequired
-        | LfsRemoteDiagnosticReason::LfsUnavailable
-        | LfsRemoteDiagnosticReason::ProbeFailed => Some("git lfs fetch origin".to_string()),
+        LfsRemoteDiagnosticReason::AuthRequired => None,
+        LfsRemoteDiagnosticReason::LfsUnavailable | LfsRemoteDiagnosticReason::ProbeFailed => {
+            Some("git lfs fetch origin".to_string())
+        }
     }
 }
 

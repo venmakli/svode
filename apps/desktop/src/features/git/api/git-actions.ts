@@ -5,6 +5,7 @@ import {
   commitGitPaths,
   continueGitResolve as continuePlatformGitResolve,
   getGitUserPolicy,
+  saveGitHttpCredentials,
   syncGit,
 } from "@/platform/git/git-api";
 import {
@@ -24,6 +25,20 @@ export interface GitCommitResult {
 
 export interface GitAutoSyncOptions {
   onSyncOutcome?: (outcome: GitSyncOutcome) => void;
+}
+
+export interface SaveGitRemoteCredentialsInput {
+  remoteUrl: string;
+  username: string;
+  password: string;
+}
+
+export function saveGitRemoteCredentials({
+  remoteUrl,
+  username,
+  password,
+}: SaveGitRemoteCredentialsInput): Promise<void> {
+  return saveGitHttpCredentials({ remoteUrl, username, password });
 }
 
 function runAutoSync(spacePath: string, options?: GitAutoSyncOptions): void {
@@ -133,8 +148,9 @@ export async function commitAllSpace(
   options?: GitAutoSyncOptions,
 ): Promise<GitCommitResult | null> {
   const previousDirtyPaths =
-    useGitStore.getState().statuses[spacePath]?.files.map((file) => file.path) ??
-    [];
+    useGitStore
+      .getState()
+      .statuses[spacePath]?.files.map((file) => file.path) ?? [];
   let result: GitCommitResult;
   try {
     const status = toGitStatus(
@@ -149,7 +165,9 @@ export async function commitAllSpace(
     );
     result = {
       status,
-      committedPaths: previousDirtyPaths.filter((path) => !stillDirty.has(path)),
+      committedPaths: previousDirtyPaths.filter(
+        (path) => !stillDirty.has(path),
+      ),
     };
   } catch (err) {
     console.error("git_commit_all failed:", err);

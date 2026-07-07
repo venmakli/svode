@@ -14,6 +14,10 @@ export function HomePage() {
   const autoOpenAttempted = useRef(false);
 
   const {
+    cloneAuthChallenge,
+    cloneAuthError,
+    cloneAuthOpen,
+    cloneAuthSaving,
     cloneDialogOpen,
     cloningProject,
     createDialogOpen,
@@ -26,6 +30,8 @@ export function HomePage() {
     isLoadingRoots,
     openProject,
     rootSpaces,
+    saveCloneAuthAndRetry,
+    setCloneAuthOpen,
     setCloneDialogOpen,
     setCreateDialogOpen,
   } = useRootProjectWorkflow();
@@ -127,8 +133,14 @@ export function HomePage() {
       </div>
 
       <RootProjectDialogs
+        cloneAuthChallenge={cloneAuthChallenge}
+        cloneAuthError={cloneAuthError}
+        cloneAuthOpen={cloneAuthOpen}
+        cloneAuthSaving={cloneAuthSaving}
         cloneOpen={cloneDialogOpen}
         createOpen={createDialogOpen}
+        onCloneAuthOpenChange={setCloneAuthOpen}
+        onCloneAuthSaveAndRetry={saveCloneAuthAndRetry}
         onCloneOpenChange={setCloneDialogOpen}
         onCloneProject={handleCloneProject}
         onCreateOpenChange={setCreateDialogOpen}

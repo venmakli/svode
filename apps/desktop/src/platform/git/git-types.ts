@@ -30,11 +30,32 @@ export interface UnpushedCommitDto {
   timestamp: string;
 }
 
+export type GitRemoteOperationDto =
+  | "sync"
+  | "clone"
+  | "first-push"
+  | "fetch"
+  | "lfs-diagnostics"
+  | "lfs-fetch-pull"
+  | "unknown";
+
+export type GitRemoteAuthMethodDto = "https" | "ssh" | "unknown";
+
+export interface GitAuthChallengeDto {
+  operation: GitRemoteOperationDto;
+  authMethod: GitRemoteAuthMethodDto;
+  remoteUrl: string | null;
+  host: string | null;
+  repository: string | null;
+  providerHint: string | null;
+  detail: string | null;
+}
+
 export type SyncResultDto =
   | { type: "success" }
   | { type: "conflict"; files: string[] }
   | { type: "noRemote" }
-  | { type: "authRequired" };
+  | { type: "authRequired"; challenge?: GitAuthChallengeDto | null };
 
 export interface GitUserPolicyDto {
   autoSync: boolean;

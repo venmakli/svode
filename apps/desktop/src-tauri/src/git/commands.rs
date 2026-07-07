@@ -477,6 +477,17 @@ pub async fn git_sync(
     Ok(result)
 }
 
+#[tauri::command]
+pub async fn git_save_http_credentials(
+    state: State<'_, GitState>,
+    remote_url: String,
+    username: String,
+    password: String,
+) -> Result<(), AppError> {
+    let cli = state.cli()?;
+    super::auth::approve_http_credentials(cli, &remote_url, &username, &password).await
+}
+
 fn normalize_commit_paths(file_paths: Vec<String>) -> Result<Vec<String>, AppError> {
     let mut paths = Vec::new();
     for file_path in file_paths {

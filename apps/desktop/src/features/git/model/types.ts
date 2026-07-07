@@ -23,15 +23,39 @@ export interface GitStatus {
   files: FileGitStatus[];
 }
 
+export type GitRemoteOperation =
+  | "sync"
+  | "clone"
+  | "first-push"
+  | "fetch"
+  | "lfs-diagnostics"
+  | "lfs-fetch-pull"
+  | "unknown";
+
+export type GitRemoteAuthMethod = "https" | "ssh" | "unknown";
+
+export interface GitAuthChallenge {
+  operation: GitRemoteOperation;
+  authMethod: GitRemoteAuthMethod;
+  remoteUrl: string | null;
+  host: string | null;
+  repository: string | null;
+  providerHint: string | null;
+  detail: string | null;
+}
+
+export interface GitRemoteAuthCredentials {
+  username: string;
+  password: string;
+}
+
 export type SyncResult =
   | { type: "Success" }
   | { type: "Conflict"; files: string[] }
   | { type: "NoRemote" }
-  | { type: "AuthRequired" };
+  | { type: "AuthRequired"; challenge: GitAuthChallenge | null };
 
-export type GitSyncOutcome =
-  | SyncResult
-  | { type: "Failed"; message: string };
+export type GitSyncOutcome = SyncResult | { type: "Failed"; message: string };
 
 export interface GitUserPolicy {
   autoSync: boolean;

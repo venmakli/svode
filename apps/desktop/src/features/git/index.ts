@@ -4,7 +4,11 @@ export type {
   FileGitStatus,
   GitAvailability,
   GitCloneProgress,
+  GitAuthChallenge,
   GitStatus,
+  GitRemoteAuthMethod,
+  GitRemoteAuthCredentials,
+  GitRemoteOperation,
   GitUserPolicy,
   GitUnpushedCommit,
   SyncResult,
@@ -12,3 +16,9 @@ export type {
 export { getGitAvailability } from "./api/git-availability-actions";
 export { trackSpaceCloneProgress } from "./api/git-clone-progress-actions";
 export { getGitStatusSnapshot } from "./api/git-status-actions";
+export { saveGitRemoteCredentials } from "./api/git-actions";
+export {
+  gitAuthChallengeFromRemoteUrl,
+  isGitAuthRequiredError,
+} from "./model/remote-auth";
+export { GitRemoteAuthDialog } from "./ui/git-remote-auth-dialog";

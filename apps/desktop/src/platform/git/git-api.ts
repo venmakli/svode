@@ -55,6 +55,14 @@ export function syncGit(spacePath: string): Promise<SyncResultDto> {
   return invokeCommand<SyncResultDto>("git_sync", { spacePath });
 }
 
+export function saveGitHttpCredentials(input: {
+  remoteUrl: string;
+  username: string;
+  password: string;
+}): Promise<void> {
+  return invokeCommand<void>("git_save_http_credentials", input);
+}
+
 export function commitGitFile(input: {
   projectPath?: string | null;
   spacePath: string;

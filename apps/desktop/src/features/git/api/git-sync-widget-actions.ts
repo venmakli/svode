@@ -7,7 +7,11 @@ import {
 } from "@/platform/git/git-api";
 import type { UnpushedCommitDto } from "@/platform/git/git-types";
 import type { GitSyncOutcome, GitUnpushedCommit } from "../model";
-import { syncSpace } from "./git-actions";
+import {
+  saveGitRemoteCredentials,
+  type SaveGitRemoteCredentialsInput,
+  syncSpace,
+} from "./git-actions";
 import { refreshGitRemoteStatus } from "./git-status-actions";
 
 type GitSyncCommitHandler = (spacePath: string) => void;
@@ -59,6 +63,12 @@ export function refreshGitSyncRemoteStatus(spacePath: string) {
 
 export function syncGitNow(spacePath: string): Promise<GitSyncOutcome> {
   return syncSpace(spacePath);
+}
+
+export function saveGitSyncCredentials(
+  input: SaveGitRemoteCredentialsInput,
+): Promise<void> {
+  return saveGitRemoteCredentials(input);
 }
 
 export async function setGitAutoSync({

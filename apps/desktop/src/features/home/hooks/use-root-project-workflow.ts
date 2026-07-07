@@ -38,18 +38,19 @@ export function useRootProjectWorkflow({
     setCreateDialogOpen,
   });
   const handleOpenProjectFolder = useOpenRootProjectFolder({ openProject });
-  const { cloningProject, handleCloneProject } = useCloneRootProject({
-    openProject,
-    setCloneDialogOpen,
-  });
+  const cloneProject = useCloneRootProject({ openProject, setCloneDialogOpen });
   const handleDeleteProject = useDeleteRootProject();
 
   return {
+    cloneAuthChallenge: cloneProject.authChallenge,
+    cloneAuthError: cloneProject.authError,
+    cloneAuthOpen: cloneProject.authOpen,
+    cloneAuthSaving: cloneProject.authSaving,
     cloneDialogOpen,
-    cloningProject,
+    cloningProject: cloneProject.cloningProject,
     createDialogOpen,
     explicitHome,
-    handleCloneProject,
+    handleCloneProject: cloneProject.handleCloneProject,
     handleCreateProject,
     handleDeleteProject,
     handleOpenProjectFolder,
@@ -57,6 +58,8 @@ export function useRootProjectWorkflow({
     isLoadingRoots,
     openProject,
     rootSpaces,
+    saveCloneAuthAndRetry: cloneProject.saveAuthAndRetry,
+    setCloneAuthOpen: cloneProject.setAuthDialogOpen,
     setCloneDialogOpen,
     setCreateDialogOpen,
   };

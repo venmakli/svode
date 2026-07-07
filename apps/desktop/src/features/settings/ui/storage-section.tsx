@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { CheckCircle2, Loader2 } from "lucide-react";
+import { GitRemoteAuthDialog } from "@/features/git";
 import type { AssetsStrategy, LfsState, SpaceGitType } from "@/features/space";
 import { isLfsStorageStrategy } from "../model/storage-strategy";
 import type { UseSpaceStorageSettingsResult } from "../hooks/use-space-storage-settings";
@@ -334,15 +335,25 @@ export function StorageSettingsSection({
       )}
 
       {lfsStatePanelStrategy && (
-        <LfsStatePanel
-          state={settings.lfsState}
-          strategy={lfsStatePanelStrategy}
-          repairing={settings.lfsRepairInFlight}
-          remoteDiagnostic={settings.lfsRemoteDiagnostic}
-          remoteChecking={settings.lfsRemoteDiagnosticInFlight}
-          onDiagnoseRemote={settings.diagnoseLfsRemote}
-          onRepair={settings.repairLfs}
-        />
+        <>
+          <LfsStatePanel
+            state={settings.lfsState}
+            strategy={lfsStatePanelStrategy}
+            repairing={settings.lfsRepairInFlight}
+            remoteDiagnostic={settings.lfsRemoteDiagnostic}
+            remoteChecking={settings.lfsRemoteDiagnosticInFlight}
+            onDiagnoseRemote={settings.diagnoseLfsRemote}
+            onRepair={settings.repairLfs}
+          />
+          <GitRemoteAuthDialog
+            open={settings.lfsRemoteAuthOpen}
+            challenge={settings.lfsRemoteAuthChallenge}
+            saving={settings.lfsRemoteAuthSaving}
+            error={settings.lfsRemoteAuthError}
+            onOpenChange={settings.setLfsRemoteAuthDialogOpen}
+            onSaveAndRetry={settings.saveLfsRemoteAuthAndRetry}
+          />
+        </>
       )}
 
       {settings.inlineSpaceNames.length > 0 && (
@@ -689,11 +700,28 @@ function RemoteLfsStatePanel({
           {(ready ? repairing : checking) && (
             <Loader2 className="mr-1 size-3 animate-spin" />
           )}
-          {ready ? m.storage_repair_lfs() : m.storage_lfs_retry()}
+          {remoteActionLabel({ ready, diagnostic })}
         </Button>
       </div>
     </div>
   );
+}
+
+function remoteActionLabel({
+  ready,
+  diagnostic,
+}: {
+  ready: boolean;
+  diagnostic: UseSpaceStorageSettingsResult["lfsRemoteDiagnostic"];
+}): string {
+  if (ready) return m.storage_repair_lfs();
+  if (
+    diagnostic?.reason === "auth-required" &&
+    diagnostic.authMethod === "https"
+  ) {
+    return m.storage_lfs_remote_sign_in();
+  }
+  return m.storage_lfs_retry();
 }
 
 function RemoteRequirement({

@@ -5,11 +5,18 @@ import {
   getGitSyncWidgetConfig,
   listenGitSyncCommits,
   refreshGitSyncRemoteStatus,
+  saveGitSyncCredentials,
   setGitAutoSync,
   syncGitNow,
 } from "../api/git-sync-widget-actions";
 import { notifyGitSyncOutcome } from "../effects/git-notifications";
-import { useGitStore, type GitStatus, type GitUnpushedCommit } from "../model";
+import {
+  useGitStore,
+  type GitAuthChallenge,
+  type GitRemoteAuthCredentials,
+  type GitStatus,
+  type GitUnpushedCommit,
+} from "../model";
 import { selectActiveSpacePath, useSpace } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 
@@ -28,8 +35,14 @@ export interface GitSyncWidget {
   savingAutoSync: boolean;
   commits: GitUnpushedCommit[];
   loadingCommits: boolean;
+  authOpen: boolean;
+  authChallenge: GitAuthChallenge | null;
+  authSaving: boolean;
+  authError: string | null;
   openDialog: () => Promise<void>;
   syncNow: () => Promise<void>;
+  setAuthOpen: (open: boolean) => void;
+  saveAuthAndRetry: (credentials: GitRemoteAuthCredentials) => Promise<void>;
   setAutoSync: (enabled: boolean) => Promise<void>;
 }
 
@@ -54,6 +67,12 @@ export function useGitSyncWidget(): GitSyncWidget {
   const [commits, setCommits] = useState<GitUnpushedCommit[]>([]);
   const [loadingCommits, setLoadingCommits] = useState(false);
   const [savingAutoSync, setSavingAutoSync] = useState(false);
+  const [authOpen, setAuthOpenState] = useState(false);
+  const [authChallenge, setAuthChallenge] = useState<GitAuthChallenge | null>(
+    null,
+  );
+  const [authSaving, setAuthSaving] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const refreshRemote = useCallback(async () => {
     if (!spacePath) return null;
@@ -143,6 +162,16 @@ export function useGitSyncWidget(): GitSyncWidget {
     if (!spacePath) return;
 
     const outcome = await syncGitNow(spacePath);
+    if (outcome.type === "AuthRequired") {
+      if (outcome.challenge) {
+        setAuthChallenge(outcome.challenge);
+        setAuthError(null);
+        setAuthOpenState(true);
+      } else {
+        notifyGitSyncOutcome(outcome);
+      }
+      return;
+    }
     notifyGitSyncOutcome(outcome);
     if (outcome.type === "Success") {
       toast.success(m.git_sync_success());
@@ -151,6 +180,53 @@ export function useGitSyncWidget(): GitSyncWidget {
       await refreshRemote();
     }
   }, [refreshRemote, spacePath]);
+
+  const setAuthOpen = useCallback((nextOpen: boolean) => {
+    setAuthOpenState(nextOpen);
+    if (!nextOpen) {
+      setAuthError(null);
+    }
+  }, []);
+
+  const saveAuthAndRetry = useCallback(
+    async (credentials: GitRemoteAuthCredentials) => {
+      if (!spacePath || !authChallenge?.remoteUrl || authSaving) return;
+
+      setAuthSaving(true);
+      setAuthError(null);
+      try {
+        await saveGitSyncCredentials({
+          remoteUrl: authChallenge.remoteUrl,
+          username: credentials.username,
+          password: credentials.password,
+        });
+        const outcome = await syncGitNow(spacePath);
+        if (outcome.type === "Success") {
+          toast.success(m.git_sync_success());
+          setAuthOpenState(false);
+          setAuthChallenge(null);
+          setOpen(false);
+          setCommits([]);
+          await refreshRemote();
+          return;
+        }
+        if (outcome.type === "AuthRequired") {
+          setAuthChallenge(outcome.challenge ?? authChallenge);
+          setAuthError(m.git_remote_auth_invalid_error());
+          return;
+        }
+        notifyGitSyncOutcome(outcome);
+        setAuthOpenState(false);
+        setAuthChallenge(null);
+      } catch (err) {
+        console.error("git credential save/retry failed:", err);
+        setAuthError(m.git_remote_auth_save_failed());
+      } finally {
+        setAuthSaving(false);
+      }
+    },
+    [authChallenge, authSaving, refreshRemote, spacePath],
+  );
 
   const setAutoSync = useCallback(
     async (enabled: boolean) => {
@@ -195,8 +271,14 @@ export function useGitSyncWidget(): GitSyncWidget {
     savingAutoSync,
     commits,
     loadingCommits,
+    authOpen,
+    authChallenge,
+    authSaving,
+    authError,
     openDialog,
     syncNow,
+    setAuthOpen,
+    saveAuthAndRetry,
     setAutoSync,
   };
 }

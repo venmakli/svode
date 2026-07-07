@@ -2,6 +2,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
+use super::auth::{GitAuthChallenge, GitRemoteOperation};
 use super::cli::GitCli;
 use crate::AppError;
 
@@ -11,7 +12,7 @@ pub enum SyncResult {
     Success,
     Conflict { files: Vec<String> },
     NoRemote,
-    AuthRequired,
+    AuthRequired { challenge: GitAuthChallenge },
 }
 
 /// Pull then push. Handle conflicts, no-remote, and auth errors.
@@ -39,12 +40,11 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError
         let stderr = push_out.stderr.trim();
 
         if super::ops::is_git_auth_error(stderr) {
-            return Ok(SyncResult::AuthRequired);
+            return auth_required(cli, space_dir, GitRemoteOperation::Sync, Some(stderr)).await;
         }
 
-        return remote_error_to_sync_result(super::ops::git_remote_command_error(
-            "git push", stderr,
-        ));
+        let error = super::ops::git_remote_command_error("git push", stderr);
+        return remote_error_to_sync_result(cli, space_dir, GitRemoteOperation::Sync, error).await;
     }
 
     tracing::info!("Synced space {}", space_dir.display());
@@ -55,7 +55,15 @@ async fn sync_without_upstream(cli: &GitCli, space_dir: &Path) -> Result<SyncRes
     match super::ops::fetch_remote(cli, space_dir).await {
         Ok(false) => return Ok(SyncResult::NoRemote),
         Ok(true) => {}
-        Err(AppError::GitAuthRequired(_)) => return Ok(SyncResult::AuthRequired),
+        Err(AppError::GitAuthRequired(detail)) => {
+            return auth_required(
+                cli,
+                space_dir,
+                GitRemoteOperation::FirstPush,
+                Some(detail.as_str()),
+            )
+            .await;
+        }
         Err(AppError::GitNoRemote) => return Ok(SyncResult::NoRemote),
         Err(err) => return Err(err),
     }
@@ -81,7 +89,15 @@ async fn sync_without_upstream(cli: &GitCli, space_dir: &Path) -> Result<SyncRes
             tracing::info!("Synced space {}", space_dir.display());
             Ok(SyncResult::Success)
         }
-        Err(AppError::GitAuthRequired(_)) => Ok(SyncResult::AuthRequired),
+        Err(AppError::GitAuthRequired(detail)) => {
+            auth_required(
+                cli,
+                space_dir,
+                GitRemoteOperation::FirstPush,
+                Some(detail.as_str()),
+            )
+            .await
+        }
         Err(AppError::GitNoRemote) => Ok(SyncResult::NoRemote),
         Err(err) => Err(err),
     }
@@ -119,7 +135,7 @@ async fn handle_pull_failure(
     let stderr = stderr.trim();
 
     if super::ops::is_git_auth_error(stderr) {
-        return Ok(SyncResult::AuthRequired);
+        return auth_required(cli, space_dir, GitRemoteOperation::Sync, Some(stderr)).await;
     }
 
     if stderr.contains("CONFLICT")
@@ -131,15 +147,34 @@ async fn handle_pull_failure(
         return Ok(SyncResult::Conflict { files });
     }
 
-    remote_error_to_sync_result(super::ops::git_remote_command_error("git pull", stderr))
+    let error = super::ops::git_remote_command_error("git pull", stderr);
+    remote_error_to_sync_result(cli, space_dir, GitRemoteOperation::Sync, error).await
 }
 
-fn remote_error_to_sync_result(error: AppError) -> Result<SyncResult, AppError> {
+async fn remote_error_to_sync_result(
+    cli: &GitCli,
+    space_dir: &Path,
+    operation: GitRemoteOperation,
+    error: AppError,
+) -> Result<SyncResult, AppError> {
     match error {
-        AppError::GitAuthRequired(_) => Ok(SyncResult::AuthRequired),
+        AppError::GitAuthRequired(detail) => {
+            auth_required(cli, space_dir, operation, Some(detail.as_str())).await
+        }
         AppError::GitNoRemote => Ok(SyncResult::NoRemote),
         other => Err(other),
     }
+}
+
+async fn auth_required(
+    cli: &GitCli,
+    space_dir: &Path,
+    operation: GitRemoteOperation,
+    detail: Option<&str>,
+) -> Result<SyncResult, AppError> {
+    Ok(SyncResult::AuthRequired {
+        challenge: super::auth::build_auth_challenge(cli, space_dir, operation, detail).await,
+    })
 }
 
 /// Get list of conflicted files.
@@ -181,11 +216,8 @@ pub async fn resolve_and_continue(cli: &GitCli, space_dir: &Path) -> Result<Sync
     let push_out = cli.exec(space_dir, &["push"]).await?;
     if push_out.exit_code != 0 {
         let stderr = push_out.stderr.trim();
-        if stderr.contains("Authentication")
-            || stderr.contains("could not read Username")
-            || stderr.contains("terminal prompts disabled")
-        {
-            return Ok(SyncResult::AuthRequired);
+        if super::ops::is_git_auth_error(stderr) {
+            return auth_required(cli, space_dir, GitRemoteOperation::Sync, Some(stderr)).await;
         }
         return Err(AppError::GitCommandFailed(format!(
             "git push failed: {stderr}"

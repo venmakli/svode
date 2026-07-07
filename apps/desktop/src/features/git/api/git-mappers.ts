@@ -1,9 +1,15 @@
 import type {
+  GitAuthChallengeDto,
   GitAvailabilityDto,
   GitStatusDto,
   SyncResultDto,
 } from "@/platform/git/git-types";
-import type { GitAvailability, GitStatus, SyncResult } from "../model";
+import type {
+  GitAuthChallenge,
+  GitAvailability,
+  GitStatus,
+  SyncResult,
+} from "../model";
 
 export function toGitAvailability(dto: GitAvailabilityDto): GitAvailability {
   return {
@@ -39,8 +45,23 @@ export function toSyncResult(dto: SyncResultDto): SyncResult {
     case "noRemote":
       return { type: "NoRemote" };
     case "authRequired":
-      return { type: "AuthRequired" };
+      return {
+        type: "AuthRequired",
+        challenge: dto.challenge ? toGitAuthChallenge(dto.challenge) : null,
+      };
     default:
       throw new Error(`Unknown git sync result: ${JSON.stringify(dto)}`);
   }
+}
+
+export function toGitAuthChallenge(dto: GitAuthChallengeDto): GitAuthChallenge {
+  return {
+    operation: dto.operation,
+    authMethod: dto.authMethod,
+    remoteUrl: dto.remoteUrl,
+    host: dto.host,
+    repository: dto.repository,
+    providerHint: dto.providerHint,
+    detail: dto.detail,
+  };
 }

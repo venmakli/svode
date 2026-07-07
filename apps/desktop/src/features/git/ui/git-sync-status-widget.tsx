@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/shared/lib/utils";
 import { useGitSyncWidget } from "../hooks/use-git-sync-widget";
+import { GitRemoteAuthDialog } from "./git-remote-auth-dialog";
 import * as m from "@/paraglide/messages.js";
 
 export function GitSyncStatusWidget() {
@@ -177,6 +178,15 @@ export function GitSyncStatusWidget() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <GitRemoteAuthDialog
+        open={sync.authOpen}
+        challenge={sync.authChallenge}
+        saving={sync.authSaving}
+        error={sync.authError}
+        onOpenChange={sync.setAuthOpen}
+        onSaveAndRetry={sync.saveAuthAndRetry}
+      />
     </>
   );
 }

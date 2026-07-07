@@ -7,6 +7,13 @@ import {
 } from "react";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
+import {
+  gitAuthChallengeFromRemoteUrl,
+  isGitAuthRequiredError,
+  saveGitRemoteCredentials,
+  type GitAuthChallenge,
+  type GitRemoteAuthCredentials,
+} from "@/features/git";
 import { useSpaceStore, type SpaceGitType } from "../model";
 import {
   cloneAndRegisterSpace,
@@ -43,6 +50,14 @@ export function useCreateSpaceDialog({
   const [cloneProgress, setCloneProgress] = useState<SpaceCloneProgress | null>(
     null,
   );
+  const [cloneAuthChallenge, setCloneAuthChallenge] =
+    useState<GitAuthChallenge | null>(null);
+  const [cloneAuthOpen, setCloneAuthOpen] = useState(false);
+  const [cloneAuthSaving, setCloneAuthSaving] = useState(false);
+  const [cloneAuthError, setCloneAuthError] = useState<string | null>(null);
+  const [pendingClone, setPendingClone] = useState<
+    Parameters<typeof cloneAndRegisterSpace>[0] | null
+  >(null);
 
   const resetForm = useCallback(() => {
     setTab("create");
@@ -53,6 +68,10 @@ export function useCreateSpaceDialog({
     setFolderEdited(false);
     setGitType("inline");
     setCloneProgress(null);
+    setCloneAuthChallenge(null);
+    setCloneAuthOpen(false);
+    setCloneAuthError(null);
+    setPendingClone(null);
   }, []);
 
   const autoFolder = tab === "create" ? slugPreview(name) : folderFromUrl(url);
@@ -130,6 +149,24 @@ export function useCreateSpaceDialog({
         onOpenChange(false);
         resetForm();
       } catch (err) {
+        if (isGitAuthRequiredError(err)) {
+          setPendingClone(opts);
+          setCloneAuthChallenge(
+            gitAuthChallengeFromRemoteUrl({
+              remoteUrl: opts.url,
+              operation: "clone",
+              detail:
+                typeof err === "string"
+                  ? err
+                  : ((err as Error)?.message ?? null),
+            }),
+          );
+          setCloneAuthError(null);
+          setCloneAuthOpen(true);
+          setCloneProgress(null);
+          return;
+        }
+
         console.error("git_clone_space failed:", err);
         toast.error(m.git_clone_failed());
         setCloneProgress(null);
@@ -138,6 +175,43 @@ export function useCreateSpaceDialog({
       }
     },
     [loadSpaces, onOpenChange, resetForm],
+  );
+
+  const setCloneAuthDialogOpen = useCallback((open: boolean) => {
+    setCloneAuthOpen(open);
+    if (!open) {
+      setCloneAuthError(null);
+      setCloneAuthChallenge(null);
+      setPendingClone(null);
+    }
+  }, []);
+
+  const saveCloneAuthAndRetry = useCallback(
+    async (credentials: GitRemoteAuthCredentials) => {
+      if (!cloneAuthChallenge?.remoteUrl || !pendingClone || cloneAuthSaving) {
+        return;
+      }
+      setCloneAuthSaving(true);
+      setCloneAuthError(null);
+      try {
+        await saveGitRemoteCredentials({
+          remoteUrl: cloneAuthChallenge.remoteUrl,
+          username: credentials.username,
+          password: credentials.password,
+        });
+        const retry = pendingClone;
+        setCloneAuthOpen(false);
+        setCloneAuthChallenge(null);
+        setPendingClone(null);
+        await runClone(retry);
+      } catch (err) {
+        console.error("git clone credential save failed:", err);
+        setCloneAuthError(m.git_remote_auth_save_failed());
+      } finally {
+        setCloneAuthSaving(false);
+      }
+    },
+    [cloneAuthChallenge, cloneAuthSaving, pendingClone, runClone],
   );
 
   const handleSubmit = useCallback(
@@ -200,6 +274,10 @@ export function useCreateSpaceDialog({
   );
 
   return {
+    cloneAuthChallenge,
+    cloneAuthError,
+    cloneAuthOpen,
+    cloneAuthSaving,
     cloneProgress,
     effectiveFolder,
     folderInputValue,
@@ -215,6 +293,8 @@ export function useCreateSpaceDialog({
     setGitType,
     setIcon,
     setName,
+    saveCloneAuthAndRetry,
+    setCloneAuthDialogOpen,
     setTab,
     setUrl,
     slugCollision,
