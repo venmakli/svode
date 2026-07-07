@@ -131,6 +131,7 @@ export function useAgentSessions(
     sessionIdsKey: string;
     promise: Promise<void>;
   } | null>(null);
+  const staleSnapshotRefreshKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     projectPathRef.current = projectPath;
@@ -334,6 +335,7 @@ export function useAgentSessions(
   useEffect(() => {
     selectionRequestIdRef.current += 1;
     hotStatusInFlightRef.current = null;
+    staleSnapshotRefreshKeyRef.current = null;
     resultRef.current = null;
     setResult(null);
     selectedSessionIdRef.current = null;
@@ -357,6 +359,15 @@ export function useAgentSessions(
     }, POLL_INTERVAL_MS);
     return () => window.clearInterval(interval);
   }, [load, projectPath]);
+
+  useEffect(() => {
+    if (!projectPath || result?.cache.mode !== "stale-snapshot") return;
+
+    const refreshKey = `${projectPath}\0${result.generatedAt}`;
+    if (staleSnapshotRefreshKeyRef.current === refreshKey) return;
+    staleSnapshotRefreshKeyRef.current = refreshKey;
+    void load(true);
+  }, [load, projectPath, result?.cache.mode, result?.generatedAt]);
 
   useEffect(() => {
     if (!projectPath || pendingTerminals.length === 0) return;

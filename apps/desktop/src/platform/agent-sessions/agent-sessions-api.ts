@@ -115,7 +115,8 @@ export type AgentSessionsCacheMode =
   | "fresh-scan"
   | "fingerprint-hit"
   | "force-refresh"
-  | "mixed";
+  | "mixed"
+  | "stale-snapshot";
 export type AgentSessionSourceReportStatus =
   | "ok"
   | "missing-root"

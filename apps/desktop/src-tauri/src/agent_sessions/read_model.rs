@@ -66,11 +66,52 @@ pub(crate) fn list_sessions_with_surfaces(
     let pinned_ids = read_pinned_session_ids(&project)?;
     let generated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
 
+    if !force_refresh
+        && memory_cache_empty(state)?
+        && let Some(reads) = disk_snapshot_reads(state, &project, Instant::now())?
+    {
+        return build_list_result(
+            &project,
+            &scope_index,
+            &pinned_ids,
+            generated_at,
+            reads,
+            force_refresh,
+            Some(AgentSessionsCacheMode::StaleSnapshot),
+            &terminal_surfaces,
+            &state.home_dir,
+        );
+    }
+
     let mut reads = Vec::new();
     for source in [AgentSessionSource::Codex, AgentSessionSource::ClaudeCode] {
         reads.push(read_source(state, &project, source, force_refresh)?);
     }
 
+    build_list_result(
+        &project,
+        &scope_index,
+        &pinned_ids,
+        generated_at,
+        reads,
+        force_refresh,
+        None,
+        &terminal_surfaces,
+        &state.home_dir,
+    )
+}
+
+fn build_list_result(
+    project: &Path,
+    scope_index: &ScopeIndex,
+    pinned_ids: &HashSet<String>,
+    generated_at: String,
+    reads: Vec<SourceRead>,
+    force_refresh: bool,
+    cache_mode_override: Option<AgentSessionsCacheMode>,
+    terminal_surfaces: &[AgentTerminalSurface],
+    home: &Path,
+) -> Result<AgentSessionsListResult, AppError> {
     let mut sessions = Vec::new();
     let mut reports = Vec::new();
     let mut summary = AgentSessionsSummary::default();
@@ -88,7 +129,7 @@ pub(crate) fn list_sessions_with_surfaces(
         summary.source_errors += read.report.counts.source_errors;
 
         for candidate in read.candidates {
-            let Some(scope) = resolve_scope(&scope_index, &candidate, &state.home_dir) else {
+            let Some(scope) = resolve_scope(scope_index, &candidate, home) else {
                 read.report.counts.unresolved_candidates += 1;
                 summary.unresolved_candidates += 1;
                 continue;
@@ -113,7 +154,9 @@ pub(crate) fn list_sessions_with_surfaces(
     summary.returned_sessions = sessions.len();
     summary.pinned_sessions = sessions.iter().filter(|session| session.pinned).count();
 
-    let cache_mode = if force_refresh {
+    let cache_mode = if let Some(cache_mode) = cache_mode_override {
+        cache_mode
+    } else if force_refresh {
         AgentSessionsCacheMode::ForceRefresh
     } else if source_hits > 0 && source_misses == 0 {
         AgentSessionsCacheMode::FingerprintHit
@@ -177,7 +220,17 @@ pub(crate) fn hot_status_with_surfaces(
                 match detail_candidate {
                     Some(detail_candidate) => {
                         candidate = merge_hot_candidate(candidate, detail_candidate);
-                        update_cached_candidate(state, candidate.clone())?;
+                        if let Some(updated_cache) =
+                            update_cached_candidate(state, candidate.clone())?
+                        {
+                            cache_source_snapshot_on_disk(
+                                &project,
+                                source,
+                                &updated_cache.fingerprint,
+                                &updated_cache.candidates,
+                                &updated_cache.report,
+                            );
+                        }
                         updated_sessions += 1;
                     }
                     None => {
@@ -250,13 +303,13 @@ fn cached_candidates_for_session_ids(
 fn update_cached_candidate(
     state: &AgentSessionsState,
     candidate: PersistedAgentSessionCandidate,
-) -> Result<(), AppError> {
+) -> Result<Option<CachedSourceScan>, AppError> {
     let mut cache = state
         .cache
         .lock()
         .map_err(|_| AppError::General("Agent sessions cache lock poisoned".to_string()))?;
     let Some(cached) = cache.sources.get_mut(&candidate.source) else {
-        return Ok(());
+        return Ok(None);
     };
 
     if let Some(existing) = cached
@@ -271,7 +324,7 @@ fn update_cached_candidate(
             .candidates
             .sort_by(|a, b| a.source_session_id.cmp(&b.source_session_id));
     }
-    Ok(())
+    Ok(Some(cached.clone()))
 }
 
 fn candidate_session_id(candidate: &PersistedAgentSessionCandidate) -> String {
@@ -387,6 +440,64 @@ fn merge_report_counts(target: &mut AgentSessionSourceReport, parsed: &AgentSess
     target.truncated_diagnostics += parsed.truncated_diagnostics;
 }
 
+struct DiskSourceCacheRow {
+    fingerprint: String,
+    candidates: Vec<PersistedAgentSessionCandidate>,
+    report: AgentSessionSourceReport,
+}
+
+fn memory_cache_empty(state: &AgentSessionsState) -> Result<bool, AppError> {
+    let cache = state
+        .cache
+        .lock()
+        .map_err(|_| AppError::General("Agent sessions cache lock poisoned".to_string()))?;
+    Ok(cache.sources.is_empty())
+}
+
+fn disk_snapshot_reads(
+    state: &AgentSessionsState,
+    project: &Path,
+    started: Instant,
+) -> Result<Option<Vec<SourceRead>>, AppError> {
+    let db_path = agent_sessions_cache_db_path(project);
+    if !db_path.is_file() {
+        return Ok(None);
+    }
+
+    let mut rows = Vec::new();
+    for source in [AgentSessionSource::Codex, AgentSessionSource::ClaudeCode] {
+        match read_disk_source_cache_row(&db_path, source) {
+            Ok(Some(row)) => rows.push((source, row)),
+            Ok(None) => return Ok(None),
+            Err(error) => {
+                tracing::warn!(
+                    "agent sessions stale snapshot read failed for {}: {error}",
+                    db_path.display()
+                );
+                return Ok(None);
+            }
+        }
+    }
+
+    let mut reads = Vec::new();
+    for (source, row) in rows {
+        let mut report = row.report;
+        report.cache_hit = true;
+        report.fingerprint = Some(row.fingerprint.clone());
+        report.duration_ms = Some(started.elapsed().as_millis());
+
+        let read = SourceRead {
+            candidates: row.candidates,
+            report,
+            cache_hit: true,
+        };
+        cache_source_read(state, source, row.fingerprint, &read)?;
+        reads.push(read);
+    }
+
+    Ok(Some(reads))
+}
+
 fn disk_cached_source_read(
     state: &AgentSessionsState,
     project: &Path,
@@ -399,44 +510,21 @@ fn disk_cached_source_read(
         return Ok(None);
     }
 
-    let read = tauri::async_runtime::block_on(async {
-        let pool = open_agent_sessions_cache_pool(&db_path, false).await?;
-        ensure_agent_sessions_cache_schema(&pool).await?;
-        let row = sqlx::query_as::<_, (String, String, String)>(
-            "SELECT fingerprint, candidates_json, report_json FROM source_cache WHERE source = ?",
-        )
-        .bind(source.as_str())
-        .fetch_optional(&pool)
-        .await?;
-        pool.close().await;
-
-        let Some((stored_fingerprint, candidates_json, report_json)) = row else {
-            return Ok(None);
-        };
-        if stored_fingerprint != fingerprint {
-            return Ok(None);
-        }
-
-        let candidates =
-            serde_json::from_str::<Vec<PersistedAgentSessionCandidate>>(&candidates_json)?;
-        let mut report = serde_json::from_str::<AgentSessionSourceReport>(&report_json)?;
-        report.cache_hit = true;
-        report.fingerprint = Some(stored_fingerprint);
-        report.duration_ms = Some(started.elapsed().as_millis());
-
-        Ok::<_, AppError>(Some(SourceRead {
-            candidates,
-            report,
-            cache_hit: true,
-        }))
-    });
-
-    match read {
-        Ok(Some(read)) => {
+    match read_disk_source_cache_row(&db_path, source) {
+        Ok(Some(row)) if row.fingerprint == fingerprint => {
+            let mut report = row.report;
+            report.cache_hit = true;
+            report.fingerprint = Some(row.fingerprint);
+            report.duration_ms = Some(started.elapsed().as_millis());
+            let read = SourceRead {
+                candidates: row.candidates,
+                report,
+                cache_hit: true,
+            };
             cache_source_read(state, source, fingerprint.to_string(), &read)?;
             Ok(Some(read))
         }
-        Ok(None) => Ok(None),
+        Ok(Some(_)) | Ok(None) => Ok(None),
         Err(error) => {
             tracing::warn!(
                 "agent sessions disk cache read failed for {}: {error}",
@@ -447,23 +535,68 @@ fn disk_cached_source_read(
     }
 }
 
+fn read_disk_source_cache_row(
+    db_path: &Path,
+    source: AgentSessionSource,
+) -> Result<Option<DiskSourceCacheRow>, AppError> {
+    tauri::async_runtime::block_on(async {
+        let pool = open_agent_sessions_cache_pool(db_path, false).await?;
+        ensure_agent_sessions_cache_schema(&pool).await?;
+        let row = sqlx::query_as::<_, (String, String, String)>(
+            "SELECT fingerprint, candidates_json, report_json FROM source_cache WHERE source = ?",
+        )
+        .bind(source.as_str())
+        .fetch_optional(&pool)
+        .await?;
+        pool.close().await;
+
+        let Some((fingerprint, candidates_json, report_json)) = row else {
+            return Ok(None);
+        };
+        let candidates =
+            serde_json::from_str::<Vec<PersistedAgentSessionCandidate>>(&candidates_json)?;
+        let report = serde_json::from_str::<AgentSessionSourceReport>(&report_json)?;
+
+        Ok::<_, AppError>(Some(DiskSourceCacheRow {
+            fingerprint,
+            candidates,
+            report,
+        }))
+    })
+}
+
 fn cache_source_scan_on_disk(project: &Path, source: AgentSessionSource, scan: &SourceScan) {
+    cache_source_snapshot_on_disk(
+        project,
+        source,
+        &scan.fingerprint,
+        &scan.candidates,
+        &scan.report,
+    );
+}
+
+fn cache_source_snapshot_on_disk(
+    project: &Path,
+    source: AgentSessionSource,
+    fingerprint: &str,
+    candidates: &[PersistedAgentSessionCandidate],
+    report: &AgentSessionSourceReport,
+) {
     let db_path = agent_sessions_cache_db_path(project);
-    let candidates_json = match serde_json::to_string(&scan.candidates) {
+    let candidates_json = match serde_json::to_string(candidates) {
         Ok(value) => value,
         Err(error) => {
             tracing::warn!("agent sessions disk cache serialization failed: {error}");
             return;
         }
     };
-    let report_json = match serde_json::to_string(&scan.report) {
+    let report_json = match serde_json::to_string(report) {
         Ok(value) => value,
         Err(error) => {
             tracing::warn!("agent sessions disk cache report serialization failed: {error}");
             return;
         }
     };
-    let fingerprint = scan.fingerprint.clone();
     let source_key = source.as_str().to_string();
     let updated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
 
@@ -1620,9 +1753,15 @@ mod tests {
         let warm_state = AgentSessionsState::with_home(home.clone());
         let warm = list_sessions(&warm_state, project.to_string_lossy().into_owned(), false)
             .expect("warm list");
-        assert_eq!(warm.cache.mode, AgentSessionsCacheMode::FingerprintHit);
+        assert_eq!(warm.cache.mode, AgentSessionsCacheMode::StaleSnapshot);
         assert!(warm.cache.hit);
         assert_eq!(warm.sessions[0].source_session_id, "disk-cached");
+
+        let validated = list_sessions(&warm_state, project.to_string_lossy().into_owned(), false)
+            .expect("validated warm list");
+        assert_eq!(validated.cache.mode, AgentSessionsCacheMode::FingerprintHit);
+        assert!(validated.cache.hit);
+        assert_eq!(validated.sessions[0].source_session_id, "disk-cached");
 
         fs::remove_file(project.join(".svode/agent-sessions.db")).expect("remove cache db");
         let rebuild_state = AgentSessionsState::with_home(home);
@@ -1718,6 +1857,19 @@ mod tests {
             .expect("refreshed cached list");
         assert_eq!(
             refreshed_cache.sessions[0].active_flags,
+            vec![AgentSessionActiveFlag::WaitingOnApproval]
+        );
+
+        let restarted_state = AgentSessionsState::with_home(home);
+        let restarted = list_sessions(
+            &restarted_state,
+            project.to_string_lossy().into_owned(),
+            false,
+        )
+        .expect("restarted warm list");
+        assert_eq!(restarted.cache.mode, AgentSessionsCacheMode::StaleSnapshot);
+        assert_eq!(
+            restarted.sessions[0].active_flags,
             vec![AgentSessionActiveFlag::WaitingOnApproval]
         );
     }

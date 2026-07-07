@@ -131,6 +131,7 @@ pub enum AgentSessionsCacheMode {
     FingerprintHit,
     ForceRefresh,
     Mixed,
+    StaleSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
