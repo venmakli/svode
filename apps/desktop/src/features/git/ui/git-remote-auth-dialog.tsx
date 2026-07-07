@@ -73,14 +73,6 @@ export function GitRemoteAuthDialog({
             </span>
           </div>
 
-          {challenge?.providerHint && (
-            <p className="text-sm text-muted-foreground">
-              {m.git_remote_auth_provider_hint({
-                provider: providerLabel(challenge.providerHint),
-              })}
-            </p>
-          )}
-
           {challenge && !isHttps && (
             <Alert>
               <AlertTriangle />
@@ -199,18 +191,5 @@ function operationLabel(operation: GitAuthChallenge["operation"]): string {
       return m.git_remote_auth_operation_sync();
     case "unknown":
       return m.git_remote_auth_operation_unknown();
-  }
-}
-
-function providerLabel(provider: string): string {
-  switch (provider) {
-    case "github":
-      return "GitHub";
-    case "gitlab":
-      return "GitLab";
-    case "gitea":
-      return "Gitea";
-    default:
-      return provider;
   }
 }
