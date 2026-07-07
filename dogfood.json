@@ -5,6 +5,23 @@
     {
       "kind": "ci-build",
       "version": "0.0.6",
+      "commit": "d6dd5a628f1f1febef2c63ca8e32f573a54d7236",
+      "sourceRef": "main",
+      "runId": 28864218564,
+      "publishedAt": "2026-07-07T12:10:33.890Z",
+      "expiresAt": "2026-07-10T12:10:33.890Z",
+      "reason": "Agent session refresh and remote auth fixes",
+      "platforms": {
+        "linux": {
+          "url": "https://github.com/venmakli/svode/actions/runs/28864218564/artifacts/8137283575",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/28864218564",
+          "artifactName": "Svode-linux-deb"
+        }
+      }
+    },
+    {
+      "kind": "ci-build",
+      "version": "0.0.6",
       "commit": "02b07b166883e1dcfaf7292cb83d1a7073a7eda1",
       "sourceRef": "main",
       "runId": 28791674287,
