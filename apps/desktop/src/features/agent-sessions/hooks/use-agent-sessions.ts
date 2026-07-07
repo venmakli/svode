@@ -464,6 +464,7 @@ export function useAgentSessions(
           selectionRequestIdRef.current === selectionRequestId;
 
         if (ptyId && projectUnchanged) {
+          const openedAt = new Date().toISOString();
           setTerminalsBySession((current) => ({
             ...current,
             [session.id]: {
@@ -471,6 +472,7 @@ export function useAgentSessions(
               command:
                 reentry.command?.display ?? session.resumeCommand?.display,
               cwd: reentry.cwd ?? reentry.command?.cwd ?? session.cwd,
+              createdAt: openedAt,
             },
           }));
         }

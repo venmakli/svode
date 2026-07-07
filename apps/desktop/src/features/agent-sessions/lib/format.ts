@@ -1,5 +1,9 @@
 import { getLocale } from "@/paraglide/runtime.js";
-import { hasActionableWait, type AgentSession } from "../model";
+import {
+  hasActionableWait,
+  terminalActivityAt,
+  type AgentSession,
+} from "../model";
 import * as m from "@/paraglide/messages.js";
 
 const MINUTE_MS = 60_000;
@@ -70,7 +74,7 @@ export function sessionTimeLabel(session: AgentSession): string {
 
   if (session.runtime?.ptyId) {
     return shortRelativeTime(
-      session.runtime.lastOutputAt ?? session.lastActivityAt,
+      terminalActivityAt(session) ?? session.lastActivityAt,
     );
   }
 

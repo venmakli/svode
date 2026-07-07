@@ -75,11 +75,12 @@ test("groups sessions as pinned, now, then spaces without duplicates", () => {
     "codex:pinned",
   ]);
   expect(groups.now?.sessions.map((item) => item.id)).toEqual(["codex:active"]);
-  expect(groups.spaces.flatMap((group) => group.sessions.map((item) => item.id)))
-    .toEqual(["codex:done"]);
+  expect(
+    groups.spaces.flatMap((group) => group.sessions.map((item) => item.id)),
+  ).toEqual(["codex:done"]);
 });
 
-test("keeps selected session in its spaces group until another selection", () => {
+test("moves selected session with an open terminal from space into now", () => {
   const openFromSpace = session({
     id: "codex:space-open",
     status: "done",
@@ -89,20 +90,60 @@ test("keeps selected session in its spaces group until another selection", () =>
     spacePath: "/repo/develop",
   });
 
-  const stable = buildAgentSessionGroups({
+  const groups = buildAgentSessionGroups({
     sessions: [openFromSpace],
+    spaceScopes: [
+      scope({
+        id: childSpaceScopeGroupId("develop"),
+        scopeId: "develop",
+        name: "Develop",
+        path: "/repo/develop",
+      }),
+    ],
     selectedSessionId: openFromSpace.id,
     selectedStableGroupId: "space:develop",
   });
-  const released = buildAgentSessionGroups({
-    sessions: [openFromSpace],
-    selectedSessionId: "codex:other",
+
+  expect(groups.now?.sessions[0]?.id).toBe(openFromSpace.id);
+  expect(groups.spaces[0]?.sessions).toEqual([]);
+});
+
+test("keeps selected past session in its space before terminal opens", () => {
+  const selectedPast = session({
+    id: "codex:space-selected",
+    status: "done",
+    scopeKind: "space",
+    spaceId: "develop",
+    spacePath: "/repo/develop",
+  });
+
+  const groups = buildAgentSessionGroups({
+    sessions: [selectedPast],
+    selectedSessionId: selectedPast.id,
     selectedStableGroupId: "space:develop",
   });
 
-  expect(stable.now).toBeNull();
-  expect(stable.spaces[0]?.sessions[0]?.id).toBe(openFromSpace.id);
-  expect(released.now?.sessions[0]?.id).toBe(openFromSpace.id);
+  expect(groups.now).toBeNull();
+  expect(groups.spaces[0]?.sessions[0]?.id).toBe(selectedPast.id);
+});
+
+test("returns selected session to space when its terminal closes", () => {
+  const closed = session({
+    id: "codex:space-closed",
+    status: "done",
+    scopeKind: "space",
+    spaceId: "develop",
+    spacePath: "/repo/develop",
+  });
+
+  const groups = buildAgentSessionGroups({
+    sessions: [closed],
+    selectedSessionId: closed.id,
+    selectedStableGroupId: "space:develop",
+  });
+
+  expect(groups.now).toBeNull();
+  expect(groups.spaces[0]?.sessions[0]?.id).toBe(closed.id);
 });
 
 test("now sorting puts actionable waiting above active and live terminals", () => {
@@ -125,6 +166,36 @@ test("now sorting puts actionable waiting above active and live terminals", () =
     "codex:live",
   ]);
   expect(isNowSession(live)).toBe(true);
+});
+
+test("now sorting orders open terminals by terminal activity", () => {
+  const olderSessionActivity = session({
+    id: "codex:older-session-newer-terminal",
+    lastActivityAt: "2026-07-04T05:00:00Z",
+    runtime: {
+      live: true,
+      ptyId: "pty-newer",
+      lastInputAt: "2026-07-04T05:30:00Z",
+    },
+  });
+  const newerSessionActivity = session({
+    id: "codex:newer-session-older-terminal",
+    lastActivityAt: "2026-07-04T05:20:00Z",
+    runtime: {
+      live: true,
+      ptyId: "pty-older",
+      lastOutputAt: "2026-07-04T05:10:00Z",
+    },
+  });
+
+  const groups = buildAgentSessionGroups({
+    sessions: [newerSessionActivity, olderSessionActivity],
+  });
+
+  expect(groups.now?.sessions.map((item) => item.id)).toEqual([
+    "codex:older-session-newer-terminal",
+    "codex:newer-session-older-terminal",
+  ]);
 });
 
 test("process-only runtime evidence does not make a session current", () => {

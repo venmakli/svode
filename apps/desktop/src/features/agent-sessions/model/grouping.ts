@@ -31,6 +31,7 @@ export function buildAgentSessionGroups({
           (session) =>
             session.id === selectedSessionId &&
             !session.pinned &&
+            !isNowSession(session) &&
             selectedStableGroupId === resolveScopeGroupId(session, scopeIndex),
         )
       : null;
@@ -63,21 +64,24 @@ export function buildAgentSessionGroups({
   const pinned = pinnedSessions.length
     ? group(PINNED_GROUP_ID, "pinned", pinnedSessions)
     : null;
-  const now = nowSessions.length ? group(NOW_GROUP_ID, "now", nowSessions) : null;
+  const now = nowSessions.length
+    ? group(NOW_GROUP_ID, "now", nowSessions)
+    : null;
   const knownSpaceIds = new Set(spaceScopes.map((scope) => scope.id));
   const knownSpaces = spaceScopes.map((scope) =>
-    spaceGroup(scope.id, spaceBuckets.get(scope.id) ?? [], visibleLimits, scope),
+    spaceGroup(
+      scope.id,
+      spaceBuckets.get(scope.id) ?? [],
+      visibleLimits,
+      scope,
+    ),
   );
   const unknownSpaces = Array.from(spaceBuckets.entries())
     .filter(([id]) => !knownSpaceIds.has(id))
     .map(([id, items]) => spaceGroup(id, items, visibleLimits));
   const spaces = [...knownSpaces, ...unknownSpaces];
 
-  const all = [
-    ...(pinned ? [pinned] : []),
-    ...(now ? [now] : []),
-    ...spaces,
-  ];
+  const all = [...(pinned ? [pinned] : []), ...(now ? [now] : []), ...spaces];
   all.forEach((item) => {
     item.sessions.forEach((session) => visibleSessionIds.add(session.id));
   });
@@ -109,6 +113,14 @@ export function isNowSession(session: AgentSession): boolean {
 
 export function hasActionableWait(session: AgentSession): boolean {
   return session.status === "active" && Boolean(session.activeFlags?.length);
+}
+
+export function terminalActivityAt(session: AgentSession): string | undefined {
+  const outputAt = session.runtime?.lastOutputAt;
+  const inputAt = session.runtime?.lastInputAt;
+  if (!outputAt) return inputAt;
+  if (!inputAt) return outputAt;
+  return timestampMs(outputAt) >= timestampMs(inputAt) ? outputAt : inputAt;
 }
 
 export function scopeGroupId(session: AgentSession): string {
@@ -227,14 +239,11 @@ function createScopeIndex(scopes: AgentSessionScopeGroup[]): ScopeIndex {
   return { project, byScopeId, byPath };
 }
 
-function compareNowSessions(
-  left: AgentSession,
-  right: AgentSession,
-): number {
+function compareNowSessions(left: AgentSession, right: AgentSession): number {
   const priorityDelta = nowPriority(right) - nowPriority(left);
   if (priorityDelta !== 0) return priorityDelta;
 
-  return timestampMs(right.lastActivityAt) - timestampMs(left.lastActivityAt);
+  return nowActivityMs(right) - nowActivityMs(left);
 }
 
 function nowPriority(session: AgentSession): number {
@@ -242,6 +251,14 @@ function nowPriority(session: AgentSession): number {
   if (session.status === "active") return 2;
   if (session.runtime?.ptyId) return 1;
   return 0;
+}
+
+function nowActivityMs(session: AgentSession): number {
+  if (session.status !== "active" && session.runtime?.ptyId) {
+    return timestampMs(terminalActivityAt(session) ?? session.lastActivityAt);
+  }
+
+  return timestampMs(session.lastActivityAt);
 }
 
 function timestampMs(value: string | undefined): number {
