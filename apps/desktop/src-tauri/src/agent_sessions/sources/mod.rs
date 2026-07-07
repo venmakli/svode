@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, TimeZone, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::agent_sessions::types::{
@@ -16,13 +17,15 @@ use crate::agent_sessions::types::{
     AgentSessionTitleSource,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub(crate) enum CandidateCwdSource {
     Cwd,
     WorktreeOriginal,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct PersistedAgentSessionCandidate {
     pub source: AgentSessionSource,
     pub source_session_id: String,
@@ -57,7 +60,8 @@ impl PersistedAgentSessionCandidate {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct PersistedAgentSessionStatus {
     pub status: AgentSessionStatus,
     pub active_flags: Vec<AgentSessionActiveFlag>,

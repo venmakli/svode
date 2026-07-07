@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  hotStatusAgentSessions,
   listAgentSessions,
   openSessionCwdInExternalTerminal,
   reenterAgentSession,
@@ -12,6 +13,7 @@ import {
   DEFAULT_SPACE_GROUP_LIMIT,
   applyLocalTerminalRuntime,
   buildAgentSessionGroups,
+  buildHotStatusSessionIds,
   buildPendingAgentSession,
   findMatchingSessionForPendingTerminal,
   isPendingSessionId,
@@ -30,6 +32,8 @@ import { getNativeErrorMessage } from "@/platform/native/errors";
 import * as m from "@/paraglide/messages.js";
 
 const POLL_INTERVAL_MS = 45_000;
+const HOT_STATUS_POLL_INTERVAL_MS = 1_500;
+const HIDDEN_HOT_STATUS_POLL_INTERVAL_MS = 15_000;
 const PENDING_POLL_INTERVAL_MS = 5_000;
 
 interface SelectedTerminalState {
@@ -107,6 +111,10 @@ export function useAgentSessions(
   const [pinningSessionIds, setPinningSessionIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const [windowActive, setWindowActive] = useState(
+    () =>
+      typeof document === "undefined" || document.visibilityState === "visible",
+  );
   const requestIdRef = useRef(0);
   const selectionRequestIdRef = useRef(0);
   const projectPathRef = useRef(projectPath);
@@ -116,6 +124,11 @@ export function useAgentSessions(
   const loadInFlightRef = useRef<{
     projectPath: string;
     requestId: number;
+    promise: Promise<void>;
+  } | null>(null);
+  const hotStatusInFlightRef = useRef<{
+    projectPath: string;
+    sessionIdsKey: string;
     promise: Promise<void>;
   } | null>(null);
 
@@ -134,6 +147,23 @@ export function useAgentSessions(
   useEffect(() => {
     pendingTerminalsRef.current = pendingTerminals;
   }, [pendingTerminals]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    const updateWindowActive = () => {
+      setWindowActive(document.visibilityState === "visible");
+    };
+    updateWindowActive();
+    document.addEventListener("visibilitychange", updateWindowActive);
+    window.addEventListener("focus", updateWindowActive);
+    window.addEventListener("blur", updateWindowActive);
+    return () => {
+      document.removeEventListener("visibilitychange", updateWindowActive);
+      window.removeEventListener("focus", updateWindowActive);
+      window.removeEventListener("blur", updateWindowActive);
+    };
+  }, []);
 
   const reconcilePendingTerminals = useCallback((sessions: AgentSession[]) => {
     const pending = pendingTerminalsRef.current;
@@ -255,8 +285,55 @@ export function useAgentSessions(
     [projectPath, reconcilePendingTerminals],
   );
 
+  const loadHotStatus = useCallback(
+    async (sessionIds: string[]) => {
+      if (!projectPath || sessionIds.length === 0 || !resultRef.current) {
+        return;
+      }
+      if (loadInFlightRef.current) return loadInFlightRef.current.promise;
+      if (hotStatusInFlightRef.current) {
+        return hotStatusInFlightRef.current.promise;
+      }
+
+      const requestId = requestIdRef.current;
+      const sessionIdsKey = sessionIds.join("\0");
+      const promise = (async () => {
+        try {
+          const hotStatus = await hotStatusAgentSessions(
+            projectPath,
+            sessionIds,
+          );
+          if (
+            requestIdRef.current !== requestId ||
+            projectPathRef.current !== projectPath
+          ) {
+            return;
+          }
+          setResult((current) =>
+            current
+              ? mergeHotStatusSessions(current, hotStatus.sessions)
+              : current,
+          );
+        } catch (error) {
+          console.warn("Failed to refresh agent session hot status:", error);
+        } finally {
+          if (
+            hotStatusInFlightRef.current?.projectPath === projectPath &&
+            hotStatusInFlightRef.current.sessionIdsKey === sessionIdsKey
+          ) {
+            hotStatusInFlightRef.current = null;
+          }
+        }
+      })();
+      hotStatusInFlightRef.current = { projectPath, sessionIdsKey, promise };
+      return promise;
+    },
+    [projectPath],
+  );
+
   useEffect(() => {
     selectionRequestIdRef.current += 1;
+    hotStatusInFlightRef.current = null;
     resultRef.current = null;
     setResult(null);
     selectedSessionIdRef.current = null;
@@ -297,6 +374,15 @@ export function useAgentSessions(
     return [...backendSessions, ...pendingSessions];
   }, [pendingTerminals, result?.sessions, terminalsBySession]);
 
+  const hotStatusSessionIdsKey = useMemo(
+    () =>
+      buildHotStatusSessionIds({
+        sessions: sessionsForUi,
+        selectedSessionId,
+      }).join("\0"),
+    [selectedSessionId, sessionsForUi],
+  );
+
   const groups = useMemo(
     () =>
       buildAgentSessionGroups({
@@ -316,6 +402,20 @@ export function useAgentSessions(
       visibleLimits,
     ],
   );
+
+  useEffect(() => {
+    if (!projectPath || !hotStatusSessionIdsKey) return;
+
+    const sessionIds = hotStatusSessionIdsKey.split("\0").filter(Boolean);
+    const pollInterval = windowActive
+      ? HOT_STATUS_POLL_INTERVAL_MS
+      : HIDDEN_HOT_STATUS_POLL_INTERVAL_MS;
+    void loadHotStatus(sessionIds);
+    const interval = window.setInterval(() => {
+      void loadHotStatus(sessionIds);
+    }, pollInterval);
+    return () => window.clearInterval(interval);
+  }, [hotStatusSessionIdsKey, loadHotStatus, projectPath, windowActive]);
 
   const selectedSession =
     sessionsForUi.find((session) => session.id === selectedSessionId) ?? null;
@@ -495,7 +595,10 @@ export function useAgentSessions(
       if (!projectPath || scope.status !== "ready") return;
 
       const openedAt = new Date().toISOString();
-      const terminal = await spawnManagedTerminalSurface(scope.path, projectPath);
+      const terminal = await spawnManagedTerminalSurface(
+        scope.path,
+        projectPath,
+      );
       if (projectPathRef.current !== projectPath) {
         await closeManagedTerminalSurface(terminal.ptyId);
         return;
@@ -654,4 +757,22 @@ export function useAgentSessions(
     closeAllTerminals,
     openSelectedExternalTerminal,
   };
+}
+
+function mergeHotStatusSessions(
+  current: AgentSessionsListResult,
+  hotSessions: AgentSessionsListResult["sessions"],
+): AgentSessionsListResult {
+  if (hotSessions.length === 0) return current;
+
+  const hotById = new Map(hotSessions.map((session) => [session.id, session]));
+  let changed = false;
+  const sessions = current.sessions.map((session) => {
+    const hot = hotById.get(session.id);
+    if (!hot) return session;
+    changed = true;
+    return hot;
+  });
+
+  return changed ? { ...current, sessions } : current;
 }

@@ -178,6 +178,10 @@ export function SessionsList({
             }
             onOpenAppSettings={onOpenAppSettings}
           />
+        ) : controller.refreshing &&
+          controller.groups.visibleSessionIds.size === 0 &&
+          controller.groups.spaces.length === 0 ? (
+          <SessionsListSkeleton />
         ) : controller.groups.visibleSessionIds.size === 0 &&
           controller.groups.spaces.length === 0 ? (
           <NoResultsState />

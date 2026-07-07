@@ -306,6 +306,18 @@ pub struct AgentSessionsCacheReport {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AgentSessionsHotStatusResult {
+    pub generated_at: String,
+    pub project_path: String,
+    pub sessions: Vec<AgentSession>,
+    pub checked_sessions: usize,
+    pub updated_sessions: usize,
+    pub skipped_sessions: usize,
+    pub sources: Vec<AgentSessionSourceReport>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentSessionSourceReport {
     pub source: AgentSessionSource,
     pub status: AgentSessionSourceStatus,
@@ -332,6 +344,8 @@ pub struct AgentSessionSourceCounts {
     pub incomplete_candidates: usize,
     pub malformed_lines: usize,
     pub source_errors: usize,
+    pub hot_files_checked: usize,
+    pub hot_files_reparsed: usize,
 }
 
 impl AgentSessionSourceReport {

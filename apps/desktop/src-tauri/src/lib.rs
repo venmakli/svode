@@ -186,6 +186,7 @@ pub fn run() {
             agent::commands::agent_respond_permission,
             agent_sessions::commands::agent_sessions_list,
             agent_sessions::commands::agent_sessions_refresh,
+            agent_sessions::commands::agent_sessions_hot_status,
             agent_sessions::commands::agent_sessions_set_pinned,
             agent_sessions::commands::agent_sessions_reenter,
             git::commands::git_check_availability,

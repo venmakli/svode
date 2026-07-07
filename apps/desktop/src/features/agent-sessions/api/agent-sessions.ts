@@ -1,4 +1,5 @@
 import {
+  hotStatusAgentSessions as hotStatusAgentSessionsCommand,
   listAgentSessions as listAgentSessionsCommand,
   reenterAgentSession as reenterAgentSessionCommand,
   refreshAgentSessions as refreshAgentSessionsCommand,
@@ -18,6 +19,7 @@ export type {
   AgentSessionReentryErrorCode,
   AgentSessionReentryMode,
   AgentSessionReentryResult,
+  AgentSessionsHotStatusResult,
   AgentSessionsListResult,
   AgentSessionsListStatus,
   AgentSessionsPinResult,
@@ -32,6 +34,13 @@ export function listAgentSessions(projectPath: string) {
 
 export function refreshAgentSessions(projectPath: string) {
   return refreshAgentSessionsCommand(projectPath);
+}
+
+export function hotStatusAgentSessions(
+  projectPath: string,
+  sessionIds: string[],
+) {
+  return hotStatusAgentSessionsCommand(projectPath, sessionIds);
 }
 
 export function setAgentSessionPinned(

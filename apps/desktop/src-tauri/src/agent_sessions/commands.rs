@@ -3,7 +3,10 @@ use tauri::{AppHandle, State};
 use super::AgentSessionsState;
 use super::read_model;
 use super::reentry;
-use super::types::{AgentSessionReentryResult, AgentSessionsListResult, AgentSessionsPinResult};
+use super::types::{
+    AgentSessionReentryResult, AgentSessionsHotStatusResult, AgentSessionsListResult,
+    AgentSessionsPinResult,
+};
 use crate::error::AppError;
 use crate::terminal::TerminalManager;
 
@@ -39,6 +42,26 @@ pub async fn agent_sessions_refresh(
             &state,
             project_path,
             true,
+            terminal_manager.list_agent_surfaces()?,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn agent_sessions_hot_status(
+    state: State<'_, AgentSessionsState>,
+    terminal_manager: State<'_, TerminalManager>,
+    project_path: String,
+    session_ids: Vec<String>,
+) -> Result<AgentSessionsHotStatusResult, AppError> {
+    let state = state.inner().clone();
+    let terminal_manager = terminal_manager.inner().clone();
+    run_blocking(move || {
+        read_model::hot_status_with_surfaces(
+            &state,
+            project_path,
+            session_ids,
             terminal_manager.list_agent_surfaces()?,
         )
     })

@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use chrono::{SecondsFormat, Utc};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 
 use super::AgentSessionsState;
 use super::sources::{
@@ -13,11 +14,11 @@ use super::sources::{
 use super::types::{
     AgentSession, AgentSessionActiveFlag, AgentSessionCapabilities, AgentSessionResumeCommand,
     AgentSessionRuntime, AgentSessionScope, AgentSessionScopeConfidence, AgentSessionScopeKind,
-    AgentSessionScopeStatus, AgentSessionSource, AgentSessionSourceReport,
-    AgentSessionSourceStatus, AgentSessionStatus, AgentSessionStatusConfidence,
-    AgentSessionStatusSource, AgentSessionTitleSource, AgentSessionsCacheMode,
-    AgentSessionsCacheReport, AgentSessionsListResult, AgentSessionsListStatus,
-    AgentSessionsSummary,
+    AgentSessionScopeStatus, AgentSessionSource, AgentSessionSourceFileRef,
+    AgentSessionSourceReport, AgentSessionSourceStatus, AgentSessionStatus,
+    AgentSessionStatusConfidence, AgentSessionStatusSource, AgentSessionTitleSource,
+    AgentSessionsCacheMode, AgentSessionsCacheReport, AgentSessionsHotStatusResult,
+    AgentSessionsListResult, AgentSessionsListStatus, AgentSessionsSummary,
 };
 use crate::error::AppError;
 use crate::space::types::{AgentSessionsLocalConfig, SpaceInfo, SpaceStatus};
@@ -67,7 +68,7 @@ pub(crate) fn list_sessions_with_surfaces(
 
     let mut reads = Vec::new();
     for source in [AgentSessionSource::Codex, AgentSessionSource::ClaudeCode] {
-        reads.push(read_source(state, source, force_refresh)?);
+        reads.push(read_source(state, &project, source, force_refresh)?);
     }
 
     let mut sessions = Vec::new();
@@ -139,16 +140,442 @@ pub(crate) fn list_sessions_with_surfaces(
     })
 }
 
+pub(crate) fn hot_status_with_surfaces(
+    state: &AgentSessionsState,
+    project_path: String,
+    session_ids: Vec<String>,
+    terminal_surfaces: Vec<AgentTerminalSurface>,
+) -> Result<AgentSessionsHotStatusResult, AppError> {
+    let project = normalize_project_path(&project_path)?;
+    let scope_index = ScopeIndex::new(&project, load_child_spaces(&project)?)?;
+    let pinned_ids = read_pinned_session_ids(&project)?;
+    let generated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+    let requested = session_ids.into_iter().collect::<HashSet<_>>();
+    let mut candidates = cached_candidates_for_session_ids(state, &requested)?;
+    let mut reports = HashMap::<AgentSessionSource, AgentSessionSourceReport>::new();
+    let mut sessions = Vec::new();
+    let mut checked_sessions = 0usize;
+    let mut updated_sessions = 0usize;
+    let mut skipped_sessions = requested.len().saturating_sub(candidates.len());
+
+    for mut candidate in candidates.drain(..) {
+        checked_sessions += 1;
+        let source = candidate.source;
+        let root = source_root(&state.home_dir, source);
+        let report = reports.entry(source).or_insert_with(|| {
+            AgentSessionSourceReport::new(source, root.to_string_lossy().into_owned())
+        });
+        report.counts.hot_files_checked += 1;
+
+        if let Some(source_file) = candidate.source_file.as_ref() {
+            let path = PathBuf::from(&source_file.path);
+            if is_detail_source_file(source, &path) && source_file_metadata_changed(source_file) {
+                report.counts.hot_files_reparsed += 1;
+                let (detail_candidate, detail_report) =
+                    parse_hot_detail_candidate(source, &root, &path, &candidate.source_session_id);
+                merge_report_counts(report, &detail_report);
+                match detail_candidate {
+                    Some(detail_candidate) => {
+                        candidate = merge_hot_candidate(candidate, detail_candidate);
+                        update_cached_candidate(state, candidate.clone())?;
+                        updated_sessions += 1;
+                    }
+                    None => {
+                        skipped_sessions += 1;
+                    }
+                }
+            }
+        } else {
+            skipped_sessions += 1;
+        }
+
+        let Some(scope) = resolve_scope(&scope_index, &candidate, &state.home_dir) else {
+            skipped_sessions += 1;
+            continue;
+        };
+        let Some(last_activity_at) = candidate.last_activity_at else {
+            skipped_sessions += 1;
+            continue;
+        };
+
+        let mut session = map_candidate(candidate, scope, last_activity_at);
+        apply_terminal_status_overlay(&mut session, &terminal_surfaces);
+        session.pinned = pinned_ids.contains(&session.id);
+        sessions.push(session);
+    }
+
+    sessions.sort_by(compare_sessions);
+
+    Ok(AgentSessionsHotStatusResult {
+        generated_at,
+        project_path: project.to_string_lossy().into_owned(),
+        sessions,
+        checked_sessions,
+        updated_sessions,
+        skipped_sessions,
+        sources: reports.into_values().collect(),
+    })
+}
+
+fn source_root(home: &Path, source: AgentSessionSource) -> PathBuf {
+    match source {
+        AgentSessionSource::Codex => home.join(".codex"),
+        AgentSessionSource::ClaudeCode => home.join(".claude"),
+    }
+}
+
+fn cached_candidates_for_session_ids(
+    state: &AgentSessionsState,
+    session_ids: &HashSet<String>,
+) -> Result<Vec<PersistedAgentSessionCandidate>, AppError> {
+    if session_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let cache = state
+        .cache
+        .lock()
+        .map_err(|_| AppError::General("Agent sessions cache lock poisoned".to_string()))?;
+    let mut candidates = Vec::new();
+    for cached in cache.sources.values() {
+        for candidate in &cached.candidates {
+            if session_ids.contains(&candidate_session_id(candidate)) {
+                candidates.push(candidate.clone());
+            }
+        }
+    }
+    Ok(candidates)
+}
+
+fn update_cached_candidate(
+    state: &AgentSessionsState,
+    candidate: PersistedAgentSessionCandidate,
+) -> Result<(), AppError> {
+    let mut cache = state
+        .cache
+        .lock()
+        .map_err(|_| AppError::General("Agent sessions cache lock poisoned".to_string()))?;
+    let Some(cached) = cache.sources.get_mut(&candidate.source) else {
+        return Ok(());
+    };
+
+    if let Some(existing) = cached
+        .candidates
+        .iter_mut()
+        .find(|item| item.source_session_id == candidate.source_session_id)
+    {
+        *existing = candidate;
+    } else {
+        cached.candidates.push(candidate);
+        cached
+            .candidates
+            .sort_by(|a, b| a.source_session_id.cmp(&b.source_session_id));
+    }
+    Ok(())
+}
+
+fn candidate_session_id(candidate: &PersistedAgentSessionCandidate) -> String {
+    format!(
+        "{}:{}",
+        candidate.source.as_str(),
+        candidate.source_session_id
+    )
+}
+
+fn source_file_metadata_changed(source_file: &AgentSessionSourceFileRef) -> bool {
+    let path = PathBuf::from(&source_file.path);
+    let current = super::sources::source_file_ref(&path, "detail", None);
+    current.mtime_ms != source_file.mtime_ms || current.size_bytes != source_file.size_bytes
+}
+
+fn is_detail_source_file(source: AgentSessionSource, path: &Path) -> bool {
+    match source {
+        AgentSessionSource::Codex => path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl")),
+        AgentSessionSource::ClaudeCode => {
+            path.extension().and_then(|ext| ext.to_str()) == Some("jsonl")
+                && path
+                    .components()
+                    .any(|component| component.as_os_str().to_string_lossy().as_ref() == "projects")
+        }
+    }
+}
+
+fn parse_hot_detail_candidate(
+    source: AgentSessionSource,
+    root: &Path,
+    path: &Path,
+    source_session_id: &str,
+) -> (
+    Option<PersistedAgentSessionCandidate>,
+    AgentSessionSourceReport,
+) {
+    let report = AgentSessionSourceReport::new(source, root.to_string_lossy().into_owned());
+    let (candidates, report) = match source {
+        AgentSessionSource::Codex => codex::scan_detail_file(path, report),
+        AgentSessionSource::ClaudeCode => claude_code::scan_detail_file(root, path, report),
+    };
+    let candidate = candidates
+        .into_iter()
+        .find(|candidate| candidate.source_session_id == source_session_id);
+    (candidate, report)
+}
+
+fn merge_hot_candidate(
+    mut base: PersistedAgentSessionCandidate,
+    detail: PersistedAgentSessionCandidate,
+) -> PersistedAgentSessionCandidate {
+    if let Some(title) = detail.title
+        && matches!(base.title_source, AgentSessionTitleSource::SessionId)
+    {
+        base.title = Some(title);
+        base.title_source = detail.title_source;
+    }
+    if detail.cwd.is_some() {
+        base.cwd = detail.cwd;
+        base.cwd_source = detail.cwd_source;
+    }
+    if detail.created_at.is_some() {
+        base.created_at = detail.created_at;
+    }
+    if detail.last_activity_at.is_some() {
+        base.last_activity_at = detail.last_activity_at;
+    }
+    if detail.source_file.is_some() {
+        base.source_file = detail.source_file;
+    }
+    base.status = detail.status;
+    base.counts = detail.counts;
+    merge_source_meta(&mut base.source_meta, detail.source_meta);
+    base
+}
+
+fn merge_source_meta(
+    base: &mut crate::agent_sessions::types::AgentSessionSourceMeta,
+    detail: crate::agent_sessions::types::AgentSessionSourceMeta,
+) {
+    base.detail_present = detail.detail_present;
+    base.detail_file_count = detail.detail_file_count;
+    base.detail_line_count = detail.detail_line_count;
+    base.malformed_line_count = detail.malformed_line_count;
+    base.function_call_count = detail.function_call_count;
+    for note in detail.notes {
+        if !base.notes.iter().any(|existing| existing == &note) {
+            base.notes.push(note);
+        }
+    }
+}
+
+fn merge_report_counts(target: &mut AgentSessionSourceReport, parsed: &AgentSessionSourceReport) {
+    target.counts.files_scanned += parsed.counts.files_scanned;
+    target.counts.records_read += parsed.counts.records_read;
+    target.counts.candidates += parsed.counts.candidates;
+    target.counts.malformed_lines += parsed.counts.malformed_lines;
+    target.counts.source_errors += parsed.counts.source_errors;
+    if matches!(parsed.status, AgentSessionSourceStatus::PartialError) {
+        target.mark_partial_if_ok();
+    }
+    for diagnostic in &parsed.diagnostics {
+        if target.diagnostics.len() >= crate::agent_sessions::types::MAX_SOURCE_DIAGNOSTICS {
+            target.truncated_diagnostics += 1;
+        } else {
+            target.diagnostics.push(diagnostic.clone());
+        }
+    }
+    target.truncated_diagnostics += parsed.truncated_diagnostics;
+}
+
+fn disk_cached_source_read(
+    state: &AgentSessionsState,
+    project: &Path,
+    source: AgentSessionSource,
+    fingerprint: &str,
+    started: Instant,
+) -> Result<Option<SourceRead>, AppError> {
+    let db_path = agent_sessions_cache_db_path(project);
+    if !db_path.is_file() {
+        return Ok(None);
+    }
+
+    let read = tauri::async_runtime::block_on(async {
+        let pool = open_agent_sessions_cache_pool(&db_path, false).await?;
+        ensure_agent_sessions_cache_schema(&pool).await?;
+        let row = sqlx::query_as::<_, (String, String, String)>(
+            "SELECT fingerprint, candidates_json, report_json FROM source_cache WHERE source = ?",
+        )
+        .bind(source.as_str())
+        .fetch_optional(&pool)
+        .await?;
+        pool.close().await;
+
+        let Some((stored_fingerprint, candidates_json, report_json)) = row else {
+            return Ok(None);
+        };
+        if stored_fingerprint != fingerprint {
+            return Ok(None);
+        }
+
+        let candidates =
+            serde_json::from_str::<Vec<PersistedAgentSessionCandidate>>(&candidates_json)?;
+        let mut report = serde_json::from_str::<AgentSessionSourceReport>(&report_json)?;
+        report.cache_hit = true;
+        report.fingerprint = Some(stored_fingerprint);
+        report.duration_ms = Some(started.elapsed().as_millis());
+
+        Ok::<_, AppError>(Some(SourceRead {
+            candidates,
+            report,
+            cache_hit: true,
+        }))
+    });
+
+    match read {
+        Ok(Some(read)) => {
+            cache_source_read(state, source, fingerprint.to_string(), &read)?;
+            Ok(Some(read))
+        }
+        Ok(None) => Ok(None),
+        Err(error) => {
+            tracing::warn!(
+                "agent sessions disk cache read failed for {}: {error}",
+                db_path.display()
+            );
+            Ok(None)
+        }
+    }
+}
+
+fn cache_source_scan_on_disk(project: &Path, source: AgentSessionSource, scan: &SourceScan) {
+    let db_path = agent_sessions_cache_db_path(project);
+    let candidates_json = match serde_json::to_string(&scan.candidates) {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::warn!("agent sessions disk cache serialization failed: {error}");
+            return;
+        }
+    };
+    let report_json = match serde_json::to_string(&scan.report) {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::warn!("agent sessions disk cache report serialization failed: {error}");
+            return;
+        }
+    };
+    let fingerprint = scan.fingerprint.clone();
+    let source_key = source.as_str().to_string();
+    let updated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+
+    let write = tauri::async_runtime::block_on(async {
+        let pool = open_agent_sessions_cache_pool(&db_path, true).await?;
+        ensure_agent_sessions_cache_schema(&pool).await?;
+        sqlx::query(
+            r#"
+            INSERT INTO source_cache (
+                source,
+                fingerprint,
+                candidates_json,
+                report_json,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(source) DO UPDATE SET
+                fingerprint = excluded.fingerprint,
+                candidates_json = excluded.candidates_json,
+                report_json = excluded.report_json,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(source_key)
+        .bind(fingerprint)
+        .bind(candidates_json)
+        .bind(report_json)
+        .bind(updated_at)
+        .execute(&pool)
+        .await?;
+        pool.close().await;
+        Ok::<_, AppError>(())
+    });
+
+    if let Err(error) = write {
+        tracing::warn!(
+            "agent sessions disk cache write failed for {}: {error}",
+            db_path.display()
+        );
+    }
+}
+
+fn cache_source_read(
+    state: &AgentSessionsState,
+    source: AgentSessionSource,
+    fingerprint: String,
+    read: &SourceRead,
+) -> Result<(), AppError> {
+    let mut cache = state
+        .cache
+        .lock()
+        .map_err(|_| AppError::General("Agent sessions cache lock poisoned".to_string()))?;
+    cache.sources.insert(
+        source,
+        CachedSourceScan {
+            fingerprint,
+            candidates: read.candidates.clone(),
+            report: read.report.clone(),
+        },
+    );
+    Ok(())
+}
+
+fn agent_sessions_cache_db_path(project: &Path) -> PathBuf {
+    project.join(".svode").join("agent-sessions.db")
+}
+
+async fn open_agent_sessions_cache_pool(
+    db_path: &Path,
+    create_if_missing: bool,
+) -> Result<sqlx::SqlitePool, AppError> {
+    if create_if_missing && let Some(parent) = db_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let options = SqliteConnectOptions::new()
+        .filename(db_path)
+        .create_if_missing(create_if_missing)
+        .journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(Duration::from_secs(5));
+
+    Ok(SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await?)
+}
+
+async fn ensure_agent_sessions_cache_schema(pool: &sqlx::SqlitePool) -> Result<(), AppError> {
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS source_cache (
+            source TEXT PRIMARY KEY NOT NULL,
+            fingerprint TEXT NOT NULL,
+            candidates_json TEXT NOT NULL,
+            report_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 fn read_source(
     state: &AgentSessionsState,
+    project: &Path,
     source: AgentSessionSource,
     force_refresh: bool,
 ) -> Result<SourceRead, AppError> {
     let started = Instant::now();
-    let root = match source {
-        AgentSessionSource::Codex => state.home_dir.join(".codex"),
-        AgentSessionSource::ClaudeCode => state.home_dir.join(".claude"),
-    };
+    let root = source_root(&state.home_dir, source);
     let (fingerprint, report) = match source {
         AgentSessionSource::Codex => codex::collect_fingerprint(&root),
         AgentSessionSource::ClaudeCode => claude_code::collect_fingerprint(&root),
@@ -156,6 +583,11 @@ fn read_source(
 
     if !force_refresh {
         if let Some(read) = cached_source_read(state, source, &fingerprint.value, started)? {
+            return Ok(read);
+        }
+        if let Some(read) =
+            disk_cached_source_read(state, project, source, &fingerprint.value, started)?
+        {
             return Ok(read);
         }
     }
@@ -168,6 +600,7 @@ fn read_source(
     scan.report.cache_hit = false;
     scan.report.duration_ms = Some(started.elapsed().as_millis());
     cache_source_scan(state, source, &scan)?;
+    cache_source_scan_on_disk(project, source, &scan);
     Ok(source_read_from_scan(scan))
 }
 
@@ -800,6 +1233,18 @@ mod tests {
         );
     }
 
+    fn append_codex_detail_row(home: &Path, source_session_id: &str, row: serde_json::Value) {
+        let path = home
+            .join(".codex/sessions/2026/07/04")
+            .join(format!("rollout-{source_session_id}.jsonl"));
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(path)
+            .expect("open detail for append");
+        use std::io::Write;
+        write!(file, "\n{row}").expect("append detail row");
+    }
+
     fn append_codex_history(home: &Path, rows: Vec<serde_json::Value>) {
         write(
             &home.join(".codex/history.jsonl"),
@@ -1147,6 +1592,191 @@ mod tests {
         assert_eq!(second.cache.mode, AgentSessionsCacheMode::FingerprintHit);
         assert!(second.cache.hit);
         assert_eq!(refresh.cache.mode, AgentSessionsCacheMode::ForceRefresh);
+    }
+
+    #[test]
+    fn agent_sessions_disk_cache_warms_new_state_and_rebuilds_after_delete() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write(
+            &home.join(".codex/history.jsonl"),
+            &serde_json::json!({
+                "sessionId": "disk-cached",
+                "cwd": project.to_string_lossy(),
+                "timestamp": 1700000000,
+                "text": "disk cached"
+            })
+            .to_string(),
+        );
+
+        let first_state = AgentSessionsState::with_home(home.clone());
+        let first = list_sessions(&first_state, project.to_string_lossy().into_owned(), false)
+            .expect("first list");
+        assert_eq!(first.cache.mode, AgentSessionsCacheMode::FreshScan);
+        assert!(project.join(".svode/agent-sessions.db").is_file());
+
+        let warm_state = AgentSessionsState::with_home(home.clone());
+        let warm = list_sessions(&warm_state, project.to_string_lossy().into_owned(), false)
+            .expect("warm list");
+        assert_eq!(warm.cache.mode, AgentSessionsCacheMode::FingerprintHit);
+        assert!(warm.cache.hit);
+        assert_eq!(warm.sessions[0].source_session_id, "disk-cached");
+
+        fs::remove_file(project.join(".svode/agent-sessions.db")).expect("remove cache db");
+        let rebuild_state = AgentSessionsState::with_home(home);
+        let rebuilt = list_sessions(
+            &rebuild_state,
+            project.to_string_lossy().into_owned(),
+            false,
+        )
+        .expect("rebuilt list");
+        assert_eq!(rebuilt.cache.mode, AgentSessionsCacheMode::FreshScan);
+        assert_eq!(rebuilt.sessions[0].source_session_id, "disk-cached");
+        assert!(project.join(".svode/agent-sessions.db").is_file());
+    }
+
+    #[test]
+    fn agent_sessions_hot_status_updates_cached_codex_detail_append() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_codex_detail(
+            &home,
+            "needs-approval",
+            vec![
+                serde_json::json!({
+                    "type": "session_meta",
+                    "payload": {
+                        "id": "needs-approval",
+                        "cwd": project.to_string_lossy()
+                    },
+                    "timestamp": recent_source_log_timestamp()
+                }),
+                serde_json::json!({
+                    "type": "event_msg",
+                    "payload": { "type": "task_started" },
+                    "timestamp": recent_source_log_timestamp()
+                }),
+            ],
+        );
+
+        let state = AgentSessionsState::with_home(home.clone());
+        let first = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("first list");
+        assert_eq!(first.sessions[0].status, AgentSessionStatus::Active);
+        assert!(first.sessions[0].active_flags.is_empty());
+
+        append_codex_detail_row(
+            &home,
+            "needs-approval",
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "name": "apply_patch",
+                    "call_id": "call-edit-approval",
+                    "input": "*** Begin Patch\n*** End Patch"
+                },
+                "timestamp": recent_source_log_timestamp()
+            }),
+        );
+
+        let stale_cached = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("cached list");
+        assert_eq!(
+            stale_cached.cache.mode,
+            AgentSessionsCacheMode::FingerprintHit
+        );
+        assert!(stale_cached.sessions[0].active_flags.is_empty());
+
+        let hot = hot_status_with_surfaces(
+            &state,
+            project.to_string_lossy().into_owned(),
+            vec!["codex:needs-approval".to_string()],
+            Vec::new(),
+        )
+        .expect("hot status");
+
+        assert_eq!(hot.checked_sessions, 1);
+        assert_eq!(hot.updated_sessions, 1);
+        assert_eq!(
+            hot.sources[0].counts.hot_files_checked, 1,
+            "hot path should check the requested detail file only",
+        );
+        assert_eq!(hot.sources[0].counts.hot_files_reparsed, 1);
+        assert_eq!(hot.sources[0].counts.files_scanned, 1);
+        assert_eq!(hot.sessions[0].status, AgentSessionStatus::Active);
+        assert_eq!(
+            hot.sessions[0].active_flags,
+            vec![AgentSessionActiveFlag::WaitingOnApproval]
+        );
+
+        let refreshed_cache = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("refreshed cached list");
+        assert_eq!(
+            refreshed_cache.sessions[0].active_flags,
+            vec![AgentSessionActiveFlag::WaitingOnApproval]
+        );
+    }
+
+    #[test]
+    fn agent_sessions_hot_status_updates_task_complete_to_done() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_codex_detail(
+            &home,
+            "complete-me",
+            vec![
+                serde_json::json!({
+                    "type": "session_meta",
+                    "payload": {
+                        "id": "complete-me",
+                        "cwd": project.to_string_lossy()
+                    },
+                    "timestamp": recent_source_log_timestamp()
+                }),
+                serde_json::json!({
+                    "type": "event_msg",
+                    "payload": { "type": "task_started" },
+                    "timestamp": recent_source_log_timestamp()
+                }),
+            ],
+        );
+
+        let state = AgentSessionsState::with_home(home.clone());
+        let first = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("first list");
+        assert_eq!(first.sessions[0].status, AgentSessionStatus::Active);
+
+        append_codex_detail_row(
+            &home,
+            "complete-me",
+            serde_json::json!({
+                "type": "event_msg",
+                "payload": { "type": "task_complete" },
+                "timestamp": recent_source_log_timestamp()
+            }),
+        );
+
+        let hot = hot_status_with_surfaces(
+            &state,
+            project.to_string_lossy().into_owned(),
+            vec!["codex:complete-me".to_string()],
+            Vec::new(),
+        )
+        .expect("hot status");
+
+        assert_eq!(hot.sessions[0].status, AgentSessionStatus::Done);
+        assert!(hot.sessions[0].active_flags.is_empty());
+        assert_eq!(
+            hot.sessions[0].status_source,
+            AgentSessionStatusSource::SourceLog
+        );
     }
 
     #[test]

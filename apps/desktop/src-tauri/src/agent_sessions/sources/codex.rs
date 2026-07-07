@@ -125,6 +125,28 @@ pub(crate) fn scan(
     }
 }
 
+pub(crate) fn scan_detail_file(
+    path: &Path,
+    mut report: AgentSessionSourceReport,
+) -> (
+    Vec<PersistedAgentSessionCandidate>,
+    AgentSessionSourceReport,
+) {
+    let mut builders: HashMap<String, SessionBuilder> = HashMap::new();
+    report.counts.files_scanned = 1;
+    parse_detail(path, &mut report, &mut builders);
+    let mut candidates = builders
+        .into_values()
+        .map(SessionBuilder::finish)
+        .collect::<Vec<_>>();
+    candidates.sort_by(|a, b| a.source_session_id.cmp(&b.source_session_id));
+    report.counts.candidates = candidates.len();
+    if report.counts.source_errors > 0 || report.counts.malformed_lines > 0 {
+        report.mark_partial_if_ok();
+    }
+    (candidates, report)
+}
+
 fn collect_scan_inputs(root: &Path, report: &mut AgentSessionSourceReport) -> Vec<SourceInputFile> {
     let mut files = Vec::new();
     if let Some(file) = collect_optional_file(root, "history.jsonl", "history") {

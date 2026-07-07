@@ -7,9 +7,7 @@ export type AgentSessionStatus =
   | "failed"
   | "stopped"
   | "unknown";
-export type AgentSessionActiveFlag =
-  | "waitingOnApproval"
-  | "waitingOnUserInput";
+export type AgentSessionActiveFlag = "waitingOnApproval" | "waitingOnUserInput";
 export type AgentSessionTitleSource =
   | "cli-title"
   | "first-user-prompt"
@@ -152,6 +150,16 @@ export interface AgentSessionsCacheState {
   sourceMisses: number;
 }
 
+export interface AgentSessionsHotStatusResult {
+  generatedAt: string;
+  projectPath: string;
+  sessions: AgentSession[];
+  checkedSessions: number;
+  updatedSessions: number;
+  skippedSessions: number;
+  sources: AgentSessionSourceReport[];
+}
+
 export interface AgentSessionSourceReport {
   source: AgentSessionSource;
   status: AgentSessionSourceReportStatus;
@@ -174,6 +182,8 @@ export interface AgentSessionSourceCounts {
   incompleteCandidates: number;
   malformedLines: number;
   sourceErrors: number;
+  hotFilesChecked: number;
+  hotFilesReparsed: number;
 }
 
 export interface AgentSessionDiagnostic {
@@ -230,6 +240,16 @@ export function refreshAgentSessions(
 ): Promise<AgentSessionsListResult> {
   return invoke<AgentSessionsListResult>("agent_sessions_refresh", {
     projectPath,
+  });
+}
+
+export function hotStatusAgentSessions(
+  projectPath: string,
+  sessionIds: string[],
+): Promise<AgentSessionsHotStatusResult> {
+  return invoke<AgentSessionsHotStatusResult>("agent_sessions_hot_status", {
+    projectPath,
+    sessionIds,
   });
 }
 
