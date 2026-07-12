@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 
 import {
   canApplyStorageStrategyDraft,
+  canReapplyLfsPolicy,
+  canRunLfsPolicyDiagnostic,
   canRunLfsRemoteDiagnostic,
   canShowLfsStatePanel,
 } from "./storage-strategy";
@@ -109,4 +111,90 @@ test("LFS state panel requires current loaded LFS strategy", () => {
       strategy: "lfs-remote",
     }),
   ).toBe(true);
+});
+
+test("repository LFS policy diagnostics require a current loaded LFS strategy", () => {
+  expect(
+    canRunLfsPolicyDiagnostic({
+      active: true,
+      configLoaded: false,
+      inheritedFromProject: false,
+      strategy: "lfs-remote",
+    }),
+  ).toBe(false);
+  expect(
+    canRunLfsPolicyDiagnostic({
+      active: true,
+      configLoaded: true,
+      inheritedFromProject: false,
+      strategy: "in-git",
+    }),
+  ).toBe(false);
+  expect(
+    canRunLfsPolicyDiagnostic({
+      active: true,
+      configLoaded: true,
+      inheritedFromProject: false,
+      strategy: "lfs-remote",
+    }),
+  ).toBe(true);
+  expect(
+    canRunLfsPolicyDiagnostic({
+      active: true,
+      configLoaded: true,
+      inheritedFromProject: false,
+      strategy: "lfs-s3",
+    }),
+  ).toBe(true);
+  expect(
+    canRunLfsPolicyDiagnostic({
+      active: false,
+      configLoaded: true,
+      inheritedFromProject: false,
+      strategy: "lfs-remote",
+    }),
+  ).toBe(false);
+  expect(
+    canRunLfsPolicyDiagnostic({
+      active: true,
+      configLoaded: true,
+      inheritedFromProject: true,
+      strategy: "lfs-remote",
+    }),
+  ).toBe(false);
+});
+
+test("active LFS policy can be explicitly reapplied when its config is ready", () => {
+  expect(
+    canReapplyLfsPolicy({
+      strategy: "lfs-remote",
+      lfsAvailable: true,
+      s3ConfigReady: false,
+      applying: false,
+    }),
+  ).toBe(true);
+  expect(
+    canReapplyLfsPolicy({
+      strategy: "lfs-s3",
+      lfsAvailable: true,
+      s3ConfigReady: false,
+      applying: false,
+    }),
+  ).toBe(false);
+  expect(
+    canReapplyLfsPolicy({
+      strategy: "lfs-s3",
+      lfsAvailable: true,
+      s3ConfigReady: true,
+      applying: false,
+    }),
+  ).toBe(true);
+  expect(
+    canReapplyLfsPolicy({
+      strategy: "lfs-remote",
+      lfsAvailable: false,
+      s3ConfigReady: false,
+      applying: false,
+    }),
+  ).toBe(false);
 });

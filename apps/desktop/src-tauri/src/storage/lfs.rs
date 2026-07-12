@@ -1,10 +1,9 @@
-//! LFS-side runtime state and helpers for the assets pipeline.
+//! LFS-side runtime state and helpers for repository storage.
 //!
 //! - `LfsState` is the per-pool runtime indicator the frontend uses to show
-//!   whether the assets in this pool are loadable right now.
-//! - `is_lfs_pointer` is a cheap inspector for `.assets/` files that lets
-//!   sync/watcher code detect a pointer file (LFS placeholder) without
-//!   shelling out to git.
+//!   whether LFS-backed files in this storage scope are loadable right now.
+//! - `is_lfs_pointer` is a cheap inspector for repository files that lets
+//!   sync/watcher code detect an LFS placeholder without shelling out to git.
 //! - `probe_lfs` runs the strategy-appropriate probe to compute the state.
 //! - `repair_lfs` is the user-gesture IPC: probe + `git lfs pull` under the
 //!   git lock, transitioning `Pulling → Ready` on success.
@@ -108,6 +107,13 @@ pub fn is_lfs_pointer(path: &Path) -> bool {
     let head = String::from_utf8_lossy(&buf[..n]);
     let first_line = head.lines().next().unwrap_or("");
     first_line == LFS_POINTER_PREFIX
+}
+
+fn changed_paths_contain_lfs_pointer(repo_dir: &Path, changed_rel_paths: &[String]) -> bool {
+    changed_rel_paths
+        .iter()
+        .filter_map(|path| normalize_repo_relative(path, RootMode::Reject).ok())
+        .any(|path| is_lfs_pointer(&repo_dir.join(path)))
 }
 
 /// Probe the LFS state of the effective storage scope for `key`:
@@ -399,11 +405,12 @@ fn ssh_probe_command(remote_url: &str) -> Option<String> {
     }
 }
 
-/// Called after `git_sync` completes successfully. If any file inside
-/// `target_dir/.assets/` from `changed_rel_paths` is currently an LFS pointer
-/// AND the strategy is LFS-flavoured, probe credentials and — on success —
-/// spawn `git lfs pull` in the background, with state transitioning
-/// `Pulling → Ready` (or `MissingCreds` on probe/pull failure).
+/// Called after `git_sync` completes successfully. If any normalized repository
+/// path from `changed_rel_paths` is currently an LFS pointer and the strategy is
+/// LFS-flavoured, probe credentials and — on success — spawn `git lfs pull` in
+/// the background, with state transitioning `Pulling → Ready` (or
+/// `MissingCreds` on probe/pull failure). Detecting actual pointers keeps this
+/// compatible with both Svode-managed and user-defined LFS rules.
 ///
 /// Returns immediately; the actual pull runs on a tokio task so it does
 /// not block the sync IPC response.
@@ -413,12 +420,7 @@ pub fn maybe_auto_pull_after_sync(
     target_dir: &Path,
     changed_rel_paths: &[String],
 ) {
-    let has_pointer = changed_rel_paths
-        .iter()
-        .filter_map(|p| normalize_repo_relative(p, RootMode::Reject).ok())
-        .filter(|p| p.starts_with(".assets/"))
-        .any(|p| is_lfs_pointer(&target_dir.join(p)));
-    if !has_pointer {
+    if !changed_paths_contain_lfs_pointer(target_dir, changed_rel_paths) {
         return;
     }
 
@@ -576,6 +578,50 @@ async fn reset_lfs_state_if_needed(app: &AppHandle, index_state: &IndexState, ke
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TEST_LFS_POINTER: &str = "version https://git-lfs.github.com/spec/v1\n\
+oid sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n\
+size 42\n";
+
+    #[test]
+    fn post_sync_detects_lfs_pointer_outside_managed_assets() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let media = temp.path().join("presentations/demo.mp4");
+        std::fs::create_dir_all(media.parent().expect("media parent")).expect("media dir");
+        std::fs::write(&media, TEST_LFS_POINTER).expect("LFS pointer");
+
+        assert!(changed_paths_contain_lfs_pointer(
+            temp.path(),
+            &["presentations/demo.mp4".to_string()],
+        ));
+    }
+
+    #[test]
+    fn post_sync_ignores_ordinary_media_file() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let media = temp.path().join("presentations/demo.mp4");
+        std::fs::create_dir_all(media.parent().expect("media parent")).expect("media dir");
+        std::fs::write(&media, b"ordinary media bytes").expect("media file");
+
+        assert!(!changed_paths_contain_lfs_pointer(
+            temp.path(),
+            &["presentations/demo.mp4".to_string()],
+        ));
+    }
+
+    #[test]
+    fn post_sync_rejects_traversal_path_to_lfs_pointer() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let repo = temp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("repo dir");
+        std::fs::write(temp.path().join("outside.psd"), TEST_LFS_POINTER)
+            .expect("outside LFS pointer");
+
+        assert!(!changed_paths_contain_lfs_pointer(
+            &repo,
+            &["../outside.psd".to_string()],
+        ));
+    }
 
     #[test]
     fn lfs_runtime_is_used_only_by_lfs_strategies() {

@@ -20,6 +20,10 @@ export {
 } from "./git-identity";
 export {
   canApplyStorageStrategyDraft,
+  canReapplyLfsPolicy,
+  canRunLfsPolicyDiagnostic,
   isStorageStrategyDraftChanged,
+  storageTargetKey,
+  type ReapplyLfsPolicyState,
   type StorageStrategyDraftState,
 } from "./storage-strategy";

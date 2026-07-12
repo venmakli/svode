@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { applyAssetsStrategy, countAssets, getAssetsConfig } from "../api";
-import type { LfsRemoteDiagnostic } from "../api";
+import type { LfsPolicyDiagnostic, LfsRemoteDiagnostic } from "../api";
 import type { GitAuthChallenge } from "@/features/git";
 import type {
   AssetsS3Config,
@@ -16,13 +16,18 @@ import {
 } from "./use-space-storage-config";
 import { useSpaceStorageInlineSpaces } from "./use-space-storage-inline-spaces";
 import { useSpaceStorageLfs } from "./use-space-storage-lfs";
+import { useSpaceStoragePolicyDiagnostics } from "./use-space-storage-policy-diagnostics";
 import {
   canApplyStorageStrategyDraft,
+  canReapplyLfsPolicy,
+  canRunLfsPolicyDiagnostic,
   canRunLfsRemoteDiagnostic,
+  storageTargetKey,
 } from "../model/storage-strategy";
 
 interface UseSpaceStorageSettingsOptions {
   open: boolean;
+  diagnosticsActive: boolean;
   spacePath: string;
   projectPath: string;
   currentSpaceId: string | null;
@@ -67,6 +72,10 @@ export interface UseSpaceStorageSettingsResult {
   lfsRemoteAuthChallenge: GitAuthChallenge | null;
   lfsRemoteAuthSaving: boolean;
   lfsRemoteAuthError: string | null;
+  lfsPolicyDiagnostic: LfsPolicyDiagnostic | null;
+  lfsPolicyDiagnosticLoading: boolean;
+  lfsPolicyDiagnosticError: boolean;
+  canUpdateLfsPolicy: boolean;
   inlineSpaceNames: string[];
   canTestS3: boolean;
   canSaveS3: boolean;
@@ -88,18 +97,24 @@ export interface UseSpaceStorageSettingsResult {
     username: string;
     password: string;
   }) => Promise<void>;
+  updateLfsPolicy: () => Promise<void>;
+  refreshLfsPolicyDiagnostic: () => Promise<void>;
   cancelPendingStrategy: () => void;
   confirmPendingStrategy: () => Promise<void>;
 }
 
 export function useSpaceStorageSettings({
   open,
+  diagnosticsActive,
   spacePath,
   projectPath,
   currentSpaceId,
   isRoot,
   spaces,
 }: UseSpaceStorageSettingsOptions): UseSpaceStorageSettingsResult {
+  const currentTargetKey = storageTargetKey(projectPath, currentSpaceId);
+  const currentTargetKeyRef = useRef(currentTargetKey);
+  currentTargetKeyRef.current = currentTargetKey;
   const storageConfig = useSpaceStorageConfig({
     open,
     spacePath,
@@ -110,11 +125,23 @@ export function useSpaceStorageSettings({
     configLoaded: storageConfig.loadedForCurrentTarget,
     strategy: storageConfig.savedAssetsStrategy,
   });
+  const lfsPolicyEnabled = canRunLfsPolicyDiagnostic({
+    active: diagnosticsActive,
+    configLoaded: storageConfig.loadedForCurrentTarget,
+    inheritedFromProject: storageConfig.inheritedFromProject,
+    strategy: storageConfig.savedAssetsStrategy,
+  });
   const lfs = useSpaceStorageLfs({
     open,
     projectPath,
     currentSpaceId,
     lfsRemoteEnabled,
+  });
+  const lfsPolicy = useSpaceStoragePolicyDiagnostics({
+    open,
+    projectPath,
+    currentSpaceId,
+    enabled: lfsPolicyEnabled,
   });
   const {
     assetsStrategy,
@@ -167,6 +194,12 @@ export function useSpaceStorageSettings({
     setLfsRemoteAuthDialogOpen,
     saveLfsRemoteAuthAndRetry,
   } = lfs;
+  const {
+    lfsPolicyDiagnostic,
+    lfsPolicyDiagnosticLoading,
+    lfsPolicyDiagnosticError,
+    reloadLfsPolicyDiagnostic,
+  } = lfsPolicy;
   const { inlineSpaceNames } = useSpaceStorageInlineSpaces({
     open,
     isRoot,
@@ -176,6 +209,7 @@ export function useSpaceStorageSettings({
   const [pendingStrategy, setPendingStrategy] = useState<AssetsStrategy | null>(
     null,
   );
+  const [pendingTargetKey, setPendingTargetKey] = useState<string | null>(null);
   const [pendingAssetCount, setPendingAssetCount] = useState<number>(0);
   const [applyingStrategy, setApplyingStrategy] = useState(false);
   const [strategyInFlight, setStrategyInFlight] =
@@ -217,8 +251,9 @@ export function useSpaceStorageSettings({
   }, [spacePath, projectPath, currentSpaceId]);
 
   const applyStrategy = useCallback(
-    async (next: AssetsStrategy) => {
+    async (next: AssetsStrategy, useSavedConfig = false) => {
       if (!spacePath) return;
+      const operationTargetKey = currentTargetKey;
       setApplyingStrategy(true);
       setStrategyInFlight(next);
       try {
@@ -228,13 +263,18 @@ export function useSpaceStorageSettings({
           secretKey: string;
         } | null = null;
         if (next === "lfs-s3") {
-          s3Config = {
-            endpoint: s3Endpoint.trim(),
-            bucket: s3Bucket.trim(),
-            region: s3Region.trim(),
-            prefix: s3Prefix.trim(),
-          };
-          if (s3AccessKey.trim() && s3SecretKey.trim()) {
+          s3Config = useSavedConfig
+            ? savedS3Config
+            : {
+                endpoint: s3Endpoint.trim(),
+                bucket: s3Bucket.trim(),
+                region: s3Region.trim(),
+                prefix: s3Prefix.trim(),
+              };
+          if (!s3Config) {
+            throw new Error(m.storage_project_setting_missing_s3());
+          }
+          if (!useSavedConfig && s3AccessKey.trim() && s3SecretKey.trim()) {
             s3Credentials = {
               accessKey: s3AccessKey,
               secretKey: s3SecretKey,
@@ -248,7 +288,11 @@ export function useSpaceStorageSettings({
           s3Config,
           s3Credentials,
         });
-        markStrategyApplied(next, s3Config);
+        if (currentTargetKeyRef.current !== operationTargetKey) return;
+        if (!useSavedConfig) {
+          markStrategyApplied(next, s3Config);
+        }
+        void reloadLfsPolicyDiagnostic();
         if (result.warnings && result.warnings.length > 0) {
           toast.warning(
             m.storage_apply_warnings({
@@ -259,10 +303,15 @@ export function useSpaceStorageSettings({
             },
           );
         } else {
-          toast.success(m.toast_settings_saved());
+          toast.success(
+            useSavedConfig
+              ? m.storage_lfs_policy_updated()
+              : m.toast_settings_saved(),
+          );
         }
       } catch (err) {
         console.error("Failed to apply assets strategy:", err);
+        if (currentTargetKeyRef.current !== operationTargetKey) return;
         const detail =
           typeof err === "string"
             ? err
@@ -272,20 +321,25 @@ export function useSpaceStorageSettings({
       } finally {
         setApplyingStrategy(false);
         setStrategyInFlight(null);
-        void loadLfsState();
+        if (currentTargetKeyRef.current === operationTargetKey) {
+          void loadLfsState();
+        }
       }
     },
     [
       currentSpaceId,
+      currentTargetKey,
       loadLfsState,
       markStrategyApplied,
       projectPath,
+      reloadLfsPolicyDiagnostic,
       s3AccessKey,
       s3Bucket,
       s3Endpoint,
       s3Prefix,
       s3Region,
       s3SecretKey,
+      savedS3Config,
       savedAssetsStrategy,
       setAssetsStrategy,
       spacePath,
@@ -297,21 +351,37 @@ export function useSpaceStorageSettings({
     setAssetsStrategy(savedAssetsStrategy);
     setPendingAssetCount(0);
     setPendingStrategy(null);
+    setPendingTargetKey(null);
   }, [applyingStrategy, open, savedAssetsStrategy, setAssetsStrategy]);
+
+  useEffect(() => {
+    setPendingAssetCount(0);
+    setPendingStrategy(null);
+    setPendingTargetKey(null);
+  }, [currentTargetKey]);
 
   const requestStrategyConfirmation = useCallback(
     async (next: AssetsStrategy) => {
+      const requestTargetKey = currentTargetKey;
       const assetCount = await countCurrentAssets();
+      if (currentTargetKeyRef.current !== requestTargetKey) return;
       if (assetCount === null) {
         setAssetsStrategy(savedAssetsStrategy);
         setPendingAssetCount(0);
         setPendingStrategy(null);
+        setPendingTargetKey(null);
         return;
       }
       setPendingAssetCount(assetCount);
       setPendingStrategy(next);
+      setPendingTargetKey(requestTargetKey);
     },
-    [countCurrentAssets, savedAssetsStrategy, setAssetsStrategy],
+    [
+      countCurrentAssets,
+      currentTargetKey,
+      savedAssetsStrategy,
+      setAssetsStrategy,
+    ],
   );
 
   const rejectUnsupportedMigration = useCallback(() => {
@@ -319,6 +389,7 @@ export function useSpaceStorageSettings({
     setAssetsStrategy(savedAssetsStrategy);
     setPendingAssetCount(0);
     setPendingStrategy(null);
+    setPendingTargetKey(null);
   }, [savedAssetsStrategy, setAssetsStrategy]);
 
   const selectStrategy = useCallback(
@@ -327,6 +398,7 @@ export function useSpaceStorageSettings({
         setAssetsStrategy(savedAssetsStrategy);
         setPendingAssetCount(0);
         setPendingStrategy(null);
+        setPendingTargetKey(null);
         return;
       }
       if (savedAssetsStrategy !== "local") {
@@ -339,6 +411,7 @@ export function useSpaceStorageSettings({
       setAssetsStrategy(next);
       setPendingAssetCount(0);
       setPendingStrategy(null);
+      setPendingTargetKey(null);
     },
     [
       lfsAvailable,
@@ -353,6 +426,17 @@ export function useSpaceStorageSettings({
     saved: savedAssetsStrategy,
     lfsAvailable,
     canSaveS3,
+    applying: applyingStrategy,
+  });
+  const canUpdateLfsPolicy = canReapplyLfsPolicy({
+    strategy: savedAssetsStrategy,
+    lfsAvailable,
+    s3ConfigReady: Boolean(
+      savedS3Config?.endpoint &&
+      savedS3Config.bucket &&
+      savedS3Config.region &&
+      savedS3Config.prefix,
+    ),
     applying: applyingStrategy,
   });
 
@@ -385,24 +469,34 @@ export function useSpaceStorageSettings({
     savedAssetsStrategy,
   ]);
 
+  const updateLfsPolicy = useCallback(async () => {
+    if (!canUpdateLfsPolicy) return;
+    await applyStrategy(savedAssetsStrategy, true);
+  }, [applyStrategy, canUpdateLfsPolicy, savedAssetsStrategy]);
+
   const cancelPendingStrategy = useCallback(() => {
     if (confirmingPendingStrategyRef.current) return;
     setAssetsStrategy(savedAssetsStrategy);
     setPendingStrategy(null);
     setPendingAssetCount(0);
+    setPendingTargetKey(null);
   }, [savedAssetsStrategy, setAssetsStrategy]);
 
   const confirmPendingStrategy = useCallback(async () => {
     const target = pendingStrategy;
+    const targetKey = pendingTargetKey;
     confirmingPendingStrategyRef.current = true;
     setPendingStrategy(null);
     setPendingAssetCount(0);
+    setPendingTargetKey(null);
     try {
-      if (target) await applyStrategy(target);
+      if (target && targetKey === currentTargetKeyRef.current) {
+        await applyStrategy(target);
+      }
     } finally {
       confirmingPendingStrategyRef.current = false;
     }
-  }, [pendingStrategy, applyStrategy]);
+  }, [applyStrategy, pendingStrategy, pendingTargetKey]);
 
   const projectDefaultApplied =
     savedAssetsStrategy === projectAssetsStrategy &&
@@ -486,6 +580,10 @@ export function useSpaceStorageSettings({
     lfsRemoteAuthChallenge,
     lfsRemoteAuthSaving,
     lfsRemoteAuthError,
+    lfsPolicyDiagnostic,
+    lfsPolicyDiagnosticLoading,
+    lfsPolicyDiagnosticError,
+    canUpdateLfsPolicy,
     inlineSpaceNames,
     canTestS3,
     canSaveS3,
@@ -504,6 +602,8 @@ export function useSpaceStorageSettings({
     repairLfs,
     setLfsRemoteAuthDialogOpen,
     saveLfsRemoteAuthAndRetry,
+    updateLfsPolicy,
+    refreshLfsPolicyDiagnostic: reloadLfsPolicyDiagnostic,
     cancelPendingStrategy,
     confirmPendingStrategy,
   };

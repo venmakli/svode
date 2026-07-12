@@ -151,6 +151,7 @@ export function SpaceSettingsDialog({
   });
   const storageSettings = useSpaceStorageSettings({
     open,
+    diagnosticsActive: section === "storage",
     spacePath,
     projectPath,
     currentSpaceId,

@@ -23,6 +23,12 @@ export interface LfsRemoteDiagnosticDto {
   detail: string | null;
 }
 
+export interface LfsPolicyDiagnosticDto {
+  managedPolicyCurrent: boolean;
+  uncoveredPaths: string[];
+  truncatedCount: number;
+}
+
 export interface SpaceInfoDto {
   id: string;
   name: string;

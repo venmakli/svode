@@ -8,6 +8,7 @@ import type {
   AssetsS3ConfigDto,
   AssetsStrategyDto,
   EffectiveAssetsConfigDto,
+  LfsPolicyDiagnosticDto,
   LfsRemoteDiagnosticDto,
   LfsStateDto,
   OpenProjectResultDto,
@@ -184,7 +185,10 @@ export function checkS3Connection(
 export function applyAssetsStrategy(
   input: SetAssetsStrategyInputDto,
 ): Promise<SetAssetsStrategyResultDto> {
-  return invokeCommand<SetAssetsStrategyResultDto>("set_assets_strategy", input);
+  return invokeCommand<SetAssetsStrategyResultDto>(
+    "set_assets_strategy",
+    input,
+  );
 }
 
 export function getLfsState(input: SpacePoolInputDto): Promise<LfsStateDto> {
@@ -195,6 +199,12 @@ export function diagnoseLfsRemote(
   input: SpacePoolInputDto,
 ): Promise<LfsRemoteDiagnosticDto> {
   return invokeCommand<LfsRemoteDiagnosticDto>("diagnose_lfs_remote", input);
+}
+
+export function diagnoseLfsPolicy(
+  input: SpacePoolInputDto,
+): Promise<LfsPolicyDiagnosticDto> {
+  return invokeCommand<LfsPolicyDiagnosticDto>("diagnose_lfs_policy", input);
 }
 
 export function repairLfs(input: SpacePoolInputDto): Promise<LfsStateDto> {

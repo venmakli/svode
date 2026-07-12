@@ -234,6 +234,7 @@ pub fn run() {
             storage::commands::check_s3_connection,
             storage::commands::has_s3_credentials,
             storage::commands::resolve_asset_url,
+            storage::policy::diagnose_lfs_policy,
             storage::lfs::diagnose_lfs_remote,
             storage::lfs::repair_lfs,
             storage::lfs::get_lfs_state,

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import * as m from "@/paraglide/messages.js";
 import type { AssetsS3Config, AssetsStrategy } from "@/features/space";
 import { checkS3Connection, getAssetsConfig, hasS3Credentials } from "../api";
+import { storageTargetKey } from "../model/storage-strategy";
 
 export type S3TestState = "idle" | "testing" | "ok" | "fail";
 
@@ -202,10 +203,6 @@ export function useSpaceStorageConfig({
     testS3,
     markStrategyApplied,
   };
-}
-
-function storageTargetKey(projectPath: string, spaceId: string | null) {
-  return `${projectPath}\u0000${spaceId ?? ""}`;
 }
 
 function sameS3Connection(

@@ -2,6 +2,7 @@ import {
   applyAssetsStrategy as applyPlatformAssetsStrategy,
   checkS3Connection as checkPlatformS3Connection,
   countAssets as countPlatformAssets,
+  diagnoseLfsPolicy as diagnosePlatformLfsPolicy,
   diagnoseLfsRemote as diagnosePlatformLfsRemote,
   getAssetsConfig as getPlatformAssetsConfig,
   getLfsState as getPlatformLfsState,
@@ -78,6 +79,12 @@ export interface LfsRemoteDiagnostic {
   detail: string | null;
 }
 
+export interface LfsPolicyDiagnostic {
+  managedPolicyCurrent: boolean;
+  uncoveredPaths: string[];
+  truncatedCount: number;
+}
+
 interface SettingsEvent<T> {
   payload: T;
 }
@@ -103,6 +110,12 @@ export function diagnoseLfsRemote(
   input: SpacePoolInput,
 ): Promise<LfsRemoteDiagnostic> {
   return diagnosePlatformLfsRemote(input);
+}
+
+export function diagnoseLfsPolicy(
+  input: SpacePoolInput,
+): Promise<LfsPolicyDiagnostic> {
+  return diagnosePlatformLfsPolicy(input);
 }
 
 export function repairLfs(input: SpacePoolInput): Promise<LfsState> {

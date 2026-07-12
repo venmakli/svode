@@ -19,6 +19,7 @@ import { GitRemoteAuthDialog } from "@/features/git";
 import type { AssetsStrategy, LfsState, SpaceGitType } from "@/features/space";
 import { isLfsStorageStrategy } from "../model/storage-strategy";
 import type { UseSpaceStorageSettingsResult } from "../hooks/use-space-storage-settings";
+import { StorageLfsPolicyWarning } from "./storage-lfs-policy-warning";
 
 interface StorageSettingsSectionProps {
   gitType: SpaceGitType | null;
@@ -100,7 +101,24 @@ export function StorageSettingsSection({
     <div className="space-y-4 max-w-md">
       <div>
         <Label className="text-sm font-medium">{m.storage_title()}</Label>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {m.storage_scope_hint()}
+        </p>
       </div>
+      {lfsStatePanelStrategy && (
+        <StorageLfsPolicyWarning
+          diagnostic={settings.lfsPolicyDiagnostic}
+          loading={settings.lfsPolicyDiagnosticLoading}
+          error={settings.lfsPolicyDiagnosticError}
+          updating={
+            settings.applyingStrategy &&
+            settings.strategyInFlight === settings.savedAssetsStrategy
+          }
+          canUpdate={settings.canUpdateLfsPolicy}
+          onUpdate={() => void settings.updateLfsPolicy()}
+          onRefresh={() => void settings.refreshLfsPolicyDiagnostic()}
+        />
+      )}
       <RadioGroup
         value={settings.assetsStrategy}
         onValueChange={(value) =>
@@ -463,6 +481,12 @@ export function StorageStrategyConfirmDialog({
               strategy: storageStrategyTitle(settings.pendingStrategy),
             })}
             <span className="block">{m.storage_confirm_files()}</span>
+            {(settings.pendingStrategy === "lfs-remote" ||
+              settings.pendingStrategy === "lfs-s3") && (
+              <span className="block">
+                {m.storage_confirm_repository_lfs_policy()}
+              </span>
+            )}
             {settings.pendingAssetCount > 0 && (
               <span className="mt-2 block text-destructive">
                 {m.storage_confirm_existing_assets({

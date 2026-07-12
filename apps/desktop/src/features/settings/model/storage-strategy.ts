@@ -18,6 +18,18 @@ export interface StorageLfsDiagnosticsState {
   strategy: AssetsStrategy;
 }
 
+export interface StorageLfsPolicyDiagnosticsState extends StorageLfsDiagnosticsState {
+  active: boolean;
+  inheritedFromProject: boolean;
+}
+
+export interface ReapplyLfsPolicyState {
+  strategy: AssetsStrategy;
+  lfsAvailable: boolean;
+  s3ConfigReady: boolean;
+  applying: boolean;
+}
+
 export function isStorageStrategyDraftChanged({
   draft,
   saved,
@@ -54,6 +66,32 @@ export function canRunLfsRemoteDiagnostic({
   return configLoaded && strategy === "lfs-remote";
 }
 
+export function canRunLfsPolicyDiagnostic({
+  active,
+  configLoaded,
+  inheritedFromProject,
+  strategy,
+}: StorageLfsPolicyDiagnosticsState): boolean {
+  return (
+    active &&
+    configLoaded &&
+    !inheritedFromProject &&
+    isLfsStorageStrategy(strategy)
+  );
+}
+
+export function canReapplyLfsPolicy({
+  strategy,
+  lfsAvailable,
+  s3ConfigReady,
+  applying,
+}: ReapplyLfsPolicyState): boolean {
+  if (applying || !lfsAvailable || !isLfsStorageStrategy(strategy)) {
+    return false;
+  }
+  return strategy !== "lfs-s3" || s3ConfigReady;
+}
+
 export function isLfsStorageStrategy(
   strategy: AssetsStrategy,
 ): strategy is LfsStorageStrategy {
@@ -65,4 +103,11 @@ export function canShowLfsStatePanel({
   strategy,
 }: StorageLfsDiagnosticsState): boolean {
   return configLoaded && isLfsStorageStrategy(strategy);
+}
+
+export function storageTargetKey(
+  projectPath: string,
+  spaceId: string | null,
+): string {
+  return `${projectPath}\u0000${spaceId ?? ""}`;
 }

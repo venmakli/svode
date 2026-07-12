@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use super::s3;
+use super::{policy, s3};
 use crate::error::AppError;
 use crate::git::GitState;
 use crate::git::cli::{GitCli, GitOutput};
@@ -19,11 +19,8 @@ pub struct ApplyStrategyResult {
 
 const IGNORE_START: &str = "# svode:assets-ignore:start";
 const IGNORE_END: &str = "# svode:assets-ignore:end";
-const LFS_START: &str = "# svode:assets-lfs:start";
-const LFS_END: &str = "# svode:assets-lfs:end";
 
 const IGNORE_BODY: &str = ".assets/";
-const LFS_BODY: &str = ".assets/** filter=lfs diff=lfs merge=lfs -text";
 
 /// Read a file to a string, returning an empty string if the file does not
 /// exist. Any other IO error is propagated.
@@ -95,6 +92,30 @@ fn normalize_trailing_newline(mut s: String) -> String {
         s.push('\n');
     }
     s
+}
+
+fn rewrite_managed_lfs_attributes(contents: &str, enabled: bool) -> String {
+    let stripped = strip_block(contents, policy::LFS_START, policy::LFS_END);
+    // Builds before managed markers were introduced could leave this exact
+    // Svode rule at top level. Keep the existing one-time legacy cleanup while
+    // preserving every other user-owned attribute line.
+    let without_legacy_rule = stripped
+        .lines()
+        .filter(|line| line.trim() != policy::LEGACY_ASSETS_ONLY_LFS_RULE)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let next = if enabled {
+        let body = policy::managed_lfs_attributes_body();
+        append_block(
+            &without_legacy_rule,
+            policy::LFS_START,
+            &body,
+            policy::LFS_END,
+        )
+    } else {
+        without_legacy_rule
+    };
+    normalize_trailing_newline(next)
 }
 
 /// Write `contents` to `path`, creating or replacing the file. If contents is
@@ -205,19 +226,31 @@ pub async fn apply_strategy(
     // --- .gitattributes: managed LFS block only for Lfs* strategies. ---
     {
         let current = read_or_empty(&gitattributes_path)?;
-        let stripped = strip_block(&current, LFS_START, LFS_END);
-        let without_raw_lfs_body = stripped
-            .lines()
-            .filter(|line| line.trim() != LFS_BODY)
-            .collect::<Vec<_>>()
-            .join("\n");
-        let next = if matches!(new, AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3) {
-            append_block(&without_raw_lfs_body, LFS_START, LFS_BODY, LFS_END)
-        } else {
-            without_raw_lfs_body
-        };
-        let next = normalize_trailing_newline(next);
+        let next = rewrite_managed_lfs_attributes(&current, policy::strategy_uses_lfs_policy(new));
         write_or_remove(&gitattributes_path, &next)?;
+    }
+
+    // Verify positive representative paths against Git's effective attribute
+    // resolution. Nested/user `.gitattributes` files can override root rules;
+    // report that as a non-fatal warning without rewriting user configuration.
+    if policy::strategy_uses_lfs_policy(new) {
+        let paths: Vec<String> = policy::REPRESENTATIVE_LFS_PATHS
+            .iter()
+            .map(|path| (*path).to_string())
+            .collect();
+        match policy::check_lfs_filters(&cli, space_dir, &paths).await {
+            Ok(checks) => {
+                for check in checks.into_iter().filter(|check| check.value != "lfs") {
+                    result.warnings.push(format!(
+                        "Git LFS policy verification failed for `{}`: expected filter=lfs, got {}",
+                        check.path, check.value
+                    ));
+                }
+            }
+            Err(error) => result
+                .warnings
+                .push(format!("Git LFS policy verification errored: {error}")),
+        }
     }
 
     // --- LFS setup (best-effort, no history migration). ---
@@ -332,11 +365,36 @@ pub async fn apply_strategy(
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::{apply_strategy, ensure_storage_strategy_git_args_safe};
+    use super::{
+        apply_strategy, ensure_storage_strategy_git_args_safe, rewrite_managed_lfs_attributes,
+    };
     use crate::AppError;
     use crate::git::GitState;
     use crate::git::cli::GitCli;
     use crate::space::types::AssetsStrategy;
+    use crate::storage::policy::{
+        LEGACY_ASSETS_ONLY_LFS_RULE, LFS_END, LFS_START, managed_lfs_attributes_body,
+    };
+
+    #[test]
+    fn managed_lfs_rewrite_is_idempotent_and_preserves_user_attributes() {
+        let existing = format!(
+            "*.bin binary\n{LFS_START}\n{LEGACY_ASSETS_ONLY_LFS_RULE}\n{LFS_END}\n*.custom merge=ours\n"
+        );
+
+        let first = rewrite_managed_lfs_attributes(&existing, true);
+        let second = rewrite_managed_lfs_attributes(&first, true);
+
+        assert_eq!(second, first);
+        assert!(first.contains("*.bin binary\n"));
+        assert!(first.contains("*.custom merge=ours\n"));
+        assert_eq!(first.matches(LFS_START).count(), 1);
+        assert_eq!(first.matches(LFS_END).count(), 1);
+        assert!(first.contains(&managed_lfs_attributes_body()));
+
+        let removed = rewrite_managed_lfs_attributes(&first, false);
+        assert_eq!(removed, "*.bin binary\n*.custom merge=ours\n");
+    }
 
     #[test]
     fn storage_strategy_git_guard_blocks_history_rewrites() {
