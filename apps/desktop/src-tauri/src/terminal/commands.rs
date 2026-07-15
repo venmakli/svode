@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
-use super::{AgentTerminalSurface, TerminalManager, TerminalSession};
+use super::{AgentTerminalSurface, TerminalManager, TerminalResourcePath, TerminalSession};
 use crate::agent_sessions::types::AgentSessionSource;
 use crate::error::AppError;
 
@@ -60,6 +60,24 @@ pub fn terminal_list(
     manager: State<'_, TerminalManager>,
 ) -> Result<Vec<TerminalSession>, AppError> {
     manager.list()
+}
+
+#[tauri::command]
+pub fn terminal_prepare_paths(
+    manager: State<'_, TerminalManager>,
+    pty_id: String,
+    paths: Vec<String>,
+) -> Result<String, AppError> {
+    manager.prepare_paths(&pty_id, paths)
+}
+
+#[tauri::command]
+pub fn terminal_prepare_resource_paths(
+    manager: State<'_, TerminalManager>,
+    pty_id: String,
+    resources: Vec<TerminalResourcePath>,
+) -> Result<String, AppError> {
+    manager.prepare_resource_paths(&pty_id, resources)
 }
 
 #[tauri::command]

@@ -2,13 +2,13 @@ pub mod commands;
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use chrono::{SecondsFormat, Utc};
 use portable_pty::{Child as PtyChild, CommandBuilder, MasterPty, PtySize, native_pty_system};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
 use crate::agent_sessions::types::{
@@ -55,9 +55,28 @@ struct TerminalErrorEvent {
 
 struct TerminalProcess {
     session: TerminalSession,
+    shell_kind: TerminalShellKind,
     child: Box<dyn PtyChild + Send>,
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // PowerShell/cmd are constructed only by Windows builds.
+enum TerminalShellKind {
+    Posix,
+    PowerShell,
+    Cmd,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalResourcePath {
+    pub version: u8,
+    pub kind: String,
+    pub project_path: String,
+    pub space_path: String,
+    pub relative_path: String,
 }
 
 #[derive(Debug, Clone)]
@@ -196,6 +215,7 @@ impl TerminalManager {
 
         let process = TerminalProcess {
             session: session.clone(),
+            shell_kind: shell.kind,
             child,
             master: pair.master,
             writer,
@@ -397,6 +417,35 @@ impl TerminalManager {
             .values()
             .map(|process| process.session.clone())
             .collect())
+    }
+
+    pub fn prepare_paths(&self, pty_id: &str, paths: Vec<String>) -> Result<String, AppError> {
+        let shell_kind = self.shell_kind(pty_id)?;
+        prepare_terminal_paths(shell_kind, paths)
+    }
+
+    pub fn prepare_resource_paths(
+        &self,
+        pty_id: &str,
+        resources: Vec<TerminalResourcePath>,
+    ) -> Result<String, AppError> {
+        let shell_kind = self.shell_kind(pty_id)?;
+        let paths = resources
+            .into_iter()
+            .map(resolve_terminal_resource_path)
+            .collect::<Result<Vec<_>, _>>()?;
+        prepare_terminal_paths(shell_kind, paths)
+    }
+
+    fn shell_kind(&self, pty_id: &str) -> Result<TerminalShellKind, AppError> {
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?;
+        sessions
+            .get(pty_id)
+            .map(|process| process.shell_kind)
+            .ok_or_else(|| AppError::General(format!("Terminal session not found: {pty_id}")))
     }
 
     #[allow(dead_code)]
@@ -810,6 +859,7 @@ fn canonical_cwd(cwd: &str) -> Result<PathBuf, AppError> {
 struct ShellCommand {
     program: String,
     args: Vec<String>,
+    kind: TerminalShellKind,
 }
 
 impl ShellCommand {
@@ -838,12 +888,14 @@ fn select_windows_shell(mut resolve: impl FnMut(&str) -> Option<String>) -> Shel
             return ShellCommand {
                 program,
                 args: Vec::new(),
+                kind: TerminalShellKind::PowerShell,
             };
         }
     }
     ShellCommand {
         program: "cmd.exe".to_string(),
         args: Vec::new(),
+        kind: TerminalShellKind::Cmd,
     }
 }
 
@@ -859,6 +911,7 @@ fn select_unix_shell(env_shell: Option<&str>, exists: impl Fn(&str) -> bool) -> 
             return ShellCommand {
                 program: shell.to_string(),
                 args: vec!["-l".to_string()],
+                kind: TerminalShellKind::Posix,
             };
         }
     }
@@ -867,6 +920,7 @@ fn select_unix_shell(env_shell: Option<&str>, exists: impl Fn(&str) -> bool) -> 
             return ShellCommand {
                 program: candidate.to_string(),
                 args: vec!["-l".to_string()],
+                kind: TerminalShellKind::Posix,
             };
         }
     }
@@ -874,7 +928,115 @@ fn select_unix_shell(env_shell: Option<&str>, exists: impl Fn(&str) -> bool) -> 
     ShellCommand {
         program: "/bin/sh".to_string(),
         args: vec!["-l".to_string()],
+        kind: TerminalShellKind::Posix,
     }
+}
+
+fn prepare_terminal_paths(
+    shell_kind: TerminalShellKind,
+    paths: Vec<String>,
+) -> Result<String, AppError> {
+    if paths.is_empty() {
+        return Err(AppError::General("No terminal paths supplied".to_string()));
+    }
+
+    paths
+        .into_iter()
+        .map(|path| {
+            validate_terminal_path(&path)?;
+            Ok(quote_terminal_path(shell_kind, &path))
+        })
+        .collect::<Result<Vec<_>, AppError>>()
+        .map(|tokens| tokens.join(" "))
+}
+
+fn validate_terminal_path(path: &str) -> Result<(), AppError> {
+    if path.is_empty() || path.chars().any(char::is_control) {
+        return Err(AppError::General(
+            "Terminal path contains unsupported characters".to_string(),
+        ));
+    }
+    let candidate = Path::new(path);
+    if !candidate.is_absolute() || !candidate.exists() {
+        return Err(AppError::General(
+            "Terminal path is not accessible".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn resolve_terminal_resource_path(resource: TerminalResourcePath) -> Result<String, AppError> {
+    if resource.version != 1
+        || !matches!(resource.kind.as_str(), "file" | "folder" | "collection")
+        || resource.relative_path.is_empty()
+        || resource.relative_path.chars().any(char::is_control)
+    {
+        return Err(AppError::General(
+            "Invalid terminal resource payload".to_string(),
+        ));
+    }
+
+    let relative = Path::new(&resource.relative_path);
+    if relative.is_absolute()
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(AppError::General(
+            "Terminal resource escapes its scope".to_string(),
+        ));
+    }
+
+    let project = Path::new(&resource.project_path)
+        .canonicalize()
+        .map_err(|_| {
+            AppError::General("Terminal resource project is not accessible".to_string())
+        })?;
+    let space = Path::new(&resource.space_path)
+        .canonicalize()
+        .map_err(|_| AppError::General("Terminal resource scope is not accessible".to_string()))?;
+    if !space.starts_with(&project) {
+        return Err(AppError::General(
+            "Terminal resource escapes its project".to_string(),
+        ));
+    }
+
+    let resolved = space
+        .join(relative)
+        .canonicalize()
+        .map_err(|_| AppError::General("Terminal resource is not accessible".to_string()))?;
+    if !resolved.starts_with(&space) {
+        return Err(AppError::General(
+            "Terminal resource escapes its scope".to_string(),
+        ));
+    }
+
+    Ok(system_path::user_facing_path(&resolved))
+}
+
+fn quote_terminal_path(shell_kind: TerminalShellKind, path: &str) -> String {
+    match shell_kind {
+        TerminalShellKind::Posix => format!("'{}'", path.replace('\'', "'\"'\"'")),
+        TerminalShellKind::PowerShell => format!("'{}'", path.replace('\'', "''")),
+        TerminalShellKind::Cmd => quote_cmd_terminal_path(path),
+    }
+}
+
+fn quote_cmd_terminal_path(path: &str) -> String {
+    let mut quoted = String::with_capacity(path.len());
+    for ch in path.chars() {
+        if matches!(
+            ch,
+            ' ' | '\t' | '&' | '<' | '>' | '|' | '(' | ')' | '^' | '!' | '%' | '\''
+        ) {
+            quoted.push('^');
+        }
+        quoted.push(ch);
+    }
+    quoted
 }
 
 #[cfg(not(windows))]
@@ -942,6 +1104,7 @@ mod tests {
             ShellCommand {
                 program: "/custom/zsh".to_string(),
                 args: vec!["-l".to_string()],
+                kind: TerminalShellKind::Posix,
             }
         );
     }
@@ -956,6 +1119,7 @@ mod tests {
             ShellCommand {
                 program: "/bin/bash".to_string(),
                 args: vec!["-l".to_string()],
+                kind: TerminalShellKind::Posix,
             }
         );
     }
@@ -972,8 +1136,158 @@ mod tests {
             ShellCommand {
                 program: "C:\\Program Files\\PowerShell\\pwsh.exe".to_string(),
                 args: Vec::new(),
+                kind: TerminalShellKind::PowerShell,
             }
         );
+    }
+
+    #[test]
+    fn terminal_paths_are_quoted_for_each_shell() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let path = temp.path().join("кириллица & it's 100%.md");
+        std::fs::write(&path, "test").expect("write path");
+        let display = system_path::user_facing_path(&path);
+
+        assert_eq!(
+            prepare_terminal_paths(TerminalShellKind::Posix, vec![display.clone()])
+                .expect("posix path"),
+            format!("'{}'", display.replace('\'', "'\"'\"'"))
+        );
+        assert_eq!(
+            prepare_terminal_paths(TerminalShellKind::PowerShell, vec![display.clone()])
+                .expect("powershell path"),
+            format!("'{}'", display.replace('\'', "''"))
+        );
+        assert_eq!(
+            prepare_terminal_paths(TerminalShellKind::Cmd, vec![display.clone()])
+                .expect("cmd path"),
+            display
+                .chars()
+                .flat_map(|ch| {
+                    if matches!(
+                        ch,
+                        ' ' | '\t' | '&' | '<' | '>' | '|' | '(' | ')' | '^' | '!' | '%' | '\''
+                    ) {
+                        vec!['^', ch]
+                    } else {
+                        vec![ch]
+                    }
+                })
+                .collect::<String>()
+        );
+    }
+
+    #[test]
+    fn terminal_paths_keep_multiple_paths_as_separate_tokens() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let first = temp.path().join("first file.md");
+        let second = temp.path().join("second.md");
+        std::fs::write(&first, "one").expect("write first");
+        std::fs::write(&second, "two").expect("write second");
+
+        let prepared = prepare_terminal_paths(
+            TerminalShellKind::Posix,
+            vec![
+                system_path::user_facing_path(&first),
+                system_path::user_facing_path(&second),
+            ],
+        )
+        .expect("multiple paths");
+
+        assert!(prepared.contains("' '"));
+        assert!(!prepared.contains('\n'));
+        assert!(!prepared.contains('\r'));
+    }
+
+    #[test]
+    fn terminal_paths_reject_control_characters() {
+        let error = prepare_terminal_paths(
+            TerminalShellKind::Posix,
+            vec![format!("{}\nunsafe", std::env::temp_dir().display())],
+        )
+        .expect_err("control character should fail");
+
+        assert!(error.to_string().contains("unsupported characters"));
+    }
+
+    #[test]
+    fn terminal_resource_path_resolves_inside_scope() {
+        let project = tempfile::tempdir().expect("project");
+        let space = project.path().join("space");
+        std::fs::create_dir(&space).expect("create space");
+        let document = space.join("docs").join("note.md");
+        std::fs::create_dir(space.join("docs")).expect("create docs");
+        std::fs::write(&document, "note").expect("write document");
+
+        let resolved = resolve_terminal_resource_path(TerminalResourcePath {
+            version: 1,
+            kind: "file".to_string(),
+            project_path: system_path::user_facing_path(project.path()),
+            space_path: system_path::user_facing_path(&space),
+            relative_path: "docs/note.md".to_string(),
+        })
+        .expect("resource path");
+
+        assert_eq!(
+            resolved,
+            system_path::user_facing_path(&document.canonicalize().expect("canonical document"))
+        );
+    }
+
+    #[test]
+    fn terminal_resource_path_rejects_scope_traversal() {
+        let project = tempfile::tempdir().expect("project");
+        let space = project.path().join("space");
+        std::fs::create_dir(&space).expect("create space");
+        std::fs::write(project.path().join("outside.md"), "outside").expect("write outside");
+
+        let error = resolve_terminal_resource_path(TerminalResourcePath {
+            version: 1,
+            kind: "file".to_string(),
+            project_path: system_path::user_facing_path(project.path()),
+            space_path: system_path::user_facing_path(&space),
+            relative_path: "../outside.md".to_string(),
+        })
+        .expect_err("traversal should fail");
+
+        assert!(error.to_string().contains("escapes its scope"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminal_resource_path_rejects_symlink_traversal() {
+        use std::os::unix::fs::symlink;
+
+        let project = tempfile::tempdir().expect("project");
+        let space = project.path().join("space");
+        let outside = tempfile::tempdir().expect("outside");
+        std::fs::create_dir(&space).expect("create space");
+        std::fs::write(outside.path().join("secret.md"), "secret").expect("write outside");
+        symlink(outside.path(), space.join("escape")).expect("create symlink");
+
+        let error = resolve_terminal_resource_path(TerminalResourcePath {
+            version: 1,
+            kind: "file".to_string(),
+            project_path: system_path::user_facing_path(project.path()),
+            space_path: system_path::user_facing_path(&space),
+            relative_path: "escape/secret.md".to_string(),
+        })
+        .expect_err("symlink traversal should fail");
+
+        assert!(error.to_string().contains("escapes its scope"));
+    }
+
+    #[test]
+    fn terminal_prepare_paths_rejects_unknown_or_exited_session() {
+        let manager = TerminalManager::new();
+        let error = manager
+            .prepare_paths(
+                "missing-pty",
+                vec![std::env::temp_dir().display().to_string()],
+            )
+            .expect_err("unknown session should fail");
+
+        assert!(error.to_string().contains("Terminal session not found"));
     }
 
     #[test]

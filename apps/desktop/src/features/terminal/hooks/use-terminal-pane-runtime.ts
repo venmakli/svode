@@ -7,6 +7,7 @@ import {
 } from "@/features/terminal/api/terminal";
 import { subscribeTerminalOutput } from "@/features/terminal/lib/output-bus";
 import type { TerminalTab } from "@/features/terminal/model/types";
+import { useTerminalDrop } from "@/features/terminal/hooks/use-terminal-drop";
 
 interface UseTerminalPaneRuntimeOptions {
   tab: TerminalTab;
@@ -71,6 +72,12 @@ export function useTerminalPaneRuntime({
     tab.status === "spawning" ||
     tab.status === "ready" ||
     tab.status === "exited";
+  const { dropOverlay, dropHandlers } = useTerminalDrop({
+    containerRef,
+    terminalRef,
+    ptyId: tab.ptyId,
+    enabled: tab.status === "ready" && active && panelOpen,
+  });
 
   const fitTerminal = useCallback((options: FitRequestOptions = {}) => {
     const container = containerRef.current;
@@ -266,5 +273,5 @@ export function useTerminalPaneRuntime({
     return () => resizeObserver.disconnect();
   }, [active, panelOpen, requestTerminalFit]);
 
-  return { containerRef, terminalVisible };
+  return { containerRef, terminalVisible, dropOverlay, dropHandlers };
 }

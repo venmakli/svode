@@ -4,6 +4,7 @@ import { useTerminalPaneRuntime } from "@/features/terminal/hooks/use-terminal-p
 import { useTerminalStore } from "@/features/terminal/hooks/use-terminal-store";
 import type { TerminalTab } from "@/features/terminal/model/types";
 import * as m from "@/paraglide/messages.js";
+import { TerminalDropOverlay } from "./terminal-drop-overlay";
 
 interface TerminalPaneProps {
   tab: TerminalTab;
@@ -13,16 +14,17 @@ interface TerminalPaneProps {
 
 export function TerminalPane({ tab, active, panelOpen }: TerminalPaneProps) {
   const closeTab = useTerminalStore((state) => state.closeTab);
-  const { containerRef, terminalVisible } = useTerminalPaneRuntime({
-    tab,
-    active,
-    panelOpen,
-  });
+  const { containerRef, terminalVisible, dropOverlay, dropHandlers } =
+    useTerminalPaneRuntime({
+      tab,
+      active,
+      panelOpen,
+    });
 
   return (
     <div className={cn("absolute inset-0", active ? "block" : "hidden")}>
       {terminalVisible ? (
-        <div className="relative h-full overflow-hidden">
+        <div className="relative h-full overflow-hidden" {...dropHandlers}>
           <div
             ref={containerRef}
             className="h-full overflow-hidden px-2 py-1"
@@ -32,6 +34,7 @@ export function TerminalPane({ tab, active, panelOpen }: TerminalPaneProps) {
               {m.terminal_session_exited()}
             </div>
           )}
+          <TerminalDropOverlay state={dropOverlay} />
         </div>
       ) : (
         <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-muted-foreground">

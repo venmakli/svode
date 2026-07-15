@@ -126,6 +126,8 @@ export function RootScopeRow({
                     spaceId={spaceId}
                     loadTreeChildren={loadTreeChildren}
                     onActivateContent={onActivateContent}
+                    projectPath={rootPath}
+                    spacePath={rootPath}
                   />
                 ))}
               </SidebarMenuSub>

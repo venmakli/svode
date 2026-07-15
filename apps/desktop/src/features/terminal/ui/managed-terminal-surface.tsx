@@ -11,6 +11,7 @@ import { clearTerminalOutput } from "@/features/terminal/lib/output-bus";
 import type { TerminalTab } from "@/features/terminal/model/types";
 import { cn } from "@/shared/lib/utils";
 import * as m from "@/paraglide/messages.js";
+import { TerminalDropOverlay } from "./terminal-drop-overlay";
 
 const DEFAULT_MANAGED_TERMINAL_COLS = 120;
 const DEFAULT_MANAGED_TERMINAL_ROWS = 30;
@@ -92,11 +93,12 @@ function ManagedTerminalSurfaceInstance({
     }),
     [createdAt, error, ptyId, status, title],
   );
-  const { containerRef, terminalVisible } = useTerminalPaneRuntime({
-    tab,
-    active,
-    panelOpen: active,
-  });
+  const { containerRef, terminalVisible, dropOverlay, dropHandlers } =
+    useTerminalPaneRuntime({
+      tab,
+      active,
+      panelOpen: active,
+    });
 
   useEffect(() => {
     let cancelled = false;
@@ -135,7 +137,10 @@ function ManagedTerminalSurfaceInstance({
   }, [ptyId]);
 
   return (
-    <div className={cn("relative h-full overflow-hidden", className)}>
+    <div
+      className={cn("relative h-full overflow-hidden", className)}
+      {...dropHandlers}
+    >
       {terminalVisible ? (
         <>
           <div
@@ -150,6 +155,7 @@ function ManagedTerminalSurfaceInstance({
               {m.terminal_session_exited()}
             </div>
           )}
+          <TerminalDropOverlay state={dropOverlay} />
         </>
       ) : (
         <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-muted-foreground">

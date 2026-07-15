@@ -65,6 +65,8 @@ export function NavDocuments() {
                   node={node}
                   spaceId={activeRootId}
                   loadTreeChildren={loadTreeChildren}
+                  projectPath={activeRootPath}
+                  spacePath={activeRootPath}
                 />
               ))}
             </SidebarMenuSub>

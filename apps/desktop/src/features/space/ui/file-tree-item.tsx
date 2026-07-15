@@ -4,6 +4,7 @@ import {
   useEffect,
   useRef,
   type ReactElement,
+  type DragEvent,
 } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import * as m from "@/paraglide/messages.js";
@@ -59,6 +60,8 @@ import { useFileTreeItemActions } from "../hooks/use-file-tree-item-actions";
 import { TreeDndContext } from "./sortable-file-tree";
 import { TreeDropIndicator } from "./tree-drop-indicator";
 import { isDescendantOf } from "../lib/tree-dnd-utilities";
+import { writeSvodeResourceDragData } from "../lib/resource-drag";
+import type { SvodeDraggedResourceKind } from "../model/resource-drag";
 
 interface FileTreeItemProps {
   node: TreeNode;
@@ -68,6 +71,8 @@ interface FileTreeItemProps {
     parentPath?: string | null,
   ) => Promise<void>;
   onActivateContent?: () => void;
+  projectPath: string;
+  spacePath: string;
 }
 
 export function FileTreeItem({
@@ -75,6 +80,8 @@ export function FileTreeItem({
   spaceId,
   loadTreeChildren,
   onActivateContent,
+  projectPath,
+  spacePath,
 }: FileTreeItemProps) {
   const {
     bareFolder,
@@ -177,6 +184,21 @@ export function FileTreeItem({
     </span>
   ) : null;
 
+  const resourceKind: SvodeDraggedResourceKind = node.has_schema
+    ? "collection"
+    : bareFolder
+      ? "folder"
+      : "file";
+  const handleResourceDragStart = (event: DragEvent<HTMLSpanElement>) => {
+    event.stopPropagation();
+    writeSvodeResourceDragData(event.dataTransfer, {
+      version: 1,
+      kind: resourceKind,
+      projectPath,
+      spacePath,
+      relativePath: node.path,
+    });
+  };
   const titleElement = isEditing ? (
     <input
       ref={editRef}
@@ -188,7 +210,13 @@ export function FileTreeItem({
       onClick={(e) => e.stopPropagation()}
     />
   ) : (
-    <span className="truncate">{node.title}</span>
+    <span
+      className="truncate cursor-grab active:cursor-grabbing"
+      draggable
+      onDragStart={handleResourceDragStart}
+    >
+      {node.title}
+    </span>
   );
 
   const hasDescription = !bareFolder && !!node.description?.trim();
@@ -406,6 +434,8 @@ export function FileTreeItem({
                     spaceId={spaceId}
                     loadTreeChildren={loadTreeChildren}
                     onActivateContent={onActivateContent}
+                    projectPath={projectPath}
+                    spacePath={spacePath}
                   />
                 ))
               )}

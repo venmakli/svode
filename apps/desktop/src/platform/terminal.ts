@@ -45,6 +45,14 @@ export interface RegisterAgentTerminalSessionInput {
   createdAt?: string | null;
 }
 
+export interface TerminalResourcePathDto {
+  version: 1;
+  kind: "file" | "folder" | "collection";
+  projectPath: string;
+  spacePath: string;
+  relativePath: string;
+}
+
 export function spawnTerminal(
   cwd: string,
   cols: number,
@@ -77,6 +85,23 @@ export function killTerminal(ptyId: string): Promise<void> {
 
 export function listTerminals(): Promise<TerminalSession[]> {
   return invoke<TerminalSession[]>("terminal_list");
+}
+
+export function prepareTerminalPaths(
+  ptyId: string,
+  paths: string[],
+): Promise<string> {
+  return invoke<string>("terminal_prepare_paths", { ptyId, paths });
+}
+
+export function prepareTerminalResourcePaths(
+  ptyId: string,
+  resources: TerminalResourcePathDto[],
+): Promise<string> {
+  return invoke<string>("terminal_prepare_resource_paths", {
+    ptyId,
+    resources,
+  });
 }
 
 export function listAgentTerminalSurfaces(): Promise<

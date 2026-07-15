@@ -5,6 +5,8 @@ import {
   onTerminalError as listenTerminalErrors,
   onTerminalExit as listenTerminalExits,
   onTerminalOutput as listenTerminalOutput,
+  prepareTerminalPaths as prepareTerminalPathInput,
+  prepareTerminalResourcePaths as prepareTerminalResourcePathInput,
   registerAgentTerminalSession as registerAgentTerminalSessionCommand,
   resizeTerminal as resizeTerminalSession,
   spawnTerminal as spawnTerminalSession,
@@ -17,6 +19,7 @@ import type {
   TerminalExitEvent,
   TerminalOutputEvent,
   TerminalSession,
+  TerminalResourcePathDto,
 } from "@/platform/terminal";
 import type { TerminalAgentSurface } from "@/features/terminal/model/types";
 
@@ -27,6 +30,7 @@ export type {
   TerminalSession,
   RegisterAgentTerminalSessionInput,
   TerminalAgentSurfaceSession,
+  TerminalResourcePathDto,
 };
 
 export function spawnTerminal(
@@ -56,6 +60,20 @@ export function killTerminal(ptyId: string): Promise<void> {
 
 export function listTerminals(): Promise<TerminalSession[]> {
   return listTerminalSessions();
+}
+
+export function prepareTerminalPaths(
+  ptyId: string,
+  paths: string[],
+): Promise<string> {
+  return prepareTerminalPathInput(ptyId, paths);
+}
+
+export function prepareTerminalResourcePaths(
+  ptyId: string,
+  resources: TerminalResourcePathDto[],
+): Promise<string> {
+  return prepareTerminalResourcePathInput(ptyId, resources);
 }
 
 export function listAgentTerminalSurfaces(): Promise<TerminalAgentSurface[]> {

@@ -308,6 +308,8 @@ export function SpaceRow({
                     spaceId={ws.id}
                     loadTreeChildren={loadTreeChildren}
                     onActivateContent={onActivateContent}
+                    projectPath={rootPath}
+                    spacePath={ws.path}
                   />
                 ))}
               </SidebarMenuSub>
