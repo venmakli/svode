@@ -189,7 +189,7 @@ export function FileTreeItem({
     : bareFolder
       ? "folder"
       : "file";
-  const handleResourceDragStart = (event: DragEvent<HTMLSpanElement>) => {
+  const handleResourceDragStart = (event: DragEvent<HTMLAnchorElement>) => {
     event.stopPropagation();
     writeSvodeResourceDragData(event.dataTransfer, {
       version: 1,
@@ -210,13 +210,7 @@ export function FileTreeItem({
       onClick={(e) => e.stopPropagation()}
     />
   ) : (
-    <span
-      className="truncate cursor-grab active:cursor-grabbing"
-      draggable
-      onDragStart={handleResourceDragStart}
-    >
-      {node.title}
-    </span>
+    <span className="truncate">{node.title}</span>
   );
 
   const hasDescription = !bareFolder && !!node.description?.trim();
@@ -363,8 +357,15 @@ export function FileTreeItem({
             {dragHandle}
             {withDescriptionTooltip(
               <SidebarMenuSubButton
+                data-svode-resource-drag-source={isEditing ? undefined : true}
+                draggable={!isEditing}
                 isActive={isActive}
-                className={`flex-1 ${nestHighlight}`}
+                className={cn(
+                  "flex-1",
+                  !isEditing && "cursor-pointer active:cursor-grabbing",
+                  nestHighlight,
+                )}
+                onDragStart={isEditing ? undefined : handleResourceDragStart}
                 onClick={handleDocumentClick}
                 onDoubleClick={handleStartRename}
               >
@@ -395,8 +396,15 @@ export function FileTreeItem({
             {dragHandle}
             {withDescriptionTooltip(
               <SidebarMenuSubButton
+                data-svode-resource-drag-source={isEditing ? undefined : true}
+                draggable={!isEditing}
                 isActive={isActive}
-                className={`flex-1 ${nestHighlight}`}
+                className={cn(
+                  "flex-1",
+                  !isEditing && "cursor-pointer active:cursor-grabbing",
+                  nestHighlight,
+                )}
+                onDragStart={isEditing ? undefined : handleResourceDragStart}
                 onClick={handleDocumentClick}
                 onDoubleClick={handleStartRename}
               >

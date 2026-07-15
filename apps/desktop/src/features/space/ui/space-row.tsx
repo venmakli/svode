@@ -123,6 +123,7 @@ export function SpaceRow({
   const {
     attributes,
     listeners,
+    setActivatorNodeRef,
     setNodeRef,
     transform,
     transition,
@@ -207,10 +208,12 @@ export function SpaceRow({
         ref={setNodeRef}
         style={sortableStyle}
         className={sortableClassName}
-        {...attributes}
-        {...listeners}
       >
         <SidebarMenuButton
+          ref={setActivatorNodeRef}
+          data-space-drag-activator
+          {...attributes}
+          {...listeners}
           isActive={isActive}
           disabled={!!gitControls.cloning}
           className={draggableRowClassName}

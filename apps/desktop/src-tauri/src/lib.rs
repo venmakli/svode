@@ -8,6 +8,7 @@ mod git;
 mod identity;
 mod index;
 pub mod mcp;
+mod native_file_drop;
 mod process;
 mod properties;
 mod repo_path;
@@ -62,6 +63,9 @@ pub fn run() {
                 app.handle().clone(),
             ));
             app.manage(service);
+            if let Err(error) = native_file_drop::clear_materialized_file_drops(app.handle()) {
+                tracing::warn!("failed to clear dropped-file cache during setup: {error}");
+            }
             if let Err(error) = app_windows::rebuild_app_menu(app.handle()) {
                 tracing::warn!("failed to rebuild app menu during setup: {error}");
             }
@@ -247,6 +251,9 @@ pub fn run() {
             terminal::commands::terminal_prepare_resource_paths,
             terminal::commands::terminal_list_agent_surfaces,
             terminal::commands::terminal_register_agent_session,
+            native_file_drop::native_file_drop_paths,
+            native_file_drop::materialize_file_drop,
+            native_file_drop::materialize_native_file_drop_paths,
             mcp::commands::mcp_set_active_context,
             mcp::commands::mcp_clear_active_context,
             mcp::commands::mcp_get_active_context,
@@ -262,6 +269,10 @@ pub fn run() {
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 let terminal_manager = app_handle.state::<terminal::TerminalManager>();
                 terminal_manager.kill_all();
+
+                if let Err(error) = native_file_drop::clear_materialized_file_drops(app_handle) {
+                    tracing::warn!("failed to clear dropped-file cache during exit: {error}");
+                }
 
                 let autocommit = app_handle.state::<Arc<git::autocommit::AutocommitService>>();
                 tauri::async_runtime::block_on(async {

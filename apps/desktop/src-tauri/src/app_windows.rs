@@ -371,7 +371,10 @@ fn build_window(app: &AppHandle, label: &str, title: &str) -> Result<WebviewWind
     let builder = builder
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .hidden_title(true)
-        .traffic_light_position(tauri::LogicalPosition::new(20.0, 20.0));
+        .traffic_light_position(tauri::LogicalPosition::new(20.0, 20.0))
+        // Keep WebKit's DOM drag lifecycle available for Plate and sidebar
+        // resources. External file paths are read from NSDragPboard instead.
+        .disable_drag_drop_handler();
 
     #[cfg(windows)]
     let builder = builder.drag_and_drop(false);

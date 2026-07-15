@@ -39,3 +39,11 @@ test("shows the overlay after an OS drag moves onto another terminal surface", (
     EMPTY_NATIVE_DROP_TARGET_STATE,
   );
 });
+
+test("clears the native target state after a successful drop", () => {
+  const active = { pathCount: 2, overlayCount: 2 };
+
+  expect(reduceNativeDropTarget(active, { type: "drop" }, true)).toEqual(
+    EMPTY_NATIVE_DROP_TARGET_STATE,
+  );
+});

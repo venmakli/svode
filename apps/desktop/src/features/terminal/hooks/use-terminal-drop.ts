@@ -21,7 +21,11 @@ import {
   reduceNativeDropTarget,
   type NativeDropTargetState,
 } from "@/features/terminal/lib/drop-target";
-import { onNativeFileDrop } from "@/platform/native/file-drop";
+import {
+  onNativeFileDrop,
+  readNativeFileDragPaths,
+  resolveDroppedFilePaths,
+} from "@/platform/native/file-drop";
 
 export type TerminalDropOverlayState =
   | { kind: "active"; count: number }
@@ -59,6 +63,8 @@ export function useTerminalDrop({
   const nativeDropTargetRef = useRef<NativeDropTargetState>(
     EMPTY_NATIVE_DROP_TARGET_STATE,
   );
+  const nativeFilePathsRef = useRef<Promise<string[]> | null>(null);
+  const nativeFileDragTokenRef = useRef(0);
 
   const clearErrorTimer = useCallback(() => {
     if (errorTimerRef.current !== null) {
@@ -75,6 +81,16 @@ export function useTerminalDrop({
       errorTimerRef.current = null;
     }, 2500);
   }, [clearErrorTimer]);
+
+  const clearActiveDrag = useCallback(() => {
+    nativeFileDragTokenRef.current += 1;
+    nativeFilePathsRef.current = null;
+    nativeDropTargetRef.current = EMPTY_NATIVE_DROP_TARGET_STATE;
+    if (!mountedRef.current) return;
+    setDropOverlay((current) =>
+      current?.kind === "active" ? null : current,
+    );
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -150,6 +166,16 @@ export function useTerminalDrop({
     [pastePreparedText, ptyId, requestIsCurrent, showError],
   );
 
+  const readCachedNativeFilePaths = useCallback(() => {
+    if (!nativeFilePathsRef.current) {
+      nativeFilePathsRef.current = readNativeFileDragPaths().catch((error) => {
+        console.warn("Failed to read native file drag paths:", error);
+        return [];
+      });
+    }
+    return nativeFilePathsRef.current;
+  }, []);
+
   useEffect(() => {
     if (!enabled || !ptyId) return;
     let cancelled = false;
@@ -168,6 +194,7 @@ export function useTerminalDrop({
       }
 
       const container = containerRef.current;
+      if (event.type === "enter") clearErrorTimer();
       const inside =
         container !== null &&
         isPointInsideDropTarget(
@@ -206,26 +233,64 @@ export function useTerminalDrop({
     return () => {
       cancelled = true;
       unlisten?.();
-      nativeDropTargetRef.current = EMPTY_NATIVE_DROP_TARGET_STATE;
-      setDropOverlay(null);
+      clearActiveDrag();
     };
-  }, [containerRef, enabled, pasteNativePaths, ptyId]);
+  }, [
+    clearActiveDrag,
+    clearErrorTimer,
+    containerRef,
+    enabled,
+    pasteNativePaths,
+    ptyId,
+  ]);
 
   const onDragEnter: DragEventHandler<HTMLDivElement> = useCallback(
     (event) => {
-      if (!enabled || !event.dataTransfer.types.includes(SVODE_RESOURCE_MIME)) {
+      if (!enabled) {
         return;
       }
+      const resourceDrag = event.dataTransfer.types.includes(
+        SVODE_RESOURCE_MIME,
+      );
+      const fileDrag = event.dataTransfer.types.includes("Files");
+      if (!resourceDrag && !fileDrag) return;
       event.preventDefault();
       event.stopPropagation();
-      setDropOverlay({ kind: "active", count: 1 });
+      clearErrorTimer();
+      if (resourceDrag) {
+        setDropOverlay({ kind: "active", count: 1 });
+        return;
+      }
+
+      const itemCount = Array.from(event.dataTransfer.items).filter(
+        (item) => item.kind === "file",
+      ).length;
+      setDropOverlay({ kind: "active", count: Math.max(1, itemCount) });
+      if (nativeFilePathsRef.current) return;
+      const token = ++nativeFileDragTokenRef.current;
+      const pathsPromise = readCachedNativeFilePaths();
+      void pathsPromise.then((paths) => {
+        if (
+          token !== nativeFileDragTokenRef.current ||
+          !mountedRef.current ||
+          !latestSessionRef.current.enabled ||
+          paths.length === 0
+        ) {
+          return;
+        }
+        setDropOverlay({ kind: "active", count: paths.length });
+      });
     },
-    [enabled],
+    [clearErrorTimer, enabled, readCachedNativeFilePaths],
   );
 
   const onDragOver: DragEventHandler<HTMLDivElement> = useCallback(
     (event) => {
-      if (!enabled || !event.dataTransfer.types.includes(SVODE_RESOURCE_MIME)) {
+      if (
+        !enabled ||
+        (!event.dataTransfer.types.includes(SVODE_RESOURCE_MIME) &&
+          !event.dataTransfer.types.includes("Files"))
+      ) {
         return;
       }
       event.preventDefault();
@@ -235,27 +300,81 @@ export function useTerminalDrop({
     [enabled],
   );
 
-  const onDragLeave: DragEventHandler<HTMLDivElement> = useCallback((event) => {
-    if (
-      event.relatedTarget instanceof Node &&
-      event.currentTarget.contains(event.relatedTarget)
-    ) {
-      return;
-    }
-    setDropOverlay(null);
-  }, []);
+  const onDragLeave: DragEventHandler<HTMLDivElement> = useCallback(
+    (event) => {
+      if (
+        event.relatedTarget instanceof Node &&
+        event.currentTarget.contains(event.relatedTarget)
+      ) {
+        return;
+      }
+      clearActiveDrag();
+    },
+    [clearActiveDrag],
+  );
 
   const onDrop: DragEventHandler<HTMLDivElement> = useCallback(
     (event) => {
-      if (!enabled || !event.dataTransfer.types.includes(SVODE_RESOURCE_MIME)) {
-        return;
-      }
+      if (!enabled) return;
+      const resourceDrag = event.dataTransfer.types.includes(
+        SVODE_RESOURCE_MIME,
+      );
+      const fileDrag = event.dataTransfer.types.includes("Files");
+      if (!resourceDrag && !fileDrag) return;
       event.preventDefault();
       event.stopPropagation();
-      setDropOverlay(null);
-      void pasteResource(event.dataTransfer.getData(SVODE_RESOURCE_MIME));
+      event.dataTransfer.dropEffect = "copy";
+      if (resourceDrag) {
+        const serialized = event.dataTransfer.getData(SVODE_RESOURCE_MIME);
+        clearActiveDrag();
+        void pasteResource(serialized);
+        return;
+      }
+
+      const droppedFiles = Array.from(event.dataTransfer.files);
+      const cachedNativePathsPromise = readCachedNativeFilePaths();
+      // File promises can publish their URL only when the drop is accepted.
+      // Start a second read while the system drag session is still current.
+      const dropNativePathsPromise = readNativeFileDragPaths().catch((error) => {
+        console.warn("Failed to read native file paths on drop:", error);
+        return [];
+      });
+      const nativePathsPromise = Promise.all([
+        cachedNativePathsPromise,
+        dropNativePathsPromise,
+      ]).then(([cachedPaths, dropPaths]) => [
+        ...new Set([...cachedPaths, ...dropPaths]),
+      ]);
+      const requestedPtyId = ptyId;
+      clearActiveDrag();
+      void nativePathsPromise
+        .then((nativePaths) =>
+          resolveDroppedFilePaths(nativePaths, droppedFiles),
+        )
+        .then((paths) => {
+          if (!requestedPtyId || !requestIsCurrent(requestedPtyId)) return;
+          if (paths.length === 0) {
+            showError();
+            return;
+          }
+          void pasteNativePaths(paths);
+        })
+        .catch((error) => {
+          if (!requestedPtyId || !requestIsCurrent(requestedPtyId)) return;
+          console.warn("Failed to materialize terminal file drop:", error);
+          showError();
+        });
     },
-    [enabled, pasteResource],
+    [
+      clearActiveDrag,
+      enabled,
+      pasteNativePaths,
+      pasteResource,
+      ptyId,
+      readCachedNativeFilePaths,
+      requestIsCurrent,
+      showError,
+    ],
   );
 
   return {
