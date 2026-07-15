@@ -660,7 +660,23 @@ fn agent_surface_from_existing_session(
 }
 
 fn agent_initial_shell_input(program: &str, args: &[String]) -> String {
-    format!("{}\n", quote_agent_shell_command(program, args))
+    format!(
+        "{}{}",
+        quote_agent_shell_command(program, args),
+        shell_submit_sequence()
+    )
+}
+
+#[cfg(windows)]
+fn shell_submit_sequence() -> &'static str {
+    // ConPTY receives keyboard input rather than a redirected command stream.
+    // PowerShell treats LF as a multiline line-feed, while CR is the Enter key.
+    "\r"
+}
+
+#[cfg(not(windows))]
+fn shell_submit_sequence() -> &'static str {
+    "\n"
 }
 
 pub(crate) fn quote_agent_shell_command(program: &str, args: &[String]) -> String {
@@ -1384,6 +1400,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn terminal_agent_shell_resume_input_does_not_exec_initial_command() {
         let input =
@@ -1391,6 +1408,16 @@ mod tests {
 
         assert_eq!(input, "codex resume session\n");
         assert!(!input.starts_with("exec "));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn terminal_agent_shell_resume_input_submits_with_conpty_enter() {
+        let input =
+            agent_initial_shell_input("codex", &["resume".to_string(), "session".to_string()]);
+
+        assert_eq!(input, "codex resume session\r");
+        assert!(!input.contains('\n'));
     }
 
     #[test]
