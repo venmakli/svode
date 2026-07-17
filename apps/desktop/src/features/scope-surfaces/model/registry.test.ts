@@ -49,7 +49,7 @@ test("registry filters capability and presentation without changing canonical or
     resolveScopeSurfaceContributions(contributions, owner, "full").map(
       ({ id }) => id,
     ),
-  ).toEqual(["readme", "collection", "routines", "agent"]);
+  ).toEqual(["agent", "readme", "collection", "routines"]);
   expect(
     resolveScopeSurfaceContributions(contributions, owner, "compact").map(
       ({ id }) => id,
@@ -103,17 +103,17 @@ test("registry keeps root, child, and hybrid owner capabilities independent", ()
     resolveScopeSurfaceContributions(contributions, root, "full").map(
       ({ id }) => id,
     ),
-  ).toEqual(["readme", "routines", "agent"]);
+  ).toEqual(["agent", "readme", "routines"]);
   expect(
     resolveScopeSurfaceContributions(contributions, child, "full").map(
       ({ id }) => id,
     ),
-  ).toEqual(["readme", "routines", "agent"]);
+  ).toEqual(["agent", "readme", "routines"]);
   expect(
     resolveScopeSurfaceContributions(contributions, hybrid, "full").map(
       ({ id }) => id,
     ),
-  ).toEqual(["readme", "collection", "routines", "agent"]);
+  ).toEqual(["agent", "readme", "collection", "routines"]);
   expect(
     resolveScopeSurfaceContributions(contributions, collection, "full").map(
       ({ id }) => id,

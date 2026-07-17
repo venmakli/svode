@@ -6,10 +6,10 @@ import type {
 } from "./types";
 
 export const SCOPE_SURFACE_ORDER: Record<ScopeSurfaceId, number> = {
-  readme: 100,
-  collection: 200,
-  routines: 300,
-  agent: 400,
+  agent: 100,
+  readme: 200,
+  collection: 300,
+  routines: 400,
 };
 
 export function hasScopeCapability(
