@@ -173,6 +173,7 @@ pub fn run() {
             app_windows::open_project_window,
             app_windows::get_window_open_intent,
             app_windows::release_current_project_window,
+            app_windows::set_current_window_title,
             commands::space::setup_cli_symlinks_cmd,
             commands::space::teardown_cli_symlinks_cmd,
             commands::space::check_symlink_health,

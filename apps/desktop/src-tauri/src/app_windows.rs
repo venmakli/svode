@@ -165,6 +165,19 @@ pub fn release_current_project_window(state: tauri::State<'_, AppWindowState>, w
     state.release_window_project(window.label());
 }
 
+#[tauri::command]
+pub fn set_current_window_title(window: WebviewWindow, title: String) -> Result<(), AppError> {
+    #[cfg(target_os = "macos")]
+    {
+        return set_macos_window_title(window, title);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    window
+        .set_title(&title)
+        .map_err(|error| AppError::General(error.to_string()))
+}
+
 pub fn build_initial_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     build_app_menu(app, RecentProjectsMode::Skip)
 }
@@ -408,6 +421,39 @@ fn focus_last_window_or_open_home(app: &AppHandle) -> Result<(), AppError> {
     }
 
     open_home_window(app).map(|_| ())
+}
+
+#[cfg(target_os = "macos")]
+fn set_macos_window_title(window: WebviewWindow, title: String) -> Result<(), AppError> {
+    // Keep the title change and inset redraw in one main-thread callback.
+    // Tao's asynchronous set_title can otherwise reset the inset afterward:
+    // https://github.com/tauri-apps/tauri/issues/13044
+    window
+        .with_webview(move |webview| unsafe {
+            use objc2_app_kit::{NSView, NSWindow};
+            use objc2_foundation::NSString;
+
+            // SAFETY: Tauri executes with_webview on the main thread and keeps
+            // these AppKit handles alive for the duration of the callback.
+            // WKWebView is an NSView subclass, so the superclass cast is valid.
+            let ns_window = &*webview.ns_window().cast::<NSWindow>();
+            ns_window.setTitle(&NSString::from_str(&title));
+
+            let wk_webview = &*webview.inner().cast::<NSView>();
+            let Some(parent_view) = wk_webview.superview() else {
+                tracing::warn!(
+                    "failed to reapply macOS traffic light position: parent view missing"
+                );
+                return;
+            };
+
+            // Wry stores the configured traffic-light inset on this parent view
+            // and reapplies it from drawRect. Force the same draw path that a
+            // native window resize triggers after AppKit has laid out the titlebar.
+            parent_view.setNeedsDisplay(true);
+            parent_view.displayIfNeeded();
+        })
+        .map_err(|error| AppError::General(error.to_string()))
 }
 
 fn emit_open_folder_to_focused_window(app: &AppHandle) -> Result<(), AppError> {
