@@ -196,7 +196,7 @@ export function CoverBanner({
     <div
       ref={bannerRef}
       className={cn(
-        "group relative mb-6 overflow-hidden rounded-md",
+        "group relative overflow-hidden rounded-md",
         size === "compact"
           ? "h-44 min-h-32 max-h-48"
           : "h-[30vh] min-h-40 max-h-72",
