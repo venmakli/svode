@@ -18,18 +18,16 @@ export function resolveCollectionViewName(
 
 export function useCollectionActiveTab({
   collectionPath,
-  hasReadme,
   routeState,
   schema,
   views,
 }: {
   collectionPath: string;
-  hasReadme: boolean;
   routeState?: CollectionRouteState;
   schema: CollectionSchema | null;
   views: CollectionView[];
 }) {
-  const [activeTab, setActiveTab] = useState<ActiveTab>("document");
+  const [activeTab, setActiveTab] = useState<ActiveTab>("");
   const initializedCollectionRef = useRef<string | null>(null);
   const requestedViewName = routeState?.viewName ?? null;
   const onViewNameChange = routeState?.onViewNameChange;
@@ -37,21 +35,19 @@ export function useCollectionActiveTab({
   const selectTab = useCallback(
     (next: ActiveTab) => {
       setActiveTab(next);
-      onViewNameChange?.(next === "document" ? null : next);
+      onViewNameChange?.(next || null);
     },
     [onViewNameChange],
   );
 
   useEffect(() => {
     if (!schema) return;
-    const key = `${collectionPath}:${hasReadme ? "readme" : "no-readme"}`;
+    const key = collectionPath;
     const resolvedViewName = resolveCollectionViewName(
       requestedViewName,
       views,
     );
-    const fallbackTab = hasReadme
-      ? "document"
-      : (resolvedViewName ?? "document");
+    const fallbackTab = resolvedViewName ?? "";
     const requestedIsValid = Boolean(
       requestedViewName && resolvedViewName === requestedViewName,
     );
@@ -74,8 +70,7 @@ export function useCollectionActiveTab({
         }
       }
       if (
-        activeTab !== "document" &&
-        !views.some((view) => view.name === activeTab)
+        activeTab && !views.some((view) => view.name === activeTab)
       ) {
         queueMicrotask(() => selectTab(fallbackTab));
       }
@@ -91,7 +86,6 @@ export function useCollectionActiveTab({
   }, [
     activeTab,
     collectionPath,
-    hasReadme,
     requestedViewName,
     schema,
     selectTab,

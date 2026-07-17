@@ -16,9 +16,7 @@ use crate::commands::files as files_commands;
 use crate::files::{entry, tree};
 use crate::git::{self, commands::GitState};
 use crate::index::{IndexKey, IndexState, search};
-use crate::properties::{
-    self, CollectionSchema, Column, DocumentConfig, Filter, PropertyType, Sort, View,
-};
+use crate::properties::{self, CollectionSchema, Column, Filter, PropertyType, Sort, View};
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::{config as space_config, project, registry};
 
@@ -126,6 +124,7 @@ struct UpdateDocumentMetadataArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct CreateCollectionArgs {
     #[serde(default)]
     space_id: Option<String>,
@@ -143,8 +142,6 @@ struct CreateCollectionArgs {
     columns: Option<Vec<Column>>,
     #[serde(default)]
     views: Option<Vec<View>>,
-    #[serde(default)]
-    document_label: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -636,16 +633,6 @@ fn schema_for_create_collection(args: &CreateCollectionArgs) -> CollectionSchema
     }
     if let Some(views) = args.views.clone() {
         schema.views = views;
-    }
-    if let Some(label) = args
-        .document_label
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        schema.document = Some(DocumentConfig {
-            label: Some(label.to_string()),
-        });
     }
     schema
 }
@@ -1556,6 +1543,16 @@ mod tests {
             index_key_for_context(&context(None), None),
             IndexKey::Root(PathBuf::from("/project"))
         );
+    }
+
+    #[test]
+    fn create_collection_rejects_removed_document_label_argument() {
+        let args = json!({
+            "path": "tasks",
+            "title": "Tasks",
+            "documentLabel": "Documents"
+        });
+        assert!(decode::<CreateCollectionArgs>(args).is_err());
     }
 
     #[test]

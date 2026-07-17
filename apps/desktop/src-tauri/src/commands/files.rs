@@ -1570,25 +1570,6 @@ pub async fn update_system_field_label(
 }
 
 #[tauri::command]
-pub async fn update_document_label(
-    space: String,
-    collection_path: String,
-    label: Option<String>,
-    project_path: Option<String>,
-    autocommit: State<'_, Arc<AutocommitService>>,
-) -> Result<CollectionSchema, AppError> {
-    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
-    let schema = properties::update_document_label(&space, &collection_path, label)?;
-    let message = schema_commit_message(
-        &schema,
-        "Update document tab label",
-        "Update collection schema",
-    );
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
-    Ok(schema)
-}
-
-#[tauri::command]
 pub fn get_collection_schema(
     space: String,
     collection_path: String,

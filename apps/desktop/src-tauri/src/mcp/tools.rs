@@ -116,10 +116,6 @@ pub fn definitions() -> Vec<ToolDefinition> {
                     str_opt("body"),
                     columns_opt("columns"),
                     views_opt("views"),
-                    str_opt_desc(
-                        "documentLabel",
-                        "Optional label for collection entry documents.",
-                    ),
                 ],
                 &["path", "title"],
             ),
@@ -327,7 +323,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "delete_collection_view",
-            "Delete a named collection view. The implicit README Document tab is not a schema view and cannot be deleted through this tool. Does not autocommit.",
+            "Delete a named collection view. Collection README content belongs to the separate Readme scope surface and is not a schema view. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -399,7 +395,7 @@ Space targeting:
 
 Metadata and fields:
 - System metadata is title, icon, description, cover, created, and updated. Do not create custom columns for these and do not write them through update_entry_fields.
-- Collection identity lives in README.md metadata. Schema.yaml stores columns, views, system field labels, document label, and template settings.
+- Collection identity lives in README.md metadata. Schema.yaml stores columns, views, system field labels, and template settings. README content is exposed through the separate Readme scope surface.
 - Prefer domain tools over direct filesystem writes: update_document_metadata for title/icon/description/cover, schema tools for columns/views, write_document or update_entry_body for body replacement, and update_entry_fields for custom field values.
 
 Property semantics:
@@ -483,13 +479,6 @@ fn str_req(name: &'static str) -> (&'static str, Value) {
 
 fn str_opt(name: &'static str) -> (&'static str, Value) {
     (name, json!({"type": ["string", "null"]}))
-}
-
-fn str_opt_desc(name: &'static str, description: &'static str) -> (&'static str, Value) {
-    (
-        name,
-        json!({"type": ["string", "null"], "description": description}),
-    )
 }
 
 fn path_req(name: &'static str, description: &'static str) -> (&'static str, Value) {
@@ -903,6 +892,30 @@ mod tests {
                 definition.name
             );
         }
+    }
+
+    #[test]
+    fn public_collection_contract_does_not_advertise_legacy_document_label() {
+        let definitions = definitions();
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.name == "create_collection")
+            .expect("create_collection definition");
+        assert!(
+            definition.input_schema["properties"]
+                .get("documentLabel")
+                .is_none()
+        );
+        assert_eq!(
+            definition.input_schema["additionalProperties"],
+            json!(false)
+        );
+        let delete_definition = definitions
+            .iter()
+            .find(|definition| definition.name == "delete_collection_view")
+            .expect("delete_collection_view definition");
+        assert!(!delete_definition.description.contains("Document tab"));
+        assert!(!guide_text().contains("document label"));
     }
 
     #[test]

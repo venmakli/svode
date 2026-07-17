@@ -4,7 +4,6 @@ import {
   duplicateCollectionView as duplicateCollectionViewDto,
   renameCollectionView as renameCollectionViewDto,
   reorderCollectionViews as reorderCollectionViewsDto,
-  updateCollectionDocumentLabel as updateCollectionDocumentLabelDto,
   updateCollectionView as updateCollectionViewDto,
 } from "@/platform/collections/collections-api";
 import { normalizeSchema, type CollectionSchema } from "@/features/properties";
@@ -132,25 +131,6 @@ export function reorderCollectionViews({
     spacePath,
     collectionPath,
     newOrder,
-    projectPath: projectPath ?? null,
-  }).then(normalizeSchema);
-}
-
-export function updateCollectionDocumentLabel({
-  spacePath,
-  collectionPath,
-  label,
-  projectPath,
-}: {
-  spacePath: string;
-  collectionPath: string;
-  label: string | null;
-  projectPath?: string | null;
-}): Promise<CollectionSchema> {
-  return updateCollectionDocumentLabelDto({
-    spacePath,
-    collectionPath,
-    label,
     projectPath: projectPath ?? null,
   }).then(normalizeSchema);
 }

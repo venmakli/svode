@@ -88,7 +88,6 @@ export interface CollectionSchema {
   systemFields?: {
     title?: { label?: string | null } | null;
   } | null;
-  document?: { label?: string | null } | null;
   templates?: { default?: string | null; order?: string[] | null } | null;
   columns: Column[];
   views?: unknown[];

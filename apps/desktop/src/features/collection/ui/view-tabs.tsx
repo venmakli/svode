@@ -9,7 +9,6 @@ import {
 } from "react";
 import {
   ChevronDown,
-  FileText,
   GripVertical,
   MoreHorizontal,
   Plus,
@@ -42,8 +41,6 @@ interface CollectionTabStripProps {
   activeTab: ActiveTab;
   addViewOptions: AddViewOption[];
   addViewLabel: string;
-  documentLabel: string;
-  hasReadme: boolean;
   manageViewsLabel: string;
   moreViewsLabel: string;
   views: CollectionView[];
@@ -89,8 +86,6 @@ export function CollectionTabStrip({
   activeTab,
   addViewOptions,
   addViewLabel,
-  documentLabel,
-  hasReadme,
   manageViewsLabel,
   moreViewsLabel,
   views,
@@ -114,17 +109,8 @@ export function CollectionTabStrip({
       label: view.name,
       Icon: viewIcons[viewType(view)],
     }));
-    return hasReadme
-      ? [
-          {
-            value: "document",
-            label: documentLabel,
-            Icon: FileText,
-          },
-          ...items,
-        ]
-      : items;
-  }, [documentLabel, hasReadme, views]);
+    return items;
+  }, [views]);
 
   const updateVisibleTabs = useCallback(() => {
     const container = containerRef.current;
@@ -344,7 +330,7 @@ export function CollectionTabStrip({
             title: manageViewsLabel,
             content: (
               <ManageViewsPane
-                activeViewName={activeTab === "document" ? null : activeTab}
+                activeViewName={activeTab || null}
                 views={views}
                 onReorderViews={onReorderViews}
                 onSelectView={onTabChange}

@@ -104,7 +104,6 @@ pub fn run() {
             commands::files::clear_option_values,
             commands::files::replace_option_values,
             commands::files::update_system_field_label,
-            commands::files::update_document_label,
             commands::files::list_templates,
             commands::files::create_template,
             commands::files::delete_template,

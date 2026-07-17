@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Removed the legacy configurable collection document tab. Collection `README.md` is now exposed only through the stable scope-level Readme surface; legacy `schema.yaml` `document` data is ignored until the next explicit schema write removes it. MCP `documentLabel` is no longer accepted.
+
 ### Fixed
 
 - Fixed Windows VS Code project opener discovery for User/System installs, `code.cmd` PATH installs, hidden spawn, and actionable error details.

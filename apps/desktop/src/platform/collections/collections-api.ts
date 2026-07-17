@@ -202,17 +202,6 @@ export function reorderCollectionViews(
   });
 }
 
-export function updateCollectionDocumentLabel(
-  input: CollectionPathInput & { label: string | null },
-) {
-  return invokeCommand<CollectionSchemaDto>("update_document_label", {
-    space: input.spacePath,
-    collectionPath: input.collectionPath,
-    label: input.label,
-    projectPath: input.projectPath ?? null,
-  });
-}
-
 export function queryCollectionEntries(input: {
   spacePath: string;
   collectionPath: string;

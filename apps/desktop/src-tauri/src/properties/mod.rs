@@ -235,13 +235,6 @@ pub struct SystemFields {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
-pub struct DocumentConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
 pub struct TemplatesConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<String>,
@@ -411,8 +404,6 @@ impl View {
 pub struct CollectionSchema {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_fields: Option<SystemFields>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub document: Option<DocumentConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub templates: Option<TemplatesConfig>,
     #[serde(default)]
@@ -2416,15 +2407,6 @@ pub fn normalize_schema(schema: &mut CollectionSchema) {
         }
         if system_fields.title.is_none() {
             schema.system_fields = None;
-        }
-    }
-    if let Some(document) = schema.document.as_mut() {
-        document.label = document.label.take().and_then(|label| {
-            let trimmed = label.trim().to_string();
-            (!trimmed.is_empty()).then_some(trimmed)
-        });
-        if document.label.is_none() {
-            schema.document = None;
         }
     }
     if let Some(templates) = schema.templates.as_mut() {
@@ -5105,31 +5087,6 @@ pub fn update_system_field_label(
     })
 }
 
-pub fn update_document_label(
-    space: &str,
-    collection_path: &str,
-    label: Option<String>,
-) -> Result<CollectionSchema, AppError> {
-    let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
-    with_rollback(vec![schema_path], || {
-        let mut schema = read_schema_or_default(space, collection_path)?;
-        let normalized = label.and_then(|label| {
-            let trimmed = label.trim().to_string();
-            (!trimmed.is_empty()).then_some(trimmed)
-        });
-        if let Some(label) = normalized {
-            schema
-                .document
-                .get_or_insert_with(DocumentConfig::default)
-                .label = Some(label);
-        } else {
-            schema.document = None;
-        }
-        write_schema(space, collection_path, &schema)?;
-        Ok(schema)
-    })
-}
-
 pub fn set_default_template(
     space: &str,
     collection_path: &str,
@@ -5234,7 +5191,6 @@ fn template_root_context(path: &str) -> Option<(String, String)> {
 pub fn default_collection_schema() -> CollectionSchema {
     CollectionSchema {
         system_fields: None,
-        document: None,
         templates: None,
         columns: Vec::new(),
         views: vec![View::Table {
@@ -9211,6 +9167,24 @@ views: []
         let schema = read_schema_at(&schema_path).unwrap();
         assert_eq!(schema.columns[0].sensitivity, Some(ColumnSensitivity::Pii));
         assert_eq!(schema.columns[1].sensitivity, None);
+    }
+
+    #[test]
+    fn legacy_document_config_is_ignored_until_an_explicit_schema_write() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let collection = space.join("tasks");
+        fs::create_dir_all(&collection).unwrap();
+        let schema_path = collection.join(SCHEMA_FILE);
+        let legacy = "document:\n  label: Documents\ncolumns: []\nviews: []\n";
+        fs::write(&schema_path, legacy).unwrap();
+
+        let schema = read_collection_schema(space.to_str().unwrap(), "tasks").unwrap();
+        assert_eq!(fs::read_to_string(&schema_path).unwrap(), legacy);
+
+        write_collection_schema(space.to_str().unwrap(), "tasks", &schema).unwrap();
+        let rewritten = fs::read_to_string(&schema_path).unwrap();
+        assert!(!rewritten.contains("document:"));
     }
 
     #[test]

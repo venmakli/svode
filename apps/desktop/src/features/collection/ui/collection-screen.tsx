@@ -18,7 +18,6 @@ import type { Entry } from "@/features/entry";
 import { EntryDetailActions } from "@/features/entry/detail";
 import {
   EntryDetailProvider,
-  ReadmeSurface,
   ScopeOwnerHeader,
   useOptionalEntryDetailContext,
 } from "@/features/entry/scope-surface";
@@ -26,7 +25,6 @@ import type { GitSaveScopeTreeNode } from "@/features/git/app-shell";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { useViewQuery } from "../query/hooks";
 import { DeleteDialogs } from "./delete-dialogs";
-import { DocumentSettings } from "./document-settings-popover";
 import { EntryPeekSheet } from "./entry-peek-sheet";
 import { handleError } from "../hooks/error-feedback";
 import { CollectionSkeleton } from "./skeleton";
@@ -64,19 +62,17 @@ interface CollectionScreenProps {
   projectPath?: string | null;
   documentPath: string;
   spaceId: string;
-  hasReadme: boolean;
   routeState?: CollectionRouteState;
   headerActions?: ReactNode;
 }
 
 const EMPTY_SAVE_SCOPE_TREE: readonly GitSaveScopeTreeNode[] = [];
 
-export function CollectionScreen({
+function CollectionScreen({
   spacePath,
   projectPath,
   documentPath,
   spaceId,
-  hasReadme,
   routeState,
   headerActions,
 }: CollectionScreenProps) {
@@ -103,7 +99,6 @@ export function CollectionScreen({
         projectPath={projectPath}
         documentPath={documentPath}
         spaceId={spaceId}
-        hasReadme={hasReadme}
         routeState={routeState}
         headerActions={headerActions}
       />
@@ -113,7 +108,7 @@ export function CollectionScreen({
 
 export interface CollectionViewsSurfaceProps extends Omit<
   CollectionScreenProps,
-  "hasReadme" | "headerActions"
+  "headerActions"
 > {
   renderNested?: (
     entry: Entry,
@@ -139,7 +134,6 @@ export function CollectionViewsSurface(props: CollectionViewsSurfaceProps) {
   return (
     <CollectionViewsSurfaceInternal
       {...props}
-      hasReadme={false}
       showOwnerChrome={false}
       ownerEntry={null}
     />
@@ -163,7 +157,6 @@ function CollectionViewsSurfaceInternal({
   projectPath,
   documentPath,
   spaceId,
-  hasReadme,
   routeState,
   headerActions,
   showOwnerChrome,
@@ -188,27 +181,21 @@ function CollectionViewsSurfaceInternal({
   const reloadTreePathParents = useSpaceTreeSync(
     (state) => state.reloadTreePathParents,
   );
-  const effectiveHasReadme = showOwnerChrome && hasReadme;
   const {
     schema,
     setSchema,
     loading,
     schemaError,
-    documentLabel,
-    setDocumentLabel,
-    saveDocumentLabel,
     refreshSchema,
   } = useCollectionSchemaState({
     spacePath,
     collectionPath,
-    projectPath,
   });
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPane, setSettingsPane] = useState<SettingsPane>("main");
   const [renameValue, setRenameValue] = useState("");
-  const [documentLabelOpen, setDocumentLabelOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [peekTarget, setPeekTarget] = useState<EntryPeekTarget | null>(null);
   const {
@@ -244,7 +231,6 @@ function CollectionViewsSurfaceInternal({
   );
   const { activeTab, selectTab } = useCollectionActiveTab({
     collectionPath,
-    hasReadme: effectiveHasReadme,
     routeState,
     schema,
     views,
@@ -266,7 +252,6 @@ function CollectionViewsSurfaceInternal({
       setSearchOpen(false);
       setSearchQuery("");
       setSettingsOpen(false);
-      setDocumentLabelOpen(false);
     });
   }, [activeTab]);
 
@@ -293,7 +278,6 @@ function CollectionViewsSurfaceInternal({
     collectionPath,
     spacePath,
     projectPath,
-    hasReadme: effectiveHasReadme,
     selectTab,
     setSettingsPane,
     setSettingsOpen,
@@ -366,7 +350,6 @@ function CollectionViewsSurfaceInternal({
 
   useCollectionKeyboardShortcuts({
     activeTab,
-    hasReadme,
     views,
     selectTab,
     moveActive,
@@ -374,7 +357,6 @@ function CollectionViewsSurfaceInternal({
     createEntry,
   });
   useCollectionSaveShortcuts({
-    activeTab,
     projectPath,
     readmePath,
     saveScopeTree,
@@ -442,8 +424,6 @@ function CollectionViewsSurfaceInternal({
               { type: "gallery", label: m.collection_view_type_gallery() },
             ]}
             addViewLabel={m.collection_add_view()}
-            documentLabel={m.collection_document_tab()}
-            hasReadme={effectiveHasReadme}
             manageViewsLabel={m.collection_manage_views()}
             moreViewsLabel={m.collection_more_views()}
             views={views}
@@ -451,15 +431,7 @@ function CollectionViewsSurfaceInternal({
             onReorderViews={reorder}
             onTabChange={selectTab}
           />
-          {showOwnerChrome && activeTab === "document" ? (
-            <DocumentSettings
-              open={documentLabelOpen}
-              label={documentLabel}
-              onOpenChange={setDocumentLabelOpen}
-              onLabelChange={setDocumentLabel}
-              onSave={() => void saveDocumentLabel().catch(handleError)}
-            />
-          ) : activeTab !== "document" ? (
+          {activeTab ? (
             <ViewActionBar
               searchOpen={searchOpen}
               searchQuery={searchQuery}
@@ -503,11 +475,6 @@ function CollectionViewsSurfaceInternal({
           ) : null}
         </div>
 
-        {effectiveHasReadme ? (
-          <TabsContent value="document" className="flex-none">
-            <ReadmeSurface />
-          </TabsContent>
-        ) : null}
         {views.map((view) => (
           <TabsContent key={view.name} value={view.name} className="flex-none">
             <CollectionViewContent
@@ -591,7 +558,6 @@ function CollectionViewsSurfaceInternal({
               projectPath={projectPath}
               documentPath={entryToOpen.path}
               spaceId={spaceId}
-              hasReadme
               headerActions={actions}
             />
           ))

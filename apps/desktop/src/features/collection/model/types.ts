@@ -2,7 +2,7 @@ import type { Entry } from "@/features/entry";
 import type { ScopeSurfaceId } from "@/features/scope-surfaces";
 import type { CalendarScope } from "./calendar-types";
 
-export type ActiveTab = "document" | string;
+export type ActiveTab = string;
 
 export interface CollectionRouteState {
   viewName: string | null;

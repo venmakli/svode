@@ -7,7 +7,6 @@ import { isEditableTarget } from "./is-editable-target";
 
 export function useCollectionKeyboardShortcuts({
   activeTab,
-  hasReadme,
   views,
   selectTab,
   moveActive,
@@ -15,7 +14,6 @@ export function useCollectionKeyboardShortcuts({
   createEntry,
 }: {
   activeTab: ActiveTab;
-  hasReadme: boolean;
   views: CollectionView[];
   selectTab: (next: ActiveTab) => void;
   moveActive: (offset: number) => Promise<void>;
@@ -37,22 +35,24 @@ export function useCollectionKeyboardShortcuts({
         return;
       }
       if (!event.shiftKey && event.key === "ArrowRight") {
+        const tabs = collectionTabs(views);
+        if (tabs.length === 0) return;
         event.preventDefault();
-        const tabs = collectionTabs(hasReadme, views);
         const index = tabs.indexOf(activeTab);
         selectTab(tabs[Math.min(tabs.length - 1, index + 1)] ?? activeTab);
         return;
       }
       if (!event.shiftKey && event.key === "ArrowLeft") {
+        const tabs = collectionTabs(views);
+        if (tabs.length === 0) return;
         event.preventDefault();
-        const tabs = collectionTabs(hasReadme, views);
         const index = tabs.indexOf(activeTab);
         selectTab(tabs[Math.max(0, index - 1)] ?? activeTab);
         return;
       }
       const numeric = Number(event.key);
       if (numeric >= 1 && numeric <= 9) {
-        const tabs = collectionTabs(hasReadme, views);
+        const tabs = collectionTabs(views);
         const next = tabs[numeric - 1];
         if (next) {
           event.preventDefault();
@@ -78,15 +78,12 @@ export function useCollectionKeyboardShortcuts({
     activeTab,
     createEntry,
     focusActiveViewCreate,
-    hasReadme,
     moveActive,
     selectTab,
     views,
   ]);
 }
 
-function collectionTabs(hasReadme: boolean, views: CollectionView[]) {
-  return [hasReadme ? "document" : null, ...views.map((view) => view.name)].filter(
-    Boolean,
-  ) as string[];
+function collectionTabs(views: CollectionView[]) {
+  return views.map((view) => view.name);
 }

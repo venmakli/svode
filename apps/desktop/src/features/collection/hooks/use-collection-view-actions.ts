@@ -39,7 +39,6 @@ export function useCollectionViewActions({
   collectionPath,
   spacePath,
   projectPath,
-  hasReadme,
   selectTab,
   setSettingsPane,
   setSettingsOpen,
@@ -53,7 +52,6 @@ export function useCollectionViewActions({
   collectionPath: string;
   spacePath: string;
   projectPath?: string | null;
-  hasReadme: boolean;
   selectTab: (next: ActiveTab) => void;
   setSettingsPane: Dispatch<SetStateAction<SettingsPane>>;
   setSettingsOpen: Dispatch<SetStateAction<boolean>>;
@@ -177,12 +175,7 @@ export function useCollectionViewActions({
     });
     const normalized = normalizeSchema(next);
     setSchema(normalized);
-    selectTab(
-      hasReadme
-        ? "document"
-        : (((normalized.views ?? []) as CollectionView[])[0]?.name ??
-            "document"),
-    );
+    selectTab(((normalized.views ?? []) as CollectionView[])[0]?.name ?? "");
     setDeleteOpen(false);
   }
 
