@@ -72,6 +72,7 @@ export function useViewQuery({
 
     listenCollectionQueryInvalidations({
       spacePath,
+      collectionPath,
       onQueryInvalidated: reloadLocalQuery,
     })
       .then((nextUnlisten) => {
@@ -88,7 +89,7 @@ export function useViewQuery({
       disposed = true;
       unlisten?.();
     };
-  }, [reloadLocalQuery, spacePath]);
+  }, [collectionPath, reloadLocalQuery, spacePath]);
 
   const setLocalQuery = useCallback(
     (patch: ViewQueryPatch) => {

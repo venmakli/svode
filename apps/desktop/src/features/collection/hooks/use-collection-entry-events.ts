@@ -8,10 +8,12 @@ const COLLECTION_REFRESH_DEBOUNCE_MS = 75;
 
 export function useCollectionRefreshEvents({
   spacePath,
+  collectionPath,
   refreshSchema,
   refreshEntries,
 }: {
   spacePath: string;
+  collectionPath: string;
   refreshSchema: () => Promise<void> | void;
   refreshEntries: () => void;
 }) {
@@ -53,7 +55,11 @@ export function useCollectionRefreshEvents({
       }, COLLECTION_REFRESH_DEBOUNCE_MS);
     }
 
-    listenCollectionDataChanges({ spacePath, onDataChanged: schedule })
+    listenCollectionDataChanges({
+      spacePath,
+      collectionPath,
+      onDataChanged: schedule,
+    })
       .then((nextUnlisten) => {
         if (disposed) nextUnlisten();
         else unlisten = nextUnlisten;
@@ -69,21 +75,27 @@ export function useCollectionRefreshEvents({
       if (timer !== null) window.clearTimeout(timer);
       unlisten?.();
     };
-  }, [refreshEntries, refreshSchema, spacePath]);
+  }, [collectionPath, refreshEntries, refreshSchema, spacePath]);
 }
 
 export function useCollectionEntryEvents({
   spacePath,
+  collectionPath,
   onEntriesChanged,
 }: {
   spacePath: string;
+  collectionPath: string;
   onEntriesChanged: () => void;
 }) {
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let disposed = false;
 
-    listenCollectionEntryChanges({ spacePath, onEntriesChanged })
+    listenCollectionEntryChanges({
+      spacePath,
+      collectionPath,
+      onEntriesChanged,
+    })
       .then((nextUnlisten) => {
         if (disposed) nextUnlisten();
         else unlisten = nextUnlisten;
@@ -98,5 +110,5 @@ export function useCollectionEntryEvents({
       disposed = true;
       unlisten?.();
     };
-  }, [onEntriesChanged, spacePath]);
+  }, [collectionPath, onEntriesChanged, spacePath]);
 }

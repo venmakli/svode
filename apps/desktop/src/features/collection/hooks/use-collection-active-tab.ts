@@ -3,6 +3,19 @@ import type { CollectionSchema } from "@/features/properties";
 import type { ActiveTab, CollectionRouteState } from "../model";
 import type { CollectionView } from "../query";
 
+export function resolveCollectionViewName(
+  requestedViewName: string | null,
+  views: readonly Pick<CollectionView, "name">[],
+): string | null {
+  if (
+    requestedViewName &&
+    views.some((view) => view.name === requestedViewName)
+  ) {
+    return requestedViewName;
+  }
+  return views[0]?.name ?? null;
+}
+
 export function useCollectionActiveTab({
   collectionPath,
   hasReadme,
@@ -32,9 +45,15 @@ export function useCollectionActiveTab({
   useEffect(() => {
     if (!schema) return;
     const key = `${collectionPath}:${hasReadme ? "readme" : "no-readme"}`;
-    const fallbackTab = hasReadme ? "document" : (views[0]?.name ?? "document");
+    const resolvedViewName = resolveCollectionViewName(
+      requestedViewName,
+      views,
+    );
+    const fallbackTab = hasReadme
+      ? "document"
+      : (resolvedViewName ?? "document");
     const requestedIsValid = Boolean(
-      requestedViewName && views.some((view) => view.name === requestedViewName),
+      requestedViewName && resolvedViewName === requestedViewName,
     );
 
     if (initializedCollectionRef.current === key) {

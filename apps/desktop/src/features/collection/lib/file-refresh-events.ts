@@ -1,18 +1,45 @@
 export type CollectionFileChangeKind = "entries" | "schema";
 
 function normalizeEventPath(path: string) {
-  return path.replace(/\\/g, "/");
+  return path.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
 }
 
-function eventPathBasename(path: string) {
-  return normalizeEventPath(path).split("/").pop() ?? "";
+function normalizedCollectionPath(collectionPath: string) {
+  const normalized = normalizeEventPath(collectionPath);
+  return normalized === "." ? "" : normalized;
+}
+
+function isPathInsideCollection(path: string, collectionPath: string) {
+  return (
+    !collectionPath ||
+    path === collectionPath ||
+    path.startsWith(`${collectionPath}/`)
+  );
+}
+
+export function isCollectionSchemaPath(path: string, collectionPath: string) {
+  const normalizedPath = normalizeEventPath(path);
+  const normalizedCollection = normalizedCollectionPath(collectionPath);
+  const schemaPath = normalizedCollection
+    ? `${normalizedCollection}/schema.yaml`
+    : "schema.yaml";
+  return normalizedPath === schemaPath;
 }
 
 export function collectionFileChangeKind(
   path: string,
+  collectionPath: string,
 ): CollectionFileChangeKind | null {
-  const normalized = normalizeEventPath(path).toLowerCase();
-  if (eventPathBasename(path) === "schema.yaml") return "schema";
-  if (normalized.endsWith(".md")) return "entries";
+  const normalizedPath = normalizeEventPath(path);
+  const normalizedCollection = normalizedCollectionPath(collectionPath);
+  if (isCollectionSchemaPath(normalizedPath, normalizedCollection)) {
+    return "schema";
+  }
+  if (
+    isPathInsideCollection(normalizedPath, normalizedCollection) &&
+    normalizedPath.toLowerCase().endsWith(".md")
+  ) {
+    return "entries";
+  }
   return null;
 }

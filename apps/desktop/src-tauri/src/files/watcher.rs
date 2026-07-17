@@ -651,6 +651,60 @@ mod tests {
     }
 
     #[test]
+    fn schema_capability_detection_and_watcher_classification_cover_root_and_nested_transitions() {
+        for owner_rel in [Path::new(""), Path::new("tasks")] {
+            let tmp = TempDir::new().unwrap();
+            let owner = tmp.path().join(owner_rel);
+            std::fs::create_dir_all(&owner).unwrap();
+            let schema = owner.join("schema.yaml");
+            let backup = owner.join("schema.backup");
+
+            // Initial capability detection depends only on the owner's direct
+            // child marker, even when its contents are not valid YAML.
+            std::fs::write(&schema, "not: [valid").unwrap();
+            assert!(has_direct_schema(&owner));
+            if !owner_rel.as_os_str().is_empty() {
+                assert!(!has_direct_schema(tmp.path()));
+            }
+
+            let created = classify(&tmp, &schema, EventKind::Create(CreateKind::File)).unwrap();
+            assert_eq!(created.kind, ContentTreeEventKind::Schema);
+            let expected_rel_path = if owner_rel.as_os_str().is_empty() {
+                "schema.yaml"
+            } else {
+                "tasks/schema.yaml"
+            };
+            assert_eq!(created.rel_path, expected_rel_path);
+            assert!(created.affects_tree);
+
+            std::fs::remove_file(&schema).unwrap();
+            let deleted = classify(&tmp, &schema, EventKind::Remove(RemoveKind::File)).unwrap();
+            assert_eq!(deleted.kind, ContentTreeEventKind::Schema);
+            assert!(deleted.affects_tree);
+            assert!(!has_direct_schema(&owner));
+
+            std::fs::write(&schema, "columns: []").unwrap();
+            std::fs::rename(&schema, &backup).unwrap();
+            let renamed_away = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+                .add_path(schema.clone())
+                .add_path(backup.clone());
+            let away_kind = event_kind_for_path(&renamed_away, 0);
+            assert_eq!(away_kind, EventKind::Remove(RemoveKind::File));
+            assert!(classify(&tmp, &schema, away_kind).unwrap().affects_tree);
+            assert!(!has_direct_schema(&owner));
+
+            std::fs::rename(&backup, &schema).unwrap();
+            let renamed_into = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+                .add_path(backup)
+                .add_path(schema.clone());
+            let into_kind = event_kind_for_path(&renamed_into, 1);
+            assert_eq!(into_kind, EventKind::Create(CreateKind::File));
+            assert!(classify(&tmp, &schema, into_kind).unwrap().affects_tree);
+            assert!(has_direct_schema(&owner));
+        }
+    }
+
+    #[test]
     fn watcher_classifies_root_schema_rename_away_as_delete() {
         let tmp = TempDir::new().unwrap();
         let schema = tmp.path().join("schema.yaml");
