@@ -23,10 +23,7 @@ export function useSpaceActions() {
   const createEntryAction = useSpaceStore((state) => state.createEntry);
 
   const selectRootHome = useCallback((rootId: string) => {
-    openScopeHomeSelection(
-      rootId,
-      useSpaceStore.getState().fileTrees[rootId] ?? [],
-    );
+    openScopeHomeSelection(rootId);
   }, []);
 
   const openRoot = useCallback(

@@ -112,7 +112,6 @@ export function useSpaceSidebarActions({
     activeRootRevealKey,
     clearActiveSpace,
     ensureTreeLoaded,
-    fileTrees,
     getScopeCollapseState: sidebarTreeExpansion.getScopeCollapseState,
     onActivateContent,
     openSpace,

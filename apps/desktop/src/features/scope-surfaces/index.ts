@@ -7,7 +7,11 @@ export {
   resolveScopeSurfaceContributions,
   SCOPE_SURFACE_ORDER,
 } from "./model/registry";
+export { resolveActiveScopeSurface } from "./model/active-surface";
 export { useScopeSurfaceStore } from "./model/surface-store";
+export { ScopeSurfaceHost } from "./ui/scope-surface-host";
+export { ScopeSurfaceTabs } from "./ui/scope-surface-tabs";
+export { ScopeSurfaceUnavailable } from "./ui/scope-surface-unavailable";
 export type {
   ScopeCapability,
   ScopeOpenIntent,

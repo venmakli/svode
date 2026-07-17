@@ -2,18 +2,9 @@ import {
   openEntryDocument,
   openEntryScopeHome,
 } from "@/features/entry/selection";
-import type { TreeNode } from "../model/types";
 
-function hasScopeReadme(nodes: TreeNode[]): boolean {
-  return nodes.some((node) => node.path.toLowerCase() === "readme.md");
-}
-
-export function openScopeHomeSelection(spaceId: string, tree: TreeNode[]) {
-  if (hasScopeReadme(tree)) {
-    openEntryDocument("README.md", spaceId);
-  } else {
-    openEntryScopeHome(spaceId);
-  }
+export function openScopeHomeSelection(spaceId: string) {
+  openEntryScopeHome(spaceId);
 }
 
 export function openSpaceReadmeDocument(spaceId: string) {

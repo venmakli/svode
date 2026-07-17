@@ -4,6 +4,7 @@
   "scope_surface_routines": "Routines",
   "scope_surface_agent": "Agent",
   "scope_surface_unavailable": "This section is not available yet",
+  "scope_surface_render_error": "Unable to display this section",
   "common_settings": "Settings",
   "common_about": "About",
   "common_theme": "Theme",

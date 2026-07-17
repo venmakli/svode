@@ -110,10 +110,10 @@ export function CollectionScreen({
   );
 }
 
-export type CollectionViewsSurfaceProps = Omit<
-  CollectionScreenProps,
-  "hasReadme" | "headerActions"
->;
+export interface CollectionViewsSurfaceProps
+  extends Omit<CollectionScreenProps, "hasReadme" | "headerActions"> {
+  renderNested?: (entry: Entry, actions: ReactNode) => ReactNode;
+}
 
 function CollectionScreenContent(props: CollectionScreenProps) {
   const entryContext = useOptionalEntryDetailContext();
@@ -142,6 +142,7 @@ interface CollectionViewsSurfaceInternalProps extends CollectionScreenProps {
   showOwnerChrome: boolean;
   ownerEntry: Entry | null;
   setOwnerEntry?: Dispatch<SetStateAction<Entry | null>>;
+  renderNested?: (entry: Entry, actions: ReactNode) => ReactNode;
 }
 
 function CollectionViewsSurfaceInternal({
@@ -155,6 +156,7 @@ function CollectionViewsSurfaceInternal({
   showOwnerChrome,
   ownerEntry: entry,
   setOwnerEntry: setEntry,
+  renderNested,
 }: CollectionViewsSurfaceInternalProps) {
   const collectionPath = useMemo(
     () => collectionPathFor(documentPath),
@@ -557,16 +559,19 @@ function CollectionViewsSurfaceInternal({
         }}
         onSetTemplateDefault={setDefaultTemplateForMenu}
         onDuplicateTemplate={duplicateTemplateEntry}
-        renderNested={(entryToOpen, actions) => (
-          <CollectionScreen
-            spacePath={spacePath}
-            projectPath={projectPath}
-            documentPath={entryToOpen.path}
-            spaceId={spaceId}
-            hasReadme
-            headerActions={actions}
-          />
-        )}
+        renderNested={
+          renderNested ??
+          ((entryToOpen, actions) => (
+            <CollectionScreen
+              spacePath={spacePath}
+              projectPath={projectPath}
+              documentPath={entryToOpen.path}
+              spaceId={spaceId}
+              hasReadme
+              headerActions={actions}
+            />
+          ))
+        }
       />
     </div>
   );

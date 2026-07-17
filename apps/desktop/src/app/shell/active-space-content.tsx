@@ -1,9 +1,12 @@
 import { useActiveEntrySelection } from "@/features/entry/selection";
 import type { TreeNode } from "@/features/space";
-import { CollectionScreen } from "@/features/collection/app-shell";
 import { EntryDocumentScreen } from "@/features/entry/app-shell";
 import { useSpace } from "@/features/space";
 import { EmptyProjectState } from "@/features/space/app-shell";
+import {
+  createCollectionDirectoryOwner,
+  createRegisteredSpaceOwner,
+} from "@/features/scope-surfaces";
 import {
   Empty,
   EmptyDescription,
@@ -13,6 +16,7 @@ import {
 } from "@/components/ui/empty";
 import { FileText } from "lucide-react";
 import { useCollectionRouteState } from "./hooks/use-collection-route-state";
+import { ScopeSurfacePage } from "./scope-surface-page";
 import * as m from "@/paraglide/messages.js";
 
 function findNodeInTree(
@@ -67,13 +71,19 @@ export function ActiveSpaceContent() {
     activeNode &&
     activeSpace &&
     documentSpaceId &&
+    activeRootPath &&
     activeDocument ? (
-      <CollectionScreen
-        spacePath={activeSpace.path}
-        projectPath={activeRootPath}
-        documentPath={activeDocument}
-        spaceId={documentSpaceId}
-        hasReadme={activeNode.path.toLowerCase().endsWith(".md")}
+      <ScopeSurfacePage
+        key={`collection:${documentSpaceId}:${collectionOwnerPath(activeDocument)}`}
+        owner={createCollectionDirectoryOwner({
+          spaceId: documentSpaceId,
+          spacePath: activeSpace.path,
+          projectPath: activeRootPath,
+          ownerPath: collectionOwnerPath(activeDocument),
+          status: activeSpace.status,
+          hasSchema: true,
+        })}
+        presentation="full"
         routeState={collectionRouteState}
       />
     ) : activeSpace && documentSpaceId && activeDocument ? (
@@ -88,6 +98,30 @@ export function ActiveSpaceContent() {
     );
 
   if (!activeDocument || isEmpty) {
+    if (
+      selectedScopeHome?.status === "ready" &&
+      activeRootPath
+    ) {
+      const owner = createRegisteredSpaceOwner({
+        spaceId: selectedScopeHome.id,
+        spacePath: selectedScopeHome.path,
+        projectPath: activeRootPath,
+        status: selectedScopeHome.status,
+        hasSchema: selectedScopeHome.hasSchema,
+      });
+      return (
+        <div className="flex h-full flex-col overflow-hidden">
+          <div className="scrollbar-hide min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
+            <ScopeSurfacePage
+              key={owner.ownerKey}
+              owner={owner}
+              presentation="full"
+              routeState={collectionRouteState}
+            />
+          </div>
+        </div>
+      );
+    }
     if (selectedScopeHome) {
       return (
         <ScopeHomeFallback
@@ -118,6 +152,10 @@ export function ActiveSpaceContent() {
       </div>
     </div>
   );
+}
+
+function collectionOwnerPath(path: string) {
+  return path.replaceAll("\\", "/").replace(/\/readme\.md$/i, "");
 }
 
 function ScopeHomeFallback({ name, icon }: { name: string; icon: string }) {

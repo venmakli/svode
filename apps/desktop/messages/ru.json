@@ -4,6 +4,7 @@
   "scope_surface_routines": "Рутины",
   "scope_surface_agent": "Агент",
   "scope_surface_unavailable": "Раздел пока недоступен",
+  "scope_surface_render_error": "Не удалось отобразить раздел",
   "common_settings": "Настройки",
   "common_about": "О программе",
   "common_theme": "Тема",

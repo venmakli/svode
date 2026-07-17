@@ -1,13 +1,23 @@
 import { Bot, FileText, ListChecks, TableProperties } from "lucide-react";
 import {
   hasScopeCapability,
+  ScopeSurfaceUnavailable,
   SCOPE_SURFACE_ORDER,
   type ScopeSurfaceContribution,
+  type ScopeSurfaceId,
 } from "@/features/scope-surfaces";
+import { createElement } from "react";
 import * as m from "@/paraglide/messages.js";
 
-export function createScopeSurfaceContributions(): ScopeSurfaceContribution[] {
-  const unavailable = () => m.scope_surface_unavailable();
+type ScopeSurfaceRenderer = ScopeSurfaceContribution["render"];
+type ScopeSurfaceRenderers = Partial<
+  Record<ScopeSurfaceId, ScopeSurfaceRenderer>
+>;
+
+export function createScopeSurfaceContributions(
+  renderers: ScopeSurfaceRenderers = {},
+): ScopeSurfaceContribution[] {
+  const unavailable = () => createElement(ScopeSurfaceUnavailable);
 
   return [
     {
@@ -17,7 +27,7 @@ export function createScopeSurfaceContributions(): ScopeSurfaceContribution[] {
       appliesTo: () => true,
       label: m.scope_surface_readme(),
       icon: FileText,
-      render: () => null,
+      render: renderers.readme ?? (() => null),
     },
     {
       id: "collection",
@@ -26,7 +36,7 @@ export function createScopeSurfaceContributions(): ScopeSurfaceContribution[] {
       appliesTo: (owner) => hasScopeCapability(owner, "collection"),
       label: m.scope_surface_collection(),
       icon: TableProperties,
-      render: () => null,
+      render: renderers.collection ?? (() => null),
     },
     {
       id: "routines",
@@ -35,7 +45,7 @@ export function createScopeSurfaceContributions(): ScopeSurfaceContribution[] {
       appliesTo: () => true,
       label: m.scope_surface_routines(),
       icon: ListChecks,
-      render: unavailable,
+      render: renderers.routines ?? unavailable,
     },
     {
       id: "agent",
@@ -44,7 +54,7 @@ export function createScopeSurfaceContributions(): ScopeSurfaceContribution[] {
       appliesTo: (owner) => hasScopeCapability(owner, "space"),
       label: m.scope_surface_agent(),
       icon: Bot,
-      render: unavailable,
+      render: renderers.agent ?? unavailable,
     },
   ];
 }
