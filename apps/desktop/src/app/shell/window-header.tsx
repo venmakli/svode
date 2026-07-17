@@ -11,7 +11,7 @@ import {
 import { useSidebar } from "@/components/ui/sidebar";
 import { useActiveEntryDocument } from "@/features/entry/selection";
 import { useSpace } from "@/features/space";
-import { useFullscreen } from "./hooks/use-fullscreen";
+import { useTrafficLightInset } from "./hooks/use-fullscreen";
 import { useShellStore } from "./model";
 import { cn } from "@/shared/lib/utils";
 import { GitSyncStatusWidget } from "@/features/git/app-shell";
@@ -30,12 +30,12 @@ function isMacPlatform() {
 
 export function ShellChrome() {
   const { state, toggleSidebar, isMobile, openMobile } = useSidebar();
-  const isFullscreen = useFullscreen();
+  const trafficLightInsetReserved = useTrafficLightInset();
   const chromeRef = useRef<HTMLDivElement>(null);
   const sidebarHidden = state === "collapsed";
   const showProjectSettings = !sidebarHidden && (!isMobile || openMobile);
   const isMac = isMacPlatform();
-  const reserveTrafficLights = isMac && !isFullscreen;
+  const reserveTrafficLights = isMac && trafficLightInsetReserved;
   const sidebarShortcutLabel = isMac ? "⌘B" : "Ctrl+B";
 
   useLayoutEffect(() => {
@@ -65,22 +65,17 @@ export function ShellChrome() {
       ref={chromeRef}
       data-tauri-drag-region
       className={cn(
-        "absolute left-0 top-0 z-30 flex h-[44px] min-w-0 items-center gap-1 bg-sidebar pr-2 transition-colors",
+        "absolute left-0 top-0 z-30 flex h-[44px] min-w-0 items-center gap-1 bg-sidebar pr-2 transition-[padding-left,background-color] duration-200 ease-out motion-reduce:transition-none",
         sidebarHidden
           ? "w-max max-w-[var(--sidebar-width)]"
           : "w-[var(--sidebar-width)]",
         sidebarHidden && "bg-transparent",
-        reserveTrafficLights ? "pl-[72px]" : "pl-2",
+        reserveTrafficLights ? "pl-[84px]" : "pl-2",
       )}
     >
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className={cn(reserveTrafficLights && "ml-3")}
-            onClick={toggleSidebar}
-          >
+          <Button variant="ghost" size="icon-sm" onClick={toggleSidebar}>
             <PanelLeft />
           </Button>
         </TooltipTrigger>

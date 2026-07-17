@@ -7,6 +7,8 @@ mod files;
 mod git;
 mod identity;
 mod index;
+#[cfg(target_os = "macos")]
+mod macos_fullscreen;
 pub mod mcp;
 mod native_file_drop;
 mod process;
@@ -69,6 +71,8 @@ pub fn run() {
             if let Err(error) = app_windows::rebuild_app_menu(app.handle()) {
                 tracing::warn!("failed to rebuild app menu during setup: {error}");
             }
+            #[cfg(target_os = "macos")]
+            macos_fullscreen::install(app.handle());
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(error) = mcp::ipc::start_desktop_ipc(handle).await {
