@@ -9,6 +9,7 @@ export function useActiveEntrySelection(): EntrySelectionSnapshot {
         activeDocument: state.activeDocument,
         activeDocumentSpaceId: state.activeDocumentSpaceId,
         activeRevealRequest: state.activeRevealRequest,
+        activeScopeOpenRequest: state.activeScopeOpenRequest,
       }),
     ),
   );

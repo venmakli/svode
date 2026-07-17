@@ -1,4 +1,5 @@
 import type { Entry } from "@/features/entry";
+import type { ScopeSurfaceId } from "@/features/scope-surfaces";
 import type { CalendarScope } from "./calendar-types";
 
 export type ActiveTab = "document" | string;
@@ -8,6 +9,11 @@ export interface CollectionRouteState {
   onViewNameChange: (viewName: string | null) => void;
   calendarScope: CalendarScope | null;
   onCalendarScopeChange: (scope: CalendarScope) => void;
+}
+
+export interface CollectionPeekSurfaceState {
+  surfaceId: ScopeSurfaceId;
+  onSurfaceIdChange: (surfaceId: ScopeSurfaceId) => void;
 }
 
 export type SettingsPane =

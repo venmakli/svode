@@ -33,15 +33,11 @@ function findNodeInTree(
 }
 
 export function ActiveSpaceContent() {
-  const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
+  const { activeDocument, activeDocumentSpaceId, activeScopeOpenRequest } =
+    useActiveEntrySelection();
   const collectionRouteState = useCollectionRouteState();
-  const {
-    fileTrees,
-    rootSpaces,
-    spaces,
-    activeRootId,
-    activeRootPath,
-  } = useSpace();
+  const { fileTrees, rootSpaces, spaces, activeRootId, activeRootPath } =
+    useSpace();
   const documentSpaceId = activeDocumentSpaceId ?? activeRootId;
   const tree = documentSpaceId ? (fileTrees[documentSpaceId] ?? []) : [];
   const activeNode = activeDocument
@@ -85,6 +81,8 @@ export function ActiveSpaceContent() {
         })}
         presentation="full"
         routeState={collectionRouteState}
+        openIntent={activeScopeOpenRequest?.intent}
+        openRequestKey={activeScopeOpenRequest?.key}
       />
     ) : activeSpace && documentSpaceId && activeDocument ? (
       <EntryDocumentScreen
@@ -98,10 +96,7 @@ export function ActiveSpaceContent() {
     );
 
   if (!activeDocument || isEmpty) {
-    if (
-      selectedScopeHome?.status === "ready" &&
-      activeRootPath
-    ) {
+    if (selectedScopeHome?.status === "ready" && activeRootPath) {
       const owner = createRegisteredSpaceOwner({
         spaceId: selectedScopeHome.id,
         spacePath: selectedScopeHome.path,
@@ -117,6 +112,8 @@ export function ActiveSpaceContent() {
               owner={owner}
               presentation="full"
               routeState={collectionRouteState}
+              openIntent={activeScopeOpenRequest?.intent}
+              openRequestKey={activeScopeOpenRequest?.key}
             />
           </div>
         </div>

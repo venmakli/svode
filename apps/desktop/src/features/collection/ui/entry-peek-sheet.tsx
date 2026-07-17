@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Maximize2, Star, StarOff, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,12 @@ import type { Entry } from "@/features/entry";
 import { EntryDetailActions, EntryPeekSurface } from "@/features/entry/detail";
 import { handleError } from "../hooks/error-feedback";
 import { useEntryPeekLoader } from "../hooks";
-import type { EntryPeekTarget } from "../model";
+import type {
+  CollectionPeekSurfaceState,
+  CollectionRouteState,
+  EntryPeekTarget,
+} from "../model";
+import type { CalendarScope } from "../model/calendar-types";
 import * as m from "@/paraglide/messages.js";
 
 interface EntryPeekSheetProps {
@@ -23,14 +28,24 @@ interface EntryPeekSheetProps {
   projectPath?: string | null;
   spaceId: string;
   onOpenChange: (open: boolean) => void;
-  onOpenFullPage: (entry: Entry, spaceId?: string | null) => void;
+  onOpenFullPage: (
+    entry: Entry,
+    spaceId?: string | null,
+    viewName?: string | null,
+    surfaceId?: CollectionPeekSurfaceState["surfaceId"],
+  ) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
   onConvertedEntry: (entry: Entry, nested: boolean) => void;
   onSetTemplateDefault?: (slug: string | null) => Promise<void>;
   onDuplicateTemplate?: (entry: Entry) => Promise<void>;
-  renderNested: (entry: Entry, actions: ReactNode) => ReactNode;
+  renderNested: (
+    entry: Entry,
+    actions: ReactNode,
+    routeState: CollectionRouteState,
+    surfaceState: CollectionPeekSurfaceState,
+  ) => ReactNode;
 }
 
 export function EntryPeekSheet({
@@ -70,32 +85,24 @@ export function EntryPeekSheet({
 
   const currentEntry =
     target && entry?.path !== target.entry.path ? target.entry : entry;
-  const actionMenu = currentEntry ? (
-    <EntryPeekActions
-      entry={currentEntry}
-      onOpenFullPage={(entryToOpen) =>
-        onOpenFullPage(entryToOpen, effectiveSpaceId)
-      }
-      onDuplicateEntry={onDuplicateEntry}
-      onDeleteEntry={onDeleteEntry}
-      onConvertedEntry={onConvertedEntry}
-      template={target?.template}
-      onSetTemplateDefault={onSetTemplateDefault}
-      onDuplicateTemplate={onDuplicateTemplate}
-      spacePath={effectiveSpacePath}
-      projectPath={effectiveProjectPath}
-      spaceId={effectiveSpaceId}
-    />
-  ) : null;
-  const actions =
-    target?.nested && target.template && actionMenu ? (
-      <div className="flex items-center gap-2">
-        <Badge variant="secondary">{m.collection_template_badge()}</Badge>
-        {actionMenu}
-      </div>
-    ) : (
-      actionMenu
-    );
+  const actionMenu =
+    currentEntry && !target?.nested ? (
+      <EntryPeekActions
+        entry={currentEntry}
+        onOpenFullPage={(entryToOpen) =>
+          onOpenFullPage(entryToOpen, effectiveSpaceId)
+        }
+        onDuplicateEntry={onDuplicateEntry}
+        onDeleteEntry={onDeleteEntry}
+        onConvertedEntry={onConvertedEntry}
+        template={target?.template}
+        onSetTemplateDefault={onSetTemplateDefault}
+        onDuplicateTemplate={onDuplicateTemplate}
+        spacePath={effectiveSpacePath}
+        projectPath={effectiveProjectPath}
+        spaceId={effectiveSpaceId}
+      />
+    ) : null;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -111,9 +118,45 @@ export function EntryPeekSheet({
         </SheetTitle>
 
         {target?.nested && currentEntry ? (
-          <PeekScrollSurface>
-            {renderNested(currentEntry, actions)}
-          </PeekScrollSurface>
+          <NestedScopePeek
+            key={`${effectiveSpaceId}:${currentEntry.path}`}
+            entry={currentEntry}
+            renderActions={({ surfaceId, viewName }) => {
+              const menu = (
+                <EntryPeekActions
+                  entry={currentEntry}
+                  onOpenFullPage={(entryToOpen) =>
+                    onOpenFullPage(
+                      entryToOpen,
+                      effectiveSpaceId,
+                      viewName,
+                      surfaceId,
+                    )
+                  }
+                  onDuplicateEntry={onDuplicateEntry}
+                  onDeleteEntry={onDeleteEntry}
+                  onConvertedEntry={onConvertedEntry}
+                  template={target.template}
+                  onSetTemplateDefault={onSetTemplateDefault}
+                  onDuplicateTemplate={onDuplicateTemplate}
+                  spacePath={effectiveSpacePath}
+                  projectPath={effectiveProjectPath}
+                  spaceId={effectiveSpaceId}
+                />
+              );
+              return target.template ? (
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary">
+                    {m.collection_template_badge()}
+                  </Badge>
+                  {menu}
+                </div>
+              ) : (
+                menu
+              );
+            }}
+            renderNested={renderNested}
+          />
         ) : currentEntry ? (
           <PeekScrollSurface>
             <EntryPeekSurface
@@ -122,7 +165,7 @@ export function EntryPeekSheet({
               spacePath={effectiveSpacePath}
               projectPath={effectiveProjectPath}
               spaceId={effectiveSpaceId}
-              actions={actions}
+              actions={actionMenu}
               metadataBefore={
                 target?.template ? (
                   <Badge variant="secondary">
@@ -138,6 +181,44 @@ export function EntryPeekSheet({
         ) : null}
       </SheetContent>
     </Sheet>
+  );
+}
+
+function NestedScopePeek({
+  entry,
+  renderActions,
+  renderNested,
+}: {
+  entry: Entry;
+  renderActions: (state: {
+    surfaceId: CollectionPeekSurfaceState["surfaceId"];
+    viewName: string | null;
+  }) => ReactNode;
+  renderNested: EntryPeekSheetProps["renderNested"];
+}) {
+  const [viewName, setViewName] = useState<string | null>(null);
+  const [calendarScope, setCalendarScope] = useState<CalendarScope | null>(
+    null,
+  );
+  const [surfaceId, setSurfaceId] =
+    useState<CollectionPeekSurfaceState["surfaceId"]>("readme");
+  const routeState = useMemo<CollectionRouteState>(
+    () => ({
+      viewName,
+      onViewNameChange: setViewName,
+      calendarScope,
+      onCalendarScopeChange: setCalendarScope,
+    }),
+    [calendarScope, viewName],
+  );
+
+  return (
+    <PeekScrollSurface>
+      {renderNested(entry, renderActions({ surfaceId, viewName }), routeState, {
+        surfaceId,
+        onSurfaceIdChange: setSurfaceId,
+      })}
+    </PeekScrollSurface>
   );
 }
 

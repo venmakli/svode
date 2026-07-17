@@ -37,9 +37,9 @@ test("keeps the only available surface mounted without rendering tabs", () => {
     />,
   );
 
-  expect(markup).toContain("Owner");
-  expect(markup).toContain("Readme content");
-  expect(markup).not.toContain('role="tablist"');
+  expect(markup.includes("Owner")).toBe(true);
+  expect(markup.includes("Readme content")).toBe(true);
+  expect(markup.includes('role="tablist"')).toBe(false);
 });
 
 test("renders shadcn tabs with only the active surface viewport mounted", () => {
@@ -52,12 +52,11 @@ test("renders shadcn tabs with only the active surface viewport mounted", () => 
         contribution("routines", "Routines"),
       ]}
       header={<header>Owner</header>}
-      initialSurfaceId="readme"
     />,
   );
 
-  expect(markup).toContain('role="tablist"');
-  expect(markup).toContain('role="tabpanel"');
-  expect(markup).toContain("Readme content");
-  expect(markup).not.toContain("Routines content");
+  expect(markup.includes('role="tablist"')).toBe(true);
+  expect(markup.includes('role="tabpanel"')).toBe(true);
+  expect(markup.includes("Readme content")).toBe(true);
+  expect(markup.includes("Routines content")).toBe(false);
 });

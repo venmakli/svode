@@ -2,7 +2,10 @@ import { expect, test } from "bun:test";
 import { useScopeSurfaceStore } from "./surface-store";
 
 test("surface selection is session-only and keyed by stable owner identity", () => {
-  useScopeSurfaceStore.setState({ surfaceByOwnerKey: {} });
+  useScopeSurfaceStore.setState({
+    surfaceByOwnerKey: {},
+    openRequestKeyByOwnerKey: {},
+  });
 
   useScopeSurfaceStore.getState().setSurface("space:root", "readme");
   useScopeSurfaceStore
@@ -18,4 +21,28 @@ test("surface selection is session-only and keyed by stable owner identity", () 
   expect(useScopeSurfaceStore.getState().surfaceByOwnerKey).toEqual({
     "collection:root:tasks": "collection",
   });
+});
+
+test("keeps each owner selection until an explicit open intent replaces it", () => {
+  useScopeSurfaceStore.setState({
+    surfaceByOwnerKey: { "collection:root:tasks": "routines" },
+    openRequestKeyByOwnerKey: {},
+  });
+
+  expect(
+    useScopeSurfaceStore.getState().surfaceByOwnerKey["collection:root:tasks"],
+  ).toBe("routines");
+  useScopeSurfaceStore
+    .getState()
+    .applyOpenRequest("collection:root:tasks", 1, "collection");
+  expect(
+    useScopeSurfaceStore.getState().surfaceByOwnerKey["collection:root:tasks"],
+  ).toBe("collection");
+
+  useScopeSurfaceStore
+    .getState()
+    .applyOpenRequest("collection:root:tasks", 1, "readme");
+  expect(
+    useScopeSurfaceStore.getState().surfaceByOwnerKey["collection:root:tasks"],
+  ).toBe("collection");
 });

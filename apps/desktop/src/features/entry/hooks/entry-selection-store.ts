@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { ScopeOpenIntent } from "@/features/scope-surfaces";
 
 export interface EntryRevealRequest {
   key: number;
@@ -8,12 +9,19 @@ export interface EntryRevealRequest {
 
 export interface OpenEntryDocumentOptions {
   reveal?: boolean;
+  scopeOpenIntent?: ScopeOpenIntent;
+}
+
+export interface ScopeOpenRequest {
+  key: number;
+  intent: ScopeOpenIntent;
 }
 
 export interface EntrySelectionState {
   activeDocument: string | null;
   activeDocumentSpaceId: string | null;
   activeRevealRequest: EntryRevealRequest | null;
+  activeScopeOpenRequest: ScopeOpenRequest | null;
   openDocument: (
     path: string,
     spaceId?: string,
@@ -24,30 +32,58 @@ export interface EntrySelectionState {
 }
 
 let nextRevealRequestKey = 1;
+let nextScopeOpenRequestKey = 1;
 
 export const useEntrySelectionStore = create<EntrySelectionState>((set) => ({
   activeDocument: null,
   activeDocumentSpaceId: null,
   activeRevealRequest: null,
+  activeScopeOpenRequest: null,
 
   openDocument: (path, spaceId?, options?) =>
-    set((state) => ({
-      activeDocument: path,
-      activeDocumentSpaceId: spaceId ?? state.activeDocumentSpaceId,
-      activeRevealRequest: options?.reveal
-        ? {
-            key: nextRevealRequestKey++,
-            path,
-            spaceId: spaceId ?? state.activeDocumentSpaceId ?? null,
-          }
-        : null,
-    })),
+    set((state) => {
+      const targetSpaceId = spaceId ?? state.activeDocumentSpaceId;
+      const isRepeatedSelection =
+        state.activeDocument === path &&
+        state.activeDocumentSpaceId === targetSpaceId &&
+        !options?.reveal &&
+        !options?.scopeOpenIntent;
+      if (isRepeatedSelection) return state;
+      return {
+        activeDocument: path,
+        activeDocumentSpaceId: targetSpaceId,
+        activeRevealRequest: options?.reveal
+          ? {
+              key: nextRevealRequestKey++,
+              path,
+              spaceId: targetSpaceId ?? null,
+            }
+          : null,
+        activeScopeOpenRequest: {
+          key: nextScopeOpenRequestKey++,
+          intent: options?.scopeOpenIntent ?? { kind: "default" },
+        },
+      };
+    }),
 
   openScopeHome: (spaceId?) =>
-    set({
-      activeDocument: null,
-      activeDocumentSpaceId: spaceId ?? null,
-      activeRevealRequest: null,
+    set((state) => {
+      const targetSpaceId = spaceId ?? null;
+      if (
+        state.activeDocument === null &&
+        state.activeDocumentSpaceId === targetSpaceId
+      ) {
+        return state;
+      }
+      return {
+        activeDocument: null,
+        activeDocumentSpaceId: targetSpaceId,
+        activeRevealRequest: null,
+        activeScopeOpenRequest: {
+          key: nextScopeOpenRequestKey++,
+          intent: { kind: "default" },
+        },
+      };
     }),
 
   closeDocument: () =>
@@ -55,5 +91,6 @@ export const useEntrySelectionStore = create<EntrySelectionState>((set) => ({
       activeDocument: null,
       activeDocumentSpaceId: null,
       activeRevealRequest: null,
+      activeScopeOpenRequest: null,
     }),
 }));

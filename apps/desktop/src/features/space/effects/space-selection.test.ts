@@ -10,8 +10,7 @@ test("ordinary scope open selects the owner instead of its README document", () 
 
   openScopeHomeSelection("marketing");
 
-  expect(getActiveEntrySelection()).toMatchObject({
-    activeDocument: null,
-    activeDocumentSpaceId: "marketing",
-  });
+  const selection = getActiveEntrySelection();
+  expect(selection.activeDocument).toBeNull();
+  expect(selection.activeDocumentSpaceId).toBe("marketing");
 });

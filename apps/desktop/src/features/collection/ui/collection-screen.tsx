@@ -51,6 +51,7 @@ import {
   viewType,
 } from "../lib/utils";
 import type {
+  CollectionPeekSurfaceState,
   CollectionRouteState,
   EntryPeekTarget,
   SettingsPane,
@@ -110,9 +111,16 @@ export function CollectionScreen({
   );
 }
 
-export interface CollectionViewsSurfaceProps
-  extends Omit<CollectionScreenProps, "hasReadme" | "headerActions"> {
-  renderNested?: (entry: Entry, actions: ReactNode) => ReactNode;
+export interface CollectionViewsSurfaceProps extends Omit<
+  CollectionScreenProps,
+  "hasReadme" | "headerActions"
+> {
+  renderNested?: (
+    entry: Entry,
+    actions: ReactNode,
+    routeState: CollectionRouteState,
+    surfaceState: CollectionPeekSurfaceState,
+  ) => ReactNode;
 }
 
 function CollectionScreenContent(props: CollectionScreenProps) {
@@ -142,7 +150,12 @@ interface CollectionViewsSurfaceInternalProps extends CollectionScreenProps {
   showOwnerChrome: boolean;
   ownerEntry: Entry | null;
   setOwnerEntry?: Dispatch<SetStateAction<Entry | null>>;
-  renderNested?: (entry: Entry, actions: ReactNode) => ReactNode;
+  renderNested?: (
+    entry: Entry,
+    actions: ReactNode,
+    routeState: CollectionRouteState,
+    surfaceState: CollectionPeekSurfaceState,
+  ) => ReactNode;
 }
 
 function CollectionViewsSurfaceInternal({
@@ -311,9 +324,19 @@ function CollectionViewsSurfaceInternal({
     setPeekTarget({ entry: entryToOpen, nested });
   }
 
-  function openFullPage(entryToOpen: Entry, targetSpaceId?: string | null) {
+  function openFullPage(
+    entryToOpen: Entry,
+    targetSpaceId?: string | null,
+    targetViewName?: string | null,
+    targetSurfaceId: CollectionPeekSurfaceState["surfaceId"] = "collection",
+  ) {
     setPeekTarget(null);
-    openDocument(entryToOpen.path, targetSpaceId ?? spaceId);
+    if (targetViewName !== undefined) {
+      routeState?.onViewNameChange(targetViewName);
+    }
+    openDocument(entryToOpen.path, targetSpaceId ?? spaceId, {
+      scopeOpenIntent: { kind: "target", surfaceId: targetSurfaceId },
+    });
   }
 
   const openRelationPeek = useCallback(

@@ -1,8 +1,13 @@
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import {
   CollectionViewsSurface,
   type CollectionViewsSurfaceProps,
 } from "@/features/collection/scope-surface";
+import type {
+  CalendarScope,
+  CollectionPeekSurfaceState,
+  CollectionRouteState,
+} from "@/features/collection/app-shell";
 import {
   EntryDetailProvider,
   ReadmeSurface,
@@ -13,6 +18,7 @@ import { useOpenEntryDocument } from "@/features/entry/selection";
 import {
   createCollectionDirectoryOwner,
   ScopeSurfaceHost,
+  type ScopeOpenIntent,
   type ScopeOwnerRef,
   type ScopePresentation,
 } from "@/features/scope-surfaces";
@@ -24,6 +30,9 @@ interface ScopeSurfacePageProps {
   presentation: ScopePresentation;
   routeState?: CollectionViewsSurfaceProps["routeState"];
   headerActions?: ReactNode;
+  openIntent?: ScopeOpenIntent;
+  openRequestKey?: number;
+  compactSurfaceState?: CollectionPeekSurfaceState;
 }
 
 export function ScopeSurfacePage({
@@ -31,7 +40,26 @@ export function ScopeSurfacePage({
   presentation,
   routeState,
   headerActions,
+  openIntent,
+  openRequestKey,
+  compactSurfaceState,
 }: ScopeSurfacePageProps) {
+  const [compactViewName, setCompactViewName] = useState<string | null>(null);
+  const [compactCalendarScope, setCompactCalendarScope] =
+    useState<CalendarScope | null>(null);
+  const [localCompactSurfaceId, setLocalCompactSurfaceId] =
+    useState<CollectionPeekSurfaceState["surfaceId"]>("readme");
+  const compactRouteState = useMemo<CollectionRouteState>(
+    () => ({
+      viewName: compactViewName,
+      onViewNameChange: setCompactViewName,
+      calendarScope: compactCalendarScope,
+      onCalendarScopeChange: setCompactCalendarScope,
+    }),
+    [compactCalendarScope, compactViewName],
+  );
+  const collectionRouteState =
+    presentation === "compact" ? (routeState ?? compactRouteState) : routeState;
   const openDocument = useOpenEntryDocument();
   const openPath = useCallback(
     (path: string, spaceId?: string | null) =>
@@ -39,7 +67,12 @@ export function ScopeSurfacePage({
     [openDocument, owner.spaceId],
   );
   const renderNested = useCallback(
-    (entry: Entry, actions: ReactNode) => {
+    (
+      entry: Entry,
+      actions: ReactNode,
+      nestedRouteState: CollectionRouteState,
+      nestedSurfaceState: CollectionPeekSurfaceState,
+    ) => {
       const nestedOwner = createCollectionDirectoryOwner({
         spaceId: owner.spaceId,
         spacePath: owner.spacePath,
@@ -53,6 +86,8 @@ export function ScopeSurfacePage({
           key={nestedOwner.ownerKey}
           owner={nestedOwner}
           presentation="compact"
+          routeState={nestedRouteState}
+          compactSurfaceState={nestedSurfaceState}
           headerActions={actions}
         />
       );
@@ -69,18 +104,13 @@ export function ScopeSurfacePage({
             projectPath={owner.projectPath}
             documentPath={owner.readmePath}
             spaceId={owner.spaceId}
-            routeState={routeState}
+            routeState={collectionRouteState}
             renderNested={renderNested}
           />
         ),
       }),
-    [owner, renderNested, routeState],
+    [collectionRouteState, owner, renderNested],
   );
-  const initialSurfaceId =
-    presentation === "compact" || owner.identityKind === "registered-space"
-      ? "readme"
-      : "collection";
-
   return (
     <EntryDetailProvider
       spacePath={owner.spacePath}
@@ -95,11 +125,16 @@ export function ScopeSurfacePage({
         presentation={presentation}
         contributions={contributions}
         header={
-          <ScopeOwnerHeader
-            actions={headerActions ?? <ScopeOwnerActions />}
-          />
+          <ScopeOwnerHeader actions={headerActions ?? <ScopeOwnerActions />} />
         }
-        initialSurfaceId={initialSurfaceId}
+        openIntent={openIntent}
+        openRequestKey={openRequestKey}
+        compactSurfaceId={
+          compactSurfaceState?.surfaceId ?? localCompactSurfaceId
+        }
+        onCompactSurfaceIdChange={
+          compactSurfaceState?.onSurfaceIdChange ?? setLocalCompactSurfaceId
+        }
       />
     </EntryDetailProvider>
   );
