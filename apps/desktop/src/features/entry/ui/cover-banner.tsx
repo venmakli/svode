@@ -2,6 +2,7 @@ import { useMemo, useRef, useState, type PointerEvent } from "react";
 import { ImagePlus, MoveVertical, Trash2, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -73,6 +74,10 @@ export function CoverBanner({
   const dragStartRef = useRef<{ y: number; position: number } | null>(null);
   const [isRepositioning, setIsRepositioning] = useState(false);
   const [draftPosition, setDraftPosition] = useState<number | null>(null);
+  const [imageLoadState, setImageLoadState] = useState<{
+    src: string;
+    status: "loaded" | "error";
+  } | null>(null);
 
   const imageSrc = useMemo(() => {
     if (!cover || cover.type !== "image" || !spacePath) return undefined;
@@ -81,6 +86,12 @@ export function CoverBanner({
 
   const imagePosition =
     cover?.type === "image" ? (draftPosition ?? cover.position ?? 50) : 50;
+  const imageIsPending = Boolean(imageSrc && imageLoadState?.src !== imageSrc);
+  const imageHasError = Boolean(
+    imageSrc &&
+    imageLoadState?.src === imageSrc &&
+    imageLoadState.status === "error",
+  );
 
   const uploadImageCover = useCoverUpload({
     projectPath,
@@ -200,6 +211,7 @@ export function CoverBanner({
         size === "compact"
           ? "h-44 min-h-32 max-h-48"
           : "h-[30vh] min-h-40 max-h-72",
+        cover.type === "image" && "bg-muted",
         isRepositioning && "cursor-move",
       )}
       style={cover.type === "color" ? colorStyle(cover.value) : undefined}
@@ -208,13 +220,21 @@ export function CoverBanner({
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
     >
+      {cover.type === "image" && imageSrc && imageIsPending ? (
+        <Skeleton className="absolute inset-0 rounded-none" />
+      ) : null}
       {cover.type === "image" && imageSrc && (
         <img
           alt=""
           src={imageSrc}
-          className="size-full object-cover"
+          className={cn(
+            "size-full object-cover transition-opacity",
+            imageIsPending || imageHasError ? "opacity-0" : "opacity-100",
+          )}
           draggable={false}
           style={{ objectPosition: `center ${imagePosition}%` }}
+          onLoad={() => setImageLoadState({ src: imageSrc, status: "loaded" })}
+          onError={() => setImageLoadState({ src: imageSrc, status: "error" })}
         />
       )}
       <div className="absolute right-3 top-3 flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">

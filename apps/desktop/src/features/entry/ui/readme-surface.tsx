@@ -6,13 +6,15 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { Skeleton } from "@/components/ui/skeleton";
 import { PlateDocumentEditor } from "@/features/editor";
 import * as m from "@/paraglide/messages.js";
+import { detailPageBodyClassName } from "@/shared/ui/page-layout";
 import { useEntryDetailContext } from "../hooks/entry-detail-context";
 
 export function ReadmeSurface() {
   const context = useEntryDetailContext();
-  if (context.status === "loading") return null;
+  if (context.status === "loading") return <ReadmeSurfaceSkeleton />;
   if (context.status === "missing") {
     return (
       <Empty>
@@ -69,5 +71,26 @@ export function ReadmeSurface() {
         )
       }
     />
+  );
+}
+
+function ReadmeSurfaceSkeleton() {
+  return (
+    <div
+      className={`${detailPageBodyClassName} flex flex-col gap-4`}
+      aria-hidden="true"
+    >
+      <Skeleton className="h-6 w-2/3 max-w-xl" />
+      <div className="flex flex-col gap-2">
+        <Skeleton className="h-4 w-full max-w-3xl" />
+        <Skeleton className="h-4 w-11/12 max-w-3xl" />
+        <Skeleton className="h-4 w-4/5 max-w-2xl" />
+      </div>
+      <Skeleton className="mt-2 h-5 w-2/5 max-w-sm" />
+      <div className="flex flex-col gap-2">
+        <Skeleton className="h-4 w-full max-w-3xl" />
+        <Skeleton className="h-4 w-3/4 max-w-2xl" />
+      </div>
+    </div>
   );
 }
