@@ -22,9 +22,11 @@ const routeAppExceptions = new Map([
 const allowedFeatureSubpathExceptions = new Set([
   // Public feature subentrypoints that intentionally avoid wider root barrels.
   "@/features/collection/app-shell",
+  "@/features/collection/scope-surface",
   "@/features/editor/file-tree-sync",
   "@/features/entry/app-shell",
   "@/features/entry/detail",
+  "@/features/entry/scope-surface",
   "@/features/entry/entry-api",
   "@/features/entry/field-save",
   "@/features/entry/selection",

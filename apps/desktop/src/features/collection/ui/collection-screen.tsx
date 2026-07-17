@@ -3,7 +3,9 @@ import {
   useEffect,
   useMemo,
   useState,
+  type Dispatch,
   type ReactNode,
+  type SetStateAction,
 } from "react";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import {
@@ -14,14 +16,16 @@ import { detailPageToolbarClassName } from "@/shared/ui/page-layout";
 import { useOpenEntryDocument } from "@/features/entry/selection";
 import type { Entry } from "@/features/entry";
 import { EntryDetailActions } from "@/features/entry/detail";
+import {
+  EntryDetailProvider,
+  ReadmeSurface,
+  ScopeOwnerHeader,
+  useOptionalEntryDetailContext,
+} from "@/features/entry/scope-surface";
 import type { GitSaveScopeTreeNode } from "@/features/git/app-shell";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
-import { useViewQuery } from "@/features/collection/query/hooks";
+import { useViewQuery } from "../query/hooks";
 import { DeleteDialogs } from "./delete-dialogs";
-import {
-  CollectionDocumentHeader,
-  CollectionDocumentTab,
-} from "./collection-document-surface";
 import { DocumentSettings } from "./document-settings-popover";
 import { EntryPeekSheet } from "./entry-peek-sheet";
 import { handleError } from "../hooks/error-feedback";
@@ -42,7 +46,6 @@ import {
 } from "../hooks";
 import {
   collectionPathFor,
-  humanize,
   readmePathFor,
   viewName,
   viewType,
@@ -52,7 +55,7 @@ import type {
   EntryPeekTarget,
   SettingsPane,
 } from "../model";
-import type { CollectionView } from "@/features/collection/query/model";
+import type { CollectionView } from "../query/model";
 import * as m from "@/paraglide/messages.js";
 
 interface CollectionScreenProps {
@@ -76,6 +79,83 @@ export function CollectionScreen({
   routeState,
   headerActions,
 }: CollectionScreenProps) {
+  const collectionPath = collectionPathFor(documentPath);
+  const readmePath = readmePathFor(collectionPath);
+  const openDocument = useOpenEntryDocument();
+  const openPath = useCallback(
+    (path: string, targetSpaceId?: string | null) =>
+      openDocument(path, targetSpaceId ?? spaceId),
+    [openDocument, spaceId],
+  );
+
+  return (
+    <EntryDetailProvider
+      spacePath={spacePath}
+      projectPath={projectPath}
+      spaceId={spaceId}
+      readmePath={readmePath}
+      ownerPath={collectionPath || "."}
+      onOpenPath={openPath}
+    >
+      <CollectionScreenContent
+        spacePath={spacePath}
+        projectPath={projectPath}
+        documentPath={documentPath}
+        spaceId={spaceId}
+        hasReadme={hasReadme}
+        routeState={routeState}
+        headerActions={headerActions}
+      />
+    </EntryDetailProvider>
+  );
+}
+
+export type CollectionViewsSurfaceProps = Omit<
+  CollectionScreenProps,
+  "hasReadme" | "headerActions"
+>;
+
+function CollectionScreenContent(props: CollectionScreenProps) {
+  const entryContext = useOptionalEntryDetailContext();
+  return (
+    <CollectionViewsSurfaceInternal
+      {...props}
+      showOwnerChrome
+      ownerEntry={entryContext?.entry ?? null}
+      setOwnerEntry={entryContext?.setEntry}
+    />
+  );
+}
+
+export function CollectionViewsSurface(props: CollectionViewsSurfaceProps) {
+  return (
+    <CollectionViewsSurfaceInternal
+      {...props}
+      hasReadme={false}
+      showOwnerChrome={false}
+      ownerEntry={null}
+    />
+  );
+}
+
+interface CollectionViewsSurfaceInternalProps extends CollectionScreenProps {
+  showOwnerChrome: boolean;
+  ownerEntry: Entry | null;
+  setOwnerEntry?: Dispatch<SetStateAction<Entry | null>>;
+}
+
+function CollectionViewsSurfaceInternal({
+  spacePath,
+  projectPath,
+  documentPath,
+  spaceId,
+  hasReadme,
+  routeState,
+  headerActions,
+  showOwnerChrome,
+  ownerEntry: entry,
+  setOwnerEntry: setEntry,
+}: CollectionViewsSurfaceInternalProps) {
   const collectionPath = useMemo(
     () => collectionPathFor(documentPath),
     [documentPath],
@@ -93,30 +173,20 @@ export function CollectionScreen({
   const reloadTreePathParents = useSpaceTreeSync(
     (state) => state.reloadTreePathParents,
   );
+  const effectiveHasReadme = showOwnerChrome && hasReadme;
   const {
     schema,
     setSchema,
-    entry,
-    setEntry,
-    propertiesSchema,
     loading,
     schemaError,
     documentLabel,
     setDocumentLabel,
-    refreshSchema,
-    updateReadmeProperty,
-    createReadmeForIdentity,
-    updateIdentity,
-    updateCover,
     saveDocumentLabel,
+    refreshSchema,
   } = useCollectionSchemaState({
     spacePath,
-    projectPath,
     collectionPath,
-    readmePath,
-    spaceId,
-    hasReadme,
-    openDocument,
+    projectPath,
   });
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -158,7 +228,7 @@ export function CollectionScreen({
   );
   const { activeTab, selectTab } = useCollectionActiveTab({
     collectionPath,
-    hasReadme,
+    hasReadme: effectiveHasReadme,
     routeState,
     schema,
     views,
@@ -207,7 +277,7 @@ export function CollectionScreen({
     collectionPath,
     spacePath,
     projectPath,
-    hasReadme,
+    hasReadme: effectiveHasReadme,
     selectTab,
     setSettingsPane,
     setSettingsOpen,
@@ -286,26 +356,27 @@ export function CollectionScreen({
   });
 
   if (loading) {
-    return <CollectionSkeleton />;
-  }
-
-  if (schemaError || !schema) {
     return (
-      <div className="flex h-full flex-col gap-4 p-6">
-        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm">
-          <div className="font-medium">{m.collection_invalid_schema()}</div>
-          <div className="mt-1 text-muted-foreground">{schemaError}</div>
-        </div>
+      <div className="flex min-h-full flex-col">
+        {showOwnerChrome ? <ScopeOwnerHeader /> : null}
+        <CollectionSkeleton />
       </div>
     );
   }
 
-  const title = entry?.meta.title ?? humanize(collectionPath);
-  const icon = entry?.meta.icon ?? null;
-  const description = entry?.meta.description ?? "";
-  const cover = entry?.meta.cover ?? null;
-  const documentLabelValue =
-    schema.document?.label || m.collection_document_tab();
+  if (schemaError || !schema) {
+    return (
+      <div className="flex min-h-full flex-col">
+        {showOwnerChrome ? <ScopeOwnerHeader /> : null}
+        <div className="flex h-full flex-col gap-4 p-6">
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm">
+            <div className="font-medium">{m.collection_invalid_schema()}</div>
+            <div className="mt-1 text-muted-foreground">{schemaError}</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const effectiveHeaderActions =
     headerActions ??
@@ -316,7 +387,7 @@ export function CollectionScreen({
         projectPath={projectPath}
         spaceId={spaceId}
         onConverted={(nextEntry, nested) => {
-          setEntry(nextEntry);
+          setEntry?.(nextEntry);
           openDocument(nextEntry.path, spaceId);
           if (nested) void reloadTreePathParents(spaceId, [nextEntry.path]);
         }}
@@ -329,32 +400,9 @@ export function CollectionScreen({
 
   return (
     <div className="flex min-h-full flex-col">
-      <CollectionDocumentHeader
-        hasReadme={hasReadme}
-        title={title}
-        icon={icon}
-        description={description}
-        cover={cover}
-        projectPath={projectPath}
-        spacePath={spacePath}
-        readmePath={readmePath}
-        spaceId={spaceId}
-        entry={entry}
-        propertiesSchema={propertiesSchema}
-        actions={effectiveHeaderActions}
-        onOpenPath={openPath}
-        onCreateReadmeForIdentity={() =>
-          void createReadmeForIdentity().catch(handleError)
-        }
-        onUpdateIdentity={(field, value) =>
-          void updateIdentity(field, value).catch(handleError)
-        }
-        onUpdateCover={(nextCover) =>
-          void updateCover(nextCover).catch(handleError)
-        }
-        onReadmePropertyChange={updateReadmeProperty}
-        onBodyFocus={() => selectTab("document")}
-      />
+      {showOwnerChrome ? (
+        <ScopeOwnerHeader actions={effectiveHeaderActions} />
+      ) : null}
 
       <Tabs value={activeTab} onValueChange={selectTab} className="gap-0">
         <div className={detailPageToolbarClassName}>
@@ -368,8 +416,8 @@ export function CollectionScreen({
               { type: "gallery", label: m.collection_view_type_gallery() },
             ]}
             addViewLabel={m.collection_add_view()}
-            documentLabel={documentLabelValue}
-            hasReadme={hasReadme}
+            documentLabel={m.collection_document_tab()}
+            hasReadme={effectiveHasReadme}
             manageViewsLabel={m.collection_manage_views()}
             moreViewsLabel={m.collection_more_views()}
             views={views}
@@ -377,7 +425,7 @@ export function CollectionScreen({
             onReorderViews={reorder}
             onTabChange={selectTab}
           />
-          {activeTab === "document" ? (
+          {showOwnerChrome && activeTab === "document" ? (
             <DocumentSettings
               open={documentLabelOpen}
               label={documentLabel}
@@ -385,7 +433,7 @@ export function CollectionScreen({
               onLabelChange={setDocumentLabel}
               onSave={() => void saveDocumentLabel().catch(handleError)}
             />
-          ) : (
+          ) : activeTab !== "document" ? (
             <ViewActionBar
               searchOpen={searchOpen}
               searchQuery={searchQuery}
@@ -426,21 +474,13 @@ export function CollectionScreen({
                 void createEntry(asFolder).catch(handleError);
               }}
             />
-          )}
+          ) : null}
         </div>
 
-        {hasReadme ? (
-          <CollectionDocumentTab
-            readmePath={readmePath}
-            spaceId={spaceId}
-            spacePath={spacePath}
-            projectPath={projectPath}
-            entry={entry}
-            onDocumentPathChange={(path) => {
-              setEntry((current) => (current ? { ...current, path } : current));
-              openDocument(path, spaceId);
-            }}
-          />
+        {effectiveHasReadme ? (
+          <TabsContent value="document" className="flex-none">
+            <ReadmeSurface />
+          </TabsContent>
         ) : null}
         {views.map((view) => (
           <TabsContent key={view.name} value={view.name} className="flex-none">
