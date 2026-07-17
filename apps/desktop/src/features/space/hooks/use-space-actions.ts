@@ -1,9 +1,6 @@
 import { useCallback } from "react";
 import * as spaceNotifications from "../effects/space-notifications";
-import {
-  openScopeHomeSelection,
-  openSpaceReadmeDocument,
-} from "../effects/space-selection";
+import { openScopeHomeSelection } from "../effects/space-selection";
 import { useSpaceStore } from "../model";
 import type { SpaceGitType, SpaceInfo } from "../model";
 
@@ -97,7 +94,7 @@ export function useSpaceActions() {
         folderName,
         gitType,
       );
-      openSpaceReadmeDocument(space.id);
+      openScopeHomeSelection(space.id);
       spaceNotifications.notifySpaceCreated();
       return space;
     },

@@ -46,3 +46,20 @@ test("keeps each owner selection until an explicit open intent replaces it", () 
     useScopeSurfaceStore.getState().surfaceByOwnerKey["collection:root:tasks"],
   ).toBe("collection");
 });
+
+test("keeps separate selections through owner switching", () => {
+  useScopeSurfaceStore.setState({
+    surfaceByOwnerKey: {},
+    openRequestKeyByOwnerKey: {},
+  });
+  const store = useScopeSurfaceStore.getState();
+
+  store.setSurface("space:root", "routines");
+  store.setSurface("collection:root:tasks", "collection");
+  store.setSurface("space:root", "agent");
+
+  expect(useScopeSurfaceStore.getState().surfaceByOwnerKey).toEqual({
+    "space:root": "agent",
+    "collection:root:tasks": "collection",
+  });
+});

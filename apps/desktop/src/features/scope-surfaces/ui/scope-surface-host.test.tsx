@@ -60,3 +60,26 @@ test("renders shadcn tabs with only the active surface viewport mounted", () => 
   expect(markup.includes("Readme content")).toBe(true);
   expect(markup.includes("Routines content")).toBe(false);
 });
+
+test("compact host filters unavailable surfaces and honors its local selection", () => {
+  const markup = renderToStaticMarkup(
+    <ScopeSurfaceHost
+      owner={owner}
+      presentation="compact"
+      contributions={[
+        contribution("readme", "Readme"),
+        contribution("collection", "Collection"),
+        {
+          ...contribution("agent", "Agent"),
+          presentations: ["full"],
+        },
+      ]}
+      compactSurfaceId="collection"
+      header={<header>Owner</header>}
+    />,
+  );
+
+  expect(markup.includes("Collection content")).toBe(true);
+  expect(markup.includes("Readme content")).toBe(false);
+  expect(markup.includes("Agent content")).toBe(false);
+});

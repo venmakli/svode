@@ -112,6 +112,8 @@ export function ActiveSpaceContent() {
               owner={owner}
               presentation="full"
               routeState={collectionRouteState}
+              fallbackTitle={selectedScopeHome.name}
+              fallbackIcon={selectedScopeHome.icon || null}
               openIntent={activeScopeOpenRequest?.intent}
               openRequestKey={activeScopeOpenRequest?.key}
             />

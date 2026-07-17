@@ -49,3 +49,25 @@ test("repeated scope home selection preserves the original open request", () => 
     firstRequest,
   );
 });
+
+test("switching owners applies a fresh default intent", () => {
+  resetSelection();
+  const { openDocument } = useEntrySelectionStore.getState();
+
+  openDocument("tasks/README.md", "root", {
+    scopeOpenIntent: { kind: "target", surfaceId: "collection" },
+  });
+  const collectionRequest =
+    useEntrySelectionStore.getState().activeScopeOpenRequest;
+  openDocument("notes/README.md", "root");
+
+  const nextRequest = useEntrySelectionStore.getState().activeScopeOpenRequest;
+  expect(nextRequest?.intent).toEqual({ kind: "default" });
+  expect(
+    Boolean(
+      collectionRequest &&
+      nextRequest &&
+      nextRequest.key > collectionRequest.key,
+    ),
+  ).toBe(true);
+});

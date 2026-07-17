@@ -26,6 +26,7 @@ export interface EntryDetailContextValue {
   status: ReadmeStatus;
   error: string | null;
   fallbackTitle: string;
+  fallbackIcon: string | null;
   reload: () => Promise<void>;
   createReadme: () => Promise<Entry>;
   updateField: (field: string, value: unknown) => Promise<void>;
@@ -46,6 +47,8 @@ export interface EntryDetailProviderProps {
   spaceId: string;
   readmePath: string;
   ownerPath: string;
+  fallbackTitle?: string;
+  fallbackIcon?: string | null;
   onOpenPath: (path: string, spaceId?: string | null) => void;
 }
 
@@ -56,8 +59,12 @@ export function EntryDetailProvider({
   spaceId,
   readmePath,
   ownerPath,
+  fallbackTitle,
+  fallbackIcon = null,
   onOpenPath,
 }: EntryDetailProviderProps) {
+  const resolvedFallbackTitle =
+    fallbackTitle?.trim() || humanizeOwnerPath(ownerPath);
   const [entry, setEntry] = useState<Entry | null>(null);
   const [schemaResult, setSchemaResult] = useState<EntrySchemaResult | null>(
     null,
@@ -139,7 +146,7 @@ export function EntryDetailProvider({
       const created = await createEntry({
         spacePath,
         parentPath: ownerPath === "." ? "" : ownerPath,
-        title: humanizeOwnerPath(ownerPath),
+        title: resolvedFallbackTitle,
         projectPath,
       });
       let nextEntry = created;
@@ -170,6 +177,7 @@ export function EntryDetailProvider({
     ownerPath,
     projectPath,
     readmePath,
+    resolvedFallbackTitle,
     reloadTreeParent,
     reloadTreePathParent,
     spaceId,
@@ -197,7 +205,8 @@ export function EntryDetailProvider({
       schemaResult,
       status,
       error,
-      fallbackTitle: humanizeOwnerPath(ownerPath),
+      fallbackTitle: resolvedFallbackTitle,
+      fallbackIcon,
       reload,
       createReadme,
       updateField,
@@ -212,11 +221,12 @@ export function EntryDetailProvider({
       createReadme,
       entry,
       error,
+      fallbackIcon,
       onOpenPath,
-      ownerPath,
       projectPath,
       readmePath,
       reload,
+      resolvedFallbackTitle,
       schemaResult,
       spaceId,
       spacePath,

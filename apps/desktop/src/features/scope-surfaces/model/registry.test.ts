@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import type { ComponentType } from "react";
-import { createRegisteredSpaceOwner } from "./owners";
+import {
+  createCollectionDirectoryOwner,
+  createRegisteredSpaceOwner,
+} from "./owners";
 import {
   resolveScopeSurfaceContributions,
   SCOPE_SURFACE_ORDER,
@@ -49,6 +52,70 @@ test("registry filters capability and presentation without changing canonical or
   ).toEqual(["readme", "collection", "routines", "agent"]);
   expect(
     resolveScopeSurfaceContributions(contributions, owner, "compact").map(
+      ({ id }) => id,
+    ),
+  ).toEqual(["readme", "collection", "routines"]);
+});
+
+test("registry keeps root, child, and hybrid owner capabilities independent", () => {
+  const contributions = [
+    contribution("readme"),
+    contribution("collection", {
+      appliesTo: (owner) => owner.capabilities.includes("collection"),
+    }),
+    contribution("routines"),
+    contribution("agent", {
+      presentations: ["full"],
+      appliesTo: (owner) => owner.capabilities.includes("space"),
+    }),
+  ];
+  const root = createRegisteredSpaceOwner({
+    spaceId: "root",
+    projectPath: "/repo",
+    spacePath: "/repo",
+    status: "ready",
+    hasSchema: false,
+  });
+  const child = createRegisteredSpaceOwner({
+    spaceId: "child",
+    projectPath: "/repo",
+    spacePath: "/repo/child",
+    status: "ready",
+    hasSchema: false,
+  });
+  const hybrid = createRegisteredSpaceOwner({
+    spaceId: "hybrid",
+    projectPath: "/repo",
+    spacePath: "/repo/hybrid",
+    status: "ready",
+    hasSchema: true,
+  });
+  const collection = createCollectionDirectoryOwner({
+    spaceId: "root",
+    projectPath: "/repo",
+    spacePath: "/repo",
+    ownerPath: "tasks",
+    status: "ready",
+    hasSchema: true,
+  });
+
+  expect(
+    resolveScopeSurfaceContributions(contributions, root, "full").map(
+      ({ id }) => id,
+    ),
+  ).toEqual(["readme", "routines", "agent"]);
+  expect(
+    resolveScopeSurfaceContributions(contributions, child, "full").map(
+      ({ id }) => id,
+    ),
+  ).toEqual(["readme", "routines", "agent"]);
+  expect(
+    resolveScopeSurfaceContributions(contributions, hybrid, "full").map(
+      ({ id }) => id,
+    ),
+  ).toEqual(["readme", "collection", "routines", "agent"]);
+  expect(
+    resolveScopeSurfaceContributions(contributions, collection, "full").map(
       ({ id }) => id,
     ),
   ).toEqual(["readme", "collection", "routines"]);

@@ -53,6 +53,7 @@ export function ScopeOwnerHeader({ actions }: { actions?: ReactNode }) {
             readOnly
             hideDescription
             fallbackIcon={Database}
+            fallbackEmoji={context.fallbackIcon}
             onActivateIdentity={createReadme}
             onTitleChange={createReadme}
             onIconChange={createReadme}

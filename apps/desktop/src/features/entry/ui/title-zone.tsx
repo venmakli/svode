@@ -21,6 +21,7 @@ interface TitleZoneProps {
   readOnly?: boolean;
   hideDescription?: boolean;
   fallbackIcon?: LucideIcon;
+  fallbackEmoji?: string | null;
   onActivateIdentity?: () => void;
 }
 
@@ -35,6 +36,7 @@ export function TitleZone({
   readOnly = false,
   hideDescription = false,
   fallbackIcon: FallbackIcon,
+  fallbackEmoji,
   onActivateIdentity,
 }: TitleZoneProps) {
   const descriptionRef = useRef<HTMLTextAreaElement>(null);
@@ -125,9 +127,19 @@ export function TitleZone({
       <div className="flex shrink-0 items-center">
         {icon ? (
           <EmojiPicker value={icon} onChange={onIconChange} size="md" />
+        ) : fallbackEmoji ? (
+          <button
+            type="button"
+            aria-label={title}
+            className="flex size-9 items-center justify-center rounded-md text-2xl hover:bg-muted"
+            onClick={onActivateIdentity}
+          >
+            {fallbackEmoji}
+          </button>
         ) : FallbackIcon ? (
           <button
             type="button"
+            aria-label={title}
             className="flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted"
             onClick={onActivateIdentity}
           >
@@ -151,7 +163,7 @@ export function TitleZone({
           readOnly={readOnly}
           onFocus={
             readOnly
-              ? onActivateIdentity
+              ? undefined
               : () => {
                   isTitleFocusedRef.current = true;
                 }

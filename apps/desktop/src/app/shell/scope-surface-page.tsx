@@ -33,6 +33,8 @@ interface ScopeSurfacePageProps {
   openIntent?: ScopeOpenIntent;
   openRequestKey?: number;
   compactSurfaceState?: CollectionPeekSurfaceState;
+  fallbackTitle?: string;
+  fallbackIcon?: string | null;
 }
 
 export function ScopeSurfacePage({
@@ -43,6 +45,8 @@ export function ScopeSurfacePage({
   openIntent,
   openRequestKey,
   compactSurfaceState,
+  fallbackTitle,
+  fallbackIcon,
 }: ScopeSurfacePageProps) {
   const [compactViewName, setCompactViewName] = useState<string | null>(null);
   const [compactCalendarScope, setCompactCalendarScope] =
@@ -118,6 +122,8 @@ export function ScopeSurfacePage({
       spaceId={owner.spaceId}
       readmePath={owner.readmePath}
       ownerPath={owner.ownerPath}
+      fallbackTitle={fallbackTitle}
+      fallbackIcon={fallbackIcon}
       onOpenPath={openPath}
     >
       <ScopeSurfaceHost
