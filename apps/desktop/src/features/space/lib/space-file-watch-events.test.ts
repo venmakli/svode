@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { repairParentPathForSpaceFileEvent } from "./space-file-watch-events";
+import {
+  applySpaceFileEvent,
+  repairParentPathForSpaceFileEvent,
+  type SpaceFileEventTreeStore,
+} from "./space-file-watch-events";
 
 test("repair parent targets document direct parent", () => {
   expect(
@@ -41,3 +45,84 @@ test("repair parent targets deleted folder parent", () => {
     }),
   ).toBe("docs");
 });
+
+test("root schema events update the registered space capability projection", async () => {
+  const rootUpdates: Array<[string, boolean]> = [];
+  const nestedUpdates: Array<[string, string, boolean]> = [];
+  const store = createEventStore(rootUpdates, nestedUpdates);
+
+  await applySpaceFileEvent({
+    eventName: "file:created",
+    getStore: () => store,
+    payload: { path: "schema.yaml", kind: "schema" },
+    readEntry: async () => {
+      throw new Error("schema events do not read entries");
+    },
+    repairTree: () => undefined,
+    spaceId: "root",
+  });
+  await applySpaceFileEvent({
+    eventName: "file:changed",
+    getStore: () => store,
+    payload: { path: "schema.yaml", kind: "schema" },
+    readEntry: async () => {
+      throw new Error("schema events do not read entries");
+    },
+    repairTree: () => undefined,
+    spaceId: "root",
+  });
+  await applySpaceFileEvent({
+    eventName: "file:deleted",
+    getStore: () => store,
+    payload: { path: "schema.yaml", kind: "schema" },
+    readEntry: async () => {
+      throw new Error("schema events do not read entries");
+    },
+    repairTree: () => undefined,
+    spaceId: "root",
+  });
+
+  expect(rootUpdates).toEqual([
+    ["root", true],
+    ["root", true],
+    ["root", false],
+  ]);
+  expect(nestedUpdates).toEqual([]);
+});
+
+test("nested schema events keep using the tree-node projection", async () => {
+  const rootUpdates: Array<[string, boolean]> = [];
+  const nestedUpdates: Array<[string, string, boolean]> = [];
+  const store = createEventStore(rootUpdates, nestedUpdates);
+
+  await applySpaceFileEvent({
+    eventName: "file:changed",
+    getStore: () => store,
+    payload: { path: "tasks/schema.yaml", kind: "schema" },
+    readEntry: async () => {
+      throw new Error("schema events do not read entries");
+    },
+    repairTree: () => undefined,
+    spaceId: "root",
+  });
+
+  expect(rootUpdates).toEqual([]);
+  expect(nestedUpdates).toEqual([["root", "tasks", true]]);
+});
+
+function createEventStore(
+  rootUpdates: Array<[string, boolean]>,
+  nestedUpdates: Array<[string, string, boolean]>,
+): SpaceFileEventTreeStore {
+  return {
+    patchSpaceSchemaCapability: (spaceId, hasSchema) =>
+      rootUpdates.push([spaceId, hasSchema]),
+    updateNodeSchema: (spaceId, ownerPath, hasSchema) =>
+      nestedUpdates.push([spaceId, ownerPath, hasSchema]),
+    applyReadmeMeta: () => undefined,
+    removeReadmeMeta: () => undefined,
+    removeTreePath: () => undefined,
+    updateNodeMeta: () => undefined,
+    upsertTreeNode: () => undefined,
+  };
+}

@@ -258,6 +258,8 @@ pub struct SpaceInfo {
     pub description: String,
     pub path: String,
     pub has_spaces: bool,
+    #[serde(default)]
+    pub has_schema: bool,
     pub last_opened: Option<String>,
     pub status: SpaceStatus,
     #[serde(default)]
@@ -356,5 +358,26 @@ mod tests {
                 pinned_session_ids: vec!["codex:one".to_string(), "claude-code:two".to_string()],
             })
         );
+    }
+
+    #[test]
+    fn space_info_serializes_has_schema_in_camel_case() {
+        let info = SpaceInfo {
+            id: "space-id".to_string(),
+            name: "Space".to_string(),
+            icon: String::new(),
+            description: String::new(),
+            path: "/tmp/space".to_string(),
+            has_spaces: false,
+            has_schema: true,
+            last_opened: None,
+            status: SpaceStatus::Ready,
+            lfs_state: LfsState::NotApplicable,
+        };
+
+        let json = serde_json::to_value(info).expect("serialize SpaceInfo");
+
+        assert_eq!(json.get("hasSchema"), Some(&serde_json::Value::Bool(true)));
+        assert!(json.get("has_schema").is_none());
     }
 }

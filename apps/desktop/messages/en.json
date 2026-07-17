@@ -1,4 +1,9 @@
 {
+  "scope_surface_readme": "Readme",
+  "scope_surface_collection": "Collection",
+  "scope_surface_routines": "Routines",
+  "scope_surface_agent": "Agent",
+  "scope_surface_unavailable": "This section is not available yet",
   "common_settings": "Settings",
   "common_about": "About",
   "common_theme": "Theme",

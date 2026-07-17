@@ -13,6 +13,10 @@ use crate::space::config::read_space_config;
 
 const MAX_FRONTMATTER_HEAD_BYTES: usize = 64 * 1024;
 
+pub(crate) fn has_direct_schema(directory: &Path) -> bool {
+    directory.join("schema.yaml").is_file()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TreeNode {
     pub name: String,
@@ -394,8 +398,8 @@ fn read_dir_direct(
 
             let schema_path = abs_path.join("schema.yaml");
             let schema_rel = schema_path.strip_prefix(base).unwrap_or(&schema_path);
-            let has_schema =
-                schema_path.is_file() && !policy.is_ignored_rel(schema_rel, TreePathKind::File);
+            let has_schema = has_direct_schema(&abs_path)
+                && !policy.is_ignored_rel(schema_rel, TreePathKind::File);
             let readme = find_readme(base, &abs_path, policy);
             let (title, icon, description) = if let Some(ref readme_path) = readme {
                 let (title, icon, description) = read_frontmatter_meta_head(readme_path);
@@ -577,8 +581,8 @@ fn read_dir_recursive(
 
             let schema_path = abs_path.join("schema.yaml");
             let schema_rel = schema_path.strip_prefix(base).unwrap_or(&schema_path);
-            let has_schema =
-                schema_path.is_file() && !policy.is_ignored_rel(schema_rel, TreePathKind::File);
+            let has_schema = has_direct_schema(&abs_path)
+                && !policy.is_ignored_rel(schema_rel, TreePathKind::File);
             let readme = find_readme(base, &abs_path, policy);
 
             let (title, icon, description) = if let Some(ref rp) = readme {

@@ -1,4 +1,9 @@
 {
+  "scope_surface_readme": "Описание",
+  "scope_surface_collection": "Коллекция",
+  "scope_surface_routines": "Рутины",
+  "scope_surface_agent": "Агент",
+  "scope_surface_unavailable": "Раздел пока недоступен",
   "common_settings": "Настройки",
   "common_about": "О программе",
   "common_theme": "Тема",

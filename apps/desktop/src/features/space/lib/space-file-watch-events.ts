@@ -28,6 +28,7 @@ export type QueuedSpaceFileEvent = {
 };
 
 export interface SpaceFileEventTreeStore {
+  patchSpaceSchemaCapability: (spaceId: string, hasSchema: boolean) => void;
   applyReadmeMeta: (
     spaceId: string,
     path: string,
@@ -181,6 +182,20 @@ export async function applySpaceFileEvent({
   });
 }
 
+function updateSchemaCapability(
+  store: SpaceFileEventTreeStore,
+  spaceId: string,
+  schemaPath: string,
+  hasSchema: boolean,
+) {
+  const ownerPath = folderPathForSchema(schemaPath);
+  if (!ownerPath) {
+    store.patchSpaceSchemaCapability(spaceId, hasSchema);
+    return;
+  }
+  store.updateNodeSchema(spaceId, ownerPath, hasSchema);
+}
+
 async function applyCreatedSpaceFileEvent({
   getStore,
   payload,
@@ -194,7 +209,7 @@ async function applyCreatedSpaceFileEvent({
   const path = normalizeTreePath(payload.path);
 
   if (kind === "schema") {
-    store.updateNodeSchema(spaceId, folderPathForSchema(path), true);
+    updateSchemaCapability(store, spaceId, path, true);
     return;
   }
 
@@ -258,7 +273,7 @@ async function applyChangedSpaceFileEvent({
   const path = normalizeTreePath(payload.path);
 
   if (kind === "schema") {
-    store.updateNodeSchema(spaceId, folderPathForSchema(path), true);
+    updateSchemaCapability(store, spaceId, path, true);
     return;
   }
 
@@ -300,7 +315,7 @@ function applyDeletedSpaceFileEvent({
   const path = normalizeTreePath(payload.path);
 
   if (kind === "schema") {
-    store.updateNodeSchema(spaceId, folderPathForSchema(path), false);
+    updateSchemaCapability(store, spaceId, path, false);
     return;
   }
 

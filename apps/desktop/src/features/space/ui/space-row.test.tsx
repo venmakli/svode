@@ -16,6 +16,7 @@ const props: ComponentProps<typeof SpaceRow> = {
     description: "",
     path: "/__space-row-drag-test__/space",
     hasSpaces: false,
+    hasSchema: false,
     lastOpened: null,
     status: "ready",
     lfsState: "n/a",

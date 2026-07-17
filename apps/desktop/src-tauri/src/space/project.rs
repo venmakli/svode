@@ -192,6 +192,14 @@ pub fn space_ref_status(parent_path: &Path, space_ref: &SpaceRef) -> SpaceStatus
     }
 }
 
+/// Return the Collection capability signal for a directory-backed Space.
+///
+/// Capability depends only on a direct child `schema.yaml` file. Schema
+/// parsing and validation belong to the Collection surface.
+pub fn has_schema_capability(path: &Path, status: SpaceStatus) -> bool {
+    matches!(status, SpaceStatus::Ready) && crate::files::tree::has_direct_schema(path)
+}
+
 /// Register direct git submodules from an existing project as Svode spaces.
 ///
 /// This is intentionally conservative: nested submodule paths are skipped
@@ -290,6 +298,7 @@ pub fn create_space(
         description: cfg.description,
         path: system_path::user_facing_path(&space_dir),
         has_spaces: false,
+        has_schema: has_schema_capability(&space_dir, SpaceStatus::Ready),
         last_opened: None,
         status: SpaceStatus::Ready,
         lfs_state: LfsState::NotApplicable,
@@ -334,6 +343,7 @@ pub fn register_cloned_space(
                 description: cfg.description,
                 path: system_path::user_facing_path(&space_dir),
                 has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
+                has_schema: has_schema_capability(&space_dir, SpaceStatus::Ready),
                 last_opened: None,
                 status: SpaceStatus::Ready,
                 lfs_state: LfsState::NotApplicable,
@@ -356,6 +366,7 @@ pub fn register_cloned_space(
         description: cfg.description,
         path: system_path::user_facing_path(&space_dir),
         has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
+        has_schema: has_schema_capability(&space_dir, SpaceStatus::Ready),
         last_opened: None,
         status: SpaceStatus::Ready,
         lfs_state: LfsState::NotApplicable,
@@ -429,6 +440,7 @@ pub fn list_spaces(parent_path: &Path) -> Result<Vec<SpaceInfo>, AppError> {
                         .and_then(|c| c.spaces.as_ref())
                         .map(|s| !s.is_empty())
                         .unwrap_or(false),
+                    has_schema: has_schema_capability(&space_path, status),
                     last_opened: None,
                     status,
                     lfs_state: LfsState::NotApplicable,
@@ -441,6 +453,7 @@ pub fn list_spaces(parent_path: &Path) -> Result<Vec<SpaceInfo>, AppError> {
                     description: String::new(),
                     path: system_path::user_facing_path(&space_path),
                     has_spaces: false,
+                    has_schema: has_schema_capability(&space_path, status),
                     last_opened: None,
                     status,
                     lfs_state: LfsState::NotApplicable,
@@ -551,8 +564,8 @@ pub fn remove_missing_space(parent_path: &Path, space_id: &str) -> Result<(), Ap
 #[cfg(test)]
 mod tests {
     use super::{
-        import_existing_submodule_spaces, normalize_space_folder, open_project_folder,
-        reorder_spaces, space_ref_status,
+        has_schema_capability, import_existing_submodule_spaces, normalize_space_folder,
+        open_project_folder, reorder_spaces, space_ref_status,
     };
     use crate::git::ops::SubmoduleConfig;
     use crate::space::registry;
@@ -744,5 +757,38 @@ mod tests {
         );
 
         assert_eq!(status, SpaceStatus::Broken);
+    }
+
+    #[test]
+    fn schema_capability_uses_direct_child_file_without_parsing() {
+        let space_dir = tempfile::tempdir().expect("space dir");
+        std::fs::write(space_dir.path().join("schema.yaml"), "not: [valid").expect("schema");
+
+        assert!(has_schema_capability(space_dir.path(), SpaceStatus::Ready));
+    }
+
+    #[test]
+    fn schema_capability_ignores_nested_schema() {
+        let space_dir = tempfile::tempdir().expect("space dir");
+        std::fs::create_dir(space_dir.path().join("nested")).expect("nested dir");
+        std::fs::write(space_dir.path().join("nested/schema.yaml"), "type: object")
+            .expect("nested schema");
+
+        assert!(!has_schema_capability(space_dir.path(), SpaceStatus::Ready));
+    }
+
+    #[test]
+    fn schema_capability_is_disabled_for_non_ready_spaces() {
+        let space_dir = tempfile::tempdir().expect("space dir");
+        std::fs::write(space_dir.path().join("schema.yaml"), "type: object").expect("schema");
+
+        assert!(!has_schema_capability(
+            space_dir.path(),
+            SpaceStatus::Missing
+        ));
+        assert!(!has_schema_capability(
+            space_dir.path(),
+            SpaceStatus::Broken
+        ));
     }
 }

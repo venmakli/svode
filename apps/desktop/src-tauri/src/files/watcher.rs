@@ -1,4 +1,4 @@
-use notify::event::{CreateKind, ModifyKind, RemoveKind};
+use notify::event::{CreateKind, ModifyKind, RemoveKind, RenameMode};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::error::AppError;
 use crate::files::WriteNonceRegistry;
-use crate::files::tree::child_folder_names;
+use crate::files::tree::{child_folder_names, has_direct_schema};
 use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
 use crate::index::{IndexKey, IndexState};
 use crate::repo_path::{RootMode, repo_relative_from_base, repo_relative_from_path};
@@ -67,8 +67,9 @@ impl FileWatcher {
 
         // Spawn debounce thread
         let sp = space.clone();
+        let root_schema_present = has_direct_schema(&space_path);
         std::thread::spawn(move || {
-            debounce_loop(event_rx, stop_rx, &sp, &app);
+            debounce_loop(event_rx, stop_rx, &sp, &app, root_schema_present);
         });
 
         let mut handles = self
@@ -122,6 +123,7 @@ fn debounce_loop(
     stop_rx: mpsc::Receiver<()>,
     space: &str,
     app: &AppHandle,
+    mut root_schema_present: bool,
 ) {
     let debounce = Duration::from_millis(200);
 
@@ -145,7 +147,7 @@ fn debounce_loop(
                 }
 
                 // Process collected events
-                process_events(&events, space, app);
+                process_events(&events, space, app, &mut root_schema_present);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 // No events, check stop signal
@@ -161,7 +163,7 @@ fn debounce_loop(
 }
 
 /// Process a batch of debounced events.
-fn process_events(events: &[Event], space: &str, app: &AppHandle) {
+fn process_events(events: &[Event], space: &str, app: &AppHandle, root_schema_present: &mut bool) {
     // Deduplicate by path while preserving structural create/delete semantics.
     // Backends often report Create followed by Modify for the same file within
     // one debounce window; the sidebar still needs this as `file:created`.
@@ -173,7 +175,8 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
     let policy = TreeIgnorePolicy::from_space_root(space_root);
     let skip_dirs = child_folder_names(space_root);
     for event in events {
-        for path in &event.paths {
+        for (path_index, path) in event.paths.iter().enumerate() {
+            let event_kind = event_kind_for_path(event, path_index);
             // Detect `.assets/`-scoped changes so we can emit a targeted
             // event for the storage reactor to re-scan the assets table.
             if is_under_assets(path, space_root) {
@@ -183,23 +186,31 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle) {
 
             // Any non-ignored file change → space is dirty.
             // Includes non-.md assets (frontend uses this to refresh git status).
-            if !policy.is_ignored_abs(path, path_kind(path, &event.kind)) {
+            if !policy.is_ignored_abs(path, path_kind(path, &event_kind)) {
                 any_dirty = true;
             }
             // Per-file file:* events are emitted for document entries and
             // collection schemas. Schema changes are derived-state inputs only;
             // they do not trigger autocommit from the watcher.
             let Some(classification) =
-                classify_content_tree_event(space_root, &policy, &skip_dirs, path, &event.kind)
+                classify_content_tree_event(space_root, &policy, &skip_dirs, path, &event_kind)
             else {
                 continue;
             };
             any_tree_changed =
                 any_tree_changed || classification.affects_tree || classification.affects_metadata;
             seen.entry(path.clone())
-                .and_modify(|current| *current = merge_event_kind(*current, event.kind))
-                .or_insert(event.kind);
+                .and_modify(|current| *current = merge_event_kind(*current, event_kind))
+                .or_insert(event_kind);
         }
+    }
+
+    let (current_root_schema_present, root_schema_changed) =
+        queue_root_schema_transition(&mut seen, space_root, *root_schema_present);
+    *root_schema_present = current_root_schema_present;
+    if root_schema_changed {
+        any_dirty = true;
+        any_tree_changed = true;
     }
 
     if any_dirty {
@@ -323,7 +334,8 @@ fn classify_content_tree_event(
     event_kind: &EventKind,
 ) -> Option<ContentTreeEventClassification> {
     let tree_kind = path_kind(path, event_kind);
-    if policy.is_ignored_abs(path, tree_kind) {
+    let is_root_schema = is_schema_path(path) && path.parent() == Some(space_root);
+    if policy.is_ignored_abs(path, tree_kind) && !is_root_schema {
         return None;
     }
 
@@ -457,6 +469,62 @@ fn merge_event_kind(current: EventKind, next: EventKind) -> EventKind {
     }
 }
 
+fn queue_root_schema_transition(
+    seen: &mut HashMap<PathBuf, EventKind>,
+    space_root: &Path,
+    previous: bool,
+) -> (bool, bool) {
+    let current = has_direct_schema(space_root);
+    if current == previous {
+        return (current, false);
+    }
+
+    seen.entry(space_root.join("schema.yaml"))
+        .or_insert_with(|| {
+            if current {
+                EventKind::Create(CreateKind::File)
+            } else {
+                EventKind::Remove(RemoveKind::File)
+            }
+        });
+    (current, true)
+}
+
+fn event_kind_for_path(event: &Event, path_index: usize) -> EventKind {
+    let path = &event.paths[path_index];
+    if !is_schema_path(path) {
+        return event.kind;
+    }
+
+    match event.kind {
+        EventKind::Modify(ModifyKind::Name(RenameMode::From)) => schema_rename_remove_kind(),
+        EventKind::Modify(ModifyKind::Name(RenameMode::To)) => schema_rename_create_kind(),
+        EventKind::Modify(ModifyKind::Name(RenameMode::Both)) if event.paths.len() >= 2 => {
+            if path_index == 0 {
+                schema_rename_remove_kind()
+            } else {
+                schema_rename_create_kind()
+            }
+        }
+        EventKind::Modify(ModifyKind::Name(RenameMode::Any | RenameMode::Other)) => {
+            if path.exists() {
+                schema_rename_create_kind()
+            } else {
+                schema_rename_remove_kind()
+            }
+        }
+        _ => event.kind,
+    }
+}
+
+fn schema_rename_remove_kind() -> EventKind {
+    EventKind::Remove(RemoveKind::File)
+}
+
+fn schema_rename_create_kind() -> EventKind {
+    EventKind::Create(CreateKind::File)
+}
+
 /// True iff `path` is inside the watched space's `.assets/` directory.
 /// Uses the literal space root so unrelated `.assets` folders nested deeper
 /// don't trip this (the watcher only fires on paths under the root anyway).
@@ -583,6 +651,119 @@ mod tests {
     }
 
     #[test]
+    fn watcher_classifies_root_schema_rename_away_as_delete() {
+        let tmp = TempDir::new().unwrap();
+        let schema = tmp.path().join("schema.yaml");
+        let renamed = tmp.path().join("schema.backup");
+        std::fs::write(&renamed, "columns: []").unwrap();
+        let event = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+            .add_path(schema.clone())
+            .add_path(renamed.clone());
+
+        let removed_kind = event_kind_for_path(&event, 0);
+        let created_kind = event_kind_for_path(&event, 1);
+
+        assert_eq!(removed_kind, EventKind::Remove(RemoveKind::File));
+        assert_eq!(
+            created_kind,
+            EventKind::Modify(ModifyKind::Name(RenameMode::Both))
+        );
+        let classification = classify(&tmp, &schema, removed_kind).unwrap();
+        assert_eq!(classification.rel_path, "schema.yaml");
+        assert_eq!(classification.kind, ContentTreeEventKind::Schema);
+        assert!(classification.affects_tree);
+        assert!(classify(&tmp, &renamed, created_kind).is_none());
+    }
+
+    #[test]
+    fn watcher_classifies_nested_schema_rename_into_place_as_create() {
+        let tmp = TempDir::new().unwrap();
+        let collection = tmp.path().join("tasks");
+        std::fs::create_dir_all(&collection).unwrap();
+        let previous = collection.join("schema.draft");
+        let schema = collection.join("schema.yaml");
+        std::fs::write(&schema, "columns: []").unwrap();
+        let event = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+            .add_path(previous.clone())
+            .add_path(schema.clone());
+
+        let removed_kind = event_kind_for_path(&event, 0);
+        let created_kind = event_kind_for_path(&event, 1);
+
+        assert_eq!(
+            removed_kind,
+            EventKind::Modify(ModifyKind::Name(RenameMode::Both))
+        );
+        assert_eq!(created_kind, EventKind::Create(CreateKind::File));
+        assert!(classify(&tmp, &previous, removed_kind).is_none());
+        let classification = classify(&tmp, &schema, created_kind).unwrap();
+        assert_eq!(classification.rel_path, "tasks/schema.yaml");
+        assert_eq!(classification.kind, ContentTreeEventKind::Schema);
+        assert!(classification.affects_tree);
+    }
+
+    #[test]
+    fn watcher_resolves_unpaired_schema_rename_from_filesystem_state() {
+        let tmp = TempDir::new().unwrap();
+        let removed_schema = tmp.path().join("schema.yaml");
+        let removed_event = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Any)))
+            .add_path(removed_schema);
+        let removed_kind = event_kind_for_path(&removed_event, 0);
+
+        let created_schema = tmp.path().join("schema.yaml");
+        std::fs::write(&created_schema, "columns: []").unwrap();
+        let created_event = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Any)))
+            .add_path(created_schema);
+
+        assert_eq!(removed_kind, EventKind::Remove(RemoveKind::File));
+        assert_eq!(
+            event_kind_for_path(&created_event, 0),
+            EventKind::Create(CreateKind::File)
+        );
+    }
+
+    #[test]
+    fn watcher_queues_root_schema_transition_for_ambiguous_rename_path() {
+        let tmp = TempDir::new().unwrap();
+        let schema = tmp.path().join("schema.yaml");
+        std::fs::write(&schema, "columns: []").unwrap();
+        let mut seen = HashMap::new();
+
+        let (present, changed) = queue_root_schema_transition(&mut seen, tmp.path(), false);
+
+        assert!(present);
+        assert!(changed);
+        assert_eq!(
+            seen.get(&schema),
+            Some(&EventKind::Create(CreateKind::File))
+        );
+
+        std::fs::rename(&schema, tmp.path().join("schema.backup")).unwrap();
+        seen.clear();
+        let (present, changed) = queue_root_schema_transition(&mut seen, tmp.path(), true);
+
+        assert!(!present);
+        assert!(changed);
+        assert_eq!(
+            seen.get(&schema),
+            Some(&EventKind::Remove(RemoveKind::File))
+        );
+    }
+
+    #[test]
+    fn watcher_does_not_duplicate_precise_root_schema_event() {
+        let tmp = TempDir::new().unwrap();
+        let schema = tmp.path().join("schema.yaml");
+        std::fs::write(&schema, "columns: []").unwrap();
+        let mut seen = HashMap::from([(schema.clone(), EventKind::Modify(ModifyKind::Any))]);
+
+        let (_, changed) = queue_root_schema_transition(&mut seen, tmp.path(), false);
+
+        assert!(changed);
+        assert_eq!(seen.get(&schema), Some(&EventKind::Modify(ModifyKind::Any)));
+    }
+
+    #[test]
     fn watcher_keeps_assets_targeted_but_out_of_content_tree_events() {
         let tmp = TempDir::new().unwrap();
         let assets = tmp.path().join(".assets");
@@ -610,6 +791,19 @@ mod tests {
         assert!(!should_emit_content_tree_event(&policy, &ignored_doc));
         assert!(should_emit_content_tree_event(&policy, &visible_doc));
         assert!(classify(&tmp, &ignored_doc, EventKind::Modify(ModifyKind::Any)).is_none());
+    }
+
+    #[test]
+    fn watcher_keeps_root_schema_capability_signal_outside_user_tree_excludes() {
+        let tmp = TempDir::new().unwrap();
+        write_tree_config(&tmp, vec!["schema.yaml"], vec![]);
+        let schema = tmp.path().join("schema.yaml");
+        std::fs::write(&schema, "columns: []").unwrap();
+
+        let classification = classify(&tmp, &schema, EventKind::Create(CreateKind::File)).unwrap();
+
+        assert_eq!(classification.rel_path, "schema.yaml");
+        assert_eq!(classification.kind, ContentTreeEventKind::Schema);
     }
 
     #[test]

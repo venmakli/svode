@@ -15,6 +15,7 @@ export interface SpaceInfo {
   description: string;
   path: string;
   hasSpaces: boolean;
+  hasSchema: boolean;
   lastOpened: string | null;
   status: SpaceStatus;
   lfsState: LfsState;

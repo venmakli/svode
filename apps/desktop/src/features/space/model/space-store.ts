@@ -69,6 +69,7 @@ export interface SpaceState extends SpaceTreeState {
     spacePath: string,
     updates: { name?: string; icon?: string; description?: string },
   ) => void;
+  patchSpaceSchemaCapability: (spaceId: string, hasSchema: boolean) => void;
 }
 
 /** Active space id: nested space if selected, otherwise root project */
@@ -83,6 +84,17 @@ export function selectActiveSpacePath(state: SpaceState): string {
     if (space) return space.path;
   }
   return state.activeRootPath ?? "";
+}
+
+export function upsertSpaceSnapshot(
+  spaces: readonly SpaceInfo[],
+  snapshot: SpaceInfo,
+): SpaceInfo[] {
+  const index = spaces.findIndex((space) => space.id === snapshot.id);
+  if (index === -1) return [...spaces, snapshot];
+  return spaces.map((space, currentIndex) =>
+    currentIndex === index ? snapshot : space,
+  );
 }
 
 function syncMcpContext(
@@ -139,11 +151,9 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       const projects = get().rootsLoaded
         ? get().rootSpaces
         : await get().loadRootSpaces();
-      const activeProject = projects.find((w) => w.id === id) ?? project;
+      const activeProject = project;
       set({
-        rootSpaces: projects.some((w) => w.id === id)
-          ? projects
-          : [...projects, project],
+        rootSpaces: upsertSpaceSnapshot(projects, project),
         rootsLoaded: true,
         activeRootId: id,
         activeRootName: config.name,
@@ -199,12 +209,10 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
 
   openRootFolder: async (path: string) => {
     const ws = await spaceActions.openRootFolderSpace(path);
-    set((s) => {
-      const exists = s.rootSpaces.some((w) => w.id === ws.id);
-      return exists
-        ? { rootsLoaded: true }
-        : { rootSpaces: [...s.rootSpaces, ws], rootsLoaded: true };
-    });
+    set((state) => ({
+      rootSpaces: upsertSpaceSnapshot(state.rootSpaces, ws),
+      rootsLoaded: true,
+    }));
     return ws;
   },
 
@@ -399,5 +407,16 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
         ),
       };
     });
+  },
+
+  patchSpaceSchemaCapability: (spaceId, hasSchema) => {
+    set((state) => ({
+      rootSpaces: state.rootSpaces.map((space) =>
+        space.id === spaceId ? { ...space, hasSchema } : space,
+      ),
+      spaces: state.spaces.map((space) =>
+        space.id === spaceId ? { ...space, hasSchema } : space,
+      ),
+    }));
   },
 }));
