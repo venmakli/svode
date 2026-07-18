@@ -8,14 +8,19 @@
       "commit": "885cc23a2b252bcbe43acf431ed300a56dae38dd",
       "sourceRef": "main",
       "runId": 29633616214,
-      "publishedAt": "2026-07-18T06:28:37.302Z",
-      "expiresAt": "2026-07-21T06:28:37.302Z",
+      "publishedAt": "2026-07-18T06:35:58.627Z",
+      "expiresAt": "2026-07-21T06:35:58.627Z",
       "reason": "add scope-surfaces and fix mcp",
       "platforms": {
         "linux": {
           "url": "https://github.com/venmakli/svode/actions/runs/29633616214/artifacts/8426454814",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/29633616214",
           "artifactName": "Svode-linux-deb"
+        },
+        "darwin": {
+          "url": "https://github.com/venmakli/svode/actions/runs/29633616214/artifacts/8426522765",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/29633616214",
+          "artifactName": "Svode-macos-dmg"
         }
       }
     },
