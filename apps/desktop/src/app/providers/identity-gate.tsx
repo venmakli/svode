@@ -1,6 +1,7 @@
 import { Outlet } from "@tanstack/react-router";
 import * as m from "@/paraglide/messages.js";
 import { Button } from "@/components/ui/button";
+import { ProjectLoadingLogo } from "@/features/branding";
 import { IdentityDialog } from "@/features/identity";
 import { useIdentityCheck } from "@/features/identity";
 import { useIdentityGateState } from "@/features/identity";
@@ -25,7 +26,7 @@ export function IdentityGate() {
   }
 
   if (!loaded) {
-    return <div className="h-screen w-screen" />;
+    return <AppBootstrapScreen />;
   }
 
   if (source === "missing") {
@@ -37,6 +38,17 @@ export function IdentityGate() {
       <Outlet />
       <SettingsDialogs />
     </>
+  );
+}
+
+function AppBootstrapScreen() {
+  return (
+    <div className="flex h-screen flex-col bg-background">
+      <div data-tauri-drag-region className="h-[44px] w-full shrink-0" />
+      <div className="flex flex-1 items-center justify-center">
+        <ProjectLoadingLogo />
+      </div>
+    </div>
   );
 }
 

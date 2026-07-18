@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import * as m from "@/paraglide/messages.js";
 import { FolderPlus, FolderOpen, FolderGit2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { ProjectLoadingLogo } from "@/features/branding";
 import { useAppVersion } from "@/features/settings";
 import { ProjectList } from "./project-list";
 import { EmptyState } from "./empty-state";
@@ -155,12 +156,7 @@ function HomeBootstrapScreen() {
     <div className="flex h-screen flex-col bg-background">
       <div data-tauri-drag-region className="h-[44px] w-full shrink-0" />
       <div className="flex flex-1 items-center justify-center">
-        <img
-          src="/logo.png"
-          alt=""
-          className="h-12 w-12 opacity-90"
-          aria-hidden="true"
-        />
+        <ProjectLoadingLogo />
       </div>
     </div>
   );
