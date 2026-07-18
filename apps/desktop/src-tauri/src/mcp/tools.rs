@@ -266,6 +266,70 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
+            "rename_entry",
+            "Rename a document or folder entry through Svode's managed structural backend. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit.",
+            schema(
+                &[
+                    space_id(),
+                    path_req("from", "Existing repo-relative document or folder path."),
+                    path_req("to", "New repo-relative document or folder path."),
+                ],
+                &["from", "to"],
+            ),
+            write_ann(false, Some(false)),
+            None,
+        ),
+        def(
+            "move_entry",
+            "Move a document or folder entry under a new parent through Svode's managed structural backend. Use an empty toParent to move to the space root. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit.",
+            schema(
+                &[
+                    space_id(),
+                    path_req("from", "Existing repo-relative document or folder path."),
+                    path_req(
+                        "toParent",
+                        "Destination parent directory path; use an empty string for the space root.",
+                    ),
+                ],
+                &["from", "toParent"],
+            ),
+            write_ann(false, Some(false)),
+            None,
+        ),
+        def(
+            "unnest_entry",
+            "Convert an empty folder document README.md back into a markdown leaf through Svode's managed structural backend. Fails actionably when the folder still has visible children. Does not autocommit.",
+            schema(
+                &[
+                    space_id(),
+                    document_path_req("path", "Folder document README.md path."),
+                ],
+                &["path"],
+            ),
+            write_ann(false, Some(false)),
+            None,
+        ),
+        def(
+            "convert_to_leaf",
+            "Convert a supported folder document README.md into a markdown leaf through Svode's managed structural backend. This is not a collection demotion tool. Returns changed paths and does not autocommit.",
+            schema(
+                &[
+                    space_id(),
+                    document_path_req("path", "Folder document README.md path."),
+                ],
+                &["path"],
+            ),
+            write_ann(false, Some(false)),
+            None,
+        ),
+        def(
+            "validate_collection_integrity",
+            "Read-only check for collection relation targets, stored relation entry references, and stale sidebar order refs after deliberate raw filesystem structural edits. Omit collectionPath to validate every collection in the selected space.",
+            schema(&[space_id(), collection_path_opt("collectionPath")], &[]),
+            read_only_ann(),
+            None,
+        ),
+        def(
             "add_collection_column",
             "Add a schema column to an existing collection. Read get_collection_schema first. actor values are canonical emails; status is workflow state; unique_id is read-only after materialization. Does not autocommit.",
             schema(
@@ -416,6 +480,12 @@ Metadata and fields:
 - Collection identity lives in README.md metadata. Schema.yaml stores columns, views, system field labels, and template settings. README content is exposed through the separate Readme scope surface.
 - Prefer domain tools over direct filesystem writes: update_document_metadata for title/icon/description/cover, schema tools for columns/views, write_document or update_entry_body for body replacement, and update_entry_fields for custom field values.
 
+Structural work and integrity:
+- Files-first work is supported: ordinary Markdown body edits and deliberate, predictable bulk file edits can be made directly in the repository.
+- Do not construct `.svode/order`, relation migrations, managed `.assets/` paths, or structural document moves/renames manually. Use rename_entry, move_entry, unnest_entry, or convert_to_leaf so Svode preserves relations, backlinks, sidebar order, and indexes.
+- Structural tools do not autocommit and return newPath, changedPaths, and touchedPaths. convert_to_leaf applies only to a supported folder document; it does not demote a collection or remove schema.yaml.
+- After an intentional raw structural edit, run validate_collection_integrity for the collection or selected space and repair every reported relation target, missing relation entry, or stale order reference before continuing.
+
 Managed file assets:
 - `.assets/` is Svode's managed attachment pool, not a directory whose filenames or storage scope an MCP client should construct. A collection named "assets" or an asset inventory is structured data; it is separate from the `.assets/` file pool.
 - To use a new local image, media file, or attachment, call import_asset with its existing source document/collection README and an absolute local sourcePath. import_asset copies the file into the effective managed pool, applies filename sanitization and a unique prefix, and registers it in SQLite. It never moves the source file, does not change body/cover automatically, and does not autocommit.
@@ -553,6 +623,16 @@ fn collection_path_req(name: &'static str) -> (&'static str, Value) {
         json!({
             "type": "string",
             "description": "Repo-relative collection directory path that contains schema.yaml. Empty string targets a root collection. No absolute paths, '..', .git/**, or .svode/**."
+        }),
+    )
+}
+
+fn collection_path_opt(name: &'static str) -> (&'static str, Value) {
+    (
+        name,
+        json!({
+            "type": ["string", "null"],
+            "description": "Optional repo-relative collection directory path containing schema.yaml. Empty string targets a root collection; omit or pass null to validate every collection in the selected space. No absolute paths, '..', .git/**, or .svode/**."
         }),
     )
 }
@@ -916,6 +996,33 @@ mod tests {
         assert!(names.contains(&"delete_entry"));
         assert!(names.contains(&"list_actors"));
         assert!(!names.contains(&"get_entry"));
+    }
+
+    #[test]
+    fn definitions_publish_managed_structural_and_integrity_tools() {
+        let definitions = definitions();
+        let names = definitions
+            .iter()
+            .map(|definition| definition.name)
+            .collect::<Vec<_>>();
+        for name in [
+            "rename_entry",
+            "move_entry",
+            "unnest_entry",
+            "convert_to_leaf",
+            "validate_collection_integrity",
+        ] {
+            assert!(names.contains(&name), "missing {name}");
+        }
+        let integrity = definitions
+            .iter()
+            .find(|definition| definition.name == "validate_collection_integrity")
+            .expect("integrity definition");
+        assert_eq!(
+            integrity.annotations.as_ref().unwrap().read_only_hint,
+            Some(true)
+        );
+        assert!(guide_text().contains("Structural work and integrity"));
     }
 
     #[test]

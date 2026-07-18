@@ -2360,31 +2360,44 @@ pub async fn rename_entry(
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Vec<String>, AppError> {
+    rename_entry_shared(
+        &space,
+        &from,
+        &to,
+        project_path.as_deref(),
+        &index_state,
+        Some(&autocommit),
+    )
+    .await
+}
+
+pub async fn rename_entry_shared(
+    space: &str,
+    from: &str,
+    to: &str,
+    project_path: Option<&str>,
+    index_state: &IndexState,
+    autocommit: Option<&AutocommitService>,
+) -> Result<Vec<String>, AppError> {
     let backlink_index = backlinks_for_space(&index_state, &space).await;
     let was_dir = Path::new(&space).join(&from).is_dir();
-    ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
-    entry::rename_with_project(&space, &from, &to, project_path.as_deref())?;
-    let modified = if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+    ensure_backlinks_before_structural(index_state, project_path).await;
+    entry::rename_with_project(space, from, to, project_path)?;
+    let modified = if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
-        let target_space_id = space_id_for_dir(&index_state, &space).await;
+        let target_space_id = space_id_for_dir(index_state, space).await;
         let mut modified_sources = if was_dir {
             index_state
                 .update_links_on_folder_rename_project(
                     project,
                     target_space_id.as_deref(),
-                    &from,
-                    &to,
+                    from,
+                    to,
                 )
                 .await
         } else {
             index_state
-                .update_links_on_rename_project(
-                    project,
-                    target_space_id.as_deref(),
-                    &from,
-                    &to,
-                    None,
-                )
+                .update_links_on_rename_project(project, target_space_id.as_deref(), from, to, None)
                 .await
         }
         .unwrap_or_else(|e| {
@@ -2393,23 +2406,23 @@ pub async fn rename_entry(
         });
         let rebased = if was_dir {
             rebase_project_source_tree_after_move(
-                &index_state,
-                project_path.as_deref(),
-                &space,
+                index_state,
+                project_path,
+                space,
                 target_space_id.as_deref(),
-                &from,
-                &to,
+                from,
+                to,
                 "rename_entry",
             )
             .await
         } else if !same_parent(&from, &to) {
             rebase_project_source_after_move(
-                &index_state,
-                project_path.as_deref(),
-                &space,
+                index_state,
+                project_path,
+                space,
                 target_space_id.as_deref(),
-                &from,
-                &to,
+                from,
+                to,
                 "rename_entry",
             )
             .await
@@ -2418,50 +2431,54 @@ pub async fn rename_entry(
         };
         modified_sources.extend(rebased);
         let modified_sources = crate::files::backlinks::dedupe_modified_sources(modified_sources);
-        schedule_modified_source_spaces(
-            &index_state,
-            &autocommit,
-            project_path.as_deref(),
-            &modified_sources,
-            entry_rename_op(&space, &from, &to),
-        )
-        .await;
+        if let Some(autocommit) = autocommit {
+            schedule_modified_source_spaces(
+                index_state,
+                autocommit,
+                project_path,
+                &modified_sources,
+                entry_rename_op(space, from, to),
+            )
+            .await;
+        }
         if !was_dir {
             let _ = index_state
-                .remove_file_backlinks(project, target_space_id.as_deref(), &from)
+                .remove_file_backlinks(project, target_space_id.as_deref(), from)
                 .await;
             let _ = index_state
-                .update_file_backlinks(project, target_space_id.as_deref(), &to)
+                .update_file_backlinks(project, target_space_id.as_deref(), to)
                 .await;
         }
         modified_sources.iter().map(|m| m.path.clone()).collect()
     } else {
         let modified = backlink_index
-            .update_links_on_rename(Path::new(&space), &from, &to, None)
+            .update_links_on_rename(Path::new(space), from, to, None)
             .unwrap_or_default();
         let mut modified = modified;
         if was_dir {
-            rebase_legacy_source_tree_after_move(&space, &backlink_index, &from, &to);
-        } else if !same_parent(&from, &to) {
-            if rebase_legacy_source_after_move(&space, &backlink_index, &from, &to).unwrap_or(false)
-                && !modified.contains(&to)
+            rebase_legacy_source_tree_after_move(space, &backlink_index, from, to);
+        } else if !same_parent(from, to) {
+            if rebase_legacy_source_after_move(space, &backlink_index, from, to).unwrap_or(false)
+                && !modified.iter().any(|path| path == to)
             {
-                modified.push(to.clone());
+                modified.push(to.to_string());
             }
         }
-        let _ = backlink_index.update_file(Path::new(&space), &to);
+        let _ = backlink_index.update_file(Path::new(space), to);
         modified
     };
-    maybe_autocommit_structural_paths(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        entry_rename_op(&space, &from, &to),
-        entry_paths_with_order(
-            &space,
-            [abs_entry_path(&space, &from), abs_entry_path(&space, &to)],
-        ),
-    );
+    if let Some(autocommit) = autocommit {
+        maybe_autocommit_structural_paths(
+            autocommit,
+            project_path,
+            space,
+            entry_rename_op(space, from, to),
+            entry_paths_with_order(
+                space,
+                [abs_entry_path(space, from), abs_entry_path(space, to)],
+            ),
+        );
+    }
     Ok(modified)
 }
 
@@ -2474,30 +2491,49 @@ pub async fn move_entry(
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
-    let backlink_index = backlinks_for_space(&index_state, &space).await;
-    let was_dir = Path::new(&space).join(&from).is_dir();
-    let old_abs = Path::new(&space).join(&from);
-    ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
-    let new_path = entry::move_entry_with_project(
-        Path::new(&space),
+    move_entry_shared(
+        &space,
         &from,
         &to_parent,
-        if project_path.as_deref().filter(|p| !p.is_empty()).is_some() {
+        project_path.as_deref(),
+        &index_state,
+        Some(&autocommit),
+    )
+    .await
+}
+
+pub async fn move_entry_shared(
+    space: &str,
+    from: &str,
+    to_parent: &str,
+    project_path: Option<&str>,
+    index_state: &IndexState,
+    autocommit: Option<&AutocommitService>,
+) -> Result<String, AppError> {
+    let backlink_index = backlinks_for_space(&index_state, &space).await;
+    let was_dir = Path::new(&space).join(&from).is_dir();
+    let old_abs = Path::new(space).join(from);
+    ensure_backlinks_before_structural(index_state, project_path).await;
+    let new_path = entry::move_entry_with_project(
+        Path::new(space),
+        from,
+        to_parent,
+        if project_path.filter(|p| !p.is_empty()).is_some() {
             None
         } else {
             Some(&backlink_index)
         },
-        project_path.as_deref(),
+        project_path,
     )?;
-    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+    if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
-        let target_space_id = space_id_for_dir(&index_state, &space).await;
+        let target_space_id = space_id_for_dir(index_state, space).await;
         let mut modified_sources = if was_dir {
             index_state
                 .update_links_on_folder_rename_project(
                     project,
                     target_space_id.as_deref(),
-                    &from,
+                    from,
                     &new_path,
                 )
                 .await
@@ -2506,7 +2542,7 @@ pub async fn move_entry(
                 .update_links_on_rename_project(
                     project,
                     target_space_id.as_deref(),
-                    &from,
+                    from,
                     &new_path,
                     None,
                 )
@@ -2518,22 +2554,22 @@ pub async fn move_entry(
         });
         let rebased = if was_dir {
             rebase_project_source_tree_after_move(
-                &index_state,
-                project_path.as_deref(),
-                &space,
+                index_state,
+                project_path,
+                space,
                 target_space_id.as_deref(),
-                &from,
+                from,
                 &new_path,
                 "move_entry",
             )
             .await
         } else {
             rebase_project_source_after_move(
-                &index_state,
-                project_path.as_deref(),
-                &space,
+                index_state,
+                project_path,
+                space,
                 target_space_id.as_deref(),
-                &from,
+                from,
                 &new_path,
                 "move_entry",
             )
@@ -2541,53 +2577,59 @@ pub async fn move_entry(
         };
         modified_sources.extend(rebased);
         let modified_sources = crate::files::backlinks::dedupe_modified_sources(modified_sources);
-        schedule_modified_source_spaces(
-            &index_state,
-            &autocommit,
-            project_path.as_deref(),
-            &modified_sources,
-            StructuralOp::Move(entry_commit_name(&space, &new_path)),
-        )
-        .await;
+        if let Some(autocommit) = autocommit {
+            schedule_modified_source_spaces(
+                index_state,
+                autocommit,
+                project_path,
+                &modified_sources,
+                StructuralOp::Move(entry_commit_name(space, &new_path)),
+            )
+            .await;
+        }
         if !was_dir {
             let _ = index_state
-                .remove_file_backlinks(project, target_space_id.as_deref(), &from)
+                .remove_file_backlinks(project, target_space_id.as_deref(), from)
                 .await;
             let _ = index_state
                 .update_file_backlinks(project, target_space_id.as_deref(), &new_path)
                 .await;
         }
     } else if was_dir {
-        rebase_legacy_source_tree_after_move(&space, &backlink_index, &from, &new_path);
+        rebase_legacy_source_tree_after_move(space, &backlink_index, from, &new_path);
     } else {
-        let _ = rebase_legacy_source_after_move(&space, &backlink_index, &from, &new_path);
+        let _ = rebase_legacy_source_after_move(space, &backlink_index, from, &new_path);
     }
     let mut unique_id_paths =
-        properties::unique_id_mutation_paths_for_entry_tree(Path::new(&space), &new_path)?;
+        properties::unique_id_mutation_paths_for_entry_tree(Path::new(space), &new_path)?;
     if unique_id_paths.is_empty() {
-        maybe_autocommit_structural_paths(
-            &autocommit,
-            project_path.as_deref(),
-            &space,
-            StructuralOp::Move(entry_commit_name(&space, &new_path)),
-            entry_paths_with_order(&space, [old_abs.clone(), abs_entry_path(&space, &new_path)]),
-        );
+        if let Some(autocommit) = autocommit {
+            maybe_autocommit_structural_paths(
+                autocommit,
+                project_path,
+                space,
+                StructuralOp::Move(entry_commit_name(space, &new_path)),
+                entry_paths_with_order(space, [old_abs.clone(), abs_entry_path(space, &new_path)]),
+            );
+        }
     } else {
         unique_id_paths.push(old_abs);
-        unique_id_paths.push(abs_entry_path(&space, &new_path));
-        unique_id_paths.push(order_path(&space));
-        maybe_autocommit_schema(
-            &autocommit,
-            project_path.as_deref(),
-            &space,
-            unique_id_paths,
-            if entry_in_sensitive_collection(&space, &new_path) {
-                "Move collection entry with unique_id".to_string()
-            } else {
-                format!("Move {} with unique_id", basename(&new_path))
-            },
-        )
-        .await;
+        unique_id_paths.push(abs_entry_path(space, &new_path));
+        unique_id_paths.push(order_path(space));
+        if let Some(autocommit) = autocommit {
+            maybe_autocommit_schema(
+                autocommit,
+                project_path,
+                space,
+                unique_id_paths,
+                if entry_in_sensitive_collection(space, &new_path) {
+                    "Move collection entry with unique_id".to_string()
+                } else {
+                    format!("Move {} with unique_id", basename(&new_path))
+                },
+            )
+            .await;
+        }
     }
     Ok(new_path)
 }
@@ -2757,25 +2799,42 @@ pub async fn unnest_entry(
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
-    let backlink_index = backlinks_for_space(&index_state, &space).await;
-    ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
-    let new_path = entry::unnest_entry(
-        Path::new(&space),
+    unnest_entry_shared(
+        &space,
         &path,
-        if project_path.as_deref().filter(|p| !p.is_empty()).is_some() {
+        project_path.as_deref(),
+        &index_state,
+        Some(&autocommit),
+    )
+    .await
+}
+
+pub async fn unnest_entry_shared(
+    space: &str,
+    path: &str,
+    project_path: Option<&str>,
+    index_state: &IndexState,
+    autocommit: Option<&AutocommitService>,
+) -> Result<String, AppError> {
+    let backlink_index = backlinks_for_space(&index_state, &space).await;
+    ensure_backlinks_before_structural(index_state, project_path).await;
+    let new_path = entry::unnest_entry(
+        Path::new(space),
+        path,
+        if project_path.filter(|p| !p.is_empty()).is_some() {
             None
         } else {
             Some(&backlink_index)
         },
     )?;
-    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+    if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
-        let target_space_id = space_id_for_dir(&index_state, &space).await;
+        let target_space_id = space_id_for_dir(index_state, space).await;
         let mut modified_sources = index_state
             .update_links_on_rename_project(
                 project,
                 target_space_id.as_deref(),
-                &path,
+                path,
                 &new_path,
                 None,
             )
@@ -2786,47 +2845,51 @@ pub async fn unnest_entry(
             });
         modified_sources.extend(
             rebase_project_source_after_move(
-                &index_state,
-                project_path.as_deref(),
-                &space,
+                index_state,
+                project_path,
+                space,
                 target_space_id.as_deref(),
-                &path,
+                path,
                 &new_path,
                 "unnest_entry",
             )
             .await,
         );
         let modified_sources = crate::files::backlinks::dedupe_modified_sources(modified_sources);
-        schedule_modified_source_spaces(
-            &index_state,
-            &autocommit,
-            project_path.as_deref(),
-            &modified_sources,
-            StructuralOp::Move(entry_commit_name(&space, &new_path)),
-        )
-        .await;
+        if let Some(autocommit) = autocommit {
+            schedule_modified_source_spaces(
+                index_state,
+                autocommit,
+                project_path,
+                &modified_sources,
+                StructuralOp::Move(entry_commit_name(space, &new_path)),
+            )
+            .await;
+        }
         let _ = index_state
-            .remove_file_backlinks(project, target_space_id.as_deref(), &path)
+            .remove_file_backlinks(project, target_space_id.as_deref(), path)
             .await;
         let _ = index_state
             .update_file_backlinks(project, target_space_id.as_deref(), &new_path)
             .await;
     } else {
-        let _ = rebase_legacy_source_after_move(&space, &backlink_index, &path, &new_path);
+        let _ = rebase_legacy_source_after_move(space, &backlink_index, path, &new_path);
     }
-    maybe_autocommit_structural_paths(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        StructuralOp::Move(entry_commit_name(&space, &new_path)),
-        entry_paths_with_order(
-            &space,
-            [
-                abs_entry_path(&space, &path),
-                abs_entry_path(&space, &new_path),
-            ],
-        ),
-    );
+    if let Some(autocommit) = autocommit {
+        maybe_autocommit_structural_paths(
+            autocommit,
+            project_path,
+            space,
+            StructuralOp::Move(entry_commit_name(space, &new_path)),
+            entry_paths_with_order(
+                space,
+                [
+                    abs_entry_path(space, path),
+                    abs_entry_path(space, &new_path),
+                ],
+            ),
+        );
+    }
     Ok(new_path)
 }
 
@@ -2931,12 +2994,29 @@ pub async fn convert_entry_to_leaf(
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
-    let backlink_index = backlinks_for_space(&index_state, &space).await;
-    ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
-    let project_aware = project_path.as_deref().filter(|p| !p.is_empty()).is_some();
-    let entry = entry::convert_entry_to_leaf(
-        Path::new(&space),
+    convert_entry_to_leaf_shared(
+        &space,
         &file_path,
+        project_path.as_deref(),
+        &index_state,
+        Some(&autocommit),
+    )
+    .await
+}
+
+pub async fn convert_entry_to_leaf_shared(
+    space: &str,
+    file_path: &str,
+    project_path: Option<&str>,
+    index_state: &IndexState,
+    autocommit: Option<&AutocommitService>,
+) -> Result<Entry, AppError> {
+    let backlink_index = backlinks_for_space(&index_state, &space).await;
+    ensure_backlinks_before_structural(index_state, project_path).await;
+    let project_aware = project_path.filter(|p| !p.is_empty()).is_some();
+    let entry = entry::convert_entry_to_leaf(
+        Path::new(space),
+        file_path,
         if project_aware {
             None
         } else {
@@ -2948,9 +3028,9 @@ pub async fn convert_entry_to_leaf(
         .strip_suffix(".md")
         .map(|root| format!("{root}/README.md"))
         .unwrap_or_else(|| entry.path.clone());
-    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+    if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
-        let target_space_id = space_id_for_dir(&index_state, &space).await;
+        let target_space_id = space_id_for_dir(index_state, space).await;
         let mut modified_sources = index_state
             .update_links_on_rename_project(
                 project,
@@ -2966,9 +3046,9 @@ pub async fn convert_entry_to_leaf(
             });
         modified_sources.extend(
             rebase_project_source_after_move(
-                &index_state,
-                project_path.as_deref(),
-                &space,
+                index_state,
+                project_path,
+                space,
                 target_space_id.as_deref(),
                 &old_readme,
                 &entry.path,
@@ -2977,14 +3057,16 @@ pub async fn convert_entry_to_leaf(
             .await,
         );
         let modified_sources = crate::files::backlinks::dedupe_modified_sources(modified_sources);
-        schedule_modified_source_spaces(
-            &index_state,
-            &autocommit,
-            project_path.as_deref(),
-            &modified_sources,
-            StructuralOp::ConvertToLeaf(entry_history_commit_name(&space, &entry.path)),
-        )
-        .await;
+        if let Some(autocommit) = autocommit {
+            schedule_modified_source_spaces(
+                index_state,
+                autocommit,
+                project_path,
+                &modified_sources,
+                StructuralOp::ConvertToLeaf(entry_history_commit_name(space, &entry.path)),
+            )
+            .await;
+        }
         let _ = index_state
             .remove_file_backlinks(project, target_space_id.as_deref(), &old_readme)
             .await;
@@ -2992,30 +3074,32 @@ pub async fn convert_entry_to_leaf(
             .update_file_backlinks(project, target_space_id.as_deref(), &entry.path)
             .await;
     } else {
-        let _ = rebase_legacy_source_after_move(&space, &backlink_index, &old_readme, &entry.path);
+        let _ = rebase_legacy_source_after_move(space, &backlink_index, &old_readme, &entry.path);
     }
     replace_index_entries_or_reindex(
-        &index_state,
-        project_path.as_deref(),
-        &space,
+        index_state,
+        project_path,
+        space,
         &[old_readme.clone()],
         std::slice::from_ref(&entry.path),
         "convert_entry_to_leaf",
     )
     .await;
-    maybe_autocommit_structural_paths(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        StructuralOp::ConvertToLeaf(entry_history_commit_name(&space, &entry.path)),
-        entry_paths_with_order(
-            &space,
-            [
-                abs_entry_path(&space, &old_readme),
-                abs_entry_path(&space, &entry.path),
-            ],
-        ),
-    );
+    if let Some(autocommit) = autocommit {
+        maybe_autocommit_structural_paths(
+            autocommit,
+            project_path,
+            space,
+            StructuralOp::ConvertToLeaf(entry_history_commit_name(space, &entry.path)),
+            entry_paths_with_order(
+                space,
+                [
+                    abs_entry_path(space, &old_readme),
+                    abs_entry_path(space, &entry.path),
+                ],
+            ),
+        );
+    }
     Ok(entry)
 }
 

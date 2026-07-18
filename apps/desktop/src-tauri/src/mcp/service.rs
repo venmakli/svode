@@ -67,6 +67,33 @@ struct PathArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct RenameEntryArgs {
+    #[serde(default)]
+    space_id: Option<String>,
+    from: String,
+    to: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MoveEntryArgs {
+    #[serde(default)]
+    space_id: Option<String>,
+    from: String,
+    to_parent: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct IntegrityArgs {
+    #[serde(default)]
+    space_id: Option<String>,
+    #[serde(default)]
+    collection_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ListDocumentsArgs {
     #[serde(default)]
     space_id: Option<String>,
@@ -354,6 +381,11 @@ async fn call_tool_inner(
         "update_entry_fields" => update_entry_fields(&app, decode(args)?).await,
         "update_entry_body" => update_entry_body(&app, decode(args)?).await,
         "delete_entry" => delete_entry(&app, decode(args)?).await,
+        "rename_entry" => rename_entry(&app, decode(args)?).await,
+        "move_entry" => move_entry(&app, decode(args)?).await,
+        "unnest_entry" => unnest_entry(&app, decode(args)?).await,
+        "convert_to_leaf" => convert_to_leaf(&app, decode(args)?).await,
+        "validate_collection_integrity" => validate_collection_integrity(&app, decode(args)?).await,
         "add_collection_column" => add_collection_column(&app, decode(args)?).await,
         "update_collection_column" => update_collection_column(&app, decode(args)?).await,
         "delete_collection_column" => delete_collection_column(&app, decode(args)?).await,
@@ -1368,6 +1400,275 @@ async fn delete_entry(app: &AppHandle, args: PathArgs) -> Result<ToolCallResult,
             "changedPaths": deleted.changed_paths
         }),
     ))
+}
+
+async fn rename_entry(
+    app: &AppHandle,
+    args: RenameEntryArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let _policy = MCP_MUTATION_POLICY;
+    let (context, space) = resolve_space(app, args.space_id.clone()).await?;
+    let from = validate_public_rel_path(&args.from, false)?;
+    let to = validate_public_rel_path(&args.to, false)?;
+    ensure_inside(Path::new(&space), &from)?;
+    ensure_inside(Path::new(&space), &to)?;
+    let before = snapshot_structural_paths(Path::new(&space))?;
+    let before_project = snapshot_structural_paths(Path::new(&context.project_path))?;
+    let index_state = app.state::<IndexState>();
+    files_commands::rename_entry_shared(
+        &space,
+        &from,
+        &to,
+        Some(context.project_path.as_str()),
+        &index_state,
+        None,
+    )
+    .await?;
+    let changed_paths = changed_structural_paths(before, Path::new(&space))?;
+    let affected_project_paths =
+        changed_structural_paths(before_project, Path::new(&context.project_path))?;
+    Ok(structural_operation_result(
+        "Renamed entry",
+        &from,
+        &to,
+        changed_paths,
+        affected_project_paths,
+    ))
+}
+
+async fn move_entry(
+    app: &AppHandle,
+    args: MoveEntryArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let _policy = MCP_MUTATION_POLICY;
+    let (context, space) = resolve_space(app, args.space_id.clone()).await?;
+    let from = validate_public_rel_path(&args.from, false)?;
+    let to_parent = validate_public_rel_path(&args.to_parent, true)?;
+    ensure_inside(Path::new(&space), &from)?;
+    ensure_inside(Path::new(&space), &to_parent)?;
+    let before = snapshot_structural_paths(Path::new(&space))?;
+    let before_project = snapshot_structural_paths(Path::new(&context.project_path))?;
+    let index_state = app.state::<IndexState>();
+    let new_path = files_commands::move_entry_shared(
+        &space,
+        &from,
+        &to_parent,
+        Some(context.project_path.as_str()),
+        &index_state,
+        None,
+    )
+    .await?;
+    let changed_paths = changed_structural_paths(before, Path::new(&space))?;
+    let affected_project_paths =
+        changed_structural_paths(before_project, Path::new(&context.project_path))?;
+    Ok(structural_operation_result(
+        "Moved entry",
+        &from,
+        &new_path,
+        changed_paths,
+        affected_project_paths,
+    ))
+}
+
+async fn unnest_entry(app: &AppHandle, args: PathArgs) -> Result<ToolCallResult, McpBusinessError> {
+    let _policy = MCP_MUTATION_POLICY;
+    let (context, space) = resolve_space(app, args.space_id.clone()).await?;
+    let path = validate_document_path(&args.path)?;
+    ensure_inside(Path::new(&space), &path)?;
+    let before = snapshot_structural_paths(Path::new(&space))?;
+    let before_project = snapshot_structural_paths(Path::new(&context.project_path))?;
+    let index_state = app.state::<IndexState>();
+    let new_path = files_commands::unnest_entry_shared(
+        &space,
+        &path,
+        Some(context.project_path.as_str()),
+        &index_state,
+        None,
+    )
+    .await?;
+    let changed_paths = changed_structural_paths(before, Path::new(&space))?;
+    let affected_project_paths =
+        changed_structural_paths(before_project, Path::new(&context.project_path))?;
+    Ok(structural_operation_result(
+        "Unnested entry",
+        &path,
+        &new_path,
+        changed_paths,
+        affected_project_paths,
+    ))
+}
+
+async fn convert_to_leaf(
+    app: &AppHandle,
+    args: PathArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let _policy = MCP_MUTATION_POLICY;
+    let (context, space) = resolve_space(app, args.space_id.clone()).await?;
+    let path = validate_document_path(&args.path)?;
+    ensure_inside(Path::new(&space), &path)?;
+    let before = snapshot_structural_paths(Path::new(&space))?;
+    let before_project = snapshot_structural_paths(Path::new(&context.project_path))?;
+    let index_state = app.state::<IndexState>();
+    let entry = files_commands::convert_entry_to_leaf_shared(
+        &space,
+        &path,
+        Some(context.project_path.as_str()),
+        &index_state,
+        None,
+    )
+    .await?;
+    let changed_paths = changed_structural_paths(before, Path::new(&space))?;
+    let affected_project_paths =
+        changed_structural_paths(before_project, Path::new(&context.project_path))?;
+    let mut result = structural_operation_result(
+        "Converted folder document to leaf",
+        &path,
+        &entry.path,
+        changed_paths,
+        affected_project_paths,
+    );
+    if let Some(structured_content) = result.structured_content.as_mut() {
+        structured_content["entry"] = json!(entry);
+    }
+    Ok(result)
+}
+
+async fn validate_collection_integrity(
+    app: &AppHandle,
+    args: IntegrityArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let (context, space) = resolve_space(app, args.space_id).await?;
+    let collection_path = args
+        .collection_path
+        .as_deref()
+        .map(|path| validate_public_rel_path(path, true))
+        .transpose()?;
+    if let Some(path) = collection_path.as_deref() {
+        ensure_inside(Path::new(&space), path)?;
+    }
+    let report = properties::validate_collection_integrity_with_project(
+        &space,
+        collection_path.as_deref(),
+        Some(context.project_path.as_str()),
+    )?;
+    let error_count = report.errors.len();
+    let warning_count = report.warnings.len();
+    Ok(ToolCallResult::ok(
+        format!(
+            "Collection integrity check completed: {error_count} errors, {warning_count} warnings."
+        ),
+        json!({
+            "collectionPath": collection_path,
+            "issuesBySeverity": report,
+            "errorCount": error_count,
+            "warningCount": warning_count,
+        }),
+    ))
+}
+
+fn structural_operation_result(
+    action: &str,
+    old_path: &str,
+    new_path: &str,
+    changed_paths: Vec<String>,
+    affected_project_paths: Vec<String>,
+) -> ToolCallResult {
+    let order_paths = affected_project_paths
+        .iter()
+        .filter(|path| path.as_str() == ".svode/order.json")
+        .cloned()
+        .collect::<Vec<_>>();
+    let markdown_paths = affected_project_paths
+        .iter()
+        .filter(|path| path.ends_with(".md"))
+        .cloned()
+        .collect::<Vec<_>>();
+    let relation_paths = affected_project_paths
+        .iter()
+        .filter(|path| path.ends_with(".md") || path.ends_with("schema.yaml"))
+        .cloned()
+        .collect::<Vec<_>>();
+    ToolCallResult::ok(
+        format!("{action}: {old_path} → {new_path}."),
+        json!({
+            "oldPath": old_path,
+            "newPath": new_path,
+            "changedPaths": changed_paths,
+            "affectedProjectPaths": affected_project_paths,
+            "touchedPaths": {
+                "backlinks": markdown_paths,
+                "relations": relation_paths,
+                "order": order_paths,
+                "index": [old_path, new_path],
+            },
+        }),
+    )
+}
+
+fn snapshot_structural_paths(root: &Path) -> Result<HashMap<String, u64>, McpBusinessError> {
+    let mut snapshot = HashMap::new();
+    snapshot_structural_paths_inner(root, root, &mut snapshot)?;
+    Ok(snapshot)
+}
+
+fn snapshot_structural_paths_inner(
+    root: &Path,
+    directory: &Path,
+    snapshot: &mut HashMap<String, u64>,
+) -> Result<(), McpBusinessError> {
+    for item in fs::read_dir(directory)? {
+        let item = item?;
+        let path = item.path();
+        let file_name = item.file_name();
+        let file_name = file_name.to_string_lossy();
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        if metadata.is_dir() {
+            if file_name == ".git" || file_name == "node_modules" {
+                continue;
+            }
+            snapshot_structural_paths_inner(root, &path, snapshot)?;
+            continue;
+        }
+        if !metadata.is_file() {
+            continue;
+        }
+        let is_relevant = path.extension().is_some_and(|extension| extension == "md")
+            || file_name == "schema.yaml"
+            || (file_name == "order.json"
+                && path
+                    .parent()
+                    .is_some_and(|parent| parent.file_name().is_some_and(|name| name == ".svode")));
+        if !is_relevant {
+            continue;
+        }
+        let content = fs::read(&path)?;
+        let hash = content.iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        });
+        let root_string = root.to_string_lossy();
+        let rel = rel_path_from_space(root_string.as_ref(), &path);
+        snapshot.insert(rel, hash);
+    }
+    Ok(())
+}
+
+fn changed_structural_paths(
+    before: HashMap<String, u64>,
+    root: &Path,
+) -> Result<Vec<String>, McpBusinessError> {
+    let after = snapshot_structural_paths(root)?;
+    let mut paths = before
+        .keys()
+        .chain(after.keys())
+        .filter(|path| before.get(*path) != after.get(*path))
+        .cloned()
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
 }
 
 async fn add_collection_column(
