@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
+use tokio::io::{AsyncWriteExt, BufReader};
 
 use crate::error::AppError;
 use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_base};
@@ -97,6 +98,49 @@ pub async fn upload(
     original_name: &str,
     document_id: Option<&str>,
 ) -> Result<UploadResult, AppError> {
+    let pending = prepare_upload(target_dir, original_name)?;
+    let mut target = create_target_file(&pending.target).await?;
+    target.write_all(bytes).await?;
+    target.flush().await?;
+
+    register_upload(pool, pending, original_name, document_id).await
+}
+
+/// Copy one local regular file into the target dir's `.assets/` pool and
+/// register it in SQLite. This is the disk-to-disk counterpart to `upload`:
+/// callers do not need to materialize a byte array just to use the managed
+/// asset contract.
+pub async fn import_file(
+    pool: &SqlitePool,
+    target_dir: &Path,
+    source_path: &Path,
+    original_name: &str,
+    document_id: Option<&str>,
+) -> Result<UploadResult, AppError> {
+    let source_metadata = tokio::fs::symlink_metadata(source_path).await?;
+    if !source_metadata.file_type().is_file() {
+        return Err(AppError::PathNotAccessible(format!(
+            "asset source must be a regular file: {}",
+            source_path.display()
+        )));
+    }
+
+    let pending = prepare_upload(target_dir, original_name)?;
+    let source = tokio::fs::File::open(source_path).await?;
+    let mut target = create_target_file(&pending.target).await?;
+    tokio::io::copy(&mut BufReader::new(source), &mut target).await?;
+    target.flush().await?;
+
+    register_upload(pool, pending, original_name, document_id).await
+}
+
+struct PendingUpload {
+    id: String,
+    target: PathBuf,
+    rel_path: String,
+}
+
+fn prepare_upload(target_dir: &Path, original_name: &str) -> Result<PendingUpload, AppError> {
     // Generate the ULID up-front and derive the filename prefix from its first
     // 8 characters (lowercased). ULID's leading bits encode the timestamp, so
     // this gives chronological ordering in `.assets/` and ties filename to the
@@ -115,22 +159,44 @@ pub async fn upload(
     }
 
     let assets_dir = target_dir.join(".assets");
-    tokio::fs::create_dir_all(&assets_dir).await?;
-
     let target = assets_dir.join(&asset_name);
+    let rel_path = normalize_repo_relative(&format!(".assets/{asset_name}"), RootMode::Reject)?;
 
-    tokio::fs::write(&target, bytes).await?;
+    Ok(PendingUpload {
+        id,
+        target,
+        rel_path,
+    })
+}
 
-    let size = tokio::fs::metadata(&target).await?.len();
+async fn create_target_file(target: &Path) -> Result<tokio::fs::File, AppError> {
+    let parent = target.parent().ok_or_else(|| {
+        AppError::PathNotAccessible(format!("asset target has no parent: {}", target.display()))
+    })?;
+    tokio::fs::create_dir_all(parent).await?;
+    tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target)
+        .await
+        .map_err(Into::into)
+}
 
-    let ext = target
+async fn register_upload(
+    pool: &SqlitePool,
+    pending: PendingUpload,
+    original_name: &str,
+    document_id: Option<&str>,
+) -> Result<UploadResult, AppError> {
+    let size = tokio::fs::metadata(&pending.target).await?.len();
+
+    let ext = pending
+        .target
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_ascii_lowercase())
         .unwrap_or_default();
     let mime = mime_for(&ext);
-
-    let rel_path = normalize_repo_relative(&format!(".assets/{asset_name}"), RootMode::Reject)?;
     let created_at = chrono::Utc::now().to_rfc3339();
 
     sqlx::query(
@@ -140,8 +206,8 @@ pub async fn upload(
         VALUES (?, ?, ?, ?, ?, ?, ?)
         "#,
     )
-    .bind(&id)
-    .bind(&rel_path)
+    .bind(&pending.id)
+    .bind(&pending.rel_path)
     .bind(original_name)
     .bind(mime)
     .bind(size as i64)
@@ -151,8 +217,8 @@ pub async fn upload(
     .await?;
 
     Ok(UploadResult {
-        id,
-        rel_path,
+        id: pending.id,
+        rel_path: pending.rel_path,
         file_name: original_name.to_string(),
         size_bytes: size,
         mime: mime.to_string(),
@@ -277,7 +343,19 @@ pub async fn update_asset(
 
 #[cfg(test)]
 mod tests {
-    use super::count_existing_asset_files;
+    use super::{count_existing_asset_files, import_file, list};
+    use sqlx::SqlitePool;
+    use std::path::Path;
+
+    async fn test_pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        crate::index::db::ensure_schema(&pool)
+            .await
+            .expect("index schema");
+        pool
+    }
 
     #[test]
     fn count_existing_asset_files_counts_real_files_recursively() {
@@ -296,5 +374,55 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp dir");
 
         assert_eq!(count_existing_asset_files(temp.path()).unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn import_file_copies_regular_file_and_registers_managed_asset() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let source = temp.path().join("source image.png");
+        let bytes = vec![42_u8; 128 * 1024];
+        std::fs::write(&source, &bytes).expect("source file");
+        let pool = test_pool().await;
+
+        let imported = import_file(
+            &pool,
+            temp.path(),
+            &source,
+            "cover?.png",
+            Some("notes/README.md"),
+        )
+        .await
+        .expect("import asset");
+
+        let target = temp.path().join(&imported.rel_path);
+        assert!(target.is_file());
+        assert_eq!(std::fs::read(&target).expect("copied bytes"), bytes);
+        assert_eq!(std::fs::read(&source).expect("source remains"), bytes);
+        assert!(imported.rel_path.starts_with(".assets/"));
+        assert!(
+            target
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().ends_with("-cover_.png"))
+        );
+        assert_eq!(imported.mime, "image/png");
+        assert_eq!(imported.size_bytes, 128 * 1024);
+
+        let rows = list(&pool).await.expect("asset rows");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].document_id.as_deref(), Some("notes/README.md"));
+        assert_eq!(rows[0].file_name, "cover?.png");
+    }
+
+    #[tokio::test]
+    async fn import_file_rejects_a_directory_source() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let source_dir = temp.path().join("not-a-file");
+        std::fs::create_dir_all(&source_dir).expect("source dir");
+        let pool = test_pool().await;
+
+        let error = import_file(&pool, temp.path(), Path::new(&source_dir), "dir", None)
+            .await
+            .expect_err("directory must be rejected");
+        assert!(error.to_string().contains("regular file"));
     }
 }

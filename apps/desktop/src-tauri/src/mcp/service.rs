@@ -17,8 +17,9 @@ use crate::files::{entry, tree};
 use crate::git::{self, commands::GitState};
 use crate::index::{IndexKey, IndexState, search};
 use crate::properties::{self, CollectionSchema, Column, Filter, PropertyType, Sort, View};
-use crate::repo_path::{RootMode, normalize_repo_relative};
+use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_base};
 use crate::space::{config as space_config, project, registry};
+use crate::storage::{assets, scope::resolve_effective_storage_scope_for_key};
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 200;
@@ -120,6 +121,18 @@ struct UpdateDocumentMetadataArgs {
     description: Option<Option<String>>,
     #[serde(default)]
     cover: Option<Option<entry::Cover>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+struct ImportAssetArgs {
+    #[serde(default)]
+    space_id: Option<String>,
+    document_path: String,
+    source_path: String,
+    #[serde(default)]
+    file_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -330,6 +343,7 @@ async fn call_tool_inner(
         "write_document" => write_document(&app, decode(args)?).await,
         "create_document" => create_document(&app, decode(args)?).await,
         "update_document_metadata" => update_document_metadata(&app, decode(args)?).await,
+        "import_asset" => import_asset(&app, decode(args)?).await,
         "create_collection" => create_collection(&app, decode(args)?).await,
         "convert_to_collection" => convert_to_collection(&app, decode(args)?).await,
         "search_documents" => search_documents(&app, decode(args)?).await,
@@ -529,6 +543,45 @@ fn rel_paths_from_space(space: &str, paths: Vec<PathBuf>) -> Vec<String> {
         .into_iter()
         .map(|path| rel_path_from_space(space, &path))
         .collect()
+}
+
+fn validate_regular_source_path(source_path: &str) -> Result<PathBuf, McpBusinessError> {
+    let path = PathBuf::from(source_path);
+    if !path.is_absolute() {
+        return Err(McpBusinessError::new(
+            "INVALID_SOURCE_PATH",
+            "sourcePath must be an absolute path to a readable local regular file",
+        ));
+    }
+    let metadata = fs::symlink_metadata(&path).map_err(|error| {
+        McpBusinessError::new(
+            "SOURCE_FILE_NOT_FOUND",
+            format!("sourcePath could not be inspected: {error}"),
+        )
+    })?;
+    if !metadata.file_type().is_file() {
+        return Err(McpBusinessError::new(
+            "SOURCE_NOT_REGULAR_FILE",
+            "sourcePath must point to a regular file, not a directory or symbolic link",
+        ));
+    }
+    Ok(path)
+}
+
+fn document_id_for_asset_scope(document_abs: &Path, pool_dir: &Path, fallback: &str) -> String {
+    repo_relative_from_base(pool_dir, document_abs, RootMode::Reject)
+        .unwrap_or_else(|_| fallback.to_string())
+}
+
+fn asset_reference_paths(
+    document_abs: &Path,
+    space_dir: &Path,
+    asset_abs: &Path,
+) -> (String, String) {
+    (
+        crate::files::backlinks::make_relative_link_between(document_abs, asset_abs),
+        crate::files::backlinks::make_relative_path(space_dir, asset_abs),
+    )
 }
 
 fn schema_path_rel(collection_path: &str) -> String {
@@ -901,6 +954,79 @@ async fn update_document_metadata(
     Ok(ToolCallResult::ok(
         format!("Updated metadata for {path}."),
         json!({ "document": document, "changedPaths": [path] }),
+    ))
+}
+
+async fn import_asset(
+    app: &AppHandle,
+    args: ImportAssetArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let _policy = MCP_MUTATION_POLICY;
+    let (context, space) = resolve_space(app, args.space_id.clone()).await?;
+    let document_path = validate_document_path(&args.document_path)?;
+    let document_abs = ensure_inside(Path::new(&space), &document_path)?;
+    let document_metadata = fs::metadata(&document_abs).map_err(|error| {
+        McpBusinessError::new(
+            "DOCUMENT_NOT_FOUND",
+            format!("documentPath must be an existing markdown document: {error}"),
+        )
+    })?;
+    if !document_metadata.is_file() {
+        return Err(McpBusinessError::new(
+            "INVALID_DOCUMENT_PATH",
+            "documentPath must reference an existing markdown file, including a collection README.md when applicable",
+        ));
+    }
+
+    let source_path = validate_regular_source_path(&args.source_path)?;
+    let file_name = args.file_name.unwrap_or_else(|| {
+        source_path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "file".to_string())
+    });
+
+    let index_state = app.state::<IndexState>();
+    let requested_key = index_key_for_context(&context, args.space_id.as_deref());
+    let scope = resolve_effective_storage_scope_for_key(
+        &index_state,
+        Path::new(&context.project_path),
+        requested_key,
+    )
+    .await?;
+    let pool = index_state.get_or_create(&scope.pool_key).await?;
+    let scoped_document_id =
+        document_id_for_asset_scope(&document_abs, &scope.pool_dir, &document_path);
+    let asset = assets::import_file(
+        &pool,
+        &scope.pool_dir,
+        &source_path,
+        &file_name,
+        Some(&scoped_document_id),
+    )
+    .await?;
+
+    let asset_abs = scope.pool_dir.join(&asset.rel_path);
+    let (markdown_url, cover_path) =
+        asset_reference_paths(&document_abs, Path::new(&space), &asset_abs);
+    let owner_space_id = IndexState::space_id_for_key(&scope.pool_key)
+        .unwrap_or_else(|| MCP_ROOT_SPACE_ID.to_string());
+
+    Ok(ToolCallResult::ok(
+        format!(
+            "Imported asset {} for document {document_path}.",
+            asset.file_name
+        ),
+        json!({
+            "spaceId": owner_space_id,
+            "assetPath": asset.rel_path,
+            "markdownUrl": markdown_url,
+            "coverPath": cover_path,
+            "fileName": asset.file_name,
+            "mime": asset.mime,
+            "sizeBytes": asset.size_bytes,
+            "changedPaths": [asset.rel_path],
+        }),
     ))
 }
 
@@ -1553,6 +1679,33 @@ mod tests {
             "documentLabel": "Documents"
         });
         assert!(decode::<CreateCollectionArgs>(args).is_err());
+    }
+
+    #[test]
+    fn import_asset_paths_follow_document_and_cover_semantics() {
+        let (root_markdown, root_cover) = asset_reference_paths(
+            Path::new("/project/note.md"),
+            Path::new("/project"),
+            Path::new("/project/.assets/cover.png"),
+        );
+        assert_eq!(root_markdown, ".assets/cover.png");
+        assert_eq!(root_cover, ".assets/cover.png");
+
+        let (inline_markdown, inline_cover) = asset_reference_paths(
+            Path::new("/project/inline/docs/note.md"),
+            Path::new("/project/inline"),
+            Path::new("/project/.assets/cover.png"),
+        );
+        assert_eq!(inline_markdown, "../../.assets/cover.png");
+        assert_eq!(inline_cover, "../.assets/cover.png");
+    }
+
+    #[test]
+    fn import_asset_requires_an_absolute_regular_file_source() {
+        assert!(validate_regular_source_path("relative.png").is_err());
+
+        let temp = tempfile::tempdir().expect("temp dir");
+        assert!(validate_regular_source_path(temp.path().to_string_lossy().as_ref()).is_err());
     }
 
     #[test]

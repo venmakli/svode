@@ -48,7 +48,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "write_document",
-            "Replace a markdown document body. Use this instead of direct filesystem writes so Svode preserves metadata, validates paths, and reports changedPaths. Does not autocommit.",
+            "Replace a markdown document body. Use this instead of direct filesystem writes so Svode preserves metadata, validates paths, and reports changedPaths. For new local media, call import_asset first and insert its returned markdownUrl. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -63,7 +63,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "create_document",
-            "Create a regular Svode markdown document, not a collection. Use create_collection for structured data like tasks, CRM contacts, OKRs, backlog rows, assets, or any list/table/board/calendar content. Paths without extension become .md; trailing slash creates README.md.",
+            "Create a regular Svode markdown document, not a collection. Use create_collection for structured data like tasks, CRM contacts, OKRs, backlog rows, asset inventory records, or any list/table/board/calendar content. A new image cover must use cover.path from import_asset or an already-existing repository file; cover.path does not upload a file. Paths without extension become .md; trailing slash creates README.md.",
             schema(
                 &[
                     space_id(),
@@ -84,7 +84,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "update_document_metadata",
-            "Update document or collection README metadata: title, icon, description, and cover. Does not change body and does not autocommit.",
+            "Update document or collection README metadata: title, icon, description, and cover. For a new local image cover, call import_asset first and pass its returned coverPath as cover.path; an existing repository file is also allowed. Does not change body and does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -100,8 +100,26 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
+            "import_asset",
+            "Copy one local regular file into Svode's managed .assets/ pool for an existing document or collection README. This is the required MCP flow for new local media: use returned markdownUrl in a body or returned coverPath in metadata. It does not change body/cover, does not move the source file, and does not autocommit.",
+            schema(
+                &[
+                    space_id(),
+                    document_path_req(
+                        "documentPath",
+                        "Existing source document or collection README.md that owns the import context.",
+                    ),
+                    source_file_path_req(),
+                    str_opt("fileName"),
+                ],
+                &["documentPath", "sourcePath"],
+            ),
+            write_ann(false, Some(false)),
+            None,
+        ),
+        def(
             "create_collection",
-            "Create a Svode collection: a directory with README.md identity plus schema.yaml. Use for structured data, tables, boards, calendars, CRM, OKRs, tasks, backlog, inventories, and repeated records. Does not autocommit.",
+            "Create a Svode collection: a directory with README.md identity plus schema.yaml. Use for structured data, tables, boards, calendars, CRM, OKRs, tasks, backlog, inventories, and repeated records. A new image cover must use cover.path from import_asset or an already-existing repository file; .assets/ file attachments are not collection records. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -189,7 +207,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "create_entry",
-            "Create one record inside an existing collection. The collectionPath must already contain schema.yaml; this tool does not create collections. fields are custom schema field values; title/icon/description/cover are system metadata. Does not autocommit.",
+            "Create one record inside an existing collection. The collectionPath must already contain schema.yaml; this tool does not create collections. fields are custom schema field values; title/icon/description/cover are system metadata. A new image cover must use cover.path from import_asset or an already-existing repository file. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -222,7 +240,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "update_entry_body",
-            "Replace entry body. Does not autocommit.",
+            "Replace entry body. For new local media, call import_asset first and insert its returned markdownUrl. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -360,7 +378,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "get_svode_guide",
-            "Return agent-facing guidance for working with Svode documents, collections, entries, metadata, and schema tools.",
+            "Return agent-facing guidance for working with Svode documents, managed file assets, collections, entries, metadata, and schema tools.",
             obj(vec![]),
             read_only_ann(),
             None,
@@ -397,6 +415,14 @@ Metadata and fields:
 - System metadata is title, icon, description, cover, created, and updated. Do not create custom columns for these and do not write them through update_entry_fields.
 - Collection identity lives in README.md metadata. Schema.yaml stores columns, views, system field labels, and template settings. README content is exposed through the separate Readme scope surface.
 - Prefer domain tools over direct filesystem writes: update_document_metadata for title/icon/description/cover, schema tools for columns/views, write_document or update_entry_body for body replacement, and update_entry_fields for custom field values.
+
+Managed file assets:
+- `.assets/` is Svode's managed attachment pool, not a directory whose filenames or storage scope an MCP client should construct. A collection named "assets" or an asset inventory is structured data; it is separate from the `.assets/` file pool.
+- To use a new local image, media file, or attachment, call import_asset with its existing source document/collection README and an absolute local sourcePath. import_asset copies the file into the effective managed pool, applies filename sanitization and a unique prefix, and registers it in SQLite. It never moves the source file, does not change body/cover automatically, and does not autocommit.
+- After import_asset, use markdownUrl exactly as returned in write_document or update_entry_body. It is relative to documentPath and is the Markdown URL Plate uses for media.
+- For a cover, pass coverPath exactly as returned to update_document_metadata (or a create tool) as cover.path. cover.path refers to an asset that already exists; it is not an upload API.
+- assetPath is repo-relative to the effective managed pool, markdownUrl is relative to the source document, and coverPath is relative to the selected space root. These can differ for an inline space whose pool is project-owned; use the returned values instead of calculating paths.
+- A repository file deliberately created outside `.assets/` remains valid and is not moved unless you explicitly import_asset a managed copy. Do not write new binary files directly into `.assets/`, and do not create or change AGENTS.md for asset handling.
 
 Property semantics:
 - Always read get_collection_schema before schema changes.
@@ -511,6 +537,16 @@ fn document_path_req(name: &'static str, description: &'static str) -> (&'static
     )
 }
 
+fn source_file_path_req() -> (&'static str, Value) {
+    (
+        "sourcePath",
+        json!({
+            "type": "string",
+            "description": "Absolute path to a readable local regular file. The file is copied, never moved; directories, symbolic links, URLs, and base64 data are not accepted."
+        }),
+    )
+}
+
 fn collection_path_req(name: &'static str) -> (&'static str, Value) {
     (
         name,
@@ -559,7 +595,7 @@ fn cover_opt(name: &'static str) -> (&'static str, Value) {
     (
         name,
         nullable(json!({
-            "description": "System metadata cover, not a custom column.",
+            "description": "System metadata cover, not a custom column. For a new local file, first call import_asset and use its returned coverPath; this field is not an upload API.",
             "anyOf": [
                 {
                     "type": "object",
@@ -579,7 +615,7 @@ fn cover_opt(name: &'static str) -> (&'static str, Value) {
                     "additionalProperties": false,
                     "properties": {
                         "type": { "type": "string", "enum": ["image"] },
-                        "path": { "type": "string", "description": "Repo-relative or asset path for image covers." },
+                        "path": { "type": "string", "description": "Existing repository image path, preferably the coverPath returned by import_asset. Do not invent a new .assets/ path here." },
                         "position": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 }
                     },
                     "required": ["type", "path"]
@@ -880,6 +916,21 @@ mod tests {
         assert!(names.contains(&"delete_entry"));
         assert!(names.contains(&"list_actors"));
         assert!(!names.contains(&"get_entry"));
+    }
+
+    #[test]
+    fn definitions_publish_managed_asset_import_contract() {
+        let definition = definitions()
+            .into_iter()
+            .find(|definition| definition.name == "import_asset")
+            .expect("import_asset definition");
+        assert_eq!(
+            definition.input_schema["required"],
+            json!(["documentPath", "sourcePath"])
+        );
+        assert!(definition.description.contains("markdownUrl"));
+        assert!(guide_text().contains("Managed file assets"));
+        assert!(guide_text().contains("AGENTS.md"));
     }
 
     #[test]
