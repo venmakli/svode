@@ -1136,51 +1136,28 @@ async fn convert_to_collection(
     args: PathArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
-    let (_, space) = resolve_space(app, args.space_id).await?;
-    let raw_path = validate_public_rel_path(&args.path, false)?;
-    let abs = ensure_inside(Path::new(&space), &raw_path)?;
-    let collection_path;
-    let entry_result;
-    let mut changed_paths = Vec::new();
-
-    if abs.is_dir() {
-        let readme_rel = collection_readme_path(&raw_path);
-        let readme_abs = Path::new(&space).join(&readme_rel);
-        if readme_abs.exists() {
-            collection_path =
-                entry::convert_entry_to_nested_collection(Path::new(&space), &readme_rel)?;
-            changed_paths.push(schema_path_rel(&collection_path));
-            entry_result = entry::read(&space, &readme_rel)?;
-        } else {
-            entry_result = entry::convert_bare_folder_to_collection(Path::new(&space), &raw_path)?;
-            collection_path = raw_path.clone();
-            changed_paths.push(collection_readme_path(&collection_path));
-            changed_paths.push(schema_path_rel(&collection_path));
-        }
-    } else {
-        let path = validate_document_path(&raw_path)?;
-        let folder_entry = entry::convert_entry_to_folder(Path::new(&space), &path, None)?;
-        let converted_collection_path = Path::new(&folder_entry.path)
-            .parent()
-            .map(|parent| parent.to_string_lossy().replace('\\', "/"))
-            .ok_or_else(|| {
-                McpBusinessError::new("INVALID_PATH", "converted entry has no folder path")
-            })?;
-        entry::convert_entry_to_nested_collection(Path::new(&space), &folder_entry.path)?;
-        collection_path = converted_collection_path;
-        changed_paths.push(path);
-        changed_paths.push(collection_readme_path(&collection_path));
-        changed_paths.push(schema_path_rel(&collection_path));
-        entry_result = entry::read(&space, &collection_readme_path(&collection_path))?;
-    }
-
-    Ok(ToolCallResult::ok(
-        format!("Converted {raw_path} to collection {collection_path}."),
-        json!({
-            "collectionPath": collection_path,
-            "entry": entry_result,
-            "changedPaths": changed_paths
-        }),
+    let (context, space) = resolve_space(app, args.space_id.clone()).await?;
+    let path = validate_public_rel_path(&args.path, false)?;
+    ensure_inside(Path::new(&space), &path)?;
+    let before = snapshot_structural_paths(Path::new(&space))?;
+    let before_project = snapshot_structural_paths(Path::new(&context.project_path))?;
+    let index_state = app.state::<IndexState>();
+    let conversion = files_commands::convert_to_collection_shared(
+        &space,
+        &path,
+        Some(context.project_path.as_str()),
+        &index_state,
+        None,
+    )
+    .await
+    .map_err(collection_conversion_error)?;
+    let changed_paths = changed_structural_paths(before, Path::new(&space))?;
+    let affected_project_paths =
+        changed_structural_paths(before_project, Path::new(&context.project_path))?;
+    Ok(collection_conversion_result(
+        conversion,
+        changed_paths,
+        affected_project_paths,
     ))
 }
 
@@ -1575,7 +1552,7 @@ fn structural_operation_result(
 ) -> ToolCallResult {
     let order_paths = affected_project_paths
         .iter()
-        .filter(|path| path.as_str() == ".svode/order.json")
+        .filter(|path| path.ends_with(".svode/order.json"))
         .cloned()
         .collect::<Vec<_>>();
     let markdown_paths = affected_project_paths
@@ -1603,6 +1580,63 @@ fn structural_operation_result(
             },
         }),
     )
+}
+
+fn collection_conversion_result(
+    conversion: files_commands::ConvertToCollectionCommandResult,
+    changed_paths: Vec<String>,
+    affected_project_paths: Vec<String>,
+) -> ToolCallResult {
+    let order_paths = affected_project_paths
+        .iter()
+        .filter(|path| path.ends_with(".svode/order.json"))
+        .cloned()
+        .collect::<Vec<_>>();
+    let markdown_paths = affected_project_paths
+        .iter()
+        .filter(|path| path.ends_with(".md"))
+        .cloned()
+        .collect::<Vec<_>>();
+    let relation_paths = affected_project_paths
+        .iter()
+        .filter(|path| path.ends_with(".md") || path.ends_with("schema.yaml"))
+        .cloned()
+        .collect::<Vec<_>>();
+    let old_path = conversion.old_path;
+    let collection_path = conversion.collection_path;
+    let readme_path = conversion.readme_path;
+    let schema_path = conversion.schema_path;
+    let index_paths = vec![old_path.clone(), readme_path.clone()];
+    let warnings = conversion.entry.warnings.clone();
+
+    ToolCallResult::ok(
+        format!("Converted {} to collection {}.", old_path, collection_path),
+        json!({
+            "oldPath": old_path,
+            "collectionPath": collection_path,
+            "readmePath": readme_path,
+            "schemaPath": schema_path,
+            "entry": conversion.entry,
+            "changedPaths": changed_paths,
+            "affectedProjectPaths": affected_project_paths,
+            "touchedPaths": {
+                "backlinks": markdown_paths,
+                "relations": relation_paths,
+                "order": order_paths,
+                "index": index_paths,
+            },
+            "warnings": warnings,
+        }),
+    )
+}
+
+fn collection_conversion_error(error: crate::AppError) -> McpBusinessError {
+    match error {
+        crate::AppError::General(message) => {
+            McpBusinessError::new("INVALID_COLLECTION_CONVERSION", message)
+        }
+        other => other.into(),
+    }
 }
 
 fn snapshot_structural_paths(root: &Path) -> Result<HashMap<String, u64>, McpBusinessError> {
@@ -1980,6 +2014,16 @@ mod tests {
             "documentLabel": "Documents"
         });
         assert!(decode::<CreateCollectionArgs>(args).is_err());
+    }
+
+    #[test]
+    fn collection_conversion_maps_validation_errors_to_stable_code() {
+        let error = collection_conversion_error(crate::AppError::General(
+            "document is already a collection".to_string(),
+        ));
+
+        assert_eq!(error.code, "INVALID_COLLECTION_CONVERSION");
+        assert_eq!(error.message, "document is already a collection");
     }
 
     #[test]

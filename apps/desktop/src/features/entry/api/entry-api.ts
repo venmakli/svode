@@ -2,7 +2,6 @@ import {
   createEntry as createEntryDto,
   convertEntryToFolder as convertEntryToFolderDto,
   convertEntryToLeaf as convertEntryToLeafDto,
-  convertEntryToNestedCollection as convertEntryToNestedCollectionDto,
   deleteEntry as deleteEntryDto,
   duplicateEntry as duplicateEntryDto,
   getEntryDetailState as getEntryDetailStateDto,
@@ -17,6 +16,7 @@ import {
   type EntryDto,
   type WriteResultDto,
 } from "@/platform/entries/entries-api";
+import { convertToCollection as convertToCollectionDto } from "@/platform/collections/collections-api";
 import { normalizeEntry } from "../model/normalize-entry";
 import type {
   Entry,
@@ -227,14 +227,15 @@ export async function convertEntryToLeaf(
   return entryFromDto(entry);
 }
 
-export function convertEntryToNestedCollection(
+export async function convertEntryToNestedCollection(
   input: ConvertEntryToNestedCollectionInput,
-): Promise<string> {
-  return convertEntryToNestedCollectionDto({
-    space: input.spacePath,
-    filePath: input.filePath,
+): Promise<Entry> {
+  const conversion = await convertToCollectionDto({
+    spacePath: input.spacePath,
+    path: input.filePath,
     projectPath: input.projectPath ?? null,
   });
+  return entryFromDto(conversion.entry);
 }
 
 export async function saveEntryTreeOrder({

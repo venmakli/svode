@@ -1,5 +1,5 @@
 import {
-  convertBareFolderToCollection,
+  convertToCollection,
   createFolder,
 } from "@/platform/collections/collections-api";
 
@@ -27,11 +27,11 @@ export async function createCollection({
     projectPath: projectPath ?? null,
   });
 
-  const entry = await convertBareFolderToCollection({
+  const conversion = await convertToCollection({
     spacePath,
-    folderPath,
+    path: folderPath,
     projectPath: projectPath ?? null,
   });
 
-  return { path: entry.path };
+  return { path: conversion.entry.path };
 }

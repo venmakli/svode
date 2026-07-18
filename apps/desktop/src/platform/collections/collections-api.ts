@@ -52,6 +52,14 @@ export interface TemplateInfoDto {
 
 export type TemplateKindDto = "leaf" | "folder" | "nested_collection";
 
+export interface ConvertToCollectionResultDto {
+  oldPath: string;
+  collectionPath: string;
+  readmePath: string;
+  schemaPath: string;
+  entry: EntryDto;
+}
+
 interface CollectionPathInput {
   spacePath: string;
   collectionPath: string;
@@ -72,14 +80,14 @@ export function createFolder(input: {
   });
 }
 
-export function convertBareFolderToCollection(input: {
+export function convertToCollection(input: {
   spacePath: string;
-  folderPath: string;
+  path: string;
   projectPath?: string | null;
-}) {
-  return invokeCommand<EntryDto>("convert_bare_folder_to_collection", {
+}): Promise<ConvertToCollectionResultDto> {
+  return invokeCommand<ConvertToCollectionResultDto>("convert_to_collection", {
     space: input.spacePath,
-    folderPath: input.folderPath,
+    path: input.path,
     projectPath: input.projectPath ?? null,
   });
 }

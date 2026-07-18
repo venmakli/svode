@@ -142,13 +142,13 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "convert_to_collection",
-            "Convert an existing markdown leaf, folder document, or bare folder into a Svode collection in place by adding schema.yaml. Use for existing content that should become structured records. Does not create a wrapper folder and does not autocommit.",
+            "Convert an existing markdown leaf, folder document, or bare folder into a Svode collection in place through Svode's managed structural backend. This preserves source body/frontmatter, rewrites managed links, refreshes indexes/tree, returns oldPath, collectionPath, readmePath, schemaPath and touched paths, and does not autocommit.",
             schema(
                 &[
                     space_id(),
                     path_req(
                         "path",
-                        "Existing markdown leaf, folder document path, or bare folder path.",
+                        "Existing markdown leaf, folder document path, or bare folder path. A leaf foo.md becomes foo/README.md; an existing collection README.md is rejected.",
                     ),
                 ],
                 &["path"],
@@ -482,8 +482,8 @@ Metadata and fields:
 
 Structural work and integrity:
 - Files-first work is supported: ordinary Markdown body edits and deliberate, predictable bulk file edits can be made directly in the repository.
-- Do not construct `.svode/order`, relation migrations, managed `.assets/` paths, or structural document moves/renames manually. Use rename_entry, move_entry, unnest_entry, or convert_to_leaf so Svode preserves relations, backlinks, sidebar order, and indexes.
-- Structural tools do not autocommit and return newPath, changedPaths, and touchedPaths. convert_to_leaf applies only to a supported folder document; it does not demote a collection or remove schema.yaml.
+- Do not construct `.svode/order`, relation migrations, managed `.assets/` paths, structural document moves/renames, or collections manually. Use rename_entry, move_entry, unnest_entry, convert_to_leaf, or convert_to_collection so Svode preserves relations, backlinks, sidebar order, and indexes.
+- Structural tools do not autocommit and return changed/touched paths. convert_to_collection is in-place and manages document/collection identity; convert_to_leaf applies only to a supported folder document and does not demote a collection or remove schema.yaml.
 - After an intentional raw structural edit, run validate_collection_integrity for the collection or selected space and repair every reported relation target, missing relation entry, or stale order reference before continuing.
 
 Managed file assets:
@@ -1010,6 +1010,7 @@ mod tests {
             "move_entry",
             "unnest_entry",
             "convert_to_leaf",
+            "convert_to_collection",
             "validate_collection_integrity",
         ] {
             assert!(names.contains(&name), "missing {name}");
@@ -1021,6 +1022,15 @@ mod tests {
         assert_eq!(
             integrity.annotations.as_ref().unwrap().read_only_hint,
             Some(true)
+        );
+        let conversion = definitions
+            .iter()
+            .find(|definition| definition.name == "convert_to_collection")
+            .expect("collection conversion definition");
+        assert!(
+            conversion
+                .description
+                .contains("managed structural backend")
         );
         assert!(guide_text().contains("Structural work and integrity"));
     }

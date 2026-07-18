@@ -1,19 +1,16 @@
 import {
-  convertBareFolderToCollection,
-  convertEntryToFolder,
-  convertEntryToNestedCollection,
   createEntry,
   createFolder,
   deleteEntry,
   getBacklinks,
   nestEntry,
-  readEntry,
   renameEntry,
   unnestEntry,
   updateEntryField,
   type BacklinkInfoDto,
   type EntryDto,
 } from "@/platform/entries/entries-api";
+import { convertToCollection } from "@/platform/collections/collections-api";
 import type { TreeNode } from "../model/types";
 import { treeNodeHasChildren, treeParentKeyForNode } from "../lib/tree-cache";
 
@@ -166,16 +163,17 @@ export async function makeBareFolderDocument(input: {
   return readmePath;
 }
 
-export function convertTreeBareFolderToCollection(input: {
+export async function convertTreeBareFolderToCollection(input: {
   spacePath: string;
   folderPath: string;
   projectPath: ProjectPath;
 }): Promise<EntryDto> {
-  return convertBareFolderToCollection({
-    space: input.spacePath,
-    folderPath: input.folderPath,
+  const conversion = await convertToCollection({
+    spacePath: input.spacePath,
+    path: input.folderPath,
     projectPath: input.projectPath,
   });
+  return conversion.entry;
 }
 
 export async function convertTreeDocumentToCollection(input: {
@@ -183,21 +181,12 @@ export async function convertTreeDocumentToCollection(input: {
   filePath: string;
   projectPath: ProjectPath;
 }): Promise<EntryDto> {
-  const entry = await readEntry(input.spacePath, input.filePath);
-  let readmeEntry = entry;
-  if (!input.filePath.toLowerCase().endsWith("/readme.md")) {
-    readmeEntry = await convertEntryToFolder({
-      space: input.spacePath,
-      filePath: entry.path,
-      projectPath: input.projectPath,
-    });
-  }
-  await convertEntryToNestedCollection({
-    space: input.spacePath,
-    filePath: readmeEntry.path,
+  const conversion = await convertToCollection({
+    spacePath: input.spacePath,
+    path: input.filePath,
     projectPath: input.projectPath,
   });
-  return readmeEntry;
+  return conversion.entry;
 }
 
 export function getTreeEntryBacklinks(input: {

@@ -106,6 +106,16 @@ pub struct DeleteEntryCommandResult {
     pub changed_paths: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConvertToCollectionCommandResult {
+    pub old_path: String,
+    pub collection_path: String,
+    pub readme_path: String,
+    pub schema_path: String,
+    pub entry: Entry,
+}
+
 fn entry_paths_with_order(space: &str, paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
     let mut out = vec![order_path(space)];
     out.extend(paths);
@@ -230,6 +240,14 @@ fn schema_path(space: &str, collection_path: &str) -> PathBuf {
         return Path::new(space).join("schema.yaml");
     }
     Path::new(space).join(collection_path).join("schema.yaml")
+}
+
+fn collection_schema_path_rel(collection_path: &str) -> String {
+    if collection_path.is_empty() || collection_path == "." {
+        "schema.yaml".to_string()
+    } else {
+        format!("{collection_path}/schema.yaml")
+    }
 }
 
 fn entry_history_name(path: &str) -> String {
@@ -2901,12 +2919,29 @@ pub async fn convert_entry_to_folder(
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
-    let backlink_index = backlinks_for_space(&index_state, &space).await;
-    ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
-    let project_aware = project_path.as_deref().filter(|p| !p.is_empty()).is_some();
-    let entry = entry::convert_entry_to_folder(
-        Path::new(&space),
+    convert_entry_to_folder_shared(
+        &space,
         &file_path,
+        project_path.as_deref(),
+        &index_state,
+        Some(&autocommit),
+    )
+    .await
+}
+
+pub async fn convert_entry_to_folder_shared(
+    space: &str,
+    file_path: &str,
+    project_path: Option<&str>,
+    index_state: &IndexState,
+    autocommit: Option<&AutocommitService>,
+) -> Result<Entry, AppError> {
+    let backlink_index = backlinks_for_space(index_state, space).await;
+    ensure_backlinks_before_structural(index_state, project_path).await;
+    let project_aware = project_path.filter(|path| !path.is_empty()).is_some();
+    let entry = entry::convert_entry_to_folder(
+        Path::new(space),
+        file_path,
         if project_aware {
             None
         } else {
@@ -2915,9 +2950,9 @@ pub async fn convert_entry_to_folder(
     )?;
     let folder_root = root_path_for_head(&entry.path);
     let old_leaf = format!("{folder_root}.md");
-    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+    if let Some(proj) = project_path.filter(|path| !path.is_empty()) {
         let project = Path::new(proj);
-        let target_space_id = space_id_for_dir(&index_state, &space).await;
+        let target_space_id = space_id_for_dir(index_state, space).await;
         let mut modified_sources = index_state
             .update_links_on_rename_project(
                 project,
@@ -2933,9 +2968,9 @@ pub async fn convert_entry_to_folder(
             });
         modified_sources.extend(
             rebase_project_source_after_move(
-                &index_state,
-                project_path.as_deref(),
-                &space,
+                index_state,
+                project_path,
+                space,
                 target_space_id.as_deref(),
                 &old_leaf,
                 &entry.path,
@@ -2944,14 +2979,16 @@ pub async fn convert_entry_to_folder(
             .await,
         );
         let modified_sources = crate::files::backlinks::dedupe_modified_sources(modified_sources);
-        schedule_modified_source_spaces(
-            &index_state,
-            &autocommit,
-            project_path.as_deref(),
-            &modified_sources,
-            StructuralOp::ConvertToFolder(entry_history_commit_name(&space, &entry.path)),
-        )
-        .await;
+        if let Some(autocommit) = autocommit {
+            schedule_modified_source_spaces(
+                index_state,
+                autocommit,
+                project_path,
+                &modified_sources,
+                StructuralOp::ConvertToFolder(entry_history_commit_name(space, &entry.path)),
+            )
+            .await;
+        }
         let _ = index_state
             .remove_file_backlinks(project, target_space_id.as_deref(), &old_leaf)
             .await;
@@ -2959,31 +2996,166 @@ pub async fn convert_entry_to_folder(
             .update_file_backlinks(project, target_space_id.as_deref(), &entry.path)
             .await;
     } else {
-        let _ = rebase_legacy_source_after_move(&space, &backlink_index, &old_leaf, &entry.path);
+        let _ = rebase_legacy_source_after_move(space, &backlink_index, &old_leaf, &entry.path);
     }
     replace_index_entries_or_reindex(
-        &index_state,
-        project_path.as_deref(),
-        &space,
+        index_state,
+        project_path,
+        space,
         &[old_leaf.clone()],
         std::slice::from_ref(&entry.path),
         "convert_entry_to_folder",
     )
     .await;
-    maybe_autocommit_structural_paths(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        StructuralOp::ConvertToFolder(entry_history_commit_name(&space, &entry.path)),
-        entry_paths_with_order(
-            &space,
-            [
-                abs_entry_path(&space, &old_leaf),
-                abs_entry_path(&space, &entry.path),
-            ],
-        ),
-    );
+    if let Some(autocommit) = autocommit {
+        maybe_autocommit_structural_paths(
+            autocommit,
+            project_path,
+            space,
+            StructuralOp::ConvertToFolder(entry_history_commit_name(space, &entry.path)),
+            entry_paths_with_order(
+                space,
+                [
+                    abs_entry_path(space, &old_leaf),
+                    abs_entry_path(space, &entry.path),
+                ],
+            ),
+        );
+    }
     Ok(entry)
+}
+
+#[tauri::command]
+pub async fn convert_to_collection(
+    space: String,
+    path: String,
+    project_path: Option<String>,
+    index_state: State<'_, IndexState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<ConvertToCollectionCommandResult, AppError> {
+    convert_to_collection_shared(
+        &space,
+        &path,
+        project_path.as_deref(),
+        &index_state,
+        Some(&autocommit),
+    )
+    .await
+}
+
+pub async fn convert_to_collection_shared(
+    space: &str,
+    path: &str,
+    project_path: Option<&str>,
+    index_state: &IndexState,
+    autocommit: Option<&AutocommitService>,
+) -> Result<ConvertToCollectionCommandResult, AppError> {
+    let old_path = normalize_repo_relative(path, RootMode::Reject)?;
+    let source_abs = Path::new(space).join(&old_path);
+    let metadata = fs::metadata(&source_abs).map_err(|error| match error.kind() {
+        std::io::ErrorKind::NotFound => AppError::FileNotFound(old_path.clone()),
+        _ => AppError::Io(error),
+    })?;
+
+    let (collection_path, readme_path, entry, source_moved) = if metadata.is_dir() {
+        let readme_path = format!("{old_path}/README.md");
+        let schema_path = schema_path(space, &old_path);
+        if schema_path.exists() {
+            return Err(AppError::FileAlreadyExists(rel_changed_path(
+                space,
+                &schema_path,
+            )));
+        }
+        if source_abs.join("README.md").exists() {
+            let collection_path =
+                entry::convert_entry_to_nested_collection(Path::new(space), &readme_path)?;
+            let entry = entry::read(space, &readme_path)?;
+            (collection_path, readme_path, entry, false)
+        } else {
+            let entry = entry::convert_bare_folder_to_collection(Path::new(space), &old_path)?;
+            (old_path.clone(), readme_path, entry, false)
+        }
+    } else if metadata.is_file() {
+        let parent_schema = source_abs.parent().map(|parent| parent.join("schema.yaml"));
+        let is_readme = source_abs
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("README.md"));
+        if is_readme && parent_schema.as_ref().is_some_and(|schema| schema.exists()) {
+            return Err(AppError::General(format!(
+                "{old_path} is already a collection README.md; convert_to_collection cannot convert an existing collection"
+            )));
+        }
+
+        if is_readme {
+            let collection_path = Path::new(&old_path)
+                .parent()
+                .map(|parent| parent.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            entry::convert_entry_to_nested_collection(Path::new(space), &old_path)?;
+            let entry = entry::read(space, &old_path)?;
+            (collection_path, old_path.clone(), entry, false)
+        } else {
+            let entry = convert_entry_to_folder_shared(
+                space,
+                &old_path,
+                project_path,
+                index_state,
+                autocommit,
+            )
+            .await?;
+            let readme_path = entry.path.clone();
+            let collection_path = Path::new(&readme_path)
+                .parent()
+                .map(|parent| parent.to_string_lossy().replace('\\', "/"))
+                .ok_or_else(|| {
+                    AppError::General("converted entry has no collection folder".to_string())
+                })?;
+            entry::convert_entry_to_nested_collection(Path::new(space), &readme_path)?;
+            let entry = entry::read(space, &readme_path)?;
+            (collection_path, readme_path, entry, true)
+        }
+    } else {
+        return Err(AppError::General(format!(
+            "path must reference a markdown document or folder: {old_path}"
+        )));
+    };
+
+    let schema_path_rel = collection_schema_path_rel(&collection_path);
+    update_index_tree_or_reindex(
+        index_state,
+        project_path,
+        space,
+        &collection_path,
+        "convert_to_collection",
+    )
+    .await;
+
+    if let Some(autocommit) = autocommit {
+        let mut paths = vec![
+            abs_entry_path(space, &readme_path),
+            schema_path(space, &collection_path),
+        ];
+        if source_moved {
+            paths = entry_paths_with_order(space, paths);
+            paths.push(abs_entry_path(space, &old_path));
+        }
+        maybe_autocommit_structural_paths(
+            autocommit,
+            project_path,
+            space,
+            StructuralOp::MakeCollection(entry_history_commit_name(space, &readme_path)),
+            paths,
+        );
+    }
+
+    Ok(ConvertToCollectionCommandResult {
+        old_path,
+        collection_path,
+        readme_path,
+        schema_path: schema_path_rel,
+        entry,
+    })
 }
 
 #[tauri::command]
@@ -3111,25 +3283,14 @@ pub async fn convert_entry_to_nested_collection(
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
-    let collection_path = entry::convert_entry_to_nested_collection(Path::new(&space), &file_path)?;
-    update_index_tree_or_reindex(
+    convert_to_collection_shared(
+        &space,
+        &file_path,
+        project_path.as_deref(),
         &index_state,
-        project_path.as_deref(),
-        &space,
-        &collection_path,
-        "convert_entry_to_nested_collection",
+        Some(&autocommit),
     )
-    .await;
-    maybe_autocommit_structural_paths(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        StructuralOp::MakeCollection(entry_history_commit_name(
-            &space,
-            &format!("{collection_path}/README.md"),
-        )),
-        vec![schema_path(&space, &collection_path)],
-    );
+    .await?;
     Ok(())
 }
 
@@ -3141,32 +3302,15 @@ pub async fn convert_bare_folder_to_collection(
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
-    let entry = entry::convert_bare_folder_to_collection(Path::new(&space), &folder_path)?;
-    update_index_tree_or_reindex(
-        &index_state,
-        project_path.as_deref(),
+    Ok(convert_to_collection_shared(
         &space,
         &folder_path,
-        "convert_bare_folder_to_collection",
-    )
-    .await;
-    maybe_autocommit_structural_paths(
-        &autocommit,
         project_path.as_deref(),
-        &space,
-        StructuralOp::MakeCollection(entry_history_commit_name(
-            &space,
-            &format!("{}/README.md", folder_path.trim_matches('/')),
-        )),
-        vec![
-            abs_entry_path(
-                &space,
-                &format!("{}/README.md", folder_path.trim_matches('/')),
-            ),
-            schema_path(&space, &folder_path),
-        ],
-    );
-    Ok(entry)
+        &index_state,
+        Some(&autocommit),
+    )
+    .await?
+    .entry)
 }
 
 #[tauri::command]
@@ -3873,6 +4017,157 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(flags, (Some("Tasks".to_string()), 1, 1));
+    }
+
+    #[tokio::test]
+    async fn shared_convert_to_collection_preserves_leaf_and_refreshes_index_tree() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let state = IndexState::new();
+        std::fs::write(
+            space.join("Topic.md"),
+            "---\ntitle: Topic\nstatus: draft\n---\nleaf-body-token",
+        )
+        .unwrap();
+        std::fs::write(space.join("Reference.md"), "[Topic](Topic.md)").unwrap();
+        index::update::update_entry(&state, space, &space.join("Topic.md"))
+            .await
+            .unwrap();
+        index::update::update_entry(&state, space, &space.join("Reference.md"))
+            .await
+            .unwrap();
+        let pool = indexed_pool(&state, space).await;
+
+        let result = convert_to_collection_shared(
+            space.to_str().unwrap(),
+            "Topic.md",
+            Some(space.to_str().unwrap()),
+            &state,
+            None,
+        )
+        .await
+        .expect("convert leaf to collection");
+
+        assert_eq!(result.old_path, "Topic.md");
+        assert_eq!(result.collection_path, "Topic");
+        assert_eq!(result.readme_path, "Topic/README.md");
+        assert_eq!(result.schema_path, "Topic/schema.yaml");
+        assert_eq!(result.entry.body, "leaf-body-token");
+        assert_eq!(
+            result
+                .entry
+                .meta
+                .extra
+                .get("status")
+                .and_then(|value| value.as_str()),
+            Some("draft")
+        );
+        assert!(space.join("Topic").join("schema.yaml").exists());
+        assert!(!space.join("Topic.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(space.join("Reference.md")).unwrap(),
+            "[Topic](Topic/README.md)"
+        );
+        assert_eq!(
+            indexed_paths(&pool).await,
+            vec!["Reference.md".to_string(), "Topic/README.md".to_string()]
+        );
+        assert!(
+            index::search::search_fts(&pool, "leaf-body-token", None, None, 10)
+                .await
+                .unwrap()
+                .iter()
+                .any(|row| row.path == "Topic/README.md")
+        );
+    }
+
+    #[tokio::test]
+    async fn shared_convert_to_collection_supports_folder_document_and_bare_folder() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let state = IndexState::new();
+        std::fs::create_dir_all(space.join("Folder")).unwrap();
+        std::fs::write(
+            space.join("Folder").join("README.md"),
+            "folder-document-token",
+        )
+        .unwrap();
+        std::fs::create_dir_all(space.join("Bare")).unwrap();
+
+        let folder_result = convert_to_collection_shared(
+            space.to_str().unwrap(),
+            "Folder/README.md",
+            Some(space.to_str().unwrap()),
+            &state,
+            None,
+        )
+        .await
+        .expect("convert folder document");
+        let bare_result = convert_to_collection_shared(
+            space.to_str().unwrap(),
+            "Bare",
+            Some(space.to_str().unwrap()),
+            &state,
+            None,
+        )
+        .await
+        .expect("convert bare folder");
+
+        assert_eq!(folder_result.collection_path, "Folder");
+        assert_eq!(folder_result.readme_path, "Folder/README.md");
+        assert_eq!(folder_result.entry.body, "folder-document-token");
+        assert!(space.join("Folder").join("schema.yaml").exists());
+        assert_eq!(bare_result.collection_path, "Bare");
+        assert_eq!(bare_result.readme_path, "Bare/README.md");
+        assert!(space.join("Bare").join("schema.yaml").exists());
+    }
+
+    #[tokio::test]
+    async fn shared_convert_to_collection_rejects_existing_collection_readme() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let state = IndexState::new();
+        std::fs::create_dir_all(space.join("Tasks")).unwrap();
+        std::fs::write(space.join("Tasks").join("README.md"), "tasks").unwrap();
+        std::fs::write(space.join("Tasks").join("schema.yaml"), "columns: []\n").unwrap();
+
+        let result = convert_to_collection_shared(
+            space.to_str().unwrap(),
+            "Tasks/README.md",
+            Some(space.to_str().unwrap()),
+            &state,
+            None,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::General(message)) if message.contains("already a collection"))
+        );
+    }
+
+    #[tokio::test]
+    async fn shared_convert_to_collection_preserves_leaf_when_target_folder_exists() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let state = IndexState::new();
+        std::fs::write(space.join("Topic.md"), "topic-body").unwrap();
+        std::fs::create_dir(space.join("Topic")).unwrap();
+
+        let result = convert_to_collection_shared(
+            space.to_str().unwrap(),
+            "Topic.md",
+            Some(space.to_str().unwrap()),
+            &state,
+            None,
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::FileAlreadyExists(path)) if path == "Topic"));
+        assert_eq!(
+            std::fs::read_to_string(space.join("Topic.md")).unwrap(),
+            "topic-body"
+        );
+        assert!(!space.join("Topic").join("schema.yaml").exists());
     }
 
     #[tokio::test]

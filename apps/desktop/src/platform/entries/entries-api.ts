@@ -154,16 +154,6 @@ export function unnestEntry(input: {
   return invokeCommand<string>("unnest_entry", { ...input });
 }
 
-export function convertBareFolderToCollection(input: {
-  space: string;
-  folderPath: string;
-  projectPath: string | null;
-}): Promise<EntryDto> {
-  return invokeCommand<EntryDto>("convert_bare_folder_to_collection", {
-    ...input,
-  });
-}
-
 export function convertEntryToFolder(input: {
   space: string;
   filePath: string;
@@ -178,16 +168,6 @@ export function convertEntryToLeaf(input: {
   projectPath: string | null;
 }): Promise<EntryDto> {
   return invokeCommand<EntryDto>("convert_entry_to_leaf", { ...input });
-}
-
-export function convertEntryToNestedCollection(input: {
-  space: string;
-  filePath: string;
-  projectPath: string | null;
-}): Promise<string> {
-  return invokeCommand<string>("convert_entry_to_nested_collection", {
-    ...input,
-  });
 }
 
 export function validateLinks(input: {
@@ -255,6 +235,8 @@ export function saveTreeOrder(input: {
   return invokeCommand<void>("save_tree_order", { ...input });
 }
 
-export function readTreeOrder(space: string): Promise<Record<string, string[]>> {
+export function readTreeOrder(
+  space: string,
+): Promise<Record<string, string[]>> {
   return invokeCommand<Record<string, string[]>>("read_tree_order", { space });
 }

@@ -142,6 +142,7 @@ pub fn run() {
             commands::files::unnest_entry,
             commands::files::convert_entry_to_folder,
             commands::files::convert_entry_to_leaf,
+            commands::files::convert_to_collection,
             commands::files::convert_entry_to_nested_collection,
             commands::files::convert_bare_folder_to_collection,
             commands::files::duplicate_entry,
