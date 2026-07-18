@@ -85,6 +85,21 @@ struct MoveEntryArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ReorderEntriesArgs {
+    #[serde(default)]
+    space_id: Option<String>,
+    parent_path: String,
+    ordered_children: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReorderSpacesArgs {
+    ordered_space_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct IntegrityArgs {
     #[serde(default)]
     space_id: Option<String>,
@@ -383,6 +398,8 @@ async fn call_tool_inner(
         "delete_entry" => delete_entry(&app, decode(args)?).await,
         "rename_entry" => rename_entry(&app, decode(args)?).await,
         "move_entry" => move_entry(&app, decode(args)?).await,
+        "reorder_entries" => reorder_entries(&app, decode(args)?).await,
+        "reorder_spaces" => reorder_spaces(&app, decode(args)?).await,
         "unnest_entry" => unnest_entry(&app, decode(args)?).await,
         "convert_to_leaf" => convert_to_leaf(&app, decode(args)?).await,
         "validate_collection_integrity" => validate_collection_integrity(&app, decode(args)?).await,
@@ -1444,6 +1461,61 @@ async fn move_entry(
         &new_path,
         changed_paths,
         affected_project_paths,
+    ))
+}
+
+async fn reorder_entries(
+    app: &AppHandle,
+    args: ReorderEntriesArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let _policy = MCP_MUTATION_POLICY;
+    let (_context, space) = resolve_space(app, args.space_id).await?;
+    let parent_path = validate_public_rel_path(&args.parent_path, true)?;
+    ensure_inside(Path::new(&space), &parent_path)?;
+    let result =
+        files_commands::reorder_entries_shared(&space, &parent_path, args.ordered_children)?;
+    Ok(ToolCallResult::ok(
+        format!("Reordered {} direct children.", result.previous_order.len()),
+        json!({
+            "parentPath": result.parent_path,
+            "previousOrder": result.previous_order,
+            "orderedChildren": result.ordered_children,
+            "changedPaths": [".svode/order.json"],
+        }),
+    ))
+}
+
+async fn reorder_spaces(
+    app: &AppHandle,
+    args: ReorderSpacesArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let _policy = MCP_MUTATION_POLICY;
+    let context = active_context(app)?;
+    if args
+        .ordered_space_ids
+        .iter()
+        .any(|id| is_mcp_root_space_id(id))
+    {
+        return Err(McpBusinessError::new(
+            "INVALID_SPACE_ORDER",
+            "the root space is pinned and must not be included",
+        ));
+    }
+    let previous_order = project::list_spaces(Path::new(&context.project_path))?
+        .into_iter()
+        .map(|space| space.id)
+        .collect::<Vec<_>>();
+    project::reorder_spaces(
+        Path::new(&context.project_path),
+        args.ordered_space_ids.clone(),
+    )?;
+    Ok(ToolCallResult::ok(
+        format!("Reordered {} child spaces.", args.ordered_space_ids.len()),
+        json!({
+            "previousOrder": previous_order,
+            "orderedSpaceIds": args.ordered_space_ids,
+            "changedPaths": [".svode/config.json"],
+        }),
     ))
 }
 

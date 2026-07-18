@@ -1390,6 +1390,15 @@ pub fn move_entry_with_project(
 
     let from_is_dir = abs_from.is_dir();
     let is_md = from_is_dir || Path::new(from).extension().and_then(|e| e.to_str()) == Some("md");
+    let target_sibling_order =
+        tree::list_tree_children(space.to_string_lossy().as_ref(), Some(to_parent))
+            .map(|children| {
+                children
+                    .into_iter()
+                    .map(|child| child.name)
+                    .collect::<Vec<String>>()
+            })
+            .unwrap_or_default();
 
     // Ensure target parent directory exists
     if let Some(parent_dir) = abs_to.parent() {
@@ -1397,6 +1406,7 @@ pub fn move_entry_with_project(
     }
 
     fs::rename(&abs_from, &abs_to)?;
+    update_order_after_move(space, from, &new_rel, from_is_dir, &target_sibling_order)?;
     crate::properties::apply_schema_defaults_to_entry_tree(space, &new_rel)?;
     rewrite_relations_after_fs_move_with_project(
         space,
@@ -1420,6 +1430,56 @@ pub fn move_entry_with_project(
     }
 
     Ok(new_rel)
+}
+
+/// Keep the sidebar order coherent after moving an entry between parents.
+/// Directory keys belong to the physical directory path, so a moved directory
+/// also carries its nested order keys to its new path.
+fn update_order_after_move(
+    space: &Path,
+    from: &str,
+    to: &str,
+    moved_directory: bool,
+    target_sibling_order: &[String],
+) -> Result<(), AppError> {
+    let source = Path::new(from);
+    let target = Path::new(to);
+    let source_parent = dir_key_for(source.parent().unwrap_or(Path::new("")));
+    let target_parent = dir_key_for(target.parent().unwrap_or(Path::new("")));
+    let source_name = source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::General("invalid source path".to_string()))?;
+    let target_name = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::General("invalid destination path".to_string()))?;
+
+    let mut order = tree::read_order(space);
+    if let Some(items) = order.get_mut(&source_parent) {
+        items.retain(|item| item != source_name);
+    }
+    let target_items = order.entry(target_parent).or_default();
+    *target_items = target_sibling_order.to_vec();
+    target_items.push(target_name.to_string());
+
+    if moved_directory {
+        let source_key = from.trim_matches('/');
+        let target_key = to.trim_matches('/');
+        let prefix = format!("{source_key}/");
+        let moved_keys: Vec<(String, Vec<String>)> = order
+            .iter()
+            .filter(|(key, _)| *key == source_key || key.starts_with(&prefix))
+            .map(|(key, children)| {
+                let suffix = key.strip_prefix(source_key).unwrap_or_default();
+                (format!("{target_key}{suffix}"), children.clone())
+            })
+            .collect();
+        order.retain(|key, _| key != source_key && !key.starts_with(&prefix));
+        order.extend(moved_keys);
+    }
+
+    tree::write_order(space, &order)
 }
 
 /// Nest an entry: convert `foo.md` → `foo/readme.md`, making it a category.
@@ -2563,6 +2623,46 @@ mod tests {
         assert_eq!(converted.path, "note/README.md");
         assert!(ws.join("note").join("README.md").is_file());
         assert!(!ws.join("note.md").exists());
+    }
+
+    #[test]
+    fn move_entry_updates_source_target_and_nested_order_keys() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        fs::create_dir_all(ws.join("source/child")).unwrap();
+        fs::create_dir_all(ws.join("target")).unwrap();
+        fs::write(ws.join("source/README.md"), "source").unwrap();
+        fs::write(ws.join("source/child/note.md"), "note").unwrap();
+        fs::write(ws.join("target/README.md"), "target").unwrap();
+        fs::write(ws.join("target/a.md"), "a").unwrap();
+        fs::write(ws.join("target/z.md"), "z").unwrap();
+        let mut order = HashMap::new();
+        order.insert(
+            ".".to_string(),
+            vec!["source".to_string(), "target".to_string()],
+        );
+        order.insert("source".to_string(), vec!["child".to_string()]);
+        order.insert("source/child".to_string(), vec!["note.md".to_string()]);
+        tree::write_order(ws, &order).unwrap();
+
+        let moved = move_entry_with_project(ws, "source", "target", None, None).unwrap();
+
+        assert_eq!(moved, "target/source");
+        let order = tree::read_order(ws);
+        assert_eq!(order.get(".").unwrap(), &vec!["target".to_string()]);
+        assert_eq!(
+            order.get("target").unwrap(),
+            &vec!["a.md".to_string(), "z.md".to_string(), "source".to_string()]
+        );
+        assert_eq!(
+            order.get("target/source").unwrap(),
+            &vec!["child".to_string()]
+        );
+        assert_eq!(
+            order.get("target/source/child").unwrap(),
+            &vec!["note.md".to_string()]
+        );
+        assert!(!order.contains_key("source"));
     }
 
     #[test]

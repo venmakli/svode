@@ -267,7 +267,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "rename_entry",
-            "Rename a document or folder entry through Svode's managed structural backend. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit.",
+            "Rename a document or folder entry in its current parent through Svode's managed structural backend. To change parent, use move_entry. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -294,6 +294,39 @@ pub fn definitions() -> Vec<ToolDefinition> {
                 &["from", "toParent"],
             ),
             write_ann(false, Some(false)),
+            None,
+        ),
+        def(
+            "reorder_entries",
+            "Set the complete semantic order of direct document, folder, and collection children under one parent. Use list_documents before and after to discover and verify child paths. Does not autocommit.",
+            schema(
+                &[
+                    space_id(),
+                    path_req(
+                        "parentPath",
+                        "Parent folder path; use an empty string for the space root.",
+                    ),
+                    str_array_req(
+                        "orderedChildren",
+                        "Complete ordered list of direct semantic child paths from list_documents. Folder-document and collection identities use their README.md paths.",
+                    ),
+                ],
+                &["parentPath", "orderedChildren"],
+            ),
+            write_ann(false, None),
+            None,
+        ),
+        def(
+            "reorder_spaces",
+            "Set the complete order of child spaces in the root project. Do not include the pinned root space id \"root\". Does not autocommit.",
+            schema(
+                &[str_array_req(
+                    "orderedSpaceIds",
+                    "Complete ordered list of current child space ids from list_spaces; omit root.",
+                )],
+                &["orderedSpaceIds"],
+            ),
+            write_ann(false, None),
             None,
         ),
         def(
@@ -482,7 +515,7 @@ Metadata and fields:
 
 Structural work and integrity:
 - Files-first work is supported: ordinary Markdown body edits and deliberate, predictable bulk file edits can be made directly in the repository.
-- Do not construct `.svode/order`, relation migrations, managed `.assets/` paths, structural document moves/renames, or collections manually. Use rename_entry, move_entry, unnest_entry, convert_to_leaf, or convert_to_collection so Svode preserves relations, backlinks, sidebar order, and indexes.
+- Do not construct `.svode/order`, relation migrations, managed `.assets/` paths, structural document moves/renames, or collections manually. Use rename_entry, move_entry, reorder_entries, reorder_spaces, unnest_entry, convert_to_leaf, or convert_to_collection so Svode preserves relations, backlinks, sidebar order, and indexes. Discover spaces with list_spaces; root is `spaceId: "root"`, while reorder_spaces accepts child ids only.
 - Structural tools do not autocommit and return changed/touched paths. convert_to_collection is in-place and manages document/collection identity; convert_to_leaf applies only to a supported folder document and does not demote a collection or remove schema.yaml.
 - After an intentional raw structural edit, run validate_collection_integrity for the collection or selected space and repair every reported relation target, missing relation entry, or stale order reference before continuing.
 
@@ -575,6 +608,13 @@ fn str_req(name: &'static str) -> (&'static str, Value) {
 
 fn str_opt(name: &'static str) -> (&'static str, Value) {
     (name, json!({"type": ["string", "null"]}))
+}
+
+fn str_array_req(name: &'static str, description: &'static str) -> (&'static str, Value) {
+    (
+        name,
+        json!({"type": "array", "description": description, "items": {"type": "string"}}),
+    )
 }
 
 fn path_req(name: &'static str, description: &'static str) -> (&'static str, Value) {
@@ -1008,6 +1048,8 @@ mod tests {
         for name in [
             "rename_entry",
             "move_entry",
+            "reorder_entries",
+            "reorder_spaces",
             "unnest_entry",
             "convert_to_leaf",
             "convert_to_collection",

@@ -323,7 +323,7 @@ pub fn list_tree_children(
     read_dir_direct(root, &dir, &parent_rel, &order, &skip_dirs, &policy)
 }
 
-fn normalize_tree_parent_path(parent_path: Option<&str>) -> Result<String, AppError> {
+pub(crate) fn normalize_tree_parent_path(parent_path: Option<&str>) -> Result<String, AppError> {
     let Some(raw) = parent_path.map(str::trim).filter(|path| !path.is_empty()) else {
         return Ok(".".to_string());
     };

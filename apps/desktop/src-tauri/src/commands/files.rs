@@ -2397,6 +2397,13 @@ pub async fn rename_entry_shared(
     index_state: &IndexState,
     autocommit: Option<&AutocommitService>,
 ) -> Result<Vec<String>, AppError> {
+    let from_parent = Path::new(from).parent().unwrap_or(Path::new(""));
+    let to_parent = Path::new(to).parent().unwrap_or(Path::new(""));
+    if from_parent != to_parent {
+        return Err(AppError::General(
+            "rename_entry cannot change parent; use move_entry to move an entry".to_string(),
+        ));
+    }
     let backlink_index = backlinks_for_space(&index_state, &space).await;
     let was_dir = Path::new(&space).join(&from).is_dir();
     ensure_backlinks_before_structural(index_state, project_path).await;
@@ -3376,6 +3383,67 @@ pub fn read_tree_order(space: String) -> Result<HashMap<String, Vec<String>>, Ap
     Ok(tree::read_order(Path::new(&space)))
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct ReorderEntriesCommandResult {
+    pub parent_path: String,
+    pub previous_order: Vec<String>,
+    pub ordered_children: Vec<String>,
+}
+
+pub fn reorder_entries_shared(
+    space: &str,
+    parent_path: &str,
+    ordered_children: Vec<String>,
+) -> Result<ReorderEntriesCommandResult, AppError> {
+    let parent_path = tree::normalize_tree_parent_path(Some(parent_path))?;
+    let actual_children = tree::list_tree_children(space, Some(&parent_path))?;
+    let previous_order = actual_children
+        .iter()
+        .map(|child| child.path.clone())
+        .collect::<Vec<_>>();
+    let expected = previous_order
+        .iter()
+        .collect::<std::collections::HashSet<_>>();
+    let proposed = ordered_children
+        .iter()
+        .collect::<std::collections::HashSet<_>>();
+
+    if proposed.len() != ordered_children.len() {
+        return Err(AppError::General(
+            "orderedChildren contains duplicate paths".to_string(),
+        ));
+    }
+    if proposed != expected {
+        return Err(AppError::General(
+            "orderedChildren must contain each current direct child exactly once".to_string(),
+        ));
+    }
+
+    let names = ordered_children
+        .iter()
+        .map(|path| {
+            actual_children
+                .iter()
+                .find(|child| child.path == *path)
+                .map(|child| child.name.clone())
+                .ok_or_else(|| AppError::General(format!("unknown child path: {path}")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut order = tree::read_order(Path::new(space));
+    order.insert(parent_path.clone(), names);
+    tree::write_order(Path::new(space), &order)?;
+
+    Ok(ReorderEntriesCommandResult {
+        parent_path: if parent_path == "." {
+            String::new()
+        } else {
+            parent_path
+        },
+        previous_order,
+        ordered_children,
+    })
+}
+
 #[tauri::command]
 pub fn save_tree_order(
     space: String,
@@ -4185,5 +4253,154 @@ mod tests {
         .await;
 
         assert!(matches!(result, Err(AppError::FileNotFound(path)) if path == "Missing.md"));
+    }
+
+    #[test]
+    fn shared_reorder_entries_handles_semantic_paths_and_preserves_other_keys() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        std::fs::write(space.join("note.md"), "note").unwrap();
+        std::fs::create_dir(space.join("folder")).unwrap();
+        std::fs::write(space.join("folder/README.md"), "folder").unwrap();
+        std::fs::write(space.join("folder/a.md"), "a").unwrap();
+        std::fs::write(space.join("folder/b.md"), "b").unwrap();
+        std::fs::create_dir(space.join("collection")).unwrap();
+        std::fs::write(space.join("collection/README.md"), "collection").unwrap();
+        std::fs::write(
+            space.join("collection/schema.yaml"),
+            "columns: []\nviews: []\n",
+        )
+        .unwrap();
+        let mut order = HashMap::new();
+        order.insert(
+            ".".to_string(),
+            vec![
+                "note.md".to_string(),
+                "folder".to_string(),
+                "collection".to_string(),
+            ],
+        );
+        order.insert(
+            "folder".to_string(),
+            vec!["a.md".to_string(), "b.md".to_string()],
+        );
+        tree::write_order(space, &order).unwrap();
+
+        let result = reorder_entries_shared(
+            space.to_str().unwrap(),
+            "",
+            vec![
+                "collection/README.md".to_string(),
+                "folder/README.md".to_string(),
+                "note.md".to_string(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(result.parent_path, "");
+        assert_eq!(
+            result.previous_order,
+            vec![
+                "note.md".to_string(),
+                "folder/README.md".to_string(),
+                "collection/README.md".to_string(),
+            ]
+        );
+        let saved = tree::read_order(space);
+        assert_eq!(
+            saved.get(".").unwrap(),
+            &vec![
+                "collection".to_string(),
+                "folder".to_string(),
+                "note.md".to_string(),
+            ]
+        );
+        assert_eq!(
+            saved.get("folder").unwrap(),
+            &vec!["a.md".to_string(), "b.md".to_string()]
+        );
+
+        let nested = reorder_entries_shared(
+            space.to_str().unwrap(),
+            "folder/README.md",
+            vec!["folder/b.md".to_string(), "folder/a.md".to_string()],
+        )
+        .unwrap();
+        assert_eq!(nested.parent_path, "folder");
+        assert_eq!(
+            tree::read_order(space).get("folder").unwrap(),
+            &vec!["b.md".to_string(), "a.md".to_string()]
+        );
+    }
+
+    #[test]
+    fn shared_reorder_entries_rejects_invalid_permutation_without_writing() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        std::fs::write(space.join("a.md"), "a").unwrap();
+        std::fs::write(space.join("b.md"), "b").unwrap();
+        let mut order = HashMap::new();
+        order.insert(
+            ".".to_string(),
+            vec!["a.md".to_string(), "b.md".to_string()],
+        );
+        tree::write_order(space, &order).unwrap();
+        let before = std::fs::read(space.join(".svode/order.json")).unwrap();
+
+        for invalid in [
+            vec!["a.md".to_string(), "a.md".to_string()],
+            vec!["a.md".to_string()],
+            vec!["a.md".to_string(), "foreign.md".to_string()],
+        ] {
+            let result = reorder_entries_shared(space.to_str().unwrap(), "", invalid);
+            assert!(result.is_err());
+            assert_eq!(
+                std::fs::read(space.join(".svode/order.json")).unwrap(),
+                before
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn shared_rename_rejects_parent_change_and_preserves_sibling_position() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        std::fs::create_dir(space.join("target")).unwrap();
+        std::fs::write(space.join("a.md"), "a").unwrap();
+        std::fs::write(space.join("b.md"), "b").unwrap();
+        let mut order = HashMap::new();
+        order.insert(
+            ".".to_string(),
+            vec!["a.md".to_string(), "b.md".to_string()],
+        );
+        tree::write_order(space, &order).unwrap();
+        let index_state = IndexState::new();
+
+        let invalid = rename_entry_shared(
+            space.to_str().unwrap(),
+            "a.md",
+            "target/a.md",
+            None,
+            &index_state,
+            None,
+        )
+        .await;
+        assert!(invalid.is_err());
+        assert!(space.join("a.md").is_file());
+
+        rename_entry_shared(
+            space.to_str().unwrap(),
+            "a.md",
+            "renamed.md",
+            None,
+            &index_state,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            tree::read_order(space).get(".").unwrap(),
+            &vec!["renamed.md".to_string(), "b.md".to_string()]
+        );
     }
 }
