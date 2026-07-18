@@ -5,6 +5,23 @@
     {
       "kind": "ci-build",
       "version": "0.0.6",
+      "commit": "885cc23a2b252bcbe43acf431ed300a56dae38dd",
+      "sourceRef": "main",
+      "runId": 29633616214,
+      "publishedAt": "2026-07-18T06:28:37.302Z",
+      "expiresAt": "2026-07-21T06:28:37.302Z",
+      "reason": "add scope-surfaces and fix mcp",
+      "platforms": {
+        "linux": {
+          "url": "https://github.com/venmakli/svode/actions/runs/29633616214/artifacts/8426454814",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/29633616214",
+          "artifactName": "Svode-linux-deb"
+        }
+      }
+    },
+    {
+      "kind": "ci-build",
+      "version": "0.0.6",
       "commit": "28bc7c1fdf0fe5b7be1f1f81a1fd1be985f488c7",
       "sourceRef": "main",
       "runId": 29406315199,
@@ -25,23 +42,6 @@
         "windows": {
           "url": "https://github.com/venmakli/svode/actions/runs/29406315199/artifacts/8339791992",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/29406315199",
-          "artifactName": "Svode-windows-nsis"
-        }
-      }
-    },
-    {
-      "kind": "ci-build",
-      "version": "0.0.6",
-      "commit": "501b481167663b6efe9e397af3d44a8afaa15616",
-      "sourceRef": "main",
-      "runId": 29191169851,
-      "publishedAt": "2026-07-12T12:01:09.886Z",
-      "expiresAt": "2026-07-15T12:01:09.886Z",
-      "reason": "fix storage strategy",
-      "platforms": {
-        "windows": {
-          "url": "https://github.com/venmakli/svode/actions/runs/29191169851/artifacts/8259745617",
-          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/29191169851",
           "artifactName": "Svode-windows-nsis"
         }
       }
