@@ -1,6 +1,7 @@
 pub mod backlinks;
 pub mod entry;
 pub mod frontmatter;
+pub(crate) mod link_fix;
 pub mod nonce;
 pub mod templates;
 pub mod tree;

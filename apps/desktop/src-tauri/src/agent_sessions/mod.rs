@@ -1,13 +1,16 @@
+mod cache;
 pub mod commands;
+mod live_status;
 mod read_model;
 mod reentry;
+mod scope;
 mod sources;
 pub mod types;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use read_model::AgentSessionsReadCache;
+use cache::AgentSessionsReadCache;
 
 #[derive(Clone)]
 pub struct AgentSessionsState {
