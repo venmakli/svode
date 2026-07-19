@@ -8,14 +8,19 @@
       "commit": "847731ef6e887e0e065555d92540173f4884dfb0",
       "sourceRef": "main",
       "runId": 29684384582,
-      "publishedAt": "2026-07-19T11:15:39.396Z",
-      "expiresAt": "2026-07-22T11:15:39.396Z",
+      "publishedAt": "2026-07-19T11:20:15.509Z",
+      "expiresAt": "2026-07-22T11:20:15.509Z",
       "reason": "refactor backend and fix UI",
       "platforms": {
         "linux": {
           "url": "https://github.com/venmakli/svode/actions/runs/29684384582/artifacts/8441724314",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/29684384582",
           "artifactName": "Svode-linux-deb"
+        },
+        "darwin": {
+          "url": "https://github.com/venmakli/svode/actions/runs/29684384582/artifacts/8441764616",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/29684384582",
+          "artifactName": "Svode-macos-dmg"
         }
       }
     },
