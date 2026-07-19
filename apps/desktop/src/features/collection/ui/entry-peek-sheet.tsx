@@ -77,7 +77,7 @@ export function EntryPeekSheet({
   const contentClassName = useMemo(
     () =>
       cn(
-        "gap-0 p-0 pt-5 pb-6 data-[side=right]:sm:max-w-none",
+        "gap-0 p-0 pt-2 pb-6 data-[side=right]:sm:max-w-none",
         "shadow-[-24px_0_60px_color-mix(in_oklch,black_20%,transparent)]",
       ),
     [],
@@ -85,13 +85,10 @@ export function EntryPeekSheet({
 
   const currentEntry =
     target && entry?.path !== target.entry.path ? target.entry : entry;
-  const actionMenu =
+  const detailActions =
     currentEntry && !target?.nested ? (
       <EntryPeekActions
         entry={currentEntry}
-        onOpenFullPage={(entryToOpen) =>
-          onOpenFullPage(entryToOpen, effectiveSpaceId)
-        }
         onDuplicateEntry={onDuplicateEntry}
         onDeleteEntry={onDeleteEntry}
         onConvertedEntry={onConvertedEntry}
@@ -122,17 +119,9 @@ export function EntryPeekSheet({
             key={`${effectiveSpaceId}:${currentEntry.path}`}
             entry={currentEntry}
             renderActions={({ surfaceId, viewName }) => {
-              const menu = (
+              const detail = (
                 <EntryPeekActions
                   entry={currentEntry}
-                  onOpenFullPage={(entryToOpen) =>
-                    onOpenFullPage(
-                      entryToOpen,
-                      effectiveSpaceId,
-                      viewName,
-                      surfaceId,
-                    )
-                  }
                   onDuplicateEntry={onDuplicateEntry}
                   onDeleteEntry={onDeleteEntry}
                   onConvertedEntry={onConvertedEntry}
@@ -144,40 +133,65 @@ export function EntryPeekSheet({
                   spaceId={effectiveSpaceId}
                 />
               );
-              return target.template ? (
-                <div className="flex items-center gap-2">
-                  <Badge variant="secondary">
-                    {m.collection_template_badge()}
-                  </Badge>
-                  {menu}
-                </div>
-              ) : (
-                menu
-              );
+              return {
+                peek: (
+                  <EntryPeekControls
+                    entry={currentEntry}
+                    onOpenFullPage={(entryToOpen) =>
+                      onOpenFullPage(
+                        entryToOpen,
+                        effectiveSpaceId,
+                        viewName,
+                        surfaceId,
+                      )
+                    }
+                  />
+                ),
+                detail: target.template ? (
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary">
+                      {m.collection_template_badge()}
+                    </Badge>
+                    {detail}
+                  </div>
+                ) : (
+                  detail
+                ),
+              };
             }}
             renderNested={renderNested}
           />
         ) : currentEntry ? (
-          <PeekScrollSurface>
-            <EntryPeekSurface
-              entry={currentEntry}
-              schemaResult={schemaResult}
-              spacePath={effectiveSpacePath}
-              projectPath={effectiveProjectPath}
-              spaceId={effectiveSpaceId}
-              actions={actionMenu}
-              metadataBefore={
-                target?.template ? (
-                  <Badge variant="secondary">
-                    {m.collection_template_badge()}
-                  </Badge>
-                ) : null
-              }
-              onOpenPath={onOpenPath}
-              onEntryChange={setEntry}
-              onSchemaChange={setSchemaResult}
-            />
-          </PeekScrollSurface>
+          <>
+            <PeekTopBar>
+              <EntryPeekControls
+                entry={currentEntry}
+                onOpenFullPage={(entryToOpen) =>
+                  onOpenFullPage(entryToOpen, effectiveSpaceId)
+                }
+              />
+            </PeekTopBar>
+            <PeekScrollSurface>
+              <EntryPeekSurface
+                entry={currentEntry}
+                schemaResult={schemaResult}
+                spacePath={effectiveSpacePath}
+                projectPath={effectiveProjectPath}
+                spaceId={effectiveSpaceId}
+                actions={detailActions}
+                metadataBefore={
+                  target?.template ? (
+                    <Badge variant="secondary">
+                      {m.collection_template_badge()}
+                    </Badge>
+                  ) : null
+                }
+                onOpenPath={onOpenPath}
+                onEntryChange={setEntry}
+                onSchemaChange={setSchemaResult}
+              />
+            </PeekScrollSurface>
+          </>
         ) : null}
       </SheetContent>
     </Sheet>
@@ -193,7 +207,7 @@ function NestedScopePeek({
   renderActions: (state: {
     surfaceId: CollectionPeekSurfaceState["surfaceId"];
     viewName: string | null;
-  }) => ReactNode;
+  }) => { peek: ReactNode; detail: ReactNode };
   renderNested: EntryPeekSheetProps["renderNested"];
 }) {
   const [viewName, setViewName] = useState<string | null>(null);
@@ -211,14 +225,26 @@ function NestedScopePeek({
     }),
     [calendarScope, viewName],
   );
+  const actions = renderActions({ surfaceId, viewName });
 
   return (
-    <PeekScrollSurface>
-      {renderNested(entry, renderActions({ surfaceId, viewName }), routeState, {
-        surfaceId,
-        onSurfaceIdChange: setSurfaceId,
-      })}
-    </PeekScrollSurface>
+    <>
+      <PeekTopBar>{actions.peek}</PeekTopBar>
+      <PeekScrollSurface>
+        {renderNested(entry, actions.detail, routeState, {
+          surfaceId,
+          onSurfaceIdChange: setSurfaceId,
+        })}
+      </PeekScrollSurface>
+    </>
+  );
+}
+
+function PeekTopBar({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex shrink-0 items-center justify-end px-2 pb-2">
+      {children}
+    </div>
   );
 }
 
@@ -232,7 +258,6 @@ function PeekScrollSurface({ children }: { children: ReactNode }) {
 
 function EntryPeekActions({
   entry,
-  onOpenFullPage,
   onDuplicateEntry,
   onDeleteEntry,
   onConvertedEntry,
@@ -244,7 +269,6 @@ function EntryPeekActions({
   spaceId,
 }: {
   entry: Entry;
-  onOpenFullPage: (entry: Entry, spaceId?: string | null) => void;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
   onConvertedEntry: (entry: Entry, nested: boolean) => void;
@@ -277,13 +301,41 @@ function EntryPeekActions({
     ) : null;
 
   return (
+    <EntryDetailActions
+      entry={entry}
+      spacePath={spacePath}
+      projectPath={projectPath}
+      spaceId={spaceId}
+      onConverted={onConvertedEntry}
+      onDuplicateEntry={(entryToDuplicate) => {
+        if (template && onDuplicateTemplate) {
+          void onDuplicateTemplate(entryToDuplicate).catch(handleError);
+          return;
+        }
+        onDuplicateEntry(entryToDuplicate);
+      }}
+      onDeleteEntry={onDeleteEntry}
+      actionItemsBeforeDuplicate={templateDefaultAction}
+      duplicateLabel={template ? m.collection_template_duplicate() : undefined}
+    />
+  );
+}
+
+function EntryPeekControls({
+  entry,
+  onOpenFullPage,
+}: {
+  entry: Entry;
+  onOpenFullPage: (entry: Entry) => void;
+}) {
+  return (
     <div className="flex items-center gap-1">
       <Button
         type="button"
         variant="ghost"
         size="sm"
         className="h-7 rounded-lg px-2 text-xs text-muted-foreground hover:text-foreground"
-        onClick={() => onOpenFullPage(entry, spaceId)}
+        onClick={() => onOpenFullPage(entry)}
       >
         <Maximize2 data-icon="inline-start" />
         Full page
@@ -299,25 +351,6 @@ function EntryPeekActions({
           <span className="sr-only">{m.settings_cancel()}</span>
         </Button>
       </SheetClose>
-      <EntryDetailActions
-        entry={entry}
-        spacePath={spacePath}
-        projectPath={projectPath}
-        spaceId={spaceId}
-        onConverted={onConvertedEntry}
-        onDuplicateEntry={(entryToDuplicate) => {
-          if (template && onDuplicateTemplate) {
-            void onDuplicateTemplate(entryToDuplicate).catch(handleError);
-            return;
-          }
-          onDuplicateEntry(entryToDuplicate);
-        }}
-        onDeleteEntry={onDeleteEntry}
-        actionItemsBeforeDuplicate={templateDefaultAction}
-        duplicateLabel={
-          template ? m.collection_template_duplicate() : undefined
-        }
-      />
     </div>
   );
 }

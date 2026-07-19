@@ -8,27 +8,22 @@ import {
   getEntryDetailState,
   readEntry,
 } from "../entry-api";
-import {
-  isEntryTreeMetaField,
-  useEntryFieldSave,
-} from "../field-save";
-import {
-  useOpenEntryDocument,
-  useOpenEntryScopeHome,
-} from "../selection";
+import { isEntryTreeMetaField, useEntryFieldSave } from "../field-save";
+import { useOpenEntryDocument, useOpenEntryScopeHome } from "../selection";
 import type { Entry, EntryCover, EntryDetailState } from "../model";
 import { PropertyPanel } from "@/features/properties/panel";
 import { normalizeSchema } from "@/features/properties";
-import {
-  type EntrySchemaResult,
-} from "@/features/properties";
+import { type EntrySchemaResult } from "@/features/properties";
 import { getEntrySchema } from "@/features/properties/api";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
 import { useSpaceTreeSync } from "@/features/space";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 import { EntryDeleteDialog } from "./entry-delete-dialog";
 import { EntryDetailActions } from "./entry-detail-actions";
-import { EntryIdentityHeader } from "./entry-identity-header";
+import {
+  EntryIdentityHeader,
+  EntryIdentityHeaderSkeleton,
+} from "./entry-identity-header";
 import { EntrySubpages } from "./entry-subpages";
 import { EntrySystemFields } from "./entry-system-fields";
 import { handleError } from "../lib/errors";
@@ -323,9 +318,8 @@ function EntryDocumentLoadingState() {
   return (
     <div className="flex min-h-full flex-col">
       <div className={detailPageHeaderClassName}>
+        <EntryIdentityHeaderSkeleton />
         <div className="flex max-w-5xl flex-col gap-4">
-          <Skeleton className="h-8 w-72 max-w-full" />
-          <Skeleton className="h-4 w-96 max-w-full" />
           <div className="flex gap-2">
             <Skeleton className="h-6 w-20" />
             <Skeleton className="h-6 w-24" />

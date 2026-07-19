@@ -23,7 +23,7 @@ test("keeps fallback identity hidden while the owner README is loading", () => {
 
   expect(markup.includes("Project title")).toBe(false);
   expect(markup.includes("🚀")).toBe(false);
-  expect(markup.match(/data-slot="skeleton"/g)?.length).toBe(12);
+  expect(markup.match(/data-slot="skeleton"/g)?.length).toBe(13);
   expect(markup.includes("h-44 min-h-32 max-h-48")).toBe(true);
   expect(markup.includes("min-h-[320px]")).toBe(true);
 });

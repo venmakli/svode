@@ -9,10 +9,8 @@ import { PlateDocumentEditor } from "@/features/editor";
 import { PropertyPanel } from "@/features/properties/panel";
 import type { EntrySchemaResult } from "@/features/properties";
 import { useSpaceTreeSync } from "@/features/space";
-import {
-  isEntryTreeMetaField,
-  useEntryFieldSave,
-} from "../field-save";
+import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
+import { isEntryTreeMetaField, useEntryFieldSave } from "../field-save";
 import { propertyFieldSavePolicy } from "../property-field-save";
 import type { Entry, EntryCover } from "../model";
 import { handleError } from "../lib/errors";
@@ -26,7 +24,7 @@ interface EntryPeekSurfaceProps {
   spacePath: string;
   projectPath?: string | null;
   spaceId: string;
-  actions: ReactNode;
+  actions?: ReactNode;
   metadataBefore?: ReactNode;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onEntryChange: Dispatch<SetStateAction<Entry | null>>;
@@ -58,7 +56,7 @@ export function EntryPeekSurface({
 
   return (
     <div className="flex min-h-full flex-col">
-      <div className="shrink-0 px-6 py-5">
+      <div className={detailPageHeaderClassName}>
         <EntryIdentityHeader
           title={entry.meta.title}
           icon={entry.meta.icon}
@@ -89,7 +87,7 @@ export function EntryPeekSurface({
         />
 
         {schemaResult && schemaResult.schema.columns.length > 0 ? (
-          <div className="mt-4">
+          <div>
             <PropertyPanel
               spacePath={spacePath}
               projectPath={projectPath}
