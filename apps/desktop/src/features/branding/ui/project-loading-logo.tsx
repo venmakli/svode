@@ -73,6 +73,10 @@ const PETALS: PetalConfig[] = [
   },
 ];
 
+const PETAL_SIZES = PETALS.map(({ width }) => width);
+const MIN_PETAL_SIZE = Math.min(...PETAL_SIZES);
+const MAX_PETAL_SIZE = Math.max(...PETAL_SIZES);
+
 export function ProjectLoadingLogo() {
   return (
     <div aria-hidden="true" className="relative size-12">
@@ -102,14 +106,14 @@ function Petal({ config }: { config: PetalConfig }) {
     }
 
     const duration = 7_200 + Math.random() * 2_800;
-    const firstScale = randomScale();
+    const firstScale = randomScale(config);
     const scales = [
       firstScale,
-      randomScale(),
-      randomScale(),
-      randomScale(),
-      randomScale(),
-      randomScale(),
+      randomScale(config),
+      randomScale(config),
+      randomScale(config),
+      randomScale(config),
+      randomScale(config),
       firstScale,
     ];
     const keyframes = scales.map((scale) => ({
@@ -179,6 +183,13 @@ function toRem(value: number) {
   return `${(value / LOGO_SOURCE_SIZE) * LOGO_SIZE_REM}rem`;
 }
 
-function randomScale() {
-  return 0.88 + Math.random() * 0.24;
+function randomScale(config: PetalConfig) {
+  return petalScaleForProgress(config.width, Math.random());
+}
+
+export function petalScaleForProgress(baseSize: number, progress: number) {
+  const targetSize =
+    MIN_PETAL_SIZE + progress * (MAX_PETAL_SIZE - MIN_PETAL_SIZE);
+
+  return targetSize / baseSize;
 }
