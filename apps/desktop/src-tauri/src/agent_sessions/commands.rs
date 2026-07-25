@@ -3,6 +3,7 @@ use tauri::{AppHandle, State};
 use super::AgentSessionsState;
 use super::read_model;
 use super::reentry;
+use super::refresh::AgentSessionsReadKind;
 use super::types::{
     AgentSessionReentryResult, AgentSessionsHotStatusResult, AgentSessionsListResult,
     AgentSessionsPinResult,
@@ -18,15 +19,25 @@ pub async fn agent_sessions_list(
 ) -> Result<AgentSessionsListResult, AppError> {
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
-    run_blocking(move || {
-        read_model::list_sessions_with_surfaces(
-            &state,
-            project_path,
-            false,
-            terminal_manager.list_agent_surfaces()?,
+    let project_key = super::scope::normalize_project_path(&project_path)?
+        .to_string_lossy()
+        .into_owned();
+    let reads = state.reads.clone();
+    reads
+        .run(
+            project_key,
+            AgentSessionsReadKind::Discovery,
+            "agent_sessions_list",
+            move || {
+                read_model::list_sessions_with_surfaces(
+                    &state,
+                    project_path,
+                    false,
+                    terminal_manager.list_agent_surfaces()?,
+                )
+            },
         )
-    })
-    .await
+        .await
 }
 
 #[tauri::command]
@@ -37,15 +48,25 @@ pub async fn agent_sessions_refresh(
 ) -> Result<AgentSessionsListResult, AppError> {
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
-    run_blocking(move || {
-        read_model::list_sessions_with_surfaces(
-            &state,
-            project_path,
-            true,
-            terminal_manager.list_agent_surfaces()?,
+    let project_key = super::scope::normalize_project_path(&project_path)?
+        .to_string_lossy()
+        .into_owned();
+    let reads = state.reads.clone();
+    reads
+        .run(
+            project_key,
+            AgentSessionsReadKind::FullRefresh,
+            "agent_sessions_refresh",
+            move || {
+                read_model::list_sessions_with_surfaces(
+                    &state,
+                    project_path,
+                    true,
+                    terminal_manager.list_agent_surfaces()?,
+                )
+            },
         )
-    })
-    .await
+        .await
 }
 
 #[tauri::command]

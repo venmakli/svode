@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useTerminalStore } from "@/features/terminal/hooks/use-terminal-store";
+import { startCompletionDrivenPolling } from "@/features/terminal/lib/agent-session-sync";
 
 const AGENT_SESSION_SYNC_INTERVAL_MS = 5_000;
 
@@ -15,27 +16,33 @@ export function useTerminalAgentSessionSync(projectPath: string | null) {
   useEffect(() => {
     if (!projectPath) return;
 
-    void syncAgentSurfaceTabs().catch((error) => {
-      console.warn("Failed to sync terminal agent surfaces:", error);
-    });
-
-    if (!panelOpen) return;
-
-    void syncAgentSessionTabs(projectPath).catch((error) => {
-      console.warn("Failed to sync terminal agent sessions:", error);
-    });
-
-    const interval = window.setInterval(() => {
+    if (!panelOpen) {
       void syncAgentSurfaceTabs().catch((error) => {
-        console.warn("Failed to refresh terminal agent surfaces:", error);
+        console.warn("Failed to sync terminal agent surfaces:", error);
       });
-      void syncAgentSessionTabs(projectPath, { forceRefresh: true }).catch(
-        (error) => {
-          console.warn("Failed to refresh terminal agent sessions:", error);
-        },
-      );
-    }, AGENT_SESSION_SYNC_INTERVAL_MS);
+      return;
+    }
 
-    return () => window.clearInterval(interval);
+    return startCompletionDrivenPolling({
+      intervalMs: AGENT_SESSION_SYNC_INTERVAL_MS,
+      task: async () => {
+        const [surfaceSync, agentSessionSync] = await Promise.allSettled([
+          syncAgentSurfaceTabs(),
+          syncAgentSessionTabs(projectPath),
+        ]);
+        if (surfaceSync.status === "rejected") {
+          console.warn(
+            "Failed to refresh terminal agent surfaces:",
+            surfaceSync.reason,
+          );
+        }
+        if (agentSessionSync.status === "rejected") {
+          console.warn(
+            "Failed to refresh terminal agent sessions:",
+            agentSessionSync.reason,
+          );
+        }
+      },
+    });
   }, [panelOpen, projectPath, syncAgentSessionTabs, syncAgentSurfaceTabs]);
 }

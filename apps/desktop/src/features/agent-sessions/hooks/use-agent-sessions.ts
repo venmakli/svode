@@ -372,7 +372,7 @@ export function useAgentSessions(
   useEffect(() => {
     if (!projectPath || pendingTerminals.length === 0) return;
     const interval = window.setInterval(() => {
-      void load(true);
+      void load(false);
     }, PENDING_POLL_INTERVAL_MS);
     return () => window.clearInterval(interval);
   }, [load, pendingTerminals.length, projectPath]);

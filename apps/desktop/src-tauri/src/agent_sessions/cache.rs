@@ -16,6 +16,26 @@ pub(crate) struct AgentSessionsReadCache {
     sources: HashMap<AgentSessionSource, CachedSourceScan>,
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct AgentSessionsSourceScanLocks {
+    locks: std::sync::Mutex<HashMap<AgentSessionSource, std::sync::Arc<std::sync::Mutex<()>>>>,
+}
+
+impl AgentSessionsSourceScanLocks {
+    fn for_source(
+        &self,
+        source: AgentSessionSource,
+    ) -> Result<std::sync::Arc<std::sync::Mutex<()>>, AppError> {
+        let mut locks = self.locks.lock().map_err(|_| {
+            AppError::General("Agent sessions source scan lock registry poisoned".to_string())
+        })?;
+        Ok(locks
+            .entry(source)
+            .or_insert_with(|| std::sync::Arc::new(std::sync::Mutex::new(())))
+            .clone())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct CachedSourceScan {
     pub(super) fingerprint: String,
@@ -153,6 +173,12 @@ pub(super) fn read_source(
     source: AgentSessionSource,
     force_refresh: bool,
 ) -> Result<SourceRead, AppError> {
+    let requested_at = Instant::now();
+    let scan_lock = state.source_scan_locks.for_source(source)?;
+    let _scan_guard = scan_lock
+        .lock()
+        .map_err(|_| AppError::General("Agent sessions source scan lock poisoned".to_string()))?;
+    let scan_wait_ms = requested_at.elapsed().as_millis();
     let started = Instant::now();
     let root = source_root(&state.home_dir, source);
     let (fingerprint, report) = match source {
@@ -162,11 +188,13 @@ pub(super) fn read_source(
 
     if !force_refresh {
         if let Some(read) = cached_source_read(state, source, &fingerprint.value, started)? {
+            log_source_read(project, source, force_refresh, scan_wait_ms, &read);
             return Ok(read);
         }
         if let Some(read) =
             disk_cached_source_read(state, project, source, &fingerprint.value, started)?
         {
+            log_source_read(project, source, force_refresh, scan_wait_ms, &read);
             return Ok(read);
         }
     }
@@ -180,7 +208,39 @@ pub(super) fn read_source(
     scan.report.duration_ms = Some(started.elapsed().as_millis());
     cache_source_scan(state, source, &scan)?;
     cache_source_scan_on_disk(project, source, &scan);
-    Ok(source_read_from_scan(scan))
+    let read = source_read_from_scan(scan);
+    log_source_read(project, source, force_refresh, scan_wait_ms, &read);
+    Ok(read)
+}
+
+fn log_source_read(
+    project: &Path,
+    source: AgentSessionSource,
+    force_refresh: bool,
+    scan_wait_ms: u128,
+    read: &SourceRead,
+) {
+    tracing::info!(
+        target: "svode::agent_sessions",
+        event = "source_read_finished",
+        project_path = %project.display(),
+        source = source.as_str(),
+        force_refresh,
+        cache_hit = read.cache_hit,
+        cache_mode = if force_refresh {
+            "force-refresh"
+        } else if read.cache_hit {
+            "cache-hit"
+        } else {
+            "fresh-scan"
+        },
+        scan_wait_ms,
+        duration_ms = read.report.duration_ms.unwrap_or_default(),
+        files_scanned = read.report.counts.files_scanned,
+        records_read = read.report.counts.records_read,
+        malformed_lines = read.report.counts.malformed_lines,
+        source_errors = read.report.counts.source_errors,
+    );
 }
 
 pub(super) fn write_snapshot(
