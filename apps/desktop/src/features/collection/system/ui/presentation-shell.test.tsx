@@ -114,6 +114,11 @@ test("list shell renders owner content through field, control, action, and detai
   expect(markup.includes("Repository is read-only")).toBe(true);
   expect(markup.includes('data-system-collection-detail="true"')).toBe(true);
   expect(markup.includes("Row actions")).toBe(true);
+  expect(markup.includes('role="list"')).toBe(true);
+  expect(markup.includes('role="listitem"')).toBe(true);
+  expect(markup.includes('aria-label="Contributors"')).toBe(true);
+  expect(markup.includes('role="listbox"')).toBe(false);
+  expect(markup.includes('role="option"')).toBe(false);
 });
 
 test("cards shell uses the extracted responsive card layout without Entry", () => {

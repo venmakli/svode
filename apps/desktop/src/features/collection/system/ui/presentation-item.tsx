@@ -15,6 +15,7 @@ import {
 } from "../../ui/presentation-layout";
 import {
   createSystemCollectionDetailRequest,
+  isSystemCollectionInteractiveTarget,
   runSystemCollectionCallback,
 } from "../lib/interaction";
 import type {
@@ -51,26 +52,7 @@ interface SystemCollectionPresentationItemProps {
 function isInteractiveEvent(
   event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>,
 ) {
-  const target = event.target;
-  if (!(target instanceof HTMLElement) || target === event.currentTarget) {
-    return false;
-  }
-
-  return Boolean(
-    target.closest(
-      [
-        "button",
-        "a",
-        "input",
-        "textarea",
-        "select",
-        "[role='button']",
-        "[role='checkbox']",
-        "[data-system-collection-interactive]",
-        "[data-radix-collection-item]",
-      ].join(","),
-    ),
-  );
+  return isSystemCollectionInteractiveTarget(event.target, event.currentTarget);
 }
 
 export function SystemCollectionPresentationItem({
@@ -198,7 +180,7 @@ export function SystemCollectionPresentationItem({
   const content = descriptor.renderRowContent(row, renderContext);
   const rowActions = descriptor.rowActions ?? [];
   const commonProps = {
-    "aria-selected": selected,
+    "aria-current": selected || undefined,
     "data-system-collection-detail": detailEnabled || undefined,
     "data-system-collection-row": rowId,
     onClick: (event: MouseEvent<HTMLElement>) => {
@@ -237,7 +219,7 @@ export function SystemCollectionPresentationItem({
       }
     },
     ref: (element: HTMLElement | null) => registerRow(rowId, element),
-    role: "option" as const,
+    role: "listitem" as const,
     tabIndex,
   };
 

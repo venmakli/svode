@@ -9,7 +9,10 @@ import {
   CollectionListShell,
   CollectionListSkeleton,
 } from "../../ui/presentation-layout";
-import { resolveSystemCollectionFocusIndex } from "../lib/interaction";
+import {
+  createSystemCollectionPresentationScope,
+  resolveSystemCollectionFocusIndex,
+} from "../lib/interaction";
 import { readSystemCollectionPresentationRuntime } from "../model/runtime";
 import type {
   SystemCollectionDetailController,
@@ -21,6 +24,11 @@ import { SystemCollectionPresentationItem } from "./presentation-item";
 const defaultCardWidth = 224;
 const cardGap = 14;
 const emptyRows: readonly unknown[] = [];
+
+interface SystemCollectionSelectionState {
+  rowId: string;
+  scope: string;
+}
 
 export interface SystemCollectionPresentationShellProps {
   instanceKey: string;
@@ -43,7 +51,12 @@ export function SystemCollectionPresentationShell({
 }: SystemCollectionPresentationShellProps) {
   const { instance } = readSystemCollectionPresentationRuntime(presentation);
   const { descriptor, state } = instance;
-  const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
+  const presentationScope = createSystemCollectionPresentationScope(
+    instanceKey,
+    descriptor.id,
+  );
+  const [selection, setSelection] =
+    useState<SystemCollectionSelectionState | null>(null);
   const rowRefs = useRef(new Map<string, HTMLElement>());
   const cardsRef = useRef<HTMLDivElement | null>(null);
 
@@ -52,8 +65,19 @@ export function SystemCollectionPresentationShell({
     () => rows.map((row) => descriptor.getRowId(row)),
     [descriptor, rows],
   );
+  const selectedRowId =
+    selection?.scope === presentationScope ? selection.rowId : null;
   const effectiveSelectedRowId =
     selectedRowId && rowIds.includes(selectedRowId) ? selectedRowId : null;
+  const selectRow = useCallback(
+    (rowId: string) =>
+      setSelection((current) =>
+        current?.scope === presentationScope && current.rowId === rowId
+          ? current
+          : { rowId, scope: presentationScope },
+      ),
+    [presentationScope],
+  );
 
   const registerRow = useCallback(
     (rowId: string, element: HTMLElement | null) => {
@@ -93,10 +117,10 @@ export function SystemCollectionPresentationShell({
       if (!nextRowId) {
         return;
       }
-      setSelectedRowId(nextRowId);
+      selectRow(nextRowId);
       rowRefs.current.get(nextRowId)?.focus();
     },
-    [cardWidth, descriptor.renderer, rowIds],
+    [cardWidth, descriptor.renderer, rowIds, selectRow],
   );
 
   if (state.phase === "initial") {
@@ -148,7 +172,7 @@ export function SystemCollectionPresentationShell({
         rowId={rowId}
         selected={selected}
         tabIndex={selected || (!effectiveSelectedRowId && index === 0) ? 0 : -1}
-        onFocus={setSelectedRowId}
+        onFocus={selectRow}
         onInteractionError={onInteractionError}
         onMoveFocus={moveFocus}
         registerRow={registerRow}
@@ -160,14 +184,20 @@ export function SystemCollectionPresentationShell({
     <div className={cn(detailPageViewRowClassName, className)}>
       {descriptor.renderer === "cards" ? (
         <CollectionCardsShell
+          key={presentationScope}
           ref={cardsRef}
           cardWidth={cardWidth}
-          role="listbox"
+          role="list"
+          aria-label={descriptor.label}
         >
           {items}
         </CollectionCardsShell>
       ) : (
-        <CollectionListShell role="listbox" aria-orientation="vertical">
+        <CollectionListShell
+          key={presentationScope}
+          role="list"
+          aria-label={descriptor.label}
+        >
           {items}
         </CollectionListShell>
       )}

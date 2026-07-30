@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 
 import {
+  createSystemCollectionPresentationScope,
   createSystemCollectionDetailRequest,
+  isSystemCollectionInteractiveTarget,
   resolveSystemCollectionFocusIndex,
   runSystemCollectionCallback,
 } from "./interaction";
@@ -95,4 +97,48 @@ test("non-error callback rejection uses the localized fallback", async () => {
     message: "The action failed.",
     ok: false,
   });
+});
+
+test("presentation scope keeps instances and presentations isolated", () => {
+  expect(
+    createSystemCollectionPresentationScope("a:b", "c") ===
+      createSystemCollectionPresentationScope("a", "b:c"),
+  ).toBe(false);
+  expect(
+    createSystemCollectionPresentationScope("space:one", "actors") ===
+      createSystemCollectionPresentationScope("space:two", "actors"),
+  ).toBe(false);
+});
+
+test("interactive target detection accepts SVG-like descendants and focusable owner content", () => {
+  const currentTarget = {};
+  const svgLikeTarget = {
+    closest: (selector: string) =>
+      selector.includes("button") ? ({} as Element) : null,
+  };
+  const textLikeTarget = {
+    parentElement: {
+      closest: (selector: string) =>
+        selector.includes("[tabindex]") ? ({} as Element) : null,
+    },
+  };
+
+  expect(
+    isSystemCollectionInteractiveTarget(
+      svgLikeTarget as unknown as EventTarget,
+      currentTarget as EventTarget,
+    ),
+  ).toBe(true);
+  expect(
+    isSystemCollectionInteractiveTarget(
+      textLikeTarget as unknown as EventTarget,
+      currentTarget as EventTarget,
+    ),
+  ).toBe(true);
+  expect(
+    isSystemCollectionInteractiveTarget(
+      currentTarget as EventTarget,
+      currentTarget as EventTarget,
+    ),
+  ).toBe(false);
 });
