@@ -14,6 +14,7 @@ import {
   type QuerySort,
   type UseViewQueryResult,
 } from "../query";
+import { useControlledQueryEditor } from "../query/hooks";
 import type { SettingsPane } from "../model";
 
 export function useViewSettingsActions({
@@ -48,21 +49,62 @@ export function useViewSettingsActions({
   ) => Promise<void>;
   onSchemaChange: (schema: CollectionSchema) => void;
 }) {
-  const [filterDraft, setFilterDraft] = useState<{
-    index: number | null;
-    filter: QueryFilter;
-  } | null>(null);
-  const [sortDraft, setSortDraft] = useState<{
-    index: number | null;
-    sort: QuerySort;
-  } | null>(null);
   const [selectedProperty, setSelectedProperty] = useState("title");
 
   const customFieldIds = schema.columns.map((column) => column.name);
+  const editorFields = new Map<
+    string,
+    {
+      key: string;
+      createFilter?: () => QueryFilter;
+      createSort?: () => QuerySort;
+    }
+  >();
+  for (const field of queryFields(schema, "filter")) {
+    editorFields.set(field.name, {
+      ...editorFields.get(field.name),
+      key: field.name,
+      createFilter: () => ({
+        field: field.name,
+        op: defaultFilterOpForField(field),
+      }),
+    });
+  }
+  for (const field of queryFields(schema, "sort")) {
+    editorFields.set(field.name, {
+      ...editorFields.get(field.name),
+      key: field.name,
+      createSort: () => ({ field: field.name, desc: false }),
+    });
+  }
+  const controlledQuery = useControlledQueryEditor({
+    fields: [...editorFields.values()],
+    value: {
+      filters: query.merged.filter,
+      sort: query.merged.sort,
+    },
+    onChange: (change) =>
+      query.setLocalQuery({
+        ...(change.filters ? { filter: [...change.filters] } : {}),
+        ...(change.sort ? { sort: [...change.sort] } : {}),
+      }),
+  });
+  const filterDraft = controlledQuery.filterDraft
+    ? {
+        index: controlledQuery.filterDraft.index,
+        filter: controlledQuery.filterDraft.item,
+      }
+    : null;
+  const sortDraft = controlledQuery.sortDraft
+    ? {
+        index: controlledQuery.sortDraft.index,
+        sort: controlledQuery.sortDraft.item,
+      }
+    : null;
 
   function setPane(nextPane: SettingsPane) {
-    if (nextPane !== "filterEditor") setFilterDraft(null);
-    if (nextPane !== "sortEditor") setSortDraft(null);
+    if (nextPane !== "filterEditor") controlledQuery.setFilterDraft(null);
+    if (nextPane !== "sortEditor") controlledQuery.setSortDraft(null);
     onPaneChange(nextPane);
   }
 
@@ -113,44 +155,30 @@ export function useViewSettingsActions({
   }
 
   function openNewFilter(field?: QueryField) {
-    const selected = field ?? queryFields(schema, "filter")[0];
-    if (!selected) return;
-    setFilterDraft({
-      index: null,
-      filter: { field: selected.name, op: defaultFilterOpForField(selected) },
-    });
+    if (!controlledQuery.startFilter(field?.name)) return;
     setPane("filterEditor");
   }
 
   function openExistingFilter(filter: QueryFilter, index: number) {
-    setFilterDraft({ index, filter: { ...filter } });
+    controlledQuery.editFilter({ ...filter }, index);
     setPane("filterEditor");
   }
 
   function applyFilterDraft() {
-    if (!filterDraft) return;
-    const next = [...query.merged.filter];
-    if (filterDraft.index === null) next.push(filterDraft.filter);
-    else next[filterDraft.index] = filterDraft.filter;
-    query.setLocalQuery({ filter: next });
+    if (!controlledQuery.applyFilterDraft()) return;
     setPane("filter");
   }
 
   function clearFilterDraft() {
-    if (!filterDraft) return;
-    if (filterDraft.index !== null) {
-      query.setLocalQuery({
-        filter: query.merged.filter.filter(
-          (_, index) => index !== filterDraft.index,
-        ),
-      });
-    }
+    if (!controlledQuery.filterDraft) return;
+    controlledQuery.removeFilterDraft();
     setPane("filter");
   }
 
   function updateFilterDraft(filter: QueryFilter) {
-    if (!filterDraft) return;
-    setFilterDraft({ ...filterDraft, filter });
+    controlledQuery.setFilterDraft((current) =>
+      current ? { ...current, item: filter } : current,
+    );
   }
 
   function addSortRule() {
@@ -158,39 +186,30 @@ export function useViewSettingsActions({
   }
 
   function openNewSort(field?: QueryField) {
-    const selected = field ?? queryFields(schema, "sort")[0];
-    if (!selected) return;
-    setSortDraft({ index: null, sort: { field: selected.name, desc: false } });
+    if (!controlledQuery.startSort(field?.name)) return;
     setPane("sortEditor");
   }
 
   function openExistingSort(sort: QuerySort, index: number) {
-    setSortDraft({ index, sort: { ...sort } });
+    controlledQuery.editSort({ ...sort }, index);
     setPane("sortEditor");
   }
 
   function applySortDraft() {
-    if (!sortDraft) return;
-    const next = [...query.merged.sort];
-    if (sortDraft.index === null) next.push(sortDraft.sort);
-    else next[sortDraft.index] = sortDraft.sort;
-    query.setLocalQuery({ sort: next });
+    if (!controlledQuery.applySortDraft()) return;
     setPane("sort");
   }
 
   function clearSortDraft() {
-    if (!sortDraft) return;
-    if (sortDraft.index !== null) {
-      query.setLocalQuery({
-        sort: query.merged.sort.filter((_, index) => index !== sortDraft.index),
-      });
-    }
+    if (!controlledQuery.sortDraft) return;
+    controlledQuery.removeSortDraft();
     setPane("sort");
   }
 
   function updateSortDraft(sort: QuerySort) {
-    if (!sortDraft) return;
-    setSortDraft({ ...sortDraft, sort });
+    controlledQuery.setSortDraft((current) =>
+      current ? { ...current, item: sort } : current,
+    );
   }
 
   function nextColumnName() {
@@ -240,15 +259,11 @@ export function useViewSettingsActions({
       existingIndex >= 0 ? query.merged.filter[existingIndex] : null;
     const fieldInfo = queryField(schema, field, "filter");
     if (!existing && !fieldInfo) return;
-    setFilterDraft({
-      index: existingIndex >= 0 ? existingIndex : null,
-      filter: existing
-        ? { ...existing }
-        : {
-            field,
-            op: fieldInfo ? defaultFilterOpForField(fieldInfo) : "contains",
-          },
-    });
+    if (existing) {
+      controlledQuery.editFilter({ ...existing }, existingIndex);
+    } else if (!controlledQuery.startFilter(field)) {
+      return;
+    }
     setPane("filterEditor");
   }
 
@@ -258,10 +273,11 @@ export function useViewSettingsActions({
     );
     const existing =
       existingIndex >= 0 ? query.merged.sort[existingIndex] : null;
-    setSortDraft({
-      index: existingIndex >= 0 ? existingIndex : null,
-      sort: existing ? { ...existing } : { field, desc: false },
-    });
+    if (existing) {
+      controlledQuery.editSort({ ...existing }, existingIndex);
+    } else if (!controlledQuery.startSort(field)) {
+      return;
+    }
     setPane("sortEditor");
   }
 

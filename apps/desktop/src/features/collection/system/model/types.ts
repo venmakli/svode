@@ -108,9 +108,29 @@ export interface SystemCollectionQueryDescriptor<Row> {
 }
 
 export interface SystemCollectionQueryState {
-  search: string;
-  filters: readonly SystemCollectionFilterRule[];
-  sort: readonly SystemCollectionSortDescriptor[];
+  readonly search: string;
+  readonly filters: readonly SystemCollectionFilterRule[];
+  readonly sort: readonly SystemCollectionSortDescriptor[];
+}
+
+export type SystemCollectionQueryValidationIssueReason =
+  | "search-unavailable"
+  | "unknown-field"
+  | "invalid-operator"
+  | "invalid-value"
+  | "unsupported-filter"
+  | "unsupported-sort";
+
+export interface SystemCollectionQueryValidationIssue {
+  reason: SystemCollectionQueryValidationIssueReason;
+  fieldKey?: string;
+  operator?: string;
+}
+
+export interface SystemCollectionQueryValidationResult {
+  query: SystemCollectionQueryState;
+  issues: readonly SystemCollectionQueryValidationIssue[];
+  reset: boolean;
 }
 
 export interface SystemCollectionSortDescriptor {

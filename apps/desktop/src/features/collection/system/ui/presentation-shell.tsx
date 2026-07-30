@@ -13,11 +13,16 @@ import {
   createSystemCollectionPresentationScope,
   resolveSystemCollectionFocusIndex,
 } from "../lib/interaction";
+import {
+  applySystemCollectionQuery,
+  EMPTY_SYSTEM_COLLECTION_QUERY,
+} from "../model/query";
 import { readSystemCollectionPresentationRuntime } from "../model/runtime";
 import type {
   SystemCollectionDetailController,
   SystemCollectionInteractionError,
   SystemCollectionPresentationRuntime,
+  SystemCollectionQueryState,
 } from "../model/types";
 import { SystemCollectionPresentationItem } from "./presentation-item";
 
@@ -37,6 +42,7 @@ export interface SystemCollectionPresentationShellProps {
   className?: string;
   density?: "compact" | "comfortable";
   detailController?: SystemCollectionDetailController;
+  query?: SystemCollectionQueryState;
   onInteractionError?(error: SystemCollectionInteractionError): void;
 }
 
@@ -47,6 +53,7 @@ export function SystemCollectionPresentationShell({
   className,
   density = "comfortable",
   detailController,
+  query = EMPTY_SYSTEM_COLLECTION_QUERY,
   onInteractionError,
 }: SystemCollectionPresentationShellProps) {
   const { instance } = readSystemCollectionPresentationRuntime(presentation);
@@ -60,7 +67,18 @@ export function SystemCollectionPresentationShell({
   const rowRefs = useRef(new Map<string, HTMLElement>());
   const cardsRef = useRef<HTMLDivElement | null>(null);
 
-  const rows = state.phase === "ready" ? state.rows : emptyRows;
+  const queryResult = useMemo(
+    () =>
+      state.phase === "ready"
+        ? applySystemCollectionQuery({
+            descriptor,
+            query,
+            rows: state.rows,
+          })
+        : null,
+    [descriptor, query, state],
+  );
+  const rows = queryResult?.rows ?? emptyRows;
   const rowIds = useMemo(
     () => rows.map((row) => descriptor.getRowId(row)),
     [descriptor, rows],
@@ -150,7 +168,7 @@ export function SystemCollectionPresentationShell({
     );
   }
 
-  if (rows.length === 0 && state.sourceEmpty) {
+  if (queryResult?.sourceRows.length === 0 && state.sourceEmpty) {
     return (
       <div className={cn(detailPageViewRowClassName, className)}>
         {state.sourceEmpty}

@@ -1,6 +1,15 @@
 export { defineSystemCollectionPresentation } from "./system/model/runtime";
+export {
+  applySystemCollectionQuery,
+  EMPTY_SYSTEM_COLLECTION_QUERY,
+  normalizeSystemCollectionSearchText,
+  validateSystemCollectionQuery,
+} from "./system/model/query";
+export { useSystemCollectionState } from "./system/hooks/use-system-collection-state";
 export { SystemCollectionFixedTabs } from "./system/ui/fixed-presentation-tabs";
 export type { SystemCollectionFixedTabsProps } from "./system/ui/fixed-presentation-tabs";
+export { SystemCollectionQueryEditor } from "./system/ui/query-editor";
+export type { SystemCollectionQueryEditorProps } from "./system/ui/query-editor";
 export { SystemCollectionPresentationShell } from "./system/ui/presentation-shell";
 export type { SystemCollectionPresentationShellProps } from "./system/ui/presentation-shell";
 export type {
@@ -22,6 +31,9 @@ export type {
   SystemCollectionPresentationState,
   SystemCollectionQueryDescriptor,
   SystemCollectionQueryState,
+  SystemCollectionQueryValidationIssue,
+  SystemCollectionQueryValidationIssueReason,
+  SystemCollectionQueryValidationResult,
   SystemCollectionRenderer,
   SystemCollectionRowActionDescriptor,
   SystemCollectionRowRenderContext,

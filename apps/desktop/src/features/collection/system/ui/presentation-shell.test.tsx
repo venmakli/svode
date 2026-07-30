@@ -149,6 +149,33 @@ test("cards shell uses the extracted responsive card layout without Entry", () =
   expect(markup.includes("entry")).toBe(false);
 });
 
+test("ready presentation renders the controlled frontend query snapshot", () => {
+  const presentation = defineSystemCollectionPresentation<TestRow>({
+    descriptor: descriptor({
+      query: { getSearchText: (row) => row.name },
+      rowActions: [],
+      renderRowContent: (row) => <span>{row.name}</span>,
+    }),
+    state: {
+      phase: "ready",
+      rows: [
+        { enabled: true, id: "person:one", name: "Ilya" },
+        { enabled: true, id: "person:two", name: "Ada" },
+      ],
+    },
+  });
+  const markup = renderToStaticMarkup(
+    <SystemCollectionPresentationShell
+      instanceKey="space:root:actors"
+      presentation={presentation}
+      query={{ filters: [], search: " ada ", sort: [] }}
+    />,
+  );
+
+  expect(markup.includes("Ada")).toBe(true);
+  expect(markup.includes("Ilya")).toBe(false);
+});
+
 test("initial presentation uses renderer-specific extracted skeleton", () => {
   const presentation = defineSystemCollectionPresentation<TestRow>({
     descriptor: descriptor({ renderer: "cards" }),
