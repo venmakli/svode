@@ -22,6 +22,7 @@ interface SpaceSidebarProps {
   identityAvatarColor: string;
   mainSurface: MainSurface;
   onActivateContent: () => void;
+  onBeforeNavigation: () => Promise<boolean>;
   onOpenInbox: () => void;
   onOpenSessions: () => void;
   onOpenSearch: () => void;
@@ -34,6 +35,7 @@ export function SpaceSidebar({
   identityAvatarColor,
   mainSurface,
   onActivateContent,
+  onBeforeNavigation,
   onOpenInbox,
   onOpenSessions,
   onOpenSearch,
@@ -58,7 +60,10 @@ export function SpaceSidebar({
           onOpenSessions={onOpenSessions}
           onOpenSearch={onOpenSearch}
         />
-        <NavSpaces onActivateContent={onActivateContent} />
+        <NavSpaces
+          onActivateContent={onActivateContent}
+          onBeforeNavigation={onBeforeNavigation}
+        />
       </SidebarContent>
 
       <SidebarFooter>

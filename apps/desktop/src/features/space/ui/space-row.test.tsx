@@ -54,6 +54,7 @@ const props: ComponentProps<typeof SpaceRow> = {
   loadTreeChildren: async () => {},
   onScopeStateChange: noop,
   onActivateContent: noop,
+  onBeforeNavigation: async () => true,
   editRef: createRef<HTMLInputElement>(),
   rootPath: "/__space-row-drag-test__",
   loading: false,

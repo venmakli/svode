@@ -16,7 +16,11 @@ import { dedupKey } from "../lib/utils";
 import type { SearchItem } from "../model";
 import * as m from "@/paraglide/messages.js";
 
-export function CommandPalette() {
+export function CommandPalette({
+  onBeforeNavigation,
+}: {
+  onBeforeNavigation?: () => Promise<boolean>;
+} = {}) {
   const open = useCommandPaletteStore((s) => s.open);
   const setOpen = useCommandPaletteStore((s) => s.setOpen);
   const activeRootPath = useSpace((s) => s.activeRootPath);
@@ -28,6 +32,7 @@ export function CommandPalette() {
       activeRootPath={activeRootPath}
       open={open}
       setOpen={setOpen}
+      onBeforeNavigation={onBeforeNavigation}
     />
   );
 }
@@ -36,14 +41,16 @@ function CommandPaletteDialog({
   activeRootPath,
   open,
   setOpen,
+  onBeforeNavigation,
 }: {
   activeRootPath: string | null;
   open: boolean;
   setOpen: (open: boolean) => void;
+  onBeforeNavigation?: () => Promise<boolean>;
 }) {
   const [query, setQuery] = useState("");
   const search = useSearch(query, activeRootPath);
-  const handleSelect = useSelectResult();
+  const handleSelect = useSelectResult({ onBeforeNavigation });
 
   const showProgress =
     search.totalSpaces > 1 &&
@@ -83,7 +90,7 @@ function SearchResults({
   onSelect,
 }: {
   search: ReturnType<typeof useSearch>;
-  onSelect: (item: SearchItem) => void;
+  onSelect: (item: SearchItem) => void | Promise<void>;
 }) {
   if (search.isEmpty) {
     if (search.recent.length === 0) {

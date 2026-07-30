@@ -36,7 +36,7 @@ interface RootScopeRowProps {
   open: boolean;
   tree: TreeNode[];
   onOpenChange: (open: boolean) => void;
-  onOpenHome: () => void;
+  onOpenHome: () => void | Promise<void>;
   onNewPage: () => void;
   onNewFolder: () => void;
   onNewCollection: () => void;
@@ -50,6 +50,7 @@ interface RootScopeRowProps {
     parentPath?: string | null,
   ) => Promise<void>;
   onActivateContent: () => void;
+  onBeforeNavigation: () => Promise<boolean>;
 }
 
 export function RootScopeRow({
@@ -70,6 +71,7 @@ export function RootScopeRow({
   treeLoaded,
   loadTreeChildren,
   onActivateContent,
+  onBeforeNavigation,
 }: RootScopeRowProps) {
   return (
     <Collapsible asChild open={open} onOpenChange={onOpenChange}>
@@ -126,6 +128,7 @@ export function RootScopeRow({
                     spaceId={spaceId}
                     loadTreeChildren={loadTreeChildren}
                     onActivateContent={onActivateContent}
+                    onBeforeNavigation={onBeforeNavigation}
                     projectPath={rootPath}
                     spacePath={rootPath}
                   />

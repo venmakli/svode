@@ -8,13 +8,15 @@ export function ResultItem({
   onSelect,
 }: {
   item: SearchItem;
-  onSelect: (item: SearchItem) => void;
+  onSelect: (item: SearchItem) => void | Promise<void>;
 }) {
   const context = `${item.spaceName} · ${parentDir(item.path)}`;
   return (
     <CommandItem
       value={dedupKey(item)}
-      onSelect={() => onSelect(item)}
+      onSelect={() => {
+        void onSelect(item);
+      }}
       className="flex flex-col items-stretch gap-0.5 py-2"
     >
       <div className="flex w-full items-center gap-2">

@@ -71,6 +71,7 @@ interface FileTreeItemProps {
     parentPath?: string | null,
   ) => Promise<void>;
   onActivateContent?: () => void;
+  onBeforeNavigation?: () => Promise<boolean>;
   projectPath: string;
   spacePath: string;
 }
@@ -80,6 +81,7 @@ export function FileTreeItem({
   spaceId,
   loadTreeChildren,
   onActivateContent,
+  onBeforeNavigation,
   projectPath,
   spacePath,
 }: FileTreeItemProps) {
@@ -115,6 +117,7 @@ export function FileTreeItem({
     spaceId,
     loadTreeChildren,
     onActivateContent,
+    onBeforeNavigation,
   });
 
   const { activeId, activeFolderPath, overId, projection, flatItemsMap } =
@@ -442,6 +445,7 @@ export function FileTreeItem({
                     spaceId={spaceId}
                     loadTreeChildren={loadTreeChildren}
                     onActivateContent={onActivateContent}
+                    onBeforeNavigation={onBeforeNavigation}
                     projectPath={projectPath}
                     spacePath={spacePath}
                   />

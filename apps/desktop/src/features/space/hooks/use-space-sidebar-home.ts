@@ -17,6 +17,7 @@ interface UseSpaceSidebarHomeInput {
   ) => void;
   activeRootRevealKey: string | null;
   onActivateContent: () => void;
+  onBeforeNavigation: () => Promise<boolean>;
   openSpace: (id: string) => Promise<void>;
 }
 
@@ -28,6 +29,7 @@ export function useSpaceSidebarHome({
   getScopeCollapseState,
   setScopeCollapseState,
   onActivateContent,
+  onBeforeNavigation,
   openSpace,
 }: UseSpaceSidebarHomeInput) {
   const openScopeHome = useOpenEntryScopeHome();
@@ -44,8 +46,9 @@ export function useSpaceSidebarHome({
       scopeState: getScopeCollapseState(activeRootId),
     });
 
-  const handleOpenRootHome = useCallback(() => {
+  const handleOpenRootHome = useCallback(async () => {
     if (!activeRootId) return;
+    if (!(await onBeforeNavigation())) return;
 
     onActivateContent();
     clearActiveSpace();
@@ -54,16 +57,18 @@ export function useSpaceSidebarHome({
     activeRootId,
     clearActiveSpace,
     onActivateContent,
+    onBeforeNavigation,
     openScopeHome,
   ]);
 
   const handleOpenSpaceHome = useCallback(
     async (space: SpaceInfo) => {
+      if (!(await onBeforeNavigation())) return;
       onActivateContent();
       openScopeHome(space.id);
       void openSpace(space.id);
     },
-    [onActivateContent, openScopeHome, openSpace],
+    [onActivateContent, onBeforeNavigation, openScopeHome, openSpace],
   );
 
   return {

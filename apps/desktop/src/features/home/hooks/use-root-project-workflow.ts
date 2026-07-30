@@ -7,10 +7,12 @@ import { useOpenRootProjectFolder } from "./use-open-root-project-folder";
 import { useRootProjectNavigation } from "./use-root-project-navigation";
 
 interface UseRootProjectWorkflowInput {
+  beforeRootOpen?: () => Promise<boolean>;
   onRootOpened?: () => void;
 }
 
 export function useRootProjectWorkflow({
+  beforeRootOpen,
   onRootOpened,
 }: UseRootProjectWorkflowInput = {}) {
   const { rootSpaces, isLoadingRoots, loadRootSpaces, explicitHome } =
@@ -18,6 +20,7 @@ export function useRootProjectWorkflow({
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
   const { openLastProject, openProject } = useRootProjectNavigation({
+    beforeRootOpen,
     onRootOpened,
   });
 

@@ -32,6 +32,10 @@ import { useSpace } from "@/features/space";
 import { cn } from "@/shared/lib/utils";
 import { useShellStore } from "./model";
 import * as m from "@/paraglide/messages.js";
+import {
+  runSystemCollectionNavigation,
+  useSystemCollectionDetailController,
+} from "@/features/collection/system";
 
 interface ProjectSwitcherProps {
   className?: string;
@@ -43,6 +47,7 @@ export function ProjectSwitcher({
   showSettingsButton = true,
 }: ProjectSwitcherProps) {
   const navigate = useNavigate();
+  const detailController = useSystemCollectionDetailController();
   const {
     rootSpaces,
     activeRootId,
@@ -70,11 +75,16 @@ export function ProjectSwitcher({
     setCloneAuthOpen,
     setCloneDialogOpen,
     setCreateDialogOpen,
-  } = useRootProjectWorkflow({ onRootOpened: openContentSurface });
+  } = useRootProjectWorkflow({
+    beforeRootOpen: detailController.prepareForNavigation,
+    onRootOpened: openContentSurface,
+  });
 
   function handleHome() {
-    goHome();
-    navigate({ to: "/" });
+    void runSystemCollectionNavigation(detailController, () => {
+      goHome();
+      navigate({ to: "/" });
+    });
   }
 
   function handleProjectSettings() {

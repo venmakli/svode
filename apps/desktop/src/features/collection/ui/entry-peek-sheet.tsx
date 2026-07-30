@@ -20,6 +20,7 @@ import type {
   EntryPeekTarget,
 } from "../model";
 import type { CalendarScope } from "../model/calendar-types";
+import { useOptionalSystemCollectionDetailController } from "../system/hooks/detail-controller-context";
 import * as m from "@/paraglide/messages.js";
 
 interface EntryPeekSheetProps {
@@ -63,6 +64,7 @@ export function EntryPeekSheet({
   onDuplicateTemplate,
   renderNested,
 }: EntryPeekSheetProps) {
+  const detailController = useOptionalSystemCollectionDetailController();
   const open = Boolean(target);
   const effectiveSpacePath = target?.spacePath ?? spacePath;
   const effectiveProjectPath = target?.projectPath ?? projectPath;
@@ -102,7 +104,20 @@ export function EntryPeekSheet({
     ) : null;
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (nextOpen || !detailController) {
+          onOpenChange(nextOpen);
+          return;
+        }
+        void detailController.prepareForNavigation().then((canClose) => {
+          if (canClose) {
+            onOpenChange(false);
+          }
+        });
+      }}
+    >
       <SheetContent
         side="right"
         showCloseButton={false}

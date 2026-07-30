@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useId,
   useState,
   type KeyboardEvent,
   type MouseEvent,
@@ -37,6 +38,7 @@ import {
 interface SystemCollectionPresentationItemProps {
   descriptor: SystemCollectionPresentationDescriptor<unknown>;
   detailController?: SystemCollectionDetailController;
+  detailFocusFallback?(): HTMLElement | null;
   density: "compact" | "comfortable";
   instanceKey: string;
   row: unknown;
@@ -58,6 +60,7 @@ function isInteractiveEvent(
 export function SystemCollectionPresentationItem({
   descriptor,
   detailController,
+  detailFocusFallback,
   density,
   instanceKey,
   row,
@@ -70,6 +73,7 @@ export function SystemCollectionPresentationItem({
   registerRow,
 }: SystemCollectionPresentationItemProps) {
   const [detailError, setDetailError] = useState<string | null>(null);
+  const focusTargetId = useId();
   const detailEnabled = Boolean(
     descriptor.createDetailRequest && detailController,
   );
@@ -106,7 +110,12 @@ export function SystemCollectionPresentationItem({
         rowId,
       });
       if (request) {
-        await detailController.open(request);
+        await detailController.open(request, {
+          fallbackFocus: () =>
+            document.getElementById(focusTargetId) ??
+            detailFocusFallback?.() ??
+            null,
+        });
       }
     }, m.system_collection_callback_error());
 
@@ -114,7 +123,16 @@ export function SystemCollectionPresentationItem({
       setDetailError(result.message);
       reportError("detail", undefined, result.message);
     }
-  }, [descriptor, detailController, instanceKey, reportError, row, rowId]);
+  }, [
+    descriptor,
+    detailController,
+    detailFocusFallback,
+    focusTargetId,
+    instanceKey,
+    reportError,
+    row,
+    rowId,
+  ]);
 
   const renderContext: SystemCollectionRowRenderContext = {
     openDetail: () => {
@@ -183,6 +201,7 @@ export function SystemCollectionPresentationItem({
     "aria-current": selected || undefined,
     "data-system-collection-detail": detailEnabled || undefined,
     "data-system-collection-row": rowId,
+    id: focusTargetId,
     onClick: (event: MouseEvent<HTMLElement>) => {
       if (isInteractiveEvent(event)) {
         return;

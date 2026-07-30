@@ -19,8 +19,13 @@ import { useSpace } from "@/features/space";
 import { isTerminalKeyboardEvent } from "@/features/terminal";
 import { useShellStore } from "../model";
 import * as m from "@/paraglide/messages.js";
+import {
+  runSystemCollectionNavigation,
+  useSystemCollectionDetailController,
+} from "@/features/collection/system";
 
 export function useKeyboardShortcuts() {
+  const detailController = useSystemCollectionDetailController();
   const closeDocument = useCloseEntryDocument();
   const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
   const { toggleChatPanel, openAppSettings } = useShellStore();
@@ -85,14 +90,16 @@ export function useKeyboardShortcuts() {
       // Cmd+W — close document
       if (isMeta && e.key === "w") {
         e.preventDefault();
-        closeDocument();
+        void runSystemCollectionNavigation(detailController, closeDocument);
       }
 
       // Cmd+Shift+O — go to home / all projects
       if (isMeta && e.shiftKey && e.key === "o") {
         e.preventDefault();
-        goHome();
-        navigate({ to: "/" });
+        void runSystemCollectionNavigation(detailController, () => {
+          goHome();
+          navigate({ to: "/" });
+        });
       }
     }
 
@@ -108,6 +115,7 @@ export function useKeyboardShortcuts() {
     openAppSettings,
     goHome,
     navigate,
+    detailController,
   ]);
 }
 

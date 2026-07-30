@@ -76,6 +76,7 @@ export function SystemCollectionPresentationShell({
     useState<SystemCollectionSelectionState | null>(null);
   const rowRefs = useRef(new Map<string, HTMLElement>());
   const cardsRef = useRef<HTMLDivElement | null>(null);
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
 
   const queryResult = useMemo(
     () =>
@@ -182,6 +183,7 @@ export function SystemCollectionPresentationShell({
         key={rowId}
         descriptor={descriptor}
         detailController={detailController}
+        detailFocusFallback={() => surfaceRef.current}
         density={density}
         instanceKey={instanceKey}
         row={row}
@@ -202,11 +204,14 @@ export function SystemCollectionPresentationShell({
 
   return (
     <div
+      ref={surfaceRef}
       className={cn(
         detailPageViewRowClassName,
         "flex flex-col gap-3",
         className,
       )}
+      data-system-collection-surface
+      tabIndex={-1}
     >
       {state.refreshing || createAction ? (
         <div

@@ -11,6 +11,7 @@ export type ScopeTarget = { id: string; path: string };
 interface UseSpaceScopeActionsInput {
   activeRootPath: string | null;
   onActivateContent: () => void;
+  onBeforeNavigation?: () => Promise<boolean>;
   reloadTreeParent: (
     spaceId: string,
     parentPath?: string | null,
@@ -20,6 +21,7 @@ interface UseSpaceScopeActionsInput {
 export function useSpaceScopeActions({
   activeRootPath,
   onActivateContent,
+  onBeforeNavigation,
   reloadTreeParent,
 }: UseSpaceScopeActionsInput) {
   const { createEntry } = useSpaceActions();
@@ -27,6 +29,7 @@ export function useSpaceScopeActions({
 
   const handleNewPage = useCallback(
     async (scope: ScopeTarget) => {
+      if (onBeforeNavigation && !(await onBeforeNavigation())) return;
       try {
         const entry = await createEntry(scope.path, "Untitled");
         if (entry) {
@@ -38,7 +41,7 @@ export function useSpaceScopeActions({
         toast.error(m.toast_error());
       }
     },
-    [createEntry, onActivateContent, openDocument],
+    [createEntry, onActivateContent, onBeforeNavigation, openDocument],
   );
 
   const handleNewFolder = useCallback(
@@ -64,6 +67,7 @@ export function useSpaceScopeActions({
   const handleNewCollection = useCallback(
     async (scope: ScopeTarget) => {
       if (!activeRootPath) return;
+      if (onBeforeNavigation && !(await onBeforeNavigation())) return;
 
       try {
         const entry = await createCollection({
@@ -79,7 +83,13 @@ export function useSpaceScopeActions({
         toast.error(m.toast_error());
       }
     },
-    [activeRootPath, onActivateContent, openDocument, reloadTreeParent],
+    [
+      activeRootPath,
+      onActivateContent,
+      onBeforeNavigation,
+      openDocument,
+      reloadTreeParent,
+    ],
   );
 
   return {

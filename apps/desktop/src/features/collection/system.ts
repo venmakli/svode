@@ -6,6 +6,11 @@ export {
   validateSystemCollectionQuery,
 } from "./system/model/query";
 export { useSystemCollectionState } from "./system/hooks/use-system-collection-state";
+export {
+  useOptionalSystemCollectionDetailController,
+  useSystemCollectionDetailController,
+} from "./system/hooks/detail-controller-context";
+export { runSystemCollectionNavigation } from "./system/model/detail-controller";
 export { SystemCollectionFixedTabs } from "./system/ui/fixed-presentation-tabs";
 export type { SystemCollectionFixedTabsProps } from "./system/ui/fixed-presentation-tabs";
 export { SystemCollectionQueryEditor } from "./system/ui/query-editor";
@@ -16,6 +21,7 @@ export type {
   SystemCollectionActionState,
   SystemCollectionCreateAction,
   SystemCollectionDetailController,
+  SystemCollectionDetailFocusOptions,
   SystemCollectionDetailRequest,
   SystemCollectionDetailSelection,
   SystemCollectionFieldDescriptor,

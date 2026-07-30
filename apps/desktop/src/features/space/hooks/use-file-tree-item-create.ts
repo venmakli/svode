@@ -26,6 +26,7 @@ interface UseFileTreeItemCreateInput {
   reloadTreePathParent: (spaceId: string, path: string) => Promise<void>;
   removeTreePath: (spaceId: string, path: string) => void;
   toggleExpanded: (spaceId: string, path: string) => void;
+  onBeforeNavigation?: () => Promise<boolean>;
 }
 
 export function useFileTreeItemCreate({
@@ -40,9 +41,11 @@ export function useFileTreeItemCreate({
   reloadTreePathParent,
   removeTreePath,
   toggleExpanded,
+  onBeforeNavigation,
 }: UseFileTreeItemCreateInput) {
   async function handleNewPage() {
     if (!space) return;
+    if (onBeforeNavigation && !(await onBeforeNavigation())) return;
     try {
       const { parentPath, parentNodePath } = await resolveTreeChildTarget({
         spacePath: space.path,
@@ -73,6 +76,7 @@ export function useFileTreeItemCreate({
 
   async function handleMakeDocument() {
     if (!space || !bareFolder) return;
+    if (onBeforeNavigation && !(await onBeforeNavigation())) return;
     try {
       const readmePath = await makeBareFolderDocument({
         spacePath: space.path,
@@ -91,6 +95,7 @@ export function useFileTreeItemCreate({
 
   async function handleMakeCollection() {
     if (!space || node.has_schema) return;
+    if (onBeforeNavigation && !(await onBeforeNavigation())) return;
     try {
       if (bareFolder) {
         const entry = await convertTreeBareFolderToCollection({

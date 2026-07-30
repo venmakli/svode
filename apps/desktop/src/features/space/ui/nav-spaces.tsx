@@ -42,9 +42,13 @@ import { SpaceRow } from "./space-row";
 
 interface NavSpacesProps {
   onActivateContent: () => void;
+  onBeforeNavigation: () => Promise<boolean>;
 }
 
-export function NavSpaces({ onActivateContent }: NavSpacesProps) {
+export function NavSpaces({
+  onActivateContent,
+  onBeforeNavigation,
+}: NavSpacesProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 6 },
@@ -91,7 +95,7 @@ export function NavSpaces({ onActivateContent }: NavSpacesProps) {
     spaces,
     treeLoading,
     treeRefreshing,
-  } = useSpaceSidebarActions({ onActivateContent });
+  } = useSpaceSidebarActions({ onActivateContent, onBeforeNavigation });
 
   if (!activeRootId || !activeRootPath) return null;
 
@@ -148,6 +152,7 @@ export function NavSpaces({ onActivateContent }: NavSpacesProps) {
               treeLoaded={hasRecordKey(fileTrees, activeRootId)}
               loadTreeChildren={loadTreeChildren}
               onActivateContent={onActivateContent}
+              onBeforeNavigation={onBeforeNavigation}
             />
             <DndContext
               sensors={sensors}
@@ -197,6 +202,7 @@ export function NavSpaces({ onActivateContent }: NavSpacesProps) {
                         setSidebarScopeCollapseState(space.id, state)
                       }
                       onActivateContent={onActivateContent}
+                      onBeforeNavigation={onBeforeNavigation}
                       editRef={editRef}
                       rootPath={activeRootPath}
                       loading={treeLoading[space.id] ?? false}

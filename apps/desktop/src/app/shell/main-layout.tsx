@@ -1,4 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import type { PanelImperativeHandle } from "react-resizable-panels";
@@ -20,6 +27,11 @@ import {
   useOpenCommandPalette,
 } from "@/features/search/app-shell";
 import { TerminalPanelHost } from "@/features/terminal";
+import { SystemCollectionDetailDrawerProvider } from "@/features/collection/app-shell";
+import {
+  runSystemCollectionNavigation,
+  useSystemCollectionDetailController,
+} from "@/features/collection/system";
 import { useSpace, useSpaceActions } from "@/features/space";
 import { SpaceFileWatcher, SpaceSidebar } from "@/features/space/app-shell";
 import {
@@ -51,6 +63,7 @@ interface ShellLayoutContentProps {
   identityEmail: string | null;
   mainSurface: "content" | "inbox" | "sessions";
   onActivateContent: () => void;
+  onBeforeNavigation: () => Promise<boolean>;
   onOpenInbox: () => void;
   onOpenSessions: () => void;
   onOpenSearch: () => void;
@@ -65,7 +78,16 @@ interface DesktopResizableShellProps {
 }
 
 export function MainLayout() {
+  return (
+    <SystemCollectionDetailDrawerProvider>
+      <MainLayoutRuntime />
+    </SystemCollectionDetailDrawerProvider>
+  );
+}
+
+function MainLayoutRuntime() {
   const navigate = useNavigate();
+  const detailController = useSystemCollectionDetailController();
   useKeyboardShortcuts();
   useAppGitFocus();
   const { activeRootId, activeRootName, activeRootPath, explicitHome } =
@@ -89,6 +111,16 @@ export function MainLayout() {
       "--sidebar-width": `${sidebarWidth}px`,
     }),
     [sidebarWidth],
+  );
+  const prepareForNavigation = useCallback(
+    () => detailController.prepareForNavigation(),
+    [detailController],
+  );
+  const runNavigation = useCallback(
+    (transition: () => void) => {
+      void runSystemCollectionNavigation(detailController, transition);
+    },
+    [detailController],
   );
 
   useEffect(() => {
@@ -136,15 +168,16 @@ export function MainLayout() {
           identityEmail={identityEmail}
           mainSurface={mainSurface}
           onActivateContent={openContentSurface}
-          onOpenInbox={openInboxSurface}
-          onOpenSessions={openSessionsSurface}
+          onBeforeNavigation={prepareForNavigation}
+          onOpenInbox={() => runNavigation(openInboxSurface)}
+          onOpenSessions={() => runNavigation(openSessionsSurface)}
           onOpenSearch={() => setCommandPaletteOpen(true)}
           onOpenAppSettings={openAppSettings}
         />
         <SpaceFileWatcher />
         {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
         <GitMissingDialog open={available === false} onRecheck={recheck} />
-        <CommandPalette />
+        <CommandPalette onBeforeNavigation={prepareForNavigation} />
       </SidebarProvider>
     </TooltipProvider>
   );
@@ -156,6 +189,7 @@ function ShellLayoutContent({
   identityEmail,
   mainSurface,
   onActivateContent,
+  onBeforeNavigation,
   onOpenInbox,
   onOpenSessions,
   onOpenSearch,
@@ -172,6 +206,7 @@ function ShellLayoutContent({
       identityAvatarColor={avatarColorFromEmail(identityEmail)}
       mainSurface={mainSurface}
       onActivateContent={onActivateContent}
+      onBeforeNavigation={onBeforeNavigation}
       onOpenInbox={onOpenInbox}
       onOpenSessions={onOpenSessions}
       onOpenSearch={onOpenSearch}
@@ -219,9 +254,7 @@ function DesktopResizableShell({
     initialSidebarWidth === SHELL_SIDEBAR_WIDTH_DEFAULT,
   );
   const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null);
-  const commitSidebarWidth = useShellStore(
-    (store) => store.commitSidebarWidth,
-  );
+  const commitSidebarWidth = useShellStore((store) => store.commitSidebarWidth);
 
   useLayoutEffect(() => {
     if (initialSidebarWidth === SHELL_SIDEBAR_WIDTH_DEFAULT) return;

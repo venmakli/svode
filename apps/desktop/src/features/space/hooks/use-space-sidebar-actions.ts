@@ -19,10 +19,12 @@ export type { DeleteSpaceTarget, ScopeTarget };
 
 interface UseSpaceSidebarActionsInput {
   onActivateContent: () => void;
+  onBeforeNavigation: () => Promise<boolean>;
 }
 
 export function useSpaceSidebarActions({
   onActivateContent,
+  onBeforeNavigation,
 }: UseSpaceSidebarActionsInput) {
   const {
     activeRootId,
@@ -114,6 +116,7 @@ export function useSpaceSidebarActions({
     ensureTreeLoaded,
     getScopeCollapseState: sidebarTreeExpansion.getScopeCollapseState,
     onActivateContent,
+    onBeforeNavigation,
     openSpace,
     setScopeCollapseState: sidebarTreeExpansion.setScopeCollapseState,
   });
@@ -132,6 +135,7 @@ export function useSpaceSidebarActions({
     useSpaceScopeActions({
       activeRootPath,
       onActivateContent,
+      onBeforeNavigation,
       reloadTreeParent,
     });
   const handleDeleteSpace = useSpaceSidebarDelete({

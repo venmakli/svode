@@ -6,7 +6,7 @@ import { getRootProjectErrorDescription } from "../lib/root-project-errors";
 import type { CreateProjectSubmit } from "../model/root-project";
 
 interface UseCreateRootProjectInput {
-  openProject: (id: string) => Promise<void>;
+  openProject: (id: string) => Promise<boolean | void>;
   setCreateDialogOpen: (open: boolean) => void;
 }
 

@@ -6,7 +6,7 @@ import { pickRootProjectFolder } from "../api/root-project-actions";
 import { getRootProjectErrorDescription } from "../lib/root-project-errors";
 
 interface UseOpenRootProjectFolderInput {
-  openProject: (id: string) => Promise<void>;
+  openProject: (id: string) => Promise<boolean | void>;
 }
 
 export function useOpenRootProjectFolder({

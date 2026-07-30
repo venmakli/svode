@@ -21,6 +21,7 @@ interface UseFileTreeItemActionsInput {
   spaceId: string;
   loadTreeChildren: LoadTreeChildren;
   onActivateContent?: () => void;
+  onBeforeNavigation?: () => Promise<boolean>;
 }
 
 function isBareFolder(node: TreeNode): boolean {
@@ -32,6 +33,7 @@ export function useFileTreeItemActions({
   spaceId,
   loadTreeChildren,
   onActivateContent,
+  onBeforeNavigation,
 }: UseFileTreeItemActionsInput) {
   const openDocument = useOpenEntryDocument();
   const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
@@ -95,6 +97,7 @@ export function useFileTreeItemActions({
     reloadTreePathParent,
     removeTreePath,
     toggleExpanded,
+    onBeforeNavigation,
   });
 
   const deletion = useFileTreeItemDelete({
@@ -117,6 +120,7 @@ export function useFileTreeItemActions({
     activeSpaceId,
     loadTreeChildren,
     onActivateContent,
+    onBeforeNavigation,
     openDocument,
     toggleExpanded,
   });

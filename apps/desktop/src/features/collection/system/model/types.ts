@@ -192,9 +192,17 @@ export interface SystemCollectionDetailRequest {
   canClose?: () => boolean | Promise<boolean>;
 }
 
+export interface SystemCollectionDetailFocusOptions {
+  returnFocus?: () => HTMLElement | null;
+  fallbackFocus?: () => HTMLElement | null;
+}
+
 export interface SystemCollectionDetailController {
-  open(request: SystemCollectionDetailRequest): Promise<boolean>;
-  close(): Promise<boolean>;
+  open(
+    request: SystemCollectionDetailRequest,
+    focusOptions?: SystemCollectionDetailFocusOptions,
+  ): Promise<boolean>;
+  close(selection?: SystemCollectionDetailSelection): Promise<boolean>;
   prepareForNavigation(): Promise<boolean>;
 }
 

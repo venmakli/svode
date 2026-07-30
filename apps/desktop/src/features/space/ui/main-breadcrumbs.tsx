@@ -14,7 +14,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useMainBreadcrumbs } from "../hooks/use-main-breadcrumbs";
 
-export function MainBreadcrumbs() {
+export function MainBreadcrumbs({
+  onBeforeNavigation,
+}: {
+  onBeforeNavigation?: () => Promise<boolean>;
+} = {}) {
   const {
     activeDocument,
     openDocument,
@@ -59,7 +63,12 @@ export function MainBreadcrumbs() {
                 <WorkspaceBreadcrumb
                   label={workspaceName}
                   workspaces={workspaces}
-                  onSwitch={openSpace}
+                  onSwitch={async (spaceId) => {
+                    if (onBeforeNavigation && !(await onBeforeNavigation())) {
+                      return;
+                    }
+                    await openSpace(spaceId);
+                  }}
                 />
               </BreadcrumbItem>
               {segments.length > 0 && (
@@ -80,7 +89,14 @@ export function MainBreadcrumbs() {
               <BreadcrumbItem className="min-w-0">
                 <button
                   className="block max-w-[220px] truncate text-left transition-colors hover:text-foreground"
-                  onClick={() => openDocument(seg.path, treeId ?? undefined)}
+                  onClick={() => {
+                    void (async () => {
+                      if (onBeforeNavigation && !(await onBeforeNavigation())) {
+                        return;
+                      }
+                      openDocument(seg.path, treeId ?? undefined);
+                    })();
+                  }}
                 >
                   {seg.label}
                 </button>
@@ -103,7 +119,7 @@ function WorkspaceBreadcrumb({
 }: {
   label: string;
   workspaces: { id: string; name: string; icon: string }[];
-  onSwitch: (id: string) => void;
+  onSwitch: (id: string) => void | Promise<void>;
 }) {
   const { state } = useSidebar();
   const isSidebarCollapsed = state === "collapsed";

@@ -18,7 +18,7 @@ import { projectNameFromCloneUrl } from "../model/project-clone";
 import type { CloneProjectSubmit, CloningProject } from "../model/root-project";
 
 interface UseCloneRootProjectInput {
-  openProject: (id: string) => Promise<void>;
+  openProject: (id: string) => Promise<boolean | void>;
   setCloneDialogOpen: (open: boolean) => void;
 }
 

@@ -19,6 +19,7 @@ import { buildProjectTerminalTarget } from "@/features/terminal";
 import { MainBreadcrumbs } from "@/features/space/app-shell";
 import { ProjectOpenersMenu } from "./project-openers-menu";
 import { ProjectSwitcher } from "./project-switcher";
+import { useSystemCollectionDetailController } from "@/features/collection/system";
 
 function isMacPlatform() {
   if (typeof navigator === "undefined") return false;
@@ -92,6 +93,7 @@ export function ShellChrome() {
 }
 
 export function WindowHeader() {
+  const detailController = useSystemCollectionDetailController();
   const activeDocument = useActiveEntryDocument();
   const toggleChatPanel = useShellStore((state) => state.toggleChatPanel);
   const mainSurface = useShellStore((state) => state.mainSurface);
@@ -125,7 +127,11 @@ export function WindowHeader() {
       )}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        {showBreadcrumbs && <MainBreadcrumbs />}
+        {showBreadcrumbs && (
+          <MainBreadcrumbs
+            onBeforeNavigation={detailController.prepareForNavigation}
+          />
+        )}
       </div>
 
       <div className="flex shrink-0 items-center gap-1">

@@ -15,6 +15,7 @@ interface UseFileTreeItemNavigationInput {
   activeSpaceId: string | null;
   loadTreeChildren: LoadTreeChildren;
   onActivateContent?: () => void;
+  onBeforeNavigation?: () => Promise<boolean>;
   openDocument: (path: string, spaceId: string) => void;
   toggleExpanded: (spaceId: string, path: string) => void;
 }
@@ -28,10 +29,14 @@ export function useFileTreeItemNavigation({
   activeSpaceId,
   loadTreeChildren,
   onActivateContent,
+  onBeforeNavigation,
   openDocument,
   toggleExpanded,
 }: UseFileTreeItemNavigationInput) {
-  function activateDocumentNode() {
+  async function activateDocumentNode() {
+    if (onBeforeNavigation && !(await onBeforeNavigation())) {
+      return;
+    }
     onActivateContent?.();
     const isRootWorkspace = spaceId === activeRootId;
     if (isRootWorkspace && activeSpaceId) {
@@ -44,7 +49,7 @@ export function useFileTreeItemNavigation({
 
   function handleDocumentClick() {
     if (node.has_schema) {
-      activateDocumentNode();
+      void activateDocumentNode();
       return;
     }
     if (bareFolder) {
@@ -52,7 +57,7 @@ export function useFileTreeItemNavigation({
       toggleExpanded(spaceId, node.path);
       return;
     }
-    activateDocumentNode();
+    void activateDocumentNode();
   }
 
   function handleNodeOpenChange(open: boolean) {

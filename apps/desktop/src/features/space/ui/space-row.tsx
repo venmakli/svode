@@ -66,7 +66,7 @@ interface SpaceRowProps {
   handleNewPage: (scope: ScopeTarget) => void;
   handleNewFolder: (scope: ScopeTarget) => void;
   handleNewCollection: (scope: ScopeTarget) => void;
-  openScopeHome: (ws: SpaceInfo) => void;
+  openScopeHome: (ws: SpaceInfo) => void | Promise<void>;
   setDeleteTarget: (target: DeleteSpaceTarget) => void;
   handleCloneMissing: (spaceId: string, spacePath: string) => void;
   handleRemoveBroken: (spaceId: string) => void;
@@ -78,6 +78,7 @@ interface SpaceRowProps {
   ) => Promise<void>;
   onScopeStateChange: (state: SpaceScopeCollapseState) => void;
   onActivateContent: () => void;
+  onBeforeNavigation: () => Promise<boolean>;
   editRef: RefObject<HTMLInputElement | null>;
   rootPath: string;
   loading: boolean;
@@ -107,6 +108,7 @@ export function SpaceRow({
   loadTreeChildren,
   onScopeStateChange,
   onActivateContent,
+  onBeforeNavigation,
   editRef,
   rootPath,
   loading,
@@ -311,6 +313,7 @@ export function SpaceRow({
                     spaceId={ws.id}
                     loadTreeChildren={loadTreeChildren}
                     onActivateContent={onActivateContent}
+                    onBeforeNavigation={onBeforeNavigation}
                     projectPath={rootPath}
                     spacePath={ws.path}
                   />

@@ -11,7 +11,11 @@ import * as m from "@/paraglide/messages.js";
 // (status refetch from in-memory SpaceConfig) but only the v1 subset:
 // ready → open, anything else → toast. The `missing` ghost-clone modal and
 // `ready+missing-file` toast land with Phase 7 §Q8 (cross-space links).
-export function useSelectResult() {
+export function useSelectResult({
+  onBeforeNavigation,
+}: {
+  onBeforeNavigation?: () => Promise<boolean>;
+} = {}) {
   const spaces = useSpace((s) => s.spaces);
   const activeRootId = useSpace((s) => s.activeRootId);
   const openSpace = useSpace((s) => s.openSpace);
@@ -20,7 +24,7 @@ export function useSelectResult() {
   const setOpen = useCommandPaletteStore((s) => s.setOpen);
 
   return useCallback(
-    (item: SearchItem) => {
+    async (item: SearchItem) => {
       if (item.spaceId !== null) {
         const target = spaces.find((s) => s.id === item.spaceId);
         if (!target || target.status !== "ready") {
@@ -29,19 +33,34 @@ export function useSelectResult() {
         }
       }
 
+      if (onBeforeNavigation && !(await onBeforeNavigation())) {
+        return;
+      }
+
       if (item.spaceId === null) {
         clearActiveSpace();
       } else if (item.spaceId !== getSpaceSnapshot().activeSpaceId) {
         void openSpace(item.spaceId);
       }
 
-      const targetSpaceId =
-        item.spaceId === null ? activeRootId : item.spaceId;
-      openDocument(joinAbs(item.spacePath, item.path), targetSpaceId ?? undefined, {
-        reveal: true,
-      });
+      const targetSpaceId = item.spaceId === null ? activeRootId : item.spaceId;
+      openDocument(
+        joinAbs(item.spacePath, item.path),
+        targetSpaceId ?? undefined,
+        {
+          reveal: true,
+        },
+      );
       setOpen(false);
     },
-    [spaces, activeRootId, clearActiveSpace, openSpace, openDocument, setOpen],
+    [
+      spaces,
+      activeRootId,
+      clearActiveSpace,
+      onBeforeNavigation,
+      openSpace,
+      openDocument,
+      setOpen,
+    ],
   );
 }
