@@ -23,6 +23,7 @@ const allowedFeatureSubpathExceptions = new Set([
   // Public feature subentrypoints that intentionally avoid wider root barrels.
   "@/features/collection/app-shell",
   "@/features/collection/scope-surface",
+  "@/features/collection/system",
   "@/features/editor/file-tree-sync",
   "@/features/entry/app-shell",
   "@/features/entry/detail",
