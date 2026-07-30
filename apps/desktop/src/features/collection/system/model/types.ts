@@ -178,6 +178,15 @@ export interface SystemCollectionDetailController {
   prepareForNavigation(): Promise<boolean>;
 }
 
+export interface SystemCollectionInteractionError {
+  kind: "action" | "detail" | "field";
+  instanceKey: string;
+  presentationId: string;
+  rowId: string;
+  targetId?: string;
+  message: string;
+}
+
 export type SystemCollectionDeveloperDiagnosticCode =
   | "async-field-value"
   | "duplicate-action-id"

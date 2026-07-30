@@ -23,12 +23,15 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import { SortableGalleryCard } from "./gallery-card";
 import type { GalleryViewProps } from "../../model/gallery-types";
 import { isFolderEntry, isNestedCollectionEntry } from "../../lib/gallery-view";
 import { useGalleryViewRuntime } from "../../hooks/gallery/use-gallery-view-runtime";
+import {
+  CollectionCardsShell,
+  CollectionCardsSkeleton,
+} from "../presentation-layout";
 import * as m from "@/paraglide/messages.js";
 
 export function GalleryView(props: GalleryViewProps) {
@@ -117,13 +120,7 @@ export function GalleryView(props: GalleryViewProps) {
       onDragEnd={(event) => void handleDragEnd(event)}
     >
       <div className={detailPageViewRowClassName}>
-        <div
-          ref={gridRef}
-          className="grid items-stretch gap-3.5"
-          style={{
-            gridTemplateColumns: `repeat(auto-fill, minmax(${cardWidth}px, 1fr))`,
-          }}
-        >
+        <CollectionCardsShell ref={gridRef} cardWidth={cardWidth}>
           <SortableContext
             items={filteredEntries.map((entry) => entry.path)}
             strategy={rectSortingStrategy}
@@ -178,7 +175,7 @@ export function GalleryView(props: GalleryViewProps) {
             onCreate={() => void createDraft()}
             onCancel={cancelDraft}
           />
-        </div>
+        </CollectionCardsShell>
       </div>
     </DndContext>
   );
@@ -272,30 +269,7 @@ function EmptyState({
 function GallerySkeleton({ cardWidth }: { cardWidth: number }) {
   return (
     <div className={detailPageViewRowClassName}>
-      <div
-        className="grid gap-3.5"
-        style={{
-          gridTemplateColumns: `repeat(auto-fill, minmax(${cardWidth}px, 1fr))`,
-        }}
-      >
-        {Array.from({ length: 8 }).map((_, index) => (
-          <Card
-            key={index}
-            size="sm"
-            className="gap-0 overflow-hidden py-0 shadow-none ring-1 ring-foreground/10"
-          >
-            <Skeleton className="aspect-video w-full rounded-none" />
-            <CardContent className="flex flex-col gap-2 p-3">
-              <Skeleton className="h-4 w-4/5" />
-              <Skeleton className="h-3 w-3/5" />
-              <div className="flex gap-1.5">
-                <Skeleton className="h-5 w-14" />
-                <Skeleton className="h-5 w-16" />
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      <CollectionCardsSkeleton cardWidth={cardWidth} />
     </div>
   );
 }

@@ -20,6 +20,7 @@ import {
 import { cn } from "@/shared/lib/utils";
 import { CardPropertyFlow } from "../card-property-flow";
 import { EntryTitleIcon } from "../entry-title-icon";
+import { CollectionListRowShell } from "../presentation-layout";
 import type { ListRowProps } from "./types";
 import * as m from "@/paraglide/messages.js";
 
@@ -96,15 +97,12 @@ function ListRowContent({
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <div
+        <CollectionListRowShell
           ref={rowRef}
           tabIndex={0}
           data-list-row-path={entry.path}
-          className={cn(
-            "group/list-row grid grid-cols-[18px_minmax(0,1fr)_auto] items-center gap-2 border-b border-border/60 px-3 outline-none transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/40",
-            density === "compact" ? "min-h-10 py-1.5" : "min-h-[52px] py-2",
-            focused && "bg-muted/50",
-          )}
+          density={density}
+          selected={focused}
           style={{ paddingLeft: `${12 + row.level * 18}px` }}
           onFocus={() => onFocusRow(entry.path)}
           onClick={(event) => {
@@ -215,7 +213,7 @@ function ListRowContent({
             onRequestActors={onRequestActors}
             onUpdateField={onUpdateField}
           />
-        </div>
+        </CollectionListRowShell>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-48">
         <ContextMenuItem onClick={() => onOpen(entry, row.nestedCollection)}>

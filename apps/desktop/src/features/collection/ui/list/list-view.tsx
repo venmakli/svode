@@ -21,11 +21,14 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import { SortableListRow } from "./list-row";
 import type { ListViewProps } from "../../model/list-types";
 import { useListViewRuntime } from "../../hooks/list/use-list-view-runtime";
+import {
+  CollectionListShell,
+  CollectionListSkeleton,
+} from "../presentation-layout";
 import * as m from "@/paraglide/messages.js";
 
 export function ListView(props: ListViewProps) {
@@ -110,7 +113,7 @@ export function ListView(props: ListViewProps) {
       onDragEnd={(event) => void handleDragEnd(event)}
     >
       <div className={detailPageViewRowClassName}>
-        <div className="overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10">
+        <CollectionListShell>
           <SortableContext
             items={rows.map((row) => row.entry.path)}
             strategy={verticalListSortingStrategy}
@@ -144,7 +147,7 @@ export function ListView(props: ListViewProps) {
               />
             ))}
           </SortableContext>
-        </div>
+        </CollectionListShell>
         <div
           ref={footerRef}
           className="flex items-center justify-between gap-3 px-1 py-3"
@@ -218,26 +221,7 @@ function EmptyState({
 function ListSkeleton({ density }: { density: "compact" | "comfortable" }) {
   return (
     <div className={detailPageViewRowClassName}>
-      <div className="overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10">
-        {Array.from({ length: 8 }).map((_, index) => (
-          <div
-            key={index}
-            className="grid grid-cols-[24px_minmax(0,1fr)_auto] items-center gap-3 border-b border-border/60 px-4 py-3 last:border-b-0"
-          >
-            <Skeleton className="size-4" />
-            <div className="flex min-w-0 flex-col gap-2">
-              <Skeleton className="h-4 w-48 max-w-full" />
-              {density === "comfortable" ? (
-                <Skeleton className="h-3 w-72 max-w-full" />
-              ) : null}
-            </div>
-            <div className="flex items-center gap-2">
-              <Skeleton className="h-5 w-16" />
-              <Skeleton className="h-5 w-20" />
-            </div>
-          </div>
-        ))}
-      </div>
+      <CollectionListSkeleton density={density} />
     </div>
   );
 }

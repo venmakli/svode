@@ -3,7 +3,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Copy, Database, FileText, Folder, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { CardContent } from "@/components/ui/card";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -13,6 +13,7 @@ import {
 import { cn } from "@/shared/lib/utils";
 import { CardPropertyFlow } from "../card-property-flow";
 import { EntryTitleIcon } from "../entry-title-icon";
+import { CollectionCardShell } from "../presentation-layout";
 import { GalleryCover } from "./gallery-cover";
 import type { GalleryCardProps } from "./types";
 import * as m from "@/paraglide/messages.js";
@@ -90,16 +91,14 @@ function GalleryCardContent({
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <Card
+        <CollectionCardShell
           ref={cardRef}
           tabIndex={0}
           data-gallery-card-path={entry.path}
+          selected={focused}
           className={cn(
-            "group/gallery-card relative h-full gap-0 overflow-hidden rounded-lg bg-card py-0 shadow-none ring-1 ring-foreground/10 outline-none transition-[box-shadow,transform,background]",
-            "hover:-translate-y-px hover:shadow-sm hover:ring-foreground/15 focus-visible:ring-2 focus-visible:ring-ring/40",
             "cursor-pointer",
             !disabledReorder && "active:cursor-grabbing",
-            focused && "ring-2 ring-ring/50",
           )}
           onFocus={() => onFocusCard(entry.path)}
           onClick={(event) => {
@@ -182,7 +181,7 @@ function GalleryCardContent({
               onUpdateField={onUpdateField}
             />
           </CardContent>
-        </Card>
+        </CollectionCardShell>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-48">
         <ContextMenuItem onClick={() => onOpen(entry, nestedCollection)}>
