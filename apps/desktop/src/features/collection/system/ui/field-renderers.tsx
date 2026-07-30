@@ -106,7 +106,7 @@ export function SystemCollectionFieldControl({
       : ownerState.status === "error"
         ? ownerState.message
         : undefined);
-  const status = localError ? "error" : ownerState.status;
+  const status = localError ? "error" : pending ? "pending" : ownerState.status;
   const validation = validatePropertyValue(column, value);
 
   return (

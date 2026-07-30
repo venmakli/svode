@@ -2,9 +2,11 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { defineSystemCollectionPresentation } from "../model/runtime";
+import { EMPTY_SYSTEM_COLLECTION_QUERY } from "../model/query";
 import type {
   SystemCollectionDetailController,
   SystemCollectionPresentationDescriptor,
+  SystemCollectionQueryState,
 } from "../model/types";
 import { SystemCollectionPresentationShell } from "./presentation-shell";
 
@@ -19,6 +21,8 @@ const detailController: SystemCollectionDetailController = {
   open: async () => true,
   prepareForNavigation: async () => true,
 };
+
+function onQueryChange(_query: SystemCollectionQueryState) {}
 
 function descriptor(
   overrides: Partial<SystemCollectionPresentationDescriptor<TestRow>> = {},
@@ -101,6 +105,8 @@ test("list shell renders owner content through field, control, action, and detai
       instanceKey="space:root:actors"
       presentation={presentation}
       detailController={detailController}
+      query={EMPTY_SYSTEM_COLLECTION_QUERY}
+      onQueryChange={onQueryChange}
     />,
   );
 
@@ -140,6 +146,8 @@ test("cards shell uses the extracted responsive card layout without Entry", () =
       instanceKey="space:root:context"
       presentation={presentation}
       cardWidth={248}
+      query={EMPTY_SYSTEM_COLLECTION_QUERY}
+      onQueryChange={onQueryChange}
     />,
   );
 
@@ -169,6 +177,7 @@ test("ready presentation renders the controlled frontend query snapshot", () => 
       instanceKey="space:root:actors"
       presentation={presentation}
       query={{ filters: [], search: " ada ", sort: [] }}
+      onQueryChange={onQueryChange}
     />,
   );
 
@@ -185,6 +194,8 @@ test("initial presentation uses renderer-specific extracted skeleton", () => {
     <SystemCollectionPresentationShell
       instanceKey="space:root:context"
       presentation={presentation}
+      query={EMPTY_SYSTEM_COLLECTION_QUERY}
+      onQueryChange={onQueryChange}
     />,
   );
 
@@ -208,9 +219,173 @@ test("renderFieldControl fails closed for custom field semantics", () => {
     <SystemCollectionPresentationShell
       instanceKey="space:root:actors"
       presentation={presentation}
+      query={EMPTY_SYSTEM_COLLECTION_QUERY}
+      onQueryChange={onQueryChange}
     />,
   );
 
   expect(markup.includes("standard editable property control")).toBe(true);
   expect(markup.includes("data-system-collection-diagnostic")).toBe(true);
+});
+
+test("ready presentation keeps stale rows visible with refresh, diagnostics, attention, and create", () => {
+  const presentation = defineSystemCollectionPresentation<TestRow>({
+    descriptor: descriptor({
+      create: {
+        getState: () => ({ status: "pending" }),
+        id: "add-contributor",
+        label: "Add contributor",
+        run: () => undefined,
+      },
+      rowActions: [],
+      renderRowContent: (row) => <span>{row.name}</span>,
+    }),
+    state: {
+      attention: <span>Review identity</span>,
+      diagnostics: [<span key="source">Git history is incomplete</span>],
+      phase: "ready",
+      refreshing: true,
+      rows: [{ enabled: true, id: "person:one", name: "Ilya" }],
+    },
+  });
+  const markup = renderToStaticMarkup(
+    <SystemCollectionPresentationShell
+      instanceKey="space:root:actors"
+      presentation={presentation}
+      query={EMPTY_SYSTEM_COLLECTION_QUERY}
+      onQueryChange={onQueryChange}
+    />,
+  );
+
+  expect(markup.includes("Ilya")).toBe(true);
+  expect(markup.includes("Updating")).toBe(true);
+  expect(markup.includes("data-system-collection-refreshing")).toBe(true);
+  expect(markup.includes("data-system-collection-attention")).toBe(true);
+  expect(markup.includes("Review identity")).toBe(true);
+  expect(markup.includes("data-system-collection-diagnostics")).toBe(true);
+  expect(markup.includes("Git history is incomplete")).toBe(true);
+  expect(
+    markup.includes('data-system-collection-create="add-contributor"'),
+  ).toBe(true);
+  expect(markup.includes('data-system-collection-create-state="pending"')).toBe(
+    true,
+  );
+});
+
+test("source-empty is resolved after fixed predicate and uses owner content or neutral fallback", () => {
+  const neutral = defineSystemCollectionPresentation<TestRow>({
+    descriptor: descriptor({
+      query: { fixedPredicate: (row) => row.enabled },
+      rowActions: [],
+    }),
+    state: {
+      phase: "ready",
+      rows: [{ enabled: false, id: "hidden", name: "Hidden" }],
+    },
+  });
+  const owner = defineSystemCollectionPresentation<TestRow>({
+    descriptor: descriptor({
+      query: { fixedPredicate: (row) => row.enabled },
+      rowActions: [],
+    }),
+    state: {
+      phase: "ready",
+      rows: [],
+      sourceEmpty: <div>Connect a repository to discover contributors</div>,
+    },
+  });
+  const neutralMarkup = renderToStaticMarkup(
+    <SystemCollectionPresentationShell
+      instanceKey="space:root:actors"
+      presentation={neutral}
+      query={{ filters: [], search: "hidden", sort: [] }}
+      onQueryChange={onQueryChange}
+    />,
+  );
+  const ownerMarkup = renderToStaticMarkup(
+    <SystemCollectionPresentationShell
+      instanceKey="space:root:actors-owner-empty"
+      presentation={owner}
+      query={EMPTY_SYSTEM_COLLECTION_QUERY}
+      onQueryChange={onQueryChange}
+    />,
+  );
+
+  expect(neutralMarkup.includes("No items yet")).toBe(true);
+  expect(neutralMarkup.includes("No results")).toBe(false);
+  expect(neutralMarkup.includes("Hidden")).toBe(false);
+  expect(
+    ownerMarkup.includes("Connect a repository to discover contributors"),
+  ).toBe(true);
+  expect(ownerMarkup.includes("No items yet")).toBe(false);
+});
+
+test("query-empty has a common reset action while source rows still exist", () => {
+  const presentation = defineSystemCollectionPresentation<TestRow>({
+    descriptor: descriptor({
+      query: { getSearchText: (row) => row.name },
+      rowActions: [],
+    }),
+    state: {
+      attention: <span>Catalog is read-only</span>,
+      diagnostics: [<span key="partial">One source was unavailable</span>],
+      phase: "ready",
+      rows: [{ enabled: true, id: "person:one", name: "Ilya" }],
+    },
+  });
+  const markup = renderToStaticMarkup(
+    <SystemCollectionPresentationShell
+      instanceKey="space:root:actors"
+      presentation={presentation}
+      query={{ filters: [], search: "Ada", sort: [] }}
+      onQueryChange={onQueryChange}
+    />,
+  );
+
+  expect(markup.includes("No results")).toBe(true);
+  expect(markup.includes("Reset query")).toBe(true);
+  expect(markup.includes("Ilya")).toBe(false);
+  expect(markup.includes("Catalog is read-only")).toBe(true);
+  expect(markup.includes("One source was unavailable")).toBe(true);
+});
+
+test("read-only presentation omits create and blocking errors stay presentation-local", () => {
+  const blocked = defineSystemCollectionPresentation<TestRow>({
+    descriptor: descriptor({ id: "broken", rowActions: [] }),
+    state: {
+      error: "Descriptor failed",
+      phase: "blocking_error",
+    },
+  });
+  const ready = defineSystemCollectionPresentation<TestRow>({
+    descriptor: descriptor({ id: "healthy", rowActions: [] }),
+    state: {
+      phase: "ready",
+      rows: [{ enabled: true, id: "person:one", name: "Ilya" }],
+    },
+  });
+  const blockedMarkup = renderToStaticMarkup(
+    <SystemCollectionPresentationShell
+      instanceKey="space:root:actors"
+      presentation={blocked}
+      query={EMPTY_SYSTEM_COLLECTION_QUERY}
+      onQueryChange={onQueryChange}
+    />,
+  );
+  const readyMarkup = renderToStaticMarkup(
+    <SystemCollectionPresentationShell
+      instanceKey="space:root:actors"
+      presentation={ready}
+      query={EMPTY_SYSTEM_COLLECTION_QUERY}
+      onQueryChange={onQueryChange}
+    />,
+  );
+
+  expect(blockedMarkup.includes("Descriptor failed")).toBe(true);
+  expect(blockedMarkup.includes("data-system-collection-blocking-error")).toBe(
+    true,
+  );
+  expect(readyMarkup.includes("Ilya")).toBe(true);
+  expect(readyMarkup.includes("Descriptor failed")).toBe(false);
+  expect(readyMarkup.includes("data-system-collection-create")).toBe(false);
 });

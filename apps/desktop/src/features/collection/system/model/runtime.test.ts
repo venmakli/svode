@@ -166,6 +166,29 @@ test("property adapters require property value semantics", () => {
   expect(runtime.diagnostics[0]?.code).toBe("invalid-property-adapter");
 });
 
+test("standard field editing requires property value semantics", () => {
+  const field: SystemCollectionFieldDescriptor<TestRow> = {
+    edit: {
+      getState: () => ({ status: "idle" }),
+      update: async () => undefined,
+    },
+    getValue: (row) => row.name,
+    key: "name",
+    label: "Name",
+    valueSemantics: {
+      kind: "custom",
+      render: (value) => String(value),
+    },
+  };
+  const presentation = testPresentation({
+    descriptor: testDescriptor({ fields: [field] }),
+  });
+  const runtime = readSystemCollectionPresentationRuntime(presentation);
+
+  expect(runtime.instance.state.phase).toBe("blocking_error");
+  expect(runtime.diagnostics[0]?.code).toBe("invalid-property-adapter");
+});
+
 test("stable field and action ids and unique descriptor keys are validated", () => {
   const field: SystemCollectionFieldDescriptor<TestRow> = {
     getValue: (row) => row.name,

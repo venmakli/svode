@@ -72,6 +72,15 @@ function validateField<Row>(
     );
   }
 
+  if (field.edit && field.valueSemantics?.kind !== "property") {
+    diagnostics.push(
+      diagnostic(
+        "invalid-property-adapter",
+        `Field "${field.key}" declares standard editing without property value semantics.`,
+      ),
+    );
+  }
+
   return diagnostics;
 }
 

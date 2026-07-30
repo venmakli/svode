@@ -76,7 +76,7 @@ export function SystemCollectionPresentationItem({
 
   const reportError = useCallback(
     (
-      kind: SystemCollectionInteractionError["kind"],
+      kind: Exclude<SystemCollectionInteractionError["kind"], "create">,
       targetId: string | undefined,
       message: string,
     ) => {

@@ -24,7 +24,15 @@ import type {
   SystemCollectionPresentationRuntime,
   SystemCollectionQueryState,
 } from "../model/types";
+import { SystemCollectionCreateActionButton } from "./create-action";
 import { SystemCollectionPresentationItem } from "./presentation-item";
+import {
+  SystemCollectionBlockingError,
+  SystemCollectionQueryEmpty,
+  SystemCollectionReadySignals,
+  SystemCollectionRefreshingStatus,
+  SystemCollectionSourceEmpty,
+} from "./presentation-states";
 
 const defaultCardWidth = 224;
 const cardGap = 14;
@@ -42,7 +50,8 @@ export interface SystemCollectionPresentationShellProps {
   className?: string;
   density?: "compact" | "comfortable";
   detailController?: SystemCollectionDetailController;
-  query?: SystemCollectionQueryState;
+  query: SystemCollectionQueryState;
+  onQueryChange(query: SystemCollectionQueryState): void;
   onInteractionError?(error: SystemCollectionInteractionError): void;
 }
 
@@ -53,7 +62,8 @@ export function SystemCollectionPresentationShell({
   className,
   density = "comfortable",
   detailController,
-  query = EMPTY_SYSTEM_COLLECTION_QUERY,
+  query,
+  onQueryChange,
   onInteractionError,
 }: SystemCollectionPresentationShellProps) {
   const { instance } = readSystemCollectionPresentationRuntime(presentation);
@@ -157,21 +167,9 @@ export function SystemCollectionPresentationShell({
   if (state.phase === "blocking_error") {
     return (
       <div className={cn(detailPageViewRowClassName, className)}>
-        <div
-          role="alert"
-          className="text-sm text-destructive"
-          data-system-collection-diagnostic
-        >
+        <SystemCollectionBlockingError>
           {state.error}
-        </div>
-      </div>
-    );
-  }
-
-  if (queryResult?.sourceRows.length === 0 && state.sourceEmpty) {
-    return (
-      <div className={cn(detailPageViewRowClassName, className)}>
-        {state.sourceEmpty}
+        </SystemCollectionBlockingError>
       </div>
     );
   }
@@ -198,9 +196,54 @@ export function SystemCollectionPresentationShell({
     );
   });
 
+  const sourceEmpty = queryResult?.sourceRows.length === 0;
+  const queryEmpty = !sourceEmpty && rows.length === 0;
+  const createAction = descriptor.create;
+
   return (
-    <div className={cn(detailPageViewRowClassName, className)}>
-      {descriptor.renderer === "cards" ? (
+    <div
+      className={cn(
+        detailPageViewRowClassName,
+        "flex flex-col gap-3",
+        className,
+      )}
+    >
+      {state.refreshing || createAction ? (
+        <div
+          className="flex min-h-7 items-center justify-between gap-3"
+          data-system-collection-toolbar
+        >
+          {state.refreshing ? <SystemCollectionRefreshingStatus /> : null}
+          {createAction ? (
+            <div className="ml-auto">
+              <SystemCollectionCreateActionButton
+                key={`${presentationScope}:${createAction.id}`}
+                action={createAction}
+                onRejected={(message) =>
+                  onInteractionError?.({
+                    instanceKey,
+                    kind: "create",
+                    message,
+                    presentationId: descriptor.id,
+                    targetId: createAction.id,
+                  })
+                }
+              />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      <SystemCollectionReadySignals
+        attention={state.attention}
+        diagnostics={state.diagnostics}
+      />
+      {sourceEmpty ? (
+        (state.sourceEmpty ?? <SystemCollectionSourceEmpty />)
+      ) : queryEmpty ? (
+        <SystemCollectionQueryEmpty
+          onClear={() => onQueryChange(EMPTY_SYSTEM_COLLECTION_QUERY)}
+        />
+      ) : descriptor.renderer === "cards" ? (
         <CollectionCardsShell
           key={presentationScope}
           ref={cardsRef}

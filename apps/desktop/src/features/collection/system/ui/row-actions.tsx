@@ -94,7 +94,7 @@ function useSystemCollectionRowAction({
     disabled: pending || ownerState.status === "disabled",
     message,
     pending,
-    status: localError ? "error" : ownerState.status,
+    status: localError ? "error" : pending ? "pending" : ownerState.status,
   };
 
   return { run, state };
