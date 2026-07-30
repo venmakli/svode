@@ -6,7 +6,7 @@ import type {
 } from "./types";
 
 export const SCOPE_SURFACE_ORDER: Record<ScopeSurfaceId, number> = {
-  agent: 100,
+  context: 100,
   readme: 200,
   collection: 300,
   routines: 400,

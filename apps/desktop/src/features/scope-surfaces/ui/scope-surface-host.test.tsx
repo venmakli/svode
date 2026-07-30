@@ -70,7 +70,7 @@ test("compact host filters unavailable surfaces and honors its local selection",
         contribution("readme", "Readme"),
         contribution("collection", "Collection"),
         {
-          ...contribution("agent", "Agent"),
+          ...contribution("context", "Context"),
           presentations: ["full"],
         },
       ]}
@@ -81,5 +81,5 @@ test("compact host filters unavailable surfaces and honors its local selection",
 
   expect(markup.includes("Collection content")).toBe(true);
   expect(markup.includes("Readme content")).toBe(false);
-  expect(markup.includes("Agent content")).toBe(false);
+  expect(markup.includes("Context content")).toBe(false);
 });

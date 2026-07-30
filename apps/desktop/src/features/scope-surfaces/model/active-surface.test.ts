@@ -21,12 +21,12 @@ test("uses the requested available scope surface", () => {
 });
 
 test("falls back to the first available scope surface", () => {
-  expect(resolveActiveScopeSurface(surfaces, "agent")?.id).toBe("readme");
+  expect(resolveActiveScopeSurface(surfaces, "context")?.id).toBe("readme");
   expect(resolveActiveScopeSurface([], "readme")).toBeNull();
 });
 
 test("prefers a capability-safe default over registry order", () => {
-  expect(resolveActiveScopeSurface(surfaces, "agent", "collection")?.id).toBe(
+  expect(resolveActiveScopeSurface(surfaces, "context", "collection")?.id).toBe(
     "collection",
   );
 });

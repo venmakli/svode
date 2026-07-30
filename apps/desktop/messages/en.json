@@ -2,7 +2,7 @@
   "scope_surface_readme": "Readme",
   "scope_surface_collection": "Collection",
   "scope_surface_routines": "Routines",
-  "scope_surface_agent": "Agent",
+  "scope_surface_context": "Context",
   "scope_surface_unavailable": "This section is not available yet",
   "scope_surface_render_error": "Unable to display this section",
   "common_settings": "Settings",

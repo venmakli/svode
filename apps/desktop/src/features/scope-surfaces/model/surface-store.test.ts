@@ -56,10 +56,10 @@ test("keeps separate selections through owner switching", () => {
 
   store.setSurface("space:root", "routines");
   store.setSurface("collection:root:tasks", "collection");
-  store.setSurface("space:root", "agent");
+  store.setSurface("space:root", "context");
 
   expect(useScopeSurfaceStore.getState().surfaceByOwnerKey).toEqual({
-    "space:root": "agent",
+    "space:root": "context",
     "collection:root:tasks": "collection",
   });
 });

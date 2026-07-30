@@ -48,13 +48,13 @@ export function createScopeSurfaceContributions(
       render: renderers.routines ?? unavailable,
     },
     {
-      id: "agent",
-      order: SCOPE_SURFACE_ORDER.agent,
+      id: "context",
+      order: SCOPE_SURFACE_ORDER.context,
       presentations: ["full"],
       appliesTo: (owner) => hasScopeCapability(owner, "space"),
-      label: m.scope_surface_agent(),
+      label: m.scope_surface_context(),
       icon: Bot,
-      render: renderers.agent ?? unavailable,
+      render: renderers.context ?? unavailable,
     },
   ];
 }

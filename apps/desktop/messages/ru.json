@@ -2,7 +2,7 @@
   "scope_surface_readme": "Описание",
   "scope_surface_collection": "Коллекция",
   "scope_surface_routines": "Рутины",
-  "scope_surface_agent": "Агент",
+  "scope_surface_context": "Контекст",
   "scope_surface_unavailable": "Раздел пока недоступен",
   "scope_surface_render_error": "Не удалось отобразить раздел",
   "common_settings": "Настройки",

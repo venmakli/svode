@@ -37,7 +37,7 @@ test("registry filters capability and presentation without changing canonical or
     hasSchema: true,
   });
   const contributions = [
-    contribution("agent", { presentations: ["full"] }),
+    contribution("context", { presentations: ["full"] }),
     contribution("collection", {
       appliesTo: (candidate) => candidate.capabilities.includes("collection"),
     }),
@@ -49,7 +49,7 @@ test("registry filters capability and presentation without changing canonical or
     resolveScopeSurfaceContributions(contributions, owner, "full").map(
       ({ id }) => id,
     ),
-  ).toEqual(["agent", "readme", "collection", "routines"]);
+  ).toEqual(["context", "readme", "collection", "routines"]);
   expect(
     resolveScopeSurfaceContributions(contributions, owner, "compact").map(
       ({ id }) => id,
@@ -64,7 +64,7 @@ test("registry keeps root, child, and hybrid owner capabilities independent", ()
       appliesTo: (owner) => owner.capabilities.includes("collection"),
     }),
     contribution("routines"),
-    contribution("agent", {
+    contribution("context", {
       presentations: ["full"],
       appliesTo: (owner) => owner.capabilities.includes("space"),
     }),
@@ -103,17 +103,17 @@ test("registry keeps root, child, and hybrid owner capabilities independent", ()
     resolveScopeSurfaceContributions(contributions, root, "full").map(
       ({ id }) => id,
     ),
-  ).toEqual(["agent", "readme", "routines"]);
+  ).toEqual(["context", "readme", "routines"]);
   expect(
     resolveScopeSurfaceContributions(contributions, child, "full").map(
       ({ id }) => id,
     ),
-  ).toEqual(["agent", "readme", "routines"]);
+  ).toEqual(["context", "readme", "routines"]);
   expect(
     resolveScopeSurfaceContributions(contributions, hybrid, "full").map(
       ({ id }) => id,
     ),
-  ).toEqual(["agent", "readme", "collection", "routines"]);
+  ).toEqual(["context", "readme", "collection", "routines"]);
   expect(
     resolveScopeSurfaceContributions(contributions, collection, "full").map(
       ({ id }) => id,
