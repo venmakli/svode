@@ -94,18 +94,17 @@ export function resolveSystemCollectionPresentationId(
 }
 
 export class SystemCollectionInstanceRegistry {
-  readonly #registrations = new Map<string, symbol>();
+  readonly #listeners = new Set<() => void>();
+  readonly #registrations = new Map<string, Set<symbol>>();
 
   register(instanceKey: string): SystemCollectionInstanceRegistration {
     validateInstanceKey(instanceKey);
-    if (this.#registrations.has(instanceKey)) {
-      throw new Error(
-        `System Collection instanceKey "${instanceKey}" is already mounted.`,
-      );
-    }
-
     const registration = Symbol(instanceKey);
-    this.#registrations.set(instanceKey, registration);
+    const registrations =
+      this.#registrations.get(instanceKey) ?? new Set<symbol>();
+    registrations.add(registration);
+    this.#registrations.set(instanceKey, registrations);
+    this.#notify();
     let released = false;
 
     return {
@@ -114,10 +113,30 @@ export class SystemCollectionInstanceRegistry {
           return;
         }
         released = true;
-        if (this.#registrations.get(instanceKey) === registration) {
+        const current = this.#registrations.get(instanceKey);
+        current?.delete(registration);
+        if (current?.size === 0) {
           this.#registrations.delete(instanceKey);
         }
+        this.#notify();
       },
     };
+  }
+
+  getCount(instanceKey: string): number {
+    return this.#registrations.get(instanceKey)?.size ?? 0;
+  }
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.#listeners.add(listener);
+    return () => {
+      this.#listeners.delete(listener);
+    };
+  };
+
+  #notify(): void {
+    for (const listener of this.#listeners) {
+      listener();
+    }
   }
 }

@@ -1,4 +1,10 @@
-import { useCallback, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import {
   createSystemCollectionInstanceState,
@@ -8,13 +14,63 @@ import {
   useSystemCollectionSessionQueryState,
   type SystemCollectionStoredInstanceState,
 } from "../model/query-state";
-import { resolveSystemCollectionPresentationId } from "../model/instance-runtime";
+import {
+  SystemCollectionInstanceRegistry,
+  resolveSystemCollectionPresentationId,
+  validateSystemCollectionInstance,
+} from "../model/instance-runtime";
 import type {
   SystemCollectionInstance,
   SystemCollectionQueryState,
 } from "../model/types";
 
-export function useSystemCollectionState(instance: SystemCollectionInstance) {
+const mountedSystemCollectionInstances = new SystemCollectionInstanceRegistry();
+
+export type SystemCollectionStateController =
+  | {
+      diagnostics: readonly string[];
+      phase: "blocking_error";
+    }
+  | {
+      activePresentationId: string | null;
+      dismissResetWarning(presentationId: string): void;
+      phase: "ready";
+      query: SystemCollectionQueryState;
+      queryByPresentationId: Readonly<
+        Record<string, SystemCollectionQueryState>
+      >;
+      resetWarning: boolean;
+      setActivePresentationId(presentationId: string): void;
+      setQuery(presentationId: string, query: SystemCollectionQueryState): void;
+    };
+
+export function useSystemCollectionState(
+  instance: SystemCollectionInstance,
+): SystemCollectionStateController {
+  const validation = useMemo(
+    () => validateSystemCollectionInstance(instance),
+    [instance],
+  );
+  const getMountedCount = useCallback(
+    () => mountedSystemCollectionInstances.getCount(instance.instanceKey),
+    [instance.instanceKey],
+  );
+  const mountedCount = useSyncExternalStore(
+    mountedSystemCollectionInstances.subscribe,
+    getMountedCount,
+    () => 0,
+  );
+  useEffect(() => {
+    if (!validation.valid) {
+      return;
+    }
+
+    const registration = mountedSystemCollectionInstances.register(
+      instance.instanceKey,
+    );
+    return () => registration.release();
+  }, [instance.instanceKey, validation.valid]);
+
   const emptyState = useMemo(() => createSystemCollectionInstanceState(), []);
   const sessionState = useSystemCollectionSessionQueryState(
     (state) => state.stateByInstanceKey[instance.instanceKey],
@@ -120,10 +176,24 @@ export function useSystemCollectionState(instance: SystemCollectionInstance) {
     [updateStored],
   );
 
+  const diagnostics = validation.diagnostics.map(({ message }) => message);
+  if (mountedCount > 1) {
+    diagnostics.push(
+      `System Collection instanceKey "${instance.instanceKey}" is mounted more than once.`,
+    );
+  }
+  if (diagnostics.length > 0) {
+    return {
+      diagnostics,
+      phase: "blocking_error",
+    };
+  }
+
   const activePresentationId = normalized.activePresentationId;
   return {
     activePresentationId,
     dismissResetWarning,
+    phase: "ready",
     query: queryForSystemCollectionPresentation(
       normalized,
       activePresentationId,

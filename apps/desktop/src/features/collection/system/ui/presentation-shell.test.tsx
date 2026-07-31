@@ -72,12 +72,29 @@ function descriptor(
         label: "Refresh",
         run: () => undefined,
       },
+      {
+        getState: () => ({ status: "pending" }),
+        id: "sync",
+        label: "Sync",
+        run: () => undefined,
+      },
+      {
+        getState: () => ({
+          message: "Previous retry failed",
+          status: "error",
+        }),
+        id: "retry",
+        label: "Retry",
+        run: () => undefined,
+      },
     ],
     renderRowContent: (row, context) => (
       <div className="flex items-center gap-2">
         {context.renderField("name")}
         {context.renderFieldControl("enabled")}
         {context.renderAction("refresh")}
+        {context.renderAction("sync")}
+        {context.renderAction("retry")}
         <button
           type="button"
           data-system-collection-interactive
@@ -118,6 +135,13 @@ test("list shell renders owner content through field, control, action, and detai
     markup.includes('data-system-collection-action-state="disabled"'),
   ).toBe(true);
   expect(markup.includes("Repository is read-only")).toBe(true);
+  expect(markup.includes('data-system-collection-action-state="pending"')).toBe(
+    true,
+  );
+  expect(markup.includes('data-system-collection-action-state="error"')).toBe(
+    true,
+  );
+  expect(markup.includes("Previous retry failed")).toBe(true);
   expect(markup.includes('data-system-collection-detail="true"')).toBe(true);
   expect(markup.includes("Row actions")).toBe(true);
   expect(markup.includes('role="list"')).toBe(true);

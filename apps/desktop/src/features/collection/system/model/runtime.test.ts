@@ -321,22 +321,21 @@ test("active presentation falls back from saved to default to first available", 
   ).toBeNull();
 });
 
-test("instance registry rejects concurrent duplicate keys and releases idempotently", () => {
+test("instance registry reports concurrent keys and recovers after release", () => {
   const registry = new SystemCollectionInstanceRegistry();
-  const registration = registry.register("space:root:actors");
+  const counts: number[] = [];
+  const unsubscribe = registry.subscribe(() => {
+    counts.push(registry.getCount("space:root:actors"));
+  });
+  const first = registry.register("space:root:actors");
+  const second = registry.register("space:root:actors");
 
-  let duplicateError = "";
-  try {
-    registry.register("space:root:actors");
-  } catch (error) {
-    duplicateError = error instanceof Error ? error.message : String(error);
-  }
-  expect(duplicateError).toBe(
-    'System Collection instanceKey "space:root:actors" is already mounted.',
-  );
-
-  registration.release();
-  registration.release();
-  const remounted = registry.register("space:root:actors");
-  remounted.release();
+  expect(registry.getCount("space:root:actors")).toBe(2);
+  second.release();
+  expect(registry.getCount("space:root:actors")).toBe(1);
+  second.release();
+  first.release();
+  expect(registry.getCount("space:root:actors")).toBe(0);
+  expect(counts).toEqual([1, 2, 1, 0]);
+  unsubscribe();
 });

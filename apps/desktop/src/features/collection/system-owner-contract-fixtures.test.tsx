@@ -46,6 +46,11 @@ interface RoutineRow {
   status: RoutineRuntime["status"] | "unavailable";
 }
 
+type CreateActorDecision =
+  | { status: "cancelled" }
+  | { message: string; status: "invalid" }
+  | { canonicalEmail: string; displayName: string; status: "confirmed" };
+
 function customTextField<Row>(
   key: string,
   label: string,
@@ -309,4 +314,79 @@ test("routine snapshot is bounded, immutable, and normalized before composition"
   expect("entry" in routineRows[0]!).toBe(false);
   expect("body" in actorRows[0]!).toBe(false);
   expect("entry" in contextRows[0]!).toBe(false);
+});
+
+test("feature-owned create flow leaves no artifact before confirmation", async () => {
+  const artifacts: ActorRow[] = [];
+  const commandCalls: ActorRow[] = [];
+  const decisions: CreateActorDecision[] = [
+    { status: "cancelled" },
+    { message: "Email is required", status: "invalid" },
+    {
+      canonicalEmail: "ada@example.com",
+      displayName: "Ada",
+      status: "confirmed",
+    },
+  ];
+  const requestCreateDecision = async () => {
+    const decision = decisions.shift();
+    if (!decision) {
+      throw new Error("Missing fixture decision");
+    }
+    return decision;
+  };
+  const createActor = async (actor: ActorRow) => {
+    commandCalls.push(actor);
+    artifacts.push(actor);
+  };
+  const createDescriptor: SystemCollectionPresentationDescriptor<ActorRow> = {
+    ...actorDescriptor,
+    create: {
+      getState: () => ({ status: "idle" }),
+      id: "add-contributor",
+      label: "Add contributor",
+      run: async () => {
+        const decision = await requestCreateDecision();
+        if (decision.status === "cancelled") {
+          return;
+        }
+        if (decision.status === "invalid") {
+          throw new Error(decision.message);
+        }
+        await createActor({
+          canonicalEmail: decision.canonicalEmail,
+          displayName: decision.displayName,
+          repositoryAccess: "writable",
+        });
+      },
+    },
+  };
+  const runCreateFlow = async () => {
+    await createDescriptor.create?.run();
+  };
+
+  await runCreateFlow();
+  expect(commandCalls).toEqual([]);
+  expect(artifacts).toEqual([]);
+
+  let validationError: string | null = null;
+  try {
+    await runCreateFlow();
+  } catch (error) {
+    validationError = error instanceof Error ? error.message : String(error);
+  }
+  expect(validationError).toBe("Email is required");
+  expect(commandCalls).toEqual([]);
+  expect(artifacts).toEqual([]);
+
+  await runCreateFlow();
+  expect(commandCalls).toEqual([
+    {
+      canonicalEmail: "ada@example.com",
+      displayName: "Ada",
+      repositoryAccess: "writable",
+    },
+  ]);
+  expect(artifacts).toEqual(commandCalls);
+  expect(decisions).toEqual([]);
 });

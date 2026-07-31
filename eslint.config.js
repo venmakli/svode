@@ -1,6 +1,7 @@
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
+import path from "node:path";
 
 const sourceFiles = ["apps/desktop/src/**/*.{ts,tsx,js,jsx}"];
 const productLayerFiles = [
@@ -45,6 +46,9 @@ const allowedFeatureSubpathExceptions = new Set([
   "@/features/space/resource-drag",
   "@/features/terminal/session-surface",
 ]);
+const allowedFeatureSubpathPaths = new Set(
+  [...allowedFeatureSubpathExceptions].map((source) => source.slice(2)),
+);
 
 function srcRelativePath(filename) {
   const normalized = filename.replaceAll("\\", "/");
@@ -66,19 +70,33 @@ function sourceValue(node) {
 }
 
 function featureNameFromPath(srcPath) {
-  return srcPath?.match(/^features\/([^/]+)\//)?.[1] ?? null;
-}
-
-function featureNameFromSource(source) {
-  return source.match(/^@\/features\/([^/]+)(?:\/.*)?$/)?.[1] ?? null;
-}
-
-function isFeatureDeepImport(source) {
-  return /^@\/features\/[^/]+\/.+/.test(source);
+  return srcPath?.match(/^features\/([^/]+)(?:\/|$)/)?.[1] ?? null;
 }
 
 function isAllowedRouteAppImport(srcPath, source) {
   return routeAppExceptions.get(srcPath)?.has(source) ?? false;
+}
+
+function isSystemCollectionFoundation(srcPath) {
+  return (
+    srcPath === "features/collection/index.ts" ||
+    srcPath === "features/collection/system.ts" ||
+    srcPath?.startsWith("features/collection/") ||
+    srcPath === "features/properties/index.ts" ||
+    srcPath?.startsWith("features/properties/")
+  );
+}
+
+function frontendSourcePath(srcPath, source) {
+  let importedSrcPath = null;
+  if (source.startsWith("@/")) {
+    importedSrcPath = path.posix.normalize(source.slice(2));
+  } else if (source.startsWith(".")) {
+    importedSrcPath = path.posix.normalize(
+      path.posix.join(path.posix.dirname(srcPath), source),
+    );
+  }
+  return importedSrcPath?.replace(/\.(?:[cm]?[jt]sx?)$/, "") ?? null;
 }
 
 function createImportBoundaryRule() {
@@ -106,6 +124,10 @@ function createImportBoundaryRule() {
           "features/workspace is not a target owner. Use features/space, features/git, or another current owner.",
         featureDeep:
           "Do not deep-import another feature internals. Import through the feature public API or a documented narrow exception.",
+        systemCollectionReverse:
+          "Collection and properties foundations cannot depend on owner consumers such as actors, agent, agent-actors, or routines.",
+        systemCollectionWideBarrel:
+          "System Collection consumer exports belong only in the documented features/collection/system subentrypoint, not the wide collection barrel.",
         stores:
           "Top-level stores are no longer a frontend owner. Import state through app or feature owners.",
       },
@@ -123,14 +145,41 @@ function createImportBoundaryRule() {
         if (!srcPath || !layer || !source) {
           return;
         }
+        const importedSrcPath = frontendSourcePath(srcPath, source);
 
-        if (source.startsWith("@/features/workspace")) {
+        if (
+          importedSrcPath &&
+          /^features\/workspace(?:\/|$)/.test(importedSrcPath)
+        ) {
           report(node, "featureWorkspace");
           return;
         }
 
-        if (source.startsWith("@/stores/")) {
+        if (
+          importedSrcPath === "stores" ||
+          importedSrcPath?.startsWith("stores/")
+        ) {
           report(node, "stores");
+          return;
+        }
+
+        if (
+          srcPath === "features/collection/index.ts" &&
+          (importedSrcPath === "features/collection/system" ||
+            importedSrcPath?.startsWith("features/collection/system/"))
+        ) {
+          report(node, "systemCollectionWideBarrel");
+          return;
+        }
+
+        if (
+          isSystemCollectionFoundation(srcPath) &&
+          importedSrcPath &&
+          /^features\/(actors|agent|agent-actors|routines)(?:\/|$)/.test(
+            importedSrcPath,
+          )
+        ) {
+          report(node, "systemCollectionReverse");
           return;
         }
 
@@ -141,7 +190,8 @@ function createImportBoundaryRule() {
 
         if (
           layer === "shared" &&
-          /^@\/(app|features|platform|stores)\//.test(source)
+          importedSrcPath &&
+          /^(app|features|platform|stores)(?:\/|$)/.test(importedSrcPath)
         ) {
           report(node, "sharedUpward");
           return;
@@ -149,7 +199,10 @@ function createImportBoundaryRule() {
 
         if (
           layer === "platform" &&
-          (/^@\/(app|features|components|stores)\//.test(source) ||
+          ((importedSrcPath &&
+            /^(app|features|components|stores)(?:\/|$)/.test(
+              importedSrcPath,
+            )) ||
             source === "react" ||
             source === "react-dom" ||
             source.startsWith("react/") ||
@@ -161,7 +214,7 @@ function createImportBoundaryRule() {
 
         if (
           layer === "routes" &&
-          source.startsWith("@/app/") &&
+          importedSrcPath?.startsWith("app/") &&
           !isAllowedRouteAppImport(srcPath, source)
         ) {
           report(node, "routeApp");
@@ -170,26 +223,41 @@ function createImportBoundaryRule() {
 
         if (
           ["features", "platform", "shared", "components"].includes(layer) &&
-          source.startsWith("@/app/")
+          importedSrcPath?.startsWith("app/")
         ) {
           report(node, "lowerApp");
           return;
         }
 
         if (layer === "components") {
-          if (/^@\/(features|platform)\//.test(source)) {
+          if (
+            importedSrcPath &&
+            /^(features|platform)(?:\/|$)/.test(importedSrcPath)
+          ) {
             report(node, "componentProductGlue");
           }
           return;
         }
 
-        if (isFeatureDeepImport(source)) {
-          const importedFeature = featureNameFromSource(source);
-          if (
-            importedFeature &&
-            importedFeature !== currentFeature &&
-            !allowedFeatureSubpathExceptions.has(source)
-          ) {
+        if (importedSrcPath?.startsWith("features/")) {
+          const importedFeature = featureNameFromPath(importedSrcPath);
+          if (importedFeature && importedFeature !== currentFeature) {
+            const featureRoot = `features/${importedFeature}`;
+            const usesPublicAlias = source.startsWith("@/");
+            const usesAllowedPublicPath =
+              importedSrcPath === featureRoot ||
+              allowedFeatureSubpathPaths.has(importedSrcPath);
+            if (!usesPublicAlias || !usesAllowedPublicPath) {
+              report(node, "featureDeep");
+            }
+          }
+        } else if (
+          /^@\/features\/[^/]+\/.+/.test(source) &&
+          !allowedFeatureSubpathExceptions.has(source)
+        ) {
+          // Keep fail-closed behavior for malformed aliases that cannot be
+          // canonicalized into a frontend source path.
+          if (featureNameFromPath(source.slice(2)) !== currentFeature) {
             report(node, "featureDeep");
           }
         }

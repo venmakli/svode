@@ -6,6 +6,7 @@ export {
   validateSystemCollectionQuery,
 } from "./system/model/query";
 export { useSystemCollectionState } from "./system/hooks/use-system-collection-state";
+export type { SystemCollectionStateController } from "./system/hooks/use-system-collection-state";
 export {
   useOptionalSystemCollectionDetailController,
   useSystemCollectionDetailController,
