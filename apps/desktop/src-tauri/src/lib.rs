@@ -83,6 +83,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            actors::commands::actors_get_catalog,
+            actors::commands::actors_refresh_catalog,
+            actors::commands::actors_get_activity,
             commands::greet::greet,
             commands::files::list_entries,
             commands::files::list_tree_children,

@@ -1,4 +1,5 @@
+pub mod commands;
 mod mailmap;
 mod resolver;
 
-pub use resolver::{ActorCandidate, ActorCatalogState, ActorSnapshot};
+pub use resolver::{ActorActivity, ActorCandidate, ActorCatalog, ActorCatalogState, ActorSnapshot};

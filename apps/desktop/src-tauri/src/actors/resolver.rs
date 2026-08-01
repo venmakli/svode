@@ -1,9 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use chrono::{Days, Local, Months, NaiveDate, TimeZone};
 use serde::Serialize;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -23,6 +24,96 @@ pub struct ActorCandidate {
     pub commit_count: u64,
     pub is_me: bool,
     pub alias_emails: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActorContribution {
+    Contributor,
+    NoCommits,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActorCatalogAlias {
+    pub name: Option<String>,
+    pub email: String,
+    pub line: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActorCatalogSourceKind {
+    History,
+    CurrentGitIdentity,
+    Mailmap,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActorCatalogSource {
+    pub kind: ActorCatalogSourceKind,
+    pub name: String,
+    pub email: String,
+    pub line: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActorCatalogDiagnosticKind {
+    InvalidLine,
+    UnsafeFile,
+    CustomSource,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActorCatalogDiagnostic {
+    pub kind: ActorCatalogDiagnosticKind,
+    pub line: Option<usize>,
+    pub message: String,
+    pub blocking: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActorCatalogRow {
+    pub canonical_email: String,
+    pub display_name: String,
+    pub contribution: ActorContribution,
+    pub commit_count: u64,
+    pub last_commit_at: Option<i64>,
+    pub last_activity_date: Option<String>,
+    pub aliases: Vec<ActorCatalogAlias>,
+    pub sources: Vec<ActorCatalogSource>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActorCatalog {
+    pub repository_id: String,
+    pub generation: u64,
+    pub rows: Vec<ActorCatalogRow>,
+    pub diagnostics: Vec<ActorCatalogDiagnostic>,
+    pub shallow: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActorActivityDay {
+    pub date: String,
+    pub commit_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActorActivity {
+    pub repository_id: String,
+    pub generation: u64,
+    pub canonical_email: String,
+    pub range_start: String,
+    pub range_end_exclusive: String,
+    pub days: Vec<ActorActivityDay>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +157,7 @@ pub struct ActorSnapshot {
     rows: Vec<ActorRow>,
     mailmap: MailmapDocument,
     diagnostics: Vec<MailmapDiagnostic>,
+    shallow: bool,
 }
 
 impl ActorSnapshot {
@@ -106,6 +198,79 @@ impl ActorSnapshot {
         equivalents
     }
 
+    pub fn catalog(&self) -> ActorCatalog {
+        ActorCatalog {
+            repository_id: self.repository_id.clone(),
+            generation: self.generation,
+            rows: self
+                .rows
+                .iter()
+                .map(|row| ActorCatalogRow {
+                    canonical_email: row.candidate.email.clone(),
+                    display_name: row.candidate.name.clone(),
+                    contribution: if row.candidate.commit_count == 0 {
+                        ActorContribution::NoCommits
+                    } else {
+                        ActorContribution::Contributor
+                    },
+                    commit_count: row.candidate.commit_count,
+                    last_commit_at: row.candidate.last_commit_at,
+                    last_activity_date: row
+                        .candidate
+                        .last_commit_at
+                        .and_then(local_date_for_timestamp)
+                        .map(|date| date.format("%Y-%m-%d").to_string()),
+                    aliases: row
+                        .aliases
+                        .iter()
+                        .map(|alias| ActorCatalogAlias {
+                            name: alias.name.clone(),
+                            email: alias.email.clone(),
+                            line: alias.line,
+                        })
+                        .collect(),
+                    sources: row
+                        .sources
+                        .iter()
+                        .map(|source| ActorCatalogSource {
+                            kind: match source.kind {
+                                ActorSourceKind::History => ActorCatalogSourceKind::History,
+                                ActorSourceKind::CurrentGitIdentity => {
+                                    ActorCatalogSourceKind::CurrentGitIdentity
+                                }
+                                ActorSourceKind::Mailmap => ActorCatalogSourceKind::Mailmap,
+                            },
+                            name: source.name.clone(),
+                            email: source.email.clone(),
+                            line: source.line,
+                        })
+                        .collect(),
+                })
+                .collect(),
+            diagnostics: self
+                .diagnostics
+                .iter()
+                .map(|diagnostic| ActorCatalogDiagnostic {
+                    kind: match diagnostic.kind {
+                        super::mailmap::MailmapDiagnosticKind::InvalidLine => {
+                            ActorCatalogDiagnosticKind::InvalidLine
+                        }
+                        super::mailmap::MailmapDiagnosticKind::UnsafeFile => {
+                            ActorCatalogDiagnosticKind::UnsafeFile
+                        }
+                        super::mailmap::MailmapDiagnosticKind::CustomSource => {
+                            ActorCatalogDiagnosticKind::CustomSource
+                        }
+                    },
+                    line: diagnostic.line,
+                    message: diagnostic.message.clone(),
+                    blocking: diagnostic.blocking,
+                })
+                .collect(),
+            shallow: self.shallow,
+        }
+    }
+
     #[cfg(test)]
     fn repository_id(&self) -> &str {
         &self.repository_id
@@ -122,10 +287,54 @@ impl ActorSnapshot {
     }
 }
 
+const MAX_ACTIVITY_CACHE_ENTRIES: usize = 64;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ActivityCacheKey {
+    repository: PathBuf,
+    generation: u64,
+    canonical_email: String,
+    range_start: NaiveDate,
+    range_end_exclusive: NaiveDate,
+}
+
+#[derive(Default)]
+struct ActorActivityCache {
+    entries: HashMap<ActivityCacheKey, Arc<ActorActivity>>,
+    order: VecDeque<ActivityCacheKey>,
+}
+
+impl ActorActivityCache {
+    fn get(&self, key: &ActivityCacheKey) -> Option<Arc<ActorActivity>> {
+        self.entries.get(key).cloned()
+    }
+
+    fn insert(&mut self, key: ActivityCacheKey, activity: Arc<ActorActivity>) {
+        if self.entries.insert(key.clone(), activity).is_some() {
+            self.order.retain(|existing| existing != &key);
+        }
+        self.order.push_back(key);
+        while self.entries.len() > MAX_ACTIVITY_CACHE_ENTRIES {
+            if let Some(oldest) = self.order.pop_front() {
+                self.entries.remove(&oldest);
+            }
+        }
+    }
+
+    fn remove_repository(&mut self, repository: &Path) {
+        self.entries
+            .retain(|key, _| key.repository.as_path() != repository);
+        self.order
+            .retain(|key| key.repository.as_path() != repository);
+    }
+}
+
 #[derive(Default)]
 pub struct ActorCatalogState {
     snapshots: Mutex<HashMap<PathBuf, Arc<ActorSnapshot>>>,
     repository_locks: Mutex<HashMap<PathBuf, Arc<AsyncMutex<()>>>>,
+    activities: Mutex<ActorActivityCache>,
+    activity_locks: Mutex<HashMap<ActivityCacheKey, Arc<AsyncMutex<()>>>>,
 }
 
 impl ActorCatalogState {
@@ -139,15 +348,23 @@ impl ActorCatalogState {
         space_path: &Path,
     ) -> Result<Arc<ActorSnapshot>, AppError> {
         let repository = resolve_repository(cli, space_path).await?;
-        if let Some(snapshot) = self.cached(&repository)? {
+        self.snapshot_at_repository(cli, &repository).await
+    }
+
+    async fn snapshot_at_repository(
+        &self,
+        cli: &GitCli,
+        repository: &Path,
+    ) -> Result<Arc<ActorSnapshot>, AppError> {
+        if let Some(snapshot) = self.cached(repository)? {
             return Ok(snapshot);
         }
-        let repository_lock = self.repository_lock(&repository)?;
+        let repository_lock = self.repository_lock(repository)?;
         let _load_guard = repository_lock.lock().await;
-        if let Some(snapshot) = self.cached(&repository)? {
+        if let Some(snapshot) = self.cached(repository)? {
             return Ok(snapshot);
         }
-        self.load_and_publish(cli, &repository).await
+        self.load_and_publish(cli, repository).await
     }
 
     pub async fn refresh(
@@ -159,6 +376,70 @@ impl ActorCatalogState {
         let repository_lock = self.repository_lock(&repository)?;
         let _load_guard = repository_lock.lock().await;
         self.load_and_publish(cli, &repository).await
+    }
+
+    pub async fn activity(
+        &self,
+        cli: &GitCli,
+        space_path: &Path,
+        canonical_email: &str,
+    ) -> Result<Arc<ActorActivity>, AppError> {
+        let repository = resolve_repository(cli, space_path).await?;
+        let snapshot = self.snapshot_at_repository(cli, &repository).await?;
+        let canonical_email = normalize_email(canonical_email);
+        if !snapshot
+            .rows
+            .iter()
+            .any(|row| row.candidate.email == canonical_email)
+        {
+            return Err(AppError::FileNotFound(format!(
+                "actor {canonical_email:?} is not present in repository catalog"
+            )));
+        }
+
+        let (range_start, range_end_exclusive) = activity_range(Local::now().date_naive())?;
+        let key = ActivityCacheKey {
+            repository: repository.clone(),
+            generation: snapshot.generation,
+            canonical_email: canonical_email.clone(),
+            range_start,
+            range_end_exclusive,
+        };
+        if let Some(activity) = self.cached_activity(&key)? {
+            return Ok(activity);
+        }
+
+        let activity_lock = self.activity_lock(&key)?;
+        let _load_guard = activity_lock.lock().await;
+        if let Some(activity) = self.cached_activity(&key)? {
+            self.remove_activity_lock_if_idle(&key, &activity_lock)?;
+            return Ok(activity);
+        }
+
+        let loaded = load_activity(
+            cli,
+            &repository,
+            &snapshot,
+            &canonical_email,
+            range_start,
+            range_end_exclusive,
+        )
+        .await;
+        match loaded {
+            Ok(activity) => {
+                let activity = Arc::new(activity);
+                self.activities
+                    .lock()
+                    .map_err(|_| AppError::General("actor activity cache lock poisoned".into()))?
+                    .insert(key.clone(), activity.clone());
+                self.remove_activity_lock_if_idle(&key, &activity_lock)?;
+                Ok(activity)
+            }
+            Err(error) => {
+                self.remove_activity_lock_if_idle(&key, &activity_lock)?;
+                Err(error)
+            }
+        }
     }
 
     fn cached(&self, repository: &Path) -> Result<Option<Arc<ActorSnapshot>>, AppError> {
@@ -179,6 +460,44 @@ impl ActorCatalogState {
             .clone())
     }
 
+    fn cached_activity(
+        &self,
+        key: &ActivityCacheKey,
+    ) -> Result<Option<Arc<ActorActivity>>, AppError> {
+        self.activities
+            .lock()
+            .map(|activities| activities.get(key))
+            .map_err(|_| AppError::General("actor activity cache lock poisoned".into()))
+    }
+
+    fn activity_lock(&self, key: &ActivityCacheKey) -> Result<Arc<AsyncMutex<()>>, AppError> {
+        let mut locks = self
+            .activity_locks
+            .lock()
+            .map_err(|_| AppError::General("actor activity lock cache poisoned".into()))?;
+        Ok(locks
+            .entry(key.clone())
+            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+            .clone())
+    }
+
+    fn remove_activity_lock_if_idle(
+        &self,
+        key: &ActivityCacheKey,
+        activity_lock: &Arc<AsyncMutex<()>>,
+    ) -> Result<(), AppError> {
+        let mut locks = self
+            .activity_locks
+            .lock()
+            .map_err(|_| AppError::General("actor activity lock cache poisoned".into()))?;
+        if locks.get(key).is_some_and(|cached_lock| {
+            Arc::ptr_eq(cached_lock, activity_lock) && Arc::strong_count(cached_lock) == 2
+        }) {
+            locks.remove(key);
+        }
+        Ok(())
+    }
+
     async fn load_and_publish(
         &self,
         cli: &GitCli,
@@ -192,8 +511,123 @@ impl ActorCatalogState {
             .lock()
             .map_err(|_| AppError::General("actor snapshot cache lock poisoned".into()))?
             .insert(repository.to_path_buf(), snapshot.clone());
+        self.activities
+            .lock()
+            .map_err(|_| AppError::General("actor activity cache lock poisoned".into()))?
+            .remove_repository(repository);
         Ok(snapshot)
     }
+}
+
+fn activity_range(today: NaiveDate) -> Result<(NaiveDate, NaiveDate), AppError> {
+    let range_start = today
+        .checked_sub_months(Months::new(12))
+        .ok_or_else(|| AppError::General("actor activity range start is out of bounds".into()))?;
+    let range_end_exclusive = today
+        .checked_add_days(Days::new(1))
+        .ok_or_else(|| AppError::General("actor activity range end is out of bounds".into()))?;
+    Ok((range_start, range_end_exclusive))
+}
+
+fn local_date_for_timestamp(timestamp: i64) -> Option<NaiveDate> {
+    timestamp_date_in_timezone(timestamp, &Local)
+}
+
+fn timestamp_date_in_timezone<Tz>(timestamp: i64, timezone: &Tz) -> Option<NaiveDate>
+where
+    Tz: TimeZone,
+{
+    timezone
+        .timestamp_opt(timestamp, 0)
+        .single()
+        .map(|instant| instant.date_naive())
+}
+
+async fn load_activity(
+    cli: &GitCli,
+    repository: &Path,
+    snapshot: &ActorSnapshot,
+    canonical_email: &str,
+    range_start: NaiveDate,
+    range_end_exclusive: NaiveDate,
+) -> Result<ActorActivity, AppError> {
+    let history = cli
+        .exec(
+            repository,
+            &[
+                "log",
+                "--no-use-mailmap",
+                "--all",
+                "--format=%H%x00%an%x00%ae%x00%at",
+            ],
+        )
+        .await?;
+    if history.exit_code != 0 && !is_unborn_repository(cli, repository).await? {
+        return Err(AppError::GitCommandFailed(format!(
+            "failed to scan actor activity in {}: {}",
+            repository.display(),
+            history.stderr.trim()
+        )));
+    }
+
+    let counts = activity_counts_from_log(
+        &history.stdout,
+        &snapshot.mailmap,
+        canonical_email,
+        range_start,
+        range_end_exclusive,
+        local_date_for_timestamp,
+    );
+    Ok(ActorActivity {
+        repository_id: snapshot.repository_id.clone(),
+        generation: snapshot.generation,
+        canonical_email: canonical_email.to_string(),
+        range_start: range_start.format("%Y-%m-%d").to_string(),
+        range_end_exclusive: range_end_exclusive.format("%Y-%m-%d").to_string(),
+        days: counts
+            .into_iter()
+            .map(|(date, commit_count)| ActorActivityDay {
+                date: date.format("%Y-%m-%d").to_string(),
+                commit_count,
+            })
+            .collect(),
+    })
+}
+
+fn activity_counts_from_log(
+    log: &str,
+    mailmap: &MailmapDocument,
+    canonical_email: &str,
+    range_start: NaiveDate,
+    range_end_exclusive: NaiveDate,
+    mut date_for_timestamp: impl FnMut(i64) -> Option<NaiveDate>,
+) -> BTreeMap<NaiveDate, u64> {
+    let mut seen_commits = HashSet::new();
+    let mut counts = BTreeMap::new();
+    for record in log.lines() {
+        let mut parts = record.splitn(4, '\0');
+        let commit_id = parts.next().unwrap_or_default().trim();
+        let raw_name = parts.next().unwrap_or_default().trim();
+        let raw_email = parts.next().unwrap_or_default().trim();
+        let timestamp = parts.next().unwrap_or_default().trim().parse::<i64>().ok();
+        if commit_id.is_empty()
+            || raw_email.is_empty()
+            || !seen_commits.insert(commit_id.to_string())
+        {
+            continue;
+        }
+        if mailmap.resolve(raw_name, raw_email).email != canonical_email {
+            continue;
+        }
+        let Some(date) = timestamp.and_then(&mut date_for_timestamp) else {
+            continue;
+        };
+        if date < range_start || date >= range_end_exclusive {
+            continue;
+        }
+        *counts.entry(date).or_insert(0) += 1;
+    }
+    counts
 }
 
 async fn resolve_repository(cli: &GitCli, space_path: &Path) -> Result<PathBuf, AppError> {
@@ -223,6 +657,7 @@ async fn load_snapshot(
 ) -> Result<ActorSnapshot, AppError> {
     let mut mailmap = read_mailmap(repository);
     detect_custom_mailmap_sources(cli, repository, &mut mailmap).await?;
+    let shallow = is_shallow_repository(cli, repository).await?;
 
     let mut rows: HashMap<String, ActorRowBuilder> = HashMap::new();
     for rule in &mailmap.rules {
@@ -302,12 +737,36 @@ async fn load_snapshot(
     });
 
     Ok(ActorSnapshot {
-        repository_id: repository.to_string_lossy().into_owned(),
+        repository_id: opaque_repository_id(repository),
         generation,
         rows,
         diagnostics: mailmap.diagnostics.clone(),
         mailmap,
+        shallow,
     })
+}
+
+fn opaque_repository_id(repository: &Path) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in repository.to_string_lossy().as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("actor-repo-{hash:016x}")
+}
+
+async fn is_shallow_repository(cli: &GitCli, repository: &Path) -> Result<bool, AppError> {
+    let output = cli
+        .exec(repository, &["rev-parse", "--is-shallow-repository"])
+        .await?;
+    if output.exit_code != 0 {
+        return Err(AppError::GitCommandFailed(format!(
+            "failed to inspect shallow state for {}: {}",
+            repository.display(),
+            output.stderr.trim()
+        )));
+    }
+    Ok(output.stdout.trim() == "true")
 }
 
 async fn is_unborn_repository(cli: &GitCli, repository: &Path) -> Result<bool, AppError> {
@@ -459,6 +918,7 @@ impl ActorRowBuilder {
             alias.email == email
                 && alias.name.as_deref().map(str::to_lowercase)
                     == name.as_deref().map(str::to_lowercase)
+                && alias.line == line
         }) {
             return;
         }
@@ -790,5 +1250,361 @@ mod tests {
             snapshot.canonical_email("", "old@example.test"),
             "old@example.test"
         );
+    }
+
+    #[tokio::test]
+    async fn rich_catalog_exposes_aliases_sources_diagnostics_and_local_activity_date() {
+        let repo = init_repo("Alias Name", "alias@example.test");
+        commit(repo.path(), "one.txt", "one", "one");
+        fs::write(
+            repo.path().join(".mailmap"),
+            "Canonical <canonical@example.test> <alias@example.test>\ninvalid mapping\n",
+        )
+        .expect("mailmap");
+
+        let cli = GitCli::detect().expect("git CLI");
+        let catalog = ActorCatalogState::new()
+            .snapshot(&cli, repo.path())
+            .await
+            .expect("snapshot")
+            .catalog();
+
+        assert!(catalog.repository_id.starts_with("actor-repo-"));
+        assert!(
+            !catalog
+                .repository_id
+                .contains(repo.path().to_string_lossy().as_ref())
+        );
+        assert_eq!(catalog.generation, 1);
+        assert!(!catalog.shallow);
+        assert_eq!(catalog.rows.len(), 1);
+        let row = &catalog.rows[0];
+        assert_eq!(row.canonical_email, "canonical@example.test");
+        assert_eq!(row.display_name, "Canonical");
+        assert_eq!(row.contribution, ActorContribution::Contributor);
+        assert_eq!(row.commit_count, 1);
+        assert!(row.last_commit_at.is_some());
+        assert!(row.last_activity_date.is_some());
+        assert!(row.aliases.iter().any(|alias| {
+            alias.name.is_none() && alias.email == "alias@example.test" && alias.line == Some(1)
+        }));
+        assert!(row.sources.iter().any(|source| {
+            source.kind == ActorCatalogSourceKind::History
+                && source.name == "Alias Name"
+                && source.email == "alias@example.test"
+        }));
+        assert!(row.sources.iter().any(|source| {
+            source.kind == ActorCatalogSourceKind::CurrentGitIdentity
+                && source.email == "alias@example.test"
+        }));
+        assert!(row.sources.iter().any(|source| {
+            source.kind == ActorCatalogSourceKind::Mailmap
+                && source.email == "canonical@example.test"
+                && source.line == Some(1)
+        }));
+        assert_eq!(catalog.diagnostics.len(), 1);
+        assert_eq!(
+            catalog.diagnostics[0].kind,
+            ActorCatalogDiagnosticKind::InvalidLine
+        );
+        assert_eq!(catalog.diagnostics[0].line, Some(2));
+        assert!(catalog.diagnostics[0].blocking);
+
+        let serialized = serde_json::to_value(&catalog).expect("serialize catalog");
+        let serialized_row = serialized["rows"][0].as_object().expect("serialized row");
+        assert!(!serialized_row.contains_key("isCurrent"));
+        assert!(!serialized_row.contains_key("isMe"));
+    }
+
+    #[test]
+    fn activity_uses_canonical_author_identity_and_deduplicates_commits() {
+        let mailmap = MailmapDocument::parse(
+            "Canonical <canonical@example.test> Alias Name <alias@example.test>\n",
+        );
+        let start = NaiveDate::from_ymd_opt(2025, 1, 1).expect("start");
+        let end = NaiveDate::from_ymd_opt(2025, 2, 1).expect("end");
+        let day_two = NaiveDate::from_ymd_opt(2025, 1, 2).expect("day two");
+        let day_three = NaiveDate::from_ymd_opt(2025, 1, 3).expect("day three");
+        let log = "a\0Alias Name\0alias@example.test\01\n\
+                   a\0Alias Name\0alias@example.test\02\n\
+                   b\0Alias Name\0ALIAS@EXAMPLE.TEST\02\n\
+                   c\0Different Name\0alias@example.test\02\n\
+                   d\0Canonical\0canonical@example.test\03\n";
+
+        let counts = activity_counts_from_log(
+            log,
+            &mailmap,
+            "canonical@example.test",
+            start,
+            end,
+            |timestamp| match timestamp {
+                1 => Some(day_two),
+                2 => Some(day_three),
+                3 => Some(day_three),
+                _ => None,
+            },
+        );
+
+        assert_eq!(counts.get(&day_two), Some(&1));
+        assert_eq!(counts.get(&day_three), Some(&2));
+        assert_eq!(counts.values().sum::<u64>(), 3);
+    }
+
+    #[test]
+    fn calendar_range_and_timezone_boundaries_are_deterministic() {
+        let leap_day = NaiveDate::from_ymd_opt(2024, 2, 29).expect("leap day");
+        assert_eq!(
+            activity_range(leap_day).expect("range"),
+            (
+                NaiveDate::from_ymd_opt(2023, 2, 28).expect("range start"),
+                NaiveDate::from_ymd_opt(2024, 3, 1).expect("range end")
+            )
+        );
+        let month_end = NaiveDate::from_ymd_opt(2025, 2, 28).expect("month end");
+        assert_eq!(
+            activity_range(month_end).expect("range"),
+            (
+                NaiveDate::from_ymd_opt(2024, 2, 28).expect("range start"),
+                NaiveDate::from_ymd_opt(2025, 3, 1).expect("range end")
+            )
+        );
+
+        let west = chrono::FixedOffset::west_opt(60 * 60).expect("west offset");
+        let east = chrono::FixedOffset::east_opt(60 * 60).expect("east offset");
+        assert_eq!(
+            timestamp_date_in_timezone(0, &west),
+            NaiveDate::from_ymd_opt(1969, 12, 31)
+        );
+        assert_eq!(
+            timestamp_date_in_timezone(0, &east),
+            NaiveDate::from_ymd_opt(1970, 1, 1)
+        );
+    }
+
+    #[test]
+    fn activity_range_is_start_inclusive_and_end_exclusive() {
+        let mailmap = MailmapDocument::default();
+        let start = NaiveDate::from_ymd_opt(2025, 1, 31).expect("start");
+        let last_day = NaiveDate::from_ymd_opt(2026, 1, 31).expect("last day");
+        let end = NaiveDate::from_ymd_opt(2026, 2, 1).expect("end");
+        let log = "start\0Actor\0actor@example.test\01\n\
+                   last\0Actor\0actor@example.test\02\n\
+                   end\0Actor\0actor@example.test\03\n";
+
+        let counts = activity_counts_from_log(
+            log,
+            &mailmap,
+            "actor@example.test",
+            start,
+            end,
+            |timestamp| match timestamp {
+                1 => Some(start),
+                2 => Some(last_day),
+                3 => Some(end),
+                _ => None,
+            },
+        );
+
+        assert_eq!(counts.get(&start), Some(&1));
+        assert_eq!(counts.get(&last_day), Some(&1));
+        assert!(!counts.contains_key(&end));
+    }
+
+    #[tokio::test]
+    async fn catalog_and_activity_use_author_timestamp_not_committer_timestamp() {
+        let repo = init_repo("Actor", "actor@example.test");
+        fs::write(repo.path().join("one.txt"), "one").expect("write commit file");
+        git(repo.path(), &["add", "one.txt"]);
+        let author_timestamp = Local::now().timestamp();
+        let output = Command::new("git")
+            .args(["commit", "--quiet", "-m", "one"])
+            .current_dir(repo.path())
+            .env("GIT_AUTHOR_DATE", format!("{author_timestamp} +0000"))
+            .env("GIT_COMMITTER_DATE", "946684800 +0000")
+            .output()
+            .expect("commit with distinct author and committer timestamps");
+        assert!(
+            output.status.success(),
+            "git commit failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let cli = GitCli::detect().expect("git CLI");
+        let state = ActorCatalogState::new();
+        let snapshot = state.snapshot(&cli, repo.path()).await.expect("snapshot");
+        assert_eq!(
+            snapshot.candidates()[0].last_commit_at,
+            Some(author_timestamp)
+        );
+
+        let activity = state
+            .activity(&cli, repo.path(), "actor@example.test")
+            .await
+            .expect("activity");
+        assert_eq!(activity.days.len(), 1);
+        assert_eq!(activity.days[0].commit_count, 1);
+        assert_eq!(
+            activity.days[0].date,
+            local_date_for_timestamp(author_timestamp)
+                .expect("local author date")
+                .format("%Y-%m-%d")
+                .to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn root_and_inline_reuse_activity_until_snapshot_generation_changes() {
+        let repo = init_repo("Current User", "current@example.test");
+        commit(repo.path(), "one.txt", "one", "one");
+        let inline = repo.path().join("inline");
+        fs::create_dir(&inline).expect("inline directory");
+        let cli = GitCli::detect().expect("git CLI");
+        let state = ActorCatalogState::new();
+
+        let (root, child) = tokio::join!(
+            state.activity(&cli, repo.path(), "CURRENT@EXAMPLE.TEST"),
+            state.activity(&cli, &inline, "current@example.test")
+        );
+        let root = root.expect("root activity");
+        let child = child.expect("inline activity");
+        assert!(Arc::ptr_eq(&root, &child));
+        assert_eq!(root.generation, 1);
+        assert_eq!(root.days.iter().map(|day| day.commit_count).sum::<u64>(), 1);
+        assert!(
+            state
+                .activity_locks
+                .lock()
+                .expect("activity locks")
+                .is_empty()
+        );
+
+        state
+            .refresh(&cli, &inline)
+            .await
+            .expect("refresh snapshot");
+        let refreshed = state
+            .activity(&cli, repo.path(), "current@example.test")
+            .await
+            .expect("refreshed activity");
+        assert!(!Arc::ptr_eq(&root, &refreshed));
+        assert_eq!(refreshed.generation, 2);
+
+        let error = state
+            .activity(&cli, repo.path(), "unknown@example.test")
+            .await
+            .expect_err("unknown actor must fail");
+        assert!(matches!(error, AppError::FileNotFound(_)));
+    }
+
+    #[test]
+    fn activity_lock_is_retained_until_joined_requests_finish() {
+        let state = ActorCatalogState::new();
+        let key = ActivityCacheKey {
+            repository: PathBuf::from("/repo"),
+            generation: 1,
+            canonical_email: "actor@example.test".into(),
+            range_start: NaiveDate::from_ymd_opt(2025, 1, 1).expect("start"),
+            range_end_exclusive: NaiveDate::from_ymd_opt(2026, 1, 2).expect("end"),
+        };
+        let first = state.activity_lock(&key).expect("first lock");
+        let joined = state.activity_lock(&key).expect("joined lock");
+
+        state
+            .remove_activity_lock_if_idle(&key, &first)
+            .expect("retain joined lock");
+        assert_eq!(state.activity_locks.lock().expect("locks").len(), 1);
+
+        drop(joined);
+        state
+            .remove_activity_lock_if_idle(&key, &first)
+            .expect("remove idle lock");
+        assert!(state.activity_locks.lock().expect("locks").is_empty());
+    }
+
+    #[tokio::test]
+    async fn activity_is_isolated_between_repositories_with_the_same_actor() {
+        let first_repo = init_repo("Shared Actor", "shared@example.test");
+        commit(first_repo.path(), "one.txt", "one", "one");
+        let second_repo = init_repo("Shared Actor", "shared@example.test");
+        commit(second_repo.path(), "one.txt", "one", "one");
+        commit(second_repo.path(), "two.txt", "two", "two");
+        let cli = GitCli::detect().expect("git CLI");
+        let state = ActorCatalogState::new();
+
+        let (first, second) = tokio::join!(
+            state.activity(&cli, first_repo.path(), "shared@example.test"),
+            state.activity(&cli, second_repo.path(), "shared@example.test")
+        );
+        let first = first.expect("first activity");
+        let second = second.expect("second activity");
+
+        assert_ne!(first.repository_id, second.repository_id);
+        assert_eq!(
+            first.days.iter().map(|day| day.commit_count).sum::<u64>(),
+            1
+        );
+        assert_eq!(
+            second.days.iter().map(|day| day.commit_count).sum::<u64>(),
+            2
+        );
+    }
+
+    #[test]
+    fn activity_cache_is_bounded() {
+        let repository = PathBuf::from("/repo");
+        let start = NaiveDate::from_ymd_opt(2025, 1, 1).expect("start");
+        let end = NaiveDate::from_ymd_opt(2026, 1, 2).expect("end");
+        let mut cache = ActorActivityCache::default();
+
+        for index in 0..=MAX_ACTIVITY_CACHE_ENTRIES {
+            let canonical_email = format!("actor-{index}@example.test");
+            let key = ActivityCacheKey {
+                repository: repository.clone(),
+                generation: 1,
+                canonical_email: canonical_email.clone(),
+                range_start: start,
+                range_end_exclusive: end,
+            };
+            cache.insert(
+                key,
+                Arc::new(ActorActivity {
+                    repository_id: "actor-repo-test".into(),
+                    generation: 1,
+                    canonical_email,
+                    range_start: "2025-01-01".into(),
+                    range_end_exclusive: "2026-01-02".into(),
+                    days: Vec::new(),
+                }),
+            );
+        }
+
+        assert_eq!(cache.entries.len(), MAX_ACTIVITY_CACHE_ENTRIES);
+        assert!(cache.entries.keys().all(|key| {
+            key.canonical_email != "actor-0@example.test"
+                && key.repository == repository
+                && key.generation == 1
+        }));
+    }
+
+    #[tokio::test]
+    async fn shallow_repository_is_reported_without_network_access() {
+        let repo = init_repo("Shallow User", "shallow@example.test");
+        commit(repo.path(), "one.txt", "one", "one");
+        let output = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repo.path())
+            .output()
+            .expect("resolve head");
+        assert!(output.status.success());
+        fs::write(repo.path().join(".git/shallow"), output.stdout).expect("mark shallow");
+
+        let cli = GitCli::detect().expect("git CLI");
+        let catalog = ActorCatalogState::new()
+            .snapshot(&cli, repo.path())
+            .await
+            .expect("snapshot")
+            .catalog();
+
+        assert!(catalog.shallow);
     }
 }

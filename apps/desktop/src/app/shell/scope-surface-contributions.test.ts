@@ -15,6 +15,13 @@ test("app registry exposes canonical Stage 7 surfaces for each owner", () => {
     status: "ready",
     hasSchema: true,
   });
+  const plainSpace = createRegisteredSpaceOwner({
+    spaceId: "plain",
+    projectPath: "/repo",
+    spacePath: "/repo/plain",
+    status: "ready",
+    hasSchema: false,
+  });
   const collection = createCollectionDirectoryOwner({
     spaceId: "root",
     projectPath: "/repo",
@@ -30,7 +37,17 @@ test("app registry exposes canonical Stage 7 surfaces for each owner", () => {
     ),
   ).toEqual(["context", "readme", "actors", "collection", "routines"]);
   expect(
+    resolveScopeSurfaceContributions(contributions, plainSpace, "full").map(
+      ({ id }) => id,
+    ),
+  ).toEqual(["context", "readme", "actors", "routines"]);
+  expect(
     resolveScopeSurfaceContributions(contributions, collection, "compact").map(
+      ({ id }) => id,
+    ),
+  ).toEqual(["readme", "collection", "routines"]);
+  expect(
+    resolveScopeSurfaceContributions(contributions, collection, "full").map(
       ({ id }) => id,
     ),
   ).toEqual(["readme", "collection", "routines"]);

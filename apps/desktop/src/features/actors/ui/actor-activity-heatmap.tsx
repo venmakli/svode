@@ -49,6 +49,7 @@ export function ActorActivityHeatmap({
   }
 
   const cells = buildActorHeatmapCells(state.snapshot);
+  const weekCount = Math.ceil(cells.length / 7);
   const totalCommits = state.snapshot.days.reduce(
     (total, day) => total + day.commitCount,
     0,
@@ -65,13 +66,17 @@ export function ActorActivityHeatmap({
         </span>
         {totalCommits === 0 ? <span>{m.actors_activity_empty()}</span> : null}
       </div>
-      <div className="overflow-x-auto pb-2">
+      <div className="min-w-0 pb-2">
         <TooltipProvider delayDuration={100}>
           <div
-            className="grid w-max grid-flow-col grid-rows-7 gap-1"
+            className="grid w-full min-w-0 grid-flow-col grid-rows-7 gap-0.5"
+            style={{
+              gridTemplateColumns: `repeat(${weekCount}, minmax(0, 1fr))`,
+            }}
             role="img"
             aria-label={m.actors_activity()}
             data-actor-activity-heatmap
+            data-activity-weeks={weekCount}
           >
             {cells.map((cell, index) =>
               cell ? (
@@ -79,7 +84,7 @@ export function ActorActivityHeatmap({
               ) : (
                 <span
                   key={`padding-${index}`}
-                  className="size-2.5"
+                  className="aspect-square w-full min-w-0"
                   aria-hidden
                 />
               ),
@@ -92,26 +97,23 @@ export function ActorActivityHeatmap({
 }
 
 function HeatmapDay({ cell }: { cell: ActorHeatmapCell }) {
-  const day = (
-    <span
-      className={cn(
-        "size-2.5 rounded-[2px]",
-        cell.level === 0 && "bg-muted",
-        cell.level === 1 && "bg-primary/20",
-        cell.level === 2 && "bg-primary/40",
-        cell.level === 3 && "bg-primary/70",
-        cell.level === 4 && "bg-primary",
-      )}
-      data-activity-date={cell.date}
-      data-activity-count={cell.commitCount}
-      aria-hidden
-    />
-  );
-
-  if (cell.commitCount === 0) return day;
   return (
     <Tooltip>
-      <TooltipTrigger asChild>{day}</TooltipTrigger>
+      <TooltipTrigger asChild>
+        <span
+          className={cn(
+            "aspect-square w-full min-w-0 rounded-[1px]",
+            cell.level === 0 && "bg-muted",
+            cell.level === 1 && "bg-primary/20",
+            cell.level === 2 && "bg-primary/40",
+            cell.level === 3 && "bg-primary/70",
+            cell.level === 4 && "bg-primary",
+          )}
+          data-activity-date={cell.date}
+          data-activity-count={cell.commitCount}
+          aria-hidden
+        />
+      </TooltipTrigger>
       <TooltipContent>
         {m.actors_activity_day({
           count: String(cell.commitCount),
