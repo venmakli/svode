@@ -1,6 +1,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
+use std::time::Duration;
 
 use serde::Serialize;
 use tokio::io::AsyncWriteExt;
@@ -110,6 +111,68 @@ impl GitCli {
         }
 
         Ok(result)
+    }
+
+    /// Execute a bounded Git command whose arguments may contain credentials.
+    /// The command and its arguments are intentionally omitted from tracing.
+    pub(crate) async fn exec_sensitive_with_stdin(
+        &self,
+        space_dir: &Path,
+        args: &[&str],
+        extra_env: &[(&str, &str)],
+        stdin_payload: Option<&str>,
+        timeout: Duration,
+    ) -> Result<GitOutput, AppError> {
+        tracing::debug!("running redacted git command (in {})", space_dir.display());
+
+        let git_args = args_with_quote_path(args);
+        let mut cmd = Command::new(&self.git_path);
+        process::hide_tokio_window(&mut cmd);
+        apply_common_git_env(&mut cmd);
+        cmd.args(&git_args)
+            .current_dir(space_dir)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("LC_ALL", "C.UTF-8")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        for (key, value) in extra_env {
+            cmd.env(key, value);
+        }
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|error| AppError::GitCommandFailed(format!("Failed to spawn git: {error}")))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            if let Some(payload) = stdin_payload {
+                stdin.write_all(payload.as_bytes()).await.map_err(|error| {
+                    AppError::GitCommandFailed(format!("Failed to write git stdin: {error}"))
+                })?;
+                stdin.flush().await.map_err(|error| {
+                    AppError::GitCommandFailed(format!("Failed to flush git stdin: {error}"))
+                })?;
+            }
+        }
+
+        let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
+            Ok(result) => result.map_err(|error| {
+                AppError::GitCommandFailed(format!("Failed to wait for git: {error}"))
+            })?,
+            Err(_) => {
+                return Ok(GitOutput {
+                    stdout: String::new(),
+                    stderr: "git command timed out".to_string(),
+                    exit_code: -2,
+                });
+            }
+        };
+
+        Ok(GitOutput {
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            exit_code: output.status.code().unwrap_or(-1),
+        })
     }
 
     /// Execute a git command without a working directory (e.g. clone, or

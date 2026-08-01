@@ -12,14 +12,17 @@ import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
 import { useActorCatalog } from "../hooks/use-actor-catalog";
+import { useRepositoryAccess } from "../hooks/use-repository-access";
 import type { ActorCatalogRow } from "../model/types";
 import {
   actorCatalogBlockingError,
   createActorsPresentation,
 } from "./actors-presentation";
+import { RepositoryAccessHeader } from "./repository-access-header";
 
 export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
   const { refresh, state } = useActorCatalog(owner.spacePath);
+  const access = useRepositoryAccess(owner.spacePath);
   const presentationState = toPresentationState(state);
   const presentation = createActorsPresentation({
     onRefresh: refresh,
@@ -36,8 +39,8 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
   const collectionState = useSystemCollectionState(instance);
   const detailController = useOptionalSystemCollectionDetailController();
 
-  if (collectionState.phase === "blocking_error") {
-    return (
+  const body =
+    collectionState.phase === "blocking_error" ? (
       <div className="px-6 py-3">
         <Alert variant="destructive">
           <AlertTriangle />
@@ -48,16 +51,23 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
           </AlertDescription>
         </Alert>
       </div>
-    );
-  }
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col" data-actors-surface>
+    ) : (
       <SystemCollectionPresentationCore
         detailController={detailController ?? undefined}
         instance={instance}
         state={collectionState}
       />
+    );
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col" data-actors-surface>
+      <RepositoryAccessHeader
+        error={access.error}
+        snapshot={access.snapshot}
+        verifying={access.verifying}
+        onVerify={() => void access.verify()}
+      />
+      {body}
     </div>
   );
 }

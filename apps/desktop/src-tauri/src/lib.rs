@@ -48,6 +48,7 @@ pub fn run() {
         .manage(agent_sessions::AgentSessionsState::new())
         .manage(Arc::new(files::WriteNonceRegistry::new()))
         .manage(git::GitState::new())
+        .manage(git::access::RepositoryAccessState::new())
         .manage(index::IndexState::new())
         .manage(app_windows::AppWindowState::new())
         .manage(mcp::active::ActiveProjectState::new())
@@ -86,6 +87,8 @@ pub fn run() {
             actors::commands::actors_get_catalog,
             actors::commands::actors_refresh_catalog,
             actors::commands::actors_get_activity,
+            git::access::repository_access_get,
+            git::access::repository_access_verify,
             commands::greet::greet,
             commands::files::list_entries,
             commands::files::list_tree_children,

@@ -236,6 +236,7 @@ pub async fn git_get_remote(
 #[tauri::command]
 pub async fn git_set_remote(
     state: State<'_, GitState>,
+    access_state: State<'_, super::access::RepositoryAccessState>,
     autocommit: State<'_, Arc<AutocommitService>>,
     space_path: String,
     url: String,
@@ -248,6 +249,7 @@ pub async fn git_set_remote(
         let _guard = lock.lock().await;
         super::ops::set_remote(state.cli()?, &path, &url).await?;
     }
+    access_state.invalidate(state.cli()?, &path).await?;
 
     if let (Some(proj_path), Some(sid)) = (project_path.as_deref(), space_id) {
         let parent = Path::new(proj_path);
@@ -276,14 +278,26 @@ pub async fn git_set_remote(
 
 #[tauri::command]
 pub async fn git_push(
+    app: AppHandle,
     state: State<'_, GitState>,
+    access_state: State<'_, super::access::RepositoryAccessState>,
     space_path: String,
 ) -> Result<GitStatus, AppError> {
     let path = PathBuf::from(&space_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
     let cli = state.cli()?;
-    super::ops::push(cli, &path).await?;
+    if let Err(error) = super::ops::push(cli, &path).await {
+        let _ = access_state.invalidate(cli, &path).await;
+        return Err(error);
+    }
+    let store_path = super::access::access_store_path(&app)?;
+    if let Err(error) = access_state
+        .record_writable_evidence(cli, &path, &store_path)
+        .await
+    {
+        tracing::warn!("failed to record repository write evidence after push: {error}");
+    }
     super::ops::status(cli, &path).await
 }
 
@@ -424,6 +438,7 @@ pub async fn git_commit_paths(
 pub async fn git_sync(
     app: AppHandle,
     state: State<'_, GitState>,
+    access_state: State<'_, super::access::RepositoryAccessState>,
     index_state: State<'_, IndexState>,
     space_path: String,
 ) -> Result<SyncResult, AppError> {
@@ -431,13 +446,29 @@ pub async fn git_sync(
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
     let cli = state.cli()?;
-    let result = super::sync::sync(cli, &path).await?;
+    let result = match super::sync::sync(cli, &path).await {
+        Ok(result) => result,
+        Err(error) => {
+            let _ = access_state.invalidate(cli, &path).await;
+            return Err(error);
+        }
+    };
+    if matches!(result, SyncResult::AuthRequired { .. }) {
+        let _ = access_state.invalidate(cli, &path).await;
+    }
 
     // On a successful pull (Success means pull+push completed), refresh the
     // SQLite index for any files that the merge brought in or modified, then
     // emit `space:synced`. The canonical source of `space:synced` is the
     // git-sync flow — emit AFTER reindex so consumers see a fresh index.
     if matches!(result, SyncResult::Success) {
+        let store_path = super::access::access_store_path(&app)?;
+        if let Err(error) = access_state
+            .record_writable_evidence(cli, &path, &store_path)
+            .await
+        {
+            tracing::warn!("failed to record repository write evidence after sync: {error}");
+        }
         let key = index_state
             .key_for_space_dir(&path)
             .await
@@ -606,14 +637,26 @@ pub async fn git_unpushed_commits(
 
 #[tauri::command]
 pub async fn git_publish(
+    app: AppHandle,
     state: State<'_, GitState>,
+    access_state: State<'_, super::access::RepositoryAccessState>,
     space_path: String,
 ) -> Result<GitStatus, AppError> {
     let path = PathBuf::from(&space_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
     let cli = state.cli()?;
-    super::ops::push_set_upstream(cli, &path).await?;
+    if let Err(error) = super::ops::push_set_upstream(cli, &path).await {
+        let _ = access_state.invalidate(cli, &path).await;
+        return Err(error);
+    }
+    let store_path = super::access::access_store_path(&app)?;
+    if let Err(error) = access_state
+        .record_writable_evidence(cli, &path, &store_path)
+        .await
+    {
+        tracing::warn!("failed to record repository write evidence after publish: {error}");
+    }
     super::ops::status(cli, &path).await
 }
 
