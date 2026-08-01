@@ -29,6 +29,7 @@ import {
   isValidEmail,
   normalizeActorValues,
   resolveActorCandidate,
+  resolveActorCandidates,
 } from "../../lib/utils";
 import type { ActorCandidate, Column } from "../../model/types";
 import * as m from "@/paraglide/messages.js";
@@ -63,8 +64,10 @@ export function ActorControl({
     : typeof value === "string" && value
       ? [value.trim().toLowerCase()]
       : [];
-  const selected = emails.map((email) => resolveActorCandidate(email, actors));
-  const selectedSet = new Set(emails);
+  const selected = resolveActorCandidates(emails, actors);
+  const selectedSet = new Set(
+    selected.map((actor) => actor.email.trim().toLowerCase()),
+  );
   const [allTime, setAllTime] = useState(column.display === "all_time");
   const [freeform, setFreeform] = useState("");
 
@@ -92,15 +95,24 @@ export function ActorControl({
   const setActor = (email: string) => {
     const normalized = email.trim().toLowerCase();
     if (!normalized) return;
+    const canonical = resolveActorCandidate(normalized, actors)
+      .email.trim()
+      .toLowerCase();
     if (!multiple) {
-      void onChange(normalized);
+      void onChange(canonical);
       setOpen(false);
       return;
     }
-    if (selectedSet.has(normalized)) {
-      void onChange(emails.filter((item) => item !== normalized));
+    if (selectedSet.has(canonical)) {
+      void onChange(
+        emails.filter(
+          (item) =>
+            resolveActorCandidate(item, actors).email.trim().toLowerCase() !==
+            canonical,
+        ),
+      );
     } else {
-      void onChange([...emails, normalized]);
+      void onChange([...emails, canonical]);
     }
   };
 
@@ -183,7 +195,12 @@ export function ActorControl({
                   className="min-w-0 max-w-full justify-start rounded-full px-2"
                   onClick={() =>
                     void onChange(
-                      emails.filter((email) => email !== actor.email),
+                      emails.filter(
+                        (email) =>
+                          resolveActorCandidate(email, actors)
+                            .email.trim()
+                            .toLowerCase() !== actor.email.trim().toLowerCase(),
+                      ),
                     )
                   }
                 >

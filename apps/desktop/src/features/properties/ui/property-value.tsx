@@ -14,6 +14,7 @@ import { PropertyBadge } from "./property-badge";
 import type { Column, ActorCandidate, RelationContext } from "../model/types";
 import {
   resolveActorCandidate,
+  resolveActorCandidates,
   colorStyle,
   formatDateValue,
   gravatarUrl,
@@ -197,9 +198,7 @@ export function ActorSingleValue({
 }) {
   const email = typeof value === "string" ? value : "";
   if (!email) return <span className="text-muted-foreground">-</span>;
-  const actor = actors.find(
-    (item) => item.email.toLowerCase() === email.toLowerCase(),
-  ) ?? { email, name: email, commitCount: 0, isMe: false };
+  const actor = resolveActorCandidate(email, actors);
 
   return (
     <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
@@ -230,7 +229,7 @@ export function ActorValue({
     return <ActorSingleValue value={emails[0]} actors={actors} />;
   }
 
-  const resolved = emails.map((email) => resolveActorCandidate(email, actors));
+  const resolved = resolveActorCandidates(emails, actors);
   return (
     <TooltipProvider>
       <Tooltip>

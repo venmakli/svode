@@ -207,6 +207,7 @@ function toActorCandidate(actor: ActorCandidateDto): ActorCandidate {
   return {
     email: actor.email,
     name: actor.name,
+    aliasEmails: actor.aliasEmails ?? actor.alias_emails ?? [],
     lastCommitAt: actor.lastCommitAt ?? actor.last_commit_at ?? null,
     commitCount: actor.commitCount ?? actor.commit_count ?? 0,
     isMe: actor.isMe ?? actor.is_me ?? false,

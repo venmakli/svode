@@ -1,6 +1,7 @@
 use super::*;
 use crate::space::config::write_space_config;
 use crate::space::types::{SpaceConfig, SpaceRef, TreeSpaceConfig};
+use std::process::Command;
 use tempfile::TempDir;
 
 fn test_column(name: &str, type_: PropertyType) -> Column {
@@ -1844,6 +1845,123 @@ views: []
         .unwrap();
     let titles: Vec<_> = rows.into_iter().map(|row| row.title).collect();
     assert_eq!(titles, vec!["A", "B", "C", "D"]);
+}
+
+#[tokio::test]
+async fn actor_query_filters_expand_canonical_email_to_stored_aliases() {
+    let repo = TempDir::new().unwrap();
+    for args in [
+        vec!["init", "--quiet"],
+        vec!["config", "user.name", "Commit Name"],
+        vec!["config", "user.email", "old@example.test"],
+    ] {
+        let output = Command::new("git")
+            .args(&args)
+            .current_dir(repo.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    fs::write(
+        repo.path().join(".mailmap"),
+        "Canonical <new@example.test> <old@example.test>\n",
+    )
+    .unwrap();
+
+    let schema: CollectionSchema =
+        serde_yml::from_str("columns:\n  - { name: Owner, type: actor }\nviews: []\n").unwrap();
+    let filters = vec![Filter {
+        field: "Owner".into(),
+        op: FilterOp::Eq,
+        value: Some(Value::String("@me".into())),
+        values: None,
+    }];
+    let cli = GitCli::detect().unwrap();
+    let catalog = ActorCatalogState::new();
+    let resolved = resolve_query_filters(&catalog, Some(&cli), repo.path(), &schema, &filters)
+        .await
+        .unwrap();
+
+    assert_eq!(resolved[0].op, FilterOp::In);
+    assert_eq!(resolved[0].value, None);
+    assert_eq!(
+        resolved[0]
+            .values
+            .as_ref()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>(),
+        vec!["new@example.test", "old@example.test"]
+    );
+
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::query(
+        r#"
+            CREATE TABLE entries (
+                file_path TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                created TEXT NOT NULL,
+                updated TEXT NOT NULL,
+                collection_root_path TEXT,
+                in_collection INTEGER NOT NULL,
+                is_entry_head INTEGER NOT NULL,
+                fields TEXT NOT NULL
+            )
+            "#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    for (path, title, owner) in [
+        ("tasks/old.md", "Stored alias", "old@example.test"),
+        ("tasks/other.md", "Other actor", "other@example.test"),
+    ] {
+        sqlx::query(
+            r#"
+                INSERT INTO entries (
+                    file_path, title, description, created, updated, collection_root_path,
+                    in_collection, is_entry_head, fields
+                ) VALUES (?, ?, NULL, '2026-01-01', '2026-01-01', 'tasks', 1, 1, ?)
+                "#,
+        )
+        .bind(path)
+        .bind(title)
+        .bind(serde_json::json!({"Owner": owner}).to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let rows = query_entry_rows(&pool, &schema, "tasks", &resolved, &[], None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.into_iter().map(|row| row.title).collect::<Vec<_>>(),
+        vec!["Stored alias"]
+    );
+
+    let not_a_repo = TempDir::new().unwrap();
+    let explicit = vec![Filter {
+        field: "Owner".into(),
+        op: FilterOp::Eq,
+        value: Some(Value::String(" Explicit@Example.Test ".into())),
+        values: None,
+    }];
+    let resolved =
+        resolve_query_filters(&catalog, Some(&cli), not_a_repo.path(), &schema, &explicit)
+            .await
+            .unwrap();
+    assert_eq!(resolved[0].op, FilterOp::Eq);
+    assert_eq!(
+        resolved[0].value.as_ref().and_then(Value::as_str),
+        Some("explicit@example.test")
+    );
 }
 
 #[test]

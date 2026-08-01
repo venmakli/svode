@@ -71,6 +71,18 @@ pub(super) async fn list_actors(
         args.all_time.unwrap_or(false),
     )
     .await?;
+    let actors = actors
+        .into_iter()
+        .map(|actor| {
+            json!({
+                "email": actor.email,
+                "name": actor.name,
+                "lastCommitAt": actor.last_commit_at,
+                "commitCount": actor.commit_count,
+                "isMe": actor.is_me,
+            })
+        })
+        .collect::<Vec<_>>();
     Ok(ToolCallResult::ok(
         format!("Found {} actors.", actors.len()),
         json!({ "actors": actors }),

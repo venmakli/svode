@@ -297,11 +297,13 @@ pub async fn list_entries_for_view(
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     git_state: State<'_, GitState>,
+    actor_catalog: State<'_, properties::ActorCatalogState>,
 ) -> Result<Vec<Entry>, AppError> {
     let pool = pool_for_space(&index_state, &space, project_path.as_deref()).await?;
     let git_cli = git_state.cli.clone();
     properties::list_entries_for_view(
         &pool,
+        &actor_catalog,
         git_cli.as_ref(),
         &space,
         &collection_path,
@@ -323,11 +325,13 @@ pub async fn query_entries(
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     git_state: State<'_, GitState>,
+    actor_catalog: State<'_, properties::ActorCatalogState>,
 ) -> Result<Vec<Entry>, AppError> {
     let pool = pool_for_space(&index_state, &space, project_path.as_deref()).await?;
     let git_cli = git_state.cli.clone();
     properties::query_entries(
         &pool,
+        &actor_catalog,
         git_cli.as_ref(),
         &space,
         &collection_path,

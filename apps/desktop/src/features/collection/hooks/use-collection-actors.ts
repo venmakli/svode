@@ -4,7 +4,10 @@ import { listCollectionActors } from "../api";
 
 export function useCollectionActors(spacePath: string) {
   const [actors, setActors] = useState<ActorCandidate[]>([]);
-  const cacheRef = useRef<{ allTime: boolean | null; actors: ActorCandidate[] }>({
+  const cacheRef = useRef<{
+    allTime: boolean | null;
+    actors: ActorCandidate[];
+  }>({
     allTime: null,
     actors: [],
   });
@@ -43,6 +46,8 @@ function sameActors(current: ActorCandidate[], next: ActorCandidate[]) {
     return (
       actor.email === other.email &&
       actor.name === other.name &&
+      JSON.stringify(actor.aliasEmails ?? []) ===
+        JSON.stringify(other.aliasEmails ?? []) &&
       (actor.commitCount ?? 0) === (other.commitCount ?? 0) &&
       (actor.lastCommitAt ?? null) === (other.lastCommitAt ?? null) &&
       (actor.isMe ?? false) === (other.isMe ?? false)

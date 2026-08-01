@@ -43,5 +43,7 @@ export {
   isSensitivePropertyType,
   normalizeSchema,
   optionByName,
+  resolveActorCandidate,
+  resolveActorCandidates,
   valueToString,
 } from "./lib/utils";

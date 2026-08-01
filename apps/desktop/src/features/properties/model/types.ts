@@ -112,6 +112,7 @@ export interface EntrySchemaResult {
 export interface ActorCandidate {
   email: string;
   name: string;
+  aliasEmails?: string[];
   lastCommitAt?: number | null;
   commitCount?: number;
   isMe?: boolean;

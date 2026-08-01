@@ -1,3 +1,4 @@
+mod actors;
 mod agent;
 mod agent_sessions;
 mod app_windows;

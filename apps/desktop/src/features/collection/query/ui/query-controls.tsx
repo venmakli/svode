@@ -44,6 +44,7 @@ import { PropertyBadge } from "@/features/properties/display";
 import {
   actorDisplayName,
   initialsForActor,
+  resolveActorCandidate,
 } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 import {
@@ -378,7 +379,11 @@ function ActorChecklist({
   onChange: (values: string[]) => void;
 }) {
   const [search, setSearch] = useState("");
-  const selected = new Set(values);
+  const selected = new Set(
+    values.map((value) =>
+      resolveActorCandidate(value, actors).email.trim().toLowerCase(),
+    ),
+  );
   const visible = actors.filter((actor) => {
     const needle = search.trim().toLowerCase();
     return (
@@ -406,12 +411,21 @@ function ActorChecklist({
             className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
           >
             <Checkbox
-              checked={selected.has(actor.email)}
+              checked={selected.has(actor.email.trim().toLowerCase())}
               onCheckedChange={(checked) => {
-                const next = new Set(selected);
-                if (checked) next.add(actor.email);
-                else next.delete(actor.email);
-                onChange([...next]);
+                if (checked) {
+                  onChange([...values, actor.email]);
+                  return;
+                }
+                const canonical = actor.email.trim().toLowerCase();
+                onChange(
+                  values.filter(
+                    (value) =>
+                      resolveActorCandidate(value, actors)
+                        .email.trim()
+                        .toLowerCase() !== canonical,
+                  ),
+                );
               }}
             />
             <Avatar className="size-6">

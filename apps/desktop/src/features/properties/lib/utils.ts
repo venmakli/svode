@@ -209,16 +209,37 @@ export function resolveActorCandidate(
   email: string,
   actors: ActorCandidate[],
 ): ActorCandidate {
+  const normalized = email.trim().toLowerCase();
+  const exact = actors.find(
+    (actor) => actor.email.trim().toLowerCase() === normalized,
+  );
+  if (exact) return exact;
+  const aliases = actors.filter((actor) =>
+    actor.aliasEmails?.some(
+      (alias) => alias.trim().toLowerCase() === normalized,
+    ),
+  );
   return (
-    actors.find(
-      (actor) => actor.email.toLowerCase() === email.toLowerCase(),
-    ) ?? {
+    (aliases.length === 1 ? aliases[0] : null) ?? {
       email,
       name: email,
       commitCount: 0,
       isMe: false,
     }
   );
+}
+
+export function resolveActorCandidates(
+  emails: string[],
+  actors: ActorCandidate[],
+): ActorCandidate[] {
+  const resolved = new Map<string, ActorCandidate>();
+  for (const email of emails) {
+    const actor = resolveActorCandidate(email, actors);
+    const key = actor.email.trim().toLowerCase();
+    if (!resolved.has(key)) resolved.set(key, actor);
+  }
+  return [...resolved.values()];
 }
 
 export function isValidEmail(value: string): boolean {

@@ -31,10 +31,7 @@ pub use model::*;
 
 mod actors;
 pub use actors::{ActorCandidate, ActorCatalogState, list_actors, refresh_actors};
-use actors::{
-    actor_multiple, canonical_actor_email, canonicalize_actor, current_git_actor, is_actor_type,
-    normalize_actor_value,
-};
+use actors::{actor_multiple, canonical_actor_email, is_actor_type, normalize_actor_value};
 
 mod entry_defaults;
 pub use entry_defaults::{
@@ -2511,13 +2508,36 @@ struct RelationEdge {
 }
 
 async fn resolve_query_filters(
+    actor_catalog: &ActorCatalogState,
     git_cli: Option<&GitCli>,
     space_path: &Path,
     schema: &CollectionSchema,
     filters: &[Filter],
 ) -> Result<Vec<Filter>, AppError> {
-    let me_email = if query_filters_need_me(schema, filters)? {
-        Some(resolve_current_actor_email(git_cli, space_path).await?)
+    let needs_actor_resolver = query_filters_need_actor_resolver(schema, filters)?;
+    let needs_me = query_filters_need_me(schema, filters)?;
+    let actor_snapshot = match (needs_actor_resolver, git_cli) {
+        (true, Some(cli)) => match actor_catalog.snapshot(cli, space_path).await {
+            Ok(snapshot) => Some(snapshot),
+            Err(error) if needs_me => return Err(error),
+            Err(error) => {
+                tracing::warn!(
+                    "actor resolver unavailable for explicit query values in {}: {error}",
+                    space_path.display()
+                );
+                None
+            }
+        },
+        _ => None,
+    };
+    let me_email = if needs_me {
+        Some(
+            actor_snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.current_email())
+                .ok_or_else(|| schema_error("@me requires git user.email"))?
+                .to_string(),
+        )
     } else {
         None
     };
@@ -2535,9 +2555,64 @@ async fn resolve_query_filters(
             }
         }
         normalize_filter_values_for_query(schema, &mut filter)?;
+        if let Some(snapshot) = actor_snapshot.as_deref() {
+            expand_actor_filter_aliases(ty, &mut filter, snapshot);
+        }
         resolved.push(filter);
     }
     Ok(resolved)
+}
+
+fn query_filters_need_actor_resolver(
+    schema: &CollectionSchema,
+    filters: &[Filter],
+) -> Result<bool, AppError> {
+    for filter in filters {
+        if !matches!(
+            field_type(schema, &filter.field, FieldContext::Filter)?,
+            FieldType::Actor | FieldType::ActorMulti
+        ) {
+            continue;
+        }
+        if !filter_value_refs(filter).is_empty() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn expand_actor_filter_aliases(
+    ty: FieldType,
+    filter: &mut Filter,
+    snapshot: &crate::actors::ActorSnapshot,
+) {
+    if !matches!(ty, FieldType::Actor | FieldType::ActorMulti) {
+        return;
+    }
+    let mut seen = HashSet::new();
+    let mut values = Vec::new();
+    for value in filter_value_refs(filter) {
+        let Some(email) = value.as_str() else {
+            continue;
+        };
+        for equivalent in snapshot.equivalent_emails(email) {
+            if seen.insert(equivalent.clone()) {
+                values.push(Value::String(equivalent));
+            }
+        }
+    }
+    if values.is_empty() {
+        return;
+    }
+    match filter.op {
+        FilterOp::Eq => filter.op = FilterOp::In,
+        FilterOp::Neq => filter.op = FilterOp::NotIn,
+        FilterOp::Contains => filter.op = FilterOp::ContainsAny,
+        FilterOp::NotContains => filter.op = FilterOp::NotContainsAny,
+        _ => {}
+    }
+    filter.value = None;
+    filter.values = Some(values);
 }
 
 fn normalize_filter_values_for_query(
@@ -2619,17 +2694,6 @@ fn collect_filter_value_refs<'a>(value: &'a Value, values: &mut Vec<&'a Value>) 
     }
 }
 
-async fn resolve_current_actor_email(
-    git_cli: Option<&GitCli>,
-    space_path: &Path,
-) -> Result<String, AppError> {
-    let cli = git_cli.ok_or_else(|| schema_error("@me requires Git to be available"))?;
-    let (name, email) = current_git_actor(cli, space_path)
-        .await?
-        .ok_or_else(|| schema_error("@me requires git user.email"))?;
-    canonicalize_actor(cli, space_path, &name, &email).await
-}
-
 fn resolve_filter_macro_value(
     ty: FieldType,
     value: &Value,
@@ -2666,6 +2730,7 @@ fn resolve_filter_macro_container(
 
 pub async fn list_entries_for_view(
     pool: &SqlitePool,
+    actor_catalog: &ActorCatalogState,
     git_cli: Option<&GitCli>,
     space: &str,
     collection_path: &str,
@@ -2682,7 +2747,14 @@ pub async fn list_entries_for_view(
         View::Table { show_nested, .. } => show_nested.unwrap_or(true),
         _ => false,
     });
-    let filters = resolve_query_filters(git_cli, Path::new(space), &schema, view.filters()).await?;
+    let filters = resolve_query_filters(
+        actor_catalog,
+        git_cli,
+        Path::new(space),
+        &schema,
+        view.filters(),
+    )
+    .await?;
     let rows = query_entry_rows(
         pool,
         &schema,
@@ -2704,6 +2776,7 @@ pub async fn list_entries_for_view(
 
 pub async fn query_entries(
     pool: &SqlitePool,
+    actor_catalog: &ActorCatalogState,
     git_cli: Option<&GitCli>,
     space: &str,
     collection_path: &str,
@@ -2718,7 +2791,8 @@ pub async fn query_entries(
     let sort = sort.unwrap_or_default();
     let include_nested = include_nested.unwrap_or(false);
     validate_ad_hoc_query(&schema, &filters, &sort)?;
-    let filters = resolve_query_filters(git_cli, Path::new(space), &schema, &filters).await?;
+    let filters =
+        resolve_query_filters(actor_catalog, git_cli, Path::new(space), &schema, &filters).await?;
     let rows = query_entry_rows(
         pool,
         &schema,

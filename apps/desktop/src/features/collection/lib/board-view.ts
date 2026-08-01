@@ -5,7 +5,7 @@ import type {
   CollectionSchema,
   Column,
 } from "@/features/properties";
-import { actorDisplayName } from "@/features/properties";
+import { actorDisplayName, resolveActorCandidate } from "@/features/properties";
 import type { BoardColumnGroup } from "../model/board-types";
 import { entryCollectionPath, isFolderEntry } from "./entry-tree";
 import { groupKeyForValue, groupValue, noValueKey } from "./board-entry";
@@ -111,19 +111,22 @@ export function boardColumns(
     ];
   }
 
-  const actorByEmail = new Map(actors.map((actor) => [actor.email, actor]));
+  const actorForEmail = (email: string) => {
+    const actor = resolveActorCandidate(email, actors);
+    return actors.includes(actor) ? actor : null;
+  };
   const seen = Array.from(counts.keys())
     .filter((key) => key !== noValueKey())
     .sort((a, b) =>
-      actorLabel(a, actorByEmail.get(a)).localeCompare(
-        actorLabel(b, actorByEmail.get(b)),
+      actorLabel(a, actorForEmail(a)).localeCompare(
+        actorLabel(b, actorForEmail(b)),
       ),
     );
 
   return [
     ...noValue,
     ...seen.map((email) => {
-      const actor = actorByEmail.get(email) ?? null;
+      const actor = actorForEmail(email);
       return {
         key: email,
         value: email,

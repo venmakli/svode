@@ -103,6 +103,8 @@ export interface EntrySchemaResultDto {
 export interface ActorCandidateDto {
   email: string;
   name: string;
+  aliasEmails?: string[];
+  alias_emails?: string[];
   lastCommitAt?: number | null;
   last_commit_at?: number | null;
   commitCount?: number;

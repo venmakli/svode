@@ -137,8 +137,10 @@ pub(super) async fn query_entries(
     let pool = pool_for_space(app, &context, args.space_id.as_deref(), &space).await?;
     let git_state = app.state::<GitState>();
     let git_cli = git::commands::require_cli(&git_state).ok();
+    let actor_catalog = app.state::<properties::ActorCatalogState>();
     let entries = properties::query_entries(
         &pool,
+        &actor_catalog,
         git_cli.as_ref(),
         &space,
         &collection_path,
