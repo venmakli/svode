@@ -1,4 +1,10 @@
-import { Bot, FileText, ListChecks, TableProperties } from "lucide-react";
+import {
+  Bot,
+  FileText,
+  ListChecks,
+  TableProperties,
+  UsersRound,
+} from "lucide-react";
 import {
   hasScopeCapability,
   ScopeSurfaceUnavailable,
@@ -28,6 +34,15 @@ export function createScopeSurfaceContributions(
       label: m.scope_surface_readme(),
       icon: FileText,
       render: renderers.readme ?? (() => null),
+    },
+    {
+      id: "actors",
+      order: SCOPE_SURFACE_ORDER.actors,
+      presentations: ["full"],
+      appliesTo: (owner) => hasScopeCapability(owner, "space"),
+      label: m.scope_surface_actors(),
+      icon: UsersRound,
+      render: renderers.actors ?? unavailable,
     },
     {
       id: "collection",

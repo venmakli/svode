@@ -31,7 +31,7 @@ export function CollectionListRowShell({
   return (
     <div
       className={cn(
-        "group/list-row grid grid-cols-[18px_minmax(0,1fr)_auto] items-center gap-2 border-b border-border/60 px-3 outline-none transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/40",
+        "group/list-row grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-b border-border/60 px-3 outline-none transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/40",
         density === "compact" ? "min-h-10 py-1.5" : "min-h-[52px] py-2",
         selected && "bg-muted/50",
         className,

@@ -42,6 +42,10 @@ test("registry filters capability and presentation without changing canonical or
       appliesTo: (candidate) => candidate.capabilities.includes("collection"),
     }),
     contribution("readme"),
+    contribution("actors", {
+      presentations: ["full"],
+      appliesTo: (candidate) => candidate.capabilities.includes("space"),
+    }),
     contribution("routines"),
   ];
 
@@ -49,7 +53,7 @@ test("registry filters capability and presentation without changing canonical or
     resolveScopeSurfaceContributions(contributions, owner, "full").map(
       ({ id }) => id,
     ),
-  ).toEqual(["context", "readme", "collection", "routines"]);
+  ).toEqual(["context", "readme", "actors", "collection", "routines"]);
   expect(
     resolveScopeSurfaceContributions(contributions, owner, "compact").map(
       ({ id }) => id,
@@ -60,6 +64,10 @@ test("registry filters capability and presentation without changing canonical or
 test("registry keeps root, child, and hybrid owner capabilities independent", () => {
   const contributions = [
     contribution("readme"),
+    contribution("actors", {
+      presentations: ["full"],
+      appliesTo: (owner) => owner.capabilities.includes("space"),
+    }),
     contribution("collection", {
       appliesTo: (owner) => owner.capabilities.includes("collection"),
     }),
@@ -103,17 +111,17 @@ test("registry keeps root, child, and hybrid owner capabilities independent", ()
     resolveScopeSurfaceContributions(contributions, root, "full").map(
       ({ id }) => id,
     ),
-  ).toEqual(["context", "readme", "routines"]);
+  ).toEqual(["context", "readme", "actors", "routines"]);
   expect(
     resolveScopeSurfaceContributions(contributions, child, "full").map(
       ({ id }) => id,
     ),
-  ).toEqual(["context", "readme", "routines"]);
+  ).toEqual(["context", "readme", "actors", "routines"]);
   expect(
     resolveScopeSurfaceContributions(contributions, hybrid, "full").map(
       ({ id }) => id,
     ),
-  ).toEqual(["context", "readme", "collection", "routines"]);
+  ).toEqual(["context", "readme", "actors", "collection", "routines"]);
   expect(
     resolveScopeSurfaceContributions(contributions, collection, "full").map(
       ({ id }) => id,

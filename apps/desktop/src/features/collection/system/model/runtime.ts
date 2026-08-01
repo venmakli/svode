@@ -113,8 +113,36 @@ function validateDescriptor<Row>(
     fieldKeys.add(field.key);
   }
 
+  if (descriptor.layout.kind === "list") {
+    const visibleFieldKeys = new Set<string>();
+    for (const fieldKey of descriptor.layout.visibleFields) {
+      if (!fieldKeys.has(fieldKey)) {
+        diagnostics.push(
+          diagnostic(
+            "unknown-visible-field",
+            `Presentation "${descriptor.id}" references unknown visible field "${fieldKey}".`,
+          ),
+        );
+      }
+      if (visibleFieldKeys.has(fieldKey)) {
+        diagnostics.push(
+          diagnostic(
+            "duplicate-visible-field",
+            `Presentation "${descriptor.id}" renders visible field "${fieldKey}" more than once.`,
+          ),
+        );
+      }
+      visibleFieldKeys.add(fieldKey);
+    }
+  }
+
   const actionIds = new Set<string>();
-  for (const action of descriptor.rowActions ?? []) {
+  const actions = [
+    ...(descriptor.rowActions ?? []),
+    ...(descriptor.create ? [descriptor.create] : []),
+    ...(descriptor.refresh ? [descriptor.refresh] : []),
+  ];
+  for (const action of actions) {
     if (!isStableId(action.id)) {
       diagnostics.push(
         diagnostic(
@@ -132,15 +160,6 @@ function validateDescriptor<Row>(
       );
     }
     actionIds.add(action.id);
-  }
-
-  if (descriptor.create && !isStableId(descriptor.create.id)) {
-    diagnostics.push(
-      diagnostic(
-        "invalid-action-id",
-        `Create action id "${descriptor.create.id}" must be a stable, non-localized id.`,
-      ),
-    );
   }
 
   const { defaultCompare, defaultSort } = descriptor.query;

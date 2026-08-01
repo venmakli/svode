@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import { TooltipProvider } from "@/components/ui/tooltip";
+
 import { defineSystemCollectionPresentation } from "../model/runtime";
 import { SystemCollectionQueryEditor } from "./query-editor";
 
@@ -33,9 +35,12 @@ function presentation({
       getRowId: (row) => row.id,
       id: "people",
       label: "People",
+      layout: {
+        getTitle: (row) => row.name,
+        kind: "list",
+        visibleFields: [],
+      },
       query: searchable ? { getSearchText: (row) => row.name } : {},
-      renderer: "list",
-      renderRowContent: (row) => row.name,
     },
     state: { phase: "ready", rows: [] },
   });
@@ -64,14 +69,16 @@ test("query editor exposes only declared query controls", () => {
 
 test("query reset warning remains a visible non-blocking control", () => {
   const markup = renderToStaticMarkup(
-    <SystemCollectionQueryEditor
-      presentation={presentation({ filterable: true })}
-      resetWarning
-      value={{ filters: [], search: "", sort: [] }}
-      onChange={() => undefined}
-    />,
+    <TooltipProvider>
+      <SystemCollectionQueryEditor
+        presentation={presentation({ filterable: true })}
+        resetWarning
+        value={{ filters: [], search: "", sort: [] }}
+        onChange={() => undefined}
+      />
+    </TooltipProvider>,
   );
 
-  expect(markup.includes('aria-label="View settings"')).toBe(true);
-  expect(markup.includes('data-variant="secondary"')).toBe(true);
+  expect(markup.includes("Filter")).toBe(true);
+  expect(markup.includes("View settings")).toBe(false);
 });

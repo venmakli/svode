@@ -24,7 +24,6 @@ import type {
   SystemCollectionPresentationRuntime,
   SystemCollectionQueryState,
 } from "../model/types";
-import { SystemCollectionCreateActionButton } from "./create-action";
 import { SystemCollectionPresentationItem } from "./presentation-item";
 import {
   SystemCollectionBlockingError,
@@ -48,7 +47,6 @@ export interface SystemCollectionPresentationShellProps {
   presentation: SystemCollectionPresentationRuntime;
   cardWidth?: number;
   className?: string;
-  density?: "compact" | "comfortable";
   detailController?: SystemCollectionDetailController;
   query: SystemCollectionQueryState;
   onQueryChange(query: SystemCollectionQueryState): void;
@@ -60,7 +58,6 @@ export function SystemCollectionPresentationShell({
   presentation,
   cardWidth = defaultCardWidth,
   className,
-  density = "comfortable",
   detailController,
   query,
   onQueryChange,
@@ -123,7 +120,7 @@ export function SystemCollectionPresentationShell({
     (rowId: string, key: string) => {
       const currentIndex = rowIds.indexOf(rowId);
       const cardColumns =
-        descriptor.renderer === "cards"
+        descriptor.layout.kind === "cards"
           ? Math.max(
               1,
               Math.floor(
@@ -137,7 +134,7 @@ export function SystemCollectionPresentationShell({
         currentIndex,
         itemCount: rowIds.length,
         key,
-        renderer: descriptor.renderer,
+        renderer: descriptor.layout.kind,
       });
       if (nextIndex === null) {
         return;
@@ -149,17 +146,19 @@ export function SystemCollectionPresentationShell({
       selectRow(nextRowId);
       rowRefs.current.get(nextRowId)?.focus();
     },
-    [cardWidth, descriptor.renderer, rowIds, selectRow],
+    [cardWidth, descriptor.layout.kind, rowIds, selectRow],
   );
 
   if (state.phase === "initial") {
     return (
       <div className={cn(detailPageViewRowClassName, className)}>
         {state.skeleton ??
-          (descriptor.renderer === "cards" ? (
+          (descriptor.layout.kind === "cards" ? (
             <CollectionCardsSkeleton cardWidth={cardWidth} />
           ) : (
-            <CollectionListSkeleton density={density} />
+            <CollectionListSkeleton
+              density={descriptor.layout.density ?? "comfortable"}
+            />
           ))}
       </div>
     );
@@ -184,7 +183,6 @@ export function SystemCollectionPresentationShell({
         descriptor={descriptor}
         detailController={detailController}
         detailFocusFallback={() => surfaceRef.current}
-        density={density}
         instanceKey={instanceKey}
         row={row}
         rowId={rowId}
@@ -200,8 +198,6 @@ export function SystemCollectionPresentationShell({
 
   const sourceEmpty = queryResult?.sourceRows.length === 0;
   const queryEmpty = !sourceEmpty && rows.length === 0;
-  const createAction = descriptor.create;
-
   return (
     <div
       ref={surfaceRef}
@@ -213,31 +209,7 @@ export function SystemCollectionPresentationShell({
       data-system-collection-surface
       tabIndex={-1}
     >
-      {state.refreshing || createAction ? (
-        <div
-          className="flex min-h-7 items-center justify-between gap-3"
-          data-system-collection-toolbar
-        >
-          {state.refreshing ? <SystemCollectionRefreshingStatus /> : null}
-          {createAction ? (
-            <div className="ml-auto">
-              <SystemCollectionCreateActionButton
-                key={`${presentationScope}:${createAction.id}`}
-                action={createAction}
-                onRejected={(message) =>
-                  onInteractionError?.({
-                    instanceKey,
-                    kind: "create",
-                    message,
-                    presentationId: descriptor.id,
-                    targetId: createAction.id,
-                  })
-                }
-              />
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      {state.refreshing ? <SystemCollectionRefreshingStatus /> : null}
       <SystemCollectionReadySignals
         attention={state.attention}
         diagnostics={state.diagnostics}
@@ -248,7 +220,7 @@ export function SystemCollectionPresentationShell({
         <SystemCollectionQueryEmpty
           onClear={() => onQueryChange(EMPTY_SYSTEM_COLLECTION_QUERY)}
         />
-      ) : descriptor.renderer === "cards" ? (
+      ) : descriptor.layout.kind === "cards" ? (
         <CollectionCardsShell
           key={presentationScope}
           ref={cardsRef}

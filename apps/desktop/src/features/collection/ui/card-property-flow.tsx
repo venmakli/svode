@@ -10,6 +10,11 @@ import type {
   RelationContext,
 } from "@/features/properties";
 
+import {
+  CollectionPresentationPropertyFlow,
+  CollectionPresentationPropertyItem,
+} from "./presentation-core";
+
 export function CardPropertyFlow({
   entry,
   columns,
@@ -46,9 +51,11 @@ export function CardPropertyFlow({
 
   if (rendered.length === 0) return null;
   return (
-    <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
+    <CollectionPresentationPropertyFlow
+      className={cn("justify-start gap-1.5 overflow-visible", className)}
+    >
       {rendered}
-    </div>
+    </CollectionPresentationPropertyFlow>
   );
 }
 
@@ -77,9 +84,8 @@ function CardPropertyItem({
   const fullWidth = mode === "card" && isFullWidthCardType(column);
 
   return (
-    <div
+    <CollectionPresentationPropertyItem
       className={cn(
-        "min-w-0 rounded-md px-0.5 text-left text-xs leading-tight",
         mode === "inline" && "max-w-44",
         fullWidth && "w-full",
         validation.invalid && "ring-1 ring-warning",
@@ -118,7 +124,7 @@ function CardPropertyItem({
           />
         )}
       </span>
-    </div>
+    </CollectionPresentationPropertyItem>
   );
 }
 

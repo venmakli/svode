@@ -4,28 +4,6 @@ import type {
   SystemCollectionRenderer,
 } from "../model/types";
 
-const interactiveTargetSelector = [
-  "button",
-  "a",
-  "input",
-  "textarea",
-  "select",
-  "summary",
-  "[contenteditable='true']",
-  "[tabindex]:not([tabindex='-1'])",
-  "[role='button']",
-  "[role='checkbox']",
-  "[role='combobox']",
-  "[role='menuitem']",
-  "[role='option']",
-  "[role='radio']",
-  "[role='slider']",
-  "[role='switch']",
-  "[role='tab']",
-  "[data-system-collection-interactive]",
-  "[data-radix-collection-item]",
-].join(",");
-
 export interface SystemCollectionCallbackResult {
   message?: string;
   ok: boolean;
@@ -36,29 +14,6 @@ export function createSystemCollectionPresentationScope(
   presentationId: string,
 ): string {
   return JSON.stringify([instanceKey, presentationId]);
-}
-
-export function isSystemCollectionInteractiveTarget(
-  target: EventTarget | null,
-  currentTarget: EventTarget,
-): boolean {
-  if (target === currentTarget || !target || typeof target !== "object") {
-    return false;
-  }
-
-  const candidate = target as {
-    closest?: (selector: string) => Element | null;
-    parentElement?: Element | null;
-  };
-  const element =
-    typeof candidate.closest === "function"
-      ? candidate
-      : candidate.parentElement &&
-          typeof candidate.parentElement.closest === "function"
-        ? candidate.parentElement
-        : null;
-
-  return Boolean(element?.closest?.(interactiveTargetSelector));
 }
 
 export async function runSystemCollectionCallback(

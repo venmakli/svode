@@ -2,17 +2,19 @@ import { expect, test } from "bun:test";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   applySystemCollectionQuery,
   defineSystemCollectionPresentation,
   EMPTY_SYSTEM_COLLECTION_QUERY,
-  SystemCollectionPresentationShell,
+  SystemCollectionPresentationCore,
   type SystemCollectionDetailController,
   type SystemCollectionDetailRequest,
   type SystemCollectionFieldDescriptor,
   type SystemCollectionInstance,
   type SystemCollectionPresentationDescriptor,
   type SystemCollectionPresentationRuntime,
+  type SystemCollectionStateController,
 } from "@/features/collection/system";
 
 interface ActorRow {
@@ -278,11 +280,16 @@ function createProjectAggregateFixture(
     getRowId: (row) => row.rowId,
     id: "project-actors",
     label: "Project actors",
+    layout: {
+      getDescription: (row) => row.canonicalEmail,
+      getTitle: (row) => row.displayName,
+      kind: "list",
+      visibleFields: ["scope", "repository"],
+    },
     query: {
       getSearchText: (row) =>
         `${row.displayName} ${row.canonicalEmail} ${row.scopes.join(" ")}`,
     },
-    renderer: "list",
     rowActions: [
       {
         getState: () => ({ status: "idle" }),
@@ -291,14 +298,6 @@ function createProjectAggregateFixture(
         run: (row) => api.setPrimaryAlias(row.target, row.canonicalEmail),
       },
     ],
-    renderRowContent: (row, context) => (
-      <>
-        <strong>{row.displayName}</strong>
-        {context.renderField("scope")}
-        {context.renderField("repository")}
-        {context.renderAction("set-primary-alias")}
-      </>
-    ),
   };
   const diagnostics = snapshots.flatMap((snapshot) => snapshot.diagnostics);
   const presentation = defineSystemCollectionPresentation({
@@ -353,9 +352,12 @@ function createLocalFixture(): {
     getRowId: (actor) => actor.canonicalEmail,
     id: "actors",
     label: "Actors",
+    layout: {
+      getTitle: (actor) => actor.displayName,
+      kind: "list",
+      visibleFields: [],
+    },
     query: { getSearchText: (actor) => actor.displayName },
-    renderer: "list",
-    renderRowContent: (actor) => actor.displayName,
   };
   const presentation = defineSystemCollectionPresentation({
     descriptor,
@@ -422,14 +424,25 @@ function renderPresentation(
   instance: SystemCollectionInstance,
   presentation: SystemCollectionPresentationRuntime,
 ) {
+  const state: Extract<SystemCollectionStateController, { phase: "ready" }> = {
+    activePresentationId: instance.defaultPresentationId,
+    dismissResetWarning: () => undefined,
+    phase: "ready",
+    query: EMPTY_SYSTEM_COLLECTION_QUERY,
+    queryByPresentationId: {},
+    resetWarning: false,
+    setActivePresentationId: () => undefined,
+    setQuery: () => undefined,
+  };
+
   return renderToStaticMarkup(
-    <SystemCollectionPresentationShell
-      detailController={noopDetailController}
-      instanceKey={instance.instanceKey}
-      onQueryChange={() => undefined}
-      presentation={presentation}
-      query={EMPTY_SYSTEM_COLLECTION_QUERY}
-    />,
+    <TooltipProvider>
+      <SystemCollectionPresentationCore
+        detailController={noopDetailController}
+        instance={{ ...instance, presentations: [presentation] }}
+        state={state}
+      />
+    </TooltipProvider>,
   );
 }
 

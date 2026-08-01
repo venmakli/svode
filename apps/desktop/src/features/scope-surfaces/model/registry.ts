@@ -8,6 +8,7 @@ import type {
 export const SCOPE_SURFACE_ORDER: Record<ScopeSurfaceId, number> = {
   context: 100,
   readme: 200,
+  actors: 250,
   collection: 300,
   routines: 400,
 };

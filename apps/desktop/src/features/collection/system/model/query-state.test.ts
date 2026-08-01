@@ -40,10 +40,13 @@ function presentation(
       getRowId: (row) => row.id,
       id,
       label: id,
+      layout: {
+        getTitle: (row) => row.name,
+        kind: "list",
+        visibleFields: [],
+      },
       query:
         fields === "searchable" ? { getSearchText: (row) => row.name } : {},
-      renderer: "list",
-      renderRowContent: (row) => row.name,
     },
     state: { phase: "ready", rows: [] },
   });

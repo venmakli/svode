@@ -114,12 +114,15 @@ function descriptor(
     getRowId: (row) => row.id,
     id: "people",
     label: "People",
+    layout: {
+      getTitle: (row) => row.name,
+      kind: "list",
+      visibleFields: [],
+    },
     query: {
       fixedPredicate: (row) => row.active,
       getSearchText: (row) => row.name,
     },
-    renderer: "list",
-    renderRowContent: (row) => row.name,
     ...overrides,
   };
 }

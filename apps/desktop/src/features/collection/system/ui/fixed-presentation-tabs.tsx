@@ -1,4 +1,6 @@
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList } from "@/components/ui/tabs";
+
+import { CollectionPresentationTabTrigger } from "../../ui/presentation-core";
 
 import type { SystemCollectionPresentationRuntime } from "../model/types";
 import { readSystemCollectionPresentationRuntime } from "../model/runtime";
@@ -14,24 +16,24 @@ export function SystemCollectionFixedTabs({
   value,
   onValueChange,
 }: SystemCollectionFixedTabsProps) {
-  if (presentations.length <= 1) {
-    return null;
-  }
-
   return (
-    <Tabs value={value} onValueChange={onValueChange} className="min-w-0 gap-0">
-      <TabsList className="min-w-0 max-w-full flex-nowrap overflow-x-auto">
+    <Tabs
+      value={value}
+      onValueChange={onValueChange}
+      className="min-w-0 flex-1 gap-0"
+    >
+      <TabsList className="scrollbar-hide min-w-0 max-w-full flex-nowrap overflow-x-auto overflow-y-hidden">
         {presentations.map((presentation) => {
           const { descriptor } =
             readSystemCollectionPresentationRuntime(presentation).instance;
           return (
-            <TabsTrigger
+            <CollectionPresentationTabTrigger
               key={descriptor.id}
               value={descriptor.id}
               data-system-collection-presentation={descriptor.id}
             >
               {descriptor.label}
-            </TabsTrigger>
+            </CollectionPresentationTabTrigger>
           );
         })}
       </TabsList>

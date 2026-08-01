@@ -4,7 +4,12 @@ export type ScopeCapability = "space" | "collection";
 
 export type ScopePresentation = "full" | "compact";
 
-export type ScopeSurfaceId = "readme" | "collection" | "routines" | "context";
+export type ScopeSurfaceId =
+  | "readme"
+  | "actors"
+  | "collection"
+  | "routines"
+  | "context";
 
 export type ScopeOwnerKey =
   | `space:${string}`

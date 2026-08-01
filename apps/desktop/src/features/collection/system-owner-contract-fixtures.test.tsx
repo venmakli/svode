@@ -149,14 +149,13 @@ const actorDescriptor: SystemCollectionPresentationDescriptor<ActorRow> = {
   getRowId: (row) => row.canonicalEmail,
   id: "actors",
   label: "Actors",
+  layout: {
+    getDescription: (row) => row.canonicalEmail,
+    getTitle: (row) => row.displayName,
+    kind: "list",
+    visibleFields: ["access"],
+  },
   query: { getSearchText: (row) => `${row.displayName} ${row.canonicalEmail}` },
-  renderer: "list",
-  renderRowContent: (_row, context) => (
-    <>
-      {context.renderField("name")}
-      {context.renderField("access")}
-    </>
-  ),
 };
 const contextDescriptor: SystemCollectionPresentationDescriptor<ContextArtifactRow> =
   {
@@ -175,14 +174,16 @@ const contextDescriptor: SystemCollectionPresentationDescriptor<ContextArtifactR
     getRowId: (row) => row.artifactId,
     id: "context",
     label: "Context",
+    layout: {
+      kind: "cards",
+      renderCardContent: (row, context) => (
+        <>
+          <strong>{row.title}</strong>
+          {context.renderField("client")}
+        </>
+      ),
+    },
     query: { getSearchText: (row) => `${row.title} ${row.client}` },
-    renderer: "cards",
-    renderRowContent: (row, context) => (
-      <>
-        <strong>{row.title}</strong>
-        {context.renderField("client")}
-      </>
-    ),
   };
 const routineDescriptor: SystemCollectionPresentationDescriptor<RoutineRow> = {
   createDetailRequest: (row) => ({
@@ -196,14 +197,12 @@ const routineDescriptor: SystemCollectionPresentationDescriptor<RoutineRow> = {
   getRowId: (row) => row.routineId,
   id: "routines",
   label: "Routines",
+  layout: {
+    getTitle: (row) => row.name,
+    kind: "list",
+    visibleFields: ["status"],
+  },
   query: { getSearchText: (row) => `${row.name} ${row.status}` },
-  renderer: "list",
-  renderRowContent: (row, context) => (
-    <>
-      <strong>{row.name}</strong>
-      {context.renderField("status")}
-    </>
-  ),
 };
 
 const actorPresentation = defineSystemCollectionPresentation({

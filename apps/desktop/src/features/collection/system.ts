@@ -18,6 +18,8 @@ export { SystemCollectionQueryEditor } from "./system/ui/query-editor";
 export type { SystemCollectionQueryEditorProps } from "./system/ui/query-editor";
 export { SystemCollectionPresentationShell } from "./system/ui/presentation-shell";
 export type { SystemCollectionPresentationShellProps } from "./system/ui/presentation-shell";
+export { SystemCollectionPresentationCore } from "./system/ui/presentation-core";
+export type { SystemCollectionPresentationCoreProps } from "./system/ui/presentation-core";
 export type {
   SystemCollectionActionState,
   SystemCollectionCreateAction,
@@ -34,6 +36,7 @@ export type {
   SystemCollectionInteractionError,
   SystemCollectionPresentationDescriptor,
   SystemCollectionPresentationInstance,
+  SystemCollectionPresentationLayout,
   SystemCollectionPresentationRuntime,
   SystemCollectionPresentationState,
   SystemCollectionQueryDescriptor,
@@ -41,6 +44,7 @@ export type {
   SystemCollectionQueryValidationIssue,
   SystemCollectionQueryValidationIssueReason,
   SystemCollectionQueryValidationResult,
+  SystemCollectionRefreshAction,
   SystemCollectionRenderer,
   SystemCollectionRowActionDescriptor,
   SystemCollectionRowRenderContext,

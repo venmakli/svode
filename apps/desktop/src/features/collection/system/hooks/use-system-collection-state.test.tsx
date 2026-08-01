@@ -18,9 +18,12 @@ function presentation(id: string) {
       getRowId: (row) => row.id,
       id,
       label: id,
+      layout: {
+        getTitle: (row) => row.id,
+        kind: "list",
+        visibleFields: [],
+      },
       query: {},
-      renderer: "list",
-      renderRowContent: (row) => row.id,
     },
     state: {
       phase: "ready",

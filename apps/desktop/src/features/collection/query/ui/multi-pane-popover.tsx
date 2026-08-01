@@ -3,6 +3,7 @@ import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
+  PopoverAnchor,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
@@ -19,7 +20,8 @@ export interface MultiPaneDefinition<TPane extends string> {
 }
 
 interface MultiPanePopoverProps<TPane extends string> {
-  trigger: ReactNode;
+  trigger?: ReactNode;
+  anchor?: ReactNode;
   panes: Array<MultiPaneDefinition<TPane>>;
   mainPane: TPane;
   initialPane?: TPane;
@@ -32,6 +34,7 @@ interface MultiPanePopoverProps<TPane extends string> {
 }
 
 export function MultiPanePopover<TPane extends string>({
+  anchor,
   trigger,
   panes,
   mainPane,
@@ -78,7 +81,10 @@ export function MultiPanePopover<TPane extends string>({
 
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
-      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+      {trigger ? <PopoverTrigger asChild>{trigger}</PopoverTrigger> : null}
+      {!trigger && anchor ? (
+        <PopoverAnchor asChild>{anchor}</PopoverAnchor>
+      ) : null}
       <PopoverContent
         align={align}
         className={cn(

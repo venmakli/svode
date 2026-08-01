@@ -3,7 +3,6 @@ import { expect, test } from "bun:test";
 import {
   createSystemCollectionPresentationScope,
   createSystemCollectionDetailRequest,
-  isSystemCollectionInteractiveTarget,
   resolveSystemCollectionFocusIndex,
   runSystemCollectionCallback,
 } from "./interaction";
@@ -68,9 +67,12 @@ test("detail request receives stable instance, presentation, and row selection",
     getRowId: (row) => row.id,
     id: "contributors",
     label: "Contributors",
+    layout: {
+      getTitle: (row) => row.id,
+      kind: "list",
+      visibleFields: [],
+    },
     query: {},
-    renderer: "list",
-    renderRowContent: () => null,
   };
 
   expect(
@@ -107,38 +109,5 @@ test("presentation scope keeps instances and presentations isolated", () => {
   expect(
     createSystemCollectionPresentationScope("space:one", "actors") ===
       createSystemCollectionPresentationScope("space:two", "actors"),
-  ).toBe(false);
-});
-
-test("interactive target detection accepts SVG-like descendants and focusable owner content", () => {
-  const currentTarget = {};
-  const svgLikeTarget = {
-    closest: (selector: string) =>
-      selector.includes("button") ? ({} as Element) : null,
-  };
-  const textLikeTarget = {
-    parentElement: {
-      closest: (selector: string) =>
-        selector.includes("[tabindex]") ? ({} as Element) : null,
-    },
-  };
-
-  expect(
-    isSystemCollectionInteractiveTarget(
-      svgLikeTarget as unknown as EventTarget,
-      currentTarget as EventTarget,
-    ),
-  ).toBe(true);
-  expect(
-    isSystemCollectionInteractiveTarget(
-      textLikeTarget as unknown as EventTarget,
-      currentTarget as EventTarget,
-    ),
-  ).toBe(true);
-  expect(
-    isSystemCollectionInteractiveTarget(
-      currentTarget as EventTarget,
-      currentTarget as EventTarget,
-    ),
   ).toBe(false);
 });

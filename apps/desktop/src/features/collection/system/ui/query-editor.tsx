@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertTriangle, ArrowUpDown, Filter, Settings2 } from "lucide-react";
+import { AlertTriangle, ArrowUpDown, Filter } from "lucide-react";
 
 import {
   Alert,
@@ -10,7 +10,6 @@ import {
 import { Button } from "@/components/ui/button";
 import {
   MultiPanePopover,
-  PaneRow,
   QueryList,
   SortEditor,
 } from "@/features/collection/query/ui";
@@ -19,6 +18,7 @@ import * as m from "@/paraglide/messages.js";
 
 import { useControlledQueryEditor } from "../../query/hooks";
 import { SearchControl } from "../../ui/search-control";
+import { CollectionQueryToolbarButton } from "../../ui/presentation-core";
 import {
   createDefaultSystemCollectionFilterRule,
   systemCollectionFilterOperators,
@@ -43,7 +43,6 @@ import {
 } from "./query-editor-parts";
 
 type SystemCollectionQueryPane =
-  | "main"
   | "filter"
   | "filterField"
   | "filterEditor"
@@ -73,7 +72,8 @@ export function SystemCollectionQueryEditor({
   const { descriptor } =
     readSystemCollectionPresentationRuntime(presentation).instance;
   const [open, setOpen] = useState(false);
-  const [pane, setPane] = useState<SystemCollectionQueryPane>("main");
+  const [rootPane, setRootPane] = useState<"filter" | "sort">("filter");
+  const [pane, setPane] = useState<SystemCollectionQueryPane>("filter");
   const [searchOpen, setSearchOpen] = useState(Boolean(value.search));
   const filterFields = descriptor.fields.filter(
     (field) => systemCollectionFilterOperators(field).length > 0,
@@ -136,8 +136,14 @@ export function SystemCollectionQueryEditor({
   function closePopover(nextOpen: boolean) {
     setOpen(nextOpen);
     if (!nextOpen) {
-      setEditorPane("main");
+      setEditorPane(rootPane);
     }
+  }
+
+  function openRootPane(nextRootPane: "filter" | "sort") {
+    setRootPane(nextRootPane);
+    setEditorPane(nextRootPane);
+    setOpen(true);
   }
 
   const filterDraft = editor.filterDraft;
@@ -146,62 +152,31 @@ export function SystemCollectionQueryEditor({
     ? fieldByKey(descriptor, filterDraft.item.fieldKey)
     : undefined;
   const filterDraftValid = isFilterDraftValid(descriptor, value, filterDraft);
-  const settingsCount = value.filters.length + value.sort.length;
-  const hasSettings =
+  const hasQueryControls =
     filterFields.length > 0 || sortFields.length > 0 || resetWarning;
+  const resetWarningNotice = resetWarning ? (
+    <Alert>
+      <AlertTriangle />
+      <AlertTitle>{m.system_collection_query_reset_title()}</AlertTitle>
+      <AlertDescription>
+        {m.system_collection_query_reset_description()}
+      </AlertDescription>
+      {onDismissResetWarning ? (
+        <AlertAction>
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            onClick={onDismissResetWarning}
+          >
+            {m.system_collection_query_reset_dismiss()}
+          </Button>
+        </AlertAction>
+      ) : null}
+    </Alert>
+  ) : null;
 
   const panes = [
-    {
-      content: (
-        <div className="flex flex-col p-1">
-          {resetWarning ? (
-            <Alert className="mb-1">
-              <AlertTriangle />
-              <AlertTitle>{m.system_collection_query_reset_title()}</AlertTitle>
-              <AlertDescription>
-                {m.system_collection_query_reset_description()}
-              </AlertDescription>
-              {onDismissResetWarning ? (
-                <AlertAction>
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant="ghost"
-                    onClick={onDismissResetWarning}
-                  >
-                    {m.system_collection_query_reset_dismiss()}
-                  </Button>
-                </AlertAction>
-              ) : null}
-            </Alert>
-          ) : null}
-          {filterFields.length > 0 ? (
-            <PaneRow
-              icon={Filter}
-              label={m.view_query_filter_title()}
-              meta={
-                value.filters.length > 0
-                  ? String(value.filters.length)
-                  : undefined
-              }
-              onClick={() => setEditorPane("filter")}
-            />
-          ) : null}
-          {sortFields.length > 0 ? (
-            <PaneRow
-              icon={ArrowUpDown}
-              label={m.view_query_sort_title()}
-              meta={
-                value.sort.length > 0 ? String(value.sort.length) : undefined
-              }
-              onClick={() => setEditorPane("sort")}
-            />
-          ) : null}
-        </div>
-      ),
-      id: "main" as const,
-      title: m.view_query_settings_title(),
-    },
     {
       content: (
         <QueryList
@@ -226,6 +201,7 @@ export function SystemCollectionQueryEditor({
         />
       ),
       id: "filter" as const,
+      notice: resetWarningNotice,
       title: m.view_query_filter_title(),
     },
     {
@@ -304,6 +280,7 @@ export function SystemCollectionQueryEditor({
         />
       ),
       id: "sort" as const,
+      notice: resetWarningNotice,
       title: m.view_query_sort_title(),
     },
     {
@@ -363,7 +340,7 @@ export function SystemCollectionQueryEditor({
     },
   ];
 
-  if (!descriptor.query.getSearchText && !hasSettings) {
+  if (!descriptor.query.getSearchText && !hasQueryControls) {
     return null;
   }
 
@@ -377,24 +354,64 @@ export function SystemCollectionQueryEditor({
           onQueryChange={(search) => onChange({ ...value, search })}
         />
       ) : null}
-      {hasSettings ? (
+      {hasQueryControls ? (
         <MultiPanePopover
-          mainPane="main"
+          mainPane={rootPane}
           open={open}
           pane={pane}
           panes={panes}
-          trigger={
-            <Button
-              type="button"
-              size={settingsCount > 0 ? "sm" : "icon-sm"}
-              variant={
-                settingsCount > 0 || resetWarning ? "secondary" : "ghost"
-              }
-              aria-label={m.view_query_settings_title()}
-            >
-              {resetWarning ? <AlertTriangle /> : <Settings2 />}
-              {settingsCount > 0 ? <span>{settingsCount}</span> : null}
-            </Button>
+          anchor={
+            <div className="flex items-center gap-1">
+              {filterFields.length > 0 ? (
+                <CollectionQueryToolbarButton
+                  active={open && rootPane === "filter"}
+                  aria-expanded={open && rootPane === "filter"}
+                  aria-haspopup="dialog"
+                  count={value.filters.length}
+                  icon={Filter}
+                  label={m.view_query_filter_title()}
+                  onClick={() => {
+                    if (open && rootPane === "filter") {
+                      setOpen(false);
+                    } else {
+                      openRootPane("filter");
+                    }
+                  }}
+                />
+              ) : null}
+              {sortFields.length > 0 ? (
+                <CollectionQueryToolbarButton
+                  active={open && rootPane === "sort"}
+                  aria-expanded={open && rootPane === "sort"}
+                  aria-haspopup="dialog"
+                  count={value.sort.length}
+                  icon={ArrowUpDown}
+                  label={m.view_query_sort_title()}
+                  onClick={() => {
+                    if (open && rootPane === "sort") {
+                      setOpen(false);
+                    } else {
+                      openRootPane("sort");
+                    }
+                  }}
+                />
+              ) : null}
+              {resetWarning &&
+              filterFields.length === 0 &&
+              sortFields.length === 0 ? (
+                <CollectionQueryToolbarButton
+                  active={open}
+                  aria-expanded={open}
+                  aria-haspopup="dialog"
+                  icon={AlertTriangle}
+                  label={m.system_collection_query_reset_title()}
+                  onClick={() => {
+                    if (open) setOpen(false);
+                    else openRootPane("filter");
+                  }}
+                />
+              ) : null}
+            </div>
           }
           onOpenChange={closePopover}
           onPaneChange={setEditorPane}

@@ -29,9 +29,12 @@ function testDescriptor(
     getRowId: (row) => row.id,
     id: "people",
     label: "People",
+    layout: {
+      getTitle: (row) => row.name,
+      kind: "list",
+      visibleFields: [],
+    },
     query: {},
-    renderer: "list",
-    renderRowContent: (row) => row.name,
     ...overrides,
   };
 }
@@ -61,9 +64,11 @@ test("typed presentation factory erases heterogeneous row models", () => {
       getRowId: (row) => row.path,
       id: "skills",
       label: "Skills",
+      layout: {
+        kind: "cards",
+        renderCardContent: (row) => row.path,
+      },
       query: {},
-      renderer: "cards",
-      renderRowContent: (row) => row.path,
     },
     state: {
       phase: "ready",
@@ -227,6 +232,39 @@ test("stable field and action ids and unique descriptor keys are validated", () 
     "invalid-action-id",
     "duplicate-action-id",
   ]);
+});
+
+test("presentation, refresh, and row actions share one stable id namespace", () => {
+  const presentation = testPresentation({
+    descriptor: testDescriptor({
+      create: {
+        getState: () => ({ status: "idle" }),
+        id: "mutate",
+        label: "Create",
+        run: () => undefined,
+      },
+      refresh: {
+        getState: () => ({ status: "idle" }),
+        id: "mutate",
+        label: "Refresh",
+        run: () => undefined,
+      },
+      rowActions: [
+        {
+          getState: () => ({ status: "idle" }),
+          id: "mutate",
+          label: "Edit",
+          run: () => undefined,
+        },
+      ],
+    }),
+  });
+
+  expect(
+    readSystemCollectionPresentationRuntime(presentation).diagnostics.map(
+      ({ code }) => code,
+    ),
+  ).toEqual(["duplicate-action-id", "duplicate-action-id"]);
 });
 
 test("field getters must return a synchronous normalized value", () => {

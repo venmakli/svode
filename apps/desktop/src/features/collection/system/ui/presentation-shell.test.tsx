@@ -60,8 +60,12 @@ function descriptor(
     getRowId: (row) => row.id,
     id: "contributors",
     label: "Contributors",
+    layout: {
+      getTitle: (row) => row.id,
+      kind: "list",
+      visibleFields: ["name", "enabled"],
+    },
     query: {},
-    renderer: "list",
     rowActions: [
       {
         getState: () => ({
@@ -88,28 +92,11 @@ function descriptor(
         run: () => undefined,
       },
     ],
-    renderRowContent: (row, context) => (
-      <div className="flex items-center gap-2">
-        {context.renderField("name")}
-        {context.renderFieldControl("enabled")}
-        {context.renderAction("refresh")}
-        {context.renderAction("sync")}
-        {context.renderAction("retry")}
-        <button
-          type="button"
-          data-system-collection-interactive
-          onClick={context.openDetail}
-        >
-          Detail
-        </button>
-        <span>{row.id}</span>
-      </div>
-    ),
     ...overrides,
   };
 }
 
-test("list shell renders owner content through field, control, action, and detail context", () => {
+test("list shell renders structured identity, property flow, context menu, and detail seam", () => {
   const presentation = defineSystemCollectionPresentation<TestRow>({
     descriptor: descriptor(),
     state: {
@@ -130,20 +117,9 @@ test("list shell renders owner content through field, control, action, and detai
   expect(markup.includes('data-system-collection-row="person:one"')).toBe(true);
   expect(markup.includes("data-field-value")).toBe(true);
   expect(markup.includes('data-system-collection-field="enabled"')).toBe(true);
-  expect(markup.includes('data-system-collection-action="refresh"')).toBe(true);
-  expect(
-    markup.includes('data-system-collection-action-state="disabled"'),
-  ).toBe(true);
-  expect(markup.includes("Repository is read-only")).toBe(true);
-  expect(markup.includes('data-system-collection-action-state="pending"')).toBe(
-    true,
-  );
-  expect(markup.includes('data-system-collection-action-state="error"')).toBe(
-    true,
-  );
-  expect(markup.includes("Previous retry failed")).toBe(true);
   expect(markup.includes('data-system-collection-detail="true"')).toBe(true);
-  expect(markup.includes("Row actions")).toBe(true);
+  expect(markup.includes('data-slot="context-menu-trigger"')).toBe(true);
+  expect(markup.includes("Row actions")).toBe(false);
   expect(markup.includes('role="list"')).toBe(true);
   expect(markup.includes('role="listitem"')).toBe(true);
   expect(markup.includes('aria-label="Contributors"')).toBe(true);
@@ -156,9 +132,11 @@ test("cards shell uses the extracted responsive card layout without Entry", () =
     descriptor: descriptor({
       createDetailRequest: undefined,
       fields: [],
-      renderer: "cards",
+      layout: {
+        kind: "cards",
+        renderCardContent: (row) => <strong>{row.name}</strong>,
+      },
       rowActions: [],
-      renderRowContent: (row) => <strong>{row.name}</strong>,
     }),
     state: {
       phase: "ready",
@@ -186,7 +164,6 @@ test("ready presentation renders the controlled frontend query snapshot", () => 
     descriptor: descriptor({
       query: { getSearchText: (row) => row.name },
       rowActions: [],
-      renderRowContent: (row) => <span>{row.name}</span>,
     }),
     state: {
       phase: "ready",
@@ -211,7 +188,12 @@ test("ready presentation renders the controlled frontend query snapshot", () => 
 
 test("initial presentation uses renderer-specific extracted skeleton", () => {
   const presentation = defineSystemCollectionPresentation<TestRow>({
-    descriptor: descriptor({ renderer: "cards" }),
+    descriptor: descriptor({
+      layout: {
+        kind: "cards",
+        renderCardContent: (row) => row.name,
+      },
+    }),
     state: { phase: "initial" },
   });
   const markup = renderToStaticMarkup(
@@ -227,12 +209,16 @@ test("initial presentation uses renderer-specific extracted skeleton", () => {
   expect(markup.includes('aria-hidden="true"')).toBe(true);
 });
 
-test("renderFieldControl fails closed for custom field semantics", () => {
+test("structured list layout fails closed for an unknown visible field", () => {
   const presentation = defineSystemCollectionPresentation<TestRow>({
     descriptor: descriptor({
       createDetailRequest: undefined,
+      layout: {
+        getTitle: (row) => row.name,
+        kind: "list",
+        visibleFields: ["missing"],
+      },
       rowActions: [],
-      renderRowContent: (_row, context) => context.renderFieldControl("name"),
     }),
     state: {
       phase: "ready",
@@ -248,21 +234,14 @@ test("renderFieldControl fails closed for custom field semantics", () => {
     />,
   );
 
-  expect(markup.includes("standard editable property control")).toBe(true);
-  expect(markup.includes("data-system-collection-diagnostic")).toBe(true);
+  expect(markup.includes("unknown visible field")).toBe(true);
+  expect(markup.includes("data-system-collection-blocking-error")).toBe(true);
 });
 
-test("ready presentation keeps stale rows visible with refresh, diagnostics, attention, and create", () => {
+test("ready presentation keeps stale rows visible with refresh, diagnostics, and attention", () => {
   const presentation = defineSystemCollectionPresentation<TestRow>({
     descriptor: descriptor({
-      create: {
-        getState: () => ({ status: "pending" }),
-        id: "add-contributor",
-        label: "Add contributor",
-        run: () => undefined,
-      },
       rowActions: [],
-      renderRowContent: (row) => <span>{row.name}</span>,
     }),
     state: {
       attention: <span>Review identity</span>,
@@ -288,12 +267,6 @@ test("ready presentation keeps stale rows visible with refresh, diagnostics, att
   expect(markup.includes("Review identity")).toBe(true);
   expect(markup.includes("data-system-collection-diagnostics")).toBe(true);
   expect(markup.includes("Git history is incomplete")).toBe(true);
-  expect(
-    markup.includes('data-system-collection-create="add-contributor"'),
-  ).toBe(true);
-  expect(markup.includes('data-system-collection-create-state="pending"')).toBe(
-    true,
-  );
 });
 
 test("source-empty is resolved after fixed predicate and uses owner content or neutral fallback", () => {

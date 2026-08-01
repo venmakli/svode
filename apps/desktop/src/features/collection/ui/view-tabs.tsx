@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList } from "@/components/ui/tabs";
 import { cn } from "@/shared/lib/utils";
 import { MultiPanePopover } from "@/features/collection/query/ui";
 import type {
@@ -27,6 +27,7 @@ import { SettingsRow, SettingsSection } from "./settings-row";
 import { ManageViewsPane } from "./manage-views-pane";
 import { viewType } from "../lib/utils";
 import { viewIcons } from "./view-icons";
+import { CollectionPresentationTabTrigger } from "./presentation-core";
 import type { ActiveTab } from "../model";
 
 type TabIcon = ComponentType<LucideProps>;
@@ -79,7 +80,9 @@ function setNextLayout(
   setLayout: (updater: (current: TabStripLayout) => TabStripLayout) => void,
   nextLayout: TabStripLayout,
 ) {
-  setLayout((current) => (sameLayout(current, nextLayout) ? current : nextLayout));
+  setLayout((current) =>
+    sameLayout(current, nextLayout) ? current : nextLayout,
+  );
 }
 
 export function CollectionTabStrip({
@@ -148,7 +151,10 @@ export function CollectionTabStrip({
 
     const activeIndex = tabs.findIndex((tab) => tab.value === activeTab);
     const prefixWithMoreWidth = availableWithoutOverflow - moreWidth;
-    const prefixWithMoreCount = countFittingPrefix(tabWidths, prefixWithMoreWidth);
+    const prefixWithMoreCount = countFittingPrefix(
+      tabWidths,
+      prefixWithMoreWidth,
+    );
 
     if (activeIndex >= 0 && activeIndex < prefixWithMoreCount) {
       setNextLayout(setLayout, {
@@ -205,25 +211,22 @@ export function CollectionTabStrip({
   const hiddenTabs = tabs.slice(layout.visibleCount);
   const shouldShowOverflowControl = layout.hasOverflow && tabs.length > 0;
 
-  const toggleOverflowPanel = useCallback(
-    (trigger: HTMLElement) => {
-      const container = containerRef.current;
-      if (container) {
-        const containerRect = container.getBoundingClientRect();
-        const triggerRect = trigger.getBoundingClientRect();
-        const maxLeft = Math.max(0, containerRect.width - OVERFLOW_PANEL_WIDTH);
-        const nextLeft = Math.max(
-          0,
-          Math.min(triggerRect.left - containerRect.left, maxLeft),
-        );
-        setPanelLeft(nextLeft);
-      }
-      setMoreOpen((open) => {
-        return !open;
-      });
-    },
-    [],
-  );
+  const toggleOverflowPanel = useCallback((trigger: HTMLElement) => {
+    const container = containerRef.current;
+    if (container) {
+      const containerRect = container.getBoundingClientRect();
+      const triggerRect = trigger.getBoundingClientRect();
+      const maxLeft = Math.max(0, containerRect.width - OVERFLOW_PANEL_WIDTH);
+      const nextLeft = Math.max(
+        0,
+        Math.min(triggerRect.left - containerRect.left, maxLeft),
+      );
+      setPanelLeft(nextLeft);
+    }
+    setMoreOpen((open) => {
+      return !open;
+    });
+  }, []);
 
   return (
     <div
@@ -375,14 +378,14 @@ function CollectionViewTab({
   className?: string;
 }) {
   return (
-    <TabsTrigger
+    <CollectionPresentationTabTrigger
       value={tab.value}
       data-collection-tab={tab.value}
       className={className}
     >
       <tab.Icon />
       {tab.label}
-    </TabsTrigger>
+    </CollectionPresentationTabTrigger>
   );
 }
 

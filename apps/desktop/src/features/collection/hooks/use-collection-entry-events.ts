@@ -20,7 +20,7 @@ export function useCollectionRefreshEvents({
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let disposed = false;
-    let timer: ReturnType<typeof window.setTimeout> | null = null;
+    let timer: number | null = null;
     const pending = {
       entries: false,
       schema: false,

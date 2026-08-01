@@ -3,6 +3,10 @@ import { LoaderCircle, MoreHorizontal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
+  ContextMenuGroup,
+  ContextMenuItem,
+} from "@/components/ui/context-menu";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
@@ -146,7 +150,7 @@ export function SystemCollectionRowActionButton(
   );
 }
 
-function SystemCollectionRowActionMenuItem(
+function SystemCollectionRowActionDropdownItem(
   props: SystemCollectionRowActionProps & {
     onSuccess(): void;
   },
@@ -172,17 +176,69 @@ function SystemCollectionRowActionMenuItem(
       {state.pending ? (
         <LoaderCircle data-icon="inline-start" className="animate-spin" />
       ) : null}
-      <span className="min-w-0 truncate">{action.label}</span>
+      <span>{action.label}</span>
       {state.message ? (
-        <span className="ml-auto max-w-40 truncate text-xs text-muted-foreground">
-          {state.message}
-        </span>
+        <span className="sr-only"> — {state.message}</span>
       ) : null}
     </DropdownMenuItem>
   );
 }
 
-export function SystemCollectionRowActionsMenu({
+function SystemCollectionRowActionContextItem(
+  props: SystemCollectionRowActionProps,
+) {
+  const { action } = props;
+  const { run, state } = useSystemCollectionRowAction(props);
+
+  return (
+    <ContextMenuItem
+      disabled={state.disabled}
+      data-system-collection-action={action.id}
+      data-system-collection-action-state={state.status}
+      title={state.message}
+      aria-description={state.message}
+      onSelect={(event) => {
+        event.preventDefault();
+        void run();
+      }}
+    >
+      {state.pending ? (
+        <LoaderCircle data-icon="inline-start" className="animate-spin" />
+      ) : null}
+      <span>{action.label}</span>
+      {state.message ? (
+        <span className="sr-only"> — {state.message}</span>
+      ) : null}
+    </ContextMenuItem>
+  );
+}
+
+export function SystemCollectionRowActionsContextMenu({
+  actions,
+  row,
+  onRejected,
+}: {
+  actions: readonly SystemCollectionRowActionDescriptor<unknown>[];
+  row: unknown;
+  onRejected(actionId: string, message: string): void;
+}) {
+  if (actions.length === 0) return null;
+
+  return (
+    <ContextMenuGroup>
+      {actions.map((action) => (
+        <SystemCollectionRowActionContextItem
+          key={action.id}
+          action={action}
+          row={row}
+          onRejected={onRejected}
+        />
+      ))}
+    </ContextMenuGroup>
+  );
+}
+
+export function SystemCollectionRowActionsDropdownMenu({
   actions,
   row,
   onRejected,
@@ -206,7 +262,7 @@ export function SystemCollectionRowActionsMenu({
           size="icon-xs"
           aria-label={m.system_collection_row_actions()}
           data-system-collection-interactive
-          className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-focus-within/list-row:opacity-100 group-hover/list-row:opacity-100 group-focus-within/gallery-card:opacity-100 group-hover/gallery-card:opacity-100"
+          className="shrink-0 text-muted-foreground"
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => event.stopPropagation()}
         >
@@ -216,7 +272,7 @@ export function SystemCollectionRowActionsMenu({
       <DropdownMenuContent align="end" className="w-64">
         <DropdownMenuGroup>
           {actions.map((action) => (
-            <SystemCollectionRowActionMenuItem
+            <SystemCollectionRowActionDropdownItem
               key={action.id}
               action={action}
               row={row}

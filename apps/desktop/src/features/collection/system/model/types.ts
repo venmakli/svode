@@ -5,6 +5,23 @@ import type { Column } from "@/features/properties";
 export type SystemCollectionRenderer = "list" | "cards";
 export type SystemCollectionStateScope = "session" | "lifecycle";
 
+export type SystemCollectionPresentationLayout<Row> =
+  | {
+      kind: "list";
+      getTitle(row: Row): ReactNode;
+      getDescription?(row: Row): ReactNode;
+      renderLeading?(row: Row): ReactNode;
+      visibleFields: readonly string[];
+      density?: "compact" | "comfortable";
+    }
+  | {
+      kind: "cards";
+      renderCardContent(
+        row: Row,
+        context: SystemCollectionRowRenderContext,
+      ): ReactNode;
+    };
+
 export interface SystemCollectionInstance {
   instanceKey: string;
   defaultPresentationId: string;
@@ -46,16 +63,13 @@ export interface SystemCollectionPresentationRuntime {
 export interface SystemCollectionPresentationDescriptor<Row> {
   id: string;
   label: string;
-  renderer: SystemCollectionRenderer;
+  layout: SystemCollectionPresentationLayout<Row>;
   getRowId(row: Row): string;
   fields: readonly SystemCollectionFieldDescriptor<Row>[];
   query: SystemCollectionQueryDescriptor<Row>;
   create?: SystemCollectionCreateAction;
+  refresh?: SystemCollectionRefreshAction;
   rowActions?: readonly SystemCollectionRowActionDescriptor<Row>[];
-  renderRowContent(
-    row: Row,
-    context: SystemCollectionRowRenderContext,
-  ): ReactNode;
   createDetailRequest?(
     row: Row,
   ): Omit<SystemCollectionDetailRequest, "selection">;
@@ -157,6 +171,13 @@ export interface SystemCollectionCreateAction {
   run(): void | Promise<void>;
 }
 
+export interface SystemCollectionRefreshAction {
+  id: string;
+  label: string;
+  getState(): SystemCollectionActionState;
+  run(): void | Promise<void>;
+}
+
 export interface SystemCollectionRowActionDescriptor<Row> {
   id: string;
   label: string;
@@ -188,7 +209,8 @@ export interface SystemCollectionDetailRequest {
   title: ReactNode;
   description: ReactNode;
   content: ReactNode;
-  actions?: ReactNode;
+  headerActions?: ReactNode;
+  footerActions?: ReactNode;
   canClose?: () => boolean | Promise<boolean>;
 }
 
@@ -215,7 +237,7 @@ interface SystemCollectionInteractionErrorBase {
 
 export type SystemCollectionInteractionError =
   | (SystemCollectionInteractionErrorBase & {
-      kind: "create";
+      kind: "create" | "refresh";
       rowId?: never;
     })
   | (SystemCollectionInteractionErrorBase & {
@@ -230,6 +252,7 @@ export type SystemCollectionDeveloperDiagnosticCode =
   | "duplicate-instance-key"
   | "duplicate-presentation-id"
   | "duplicate-row-id"
+  | "duplicate-visible-field"
   | "field-value-error"
   | "invalid-action-id"
   | "invalid-default-presentation"
@@ -239,6 +262,7 @@ export type SystemCollectionDeveloperDiagnosticCode =
   | "invalid-presentation-id"
   | "invalid-property-adapter"
   | "invalid-row-id"
+  | "unknown-visible-field"
   | "row-id-error";
 
 export interface SystemCollectionDeveloperDiagnostic {

@@ -1,13 +1,10 @@
 import { ArrowUpDown, Filter, Group } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { cn } from "@/shared/lib/utils";
-import type { UseViewQueryResult, ViewType } from "@/features/collection/query/model";
+import type {
+  UseViewQueryResult,
+  ViewType,
+} from "@/features/collection/query/model";
 import type { CollectionView } from "@/features/collection/query/model";
 import type { CollectionSchema } from "@/features/properties";
 import { SearchControl } from "./search-control";
@@ -15,15 +12,11 @@ import type { SettingsPane } from "../model";
 import type { TemplateInfo, TemplateKind } from "../model";
 import { TemplatesSplitButton } from "./templates-menu";
 import { ViewSettingsPopover } from "./view-settings-popover";
+import { CollectionQueryToolbarButton } from "./presentation-core";
 import * as m from "@/paraglide/messages.js";
 
-const toolbarIconButtonClass =
-  "rounded-[7px] text-muted-foreground hover:bg-accent hover:text-foreground aria-expanded:bg-transparent aria-expanded:text-muted-foreground";
 const toolbarActiveButtonClass =
   "bg-accent text-accent-foreground hover:bg-accent hover:text-accent-foreground aria-expanded:bg-accent aria-expanded:text-accent-foreground";
-const toolbarBadgeButtonClass = "h-7 gap-1 rounded-[7px] px-2";
-const toolbarCountBadgeClass =
-  "h-3.5 min-w-3.5 rounded-full px-1 text-[10px] leading-none";
 const toolbarPillButtonClass =
   "h-7 max-w-40 rounded-[7px] bg-foreground/[0.03] px-[9px] text-muted-foreground shadow-none hover:bg-accent hover:text-foreground";
 
@@ -143,56 +136,26 @@ export function ViewActionBar({
           <span className="truncate">{groupBy}</span>
         </Button>
       ) : null}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size={filterCount > 0 ? "sm" : "icon-sm"}
-            className={cn(
-              toolbarIconButtonClass,
-              filterCount > 0 && toolbarBadgeButtonClass,
-              (filterCount > 0 || filterActive) && toolbarActiveButtonClass,
-            )}
-            onClick={() => {
-              onSettingsPaneChange("filter");
-              onSettingsOpenChange(!filterActive);
-            }}
-          >
-            <Filter />
-            <span className="sr-only">{m.view_query_filter_title()}</span>
-            {filterCount > 0 ? (
-              <Badge className={toolbarCountBadgeClass}>{filterCount}</Badge>
-            ) : null}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{m.view_query_filter_title()}</TooltipContent>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size={sortCount > 0 ? "sm" : "icon-sm"}
-            className={cn(
-              toolbarIconButtonClass,
-              sortCount > 0 && toolbarBadgeButtonClass,
-              (sortCount > 0 || sortActive) && toolbarActiveButtonClass,
-            )}
-            onClick={() => {
-              onSettingsPaneChange("sort");
-              onSettingsOpenChange(!sortActive);
-            }}
-          >
-            <ArrowUpDown />
-            <span className="sr-only">{m.view_query_sort_title()}</span>
-            {sortCount > 0 ? (
-              <Badge className={toolbarCountBadgeClass}>{sortCount}</Badge>
-            ) : null}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{m.view_query_sort_title()}</TooltipContent>
-      </Tooltip>
+      <CollectionQueryToolbarButton
+        active={filterActive}
+        count={filterCount}
+        icon={Filter}
+        label={m.view_query_filter_title()}
+        onClick={() => {
+          onSettingsPaneChange("filter");
+          onSettingsOpenChange(!filterActive);
+        }}
+      />
+      <CollectionQueryToolbarButton
+        active={sortActive}
+        count={sortCount}
+        icon={ArrowUpDown}
+        label={m.view_query_sort_title()}
+        onClick={() => {
+          onSettingsPaneChange("sort");
+          onSettingsOpenChange(!sortActive);
+        }}
+      />
       <ViewSettingsPopover
         open={settingsOpen}
         pane={settingsPane}

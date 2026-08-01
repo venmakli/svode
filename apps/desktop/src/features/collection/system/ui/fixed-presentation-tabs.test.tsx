@@ -15,9 +15,12 @@ function presentation(id: string, label: string) {
       getRowId: (row) => row.id,
       id,
       label,
+      layout: {
+        getTitle: (row) => row.id,
+        kind: "list",
+        visibleFields: [],
+      },
       query: {},
-      renderer: "list",
-      renderRowContent: (row) => row.id,
     },
     state: {
       phase: "ready",
@@ -44,7 +47,7 @@ test("fixed presentation tabs render labels without mutation controls", () => {
   expect(markup.includes("dropdown-menu")).toBe(false);
 });
 
-test("fixed presentation tabs stay hidden for one presentation", () => {
+test("fixed presentation tabs remain visible for one presentation", () => {
   const markup = renderToStaticMarkup(
     <SystemCollectionFixedTabs
       presentations={[presentation("contributors", "Contributors")]}
@@ -53,5 +56,10 @@ test("fixed presentation tabs stay hidden for one presentation", () => {
     />,
   );
 
-  expect(markup).toBe("");
+  expect(markup.includes("Contributors")).toBe(true);
+  expect(
+    markup.includes('data-system-collection-presentation="contributors"'),
+  ).toBe(true);
+  expect(markup.includes("scrollbar-hide")).toBe(true);
+  expect(markup.includes("overflow-y-hidden")).toBe(true);
 });

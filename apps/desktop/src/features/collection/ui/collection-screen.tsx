@@ -12,7 +12,6 @@ import {
   normalizeSchema,
   type RelationOpenTarget,
 } from "@/features/properties";
-import { detailPageToolbarClassName } from "@/shared/ui/page-layout";
 import { useOpenEntryDocument } from "@/features/entry/selection";
 import type { Entry } from "@/features/entry";
 import { EntryDetailActions } from "@/features/entry/detail";
@@ -31,6 +30,7 @@ import { CollectionSkeleton } from "./skeleton";
 import { CollectionViewContent } from "./collection-view-content";
 import { CollectionTabStrip } from "./view-tabs";
 import { ViewActionBar } from "./view-action-bar";
+import { CollectionPresentationToolbar } from "./presentation-core";
 import {
   useCollectionEntryActions,
   useCollectionActiveTab,
@@ -181,16 +181,11 @@ function CollectionViewsSurfaceInternal({
   const reloadTreePathParents = useSpaceTreeSync(
     (state) => state.reloadTreePathParents,
   );
-  const {
-    schema,
-    setSchema,
-    loading,
-    schemaError,
-    refreshSchema,
-  } = useCollectionSchemaState({
-    spacePath,
-    collectionPath,
-  });
+  const { schema, setSchema, loading, schemaError, refreshSchema } =
+    useCollectionSchemaState({
+      spacePath,
+      collectionPath,
+    });
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -413,67 +408,71 @@ function CollectionViewsSurfaceInternal({
       ) : null}
 
       <Tabs value={activeTab} onValueChange={selectTab} className="gap-0">
-        <div className={detailPageToolbarClassName}>
-          <CollectionTabStrip
-            activeTab={activeTab}
-            addViewOptions={[
-              { type: "table", label: m.collection_view_type_table() },
-              { type: "board", label: m.collection_view_type_board() },
-              { type: "calendar", label: m.collection_view_type_calendar() },
-              { type: "list", label: m.collection_view_type_list() },
-              { type: "gallery", label: m.collection_view_type_gallery() },
-            ]}
-            addViewLabel={m.collection_add_view()}
-            manageViewsLabel={m.collection_manage_views()}
-            moreViewsLabel={m.collection_more_views()}
-            views={views}
-            onAddView={(type) => void addView(type).catch(handleError)}
-            onReorderViews={reorder}
-            onTabChange={selectTab}
-          />
-          {activeTab ? (
-            <ViewActionBar
-              searchOpen={searchOpen}
-              searchQuery={searchQuery}
-              settingsOpen={settingsOpen}
-              settingsPane={settingsPane}
-              activeView={activeView}
-              renameValue={renameValue}
-              schema={schema}
-              query={query}
-              collectionPath={collectionPath}
-              spacePath={spacePath}
-              projectPath={projectPath}
-              onSearchOpenChange={setSearchOpen}
-              onSearchQueryChange={setSearchQuery}
-              onSettingsOpenChange={setSettingsOpen}
-              onSettingsPaneChange={setSettingsPane}
-              onRenameValueChange={setRenameValue}
-              onRename={renameActiveView}
-              onUpdateView={updateView}
-              onDuplicateView={duplicateActiveView}
-              onDeleteViewRequest={() => setDeleteOpen(true)}
-              onSchemaChange={(nextSchema) =>
-                setSchema(normalizeSchema(nextSchema))
-              }
-              autoConfigForType={autoConfigForType}
-              onLoadTemplates={loadTemplatesForMenu}
-              onCreateTemplate={createTemplateForMenu}
-              onInstantiateTemplate={instantiateTemplateForMenu}
-              onEditTemplate={editTemplate}
-              onSetDefaultTemplate={setDefaultTemplateForMenu}
-              onDuplicateTemplate={duplicateTemplateForMenu}
-              onDeleteTemplate={deleteTemplateForMenu}
-              onReorderTemplates={reorderTemplatesForMenu}
-              onCreateEntry={(asFolder) => {
-                if (focusActiveViewCreate(asFolder)) {
-                  return;
-                }
-                void createEntry(asFolder).catch(handleError);
-              }}
+        <CollectionPresentationToolbar
+          tabs={
+            <CollectionTabStrip
+              activeTab={activeTab}
+              addViewOptions={[
+                { type: "table", label: m.collection_view_type_table() },
+                { type: "board", label: m.collection_view_type_board() },
+                { type: "calendar", label: m.collection_view_type_calendar() },
+                { type: "list", label: m.collection_view_type_list() },
+                { type: "gallery", label: m.collection_view_type_gallery() },
+              ]}
+              addViewLabel={m.collection_add_view()}
+              manageViewsLabel={m.collection_manage_views()}
+              moreViewsLabel={m.collection_more_views()}
+              views={views}
+              onAddView={(type) => void addView(type).catch(handleError)}
+              onReorderViews={reorder}
+              onTabChange={selectTab}
             />
-          ) : null}
-        </div>
+          }
+          actions={
+            activeTab ? (
+              <ViewActionBar
+                searchOpen={searchOpen}
+                searchQuery={searchQuery}
+                settingsOpen={settingsOpen}
+                settingsPane={settingsPane}
+                activeView={activeView}
+                renameValue={renameValue}
+                schema={schema}
+                query={query}
+                collectionPath={collectionPath}
+                spacePath={spacePath}
+                projectPath={projectPath}
+                onSearchOpenChange={setSearchOpen}
+                onSearchQueryChange={setSearchQuery}
+                onSettingsOpenChange={setSettingsOpen}
+                onSettingsPaneChange={setSettingsPane}
+                onRenameValueChange={setRenameValue}
+                onRename={renameActiveView}
+                onUpdateView={updateView}
+                onDuplicateView={duplicateActiveView}
+                onDeleteViewRequest={() => setDeleteOpen(true)}
+                onSchemaChange={(nextSchema) =>
+                  setSchema(normalizeSchema(nextSchema))
+                }
+                autoConfigForType={autoConfigForType}
+                onLoadTemplates={loadTemplatesForMenu}
+                onCreateTemplate={createTemplateForMenu}
+                onInstantiateTemplate={instantiateTemplateForMenu}
+                onEditTemplate={editTemplate}
+                onSetDefaultTemplate={setDefaultTemplateForMenu}
+                onDuplicateTemplate={duplicateTemplateForMenu}
+                onDeleteTemplate={deleteTemplateForMenu}
+                onReorderTemplates={reorderTemplatesForMenu}
+                onCreateEntry={(asFolder) => {
+                  if (focusActiveViewCreate(asFolder)) {
+                    return;
+                  }
+                  void createEntry(asFolder).catch(handleError);
+                }}
+              />
+            ) : null
+          }
+        />
 
         {views.map((view) => (
           <TabsContent key={view.name} value={view.name} className="flex-none">
