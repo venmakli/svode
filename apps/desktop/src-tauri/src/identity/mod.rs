@@ -58,7 +58,7 @@ fn email_regex() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"^[^@\s]+@[^@\s]+\.[^@\s]+$").expect("valid email regex"))
 }
 
-fn validate_name(name: &str) -> Result<String, AppError> {
+pub(crate) fn validate_name(name: &str) -> Result<String, AppError> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
         return Err(AppError::IdentityInvalid("name"));
@@ -66,7 +66,7 @@ fn validate_name(name: &str) -> Result<String, AppError> {
     Ok(trimmed.to_string())
 }
 
-fn validate_email(email: &str) -> Result<String, AppError> {
+pub(crate) fn validate_email(email: &str) -> Result<String, AppError> {
     let trimmed = email.trim();
     if !email_regex().is_match(trimmed) {
         return Err(AppError::IdentityInvalid("email"));
@@ -196,6 +196,74 @@ pub async fn set_local_identity(
         }
         _ => Err(AppError::IdentityInvalid("both_required")),
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LocalIdentityFields {
+    name: Option<String>,
+    email: Option<String>,
+}
+
+pub(crate) async fn replace_local_identity_pair(
+    cli: &GitCli,
+    repo_path: &Path,
+    name: &str,
+    email: &str,
+) -> Result<LocalIdentityFields, AppError> {
+    let name = validate_name(name)?;
+    let email = validate_email(email)?;
+    let (previous_name, previous_email) = get_local_identity_fields(cli, repo_path).await?;
+    let previous = LocalIdentityFields {
+        name: previous_name,
+        email: previous_email,
+    };
+
+    write_local_identity_field(cli, repo_path, "user.name", Some(&name)).await?;
+    if let Err(error) = write_local_identity_field(cli, repo_path, "user.email", Some(&email)).await
+    {
+        if let Err(rollback_error) = restore_local_identity_fields(cli, repo_path, &previous).await
+        {
+            return Err(AppError::General(format!(
+                "local identity update failed: {error}; rollback failed: {rollback_error}"
+            )));
+        }
+        return Err(error);
+    }
+    Ok(previous)
+}
+
+pub(crate) async fn restore_local_identity_fields(
+    cli: &GitCli,
+    repo_path: &Path,
+    fields: &LocalIdentityFields,
+) -> Result<(), AppError> {
+    write_local_identity_field(cli, repo_path, "user.name", fields.name.as_deref()).await?;
+    write_local_identity_field(cli, repo_path, "user.email", fields.email.as_deref()).await
+}
+
+async fn write_local_identity_field(
+    cli: &GitCli,
+    repo_path: &Path,
+    key: &str,
+    value: Option<&str>,
+) -> Result<(), AppError> {
+    let output = match value {
+        Some(value) => {
+            cli.exec(repo_path, &["config", "--local", key, value])
+                .await?
+        }
+        None => {
+            cli.exec(repo_path, &["config", "--local", "--unset", key])
+                .await?
+        }
+    };
+    if output.exit_code == 0 || (value.is_none() && output.exit_code == 5) {
+        return Ok(());
+    }
+    Err(AppError::GitCommandFailed(format!(
+        "git config --local {key} failed: {}",
+        output.stderr.trim()
+    )))
 }
 
 pub async fn get_effective_identity(

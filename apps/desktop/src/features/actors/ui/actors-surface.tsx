@@ -1,10 +1,13 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle } from "lucide-react";
+import { toast } from "sonner";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   SystemCollectionPresentationCore,
   useOptionalSystemCollectionDetailController,
   useSystemCollectionState,
+  type SystemCollectionActionState,
   type SystemCollectionInstance,
   type SystemCollectionPresentationState,
 } from "@/features/collection/system";
@@ -12,19 +15,104 @@ import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
 import { useActorCatalog } from "../hooks/use-actor-catalog";
+import { useActorMutation } from "../hooks/use-actor-mutation";
 import { useRepositoryAccess } from "../hooks/use-repository-access";
-import type { ActorCatalogRow } from "../model/types";
+import type { ActorCatalogState } from "../model/catalog-state";
+import type { RepositoryAccessSnapshot } from "../model/repository-access";
+import type { ActorCatalogRow, ActorCatalogSnapshot } from "../model/types";
+import { ActorMutationDialog } from "./actor-mutation-dialog";
 import {
   actorCatalogBlockingError,
+  createActorDetailRequest,
   createActorsPresentation,
 } from "./actors-presentation";
 import { RepositoryAccessHeader } from "./repository-access-header";
 
 export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
-  const { refresh, state } = useActorCatalog(owner.spacePath);
+  const { refresh, replaceSnapshot, state } = useActorCatalog(owner.spacePath);
   const access = useRepositoryAccess(owner.spacePath);
+  const detailController = useOptionalSystemCollectionDetailController();
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const [focusRowId, setFocusRowId] = useState<string | null>(null);
+  const instanceKey = `actors:${owner.ownerKey}`;
+  const catalogRows = useMemo(
+    () => (state.phase === "ready" ? state.snapshot.rows : []),
+    [state],
+  );
+  const onApplied = useCallback(
+    (snapshot: ActorCatalogSnapshot, canonicalEmail: string) => {
+      replaceSnapshot(snapshot);
+      setFocusRowId(canonicalEmail);
+      void detailController?.close();
+      toast.success(m.actors_mutation_success());
+    },
+    [detailController, replaceSnapshot],
+  );
+  const onDuplicate = useCallback(
+    (canonicalEmail: string) => {
+      const actor = catalogRows.find(
+        (row) => row.canonicalEmail === canonicalEmail,
+      );
+      setFocusRowId(canonicalEmail);
+      if (!actor || !detailController) return;
+      void detailController.open({
+        ...createActorDetailRequest(actor, owner.spacePath),
+        selection: {
+          instanceKey,
+          presentationId: "humans",
+          rowId: actor.canonicalEmail,
+        },
+      });
+    },
+    [catalogRows, detailController, instanceKey, owner.spacePath],
+  );
+  const mutation = useActorMutation({
+    onApplied,
+    onDuplicate,
+    spacePath: owner.spacePath,
+  });
+
+  useEffect(() => {
+    if (!focusRowId || state.phase !== "ready") return;
+    if (!state.snapshot.rows.some((row) => row.canonicalEmail === focusRowId)) {
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      const row = Array.from(
+        surfaceRef.current?.querySelectorAll<HTMLElement>(
+          "[data-system-collection-row]",
+        ) ?? [],
+      ).find((element) => element.dataset.systemCollectionRow === focusRowId);
+      row?.focus({ preventScroll: true });
+      row?.scrollIntoView?.({ block: "nearest" });
+      setFocusRowId(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusRowId, state]);
+
   const presentationState = toPresentationState(state);
+  const mutationState = mutationActionState(
+    access.snapshot,
+    access.error,
+    access.verifying,
+    state,
+    mutation.pendingPhase !== null,
+  );
   const presentation = createActorsPresentation({
+    mutations: {
+      createState: mutationState,
+      getEditState: () => mutationState,
+      getMergeState: () =>
+        mutationState.status === "idle" && catalogRows.length < 2
+          ? {
+              reason: m.actors_mutation_disabled_merge_target(),
+              status: "disabled",
+            }
+          : mutationState,
+      onAdd: mutation.openAdd,
+      onEdit: mutation.openEdit,
+      onMerge: mutation.openMerge,
+    },
     onRefresh: refresh,
     refreshing: state.phase === "ready" && state.refreshing,
     spacePath: owner.spacePath,
@@ -32,12 +120,11 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
   });
   const instance: SystemCollectionInstance = {
     defaultPresentationId: "humans",
-    instanceKey: `actors:${owner.ownerKey}`,
+    instanceKey,
     presentations: [presentation],
     stateScope: "session",
   };
   const collectionState = useSystemCollectionState(instance);
-  const detailController = useOptionalSystemCollectionDetailController();
 
   const body =
     collectionState.phase === "blocking_error" ? (
@@ -60,7 +147,11 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
     );
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col" data-actors-surface>
+    <div
+      ref={surfaceRef}
+      className="flex min-h-0 flex-1 flex-col"
+      data-actors-surface
+    >
       <RepositoryAccessHeader
         error={access.error}
         snapshot={access.snapshot}
@@ -68,8 +159,70 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
         onVerify={() => void access.verify()}
       />
       {body}
+      <ActorMutationDialog
+        key={mutation.sessionId}
+        duplicateEmail={mutation.duplicateEmail}
+        failure={mutation.failure}
+        intent={mutation.intent}
+        pendingPhase={mutation.pendingPhase}
+        review={mutation.review}
+        rows={catalogRows}
+        onApply={() => void mutation.apply()}
+        onBack={mutation.back}
+        onClose={mutation.close}
+        onOpenDuplicate={mutation.openDuplicate}
+        onRequestPreview={(action) => void mutation.requestPreview(action)}
+        onRetryReview={mutation.retryReview}
+      />
     </div>
   );
+}
+
+function mutationActionState(
+  access: RepositoryAccessSnapshot | null,
+  accessError: string | null,
+  verifying: boolean,
+  catalog: ActorCatalogState,
+  mutationPending: boolean,
+): SystemCollectionActionState {
+  if (mutationPending) return { status: "pending" };
+  if (verifying || access?.status === "checking") {
+    return {
+      reason: m.actors_mutation_disabled_access_checking(),
+      status: "disabled",
+    };
+  }
+  if (catalog.phase === "initial" || (!access && !accessError)) {
+    return {
+      reason: m.actors_mutation_disabled_loading(),
+      status: "disabled",
+    };
+  }
+  if (catalog.phase === "blocking_error" || accessError) {
+    return {
+      reason: m.actors_mutation_disabled_unavailable(),
+      status: "disabled",
+    };
+  }
+  if (catalog.snapshot.diagnostics.some((diagnostic) => diagnostic.blocking)) {
+    return {
+      reason: m.actors_mutation_disabled_mailmap(),
+      status: "disabled",
+    };
+  }
+  if (access?.status === "local" || access?.status === "writable") {
+    return { status: "idle" };
+  }
+  if (access?.status === "read_only") {
+    return {
+      reason: m.actors_mutation_disabled_access_read_only(),
+      status: "disabled",
+    };
+  }
+  return {
+    reason: m.actors_mutation_disabled_access_unknown(),
+    status: "disabled",
+  };
 }
 
 function toPresentationState(

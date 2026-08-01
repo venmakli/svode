@@ -94,6 +94,32 @@ test("actors descriptor exposes the fixed query fields and exact action placemen
   ).toBe(true);
 });
 
+test("actors descriptor delegates enabled add, merge, and edit mutations", async () => {
+  const calls: string[] = [];
+  const descriptor = createActorsPresentationDescriptor("/repo", {
+    mutations: {
+      createState: { status: "idle" },
+      getEditState: () => ({ status: "idle" }),
+      getMergeState: () => ({ status: "idle" }),
+      onAdd: () => calls.push("add"),
+      onEdit: (row) => calls.push(`edit:${row.canonicalEmail}`),
+      onMerge: (row) => calls.push(`merge:${row.canonicalEmail}`),
+    },
+  });
+
+  expect(descriptor.create?.getState()).toEqual({ status: "idle" });
+  await descriptor.create?.run();
+  for (const action of descriptor.rowActions ?? []) {
+    expect(action.getState(actors[0]!)).toEqual({ status: "idle" });
+    await action.run(actors[0]!);
+  }
+  expect(calls).toEqual([
+    "add",
+    "merge:ada@example.test",
+    "edit:ada@example.test",
+  ]);
+});
+
 test("actors query searches name and email with activity-first default ordering", () => {
   const descriptor = createActorsPresentationDescriptor("/repo");
   const ordered = applySystemCollectionQuery({

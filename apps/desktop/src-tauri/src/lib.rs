@@ -87,6 +87,8 @@ pub fn run() {
             actors::commands::actors_get_catalog,
             actors::commands::actors_refresh_catalog,
             actors::commands::actors_get_activity,
+            actors::commands::actors_preview_mutation,
+            actors::commands::actors_apply_mutation,
             git::access::repository_access_get,
             git::access::repository_access_verify,
             commands::greet::greet,

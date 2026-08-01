@@ -271,6 +271,23 @@ impl ActorSnapshot {
         }
     }
 
+    pub(super) fn mutation_actor(&self, email: &str) -> Option<MutationActor> {
+        let email = normalize_email(email);
+        let row = self.rows.iter().find(|row| {
+            row.candidate.email == email || row.aliases.iter().any(|alias| alias.email == email)
+        })?;
+        Some(MutationActor {
+            canonical_email: row.candidate.email.clone(),
+            display_name: row.candidate.name.clone(),
+            aliases: row
+                .aliases
+                .iter()
+                .map(|alias| (alias.name.clone(), alias.email.clone()))
+                .collect(),
+            is_current: row.is_current,
+        })
+    }
+
     #[cfg(test)]
     fn repository_id(&self) -> &str {
         &self.repository_id
@@ -285,6 +302,13 @@ impl ActorSnapshot {
     fn diagnostics(&self) -> &[MailmapDiagnostic] {
         &self.diagnostics
     }
+}
+
+pub(super) struct MutationActor {
+    pub canonical_email: String,
+    pub display_name: String,
+    pub aliases: Vec<(Option<String>, String)>,
+    pub is_current: bool,
 }
 
 const MAX_ACTIVITY_CACHE_ENTRIES: usize = 64;
@@ -449,7 +473,10 @@ impl ActorCatalogState {
             .map_err(|_| AppError::General("actor snapshot cache lock poisoned".into()))
     }
 
-    fn repository_lock(&self, repository: &Path) -> Result<Arc<AsyncMutex<()>>, AppError> {
+    pub(super) fn repository_lock(
+        &self,
+        repository: &Path,
+    ) -> Result<Arc<AsyncMutex<()>>, AppError> {
         let mut locks = self
             .repository_locks
             .lock()
@@ -498,7 +525,7 @@ impl ActorCatalogState {
         Ok(())
     }
 
-    async fn load_and_publish(
+    pub(super) async fn load_and_publish(
         &self,
         cli: &GitCli,
         repository: &Path,
@@ -630,7 +657,10 @@ fn activity_counts_from_log(
     counts
 }
 
-async fn resolve_repository(cli: &GitCli, space_path: &Path) -> Result<PathBuf, AppError> {
+pub(super) async fn resolve_repository(
+    cli: &GitCli,
+    space_path: &Path,
+) -> Result<PathBuf, AppError> {
     let output = cli
         .exec(space_path, &["rev-parse", "--show-toplevel"])
         .await?;
@@ -650,7 +680,7 @@ async fn resolve_repository(cli: &GitCli, space_path: &Path) -> Result<PathBuf, 
     })
 }
 
-async fn load_snapshot(
+pub(super) async fn load_snapshot(
     cli: &GitCli,
     repository: &Path,
     generation: u64,

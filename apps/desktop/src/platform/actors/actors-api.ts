@@ -60,6 +60,71 @@ export interface ActorActivityDto {
   days: ActorActivityDayDto[];
 }
 
+export type ActorMutationActionDto =
+  | {
+      kind: "add";
+      displayName: string;
+      canonicalEmail: string;
+    }
+  | {
+      kind: "merge";
+      sourceCanonicalEmail: string;
+      targetCanonicalEmail: string;
+    }
+  | {
+      kind: "edit";
+      sourceCanonicalEmail: string;
+      displayName: string;
+      canonicalEmail: string;
+    };
+
+export type ActorMutationBlockReasonDto =
+  | "access_checking"
+  | "access_read_only"
+  | "access_unknown"
+  | "invalid_mailmap"
+  | "unsafe_mailmap"
+  | "invalid_name"
+  | "invalid_email"
+  | "actor_not_found"
+  | "same_merge_target"
+  | "no_merge_target"
+  | "stale_preview"
+  | "current_identity_changed";
+
+export interface ActorMutationReviewDto {
+  action: ActorMutationActionDto;
+  repositoryId: string;
+  previewFingerprint: string;
+  resultDisplayName: string;
+  resultCanonicalEmail: string;
+  transferredAliasEmails: string[];
+  affectsCurrentIdentity: boolean;
+  currentIdentityFingerprint?: string | null;
+}
+
+export type ActorMutationPreviewResultDto =
+  | { status: "ready"; review: ActorMutationReviewDto }
+  | { status: "duplicate"; canonicalEmail: string }
+  | {
+      status: "blocked";
+      reason: ActorMutationBlockReasonDto;
+      message: string;
+    };
+
+export type ActorMutationApplyResultDto =
+  | {
+      status: "applied";
+      canonicalEmail: string;
+      catalog: ActorCatalogDto;
+    }
+  | { status: "duplicate"; canonicalEmail: string }
+  | {
+      status: "blocked";
+      reason: ActorMutationBlockReasonDto;
+      message: string;
+    };
+
 export function getActorsCatalog(spacePath: string) {
   return invokeCommand<ActorCatalogDto>("actors_get_catalog", { spacePath });
 }
@@ -73,6 +138,26 @@ export function refreshActorsCatalog(spacePath: string) {
 export function getActorActivity(spacePath: string, canonicalEmail: string) {
   return invokeCommand<ActorActivityDto>("actors_get_activity", {
     canonicalEmail,
+    spacePath,
+  });
+}
+
+export function previewActorMutation(
+  spacePath: string,
+  action: ActorMutationActionDto,
+) {
+  return invokeCommand<ActorMutationPreviewResultDto>(
+    "actors_preview_mutation",
+    { action, spacePath },
+  );
+}
+
+export function applyActorMutation(
+  spacePath: string,
+  review: ActorMutationReviewDto,
+) {
+  return invokeCommand<ActorMutationApplyResultDto>("actors_apply_mutation", {
+    review,
     spacePath,
   });
 }

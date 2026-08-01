@@ -7,6 +7,7 @@ import {
   failActorCatalogRefresh,
   type ActorCatalogState,
 } from "../model/catalog-state";
+import type { ActorCatalogSnapshot } from "../model/types";
 
 export function useActorCatalog(spacePath: string) {
   const [state, setState] = useState<ActorCatalogState>({
@@ -55,7 +56,15 @@ export function useActorCatalog(spacePath: string) {
     }
   }, [spacePath]);
 
-  return { refresh, state: currentState };
+  const replaceSnapshot = useCallback(
+    (snapshot: ActorCatalogSnapshot) => {
+      ++requestIdRef.current;
+      setState(completeActorCatalogRefresh(spacePath, snapshot));
+    },
+    [spacePath],
+  );
+
+  return { refresh, replaceSnapshot, state: currentState };
 }
 
 function errorMessage(error: unknown) {
