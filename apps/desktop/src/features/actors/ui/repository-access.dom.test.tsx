@@ -4,11 +4,13 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  useRepositoryAccess,
+  type RepositoryAccessSnapshot,
+} from "@/features/git";
 import { createRegisteredSpaceOwner } from "@/features/scope-surfaces";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
-import { useRepositoryAccess } from "../hooks/use-repository-access";
-import type { RepositoryAccessSnapshot } from "../model/repository-access";
 import { ActorsSurface } from "./actors-surface";
 import { RepositoryAccessHeader } from "./repository-access-header";
 

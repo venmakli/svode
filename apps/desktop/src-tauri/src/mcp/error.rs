@@ -33,6 +33,7 @@ impl From<AppError> for McpBusinessError {
             AppError::GitCommandFailed(_) => "GIT_COMMAND_FAILED",
             AppError::GitConflict(_) => "GIT_CONFLICT",
             AppError::GitAuthRequired(_) => "GIT_AUTH_REQUIRED",
+            AppError::RepositoryAccessDenied { .. } => "REPOSITORY_ACCESS_DENIED",
             AppError::GitNoRemote => "GIT_NO_REMOTE",
             AppError::Index(_) => "INDEX_ERROR",
             AppError::Db(_) => "DATABASE_ERROR",
@@ -51,5 +52,22 @@ impl From<std::io::Error> for McpBusinessError {
 impl From<serde_json::Error> for McpBusinessError {
     fn from(error: serde_json::Error) -> Self {
         Self::new("SERIALIZATION_ERROR", error.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repository_access_denial_has_stable_business_code() {
+        let error = McpBusinessError::from(AppError::RepositoryAccessDenied {
+            repository_id: "repo".to_string(),
+            status: "read_only".to_string(),
+            reason: "none".to_string(),
+        });
+
+        assert_eq!(error.code, "REPOSITORY_ACCESS_DENIED");
+        assert!(error.message.contains("status=read_only"));
     }
 }

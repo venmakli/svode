@@ -235,6 +235,7 @@ pub async fn git_get_remote(
 
 #[tauri::command]
 pub async fn git_set_remote(
+    app: AppHandle,
     state: State<'_, GitState>,
     access_state: State<'_, super::access::RepositoryAccessState>,
     autocommit: State<'_, Arc<AutocommitService>>,
@@ -244,17 +245,56 @@ pub async fn git_set_remote(
     space_id: Option<String>,
 ) -> Result<(), AppError> {
     let path = PathBuf::from(&space_path);
-    {
-        let lock = state.get_lock(&path).await;
-        let _guard = lock.lock().await;
-        super::ops::set_remote(state.cli()?, &path, &url).await?;
-    }
-    access_state.invalidate(state.cli()?, &path).await?;
+    let reconcile_target = project_path
+        .as_deref()
+        .filter(|path| !path.is_empty())
+        .zip(space_id.as_deref())
+        .map(|(project, space_id)| (PathBuf::from(project), space_id.to_string()));
 
-    if let (Some(proj_path), Some(sid)) = (project_path.as_deref(), space_id) {
-        let parent = Path::new(proj_path);
-        crate::space::project::reconcile_space_url(parent, &sid, Some(&url))?;
+    // Remote configuration is an access-recovery path and is intentionally
+    // always available. Only the tracked project config written by reconcile
+    // participates in the repository mutation gate, and it must be authorized
+    // before `.git/config` changes.
+    if let Some((project, _)) = &reconcile_target {
+        super::access::require_repository_mutation_paths(
+            &app,
+            vec![project.join(".svode").join("config.json")],
+        )
+        .await?;
     }
+
+    let cli = require_cli(&state)?;
+    let lock = state.get_lock(&path).await;
+    let guard = lock.lock().await;
+    let previous_remote = super::ops::get_remote(&cli, &path).await?;
+    super::ops::set_remote(&cli, &path, &url).await?;
+
+    let reconcile_error = reconcile_target.as_ref().and_then(|(project, space_id)| {
+        crate::space::project::reconcile_space_url(project, space_id, Some(&url)).err()
+    });
+    if let Some(error) = reconcile_error {
+        let rollback = match previous_remote.as_deref() {
+            Some(previous) => super::ops::set_remote(&cli, &path, previous).await,
+            None => match cli.exec(&path, &["remote", "remove", "origin"]).await {
+                Ok(output) if output.exit_code == 0 => Ok(()),
+                Ok(output) => Err(AppError::GitCommandFailed(format!(
+                    "git remote rollback failed: {}",
+                    output.stderr
+                ))),
+                Err(error) => Err(error),
+            },
+        };
+        drop(guard);
+        access_state.invalidate(&cli, &path).await?;
+        return match rollback {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(AppError::General(format!(
+                "space URL reconcile failed: {error}; remote rollback failed: {rollback_error}"
+            ))),
+        };
+    }
+    drop(guard);
+    access_state.invalidate(&cli, &path).await?;
 
     // Commit the config change (reconcile_space_url may have updated parent
     // .svode/config.json). Routes per space git type.

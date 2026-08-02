@@ -14,6 +14,10 @@ use crate::files::{
     tree_policy::{TreeIgnorePolicy, TreePathKind},
 };
 use crate::files::{TemplateInfo, TemplateKind};
+use crate::git::access::{
+    ensure_mutation_paths_were_authorized, require_repository_mutation,
+    require_repository_mutation_paths, scope_authorized_mutation_paths,
+};
 use crate::git::autocommit::{AutocommitService, StructuralOp};
 use crate::git::commands::{GitState, require_cli};
 use crate::index::{self, IndexKey, IndexState, ResolvedDocLink};
@@ -716,6 +720,176 @@ fn append_unsnapshotted_paths(
             append_unique_path(paths, path);
         }
     }
+}
+
+async fn require_planned_mutation_paths(
+    app: &AppHandle,
+    space: &str,
+    mut paths: Vec<PathBuf>,
+) -> Result<Vec<PathBuf>, AppError> {
+    paths.push(PathBuf::from(space));
+    require_repository_mutation_paths(app, paths.clone()).await?;
+    Ok(paths)
+}
+
+async fn require_entry_move_mutation_plan(
+    app: &AppHandle,
+    index_state: &IndexState,
+    space: &str,
+    project_path: Option<&str>,
+    from: &str,
+    to: &str,
+) -> Result<Vec<PathBuf>, AppError> {
+    let Some(project_path) = project_path.filter(|path| !path.is_empty()) else {
+        return require_planned_mutation_paths(app, space, Vec::new()).await;
+    };
+    let mut paths =
+        properties::relation_move_mutation_paths_with_project(space, Some(project_path), from, to)?;
+    let target_space_id = space_id_for_dir(index_state, space).await;
+    let link_plan = if Path::new(space).join(from).is_dir() {
+        index_state
+            .plan_links_on_folder_rename_project(
+                Path::new(project_path),
+                target_space_id.as_deref(),
+                from,
+            )
+            .await?
+    } else {
+        index_state
+            .plan_links_on_rename_project(Path::new(project_path), target_space_id.as_deref(), from)
+            .await?
+    };
+    paths.extend_from_slice(link_plan.mutation_paths());
+    require_planned_mutation_paths(app, space, paths).await
+}
+
+async fn require_entry_backlink_mutation_plan(
+    app: &AppHandle,
+    index_state: &IndexState,
+    space: &str,
+    project_path: Option<&str>,
+    from: &str,
+    folder_rename: bool,
+) -> Result<Vec<PathBuf>, AppError> {
+    let Some(project_path) = project_path.filter(|path| !path.is_empty()) else {
+        return require_planned_mutation_paths(app, space, Vec::new()).await;
+    };
+    let target_space_id = space_id_for_dir(index_state, space).await;
+    let link_plan = if folder_rename {
+        index_state
+            .plan_links_on_folder_rename_project(
+                Path::new(project_path),
+                target_space_id.as_deref(),
+                from,
+            )
+            .await?
+    } else {
+        index_state
+            .plan_links_on_rename_project(Path::new(project_path), target_space_id.as_deref(), from)
+            .await?
+    };
+    require_planned_mutation_paths(app, space, link_plan.mutation_paths().to_vec()).await
+}
+
+async fn require_convert_to_collection_mutation_plan(
+    app: &AppHandle,
+    index_state: &IndexState,
+    space: &str,
+    project_path: Option<&str>,
+    path: &str,
+) -> Result<Vec<PathBuf>, AppError> {
+    let path = normalize_repo_relative(path, RootMode::Reject)?;
+    let source = Path::new(space).join(&path);
+    let needs_leaf_move = source.is_file()
+        && !source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("README.md"));
+    if needs_leaf_move {
+        require_entry_backlink_mutation_plan(app, index_state, space, project_path, &path, false)
+            .await
+    } else {
+        require_planned_mutation_paths(app, space, Vec::new()).await
+    }
+}
+
+async fn revalidate_entry_backlink_mutation_plan(
+    index_state: &IndexState,
+    space: &str,
+    project_path: Option<&str>,
+    from: &str,
+    folder_rename: bool,
+) -> Result<(), AppError> {
+    let Some(project_path) = project_path.filter(|path| !path.is_empty()) else {
+        return Ok(());
+    };
+    let target_space_id = space_id_for_dir(index_state, space).await;
+    let plan = if folder_rename {
+        index_state
+            .plan_links_on_folder_rename_project(
+                Path::new(project_path),
+                target_space_id.as_deref(),
+                from,
+            )
+            .await?
+    } else {
+        index_state
+            .plan_links_on_rename_project(Path::new(project_path), target_space_id.as_deref(), from)
+            .await?
+    };
+    ensure_mutation_paths_were_authorized(plan.mutation_paths())
+}
+
+fn nested_entry_path(path: &str) -> Result<String, AppError> {
+    let path = normalize_repo_relative(path, RootMode::Reject)?;
+    if Path::new(&path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
+    {
+        return Ok(path);
+    }
+    let stem = Path::new(&path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or_else(|| AppError::General("invalid entry filename".to_string()))?;
+    let parent = Path::new(&path).parent().unwrap_or(Path::new(""));
+    Ok(if parent.as_os_str().is_empty() {
+        format!("{stem}/README.md")
+    } else {
+        format!("{}/{stem}/README.md", parent.to_string_lossy())
+    })
+}
+
+fn leaf_entry_path(path: &str) -> Result<String, AppError> {
+    let path = normalize_repo_relative(path, RootMode::Reject)?;
+    let folder = Path::new(&path)
+        .parent()
+        .ok_or_else(|| AppError::General("entry has no parent folder".to_string()))?;
+    let folder_name = folder
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::General("invalid folder name".to_string()))?;
+    let parent = folder.parent().unwrap_or(Path::new(""));
+    Ok(if parent.as_os_str().is_empty() {
+        format!("{folder_name}.md")
+    } else {
+        format!("{}/{folder_name}.md", parent.to_string_lossy())
+    })
+}
+
+async fn require_entry_delete_mutation_plan(
+    app: &AppHandle,
+    space: &str,
+    project_path: Option<&str>,
+    deleted_paths: &[String],
+) -> Result<Vec<PathBuf>, AppError> {
+    let paths = properties::cascade_clean_deleted_entries_mutation_paths_with_project(
+        space,
+        project_path.filter(|path| !path.is_empty()),
+        deleted_paths,
+    )?;
+    require_planned_mutation_paths(app, space, paths).await
 }
 
 async fn pool_for_space(

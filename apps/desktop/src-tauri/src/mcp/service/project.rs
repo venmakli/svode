@@ -3,7 +3,7 @@ use super::*;
 pub(super) async fn get_project_info(app: &AppHandle) -> Result<ToolCallResult, McpBusinessError> {
     let context = active_context(app)?;
     let project_path = Path::new(&context.project_path);
-    let spaces = mcp_spaces_payload(project_path)?;
+    let spaces = mcp_spaces_payload(app, project_path).await?;
     let cfg = space_config::read_space_config(Path::new(&context.project_path))?;
     let structured = json!({
         "projectPath": context.project_path,
@@ -32,7 +32,7 @@ pub(super) async fn get_project_info(app: &AppHandle) -> Result<ToolCallResult, 
 }
 pub(super) async fn list_spaces(app: &AppHandle) -> Result<ToolCallResult, McpBusinessError> {
     let context = active_context(app)?;
-    let spaces = mcp_spaces_payload(Path::new(&context.project_path))?;
+    let spaces = mcp_spaces_payload(app, Path::new(&context.project_path)).await?;
     let structured = json!({
         "rootSpaceId": MCP_ROOT_SPACE_ID,
         "activeSpaceId": context.active_space_id,

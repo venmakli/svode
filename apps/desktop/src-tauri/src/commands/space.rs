@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State, Window};
 
 use crate::error::AppError;
+use crate::git::access::{RepositoryAccessSnapshot, require_repository_mutation};
 use crate::git::autocommit::{AutocommitService, SystemCommitKind};
 use crate::git::commands::{
     GitState, auto_commit_structural_enabled, init_repo_with_policy, require_cli,
@@ -52,6 +53,30 @@ async fn import_existing_submodules_if_possible(
             0
         }
     }
+}
+
+fn automatic_repairs_allowed(
+    result: Result<RepositoryAccessSnapshot, AppError>,
+    repository: &Path,
+) -> bool {
+    match result {
+        Ok(_) => true,
+        Err(error) => {
+            tracing::info!(
+                repository = %repository.display(),
+                error_kind = error.kind(),
+                "skipping automatic tracked repository repairs"
+            );
+            false
+        }
+    }
+}
+
+async fn allow_automatic_repository_repairs(app: &AppHandle, repository: &Path) -> bool {
+    automatic_repairs_allowed(
+        require_repository_mutation(app, repository).await,
+        repository,
+    )
 }
 
 fn emit_space_added(app: &AppHandle, project: &Path, info: &SpaceInfo, folder: &str) {
@@ -237,14 +262,27 @@ pub async fn open_project_folder(
     let readme_existed_before = sp_path.join("README.md").exists();
 
     let had_git_before = sp_path.join(".git").exists();
+    let preauthorized_readme_repair =
+        had_git_before && svode_existed_before && !readme_existed_before;
+    if preauthorized_readme_repair {
+        require_repository_mutation(&app, sp_path).await?;
+    }
     let (id, mut cfg) = project::open_project_folder(&config_dir, sp_path)?;
     refresh_recent_projects_menu(&app);
-    let gitignore_changed = if had_git_before {
+    let repairs_allowed = !had_git_before
+        || !svode_existed_before
+        || preauthorized_readme_repair
+        || allow_automatic_repository_repairs(&app, sp_path).await;
+    let gitignore_changed = if had_git_before && repairs_allowed {
         ops::ensure_svode_gitignore(sp_path)?
     } else {
         false
     };
-    let imported_submodules = import_existing_submodules_if_possible(&git_state, sp_path).await;
+    let imported_submodules = if repairs_allowed {
+        import_existing_submodules_if_possible(&git_state, sp_path).await
+    } else {
+        0
+    };
     if imported_submodules > 0 {
         cfg = config::read_space_config(sp_path)?;
     }
@@ -332,10 +370,17 @@ pub async fn delete_project(
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
 
+    let project_ref = registry::find_space(&config_dir, &id)?;
+    if delete_files.unwrap_or(false)
+        && let Some(sp_ref) = project_ref.as_ref()
+    {
+        require_repository_mutation(&app, Path::new(&sp_ref.path)).await?;
+    }
+
     // Close the project's pools before any filesystem operations so SQLite
     // releases file handles (Windows would otherwise refuse to remove the
     // directory).
-    if let Some(sp_ref) = registry::find_space(&config_dir, &id)? {
+    if let Some(sp_ref) = project_ref {
         index_state.close_project(Path::new(&sp_ref.path)).await;
     }
 
@@ -373,13 +418,18 @@ pub async fn open_project(
     let project_path = PathBuf::from(&sp_ref.path);
 
     let readme_existed_before = project_path.join("README.md").exists();
-    let gitignore_changed = if project_path.join(".git").exists() {
+    let has_git = project_path.join(".git").exists();
+    let repairs_allowed = !has_git || allow_automatic_repository_repairs(&app, &project_path).await;
+    let gitignore_changed = if repairs_allowed {
         ops::ensure_svode_gitignore(&project_path)?
     } else {
         false
     };
-    let imported_submodules =
-        import_existing_submodules_if_possible(&git_state, &project_path).await;
+    let imported_submodules = if repairs_allowed {
+        import_existing_submodules_if_possible(&git_state, &project_path).await
+    } else {
+        0
+    };
     if gitignore_changed {
         if let Err(e) = autocommit
             .commit_system_now(
@@ -407,7 +457,11 @@ pub async fn open_project(
     }
 
     let cfg = config::read_space_config(&project_path)?;
-    let readme_created = project::ensure_scope_readme(&project_path, &cfg.name)?;
+    let readme_created = if repairs_allowed {
+        project::ensure_scope_readme(&project_path, &cfg.name)?
+    } else {
+        false
+    };
     if readme_created && project_path.join(".git").exists() && !readme_existed_before {
         if let Err(e) = autocommit
             .commit_scope_readme(project_path.clone(), project_path.clone())
@@ -450,11 +504,13 @@ pub fn list_spaces(space_path: String) -> Result<Vec<SpaceInfo>, AppError> {
 
 #[tauri::command]
 pub async fn reorder_spaces(
+    app: AppHandle,
     project_path: String,
     ordered_space_ids: Vec<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Vec<SpaceInfo>, AppError> {
     let parent = PathBuf::from(&project_path);
+    require_repository_mutation(&app, &parent).await?;
     let spaces = project::reorder_spaces(&parent, ordered_space_ids)?;
 
     if let Err(e) = autocommit
@@ -479,6 +535,7 @@ pub async fn create_space(
     git_type: SpaceGitType,
 ) -> Result<SpaceInfo, AppError> {
     let parent = Path::new(&parent_path);
+    require_repository_mutation(&app, parent).await?;
     let folder_name = project::normalize_space_folder(&folder_name)?;
     let info = project::create_space(parent, &name, &icon, &folder_name)?;
     let space_dir = parent.join(&folder_name);
@@ -595,6 +652,7 @@ pub async fn delete_space(
     delete_files: Option<bool>,
 ) -> Result<(), AppError> {
     let parent = Path::new(&parent_path);
+    require_repository_mutation(&app, parent).await?;
 
     // Look up folder name + detect git type before deletion so we know which
     // commit message to use in the root repo.
@@ -621,6 +679,10 @@ pub async fn delete_space(
         };
         (folder, gt)
     };
+
+    if delete_files.unwrap_or(false) && !matches!(git_type, SpaceGitType::Inline) {
+        require_repository_mutation(&app, &parent.join(&folder_name)).await?;
+    }
 
     project::delete_space(parent, &space_id, delete_files.unwrap_or(false))?;
 
@@ -659,6 +721,7 @@ pub async fn register_cloned_space(
     git_type: String,
 ) -> Result<SpaceInfo, AppError> {
     let path = Path::new(&parent_path);
+    require_repository_mutation(&app, path).await?;
     let folder_name = project::normalize_space_folder(&folder_name)?;
     let repo = if git_type == "independent" {
         Some(url)
@@ -806,6 +869,7 @@ pub fn ensure_assets_scope(app: AppHandle, space_path: String) -> Result<(), App
 
 #[tauri::command]
 pub async fn ensure_space_scaffold(
+    app: AppHandle,
     project_path: String,
     space_path: String,
     autocommit: State<'_, Arc<AutocommitService>>,
@@ -814,6 +878,7 @@ pub async fn ensure_space_scaffold(
     if !path.is_dir() {
         return Err(AppError::PathNotAccessible(space_path));
     }
+    require_repository_mutation(&app, path).await?;
 
     let svode_existed_before = path.join(".svode").join("config.json").exists();
     let readme_existed_before = path.join("README.md").exists();
@@ -859,12 +924,14 @@ pub fn get_space_config(space_path: String) -> Result<SpaceConfig, AppError> {
 
 #[tauri::command]
 pub async fn save_space_config(
+    app: AppHandle,
     space_path: String,
     config_data: SpaceConfig,
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
     let path = Path::new(&space_path);
+    require_repository_mutation(&app, path).await?;
     config::write_space_config(path, &config_data)?;
     if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
         if let Err(e) = autocommit
@@ -885,12 +952,14 @@ pub async fn save_space_config(
 
 #[tauri::command]
 pub async fn setup_cli_symlinks_cmd(
+    app: AppHandle,
     space_path: String,
     cli_name: String,
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Vec<String>, AppError> {
     let path = Path::new(&space_path);
+    require_repository_mutation(&app, path).await?;
     let created = symlinks::setup_cli_symlinks(path, &cli_name)?;
     if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
         if let Err(e) = autocommit
@@ -909,12 +978,14 @@ pub async fn setup_cli_symlinks_cmd(
 
 #[tauri::command]
 pub async fn teardown_cli_symlinks_cmd(
+    app: AppHandle,
     space_path: String,
     cli_name: String,
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
     let path = Path::new(&space_path);
+    require_repository_mutation(&app, path).await?;
     symlinks::teardown_cli_symlinks(path, &cli_name)?;
     if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
         if let Err(e) = autocommit
@@ -932,11 +1003,13 @@ pub async fn teardown_cli_symlinks_cmd(
 }
 
 #[tauri::command]
-pub fn check_symlink_health(
+pub async fn check_symlink_health(
+    app: AppHandle,
     space_path: String,
     cli_name: String,
 ) -> Result<symlinks::SymlinkHealthReport, AppError> {
     let path = Path::new(&space_path);
+    require_repository_mutation(&app, path).await?;
     symlinks::health_check_symlinks(path, &cli_name)
 }
 
@@ -955,11 +1028,13 @@ pub fn read_agents_md(space_path: String) -> Result<Option<String>, AppError> {
 /// as System; a future AI stage may promote them to their own category.
 #[tauri::command]
 pub async fn write_agents_md(
+    app: AppHandle,
     space_path: String,
     content: String,
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
+    require_repository_mutation(&app, Path::new(&space_path)).await?;
     let svode_dir = Path::new(&space_path).join(".svode");
     std::fs::create_dir_all(&svode_dir)?;
     std::fs::write(svode_dir.join("AGENTS.md"), content)?;
@@ -991,6 +1066,7 @@ pub async fn clone_missing_space(
     space_id: String,
 ) -> Result<(), AppError> {
     let parent = PathBuf::from(&project_path);
+    let root_mutation_allowed = require_repository_mutation(&app, &parent).await.is_ok();
     let parent_config = config::read_space_config(&parent)?;
     let space_ref = parent_config
         .spaces
@@ -1013,7 +1089,13 @@ pub async fn clone_missing_space(
         {
             tracing::warn!("scaffold_space_git_identity failed after clone: {e}");
         }
-        ops::add_independent_gitignore(&parent, &space_ref.path)?;
+        if root_mutation_allowed {
+            ops::add_independent_gitignore(&parent, &space_ref.path)?;
+        } else {
+            tracing::warn!(
+                "clone_missing_space: skipped root .gitignore update because repository access is not writable"
+            );
+        }
     } else {
         // Check .gitmodules for submodule
         let gitmodules = parent.join(".gitmodules");
@@ -1135,8 +1217,40 @@ pub async fn remove_missing_space(
     space_id: String,
 ) -> Result<(), AppError> {
     let parent = Path::new(&project_path);
+    require_repository_mutation(&app, parent).await?;
     project::remove_missing_space(parent, &space_id)?;
     index_state.on_space_removed(parent, &space_id).await;
     emit_space_removed(&app, parent, &space_id);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::git::access::RepositoryAccessStatus;
+
+    #[test]
+    fn automatic_open_repairs_are_skipped_when_access_gate_denies() {
+        let repository = Path::new("/project");
+        assert!(!automatic_repairs_allowed(
+            Err(AppError::RepositoryAccessDenied {
+                repository_id: "repo".to_string(),
+                status: "read_only".to_string(),
+                reason: "auth_required".to_string(),
+            }),
+            repository,
+        ));
+        assert!(automatic_repairs_allowed(
+            Ok(RepositoryAccessSnapshot {
+                repository_id: "repo".to_string(),
+                generation: 1,
+                status: RepositoryAccessStatus::Local,
+                reason: None,
+                checked_at: None,
+                expires_at: None,
+                last_known_status: None,
+            }),
+            repository,
+        ));
+    }
 }

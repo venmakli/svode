@@ -11,14 +11,16 @@ import {
   type SystemCollectionInstance,
   type SystemCollectionPresentationState,
 } from "@/features/collection/system";
+import {
+  useRepositoryAccess,
+  type RepositoryAccessSnapshot,
+} from "@/features/git";
 import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
 import { useActorCatalog } from "../hooks/use-actor-catalog";
 import { useActorMutation } from "../hooks/use-actor-mutation";
-import { useRepositoryAccess } from "../hooks/use-repository-access";
 import type { ActorCatalogState } from "../model/catalog-state";
-import type { RepositoryAccessSnapshot } from "../model/repository-access";
 import type { ActorCatalogRow, ActorCatalogSnapshot } from "../model/types";
 import { ActorMutationDialog } from "./actor-mutation-dialog";
 import {

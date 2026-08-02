@@ -489,6 +489,17 @@ pub fn is_public_tool(name: &str) -> bool {
         .any(|definition| definition.name == name)
 }
 
+pub fn is_mutating_tool(name: &str) -> Option<bool> {
+    definitions()
+        .into_iter()
+        .find(|definition| definition.name == name)
+        .map(|definition| annotations_are_mutating(definition.annotations.as_ref()))
+}
+
+fn annotations_are_mutating(annotations: Option<&ToolAnnotations>) -> bool {
+    annotations.is_none_or(|annotations| annotations.read_only_hint != Some(true))
+}
+
 pub fn guide_text() -> &'static str {
     r#"Svode MCP guide:
 - Target: Svode MCP is a tools-only local product API. It currently negotiates protocolVersion 2025-06-18 for client compatibility while using 2025-11-25-friendly tool definitions: object inputSchema, optional outputSchema only when it matches structuredContent, annotations, and tools/list pagination tolerance.
@@ -1102,6 +1113,48 @@ mod tests {
                 definition.name
             );
         }
+    }
+
+    #[test]
+    fn every_public_tool_has_an_access_classification() {
+        let classified_writes = definitions()
+            .into_iter()
+            .filter(|definition| is_mutating_tool(definition.name) == Some(true))
+            .map(|definition| definition.name)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            classified_writes,
+            vec![
+                "write_document",
+                "create_document",
+                "update_document_metadata",
+                "import_asset",
+                "create_collection",
+                "convert_to_collection",
+                "create_entry",
+                "update_entry_fields",
+                "update_entry_body",
+                "delete_entry",
+                "rename_entry",
+                "move_entry",
+                "reorder_entries",
+                "reorder_spaces",
+                "unnest_entry",
+                "convert_to_leaf",
+                "add_collection_column",
+                "update_collection_column",
+                "delete_collection_column",
+                "add_collection_view",
+                "update_collection_view",
+                "delete_collection_view",
+            ]
+        );
+        assert!(annotations_are_mutating(None));
+        assert!(annotations_are_mutating(Some(&write_ann(false, None))));
+        assert!(!annotations_are_mutating(Some(&read_only_ann())));
+        assert_eq!(is_mutating_tool("list_spaces"), Some(false));
+        assert_eq!(is_mutating_tool("write_document"), Some(true));
+        assert_eq!(is_mutating_tool("unknown"), None);
     }
 
     #[test]

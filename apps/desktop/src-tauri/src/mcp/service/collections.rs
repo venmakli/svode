@@ -171,6 +171,19 @@ pub(super) async fn create_entry(
     } else {
         Some(collection_path.as_str())
     };
+    let mut relation_targets = Vec::new();
+    for (field, value) in fields.as_ref().into_iter().flatten() {
+        relation_targets.extend(
+            properties::relation_field_target_mutation_paths_for_value_with_project(
+                &space,
+                Some(context.project_path.as_str()),
+                &collection_path,
+                field,
+                json_to_yaml(value.clone())?,
+            )?,
+        );
+    }
+    ensure_mutation_paths_were_authorized(&relation_targets)?;
     let mut created = entry::create_with_contextual_defaults(&space, parent, &args.title, None)?;
     if let Some(fields) = fields {
         for (field, value) in fields {
@@ -224,6 +237,19 @@ pub(super) async fn update_entry_fields(
     let (context, space) = resolve_space(app, args.space_id).await?;
     let path = validate_document_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
+    let mut relation_targets = Vec::new();
+    for (field, value) in &args.fields {
+        relation_targets.extend(
+            properties::relation_entry_field_mutation_paths_with_project(
+                &space,
+                Some(context.project_path.as_str()),
+                &path,
+                field,
+                json_to_yaml(value.clone())?,
+            )?,
+        );
+    }
+    ensure_mutation_paths_were_authorized(&relation_targets)?;
     let mut updated = None;
     for (field, value) in args.fields {
         updated = Some(entry::update_field(

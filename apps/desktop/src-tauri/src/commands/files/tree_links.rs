@@ -69,12 +69,14 @@ pub fn reorder_entries_shared(
 }
 
 #[tauri::command]
-pub fn save_tree_order(
+pub async fn save_tree_order(
+    app: AppHandle,
     space: String,
     order: HashMap<String, Vec<String>>,
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
+    require_repository_mutation(&app, Path::new(&space)).await?;
     tree::write_order(Path::new(&space), &order)?;
     maybe_autocommit_structural_paths(
         &autocommit,

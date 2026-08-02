@@ -9,13 +9,12 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import * as m from "@/paraglide/messages.js";
-
 import type {
   RepositoryAccessReason,
   RepositoryAccessSnapshot,
   RepositoryAccessStatus,
-} from "../model/repository-access";
+} from "@/features/git";
+import * as m from "@/paraglide/messages.js";
 
 const EMPTY_ACCESS: RepositoryAccessSnapshot = {
   checkedAt: null,

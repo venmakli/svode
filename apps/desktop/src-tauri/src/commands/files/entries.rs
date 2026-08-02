@@ -85,6 +85,7 @@ pub fn get_entry_detail_state(
 
 #[tauri::command]
 pub async fn create_entry(
+    app: AppHandle,
     space: String,
     parent_path: Option<String>,
     title: String,
@@ -93,6 +94,7 @@ pub async fn create_entry(
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
+    require_repository_mutation(&app, Path::new(&space)).await?;
     let contextual_defaults = contextual_defaults
         .map(|defaults| {
             defaults
@@ -141,13 +143,15 @@ pub async fn create_entry(
 }
 
 #[tauri::command]
-pub fn create_folder(
+pub async fn create_folder(
+    app: AppHandle,
     space: String,
     parent_path: Option<String>,
     name: String,
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
+    require_repository_mutation(&app, Path::new(&space)).await?;
     let folder_path = entry::create_folder(&space, parent_path.as_deref(), &name)?;
     maybe_autocommit_structural_paths(
         &autocommit,
@@ -181,6 +185,7 @@ pub fn get_entry_schema(
 
 #[tauri::command]
 pub async fn update_entry_field(
+    app: AppHandle,
     space: String,
     file_path: String,
     field: String,
@@ -188,7 +193,18 @@ pub async fn update_entry_field(
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
 ) -> Result<Entry, AppError> {
-    let updated = entry::update_field(&space, project_path.as_deref(), &file_path, &field, value)?;
+    let relation_paths = properties::relation_entry_field_mutation_paths_with_project(
+        &space,
+        project_path.as_deref(),
+        &file_path,
+        &field,
+        json_to_yaml_value(value.clone())?,
+    )?;
+    let authorized_paths = require_planned_mutation_paths(&app, &space, relation_paths).await?;
+    let updated = scope_authorized_mutation_paths(authorized_paths, async {
+        entry::update_field(&space, project_path.as_deref(), &file_path, &field, value)
+    })
+    .await?;
 
     update_index_entry_or_reindex(
         &index_state,
@@ -204,6 +220,7 @@ pub async fn update_entry_field(
 
 #[tauri::command]
 pub async fn write_entry(
+    app: AppHandle,
     space: String,
     path: String,
     content: String,
@@ -224,21 +241,51 @@ pub async fn write_entry(
     if project_aware && !skip_rename {
         ensure_backlinks_before_structural(&index_state, project).await;
     }
-    let mut result = entry::write(
-        &space,
-        &path,
-        &content,
-        title.as_deref(),
-        icon.as_deref(),
-        extra,
-        existing_id.as_deref(),
-        if project_aware {
-            None
-        } else {
-            Some(&backlink_index)
-        },
-        skip_rename,
-    )?;
+    let write_plan = entry::planned_write_rename(&space, &path, title.as_deref(), skip_rename)?;
+    let mut planned_paths = Vec::new();
+    if let (Some(project), Some(_)) = (project, write_plan.as_ref()) {
+        let target_space_id = space_id_for_dir(&index_state, &space).await;
+        planned_paths.extend_from_slice(
+            index_state
+                .plan_links_on_rename_project(Path::new(project), target_space_id.as_deref(), &path)
+                .await?
+                .mutation_paths(),
+        );
+        if let Some(folder) = write_plan
+            .as_ref()
+            .and_then(|plan| plan.folder_rename_old.as_deref())
+        {
+            planned_paths.extend_from_slice(
+                index_state
+                    .plan_links_on_folder_rename_project(
+                        Path::new(project),
+                        target_space_id.as_deref(),
+                        folder,
+                    )
+                    .await?
+                    .mutation_paths(),
+            );
+        }
+    }
+    let authorized_paths = require_planned_mutation_paths(&app, &space, planned_paths).await?;
+    let mut result = scope_authorized_mutation_paths(authorized_paths.clone(), async {
+        entry::write(
+            &space,
+            &path,
+            &content,
+            title.as_deref(),
+            icon.as_deref(),
+            extra,
+            existing_id.as_deref(),
+            if project_aware {
+                None
+            } else {
+                Some(&backlink_index)
+            },
+            skip_rename,
+        )
+    })
+    .await?;
 
     // Register the write-nonce against the canonical post-rename path so the
     // watcher can echo-guard the `file:changed` event that our own write
@@ -259,15 +306,18 @@ pub async fn write_entry(
         let target_space_id = space_id_for_dir(&index_state, &space).await;
         if !skip_rename {
             if let Some(ref new_path) = result.new_path {
-                match index_state
-                    .update_links_on_rename_project(
-                        project,
-                        target_space_id.as_deref(),
-                        &path,
-                        new_path,
-                        title.as_deref(),
-                    )
-                    .await
+                match scope_authorized_mutation_paths(authorized_paths.clone(), async {
+                    index_state
+                        .update_links_on_rename_project(
+                            project,
+                            target_space_id.as_deref(),
+                            &path,
+                            new_path,
+                            title.as_deref(),
+                        )
+                        .await
+                })
+                .await
                 {
                     Ok(modified) => {
                         result.modified_files = modified.iter().map(|m| m.path.clone()).collect();
@@ -297,14 +347,17 @@ pub async fn write_entry(
                         .map(|p| p.to_string_lossy().to_string());
                     if let (Some(of), Some(nf)) = (old_folder, new_folder) {
                         if !of.is_empty() && of != nf {
-                            match index_state
-                                .update_links_on_folder_rename_project(
-                                    project,
-                                    target_space_id.as_deref(),
-                                    &of,
-                                    &nf,
-                                )
-                                .await
+                            match scope_authorized_mutation_paths(authorized_paths.clone(), async {
+                                index_state
+                                    .update_links_on_folder_rename_project(
+                                        project,
+                                        target_space_id.as_deref(),
+                                        &of,
+                                        &nf,
+                                    )
+                                    .await
+                            })
+                            .await
                             {
                                 Ok(extra) => {
                                     schedule_modified_source_spaces(
@@ -395,6 +448,13 @@ pub async fn delete_entry_shared(
     index_state: &IndexState,
     autocommit: Option<&AutocommitService>,
 ) -> Result<DeleteEntryCommandResult, AppError> {
+    let planned_deleted = entry::planned_deleted_entry_paths(space, path)?;
+    let planned_cascade = properties::cascade_clean_deleted_entries_mutation_paths_with_project(
+        space,
+        project_path.filter(|path| !path.is_empty()),
+        &planned_deleted,
+    )?;
+    ensure_mutation_paths_were_authorized(&planned_cascade)?;
     let backlink_index = backlinks_for_space(index_state, space).await;
     let deleted = entry::delete_with_project(
         space,
@@ -491,25 +551,34 @@ pub async fn delete_entry_shared(
 
 #[tauri::command]
 pub async fn delete_entry(
+    app: AppHandle,
     space: String,
     path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
-    delete_entry_shared(
-        &space,
-        &path,
-        project_path.as_deref(),
-        &index_state,
-        Some(&autocommit),
-    )
+    let deleted_paths = entry::planned_deleted_entry_paths(&space, &path)?;
+    let authorized_paths =
+        require_entry_delete_mutation_plan(&app, &space, project_path.as_deref(), &deleted_paths)
+            .await?;
+    scope_authorized_mutation_paths(authorized_paths, async {
+        delete_entry_shared(
+            &space,
+            &path,
+            project_path.as_deref(),
+            &index_state,
+            Some(&autocommit),
+        )
+        .await
+    })
     .await?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn rename_entry(
+    app: AppHandle,
     space: String,
     from: String,
     to: String,
@@ -517,14 +586,26 @@ pub async fn rename_entry(
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Vec<String>, AppError> {
-    rename_entry_shared(
+    let authorized_paths = require_entry_move_mutation_plan(
+        &app,
+        &index_state,
         &space,
+        project_path.as_deref(),
         &from,
         &to,
-        project_path.as_deref(),
-        &index_state,
-        Some(&autocommit),
     )
+    .await?;
+    scope_authorized_mutation_paths(authorized_paths, async {
+        rename_entry_shared(
+            &space,
+            &from,
+            &to,
+            project_path.as_deref(),
+            &index_state,
+            Some(&autocommit),
+        )
+        .await
+    })
     .await
 }
 
@@ -546,6 +627,8 @@ pub async fn rename_entry_shared(
     let backlink_index = backlinks_for_space(&index_state, &space).await;
     let was_dir = Path::new(&space).join(&from).is_dir();
     ensure_backlinks_before_structural(index_state, project_path).await;
+    revalidate_entry_backlink_mutation_plan(index_state, space, project_path, from, was_dir)
+        .await?;
     entry::rename_with_project(space, from, to, project_path)?;
     let modified = if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
@@ -648,6 +731,7 @@ pub async fn rename_entry_shared(
 
 #[tauri::command]
 pub async fn move_entry(
+    app: AppHandle,
     space: String,
     from: String,
     to_parent: String,
@@ -655,14 +739,35 @@ pub async fn move_entry(
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
-    move_entry_shared(
-        &space,
-        &from,
-        &to_parent,
-        project_path.as_deref(),
+    let file_name = Path::new(&from)
+        .file_name()
+        .ok_or_else(|| AppError::General("invalid source path".to_string()))?
+        .to_string_lossy();
+    let to = if to_parent.is_empty() {
+        file_name.to_string()
+    } else {
+        format!("{to_parent}/{file_name}")
+    };
+    let authorized_paths = require_entry_move_mutation_plan(
+        &app,
         &index_state,
-        Some(&autocommit),
+        &space,
+        project_path.as_deref(),
+        &from,
+        &to,
     )
+    .await?;
+    scope_authorized_mutation_paths(authorized_paths, async {
+        move_entry_shared(
+            &space,
+            &from,
+            &to_parent,
+            project_path.as_deref(),
+            &index_state,
+            Some(&autocommit),
+        )
+        .await
+    })
     .await
 }
 
@@ -678,6 +783,8 @@ pub async fn move_entry_shared(
     let was_dir = Path::new(&space).join(&from).is_dir();
     let old_abs = Path::new(space).join(from);
     ensure_backlinks_before_structural(index_state, project_path).await;
+    revalidate_entry_backlink_mutation_plan(index_state, space, project_path, from, was_dir)
+        .await?;
     let new_path = entry::move_entry_with_project(
         Path::new(space),
         from,

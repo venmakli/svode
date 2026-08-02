@@ -12,6 +12,7 @@ pub fn list_templates(
 
 #[tauri::command]
 pub async fn create_template(
+    app: AppHandle,
     space: String,
     collection_path: String,
     title: String,
@@ -19,6 +20,7 @@ pub async fn create_template(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
+    require_repository_mutation(&app, Path::new(&space)).await?;
     let path = templates::create(&space, &collection_path, &title, kind)?;
     let root = root_path_for_head(&path);
     maybe_autocommit_structural_paths(
@@ -33,12 +35,14 @@ pub async fn create_template(
 
 #[tauri::command]
 pub async fn delete_template(
+    app: AppHandle,
     space: String,
     collection_path: String,
     template_slug: String,
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
+    require_repository_mutation(&app, Path::new(&space)).await?;
     let deleted = templates::delete(&space, &collection_path, &template_slug)?;
     maybe_autocommit_structural_paths(
         &autocommit,
@@ -56,12 +60,14 @@ pub async fn delete_template(
 
 #[tauri::command]
 pub async fn duplicate_template(
+    app: AppHandle,
     space: String,
     collection_path: String,
     template_slug: String,
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
+    require_repository_mutation(&app, Path::new(&space)).await?;
     let duplicated = templates::duplicate(&space, &collection_path, &template_slug)?;
     let root = root_path_for_head(&duplicated.head_path);
     maybe_autocommit_structural_paths(
@@ -79,6 +85,7 @@ pub async fn duplicate_template(
 
 #[tauri::command]
 pub async fn instantiate_template(
+    app: AppHandle,
     space: String,
     collection_path: String,
     template_slug: String,
@@ -90,6 +97,7 @@ pub async fn instantiate_template(
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
+    require_repository_mutation(&app, Path::new(&space)).await?;
     let contextual_defaults = contextual_defaults
         .map(|defaults| {
             defaults
@@ -135,12 +143,14 @@ pub async fn instantiate_template(
 
 #[tauri::command]
 pub async fn set_default_template(
+    app: AppHandle,
     space: String,
     collection_path: String,
     template_slug: Option<String>,
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
+    require_repository_mutation(&app, Path::new(&space)).await?;
     if let Some(template_slug) = template_slug.as_deref() {
         templates::ensure_template_exists(&space, &collection_path, template_slug)?;
     }
@@ -158,12 +168,14 @@ pub async fn set_default_template(
 
 #[tauri::command]
 pub async fn reorder_templates(
+    app: AppHandle,
     space: String,
     collection_path: String,
     new_order: Vec<String>,
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
+    require_repository_mutation(&app, Path::new(&space)).await?;
     templates::validate_template_order(&space, &collection_path, &new_order)?;
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let schema = properties::reorder_templates(&space, &collection_path, new_order)?;
@@ -178,6 +190,7 @@ pub async fn reorder_templates(
 
 #[tauri::command]
 pub async fn add_view(
+    app: AppHandle,
     space: String,
     collection_path: String,
     view: View,
@@ -185,6 +198,7 @@ pub async fn add_view(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
+    require_repository_mutation(&app, Path::new(&space)).await?;
     let default_message = format!("Add view \"{}\"", view.name());
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let schema = properties::add_view(&space, &collection_path, view, position)?;
@@ -195,6 +209,7 @@ pub async fn add_view(
 
 #[tauri::command]
 pub async fn rename_view(
+    app: AppHandle,
     space: String,
     collection_path: String,
     old_name: String,
@@ -202,6 +217,7 @@ pub async fn rename_view(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
+    require_repository_mutation(&app, Path::new(&space)).await?;
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let schema = properties::rename_view(&space, &collection_path, &old_name, &new_name)?;
     let message = schema_commit_message(
@@ -215,6 +231,7 @@ pub async fn rename_view(
 
 #[tauri::command]
 pub async fn update_view(
+    app: AppHandle,
     space: String,
     collection_path: String,
     view_name: String,
@@ -222,6 +239,7 @@ pub async fn update_view(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
+    require_repository_mutation(&app, Path::new(&space)).await?;
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let patch = json_to_yaml_value(patch)?;
     let schema = properties::update_view(&space, &collection_path, &view_name, patch)?;
@@ -236,12 +254,14 @@ pub async fn update_view(
 
 #[tauri::command]
 pub async fn delete_view(
+    app: AppHandle,
     space: String,
     collection_path: String,
     view_name: String,
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
+    require_repository_mutation(&app, Path::new(&space)).await?;
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let schema = properties::delete_view(&space, &collection_path, &view_name)?;
     let message = schema_commit_message(
@@ -255,6 +275,7 @@ pub async fn delete_view(
 
 #[tauri::command]
 pub async fn duplicate_view(
+    app: AppHandle,
     space: String,
     collection_path: String,
     view_name: String,
@@ -262,6 +283,7 @@ pub async fn duplicate_view(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
+    require_repository_mutation(&app, Path::new(&space)).await?;
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let schema = properties::duplicate_view(&space, &collection_path, &view_name, &new_name)?;
     let message = schema_commit_message(
@@ -275,12 +297,14 @@ pub async fn duplicate_view(
 
 #[tauri::command]
 pub async fn reorder_views(
+    app: AppHandle,
     space: String,
     collection_path: String,
     new_order: Vec<String>,
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
+    require_repository_mutation(&app, Path::new(&space)).await?;
     let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let schema = properties::reorder_views(&space, &collection_path, new_order)?;
     let message = schema_commit_message(&schema, "Reorder views", "Update collection view");
@@ -415,15 +439,19 @@ pub async fn repair_two_way_relation(
         &column,
         project_path.as_deref(),
     )?;
+    let authorized_paths = require_planned_mutation_paths(&app, &space, paths.clone()).await?;
     let snapshot = snapshot_paths(&paths)?;
-    properties::repair_two_way_relation_with_project(
-        &space,
-        &collection_path,
-        &column,
-        &strategy,
-        reverse_column.as_deref(),
-        project_path.as_deref(),
-    )?;
+    scope_authorized_mutation_paths(authorized_paths, async {
+        properties::repair_two_way_relation_with_project(
+            &space,
+            &collection_path,
+            &column,
+            &strategy,
+            reverse_column.as_deref(),
+            project_path.as_deref(),
+        )
+    })
+    .await?;
     let paths = changed_paths(snapshot)?;
     let message = if collection_has_sensitive_columns(&space, &collection_path) {
         "Update collection field".to_string()

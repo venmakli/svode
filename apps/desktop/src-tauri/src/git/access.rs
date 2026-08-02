@@ -21,6 +21,10 @@ pub(crate) const ACCESS_EVIDENCE_TTL_SECONDS: i64 = 24 * 60 * 60;
 const SERVICE_AUTHOR_NAME: &str = "Svode Access Probe";
 const SERVICE_AUTHOR_EMAIL: &str = "access@svode.invalid";
 
+tokio::task_local! {
+    static AUTHORIZED_MUTATION_REPOSITORIES: Option<Arc<std::collections::HashSet<PathBuf>>>;
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RepositoryAccessStatus {
@@ -149,32 +153,50 @@ impl RepositoryAccessState {
 
         let repository_id = opaque_id("access-repo", &repository.to_string_lossy());
         match inspect_remote(cli, &repository).await? {
-            RemoteInspection::Local => Ok(self.publish(
-                &repository,
-                None,
-                RepositoryAccessSnapshot {
-                    repository_id,
-                    generation: 0,
-                    status: RepositoryAccessStatus::Local,
-                    reason: None,
-                    checked_at: None,
-                    expires_at: None,
-                    last_known_status: None,
-                },
-            )?),
-            RemoteInspection::Unsupported => Ok(self.publish(
-                &repository,
-                None,
-                RepositoryAccessSnapshot {
-                    repository_id,
-                    generation: 0,
-                    status: RepositoryAccessStatus::Unknown,
-                    reason: Some(RepositoryAccessReason::UnsupportedRemoteConfiguration),
-                    checked_at: None,
-                    expires_at: None,
-                    last_known_status: None,
-                },
-            )?),
+            RemoteInspection::Local => {
+                if let Some(current) = self.cached(&repository)?
+                    && current.remote_fingerprint.is_none()
+                    && current.snapshot.status == RepositoryAccessStatus::Local
+                {
+                    return Ok(current.snapshot.clone());
+                }
+                Ok(self.publish(
+                    &repository,
+                    None,
+                    RepositoryAccessSnapshot {
+                        repository_id,
+                        generation: 0,
+                        status: RepositoryAccessStatus::Local,
+                        reason: None,
+                        checked_at: None,
+                        expires_at: None,
+                        last_known_status: None,
+                    },
+                )?)
+            }
+            RemoteInspection::Unsupported => {
+                if let Some(current) = self.cached(&repository)?
+                    && current.remote_fingerprint.is_none()
+                    && current.snapshot.status == RepositoryAccessStatus::Unknown
+                    && current.snapshot.reason
+                        == Some(RepositoryAccessReason::UnsupportedRemoteConfiguration)
+                {
+                    return Ok(current.snapshot.clone());
+                }
+                Ok(self.publish(
+                    &repository,
+                    None,
+                    RepositoryAccessSnapshot {
+                        repository_id,
+                        generation: 0,
+                        status: RepositoryAccessStatus::Unknown,
+                        reason: Some(RepositoryAccessReason::UnsupportedRemoteConfiguration),
+                        checked_at: None,
+                        expires_at: None,
+                        last_known_status: None,
+                    },
+                )?)
+            }
             RemoteInspection::Remote(remote) => {
                 let now = self.clock.now_unix();
                 if let Some(current) = self.cached(&repository)? {
@@ -301,6 +323,21 @@ impl RepositoryAccessState {
             last_known_status: None,
         };
         self.persist_and_publish(&repository, &remote.fingerprint, snapshot, store_path)
+    }
+
+    /// Authorize a managed mutation from local repository state only.
+    ///
+    /// This deliberately uses `snapshot`, never `verify`: consumers cannot
+    /// turn a write attempt into a hidden network capability probe.
+    pub async fn require_mutation(
+        &self,
+        cli: &GitCli,
+        space_path: &Path,
+        store_path: &Path,
+    ) -> Result<RepositoryAccessSnapshot, AppError> {
+        let snapshot = self.snapshot(cli, space_path, store_path).await?;
+        ensure_mutation_allowed(&snapshot, self.clock.now_unix())?;
+        Ok(snapshot)
     }
 
     pub(crate) async fn record_writable_evidence(
@@ -547,6 +584,173 @@ pub async fn repository_access_verify(
     access_state
         .verify(&cli, Path::new(&space_path), &store_path)
         .await
+}
+
+pub async fn require_repository_mutation(
+    app: &AppHandle,
+    space_path: &Path,
+) -> Result<RepositoryAccessSnapshot, AppError> {
+    let git_state = app.state::<GitState>();
+    let cli = require_cli(&git_state)?;
+    let access_state = app.state::<RepositoryAccessState>();
+    let store_path = access_store_path(app)?;
+    access_state
+        .require_mutation(&cli, space_path, &store_path)
+        .await
+}
+
+pub async fn repository_access_snapshot(
+    app: &AppHandle,
+    space_path: &Path,
+) -> Result<RepositoryAccessSnapshot, AppError> {
+    let git_state = app.state::<GitState>();
+    let cli = require_cli(&git_state)?;
+    let access_state = app.state::<RepositoryAccessState>();
+    let store_path = access_store_path(app)?;
+    access_state.snapshot(&cli, space_path, &store_path).await
+}
+
+pub async fn require_repository_mutation_paths(
+    app: &AppHandle,
+    paths: impl IntoIterator<Item = PathBuf>,
+) -> Result<Vec<RepositoryAccessSnapshot>, AppError> {
+    let mut authorized = Vec::new();
+    let mut repositories = std::collections::HashSet::new();
+    for path in paths {
+        let repository = local_repository_root(&path)?;
+        if repositories.insert(repository.clone()) {
+            authorized.push(require_repository_mutation(app, &repository).await?);
+        }
+    }
+    Ok(authorized)
+}
+
+fn existing_git_context(path: &Path) -> Result<PathBuf, AppError> {
+    let mut candidate = if path.is_file() {
+        path.parent().unwrap_or(path).to_path_buf()
+    } else {
+        path.to_path_buf()
+    };
+    while !candidate.is_dir() {
+        if !candidate.pop() {
+            return Err(AppError::PathNotAccessible(path.display().to_string()));
+        }
+    }
+    Ok(candidate)
+}
+
+fn local_repository_root(path: &Path) -> Result<PathBuf, AppError> {
+    let mut candidate = existing_git_context(path)?;
+    loop {
+        if candidate.join(".git").symlink_metadata().is_ok() {
+            return candidate.canonicalize().map_err(AppError::Io);
+        }
+        if !candidate.pop() {
+            return Err(AppError::GitCommandFailed(format!(
+                "failed to resolve repository for {}",
+                path.display()
+            )));
+        }
+    }
+}
+
+pub async fn scope_authorized_mutation_paths<F, T, E>(
+    paths: Vec<PathBuf>,
+    future: F,
+) -> Result<T, E>
+where
+    F: std::future::Future<Output = Result<T, E>>,
+    E: From<AppError>,
+{
+    let repositories = paths
+        .iter()
+        .map(|path| local_repository_root(path))
+        .collect::<Result<std::collections::HashSet<_>, _>>()
+        .map_err(E::from)?;
+    AUTHORIZED_MUTATION_REPOSITORIES
+        .scope(Some(Arc::new(repositories)), future)
+        .await
+}
+
+pub fn ensure_mutation_paths_were_authorized(paths: &[PathBuf]) -> Result<(), AppError> {
+    AUTHORIZED_MUTATION_REPOSITORIES
+        .try_with(|authorized| {
+            let Some(authorized) = authorized else {
+                return Ok(());
+            };
+            for path in paths {
+                let repository = local_repository_root(path)?;
+                if !authorized.contains(&repository) {
+                    return Err(AppError::RepositoryAccessDenied {
+                        repository_id: opaque_id("access-repo", &repository.to_string_lossy()),
+                        status: "unknown".to_string(),
+                        reason: "mutation_plan_changed".to_string(),
+                    });
+                }
+            }
+            Ok(())
+        })
+        .unwrap_or(Ok(()))
+}
+
+/// Shared predicate for future automatic routine eligibility.
+/// Callers must pass a snapshot returned by `snapshot`, which has already
+/// failed expired or remote-changed evidence closed to `unknown`.
+pub fn automatic_mutation_eligible(snapshot: &RepositoryAccessSnapshot, now: i64) -> bool {
+    if snapshot.status == RepositoryAccessStatus::Local {
+        return true;
+    }
+    if snapshot.status != RepositoryAccessStatus::Writable {
+        return false;
+    }
+    let (Some(checked_at), Some(expires_at)) = (snapshot.checked_at, snapshot.expires_at) else {
+        return false;
+    };
+    checked_at <= now
+        && checked_at < expires_at
+        && expires_at > now
+        && expires_at <= checked_at.saturating_add(ACCESS_EVIDENCE_TTL_SECONDS)
+}
+
+fn ensure_mutation_allowed(snapshot: &RepositoryAccessSnapshot, now: i64) -> Result<(), AppError> {
+    if automatic_mutation_eligible(snapshot, now) {
+        return Ok(());
+    }
+    Err(AppError::RepositoryAccessDenied {
+        repository_id: snapshot.repository_id.clone(),
+        status: status_name(snapshot.status).to_string(),
+        reason: snapshot
+            .reason
+            .map(reason_name)
+            .unwrap_or("none")
+            .to_string(),
+    })
+}
+
+fn status_name(status: RepositoryAccessStatus) -> &'static str {
+    match status {
+        RepositoryAccessStatus::Local => "local",
+        RepositoryAccessStatus::Checking => "checking",
+        RepositoryAccessStatus::Writable => "writable",
+        RepositoryAccessStatus::ReadOnly => "read_only",
+        RepositoryAccessStatus::Unknown => "unknown",
+    }
+}
+
+fn reason_name(reason: RepositoryAccessReason) -> &'static str {
+    match reason {
+        RepositoryAccessReason::NotChecked => "not_checked",
+        RepositoryAccessReason::AuthRequired => "auth_required",
+        RepositoryAccessReason::OfflineOrTimeout => "offline_or_timeout",
+        RepositoryAccessReason::UnsupportedRef => "unsupported_ref",
+        RepositoryAccessReason::UnsupportedRemoteConfiguration => {
+            "unsupported_remote_configuration"
+        }
+        RepositoryAccessReason::AmbiguousRejection => "ambiguous_rejection",
+        RepositoryAccessReason::LeaseConflict => "lease_conflict",
+        RepositoryAccessReason::Expired => "expired",
+        RepositoryAccessReason::RemoteChanged => "remote_changed",
+    }
 }
 
 pub(crate) fn access_store_path(app: &AppHandle) -> Result<PathBuf, AppError> {
@@ -1056,7 +1260,7 @@ mod tests {
         assert_eq!(root.status, RepositoryAccessStatus::Local);
         assert_eq!(child.status, RepositoryAccessStatus::Local);
         assert_eq!(root.repository_id, child.repository_id);
-        assert!(child.generation > root.generation);
+        assert_eq!(child.generation, root.generation);
         assert!(!store.exists(), "local reads must not create evidence");
     }
 
@@ -1357,5 +1561,146 @@ mod tests {
             Some(RepositoryAccessReason::UnsupportedRemoteConfiguration)
         );
         assert!(!temp.path().join("access.json").exists());
+    }
+
+    #[test]
+    fn mutation_gate_matrix_and_automatic_eligibility_allow_only_local_or_writable() {
+        for (status, allowed) in [
+            (RepositoryAccessStatus::Local, true),
+            (RepositoryAccessStatus::Checking, false),
+            (RepositoryAccessStatus::Writable, true),
+            (RepositoryAccessStatus::ReadOnly, false),
+            (RepositoryAccessStatus::Unknown, false),
+        ] {
+            let snapshot = RepositoryAccessSnapshot {
+                repository_id: "repo".to_string(),
+                generation: 1,
+                status,
+                reason: (!allowed).then_some(RepositoryAccessReason::NotChecked),
+                checked_at: (status == RepositoryAccessStatus::Writable).then_some(10),
+                expires_at: (status == RepositoryAccessStatus::Writable)
+                    .then_some(10 + ACCESS_EVIDENCE_TTL_SECONDS),
+                last_known_status: None,
+            };
+            assert_eq!(
+                automatic_mutation_eligible(&snapshot, 10),
+                allowed,
+                "{status:?}"
+            );
+            assert_eq!(
+                ensure_mutation_allowed(&snapshot, 10).is_ok(),
+                allowed,
+                "{status:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn automatic_eligibility_requires_fresh_bounded_writable_evidence() {
+        let writable = |checked_at, expires_at| RepositoryAccessSnapshot {
+            repository_id: "repo".to_string(),
+            generation: 1,
+            status: RepositoryAccessStatus::Writable,
+            reason: None,
+            checked_at,
+            expires_at,
+            last_known_status: None,
+        };
+
+        assert!(automatic_mutation_eligible(
+            &writable(Some(100), Some(100 + ACCESS_EVIDENCE_TTL_SECONDS)),
+            101,
+        ));
+        assert!(!automatic_mutation_eligible(
+            &writable(Some(100), Some(101)),
+            101,
+        ));
+        assert!(!automatic_mutation_eligible(
+            &writable(Some(100), None),
+            101,
+        ));
+        assert!(!automatic_mutation_eligible(
+            &writable(Some(200), Some(200 + ACCESS_EVIDENCE_TTL_SECONDS)),
+            101,
+        ));
+        assert!(!automatic_mutation_eligible(
+            &writable(Some(100), Some(100 + ACCESS_EVIDENCE_TTL_SECONDS + 1),),
+            101,
+        ));
+    }
+
+    #[tokio::test]
+    async fn mutation_gate_rejects_expired_and_remote_changed_evidence() {
+        let temp = TempDir::new().expect("temp dir");
+        let repository = temp.path().join("repository");
+        let remote = temp.path().join("remote.git");
+        let changed_remote = temp.path().join("changed.git");
+        let cli = GitCli::detect().expect("git");
+        init_repository(&cli, &repository).await;
+        init_bare(&cli, &remote).await;
+        init_bare(&cli, &changed_remote).await;
+        add_origin(&cli, &repository, &remote).await;
+        let clock = Arc::new(TestClock::new(1_000));
+        let store = temp.path().join("access.json");
+        let state = test_state(clock.clone());
+        state
+            .record_writable_evidence(&cli, &repository, &store)
+            .await
+            .expect("record evidence");
+
+        clock.set(1_000 + ACCESS_EVIDENCE_TTL_SECONDS + 1);
+        let expired = test_state(clock.clone())
+            .require_mutation(&cli, &repository, &store)
+            .await
+            .expect_err("expired evidence must fail closed");
+        assert!(matches!(
+            expired,
+            AppError::RepositoryAccessDenied { ref status, ref reason, .. }
+                if status == "unknown" && reason == "expired"
+        ));
+
+        clock.set(2_000);
+        let changed_remote_arg = changed_remote.to_string_lossy();
+        git_ok(
+            &cli,
+            &repository,
+            &["config", "remote.origin.pushurl", &changed_remote_arg],
+        )
+        .await;
+        let changed = test_state(clock)
+            .require_mutation(&cli, &repository, &store)
+            .await
+            .expect_err("changed remote must fail closed");
+        assert!(matches!(
+            changed,
+            AppError::RepositoryAccessDenied { ref status, ref reason, .. }
+                if status == "unknown" && reason == "remote_changed"
+        ));
+    }
+
+    #[tokio::test]
+    async fn authorized_child_plan_does_not_authorize_parent_repository_writes() {
+        let temp = TempDir::new().expect("temp dir");
+        let parent = temp.path().join("project");
+        let child = parent.join("child");
+        let cli = GitCli::detect().expect("git");
+        init_repository(&cli, &parent).await;
+        init_repository(&cli, &child).await;
+        let child_target = child.join("entry.md");
+        let parent_target = parent.join(".svode").join("config.json");
+
+        scope_authorized_mutation_paths(vec![child_target.clone()], async {
+            ensure_mutation_paths_were_authorized(&[child_target])?;
+            let denied = ensure_mutation_paths_were_authorized(&[parent_target])
+                .expect_err("child-only plan must not authorize a parent write");
+            assert!(matches!(
+                denied,
+                AppError::RepositoryAccessDenied { ref reason, .. }
+                    if reason == "mutation_plan_changed"
+            ));
+            Ok::<(), AppError>(())
+        })
+        .await
+        .expect("authorized child plan");
     }
 }

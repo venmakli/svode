@@ -47,6 +47,15 @@ pub enum AppError {
     #[error("Git auth required: {0}")]
     GitAuthRequired(String),
 
+    #[error(
+        "Repository access denied: repository={repository_id}, status={status}, reason={reason}"
+    )]
+    RepositoryAccessDenied {
+        repository_id: String,
+        status: String,
+        reason: String,
+    },
+
     #[error("Git no remote configured")]
     GitNoRemote,
 
@@ -96,6 +105,7 @@ impl AppError {
             AppError::GitCommandFailed(_) => "git_command_failed",
             AppError::GitConflict(_) => "git_conflict",
             AppError::GitAuthRequired(_) => "git_auth_required",
+            AppError::RepositoryAccessDenied { .. } => "repository_access_denied",
             AppError::GitNoRemote => "git_no_remote",
             AppError::GitRemoteNotEmpty => "git_remote_not_empty",
             AppError::InvalidUrl(_) => "invalid_url",

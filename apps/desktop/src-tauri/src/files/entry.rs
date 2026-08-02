@@ -232,7 +232,9 @@ fn rewrite_relations_after_fs_move(
     old_abs: &Path,
     new_abs: &Path,
 ) -> Result<(), AppError> {
-    rewrite_relations_after_fs_move_with_project(space, None, old_rel, new_rel, old_abs, new_abs)
+    rewrite_relations_after_fs_move_with_project(
+        space, None, old_rel, new_rel, old_abs, new_abs, None,
+    )
 }
 
 fn rewrite_relations_after_fs_move_with_project(
@@ -242,13 +244,25 @@ fn rewrite_relations_after_fs_move_with_project(
     new_rel: &str,
     old_abs: &Path,
     new_abs: &Path,
+    authorized_paths: Option<&[PathBuf]>,
 ) -> Result<(), AppError> {
-    if let Err(error) = crate::properties::rewrite_relation_paths_for_move_with_project(
-        &space.to_string_lossy(),
-        project_path,
-        old_rel,
-        new_rel,
-    ) {
+    let result = if let Some(authorized_paths) = authorized_paths {
+        crate::properties::rewrite_relation_paths_for_move_with_authorized_plan(
+            &space.to_string_lossy(),
+            project_path,
+            old_rel,
+            new_rel,
+            authorized_paths,
+        )
+    } else {
+        crate::properties::rewrite_relation_paths_for_move_with_project(
+            &space.to_string_lossy(),
+            project_path,
+            old_rel,
+            new_rel,
+        )
+    };
+    if let Err(error) = result {
         let _ = fs::rename(new_abs, old_abs);
         return Err(error);
     }
@@ -444,6 +458,89 @@ pub fn create_folder(
 /// runtime fallback metadata. If title changes, the file may be renamed based
 /// on the new slug.
 /// Returns WriteResult with new_path if a rename occurred.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedWriteRename {
+    pub new_path: String,
+    pub folder_rename_old: Option<String>,
+}
+
+pub fn planned_write_rename(
+    space: &str,
+    path: &str,
+    title: Option<&str>,
+    skip_rename: bool,
+) -> Result<Option<PlannedWriteRename>, AppError> {
+    if skip_rename {
+        return Ok(None);
+    }
+    let abs_path = resolve(space, path);
+    if !abs_path.exists() {
+        return Err(AppError::FileNotFound(path.to_string()));
+    }
+    let (_, parsed_existing) = persistence::read_existing(&abs_path)?;
+    let materialized_title = match &parsed_existing {
+        frontmatter::ParseStatus::Valid { meta, .. } => {
+            title.or_else(|| meta.frontmatter_keys.title.then_some(meta.title.as_str()))
+        }
+        frontmatter::ParseStatus::Missing { .. } | frontmatter::ParseStatus::Malformed { .. } => {
+            title
+        }
+    };
+    let Some(title) = materialized_title else {
+        return Ok(None);
+    };
+    let new_slug = slugify(title);
+    let current = Path::new(path);
+    let current_stem = current
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("");
+    let is_readme = current
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"));
+    if !is_readme && new_slug == current_stem {
+        return Ok(None);
+    }
+    if is_readme {
+        let Some(parent) = current
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        else {
+            return Ok(None);
+        };
+        let grandparent = parent.parent().unwrap_or(Path::new(""));
+        let new_dir = if grandparent.as_os_str().is_empty() {
+            new_slug
+        } else {
+            format!("{}/{new_slug}", grandparent.to_string_lossy())
+        };
+        if resolve(space, &new_dir).exists() {
+            return Ok(None);
+        }
+        let readme = current.file_name().unwrap_or_default().to_string_lossy();
+        return Ok(Some(PlannedWriteRename {
+            new_path: format!("{new_dir}/{readme}"),
+            folder_rename_old: Some(parent.to_string_lossy().to_string()),
+        }));
+    }
+
+    let parent = current.parent().unwrap_or(Path::new(""));
+    let new_file = format!("{new_slug}.md");
+    let new_path = if parent.as_os_str().is_empty() {
+        new_file
+    } else {
+        format!("{}/{new_file}", parent.to_string_lossy())
+    };
+    if resolve(space, &new_path).exists() {
+        return Ok(None);
+    }
+    Ok(Some(PlannedWriteRename {
+        new_path,
+        folder_rename_old: None,
+    }))
+}
+
 pub fn write(
     space: &str,
     path: &str,
@@ -1046,6 +1143,12 @@ pub fn move_entry_with_project(
     if abs_to.exists() {
         return Err(AppError::FileAlreadyExists(new_rel));
     }
+    let relation_plan = crate::properties::relation_move_mutation_paths_with_project(
+        &space.to_string_lossy(),
+        project_path,
+        from,
+        &new_rel,
+    )?;
 
     let from_is_dir = abs_from.is_dir();
     let is_md = from_is_dir || Path::new(from).extension().and_then(|e| e.to_str()) == Some("md");
@@ -1074,6 +1177,7 @@ pub fn move_entry_with_project(
         &new_rel,
         &abs_from,
         &abs_to,
+        Some(&relation_plan),
     )?;
 
     // Update backlinks. For folder moves, every .md descendant sits under a
@@ -1823,6 +1927,16 @@ fn collect_deleted_entry_paths(space: &Path, abs_path: &Path) -> Result<Vec<Stri
     }
 }
 
+pub fn planned_deleted_entry_paths(space: &str, path: &str) -> Result<Vec<String>, AppError> {
+    let space_path = Path::new(space);
+    let requested = resolve(space, path);
+    let root = delete_root_for_path(space_path, &requested);
+    if !root.exists() {
+        return Err(AppError::FileNotFound(path.to_string()));
+    }
+    collect_deleted_entry_paths(space_path, &root)
+}
+
 fn cleanup_deleted_order(space: &Path, deleted_root: &str) {
     let root = Path::new(deleted_root);
     let deleted_name = root
@@ -1866,6 +1980,12 @@ pub fn rename_with_project(
     if abs_to.exists() {
         return Err(AppError::FileAlreadyExists(to.to_string()));
     }
+    let relation_plan = crate::properties::relation_move_mutation_paths_with_project(
+        space,
+        project_path,
+        from,
+        to,
+    )?;
 
     // Ensure target parent directory exists
     if let Some(parent_dir) = abs_to.parent() {
@@ -1880,6 +2000,7 @@ pub fn rename_with_project(
         to,
         &abs_from,
         &abs_to,
+        Some(&relation_plan),
     )?;
 
     // Update order.json: rename entry in parent's order list

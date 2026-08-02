@@ -11,6 +11,7 @@ use super::scope::{resolve_effective_storage_scope, resolve_effective_storage_sc
 use super::strategy::ApplyStrategyResult;
 use crate::error::AppError;
 use crate::git::GitState;
+use crate::git::access::require_repository_mutation;
 use crate::git::autocommit::{AutocommitService, StructuralOp, SystemCommitKind};
 use crate::git::cli::GitCli;
 use crate::git::commands::require_cli;
@@ -76,7 +77,7 @@ pub struct UploadResponse {
 
 #[tauri::command]
 pub async fn upload_asset(
-    _app: AppHandle,
+    app: AppHandle,
     project_path: String,
     document_abs_path: String,
     file_name: String,
@@ -93,6 +94,7 @@ pub async fn upload_asset(
     // We only use the IndexKey from this — the asset path is computed below.
     let (key, _rel_doc) = index_state.resolve(&project, &doc_abs).await?;
     let scope = resolve_effective_storage_scope_for_key(&index_state, &project, key).await?;
+    require_repository_mutation(&app, &scope.repo_dir).await?;
     let pool = index_state.get_or_create(&scope.pool_key).await?;
     let scoped_document_id =
         document_id_for_scope(&doc_abs, &scope.pool_dir, document_id.as_deref());
@@ -276,6 +278,7 @@ pub async fn set_assets_strategy(
     let project = PathBuf::from(&project_path);
     let scope =
         resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
+    require_repository_mutation(&app, &scope.repo_dir).await?;
     let cli = require_cli(&git_state)?;
 
     // Inline spaces inherit their assets strategy from the root project —

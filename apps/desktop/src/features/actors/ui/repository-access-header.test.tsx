@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import type { RepositoryAccessSnapshot } from "../model/repository-access";
+import type { RepositoryAccessSnapshot } from "@/features/git";
 import { RepositoryAccessHeader } from "./repository-access-header";
 
 function snapshot(

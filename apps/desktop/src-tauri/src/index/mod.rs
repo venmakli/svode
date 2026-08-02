@@ -19,6 +19,7 @@ use crate::files::backlinks::{
     is_external_or_anchor_url, link_stem, markdown_url_path, rebase_source_links_between,
     replace_link_urls_between,
 };
+use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_path};
 use crate::space::types::{SpaceConfig, SpaceStatus};
 use crate::space::{config, project};
@@ -60,6 +61,17 @@ pub struct ResolvedDocLink {
     pub status: String,
     pub exists: bool,
     pub space_name: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ProjectLinkMutationPlan {
+    mutation_paths: Vec<PathBuf>,
+}
+
+impl ProjectLinkMutationPlan {
+    pub fn mutation_paths(&self) -> &[PathBuf] {
+        &self.mutation_paths
+    }
 }
 
 impl IndexKey {
@@ -738,7 +750,7 @@ impl IndexState {
         let new_abs = target_dir.join(new_path);
         let old_stem = link_stem(old_path);
         let text_replace = new_title.map(|title| (old_stem.as_str(), title));
-        let mut modified = Vec::new();
+        let mut planned = Vec::new();
 
         for (source, _) in sources {
             let source_dir = self
@@ -752,13 +764,38 @@ impl IndexState {
             let updated =
                 replace_link_urls_between(&content, &source_abs, &old_abs, &new_abs, text_replace);
             if updated != content {
-                std::fs::write(&source_abs, updated)?;
-                modified.push(ModifiedLinkSource {
-                    space_id: source.source_space_id.clone(),
-                    path: source.source_path.clone(),
-                });
+                planned.push((
+                    source_abs,
+                    content,
+                    updated,
+                    ModifiedLinkSource {
+                        space_id: source.source_space_id.clone(),
+                        path: source.source_path.clone(),
+                    },
+                ));
             }
         }
+
+        let mutation_paths = planned
+            .iter()
+            .map(|(path, _, _, _)| path.clone())
+            .collect::<Vec<_>>();
+        ensure_mutation_paths_were_authorized(&mutation_paths)?;
+        let mut written = Vec::new();
+        for (source_abs, content, updated, _) in &planned {
+            if let Err(error) = std::fs::write(source_abs, updated) {
+                for (written_path, original) in written {
+                    let _ = std::fs::write(written_path, original);
+                }
+                return Err(AppError::Io(error));
+            }
+            written.push((source_abs, content));
+        }
+
+        let modified = planned
+            .into_iter()
+            .map(|(_, _, _, source)| source)
+            .collect::<Vec<_>>();
 
         let modified = dedupe_modified_sources(modified);
         for item in &modified {
@@ -768,6 +805,57 @@ impl IndexState {
         Ok(modified)
     }
 
+    pub async fn plan_links_on_rename_project(
+        &self,
+        project: &Path,
+        target_space_id: Option<&str>,
+        old_path: &str,
+    ) -> Result<ProjectLinkMutationPlan, AppError> {
+        self.ensure_project_backlinks_built(project).await?;
+        let target_key = self
+            .key_for_project_space_id(project, target_space_id)
+            .await?;
+        let target_index = self.backlinks_for(&target_key).await;
+        let mut mutation_paths = Vec::new();
+        for (source, _) in target_index.sources_for_target(old_path) {
+            let source_dir = self
+                .space_path_of(project, source.source_space_id.as_deref())
+                .await?;
+            let source_abs = source_dir.join(source.source_path);
+            if source_abs.is_file() {
+                mutation_paths.push(source_abs);
+            }
+        }
+        mutation_paths.sort();
+        mutation_paths.dedup();
+        Ok(ProjectLinkMutationPlan { mutation_paths })
+    }
+
+    pub async fn plan_links_on_folder_rename_project(
+        &self,
+        project: &Path,
+        target_space_id: Option<&str>,
+        old_folder: &str,
+    ) -> Result<ProjectLinkMutationPlan, AppError> {
+        self.ensure_project_backlinks_built(project).await?;
+        let target_key = self
+            .key_for_project_space_id(project, target_space_id)
+            .await?;
+        let target_index = self.backlinks_for(&target_key).await;
+        let old_norm = normalize_rel_result(old_folder)?;
+        let mut mutation_paths = Vec::new();
+        for old_target in target_index.target_paths_under(&old_norm) {
+            mutation_paths.extend(
+                self.plan_links_on_rename_project(project, target_space_id, &old_target)
+                    .await?
+                    .mutation_paths,
+            );
+        }
+        mutation_paths.sort();
+        mutation_paths.dedup();
+        Ok(ProjectLinkMutationPlan { mutation_paths })
+    }
+
     pub async fn update_links_on_folder_rename_project(
         &self,
         project: &Path,
@@ -775,6 +863,10 @@ impl IndexState {
         old_folder: &str,
         new_folder: &str,
     ) -> Result<Vec<ModifiedLinkSource>, AppError> {
+        let current_plan = self
+            .plan_links_on_folder_rename_project(project, target_space_id, old_folder)
+            .await?;
+        ensure_mutation_paths_were_authorized(current_plan.mutation_paths())?;
         self.ensure_project_backlinks_built(project).await?;
         let target_key = self
             .key_for_project_space_id(project, target_space_id)

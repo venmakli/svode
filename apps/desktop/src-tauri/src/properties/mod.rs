@@ -12,6 +12,7 @@ use crate::files::entry::{ColorName, EntryMeta};
 use crate::files::tree::child_folder_names;
 use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
 use crate::files::{entry, frontmatter};
+use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::git::cli::GitCli;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::config;
@@ -887,6 +888,87 @@ pub fn schema_column_name_mutation_paths_with_project(
     schema_mutation_paths(space, collection_path, include_markdown)
 }
 
+pub fn schema_type_target_mutation_paths_with_project(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+    new_type: PropertyType,
+    conversion_strategy: Option<&Value>,
+    project_path: Option<&str>,
+) -> Result<Vec<PathBuf>, AppError> {
+    if new_type != PropertyType::Relation {
+        return Ok(Vec::new());
+    }
+    let schema = read_schema_or_default(space, collection_path)?;
+    let Some(mut column) = schema
+        .columns
+        .iter()
+        .find(|column| column.name == column_name)
+        .cloned()
+    else {
+        return Ok(Vec::new());
+    };
+    column.type_ = PropertyType::Relation;
+    if let Some(strategy) = conversion_strategy {
+        if let Some(relation) = strategy.get("relation") {
+            column.relation = relation.as_str().map(ToOwned::to_owned);
+        }
+        if let Some(scope) = strategy.get("relation_scope") {
+            column.relation_scope =
+                if scope.is_null() {
+                    None
+                } else {
+                    Some(serde_yml::from_value(scope.clone()).map_err(|error| {
+                        schema_error(format!("invalid relation_scope: {error}"))
+                    })?)
+                };
+        }
+        if let Some(two_way) = strategy.get("two_way") {
+            column.two_way = two_way.as_str().map(ToOwned::to_owned);
+        }
+    }
+    let mut paths = Vec::new();
+    extend_relation_side_effect_paths(space, project_path, collection_path, &column, &mut paths)?;
+    dedupe_paths(paths)
+}
+
+pub fn schema_column_patch_target_mutation_paths_with_project(
+    space: &str,
+    collection_path: &str,
+    column_name: &str,
+    patch: &Value,
+    project_path: Option<&str>,
+) -> Result<Vec<PathBuf>, AppError> {
+    let schema = read_schema_or_default(space, collection_path)?;
+    let Some(mut column) = schema
+        .columns
+        .iter()
+        .find(|column| column.name == column_name)
+        .cloned()
+    else {
+        return Ok(Vec::new());
+    };
+    if let Some(relation) = patch.get("relation") {
+        column.relation = relation.as_str().map(ToOwned::to_owned);
+    }
+    if let Some(scope) = patch.get("relation_scope") {
+        column.relation_scope = if scope.is_null() {
+            None
+        } else {
+            Some(
+                serde_yml::from_value(scope.clone())
+                    .map_err(|error| schema_error(format!("invalid relation_scope: {error}")))?,
+            )
+        };
+    }
+    if let Some(two_way) = patch.get("two_way") {
+        column.two_way = two_way.as_str().map(ToOwned::to_owned);
+    }
+    let mut paths = Vec::new();
+    extend_relation_side_effect_paths(space, project_path, collection_path, &column, &mut paths)?;
+    dedupe_paths(paths)
+}
+
 fn extend_relation_side_effect_paths(
     space: &str,
     project_path: Option<&str>,
@@ -1209,13 +1291,12 @@ pub fn cascade_clean_deleted_entries_with_project(
     if deleted_paths.is_empty() {
         return Ok(Vec::new());
     }
-    let mut touched = Vec::new();
+    let touched = cascade_clean_deleted_entries_mutation_paths_with_project(
+        space,
+        project_path,
+        deleted_paths,
+    )?;
     let scan_spaces = project_relation_scan_spaces(space, project_path)?;
-    for source_space in &scan_spaces {
-        for collection in list_collections(source_space)? {
-            touched.extend(collection_markdown_files(source_space, &collection.path)?);
-        }
-    }
     let mut changed = Vec::new();
     with_rollback(touched, || {
         for source_space in &scan_spaces {
@@ -1275,6 +1356,59 @@ pub fn cascade_clean_deleted_entries_with_project(
         Ok(())
     })?;
     Ok(changed)
+}
+
+pub fn cascade_clean_deleted_entries_mutation_paths_with_project(
+    space: &str,
+    project_path: Option<&str>,
+    deleted_paths: &[String],
+) -> Result<Vec<PathBuf>, AppError> {
+    if deleted_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut paths = Vec::new();
+    for source_space in project_relation_scan_spaces(space, project_path)? {
+        for collection in list_collections(&source_space)? {
+            let schema = read_schema_or_default(&source_space, &collection.path)?;
+            let relation_columns = schema
+                .columns
+                .iter()
+                .filter_map(|column| {
+                    relation_column_targets_space(&source_space, project_path, column, space)
+                        .transpose()
+                        .map(|relation| relation.map(|relation| (column, relation)))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if relation_columns.is_empty() {
+                continue;
+            }
+            for file in collection_markdown_files(&source_space, &collection.path)? {
+                let raw = fs::read_to_string(&file)?;
+                let Some((meta, _)) = frontmatter::try_parse(&raw)? else {
+                    continue;
+                };
+                let mut changes = false;
+                for (column, relation) in &relation_columns {
+                    let deleted_values = deleted_paths
+                        .iter()
+                        .filter_map(|path| value_relative_to_collection(relation, path).ok())
+                        .collect::<HashSet<_>>();
+                    let Some(existing) = meta.extra.get(&column.name) else {
+                        continue;
+                    };
+                    let values = relation_values_from_value(column, existing)?;
+                    if values.iter().any(|value| deleted_values.contains(value)) {
+                        changes = true;
+                        break;
+                    }
+                }
+                if changes {
+                    paths.push(file);
+                }
+            }
+        }
+    }
+    dedupe_paths(paths)
 }
 
 #[allow(dead_code)]
@@ -1362,6 +1496,32 @@ pub fn rewrite_relation_paths_for_move_with_project(
     old_path: &str,
     new_path: &str,
 ) -> Result<(), AppError> {
+    rewrite_relation_paths_for_move_with_project_plan(space, project_path, old_path, new_path, None)
+}
+
+pub fn rewrite_relation_paths_for_move_with_authorized_plan(
+    space: &str,
+    project_path: Option<&str>,
+    old_path: &str,
+    new_path: &str,
+    authorized_paths: &[PathBuf],
+) -> Result<(), AppError> {
+    rewrite_relation_paths_for_move_with_project_plan(
+        space,
+        project_path,
+        old_path,
+        new_path,
+        Some(authorized_paths),
+    )
+}
+
+fn rewrite_relation_paths_for_move_with_project_plan(
+    space: &str,
+    project_path: Option<&str>,
+    old_path: &str,
+    new_path: &str,
+    authorized_paths: Option<&[PathBuf]>,
+) -> Result<(), AppError> {
     let old_path = normalize_rel_path(old_path);
     let new_path = normalize_rel_path(new_path);
     if old_path == new_path {
@@ -1374,11 +1534,24 @@ pub fn rewrite_relation_paths_for_move_with_project(
     let old_collection_path = old_path.clone();
     let new_collection_path = new_path.clone();
     let moved_paths = moved_markdown_path_pairs(space_path, &old_path, &new_path, &new_abs)?;
-    let mut touched = Vec::new();
-    for source_space in project_relation_scan_spaces(space, project_path)? {
-        for collection in list_collections(&source_space)? {
-            touched.push(collection_dir(&source_space, &collection.path).join(SCHEMA_FILE));
-            touched.extend(collection_markdown_files(&source_space, &collection.path)?);
+    let mut touched = relation_move_mutation_paths_from_pairs(
+        space,
+        project_path,
+        &old_path,
+        &new_path,
+        collection_rename,
+        &moved_paths,
+    )?;
+    if let Some(authorized_paths) = authorized_paths {
+        let mut expected = authorized_paths.to_vec();
+        expected.sort();
+        expected.dedup();
+        touched.sort();
+        touched.dedup();
+        if touched != expected {
+            return Err(AppError::General(
+                "relation mutation plan changed before execution".to_string(),
+            ));
         }
     }
 
@@ -1426,6 +1599,127 @@ pub fn rewrite_relation_paths_for_move_with_project(
         }
         Ok(())
     })
+}
+
+pub fn relation_move_mutation_paths_with_project(
+    space: &str,
+    project_path: Option<&str>,
+    old_path: &str,
+    new_path: &str,
+) -> Result<Vec<PathBuf>, AppError> {
+    let old_path = normalize_rel_path(old_path);
+    let new_path = normalize_rel_path(new_path);
+    if old_path == new_path {
+        return Ok(Vec::new());
+    }
+    let space_path = Path::new(space);
+    let old_abs = space_path.join(&old_path);
+    let collection_rename = old_abs.is_dir() && old_abs.join(SCHEMA_FILE).is_file();
+    let moved_paths =
+        moved_markdown_path_pairs_before_move(space_path, &old_path, &new_path, &old_abs)?;
+    let paths = relation_move_mutation_paths_from_pairs(
+        space,
+        project_path,
+        &old_path,
+        &new_path,
+        collection_rename,
+        &moved_paths,
+    )?;
+    let new_abs = space_path.join(&new_path);
+    dedupe_paths(
+        paths
+            .into_iter()
+            .map(|path| {
+                path.strip_prefix(&old_abs)
+                    .map(|suffix| new_abs.join(suffix))
+                    .unwrap_or(path)
+            })
+            .collect(),
+    )
+}
+
+fn moved_markdown_path_pairs_before_move(
+    space: &Path,
+    old_path: &str,
+    new_path: &str,
+    old_abs: &Path,
+) -> Result<Vec<(String, String)>, AppError> {
+    if old_abs.is_dir() {
+        let old_prefix = normalize_rel_path(old_path);
+        let new_prefix = normalize_rel_path(new_path);
+        let mut pairs = Vec::new();
+        for file in collect_md_files_in_space(space, old_abs)? {
+            let old_file = rel_path_string(file.strip_prefix(space).unwrap_or(&file));
+            let suffix = old_file
+                .strip_prefix(&format!("{old_prefix}/"))
+                .unwrap_or(&old_file)
+                .to_string();
+            pairs.push((old_file, format!("{new_prefix}/{suffix}")));
+        }
+        return Ok(pairs);
+    }
+    if old_abs.extension().and_then(|extension| extension.to_str()) == Some("md") {
+        return Ok(vec![(old_path.to_string(), new_path.to_string())]);
+    }
+    Ok(Vec::new())
+}
+
+fn relation_move_mutation_paths_from_pairs(
+    target_space: &str,
+    project_path: Option<&str>,
+    old_path: &str,
+    _new_path: &str,
+    collection_rename: bool,
+    moved_paths: &[(String, String)],
+) -> Result<Vec<PathBuf>, AppError> {
+    let old_collection = normalize_collection_path(old_path).unwrap_or_else(|_| old_path.into());
+    let mut paths = Vec::new();
+    for source_space in project_relation_scan_spaces(target_space, project_path)? {
+        for collection in list_collections(&source_space)? {
+            let schema = read_schema_or_default(&source_space, &collection.path)?;
+            let relation_columns = schema
+                .columns
+                .iter()
+                .filter_map(|column| {
+                    relation_column_targets_space(&source_space, project_path, column, target_space)
+                        .transpose()
+                        .map(|relation| relation.map(|relation| (column, relation)))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if collection_rename
+                && relation_columns
+                    .iter()
+                    .any(|(_, relation)| relation == &old_collection)
+            {
+                paths.push(collection_dir(&source_space, &collection.path).join(SCHEMA_FILE));
+            }
+            if relation_columns.is_empty() || moved_paths.is_empty() {
+                continue;
+            }
+            for file in collection_markdown_files(&source_space, &collection.path)? {
+                let raw = fs::read_to_string(&file)?;
+                let Some((meta, _)) = frontmatter::try_parse(&raw)? else {
+                    continue;
+                };
+                let changes = relation_columns.iter().any(|(column, relation)| {
+                    let Some(existing) = meta.extra.get(&column.name) else {
+                        return false;
+                    };
+                    let Ok(values) = relation_values_from_value(column, existing) else {
+                        return false;
+                    };
+                    moved_paths.iter().any(|(old_file, _)| {
+                        value_relative_to_collection(relation, old_file)
+                            .is_ok_and(|old_value| values.iter().any(|value| value == &old_value))
+                    })
+                });
+                if changes {
+                    paths.push(file);
+                }
+            }
+        }
+    }
+    dedupe_paths(paths)
 }
 
 fn moved_markdown_path_pairs(
@@ -1922,6 +2216,70 @@ pub fn update_relation_entry_field(
             warnings: Vec::new(),
         }))
     })
+}
+
+pub fn relation_entry_field_mutation_paths_with_project(
+    space: &str,
+    project_path: Option<&str>,
+    file_path: &str,
+    field: &str,
+    value: Value,
+) -> Result<Vec<PathBuf>, AppError> {
+    let Some((schema, _)) = resolve_collection_schema_result(space, file_path)? else {
+        return Ok(vec![Path::new(space).join(normalize_rel_path(file_path))]);
+    };
+    let Some(column) = schema.columns.iter().find(|column| column.name == field) else {
+        return Ok(vec![Path::new(space).join(normalize_rel_path(file_path))]);
+    };
+    let source_path = normalize_rel_path(file_path);
+    let source_abs = Path::new(space).join(&source_path);
+    if column.type_ != PropertyType::Relation || column.two_way.is_none() {
+        return Ok(vec![source_abs]);
+    }
+    let relation = column
+        .relation
+        .as_deref()
+        .ok_or_else(|| schema_error(format!("relation column '{field}' requires relation")))?;
+    let target_space =
+        required_relation_target_space_path(space, project_path, column.relation_scope.as_ref())?;
+    let normalized = normalize_relation_update_value(&target_space, column, relation, &value)?;
+    let old_values = read_relation_field_values_from_file(&source_abs, column)?;
+    let new_values = relation_values_from_value(column, &normalized)?;
+    let mut paths = vec![source_abs];
+    for value in old_values.iter().chain(new_values.iter()) {
+        paths.push(Path::new(&target_space).join(join_collection_value(relation, value)));
+    }
+    dedupe_paths(paths)
+}
+
+pub fn relation_field_target_mutation_paths_for_value_with_project(
+    space: &str,
+    project_path: Option<&str>,
+    collection_path: &str,
+    field: &str,
+    value: Value,
+) -> Result<Vec<PathBuf>, AppError> {
+    let schema = read_schema_or_default(space, collection_path)?;
+    let Some(column) = schema.columns.iter().find(|column| column.name == field) else {
+        return Ok(Vec::new());
+    };
+    if column.type_ != PropertyType::Relation || column.two_way.is_none() {
+        return Ok(Vec::new());
+    }
+    let relation = column
+        .relation
+        .as_deref()
+        .ok_or_else(|| schema_error(format!("relation column '{field}' requires relation")))?;
+    let target_space =
+        required_relation_target_space_path(space, project_path, column.relation_scope.as_ref())?;
+    let normalized = normalize_relation_update_value(&target_space, column, relation, &value)?;
+    let values = relation_values_from_value(column, &normalized)?;
+    dedupe_paths(
+        values
+            .iter()
+            .map(|value| Path::new(&target_space).join(join_collection_value(relation, value)))
+            .collect(),
+    )
 }
 
 fn normalize_relation_update_value(
@@ -3651,6 +4009,7 @@ fn with_rollback<T, F>(paths: Vec<PathBuf>, f: F) -> Result<T, AppError>
 where
     F: FnOnce() -> Result<T, AppError>,
 {
+    ensure_mutation_paths_were_authorized(&paths)?;
     let mut seen = HashSet::new();
     let mut snapshots = Vec::new();
     for path in paths {

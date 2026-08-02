@@ -3,24 +3,56 @@
 use super::*;
 #[tauri::command]
 pub async fn nest_entry(
+    app: AppHandle,
     space: String,
     path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
+    let _new_path = nested_entry_path(&path)?;
+    let authorized_paths = require_entry_backlink_mutation_plan(
+        &app,
+        &index_state,
+        &space,
+        project_path.as_deref(),
+        &path,
+        false,
+    )
+    .await?;
+    scope_authorized_mutation_paths(authorized_paths, async {
+        nest_entry_shared(
+            &space,
+            &path,
+            project_path.as_deref(),
+            &index_state,
+            &autocommit,
+        )
+        .await
+    })
+    .await
+}
+
+async fn nest_entry_shared(
+    space: &str,
+    path: &str,
+    project_path: Option<&str>,
+    index_state: &IndexState,
+    autocommit: &AutocommitService,
+) -> Result<String, AppError> {
     let backlink_index = backlinks_for_space(&index_state, &space).await;
-    ensure_backlinks_before_structural(&index_state, project_path.as_deref()).await;
+    ensure_backlinks_before_structural(&index_state, project_path).await;
+    revalidate_entry_backlink_mutation_plan(index_state, space, project_path, path, false).await?;
     let new_path = entry::nest_entry(
         Path::new(&space),
         &path,
-        if project_path.as_deref().filter(|p| !p.is_empty()).is_some() {
+        if project_path.filter(|p| !p.is_empty()).is_some() {
             None
         } else {
             Some(&backlink_index)
         },
     )?;
-    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
+    if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
         let target_space_id = space_id_for_dir(&index_state, &space).await;
         let mut modified_sources = index_state
@@ -39,7 +71,7 @@ pub async fn nest_entry(
         modified_sources.extend(
             rebase_project_source_after_move(
                 &index_state,
-                project_path.as_deref(),
+                project_path,
                 &space,
                 target_space_id.as_deref(),
                 &path,
@@ -51,8 +83,8 @@ pub async fn nest_entry(
         let modified_sources = crate::files::backlinks::dedupe_modified_sources(modified_sources);
         schedule_modified_source_spaces(
             &index_state,
-            &autocommit,
-            project_path.as_deref(),
+            autocommit,
+            project_path,
             &modified_sources,
             StructuralOp::Move(entry_commit_name(&space, &new_path)),
         )
@@ -67,15 +99,15 @@ pub async fn nest_entry(
         let _ = rebase_legacy_source_after_move(&space, &backlink_index, &path, &new_path);
     }
     maybe_autocommit_structural_paths(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        StructuralOp::Move(entry_commit_name(&space, &new_path)),
+        autocommit,
+        project_path,
+        space,
+        StructuralOp::Move(entry_commit_name(space, &new_path)),
         entry_paths_with_order(
-            &space,
+            space,
             [
-                abs_entry_path(&space, &path),
-                abs_entry_path(&space, &new_path),
+                abs_entry_path(space, path),
+                abs_entry_path(space, &new_path),
             ],
         ),
     );
@@ -84,19 +116,33 @@ pub async fn nest_entry(
 
 #[tauri::command]
 pub async fn unnest_entry(
+    app: AppHandle,
     space: String,
     path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
-    unnest_entry_shared(
-        &space,
-        &path,
-        project_path.as_deref(),
+    let _new_path = leaf_entry_path(&path)?;
+    let authorized_paths = require_entry_backlink_mutation_plan(
+        &app,
         &index_state,
-        Some(&autocommit),
+        &space,
+        project_path.as_deref(),
+        &path,
+        false,
     )
+    .await?;
+    scope_authorized_mutation_paths(authorized_paths, async {
+        unnest_entry_shared(
+            &space,
+            &path,
+            project_path.as_deref(),
+            &index_state,
+            Some(&autocommit),
+        )
+        .await
+    })
     .await
 }
 
@@ -109,6 +155,7 @@ pub async fn unnest_entry_shared(
 ) -> Result<String, AppError> {
     let backlink_index = backlinks_for_space(&index_state, &space).await;
     ensure_backlinks_before_structural(index_state, project_path).await;
+    revalidate_entry_backlink_mutation_plan(index_state, space, project_path, path, false).await?;
     let new_path = entry::unnest_entry(
         Path::new(space),
         path,
@@ -186,19 +233,33 @@ pub async fn unnest_entry_shared(
 
 #[tauri::command]
 pub async fn convert_entry_to_folder(
+    app: AppHandle,
     space: String,
     file_path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
-    convert_entry_to_folder_shared(
-        &space,
-        &file_path,
-        project_path.as_deref(),
+    let _new_path = nested_entry_path(&file_path)?;
+    let authorized_paths = require_entry_backlink_mutation_plan(
+        &app,
         &index_state,
-        Some(&autocommit),
+        &space,
+        project_path.as_deref(),
+        &file_path,
+        false,
     )
+    .await?;
+    scope_authorized_mutation_paths(authorized_paths, async {
+        convert_entry_to_folder_shared(
+            &space,
+            &file_path,
+            project_path.as_deref(),
+            &index_state,
+            Some(&autocommit),
+        )
+        .await
+    })
     .await
 }
 
@@ -211,6 +272,8 @@ pub async fn convert_entry_to_folder_shared(
 ) -> Result<Entry, AppError> {
     let backlink_index = backlinks_for_space(index_state, space).await;
     ensure_backlinks_before_structural(index_state, project_path).await;
+    revalidate_entry_backlink_mutation_plan(index_state, space, project_path, file_path, false)
+        .await?;
     let project_aware = project_path.filter(|path| !path.is_empty()).is_some();
     let entry = entry::convert_entry_to_folder(
         Path::new(space),
@@ -300,19 +363,31 @@ pub async fn convert_entry_to_folder_shared(
 
 #[tauri::command]
 pub async fn convert_to_collection(
+    app: AppHandle,
     space: String,
     path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<ConvertToCollectionCommandResult, AppError> {
-    convert_to_collection_shared(
-        &space,
-        &path,
-        project_path.as_deref(),
+    let authorized_paths = require_convert_to_collection_mutation_plan(
+        &app,
         &index_state,
-        Some(&autocommit),
+        &space,
+        project_path.as_deref(),
+        &path,
     )
+    .await?;
+    scope_authorized_mutation_paths(authorized_paths, async {
+        convert_to_collection_shared(
+            &space,
+            &path,
+            project_path.as_deref(),
+            &index_state,
+            Some(&autocommit),
+        )
+        .await
+    })
     .await
 }
 
@@ -433,19 +508,33 @@ pub async fn convert_to_collection_shared(
 
 #[tauri::command]
 pub async fn convert_entry_to_leaf(
+    app: AppHandle,
     space: String,
     file_path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
-    convert_entry_to_leaf_shared(
-        &space,
-        &file_path,
-        project_path.as_deref(),
+    let _new_path = leaf_entry_path(&file_path)?;
+    let authorized_paths = require_entry_backlink_mutation_plan(
+        &app,
         &index_state,
-        Some(&autocommit),
+        &space,
+        project_path.as_deref(),
+        &file_path,
+        false,
     )
+    .await?;
+    scope_authorized_mutation_paths(authorized_paths, async {
+        convert_entry_to_leaf_shared(
+            &space,
+            &file_path,
+            project_path.as_deref(),
+            &index_state,
+            Some(&autocommit),
+        )
+        .await
+    })
     .await
 }
 
@@ -458,6 +547,8 @@ pub async fn convert_entry_to_leaf_shared(
 ) -> Result<Entry, AppError> {
     let backlink_index = backlinks_for_space(&index_state, &space).await;
     ensure_backlinks_before_structural(index_state, project_path).await;
+    revalidate_entry_backlink_mutation_plan(index_state, space, project_path, file_path, false)
+        .await?;
     let project_aware = project_path.filter(|p| !p.is_empty()).is_some();
     let entry = entry::convert_entry_to_leaf(
         Path::new(space),
@@ -550,50 +641,76 @@ pub async fn convert_entry_to_leaf_shared(
 
 #[tauri::command]
 pub async fn convert_entry_to_nested_collection(
+    app: AppHandle,
     space: String,
     file_path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
-    convert_to_collection_shared(
-        &space,
-        &file_path,
-        project_path.as_deref(),
+    let authorized_paths = require_convert_to_collection_mutation_plan(
+        &app,
         &index_state,
-        Some(&autocommit),
+        &space,
+        project_path.as_deref(),
+        &file_path,
     )
+    .await?;
+    scope_authorized_mutation_paths(authorized_paths, async {
+        convert_to_collection_shared(
+            &space,
+            &file_path,
+            project_path.as_deref(),
+            &index_state,
+            Some(&autocommit),
+        )
+        .await
+    })
     .await?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn convert_bare_folder_to_collection(
+    app: AppHandle,
     space: String,
     folder_path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
-    Ok(convert_to_collection_shared(
-        &space,
-        &folder_path,
-        project_path.as_deref(),
+    let authorized_paths = require_convert_to_collection_mutation_plan(
+        &app,
         &index_state,
-        Some(&autocommit),
+        &space,
+        project_path.as_deref(),
+        &folder_path,
     )
+    .await?;
+    Ok(scope_authorized_mutation_paths(authorized_paths, async {
+        convert_to_collection_shared(
+            &space,
+            &folder_path,
+            project_path.as_deref(),
+            &index_state,
+            Some(&autocommit),
+        )
+        .await
+    })
     .await?
     .entry)
 }
 
 #[tauri::command]
 pub async fn duplicate_entry(
+    app: AppHandle,
     space: String,
     file_path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
+    require_repository_mutation(&app, Path::new(&space)).await?;
     let old_name = entry_history_commit_name(&space, &file_path);
     let entry = entry::duplicate_entry(Path::new(&space), &file_path)?;
     update_index_tree_or_reindex(

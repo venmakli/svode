@@ -14,6 +14,7 @@ use super::path::{
 use super::protocol::{IpcContextOverride, ToolCallResult};
 use crate::commands::files as files_commands;
 use crate::files::{entry, tree};
+use crate::git::access::{ensure_mutation_paths_were_authorized, repository_access_snapshot};
 use crate::git::{self, commands::GitState};
 use crate::index::{IndexKey, IndexState, search};
 use crate::properties::{self, CollectionSchema, Column, Filter, PropertyType, Sort, View};
@@ -440,10 +441,14 @@ fn active_mcp_space_id(context: &ActiveProjectContext) -> String {
         .unwrap_or_else(|| MCP_ROOT_SPACE_ID.to_string())
 }
 
-fn mcp_spaces_payload(project_path: &Path) -> Result<Vec<Value>, McpBusinessError> {
+async fn mcp_spaces_payload(
+    app: &AppHandle,
+    project_path: &Path,
+) -> Result<Vec<Value>, McpBusinessError> {
     let cfg = space_config::read_space_config(project_path)?;
     let child_spaces = project::list_spaces(project_path)?;
     let mut spaces = Vec::with_capacity(child_spaces.len() + 1);
+    let (root_access, root_access_diagnostic) = mcp_repository_access(app, project_path).await;
     spaces.push(json!({
         "id": MCP_ROOT_SPACE_ID,
         "name": cfg.name,
@@ -455,6 +460,8 @@ fn mcp_spaces_payload(project_path: &Path) -> Result<Vec<Value>, McpBusinessErro
         "spaceId": MCP_ROOT_SPACE_ID,
         "hasSpaces": !child_spaces.is_empty(),
         "status": "ready",
+        "repositoryAccess": root_access,
+        "repositoryAccessDiagnostic": root_access_diagnostic,
         "capabilities": mcp_space_capabilities("root"),
         "addressing": {
             "spaceId": MCP_ROOT_SPACE_ID,
@@ -462,6 +469,8 @@ fn mcp_spaces_payload(project_path: &Path) -> Result<Vec<Value>, McpBusinessErro
         }
     }));
     for space in child_spaces {
+        let (repository_access, repository_access_diagnostic) =
+            mcp_repository_access(app, Path::new(&space.path)).await;
         spaces.push(json!({
             "id": space.id,
             "name": space.name,
@@ -474,6 +483,8 @@ fn mcp_spaces_payload(project_path: &Path) -> Result<Vec<Value>, McpBusinessErro
             "hasSpaces": space.has_spaces,
             "lastOpened": space.last_opened,
             "status": space.status,
+            "repositoryAccess": repository_access,
+            "repositoryAccessDiagnostic": repository_access_diagnostic,
             "lfsState": space.lfs_state,
             "capabilities": mcp_space_capabilities("child"),
             "addressing": {
@@ -483,6 +494,19 @@ fn mcp_spaces_payload(project_path: &Path) -> Result<Vec<Value>, McpBusinessErro
         }));
     }
     Ok(spaces)
+}
+
+async fn mcp_repository_access(
+    app: &AppHandle,
+    path: &Path,
+) -> (
+    Option<git::access::RepositoryAccessSnapshot>,
+    Option<McpBusinessError>,
+) {
+    match repository_access_snapshot(app, path).await {
+        Ok(snapshot) => (Some(snapshot), None),
+        Err(error) => (None, Some(error.into())),
+    }
 }
 
 fn mcp_space_capabilities(kind: &str) -> Value {

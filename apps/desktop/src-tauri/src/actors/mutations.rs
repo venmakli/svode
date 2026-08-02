@@ -187,26 +187,9 @@ pub async fn apply(
     access_state: &RepositoryAccessState,
     actor_catalog: &ActorCatalogState,
 ) -> Result<ActorMutationApplyResult, AppError> {
-    if let Some(blocked) = access_block(
-        access_state
-            .snapshot(cli, space_path, &access_store_path(app)?)
-            .await?
-            .status,
-    ) {
-        return Ok(blocked_apply(blocked));
-    }
-
     let repository = resolve_repository(cli, space_path).await?;
     let repository_lock = actor_catalog.repository_lock(&repository)?;
     let _guard = repository_lock.lock().await;
-    if let Some(blocked) = access_block(
-        access_state
-            .snapshot(cli, &repository, &access_store_path(app)?)
-            .await?
-            .status,
-    ) {
-        return Ok(blocked_apply(blocked));
-    }
     let source = match read_mailmap_source(&repository)? {
         Ok(source) => source,
         Err((reason, message)) => return Ok(blocked_apply_with_message(reason, message)),
@@ -239,6 +222,10 @@ pub async fn apply(
 
     let patched = patch_mailmap(&source.raw, &source.document, &plan);
     validate_patched_document(&patched, &plan).map_err(AppError::General)?;
+
+    access_state
+        .require_mutation(cli, &repository, &access_store_path(app)?)
+        .await?;
 
     let previous_identity = if plan.affects_current_identity {
         Some(
