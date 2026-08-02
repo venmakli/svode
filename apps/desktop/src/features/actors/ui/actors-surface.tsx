@@ -11,24 +11,23 @@ import {
   type SystemCollectionInstance,
   type SystemCollectionPresentationState,
 } from "@/features/collection/system";
-import {
-  useRepositoryAccess,
-  type RepositoryAccessSnapshot,
-} from "@/features/git";
+import { useRepositoryAccess } from "@/features/git";
 import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
 import { useActorCatalog } from "../hooks/use-actor-catalog";
+import { useActorAccessPreflight } from "../hooks/use-actor-access-preflight";
 import { useActorMutation } from "../hooks/use-actor-mutation";
 import type { ActorCatalogState } from "../model/catalog-state";
+import type { ActorMutationIntent } from "../model/identity-mutation";
 import type { ActorCatalogRow, ActorCatalogSnapshot } from "../model/types";
+import { ActorAccessPreflightDialog } from "./actor-access-preflight-dialog";
 import { ActorMutationDialog } from "./actor-mutation-dialog";
 import {
   actorCatalogBlockingError,
   createActorDetailRequest,
   createActorsPresentation,
 } from "./actors-presentation";
-import { RepositoryAccessHeader } from "./repository-access-header";
 
 export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
   const { refresh, replaceSnapshot, state } = useActorCatalog(owner.spacePath);
@@ -73,6 +72,22 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
     onDuplicate,
     spacePath: owner.spacePath,
   });
+  const { openAdd, openEdit, openMerge } = mutation;
+  const continueMutationIntent = useCallback(
+    (intent: ActorMutationIntent) => {
+      if (intent.kind === "add") openAdd();
+      else if (intent.kind === "merge") openMerge(intent.source);
+      else openEdit(intent.source);
+    },
+    [openAdd, openEdit, openMerge],
+  );
+  const accessPreflight = useActorAccessPreflight({
+    error: access.error,
+    snapshot: access.snapshot,
+    verifying: access.verifying,
+    onContinue: continueMutationIntent,
+    onVerify: access.verify,
+  });
 
   useEffect(() => {
     if (!focusRowId || state.phase !== "ready") return;
@@ -94,9 +109,6 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
 
   const presentationState = toPresentationState(state);
   const mutationState = mutationActionState(
-    access.snapshot,
-    access.error,
-    access.verifying,
     state,
     mutation.pendingPhase !== null,
   );
@@ -111,9 +123,9 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
               status: "disabled",
             }
           : mutationState,
-      onAdd: mutation.openAdd,
-      onEdit: mutation.openEdit,
-      onMerge: mutation.openMerge,
+      onAdd: () => accessPreflight.request({ kind: "add" }),
+      onEdit: (source) => accessPreflight.request({ kind: "edit", source }),
+      onMerge: (source) => accessPreflight.request({ kind: "merge", source }),
     },
     onRefresh: refresh,
     refreshing: state.phase === "ready" && state.refreshing,
@@ -154,13 +166,15 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
       className="flex min-h-0 flex-1 flex-col"
       data-actors-surface
     >
-      <RepositoryAccessHeader
+      {body}
+      <ActorAccessPreflightDialog
         error={access.error}
+        intent={accessPreflight.intent}
         snapshot={access.snapshot}
         verifying={access.verifying}
-        onVerify={() => void access.verify()}
+        onClose={accessPreflight.close}
+        onVerify={accessPreflight.verify}
       />
-      {body}
       <ActorMutationDialog
         key={mutation.sessionId}
         duplicateEmail={mutation.duplicateEmail}
@@ -181,26 +195,17 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
 }
 
 function mutationActionState(
-  access: RepositoryAccessSnapshot | null,
-  accessError: string | null,
-  verifying: boolean,
   catalog: ActorCatalogState,
   mutationPending: boolean,
 ): SystemCollectionActionState {
   if (mutationPending) return { status: "pending" };
-  if (verifying || access?.status === "checking") {
-    return {
-      reason: m.actors_mutation_disabled_access_checking(),
-      status: "disabled",
-    };
-  }
-  if (catalog.phase === "initial" || (!access && !accessError)) {
+  if (catalog.phase === "initial") {
     return {
       reason: m.actors_mutation_disabled_loading(),
       status: "disabled",
     };
   }
-  if (catalog.phase === "blocking_error" || accessError) {
+  if (catalog.phase === "blocking_error") {
     return {
       reason: m.actors_mutation_disabled_unavailable(),
       status: "disabled",
@@ -212,19 +217,7 @@ function mutationActionState(
       status: "disabled",
     };
   }
-  if (access?.status === "local" || access?.status === "writable") {
-    return { status: "idle" };
-  }
-  if (access?.status === "read_only") {
-    return {
-      reason: m.actors_mutation_disabled_access_read_only(),
-      status: "disabled",
-    };
-  }
-  return {
-    reason: m.actors_mutation_disabled_access_unknown(),
-    status: "disabled",
-  };
+  return { status: "idle" };
 }
 
 function toPresentationState(

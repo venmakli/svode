@@ -46,6 +46,15 @@ export function useActorMutation({
     setFailure(null);
     setPendingPhase(null);
   }, []);
+  const openAdd = useCallback(() => open({ kind: "add" }), [open]);
+  const openEdit = useCallback(
+    (source: ActorCatalogRow) => open({ kind: "edit", source }),
+    [open],
+  );
+  const openMerge = useCallback(
+    (source: ActorCatalogRow) => open({ kind: "merge", source }),
+    [open],
+  );
 
   const close = useCallback(() => {
     if (pendingPhase) return;
@@ -120,10 +129,10 @@ export function useActorMutation({
     duplicateEmail,
     failure,
     intent,
-    openAdd: () => open({ kind: "add" }),
+    openAdd,
     openDuplicate,
-    openEdit: (source: ActorCatalogRow) => open({ kind: "edit", source }),
-    openMerge: (source: ActorCatalogRow) => open({ kind: "merge", source }),
+    openEdit,
+    openMerge,
     pendingPhase,
     requestPreview,
     retryReview,
