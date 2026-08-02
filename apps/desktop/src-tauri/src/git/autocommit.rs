@@ -93,7 +93,6 @@ pub enum ExactPathPendingReason {
     IndexStaged,
     TargetChanged,
     IndexInterference,
-    SubmoduleDeferred,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -355,6 +354,38 @@ impl AutocommitService {
             return Ok(classify_guarded_exact_path_preflight(false, false, false));
         }
         if ops::exact_path_has_changes(cli, repo, path).await? {
+            return Ok(classify_guarded_exact_path_preflight(true, true, false));
+        }
+        Ok(classify_guarded_exact_path_preflight(
+            true,
+            false,
+            ops::has_staged_changes(cli, repo).await?,
+        ))
+    }
+
+    /// Capture background eligibility for an exact-path structural commit in
+    /// the root repository. A newly registered local submodule with clean,
+    /// tracked metadata is the one safe exception to the usual clean-target
+    /// requirement: before its first child commit the root necessarily reports
+    /// that direct child as untracked.
+    pub async fn plan_guarded_structural_exact_path(
+        &self,
+        cli: &super::cli::GitCli,
+        repo: &Path,
+        path: &str,
+        allow_registered_unborn_submodule: bool,
+    ) -> Result<GuardedExactPathPlan, AppError> {
+        if !background_commit_allowed(repo, CommitIntent::StructuralLifecycle) {
+            return Ok(classify_guarded_exact_path_preflight(false, false, false));
+        }
+        let mut target_dirty = ops::exact_path_has_changes(cli, repo, path).await?;
+        if target_dirty
+            && allow_registered_unborn_submodule
+            && ops::is_registered_unborn_submodule_target(cli, repo, path).await?
+        {
+            target_dirty = false;
+        }
+        if target_dirty {
             return Ok(classify_guarded_exact_path_preflight(true, true, false));
         }
         Ok(classify_guarded_exact_path_preflight(
@@ -1352,6 +1383,63 @@ mod tests {
             &inline_space,
             CommitIntent::SystemConfig
         ));
+    }
+
+    #[test]
+    fn submodule_mailmap_and_root_pointer_policies_are_independent() {
+        for child_system in [false, true] {
+            for root_structural in [false, true] {
+                for child_sync in [false, true] {
+                    for root_sync in [false, true] {
+                        let temp = tempfile::tempdir().expect("temp dir");
+                        let root = temp.path().join("project");
+                        let child = root.join("space");
+                        std::fs::create_dir_all(&child).expect("create policy roots");
+                        write_local_git_policy(
+                            &root,
+                            GitUserPolicy {
+                                auto_sync: root_sync,
+                                auto_commit_structural: root_structural,
+                                auto_commit_system: false,
+                            },
+                        );
+                        write_local_git_policy(
+                            &child,
+                            GitUserPolicy {
+                                auto_sync: child_sync,
+                                auto_commit_structural: false,
+                                auto_commit_system: child_system,
+                            },
+                        );
+
+                        let child_plan = classify_guarded_exact_path_preflight(
+                            background_commit_allowed(&child, CommitIntent::SystemConfig),
+                            false,
+                            false,
+                        );
+                        let root_plan = classify_guarded_exact_path_preflight(
+                            background_commit_allowed(&root, CommitIntent::StructuralLifecycle),
+                            false,
+                            false,
+                        );
+                        assert_eq!(child_plan == GuardedExactPathPlan::Eligible, child_system);
+                        assert_eq!(root_plan == GuardedExactPathPlan::Eligible, root_structural);
+                        assert_eq!(is_auto_sync_enabled(&child), child_sync);
+                        assert_eq!(is_auto_sync_enabled(&root), root_sync);
+
+                        // Root eligibility never upgrades a system-policy-pending
+                        // child mutation into an automatic `.mailmap` commit.
+                        let root_can_follow_created_child = child_plan
+                            == GuardedExactPathPlan::Eligible
+                            && root_plan == GuardedExactPathPlan::Eligible;
+                        assert_eq!(
+                            root_can_follow_created_child,
+                            child_system && root_structural
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

@@ -110,20 +110,25 @@ export type ActorExactPathPendingReasonDto =
   | "target_dirty"
   | "index_staged"
   | "target_changed"
-  | "index_interference"
-  | "submodule_deferred";
+  | "index_interference";
 
-export type ActorPersistenceOutcomeDto =
+export type ActorExactPathPersistenceOutcomeDto =
   | { status: "committed" }
   | { status: "pending"; reason: ActorExactPathPendingReasonDto }
   | { status: "failed"; message: string }
   | { status: "clean" };
+
+export interface ActorRepositoryPersistenceOutcomeDto {
+  mailmap: ActorExactPathPersistenceOutcomeDto;
+  rootPointer?: ActorExactPathPersistenceOutcomeDto;
+}
 
 export type ActorMutationPreviewResultDto =
   | {
       status: "ready";
       review: ActorMutationReviewDto;
       commitExpectation: ActorCommitExpectationDto;
+      rootPointerCommitExpectation?: ActorCommitExpectationDto;
     }
   | { status: "duplicate"; canonicalEmail: string }
   | {
@@ -138,7 +143,7 @@ export type ActorMutationApplyResultDto =
       canonicalEmail: string;
       catalog: ActorCatalogDto;
       currentIdentityUpdated: boolean;
-      persistence: ActorPersistenceOutcomeDto;
+      persistence: ActorRepositoryPersistenceOutcomeDto;
     }
   | { status: "duplicate"; canonicalEmail: string }
   | {
@@ -150,6 +155,7 @@ export type ActorMutationApplyResultDto =
 export interface ActorMailmapSaveReviewDto {
   repositoryId: string;
   fingerprint: string;
+  rootPointerFingerprint?: string;
 }
 
 export type ActorMailmapSaveReviewResultDto =
@@ -159,7 +165,6 @@ export type ActorMailmapSaveReviewResultDto =
       review: ActorMailmapSaveReviewDto;
       requiresConsent: boolean;
     }
-  | { status: "deferred_submodule" }
   | {
       status: "blocked";
       reason: ActorMutationBlockReasonDto;
@@ -167,11 +172,11 @@ export type ActorMailmapSaveReviewResultDto =
     };
 
 export type ActorMailmapSaveResultDto =
-  | { status: "committed" }
-  | { status: "clean" }
+  | {
+      status: "saved";
+      persistence: ActorRepositoryPersistenceOutcomeDto;
+    }
   | { status: "stale" }
-  | { status: "deferred_submodule" }
-  | { status: "failed"; message: string }
   | {
       status: "blocked";
       reason: ActorMutationBlockReasonDto;
@@ -196,12 +201,13 @@ export function getActorActivity(spacePath: string, canonicalEmail: string) {
 }
 
 export function previewActorMutation(
+  projectPath: string,
   spacePath: string,
   action: ActorMutationActionDto,
 ) {
   return invokeCommand<ActorMutationPreviewResultDto>(
     "actors_preview_mutation",
-    { action, spacePath },
+    { action, projectPath, spacePath },
   );
 }
 

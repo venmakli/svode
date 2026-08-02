@@ -11,9 +11,11 @@ import type {
 export function ActorMutationReviewStep({
   review,
   commitExpectation,
+  rootPointerCommitExpectation,
 }: {
   review: ActorMutationReview;
   commitExpectation: ActorCommitExpectation;
+  rootPointerCommitExpectation: ActorCommitExpectation | null;
 }) {
   return (
     <div className="flex flex-col gap-4" data-actor-mutation-review>
@@ -61,6 +63,15 @@ export function ActorMutationReviewStep({
           ? m.actors_mutation_review_mailmap_automatic()
           : m.actors_mutation_review_mailmap_manual()}
       </p>
+      {rootPointerCommitExpectation ? (
+        <p className="text-sm text-muted-foreground">
+          {commitExpectation === "manual"
+            ? m.actors_mutation_review_submodule_both_manual()
+            : rootPointerCommitExpectation === "automatic_if_safe"
+              ? m.actors_mutation_review_submodule_both_automatic()
+              : m.actors_mutation_review_submodule_pointer_manual()}
+        </p>
+      ) : null}
     </div>
   );
 }

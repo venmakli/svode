@@ -36,6 +36,7 @@ export function ActorMutationDialog({
   intent,
   pendingPhase,
   review,
+  rootPointerCommitExpectation,
   rows,
   onApply,
   onBack,
@@ -50,6 +51,7 @@ export function ActorMutationDialog({
   intent: ActorMutationIntent | null;
   pendingPhase: "preview" | "apply" | null;
   review: ActorMutationReview | null;
+  rootPointerCommitExpectation: ActorCommitExpectation | null;
   rows: readonly ActorCatalogRow[];
   onApply(): void;
   onBack(): void;
@@ -97,6 +99,7 @@ export function ActorMutationDialog({
           <ActorMutationReviewStep
             commitExpectation={commitExpectation}
             review={review}
+            rootPointerCommitExpectation={rootPointerCommitExpectation}
           />
         ) : (
           <ActorMutationInputStep

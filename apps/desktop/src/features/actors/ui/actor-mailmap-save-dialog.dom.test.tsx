@@ -10,6 +10,8 @@ test("manual Actors save request stays one-shot across surface remounts", async 
   const restoreGlobals = installDomGlobals(dom);
   const { useActorMailmapSave } =
     await import("../hooks/use-actor-mailmap-save");
+  const { ActorMailmapSaveDialog } =
+    await import("./actor-mailmap-save-dialog");
   const { requestActorMailmapSave, useActorMailmapSaveRequest } =
     await import("../model/mailmap-save-request");
   const calls: Array<{ args: unknown; command: string }> = [];
@@ -22,11 +24,20 @@ test("manual Actors save request stays one-shot across surface remounts", async 
         review: {
           fingerprint: "mailmap-v2",
           repositoryId: "/repo",
+          rootPointerFingerprint: "pointer-v1",
         },
         status: "ready",
       };
     }
-    if (command === "actors_save_mailmap") return { status: "committed" };
+    if (command === "actors_save_mailmap") {
+      return {
+        persistence: {
+          mailmap: { status: "committed" },
+          rootPointer: { status: "committed" },
+        },
+        status: "saved",
+      };
+    }
     throw new Error(`Unexpected command: ${command}`);
   });
   const root = createRoot(dom.window.document.getElementById("app")!);
@@ -39,9 +50,19 @@ test("manual Actors save request stays one-shot across surface remounts", async 
     return (
       <div>
         <span data-mailmap-review>{save.review?.fingerprint ?? ""}</span>
-        <button type="button" onClick={() => void save.confirm()}>
+        <span data-root-pointer-review>
+          {save.review?.rootPointerFingerprint ?? ""}
+        </span>
+        <button type="button" data-confirm onClick={() => void save.confirm()}>
           confirm
         </button>
+        <ActorMailmapSaveDialog
+          failure={save.failure}
+          pending={save.pendingPhase === "commit"}
+          review={save.review}
+          onClose={save.close}
+          onConfirm={() => void save.confirm()}
+        />
       </div>
     );
   }
@@ -65,12 +86,14 @@ test("manual Actors save request stays one-shot across surface remounts", async 
     expect(
       dom.window.document.querySelector("[data-mailmap-review]")?.textContent,
     ).toBe("mailmap-v2");
-
-    const saveButton = Array.from(
-      dom.window.document.querySelectorAll<HTMLButtonElement>("button"),
-    ).find((button) => button.textContent?.includes("confirm"));
+    expect(
+      dom.window.document.querySelector("[data-root-pointer-review]")
+        ?.textContent,
+    ).toBe("pointer-v1");
     await act(async () => {
-      saveButton?.click();
+      dom.window.document
+        .querySelector<HTMLButtonElement>("[data-confirm]")!
+        .click();
       await nextTurn();
     });
 

@@ -127,6 +127,7 @@ test("review shows aliases, current Git identity effects, and mailmap status", a
       root.render(
         <ActorMutationReviewStep
           commitExpectation="manual"
+          rootPointerCommitExpectation="automatic_if_safe"
           review={{
             action: {
               canonicalEmail: "ada@canonical.test",
@@ -153,6 +154,11 @@ test("review shows aliases, current Git identity effects, and mailmap status", a
     );
     expect(
       dom.window.document.body.textContent?.includes("remain pending"),
+    ).toBe(true);
+    expect(
+      dom.window.document.body.textContent?.includes(
+        "Manual save from this surface will commit the child .mailmap first",
+      ),
     ).toBe(true);
   } finally {
     await act(async () => root.unmount());
@@ -189,7 +195,12 @@ test("mutation state machine applies a reviewed snapshot and opens duplicates", 
     if (command === "actors_preview_mutation") {
       previewCount += 1;
       return previewCount === 1
-        ? { commitExpectation: "automatic_if_safe", review, status: "ready" }
+        ? {
+            commitExpectation: "automatic_if_safe",
+            review,
+            rootPointerCommitExpectation: "manual",
+            status: "ready",
+          }
         : { canonicalEmail: source.canonicalEmail, status: "duplicate" };
     }
     if (command === "actors_apply_mutation") {
@@ -214,7 +225,10 @@ test("mutation state machine applies a reviewed snapshot and opens duplicates", 
           shallow: false,
         },
         currentIdentityUpdated: false,
-        persistence: { status: "committed" },
+        persistence: {
+          mailmap: { status: "committed" },
+          rootPointer: { reason: "policy_off", status: "pending" },
+        },
         status: "applied",
       };
     }
@@ -269,7 +283,8 @@ test("mutation state machine applies a reviewed snapshot and opens duplicates", 
     expect(applied[0]?.canonicalEmail).toBe("new@example.test");
     expect(applied[0]?.catalog.generation).toBe(2);
     expect(Object.isFrozen(applied[0]?.catalog)).toBe(true);
-    expect(applied[0]?.persistence.status).toBe("committed");
+    expect(applied[0]?.persistence.mailmap.status).toBe("committed");
+    expect(applied[0]?.persistence.rootPointer?.status).toBe("pending");
     expect(textOf(dom, "[data-intent]")).toBe("closed");
 
     await clickAndFlush(dom, "open");
@@ -290,6 +305,12 @@ test("mutation state machine applies a reviewed snapshot and opens duplicates", 
     };
     expect(applyArgs.projectPath).toBe("/project");
     expect(applyArgs.spacePath).toBe("/repo");
+    const previewArgs = calls[0]?.args as {
+      projectPath: string;
+      spacePath: string;
+    };
+    expect(previewArgs.projectPath).toBe("/project");
+    expect(previewArgs.spacePath).toBe("/repo");
   } finally {
     await act(async () => root.unmount());
     clearNativeMocks();

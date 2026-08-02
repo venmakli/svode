@@ -193,6 +193,7 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
         intent={mutation.intent}
         pendingPhase={mutation.pendingPhase}
         review={mutation.review}
+        rootPointerCommitExpectation={mutation.rootPointerCommitExpectation}
         rows={catalogRows}
         onApply={() => void mutation.apply()}
         onBack={mutation.back}

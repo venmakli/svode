@@ -1,8 +1,12 @@
-import type { ActorMutationBlockReason } from "./identity-mutation";
+import type {
+  ActorMutationBlockReason,
+  ActorRepositoryPersistenceOutcome,
+} from "./identity-mutation";
 
 export interface ActorMailmapSaveReview {
   repositoryId: string;
   fingerprint: string;
+  rootPointerFingerprint?: string;
 }
 
 export type ActorMailmapSaveReviewResult =
@@ -12,7 +16,6 @@ export type ActorMailmapSaveReviewResult =
       review: ActorMailmapSaveReview;
       requiresConsent: boolean;
     }
-  | { status: "deferred_submodule" }
   | {
       status: "blocked";
       reason: ActorMutationBlockReason;
@@ -20,11 +23,11 @@ export type ActorMailmapSaveReviewResult =
     };
 
 export type ActorMailmapSaveResult =
-  | { status: "committed" }
-  | { status: "clean" }
+  | {
+      status: "saved";
+      persistence: ActorRepositoryPersistenceOutcome;
+    }
   | { status: "stale" }
-  | { status: "deferred_submodule" }
-  | { status: "failed"; message: string }
   | {
       status: "blocked";
       reason: ActorMutationBlockReason;

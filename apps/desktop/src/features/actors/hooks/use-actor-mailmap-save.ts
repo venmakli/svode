@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 
 import { getActorMailmapSaveReview, saveActorMailmap } from "../api/actors-api";
+import { actorManualSaveFeedback } from "../lib/persistence-feedback";
 import type { ActorMailmapSaveReview } from "../model/mailmap-save";
 import {
   consumeActorMailmapSaveRequest,
@@ -33,8 +34,6 @@ export function useActorMailmapSave({
         setReview(result.review);
       } else if (result.status === "clean") {
         toast.info(m.actors_mailmap_save_clean());
-      } else if (result.status === "deferred_submodule") {
-        toast.info(m.actors_mailmap_save_deferred_submodule());
       } else {
         toast.error(m.actors_mailmap_save_unavailable(), {
           description: result.message,
@@ -73,18 +72,15 @@ export function useActorMailmapSave({
     setFailure(null);
     try {
       const result = await saveActorMailmap(projectPath, spacePath, review);
-      if (result.status === "committed") {
+      if (result.status === "saved") {
         setReview(null);
-        toast.success(m.actors_mailmap_save_committed());
-      } else if (result.status === "clean") {
-        setReview(null);
-        toast.info(m.actors_mailmap_save_clean());
+        const feedback = actorManualSaveFeedback(result.persistence);
+        toast[feedback.tone](feedback.title, {
+          description: feedback.description,
+        });
       } else if (result.status === "stale") {
         setReview(null);
         toast.info(m.actors_mailmap_save_stale());
-      } else if (result.status === "deferred_submodule") {
-        setReview(null);
-        toast.info(m.actors_mailmap_save_deferred_submodule());
       } else {
         setFailure(result.message);
       }

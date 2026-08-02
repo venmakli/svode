@@ -55,8 +55,7 @@ export type ActorExactPathPendingReason =
   | "target_dirty"
   | "index_staged"
   | "target_changed"
-  | "index_interference"
-  | "submodule_deferred";
+  | "index_interference";
 
 export type ActorPersistenceOutcome =
   | { status: "committed" }
@@ -64,11 +63,17 @@ export type ActorPersistenceOutcome =
   | { status: "failed"; message: string }
   | { status: "clean" };
 
+export interface ActorRepositoryPersistenceOutcome {
+  mailmap: ActorPersistenceOutcome;
+  rootPointer?: ActorPersistenceOutcome;
+}
+
 export type ActorMutationPreviewResult =
   | {
       status: "ready";
       review: ActorMutationReview;
       commitExpectation: ActorCommitExpectation;
+      rootPointerCommitExpectation: ActorCommitExpectation | null;
     }
   | { status: "duplicate"; canonicalEmail: string }
   | {
@@ -83,7 +88,7 @@ export type ActorMutationApplyResult =
       canonicalEmail: string;
       catalog: ActorCatalogSnapshot;
       currentIdentityUpdated: boolean;
-      persistence: ActorPersistenceOutcome;
+      persistence: ActorRepositoryPersistenceOutcome;
     }
   | { status: "duplicate"; canonicalEmail: string }
   | {

@@ -12,7 +12,7 @@ use crate::AppError;
 use crate::git::GitState;
 use crate::git::access::{RepositoryAccessState, RepositoryAccessStatus, access_store_path};
 use crate::git::autocommit::{
-    AutocommitService, ExactPathPendingReason, ExactPathPersistenceOutcome, GuardedExactPathPlan,
+    AutocommitService, ExactPathPersistenceOutcome, GuardedExactPathPlan,
 };
 use crate::git::cli::GitCli;
 use crate::git::ops;
@@ -24,6 +24,7 @@ use crate::space::types::SpaceGitType;
 
 const MAILMAP_PATH: &str = ".mailmap";
 const MAILMAP_COMMIT_MESSAGE: &str = "Update contributor identities";
+const SUBMODULE_POINTER_COMMIT_MESSAGE: &str = "Update space pointer";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(
@@ -88,6 +89,8 @@ pub enum ActorMutationPreviewResult {
     Ready {
         review: ActorMutationReview,
         commit_expectation: ActorCommitExpectation,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        root_pointer_commit_expectation: Option<ActorCommitExpectation>,
     },
     Duplicate {
         canonical_email: String,
@@ -109,7 +112,7 @@ pub enum ActorMutationApplyResult {
         canonical_email: String,
         catalog: ActorCatalog,
         current_identity_updated: bool,
-        persistence: ExactPathPersistenceOutcome,
+        persistence: ActorPersistenceOutcome,
     },
     Duplicate {
         canonical_email: String,
@@ -118,6 +121,14 @@ pub enum ActorMutationApplyResult {
         reason: ActorMutationBlockReason,
         message: String,
     },
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActorPersistenceOutcome {
+    pub mailmap: ExactPathPersistenceOutcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_pointer: Option<ExactPathPersistenceOutcome>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -132,6 +143,8 @@ pub enum ActorCommitExpectation {
 pub struct ActorMailmapSaveReview {
     pub repository_id: String,
     pub fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_pointer_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -146,7 +159,6 @@ pub enum ActorMailmapSaveReviewResult {
         review: ActorMailmapSaveReview,
         requires_consent: bool,
     },
-    DeferredSubmodule,
     Blocked {
         reason: ActorMutationBlockReason,
         message: String,
@@ -160,17 +172,20 @@ pub enum ActorMailmapSaveReviewResult {
     rename_all_fields = "camelCase"
 )]
 pub enum ActorMailmapSaveResult {
-    Committed,
-    Clean,
-    Stale,
-    DeferredSubmodule,
-    Failed {
-        message: String,
+    Saved {
+        persistence: ActorPersistenceOutcome,
     },
+    Stale,
     Blocked {
         reason: ActorMutationBlockReason,
         message: String,
     },
+}
+
+#[derive(Debug, Clone)]
+enum RootPointerCommitPlan {
+    Guarded(GuardedExactPathPlan),
+    Failed(String),
 }
 
 #[derive(Debug)]
@@ -207,6 +222,7 @@ impl From<std::io::Error> for MutationWriteError {
 
 pub async fn preview(
     cli: &GitCli,
+    project_path: &Path,
     space_path: &Path,
     action: ActorMutationAction,
     app: &tauri::AppHandle,
@@ -239,15 +255,32 @@ pub async fn preview(
     } else {
         None
     };
-    Ok(ActorMutationPreviewResult::Ready {
-        review: review_for(&snapshot, &source, &plan, current_identity_fingerprint),
-        commit_expectation: if crate::space::config::effective_git_user_policy(&repository)
-            .auto_commit_system
-        {
+    let commit_expectation =
+        if crate::space::config::effective_git_user_policy(&repository).auto_commit_system {
             ActorCommitExpectation::AutomaticIfSafe
         } else {
             ActorCommitExpectation::Manual
-        },
+        };
+    let root_pointer_commit_expectation =
+        if ops::detect_space_git_type(cli, project_path, space_path).await?
+            == SpaceGitType::Submodule
+        {
+            Some(
+                if crate::space::config::effective_git_user_policy(project_path)
+                    .auto_commit_structural
+                {
+                    ActorCommitExpectation::AutomaticIfSafe
+                } else {
+                    ActorCommitExpectation::Manual
+                },
+            )
+        } else {
+            None
+        };
+    Ok(ActorMutationPreviewResult::Ready {
+        review: review_for(&snapshot, &source, &plan, current_identity_fingerprint),
+        commit_expectation,
+        root_pointer_commit_expectation,
     })
 }
 
@@ -305,12 +338,28 @@ pub async fn apply(
         .require_mutation(cli, &repository, &access_store_path(app)?)
         .await?;
 
-    let commit_plan = if git_type == SpaceGitType::Submodule {
-        GuardedExactPathPlan::Pending(ExactPathPendingReason::SubmoduleDeferred)
+    let commit_plan = autocommit
+        .plan_guarded_system_exact_path(cli, &repository, MAILMAP_PATH)
+        .await?;
+    let root_pointer_target = if git_type == SpaceGitType::Submodule {
+        Some(submodule_root_target(project_path, space_path)?)
     } else {
-        autocommit
-            .plan_guarded_system_exact_path(cli, &repository, MAILMAP_PATH)
-            .await?
+        None
+    };
+    let root_pointer_plan = if let Some(root_pointer_target) = root_pointer_target.as_deref() {
+        let root_lock = git_state.get_lock(project_path).await;
+        let _root_guard = root_lock.lock().await;
+        Some(
+            match autocommit
+                .plan_guarded_structural_exact_path(cli, project_path, root_pointer_target, true)
+                .await
+            {
+                Ok(plan) => RootPointerCommitPlan::Guarded(plan),
+                Err(error) => RootPointerCommitPlan::Failed(error.to_string()),
+            },
+        )
+    } else {
+        None
     };
 
     let previous_identity = if plan.affects_current_identity {
@@ -352,7 +401,7 @@ pub async fn apply(
                 read_mailmap_source(&repository)?,
                 Ok(current) if current.fingerprint == expected_fingerprint
             );
-            let persistence = autocommit
+            let mailmap = autocommit
                 .finish_guarded_exact_path_commit(
                     cli,
                     space_path,
@@ -363,11 +412,37 @@ pub async fn apply(
                     target_matches_expected,
                 )
                 .await;
+            let root_pointer = if mailmap == ExactPathPersistenceOutcome::Committed {
+                match (root_pointer_target.as_deref(), root_pointer_plan) {
+                    (Some(root_pointer_target), Some(root_pointer_plan)) => {
+                        let root_lock = git_state.get_lock(project_path).await;
+                        let _root_guard = root_lock.lock().await;
+                        Some(
+                            finish_guarded_submodule_pointer(
+                                cli,
+                                project_path,
+                                space_path,
+                                &repository,
+                                root_pointer_target,
+                                root_pointer_plan,
+                                autocommit,
+                            )
+                            .await,
+                        )
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
             Ok(ActorMutationApplyResult::Applied {
                 canonical_email: plan.canonical_email,
                 catalog: snapshot.catalog(),
                 current_identity_updated: plan.affects_current_identity,
-                persistence,
+                persistence: ActorPersistenceOutcome {
+                    mailmap,
+                    root_pointer,
+                },
             })
         }
         Err(error) => {
@@ -394,6 +469,62 @@ pub async fn apply(
     }
 }
 
+async fn finish_guarded_submodule_pointer(
+    cli: &GitCli,
+    project_path: &Path,
+    space_path: &Path,
+    repository: &Path,
+    root_pointer_target: &str,
+    plan: RootPointerCommitPlan,
+    autocommit: &AutocommitService,
+) -> ExactPathPersistenceOutcome {
+    let plan = match plan {
+        RootPointerCommitPlan::Guarded(plan) => plan,
+        RootPointerCommitPlan::Failed(message) => {
+            return ExactPathPersistenceOutcome::Failed { message };
+        }
+    };
+    if let GuardedExactPathPlan::Pending(reason) = plan {
+        return ExactPathPersistenceOutcome::Pending { reason };
+    }
+
+    let expected_head = match ops::repository_head_oid(cli, repository).await {
+        Ok(expected_head) => expected_head,
+        Err(error) => {
+            return ExactPathPersistenceOutcome::Failed {
+                message: error.to_string(),
+            };
+        }
+    };
+    let target_matches_expected = match ops::submodule_target_matches_expected_head(
+        cli,
+        project_path,
+        root_pointer_target,
+        repository,
+        &expected_head,
+    )
+    .await
+    {
+        Ok(matches) => matches,
+        Err(error) => {
+            return ExactPathPersistenceOutcome::Failed {
+                message: error.to_string(),
+            };
+        }
+    };
+    autocommit
+        .finish_guarded_exact_path_commit(
+            cli,
+            space_path,
+            project_path,
+            root_pointer_target,
+            SUBMODULE_POINTER_COMMIT_MESSAGE,
+            plan,
+            target_matches_expected,
+        )
+        .await
+}
+
 pub async fn get_mailmap_save_review(
     cli: &GitCli,
     project_path: &Path,
@@ -403,27 +534,65 @@ pub async fn get_mailmap_save_review(
 ) -> Result<ActorMailmapSaveReviewResult, AppError> {
     let (repository, git_type, git_lock_path) =
         resolve_actor_git_context(cli, project_path, space_path).await?;
-    if git_type == SpaceGitType::Submodule {
-        return Ok(ActorMailmapSaveReviewResult::DeferredSubmodule);
-    }
-
     let repository_lock = actor_catalog.repository_lock(&repository)?;
     let _guard = repository_lock.lock().await;
     let git_lock = git_state.get_lock(&git_lock_path).await;
     let _git_guard = git_lock.lock().await;
+    let root_pointer_target = if git_type == SpaceGitType::Submodule {
+        Some(submodule_root_target(project_path, space_path)?)
+    } else {
+        None
+    };
+    let root_lock = if root_pointer_target.is_some() {
+        Some(git_state.get_lock(project_path).await)
+    } else {
+        None
+    };
+    let _root_guard = if let Some(root_lock) = root_lock.as_ref() {
+        Some(root_lock.lock().await)
+    } else {
+        None
+    };
     let source = match read_mailmap_source(&repository)? {
         Ok(source) => source,
         Err((reason, message)) => {
             return Ok(ActorMailmapSaveReviewResult::Blocked { reason, message });
         }
     };
-    if !ops::exact_path_has_changes(cli, &repository, MAILMAP_PATH).await? {
+    let mailmap_dirty = ops::exact_path_has_changes(cli, &repository, MAILMAP_PATH).await?;
+    let root_pointer_fingerprint = if let Some(root_pointer_target) = root_pointer_target.as_deref()
+    {
+        Some(ops::exact_path_state_fingerprint(cli, project_path, root_pointer_target).await?)
+    } else {
+        None
+    };
+    let root_pointer_recoverable = if let Some(root_pointer_target) = root_pointer_target.as_deref()
+    {
+        let expected_head = ops::repository_head_oid(cli, &repository).await.ok();
+        ops::exact_path_has_changes(cli, project_path, root_pointer_target).await?
+            && if let Some(expected_head) = expected_head {
+                ops::submodule_target_matches_expected_head(
+                    cli,
+                    project_path,
+                    root_pointer_target,
+                    &repository,
+                    &expected_head,
+                )
+                .await?
+            } else {
+                false
+            }
+    } else {
+        false
+    };
+    if !mailmap_dirty && !root_pointer_recoverable {
         return Ok(ActorMailmapSaveReviewResult::Clean);
     }
     Ok(ActorMailmapSaveReviewResult::Ready {
         review: ActorMailmapSaveReview {
             repository_id: repository.to_string_lossy().into_owned(),
             fingerprint: source.fingerprint,
+            root_pointer_fingerprint,
         },
         requires_consent: true,
     })
@@ -440,31 +609,45 @@ pub async fn save_mailmap(
 ) -> Result<ActorMailmapSaveResult, AppError> {
     let (repository, git_type, git_lock_path) =
         resolve_actor_git_context(cli, project_path, space_path).await?;
-    if git_type == SpaceGitType::Submodule {
-        return Ok(ActorMailmapSaveResult::DeferredSubmodule);
-    }
-
     let repository_lock = actor_catalog.repository_lock(&repository)?;
     let _guard = repository_lock.lock().await;
     let git_lock = git_state.get_lock(&git_lock_path).await;
     let _git_guard = git_lock.lock().await;
+    let root_pointer_target = if git_type == SpaceGitType::Submodule {
+        Some(submodule_root_target(project_path, space_path)?)
+    } else {
+        None
+    };
+    let root_lock = if root_pointer_target.is_some() {
+        Some(git_state.get_lock(project_path).await)
+    } else {
+        None
+    };
+    let _root_guard = if let Some(root_lock) = root_lock.as_ref() {
+        Some(root_lock.lock().await)
+    } else {
+        None
+    };
     let source = match read_mailmap_source(&repository)? {
         Ok(source) => source,
         Err((reason, message)) => {
             return Ok(ActorMailmapSaveResult::Blocked { reason, message });
         }
     };
+    let current_root_pointer_fingerprint =
+        if let Some(root_pointer_target) = root_pointer_target.as_deref() {
+            Some(ops::exact_path_state_fingerprint(cli, project_path, root_pointer_target).await?)
+        } else {
+            None
+        };
     if review.repository_id != repository.to_string_lossy()
         || review.fingerprint != source.fingerprint
+        || review.root_pointer_fingerprint != current_root_pointer_fingerprint
     {
         return Ok(ActorMailmapSaveResult::Stale);
     }
-    if !ops::exact_path_has_changes(cli, &repository, MAILMAP_PATH).await? {
-        return Ok(ActorMailmapSaveResult::Clean);
-    }
-
-    Ok(
-        match autocommit
+    let mailmap = if ops::exact_path_has_changes(cli, &repository, MAILMAP_PATH).await? {
+        autocommit
             .commit_exact_path_manual(
                 cli,
                 space_path,
@@ -473,20 +656,125 @@ pub async fn save_mailmap(
                 MAILMAP_COMMIT_MESSAGE,
             )
             .await
-        {
-            ExactPathPersistenceOutcome::Committed => ActorMailmapSaveResult::Committed,
-            ExactPathPersistenceOutcome::Clean => ActorMailmapSaveResult::Clean,
-            ExactPathPersistenceOutcome::Failed { message } => {
-                ActorMailmapSaveResult::Failed { message }
+    } else {
+        ExactPathPersistenceOutcome::Clean
+    };
+    let child_allows_root = matches!(
+        mailmap,
+        ExactPathPersistenceOutcome::Committed | ExactPathPersistenceOutcome::Clean
+    );
+    let root_pointer = if child_allows_root {
+        if let Some(root_pointer_target) = root_pointer_target.as_deref() {
+            if ops::exact_path_has_changes(cli, project_path, root_pointer_target).await? {
+                Some(
+                    commit_manual_submodule_pointer(
+                        cli,
+                        project_path,
+                        space_path,
+                        &repository,
+                        root_pointer_target,
+                        autocommit,
+                    )
+                    .await,
+                )
+            } else {
+                None
             }
-            ExactPathPersistenceOutcome::Pending {
-                reason: ExactPathPendingReason::SubmoduleDeferred,
-            } => ActorMailmapSaveResult::DeferredSubmodule,
-            ExactPathPersistenceOutcome::Pending { reason } => ActorMailmapSaveResult::Failed {
-                message: format!("manual .mailmap commit remained pending: {reason:?}"),
-            },
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    Ok(ActorMailmapSaveResult::Saved {
+        persistence: ActorPersistenceOutcome {
+            mailmap,
+            root_pointer,
         },
+    })
+}
+
+async fn commit_manual_submodule_pointer(
+    cli: &GitCli,
+    project_path: &Path,
+    space_path: &Path,
+    repository: &Path,
+    root_pointer_target: &str,
+    autocommit: &AutocommitService,
+) -> ExactPathPersistenceOutcome {
+    let expected_head = match ops::repository_head_oid(cli, repository).await {
+        Ok(expected_head) => expected_head,
+        Err(error) => {
+            return ExactPathPersistenceOutcome::Failed {
+                message: error.to_string(),
+            };
+        }
+    };
+    match ops::submodule_target_matches_expected_head(
+        cli,
+        project_path,
+        root_pointer_target,
+        repository,
+        &expected_head,
     )
+    .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            return ExactPathPersistenceOutcome::Failed {
+                message: "submodule pointer target no longer matches the child repository HEAD"
+                    .to_string(),
+            };
+        }
+        Err(error) => {
+            return ExactPathPersistenceOutcome::Failed {
+                message: error.to_string(),
+            };
+        }
+    }
+
+    autocommit
+        .commit_exact_path_manual(
+            cli,
+            space_path,
+            project_path,
+            root_pointer_target,
+            SUBMODULE_POINTER_COMMIT_MESSAGE,
+        )
+        .await
+}
+
+fn submodule_root_target(project_path: &Path, space_path: &Path) -> Result<String, AppError> {
+    let canonical_project = fs::canonicalize(project_path).map_err(|error| {
+        AppError::GitCommandFailed(format!(
+            "failed to canonicalize submodule project {}: {error}",
+            project_path.display()
+        ))
+    })?;
+    let canonical_space = fs::canonicalize(space_path).map_err(|error| {
+        AppError::GitCommandFailed(format!(
+            "failed to canonicalize submodule target {}: {error}",
+            space_path.display()
+        ))
+    })?;
+    if canonical_space.parent() != Some(canonical_project.as_path()) {
+        return Err(AppError::GitCommandFailed(format!(
+            "submodule target {} is not a direct child of {}",
+            canonical_space.display(),
+            canonical_project.display()
+        )));
+    }
+    canonical_space
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            AppError::GitCommandFailed(format!(
+                "submodule target {} is not valid UTF-8",
+                canonical_space.display()
+            ))
+        })
 }
 
 async fn resolve_actor_git_context(
@@ -1298,6 +1586,25 @@ mod tests {
         assert_eq!(value["status"], "duplicate");
         assert_eq!(value["canonicalEmail"], "existing@example.test");
         assert!(value.get("canonical_email").is_none());
+
+        let persistence = ActorPersistenceOutcome {
+            mailmap: ExactPathPersistenceOutcome::Committed,
+            root_pointer: Some(ExactPathPersistenceOutcome::Pending {
+                reason: crate::git::autocommit::ExactPathPendingReason::PolicyOff,
+            }),
+        };
+        let value = serde_json::to_value(ActorMailmapSaveResult::Saved { persistence })
+            .expect("serialize compound persistence");
+        assert_eq!(value["status"], "saved");
+        assert_eq!(value["persistence"]["mailmap"]["status"], "committed");
+        assert_eq!(value["persistence"]["rootPointer"]["reason"], "policy_off");
+
+        let child_only = serde_json::to_value(ActorPersistenceOutcome {
+            mailmap: ExactPathPersistenceOutcome::Clean,
+            root_pointer: None,
+        })
+        .expect("serialize child-only persistence");
+        assert!(child_only.get("rootPointer").is_none());
     }
 
     #[test]

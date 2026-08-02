@@ -47,14 +47,20 @@ export async function loadActorActivity(
 }
 
 export async function previewActorMutation(
+  projectPath: string,
   spacePath: string,
   action: ActorMutationAction,
 ): Promise<ActorMutationPreviewResult> {
-  const result = await previewActorMutationCommand(spacePath, action);
+  const result = await previewActorMutationCommand(
+    projectPath,
+    spacePath,
+    action,
+  );
   if (result.status !== "ready") return result;
   return {
     status: "ready",
     commitExpectation: result.commitExpectation,
+    rootPointerCommitExpectation: result.rootPointerCommitExpectation ?? null,
     review: toActorMutationReview(result.review),
   };
 }

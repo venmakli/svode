@@ -1,3 +1,4 @@
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::Path;
 
 use serde::Serialize;
@@ -642,6 +643,166 @@ pub async fn exact_path_has_changes(
         )));
     }
     Ok(!out.stdout.is_empty())
+}
+
+/// Opaque fingerprint of one repository-relative target across HEAD, index,
+/// worktree status, and (for nested repositories) the target repository HEAD.
+/// This is used to stale-check explicit exact-path reviews without making
+/// unrelated staged paths part of the review contract.
+pub async fn exact_path_state_fingerprint(
+    cli: &GitCli,
+    repo: &Path,
+    path: &str,
+) -> Result<String, AppError> {
+    let path = normalize_git_path(path)?;
+    let status = cli
+        .exec(
+            repo,
+            &[
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+                "--",
+                &path,
+            ],
+        )
+        .await?;
+    if status.exit_code != 0 {
+        return Err(AppError::GitCommandFailed(format!(
+            "git status for exact-path fingerprint failed: {}",
+            status.stderr
+        )));
+    }
+
+    let index = cli
+        .exec(repo, &["ls-files", "--stage", "--", &path])
+        .await?;
+    if index.exit_code != 0 {
+        return Err(AppError::GitCommandFailed(format!(
+            "git ls-files for exact-path fingerprint failed: {}",
+            index.stderr
+        )));
+    }
+
+    // `ls-tree HEAD` is expected to fail for an unborn root repository. Its
+    // exit code is still part of the fingerprint and does not make the review
+    // unavailable.
+    let head = cli.exec(repo, &["ls-tree", "HEAD", "--", &path]).await?;
+    let nested_head = if repo.join(&path).join(".git").symlink_metadata().is_ok() {
+        cli.exec(&repo.join(&path), &["rev-parse", "--verify", "HEAD"])
+            .await?
+    } else {
+        super::cli::GitOutput {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 1,
+        }
+    };
+
+    let mut hasher = DefaultHasher::new();
+    for (exit_code, stdout) in [
+        (status.exit_code, status.stdout.as_str()),
+        (index.exit_code, index.stdout.as_str()),
+        (head.exit_code, head.stdout.as_str()),
+        (nested_head.exit_code, nested_head.stdout.as_str()),
+    ] {
+        exit_code.hash(&mut hasher);
+        stdout.hash(&mut hasher);
+    }
+    Ok(format!("{:016x}", hasher.finish()))
+}
+
+/// Whether an exact root target is the expected metadata-only form of a local
+/// submodule: registered by a clean tracked `.gitmodules`, not yet represented
+/// in the root index, and with an unborn child repository. This state is safe
+/// before the first child commit even though root `git status` reports the
+/// directory as untracked.
+pub async fn is_registered_unborn_submodule_target(
+    cli: &GitCli,
+    root: &Path,
+    path: &str,
+) -> Result<bool, AppError> {
+    let path = normalize_git_path(path)?;
+    if path.contains('/')
+        || !list_submodules(cli, root)
+            .await?
+            .iter()
+            .any(|submodule| submodule.path == path)
+        || exact_path_has_changes(cli, root, ".gitmodules").await?
+    {
+        return Ok(false);
+    }
+
+    let known = cli
+        .exec(root, &["ls-files", "--error-unmatch", "--", &path])
+        .await?;
+    if known.exit_code == 0 || root.join(&path).join(".git").symlink_metadata().is_err() {
+        return Ok(false);
+    }
+
+    let child = root.join(&path);
+    let repository = cli.exec(&child, &["rev-parse", "--show-toplevel"]).await?;
+    if repository.exit_code != 0 {
+        return Ok(false);
+    }
+    let head = cli.exec(&child, &["rev-parse", "--verify", "HEAD"]).await?;
+    Ok(head.exit_code != 0)
+}
+
+/// Read the repository HEAD expected to become a root gitlink target.
+pub async fn repository_head_oid(cli: &GitCli, repository: &Path) -> Result<String, AppError> {
+    let head = cli
+        .exec(repository, &["rev-parse", "--verify", "HEAD"])
+        .await?;
+    if head.exit_code != 0 {
+        return Err(AppError::GitCommandFailed(format!(
+            "git rev-parse HEAD failed: {}",
+            head.stderr
+        )));
+    }
+    Ok(head.stdout.trim().to_string())
+}
+
+/// Validate that a configured direct-child submodule still resolves to the
+/// expected child repository and commit. The root worktree gitlink is derived
+/// from this child HEAD, so this protects the final exact-path commit from path
+/// replacement, routing drift, and a stale child target.
+pub async fn submodule_target_matches_expected_head(
+    cli: &GitCli,
+    root: &Path,
+    path: &str,
+    repository: &Path,
+    expected_head: &str,
+) -> Result<bool, AppError> {
+    let path = normalize_git_path(path)?;
+    if path.contains('/')
+        || !list_submodules(cli, root)
+            .await?
+            .iter()
+            .any(|submodule| submodule.path == path)
+    {
+        return Ok(false);
+    }
+
+    let target = match std::fs::canonicalize(root.join(&path)) {
+        Ok(target) => target,
+        Err(_) => return Ok(false),
+    };
+    let repository = match std::fs::canonicalize(repository) {
+        Ok(repository) => repository,
+        Err(_) => return Ok(false),
+    };
+    if target != repository {
+        return Ok(false);
+    }
+
+    let target_head = cli
+        .exec(&target, &["rev-parse", "--verify", "HEAD"])
+        .await?;
+    Ok(target_head.exit_code == 0
+        && !expected_head.is_empty()
+        && target_head.stdout.trim() == expected_head)
 }
 
 /// Stage a specific file and auto-commit with a generated message.
@@ -1468,6 +1629,32 @@ mod tests {
         repo
     }
 
+    async fn init_metadata_only_submodule(cli: &GitCli, root: &Path) -> std::path::PathBuf {
+        let child = root.join("space");
+        std::fs::create_dir(&child).unwrap();
+        assert_eq!(cli.exec(&child, &["init"]).await.unwrap().exit_code, 0);
+        assert_eq!(
+            cli.exec(&child, &["config", "user.name", "Svode Test"])
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        assert_eq!(
+            cli.exec(&child, &["config", "user.email", "svode@example.test"],)
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        std::fs::write(
+            root.join(".gitmodules"),
+            "[submodule \"space\"]\n\tpath = space\n\turl = ./space\n",
+        )
+        .unwrap();
+        child
+    }
+
     #[test]
     fn parses_status_z_with_spaces_cyrillic_untracked_modified_conflict_and_rename() {
         let output = concat!(
@@ -1574,6 +1761,307 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(committed_mailmap.stdout, "Actor <actor@example.test>\n");
+    }
+
+    #[tokio::test]
+    async fn exact_path_gitlink_commit_preserves_unrelated_root_index() {
+        let Ok(cli) = GitCli::detect() else {
+            return;
+        };
+        let root = init_test_repo(&cli).await;
+        let child = root.path().join("space");
+        std::fs::create_dir(&child).unwrap();
+        assert_eq!(cli.exec(&child, &["init"]).await.unwrap().exit_code, 0);
+        assert_eq!(
+            cli.exec(&child, &["config", "user.name", "Svode Test"])
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        assert_eq!(
+            cli.exec(&child, &["config", "user.email", "svode@example.test"],)
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        std::fs::write(
+            root.path().join(".gitmodules"),
+            "[submodule \"space\"]\n\tpath = space\n\turl = ./space\n",
+        )
+        .unwrap();
+        assert!(
+            !is_registered_unborn_submodule_target(&cli, root.path(), "space")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            cli.exec(root.path(), &["add", "--", ".gitmodules"])
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        assert_eq!(
+            cli.exec(root.path(), &["commit", "-m", "Register space"])
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        assert!(
+            is_registered_unborn_submodule_target(&cli, root.path(), "space")
+                .await
+                .unwrap()
+        );
+
+        std::fs::write(child.join(".mailmap"), "Actor <actor@example.test>\n").unwrap();
+        assert!(
+            commit_exact_path(&cli, &child, ".mailmap", "Update contributor identities",)
+                .await
+                .unwrap()
+        );
+        let child_head = repository_head_oid(&cli, &child).await.unwrap();
+        assert!(
+            submodule_target_matches_expected_head(
+                &cli,
+                root.path(),
+                "space",
+                &child,
+                &child_head,
+            )
+            .await
+            .unwrap()
+        );
+        std::fs::write(root.path().join("unrelated.txt"), "keep staged\n").unwrap();
+        assert_eq!(
+            cli.exec(root.path(), &["add", "--", "unrelated.txt"])
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+
+        assert!(
+            commit_exact_path(&cli, root.path(), "space", "Update space pointer")
+                .await
+                .unwrap()
+        );
+
+        let tree = cli
+            .exec(root.path(), &["ls-tree", "HEAD", "--", "space"])
+            .await
+            .unwrap();
+        assert!(tree.stdout.starts_with("160000 commit "));
+        let staged = cli
+            .exec(root.path(), &["diff", "--cached", "--name-only"])
+            .await
+            .unwrap();
+        assert_eq!(staged.stdout.trim(), "unrelated.txt");
+        let committed = cli
+            .exec(
+                root.path(),
+                &["show", "--pretty=format:", "--name-only", "HEAD"],
+            )
+            .await
+            .unwrap();
+        assert_eq!(committed.stdout.trim(), "space");
+        assert!(
+            !exact_path_has_changes(&cli, root.path(), ".gitmodules")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn child_commit_failure_does_not_create_root_gitlink() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let Ok(cli) = GitCli::detect() else {
+            return;
+        };
+        let root = init_test_repo(&cli).await;
+        let child = init_metadata_only_submodule(&cli, root.path()).await;
+        std::fs::write(child.join(".mailmap"), "Actor <actor@example.test>\n").unwrap();
+        let hook = child.join(".git/hooks/pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+        let mut permissions = std::fs::metadata(&hook).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&hook, permissions).unwrap();
+
+        let child_commit =
+            commit_exact_path(&cli, &child, ".mailmap", "Update contributor identities").await;
+        assert!(child_commit.is_err());
+        let root_tree = cli
+            .exec(root.path(), &["ls-tree", "HEAD", "--", "space"])
+            .await
+            .unwrap();
+        assert!(root_tree.stdout.is_empty());
+        let child_head = cli
+            .exec(&child, &["rev-parse", "--verify", "HEAD"])
+            .await
+            .unwrap();
+        assert_ne!(child_head.exit_code, 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn root_gitlink_failure_keeps_child_commit_and_allows_pointer_only_recovery() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let Ok(cli) = GitCli::detect() else {
+            return;
+        };
+        let root = init_test_repo(&cli).await;
+        let child = init_metadata_only_submodule(&cli, root.path()).await;
+        std::fs::write(child.join(".mailmap"), "Actor <actor@example.test>\n").unwrap();
+        assert!(
+            commit_exact_path(&cli, &child, ".mailmap", "Update contributor identities",)
+                .await
+                .unwrap()
+        );
+        let child_head = cli
+            .exec(&child, &["rev-parse", "--verify", "HEAD"])
+            .await
+            .unwrap()
+            .stdout;
+        let pointer_fingerprint = exact_path_state_fingerprint(&cli, root.path(), "space")
+            .await
+            .unwrap();
+
+        let hook = root.path().join(".git/hooks/pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+        let mut permissions = std::fs::metadata(&hook).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&hook, permissions).unwrap();
+        assert!(
+            commit_exact_path(&cli, root.path(), "space", "Update space pointer")
+                .await
+                .is_err()
+        );
+
+        let committed_mailmap = cli.exec(&child, &["show", "HEAD:.mailmap"]).await.unwrap();
+        assert_eq!(committed_mailmap.stdout, "Actor <actor@example.test>\n");
+        assert_eq!(
+            cli.exec(&child, &["rev-parse", "--verify", "HEAD"])
+                .await
+                .unwrap()
+                .stdout,
+            child_head
+        );
+        assert!(
+            exact_path_has_changes(&cli, root.path(), "space")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            exact_path_state_fingerprint(&cli, root.path(), "space")
+                .await
+                .unwrap(),
+            pointer_fingerprint
+        );
+
+        std::fs::remove_file(&hook).unwrap();
+        assert!(
+            commit_exact_path(&cli, root.path(), "space", "Update space pointer")
+                .await
+                .unwrap()
+        );
+        let root_pointer = cli
+            .exec(root.path(), &["ls-tree", "HEAD", "--", "space"])
+            .await
+            .unwrap();
+        assert!(root_pointer.stdout.contains(child_head.trim()));
+        assert!(
+            !exact_path_has_changes(&cli, root.path(), "space")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn cloned_submodule_child_and_root_pointer_commit_in_sequence() {
+        let Ok(cli) = GitCli::detect() else {
+            return;
+        };
+        let source = init_test_repo(&cli).await;
+        let root = init_test_repo(&cli).await;
+        let source_path = source.path().to_string_lossy().into_owned();
+        let added = cli
+            .exec(
+                root.path(),
+                &[
+                    "-c",
+                    "protocol.file.allow=always",
+                    "submodule",
+                    "add",
+                    "--",
+                    &source_path,
+                    "space",
+                ],
+            )
+            .await
+            .unwrap();
+        assert_eq!(added.exit_code, 0, "{}", added.stderr);
+        assert_eq!(
+            cli.exec(root.path(), &["commit", "-m", "Add space"])
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        let child = root.path().join("space");
+        assert_eq!(
+            cli.exec(&child, &["config", "user.name", "Svode Test"])
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        assert_eq!(
+            cli.exec(&child, &["config", "user.email", "svode@example.test"],)
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        assert!(child.join(".git").is_file());
+        assert!(
+            !is_registered_unborn_submodule_target(&cli, root.path(), "space")
+                .await
+                .unwrap()
+        );
+
+        std::fs::write(child.join(".mailmap"), "Actor <actor@example.test>\n").unwrap();
+        assert!(
+            commit_exact_path(&cli, &child, ".mailmap", "Update contributor identities",)
+                .await
+                .unwrap()
+        );
+        let child_head = repository_head_oid(&cli, &child).await.unwrap();
+        assert!(
+            submodule_target_matches_expected_head(
+                &cli,
+                root.path(),
+                "space",
+                &child,
+                &child_head,
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            commit_exact_path(&cli, root.path(), "space", "Update space pointer")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !exact_path_has_changes(&cli, root.path(), "space")
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]

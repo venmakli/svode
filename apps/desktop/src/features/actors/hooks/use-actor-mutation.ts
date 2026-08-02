@@ -30,6 +30,8 @@ export function useActorMutation({
   const [review, setReview] = useState<ActorMutationReview | null>(null);
   const [commitExpectation, setCommitExpectation] =
     useState<ActorCommitExpectation | null>(null);
+  const [rootPointerCommitExpectation, setRootPointerCommitExpectation] =
+    useState<ActorCommitExpectation | null>(null);
   const [duplicateEmail, setDuplicateEmail] = useState<string | null>(null);
   const [failure, setFailure] = useState<ActorMutationFailure | null>(null);
   const [pendingPhase, setPendingPhase] =
@@ -40,6 +42,7 @@ export function useActorMutation({
     setIntent(null);
     setReview(null);
     setCommitExpectation(null);
+    setRootPointerCommitExpectation(null);
     setDuplicateEmail(null);
     setFailure(null);
     setPendingPhase(null);
@@ -50,6 +53,7 @@ export function useActorMutation({
     setIntent(nextIntent);
     setReview(null);
     setCommitExpectation(null);
+    setRootPointerCommitExpectation(null);
     setDuplicateEmail(null);
     setFailure(null);
     setPendingPhase(null);
@@ -75,10 +79,15 @@ export function useActorMutation({
       setFailure(null);
       setDuplicateEmail(null);
       try {
-        const result = await previewActorMutation(spacePath, action);
+        const result = await previewActorMutation(
+          projectPath,
+          spacePath,
+          action,
+        );
         if (result.status === "ready") {
           setReview(result.review);
           setCommitExpectation(result.commitExpectation);
+          setRootPointerCommitExpectation(result.rootPointerCommitExpectation);
         } else if (result.status === "duplicate") {
           setDuplicateEmail(result.canonicalEmail);
         } else {
@@ -90,7 +99,7 @@ export function useActorMutation({
         setPendingPhase(null);
       }
     },
-    [spacePath],
+    [projectPath, spacePath],
   );
 
   const apply = useCallback(async () => {
@@ -118,6 +127,7 @@ export function useActorMutation({
     if (pendingPhase) return;
     setReview(null);
     setCommitExpectation(null);
+    setRootPointerCommitExpectation(null);
     setDuplicateEmail(null);
     setFailure(null);
   }, [pendingPhase]);
@@ -145,6 +155,7 @@ export function useActorMutation({
     openEdit,
     openMerge,
     pendingPhase,
+    rootPointerCommitExpectation,
     requestPreview,
     retryReview,
     review,

@@ -58,6 +58,7 @@ pub async fn actors_get_activity(
 #[tauri::command]
 pub async fn actors_preview_mutation(
     app: AppHandle,
+    project_path: String,
     space_path: String,
     action: ActorMutationAction,
     git_state: State<'_, GitState>,
@@ -67,6 +68,7 @@ pub async fn actors_preview_mutation(
     let cli = require_cli(&git_state)?;
     super::mutations::preview(
         &cli,
+        Path::new(&project_path),
         Path::new(&space_path),
         action,
         &app,

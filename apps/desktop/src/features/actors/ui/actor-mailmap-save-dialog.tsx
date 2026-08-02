@@ -28,6 +28,7 @@ export function ActorMailmapSaveDialog({
   onClose(): void;
   onConfirm(): void;
 }) {
+  const includesRootPointer = Boolean(review?.rootPointerFingerprint);
   return (
     <AlertDialog
       open={review !== null}
@@ -42,7 +43,9 @@ export function ActorMailmapSaveDialog({
           </AlertDialogMedia>
           <AlertDialogTitle>{m.actors_mailmap_save_title()}</AlertDialogTitle>
           <AlertDialogDescription>
-            {m.actors_mailmap_save_description()}
+            {includesRootPointer
+              ? m.actors_mailmap_save_submodule_description()
+              : m.actors_mailmap_save_description()}
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -65,7 +68,9 @@ export function ActorMailmapSaveDialog({
             ) : null}
             {pending
               ? m.actors_mailmap_save_saving()
-              : m.actors_mailmap_save_confirm()}
+              : includesRootPointer
+                ? m.actors_mailmap_save_submodule_confirm()
+                : m.actors_mailmap_save_confirm()}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
