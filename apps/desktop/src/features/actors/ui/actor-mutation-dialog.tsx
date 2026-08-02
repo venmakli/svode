@@ -16,6 +16,7 @@ import * as m from "@/paraglide/messages.js";
 
 import type {
   ActorMutationAction,
+  ActorCommitExpectation,
   ActorMutationFailure,
   ActorMutationIntent,
   ActorMutationReview,
@@ -29,6 +30,7 @@ import { ActorMergePicker } from "./actor-merge-picker";
 import { ActorMutationReviewStep } from "./actor-mutation-review";
 
 export function ActorMutationDialog({
+  commitExpectation,
   duplicateEmail,
   failure,
   intent,
@@ -42,6 +44,7 @@ export function ActorMutationDialog({
   onRequestPreview,
   onRetryReview,
 }: {
+  commitExpectation: ActorCommitExpectation | null;
   duplicateEmail: string | null;
   failure: ActorMutationFailure | null;
   intent: ActorMutationIntent | null;
@@ -90,8 +93,11 @@ export function ActorMutationDialog({
 
         {duplicateEmail ? (
           <DuplicateIdentity canonicalEmail={duplicateEmail} />
-        ) : review ? (
-          <ActorMutationReviewStep review={review} />
+        ) : review && commitExpectation ? (
+          <ActorMutationReviewStep
+            commitExpectation={commitExpectation}
+            review={review}
+          />
         ) : (
           <ActorMutationInputStep
             key={intentKey(intent)}

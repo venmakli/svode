@@ -3,27 +3,33 @@ import { useCallback, useState } from "react";
 import { applyActorMutation, previewActorMutation } from "../api/actors-api";
 import type {
   ActorMutationAction,
+  ActorCommitExpectation,
   ActorMutationFailure,
   ActorMutationIntent,
   ActorMutationReview,
+  AppliedActorMutationResult,
 } from "../model/identity-mutation";
-import type { ActorCatalogSnapshot, ActorCatalogRow } from "../model/types";
+import type { ActorCatalogRow } from "../model/types";
 
 type ActorMutationPendingPhase = "preview" | "apply" | null;
 
 interface UseActorMutationOptions {
+  projectPath: string;
   spacePath: string;
-  onApplied(snapshot: ActorCatalogSnapshot, canonicalEmail: string): void;
+  onApplied(result: AppliedActorMutationResult): void;
   onDuplicate(canonicalEmail: string): void;
 }
 
 export function useActorMutation({
+  projectPath,
   spacePath,
   onApplied,
   onDuplicate,
 }: UseActorMutationOptions) {
   const [intent, setIntent] = useState<ActorMutationIntent | null>(null);
   const [review, setReview] = useState<ActorMutationReview | null>(null);
+  const [commitExpectation, setCommitExpectation] =
+    useState<ActorCommitExpectation | null>(null);
   const [duplicateEmail, setDuplicateEmail] = useState<string | null>(null);
   const [failure, setFailure] = useState<ActorMutationFailure | null>(null);
   const [pendingPhase, setPendingPhase] =
@@ -33,6 +39,7 @@ export function useActorMutation({
   const reset = useCallback(() => {
     setIntent(null);
     setReview(null);
+    setCommitExpectation(null);
     setDuplicateEmail(null);
     setFailure(null);
     setPendingPhase(null);
@@ -42,6 +49,7 @@ export function useActorMutation({
     setSessionId((current) => current + 1);
     setIntent(nextIntent);
     setReview(null);
+    setCommitExpectation(null);
     setDuplicateEmail(null);
     setFailure(null);
     setPendingPhase(null);
@@ -70,6 +78,7 @@ export function useActorMutation({
         const result = await previewActorMutation(spacePath, action);
         if (result.status === "ready") {
           setReview(result.review);
+          setCommitExpectation(result.commitExpectation);
         } else if (result.status === "duplicate") {
           setDuplicateEmail(result.canonicalEmail);
         } else {
@@ -89,9 +98,9 @@ export function useActorMutation({
     setPendingPhase("apply");
     setFailure(null);
     try {
-      const result = await applyActorMutation(spacePath, review);
+      const result = await applyActorMutation(projectPath, spacePath, review);
       if (result.status === "applied") {
-        onApplied(result.catalog, result.canonicalEmail);
+        onApplied(result);
         reset();
       } else if (result.status === "duplicate") {
         setDuplicateEmail(result.canonicalEmail);
@@ -103,11 +112,12 @@ export function useActorMutation({
     } finally {
       setPendingPhase(null);
     }
-  }, [onApplied, pendingPhase, reset, review, spacePath]);
+  }, [onApplied, pendingPhase, projectPath, reset, review, spacePath]);
 
   const back = useCallback(() => {
     if (pendingPhase) return;
     setReview(null);
+    setCommitExpectation(null);
     setDuplicateEmail(null);
     setFailure(null);
   }, [pendingPhase]);
@@ -126,6 +136,7 @@ export function useActorMutation({
     apply,
     back,
     close,
+    commitExpectation,
     duplicateEmail,
     failure,
     intent,

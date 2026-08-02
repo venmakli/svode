@@ -5,7 +5,8 @@ import { JSDOM } from "jsdom";
 import type { ActorIdentityDraft } from "./actor-identity-fields";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
-import type { ActorCatalogRow, ActorCatalogSnapshot } from "../model/types";
+import type { AppliedActorMutationResult } from "../model/identity-mutation";
+import type { ActorCatalogRow } from "../model/types";
 
 const source: ActorCatalogRow = {
   aliases: [{ email: "ada@old.test", line: 2, name: "A. Lovelace" }],
@@ -98,9 +99,9 @@ test("merge picker selects one canonical target from the available actors", asyn
         />,
       );
     });
-    expect(
-      dom.window.document.body.textContent?.includes("Grace Hopper"),
-    ).toBe(true);
+    expect(dom.window.document.body.textContent?.includes("Grace Hopper")).toBe(
+      true,
+    );
     await act(async () => {
       dom.window.document
         .querySelector<HTMLElement>('[data-slot="command-item"]')!
@@ -125,6 +126,7 @@ test("review shows aliases, current Git identity effects, and mailmap status", a
     await act(async () => {
       root.render(
         <ActorMutationReviewStep
+          commitExpectation="manual"
           review={{
             action: {
               canonicalEmail: "ada@canonical.test",
@@ -146,11 +148,11 @@ test("review shows aliases, current Git identity effects, and mailmap status", a
     expect(
       dom.window.document.body.textContent?.includes("Current Git identity"),
     ).toBe(true);
+    expect(dom.window.document.body.textContent?.includes("ada@old.test")).toBe(
+      true,
+    );
     expect(
-      dom.window.document.body.textContent?.includes("ada@old.test"),
-    ).toBe(true);
-    expect(
-      dom.window.document.body.textContent?.includes("remains uncommitted"),
+      dom.window.document.body.textContent?.includes("remain pending"),
     ).toBe(true);
   } finally {
     await act(async () => root.unmount());
@@ -164,10 +166,7 @@ test("mutation state machine applies a reviewed snapshot and opens duplicates", 
   const restoreGlobals = installDomGlobals(dom);
   const { createRoot } = await import("react-dom/client");
   const { useActorMutation } = await import("../hooks/use-actor-mutation");
-  const applied: Array<{
-    canonicalEmail: string;
-    snapshot: ActorCatalogSnapshot;
-  }> = [];
+  const applied: AppliedActorMutationResult[] = [];
   const duplicates: string[] = [];
   const calls: Array<{ args: unknown; command: string }> = [];
   let previewCount = 0;
@@ -190,7 +189,7 @@ test("mutation state machine applies a reviewed snapshot and opens duplicates", 
     if (command === "actors_preview_mutation") {
       previewCount += 1;
       return previewCount === 1
-        ? { review, status: "ready" }
+        ? { commitExpectation: "automatic_if_safe", review, status: "ready" }
         : { canonicalEmail: source.canonicalEmail, status: "duplicate" };
     }
     if (command === "actors_apply_mutation") {
@@ -214,6 +213,8 @@ test("mutation state machine applies a reviewed snapshot and opens duplicates", 
           ],
           shallow: false,
         },
+        currentIdentityUpdated: false,
+        persistence: { status: "committed" },
         status: "applied",
       };
     }
@@ -223,9 +224,11 @@ test("mutation state machine applies a reviewed snapshot and opens duplicates", 
 
   function MutationHarness() {
     const mutation = useActorMutation({
+      projectPath: "/project",
       spacePath: "/repo",
-      onApplied: (snapshot, canonicalEmail) =>
-        applied.push({ canonicalEmail, snapshot }),
+      onApplied: (result) => {
+        applied.push(result);
+      },
       onDuplicate: (canonicalEmail) => duplicates.push(canonicalEmail),
     });
     return (
@@ -264,8 +267,9 @@ test("mutation state machine applies a reviewed snapshot and opens duplicates", 
     await clickAndFlush(dom, "apply");
     expect(applied.length).toBe(1);
     expect(applied[0]?.canonicalEmail).toBe("new@example.test");
-    expect(applied[0]?.snapshot.generation).toBe(2);
-    expect(Object.isFrozen(applied[0]?.snapshot)).toBe(true);
+    expect(applied[0]?.catalog.generation).toBe(2);
+    expect(Object.isFrozen(applied[0]?.catalog)).toBe(true);
+    expect(applied[0]?.persistence.status).toBe("committed");
     expect(textOf(dom, "[data-intent]")).toBe("closed");
 
     await clickAndFlush(dom, "open");
@@ -280,6 +284,12 @@ test("mutation state machine applies a reviewed snapshot and opens duplicates", 
       "actors_apply_mutation",
       "actors_preview_mutation",
     ]);
+    const applyArgs = calls[1]?.args as {
+      projectPath: string;
+      spacePath: string;
+    };
+    expect(applyArgs.projectPath).toBe("/project");
+    expect(applyArgs.spacePath).toBe("/repo");
   } finally {
     await act(async () => root.unmount());
     clearNativeMocks();

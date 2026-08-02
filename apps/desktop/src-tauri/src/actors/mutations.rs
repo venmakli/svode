@@ -9,12 +9,21 @@ use super::ActorCatalog;
 use super::mailmap::{MailmapDocument, MailmapRule, mailmap_size_is_safe, normalize_email};
 use super::resolver::{ActorCatalogState, ActorSnapshot, load_snapshot, resolve_repository};
 use crate::AppError;
+use crate::git::GitState;
 use crate::git::access::{RepositoryAccessState, RepositoryAccessStatus, access_store_path};
+use crate::git::autocommit::{
+    AutocommitService, ExactPathPendingReason, ExactPathPersistenceOutcome, GuardedExactPathPlan,
+};
 use crate::git::cli::GitCli;
+use crate::git::ops;
 use crate::identity::{
     get_effective_identity, replace_local_identity_pair, restore_local_identity_fields,
     validate_email, validate_name,
 };
+use crate::space::types::SpaceGitType;
+
+const MAILMAP_PATH: &str = ".mailmap";
+const MAILMAP_COMMIT_MESSAGE: &str = "Update contributor identities";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(
@@ -78,6 +87,7 @@ pub struct ActorMutationReview {
 pub enum ActorMutationPreviewResult {
     Ready {
         review: ActorMutationReview,
+        commit_expectation: ActorCommitExpectation,
     },
     Duplicate {
         canonical_email: String,
@@ -98,9 +108,64 @@ pub enum ActorMutationApplyResult {
     Applied {
         canonical_email: String,
         catalog: ActorCatalog,
+        current_identity_updated: bool,
+        persistence: ExactPathPersistenceOutcome,
     },
     Duplicate {
         canonical_email: String,
+    },
+    Blocked {
+        reason: ActorMutationBlockReason,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActorCommitExpectation {
+    AutomaticIfSafe,
+    Manual,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActorMailmapSaveReview {
+    pub repository_id: String,
+    pub fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(
+    tag = "status",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum ActorMailmapSaveReviewResult {
+    Clean,
+    Ready {
+        review: ActorMailmapSaveReview,
+        requires_consent: bool,
+    },
+    DeferredSubmodule,
+    Blocked {
+        reason: ActorMutationBlockReason,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(
+    tag = "status",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum ActorMailmapSaveResult {
+    Committed,
+    Clean,
+    Stale,
+    DeferredSubmodule,
+    Failed {
+        message: String,
     },
     Blocked {
         reason: ActorMutationBlockReason,
@@ -176,20 +241,33 @@ pub async fn preview(
     };
     Ok(ActorMutationPreviewResult::Ready {
         review: review_for(&snapshot, &source, &plan, current_identity_fingerprint),
+        commit_expectation: if crate::space::config::effective_git_user_policy(&repository)
+            .auto_commit_system
+        {
+            ActorCommitExpectation::AutomaticIfSafe
+        } else {
+            ActorCommitExpectation::Manual
+        },
     })
 }
 
 pub async fn apply(
     cli: &GitCli,
+    project_path: &Path,
     space_path: &Path,
     review: ActorMutationReview,
     app: &tauri::AppHandle,
+    git_state: &GitState,
+    autocommit: &AutocommitService,
     access_state: &RepositoryAccessState,
     actor_catalog: &ActorCatalogState,
 ) -> Result<ActorMutationApplyResult, AppError> {
-    let repository = resolve_repository(cli, space_path).await?;
+    let (repository, git_type, git_lock_path) =
+        resolve_actor_git_context(cli, project_path, space_path).await?;
     let repository_lock = actor_catalog.repository_lock(&repository)?;
     let _guard = repository_lock.lock().await;
+    let git_lock = git_state.get_lock(&git_lock_path).await;
+    let _git_guard = git_lock.lock().await;
     let source = match read_mailmap_source(&repository)? {
         Ok(source) => source,
         Err((reason, message)) => return Ok(blocked_apply_with_message(reason, message)),
@@ -227,6 +305,14 @@ pub async fn apply(
         .require_mutation(cli, &repository, &access_store_path(app)?)
         .await?;
 
+    let commit_plan = if git_type == SpaceGitType::Submodule {
+        GuardedExactPathPlan::Pending(ExactPathPendingReason::SubmoduleDeferred)
+    } else {
+        autocommit
+            .plan_guarded_system_exact_path(cli, &repository, MAILMAP_PATH)
+            .await?
+    };
+
     let previous_identity = if plan.affects_current_identity {
         Some(
             replace_local_identity_pair(
@@ -260,10 +346,30 @@ pub async fn apply(
     }
 
     match actor_catalog.load_and_publish(cli, &repository).await {
-        Ok(snapshot) => Ok(ActorMutationApplyResult::Applied {
-            canonical_email: plan.canonical_email,
-            catalog: snapshot.catalog(),
-        }),
+        Ok(snapshot) => {
+            let expected_fingerprint = mailmap_fingerprint(true, patched.as_bytes());
+            let target_matches_expected = matches!(
+                read_mailmap_source(&repository)?,
+                Ok(current) if current.fingerprint == expected_fingerprint
+            );
+            let persistence = autocommit
+                .finish_guarded_exact_path_commit(
+                    cli,
+                    space_path,
+                    &repository,
+                    MAILMAP_PATH,
+                    MAILMAP_COMMIT_MESSAGE,
+                    commit_plan,
+                    target_matches_expected,
+                )
+                .await;
+            Ok(ActorMutationApplyResult::Applied {
+                canonical_email: plan.canonical_email,
+                catalog: snapshot.catalog(),
+                current_identity_updated: plan.affects_current_identity,
+                persistence,
+            })
+        }
         Err(error) => {
             let mut rollback_errors = Vec::new();
             if let Some(previous_identity) = previous_identity.as_ref() {
@@ -286,6 +392,140 @@ pub async fn apply(
             }
         }
     }
+}
+
+pub async fn get_mailmap_save_review(
+    cli: &GitCli,
+    project_path: &Path,
+    space_path: &Path,
+    git_state: &GitState,
+    actor_catalog: &ActorCatalogState,
+) -> Result<ActorMailmapSaveReviewResult, AppError> {
+    let (repository, git_type, git_lock_path) =
+        resolve_actor_git_context(cli, project_path, space_path).await?;
+    if git_type == SpaceGitType::Submodule {
+        return Ok(ActorMailmapSaveReviewResult::DeferredSubmodule);
+    }
+
+    let repository_lock = actor_catalog.repository_lock(&repository)?;
+    let _guard = repository_lock.lock().await;
+    let git_lock = git_state.get_lock(&git_lock_path).await;
+    let _git_guard = git_lock.lock().await;
+    let source = match read_mailmap_source(&repository)? {
+        Ok(source) => source,
+        Err((reason, message)) => {
+            return Ok(ActorMailmapSaveReviewResult::Blocked { reason, message });
+        }
+    };
+    if !ops::exact_path_has_changes(cli, &repository, MAILMAP_PATH).await? {
+        return Ok(ActorMailmapSaveReviewResult::Clean);
+    }
+    Ok(ActorMailmapSaveReviewResult::Ready {
+        review: ActorMailmapSaveReview {
+            repository_id: repository.to_string_lossy().into_owned(),
+            fingerprint: source.fingerprint,
+        },
+        requires_consent: true,
+    })
+}
+
+pub async fn save_mailmap(
+    cli: &GitCli,
+    project_path: &Path,
+    space_path: &Path,
+    review: ActorMailmapSaveReview,
+    git_state: &GitState,
+    autocommit: &AutocommitService,
+    actor_catalog: &ActorCatalogState,
+) -> Result<ActorMailmapSaveResult, AppError> {
+    let (repository, git_type, git_lock_path) =
+        resolve_actor_git_context(cli, project_path, space_path).await?;
+    if git_type == SpaceGitType::Submodule {
+        return Ok(ActorMailmapSaveResult::DeferredSubmodule);
+    }
+
+    let repository_lock = actor_catalog.repository_lock(&repository)?;
+    let _guard = repository_lock.lock().await;
+    let git_lock = git_state.get_lock(&git_lock_path).await;
+    let _git_guard = git_lock.lock().await;
+    let source = match read_mailmap_source(&repository)? {
+        Ok(source) => source,
+        Err((reason, message)) => {
+            return Ok(ActorMailmapSaveResult::Blocked { reason, message });
+        }
+    };
+    if review.repository_id != repository.to_string_lossy()
+        || review.fingerprint != source.fingerprint
+    {
+        return Ok(ActorMailmapSaveResult::Stale);
+    }
+    if !ops::exact_path_has_changes(cli, &repository, MAILMAP_PATH).await? {
+        return Ok(ActorMailmapSaveResult::Clean);
+    }
+
+    Ok(
+        match autocommit
+            .commit_exact_path_manual(
+                cli,
+                space_path,
+                &repository,
+                MAILMAP_PATH,
+                MAILMAP_COMMIT_MESSAGE,
+            )
+            .await
+        {
+            ExactPathPersistenceOutcome::Committed => ActorMailmapSaveResult::Committed,
+            ExactPathPersistenceOutcome::Clean => ActorMailmapSaveResult::Clean,
+            ExactPathPersistenceOutcome::Failed { message } => {
+                ActorMailmapSaveResult::Failed { message }
+            }
+            ExactPathPersistenceOutcome::Pending {
+                reason: ExactPathPendingReason::SubmoduleDeferred,
+            } => ActorMailmapSaveResult::DeferredSubmodule,
+            ExactPathPersistenceOutcome::Pending { reason } => ActorMailmapSaveResult::Failed {
+                message: format!("manual .mailmap commit remained pending: {reason:?}"),
+            },
+        },
+    )
+}
+
+async fn resolve_actor_git_context(
+    cli: &GitCli,
+    project_path: &Path,
+    space_path: &Path,
+) -> Result<(PathBuf, SpaceGitType, PathBuf), AppError> {
+    let repository = resolve_repository(cli, space_path).await?;
+    let canonical_project = fs::canonicalize(project_path).map_err(|error| {
+        AppError::GitCommandFailed(format!(
+            "failed to canonicalize actor project {}: {error}",
+            project_path.display()
+        ))
+    })?;
+    let canonical_space = fs::canonicalize(space_path).map_err(|error| {
+        AppError::GitCommandFailed(format!(
+            "failed to canonicalize actor space {}: {error}",
+            space_path.display()
+        ))
+    })?;
+    let (git_type, git_lock_path) = if canonical_project == canonical_space {
+        (SpaceGitType::Inline, project_path.to_path_buf())
+    } else {
+        ops::resolve_target_repo(cli, project_path, space_path).await?
+    };
+    let canonical_target = fs::canonicalize(&git_lock_path).map_err(|error| {
+        AppError::GitCommandFailed(format!(
+            "failed to canonicalize actor Git target {}: {error}",
+            git_lock_path.display()
+        ))
+    })?;
+    if canonical_target != repository {
+        return Err(AppError::GitCommandFailed(format!(
+            "actor repository {} does not match routed Git target {}",
+            repository.display(),
+            canonical_target.display()
+        )));
+    }
+    Ok((repository, git_type, git_lock_path))
 }
 
 fn plan_mutation(
@@ -1142,6 +1382,43 @@ mod tests {
             fs::read(repo.path().join(".mailmap")).expect("mailmap bytes"),
             before_duplicate
         );
+    }
+
+    #[tokio::test]
+    async fn actor_git_context_routes_root_inline_and_independent_locks() {
+        let cli = GitCli::detect().expect("git CLI");
+        let project = init_repo("Current", "current@example.test");
+        let inline = project.path().join("docs");
+        fs::create_dir(&inline).expect("create inline space");
+
+        let (root_repo, root_type, root_lock) =
+            resolve_actor_git_context(&cli, project.path(), project.path())
+                .await
+                .expect("root context");
+        assert_eq!(root_type, SpaceGitType::Inline);
+        assert_eq!(root_repo, fs::canonicalize(project.path()).unwrap());
+        assert_eq!(root_lock, project.path());
+
+        let (inline_repo, inline_type, inline_lock) =
+            resolve_actor_git_context(&cli, project.path(), &inline)
+                .await
+                .expect("inline context");
+        assert_eq!(inline_type, SpaceGitType::Inline);
+        assert_eq!(inline_repo, root_repo);
+        assert_eq!(inline_lock, project.path());
+
+        let independent = init_repo("Independent", "independent@example.test");
+        let independent_project = independent.path().parent().expect("parent");
+        let (independent_repo, independent_type, independent_lock) =
+            resolve_actor_git_context(&cli, independent_project, independent.path())
+                .await
+                .expect("independent context");
+        assert_eq!(independent_type, SpaceGitType::Independent);
+        assert_eq!(
+            independent_repo,
+            fs::canonicalize(independent.path()).unwrap()
+        );
+        assert_eq!(independent_lock, independent.path());
     }
 
     #[tokio::test]

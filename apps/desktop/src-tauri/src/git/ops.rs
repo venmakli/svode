@@ -542,6 +542,108 @@ pub async fn commit(cli: &GitCli, space_dir: &Path, message: &str) -> Result<boo
     Ok(true)
 }
 
+/// Commit one working-tree path without consuming any other staged entries.
+///
+/// `git commit --only` reads the selected path from the working tree and keeps
+/// unrelated index entries staged. A new path must first be made known to Git;
+/// intent-to-add is used so no file content is staged in the shared index.
+pub async fn commit_exact_path(
+    cli: &GitCli,
+    repo: &Path,
+    path: &str,
+    message: &str,
+) -> Result<bool, AppError> {
+    let path = normalize_git_path(path)?;
+    let known = cli
+        .exec(repo, &["ls-files", "--error-unmatch", "--", &path])
+        .await?;
+    let prepared_intent_to_add = known.exit_code != 0;
+
+    if prepared_intent_to_add {
+        let prepared = cli
+            .exec(repo, &["add", "--intent-to-add", "--", &path])
+            .await?;
+        if prepared.exit_code != 0 {
+            return Err(AppError::GitCommandFailed(format!(
+                "git add --intent-to-add failed: {}",
+                prepared.stderr
+            )));
+        }
+    }
+
+    let out = cli
+        .exec(repo, &["commit", "--only", "-m", message, "--", &path])
+        .await?;
+    if out.exit_code == 0 {
+        return Ok(true);
+    }
+
+    if prepared_intent_to_add {
+        let cleanup = cli.exec(repo, &["reset", "--", &path]).await?;
+        if cleanup.exit_code != 0 {
+            return Err(AppError::GitCommandFailed(format!(
+                "git commit failed: {}; target index cleanup failed: {}",
+                out.stderr.trim(),
+                cleanup.stderr.trim()
+            )));
+        }
+    }
+
+    let combined = format!("{}{}", out.stdout, out.stderr);
+    if combined.contains("nothing to commit")
+        || combined.contains("no changes added to commit")
+        || combined.contains("nothing added to commit")
+    {
+        return Ok(false);
+    }
+    Err(AppError::GitCommandFailed(format!(
+        "git commit --only failed: {}",
+        out.stderr
+    )))
+}
+
+/// Whether the repository index contains any changes relative to `HEAD`.
+pub async fn has_staged_changes(cli: &GitCli, repo: &Path) -> Result<bool, AppError> {
+    let out = cli.exec(repo, &["diff", "--cached", "--quiet"]).await?;
+    match out.exit_code {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(AppError::GitCommandFailed(format!(
+            "git diff --cached failed: {}",
+            out.stderr
+        ))),
+    }
+}
+
+/// Whether one path differs from `HEAD` or the index, including untracked state.
+pub async fn exact_path_has_changes(
+    cli: &GitCli,
+    repo: &Path,
+    path: &str,
+) -> Result<bool, AppError> {
+    let path = normalize_git_path(path)?;
+    let out = cli
+        .exec(
+            repo,
+            &[
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+                "--",
+                &path,
+            ],
+        )
+        .await?;
+    if out.exit_code != 0 {
+        return Err(AppError::GitCommandFailed(format!(
+            "git status for exact path failed: {}",
+            out.stderr
+        )));
+    }
+    Ok(!out.stdout.is_empty())
+}
+
 /// Stage a specific file and auto-commit with a generated message.
 /// Returns `true` if a commit was actually created.
 pub async fn commit_file(
@@ -1331,6 +1433,41 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    async fn init_test_repo(cli: &GitCli) -> TempDir {
+        let repo = TempDir::new().unwrap();
+        assert_eq!(cli.exec(repo.path(), &["init"]).await.unwrap().exit_code, 0);
+        assert_eq!(
+            cli.exec(repo.path(), &["config", "user.name", "Svode Test"])
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        assert_eq!(
+            cli.exec(repo.path(), &["config", "user.email", "svode@example.test"],)
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        std::fs::write(repo.path().join("base.txt"), "base\n").unwrap();
+        assert_eq!(
+            cli.exec(repo.path(), &["add", "--", "base.txt"])
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        assert_eq!(
+            cli.exec(repo.path(), &["commit", "-m", "Initial"])
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        repo
+    }
+
     #[test]
     fn parses_status_z_with_spaces_cyrillic_untracked_modified_conflict_and_rename() {
         let output = concat!(
@@ -1390,6 +1527,200 @@ mod tests {
                 .iter()
                 .any(|file| { file.path == ".assets" && file.state == "untracked" })
         );
+    }
+
+    #[tokio::test]
+    async fn exact_path_commit_preserves_unrelated_staged_changes() {
+        let Ok(cli) = GitCli::detect() else {
+            return;
+        };
+        let repo = init_test_repo(&cli).await;
+        std::fs::write(repo.path().join(".mailmap"), "Actor <actor@example.test>\n").unwrap();
+        std::fs::write(repo.path().join("unrelated.txt"), "keep staged\n").unwrap();
+        assert_eq!(
+            cli.exec(repo.path(), &["add", "--", "unrelated.txt"])
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+
+        assert!(
+            commit_exact_path(
+                &cli,
+                repo.path(),
+                ".mailmap",
+                "Update contributor identities",
+            )
+            .await
+            .unwrap()
+        );
+
+        let committed = cli
+            .exec(
+                repo.path(),
+                &["show", "--pretty=format:", "--name-only", "HEAD"],
+            )
+            .await
+            .unwrap();
+        assert_eq!(committed.stdout.trim(), ".mailmap");
+        let staged = cli
+            .exec(repo.path(), &["diff", "--cached", "--name-only"])
+            .await
+            .unwrap();
+        assert_eq!(staged.stdout.trim(), "unrelated.txt");
+        let committed_mailmap = cli
+            .exec(repo.path(), &["show", "HEAD:.mailmap"])
+            .await
+            .unwrap();
+        assert_eq!(committed_mailmap.stdout, "Actor <actor@example.test>\n");
+    }
+
+    #[tokio::test]
+    async fn exact_path_commit_captures_full_current_target_after_multiple_updates() {
+        let Ok(cli) = GitCli::detect() else {
+            return;
+        };
+        let repo = init_test_repo(&cli).await;
+        std::fs::write(repo.path().join(".mailmap"), "First <first@example.test>\n").unwrap();
+        std::fs::write(
+            repo.path().join(".mailmap"),
+            "First <first@example.test>\nSecond <second@example.test>\n",
+        )
+        .unwrap();
+
+        assert!(
+            commit_exact_path(
+                &cli,
+                repo.path(),
+                ".mailmap",
+                "Update contributor identities",
+            )
+            .await
+            .unwrap()
+        );
+        let committed_mailmap = cli
+            .exec(repo.path(), &["show", "HEAD:.mailmap"])
+            .await
+            .unwrap();
+        assert_eq!(
+            committed_mailmap.stdout,
+            "First <first@example.test>\nSecond <second@example.test>\n"
+        );
+        assert!(
+            !commit_exact_path(
+                &cli,
+                repo.path(),
+                ".mailmap",
+                "Update contributor identities",
+            )
+            .await
+            .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn exact_path_commit_uses_current_worktree_target_not_its_staged_snapshot() {
+        let Ok(cli) = GitCli::detect() else {
+            return;
+        };
+        let repo = init_test_repo(&cli).await;
+        std::fs::write(
+            repo.path().join(".mailmap"),
+            "Original <old@example.test>\n",
+        )
+        .unwrap();
+        assert!(
+            commit_exact_path(&cli, repo.path(), ".mailmap", "Add identities")
+                .await
+                .unwrap()
+        );
+
+        std::fs::write(
+            repo.path().join(".mailmap"),
+            "Staged <staged@example.test>\n",
+        )
+        .unwrap();
+        std::fs::write(repo.path().join("unrelated.txt"), "keep staged\n").unwrap();
+        assert_eq!(
+            cli.exec(repo.path(), &["add", "--", ".mailmap", "unrelated.txt"],)
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        std::fs::write(
+            repo.path().join(".mailmap"),
+            "Current <current@example.test>\n",
+        )
+        .unwrap();
+
+        assert!(
+            commit_exact_path(
+                &cli,
+                repo.path(),
+                ".mailmap",
+                "Update contributor identities",
+            )
+            .await
+            .unwrap()
+        );
+        let committed_mailmap = cli
+            .exec(repo.path(), &["show", "HEAD:.mailmap"])
+            .await
+            .unwrap();
+        assert_eq!(committed_mailmap.stdout, "Current <current@example.test>\n");
+        let staged = cli
+            .exec(repo.path(), &["diff", "--cached", "--name-only"])
+            .await
+            .unwrap();
+        assert_eq!(staged.stdout.trim(), "unrelated.txt");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn failed_new_exact_path_commit_restores_its_index_state() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let Ok(cli) = GitCli::detect() else {
+            return;
+        };
+        let repo = init_test_repo(&cli).await;
+        std::fs::write(repo.path().join(".mailmap"), "Actor <actor@example.test>\n").unwrap();
+        std::fs::write(repo.path().join("unrelated.txt"), "keep staged\n").unwrap();
+        assert_eq!(
+            cli.exec(repo.path(), &["add", "--", "unrelated.txt"])
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        let hook = repo.path().join(".git/hooks/pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+        let mut permissions = std::fs::metadata(&hook).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&hook, permissions).unwrap();
+
+        assert!(
+            commit_exact_path(
+                &cli,
+                repo.path(),
+                ".mailmap",
+                "Update contributor identities",
+            )
+            .await
+            .is_err()
+        );
+        let target_status = cli
+            .exec(repo.path(), &["status", "--short", "--", ".mailmap"])
+            .await
+            .unwrap();
+        assert_eq!(target_status.stdout.trim(), "?? .mailmap");
+        let staged = cli
+            .exec(repo.path(), &["diff", "--cached", "--name-only"])
+            .await
+            .unwrap();
+        assert_eq!(staged.stdout.trim(), "unrelated.txt");
     }
 
     #[test]

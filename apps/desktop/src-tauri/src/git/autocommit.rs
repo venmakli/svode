@@ -85,6 +85,36 @@ struct CommittedPayload {
     repo_path: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExactPathPendingReason {
+    PolicyOff,
+    TargetDirty,
+    IndexStaged,
+    TargetChanged,
+    IndexInterference,
+    SubmoduleDeferred,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(
+    tag = "status",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum ExactPathPersistenceOutcome {
+    Committed,
+    Pending { reason: ExactPathPendingReason },
+    Failed { message: String },
+    Clean,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuardedExactPathPlan {
+    Eligible,
+    Pending(ExactPathPendingReason),
+}
+
 struct PendingItem {
     op: Option<StructuralOp>,
     paths: Vec<PathBuf>,
@@ -312,6 +342,113 @@ impl AutocommitService {
         do_commit_system(&self.app, &project_path, &space_path, git_type, kind).await
     }
 
+    /// Capture background exact-path eligibility before the owning mutation.
+    /// The caller must hold the effective repository's `GitState` lock across
+    /// this preflight, the mutation, and `finish_guarded_exact_path_commit`.
+    pub async fn plan_guarded_system_exact_path(
+        &self,
+        cli: &super::cli::GitCli,
+        repo: &Path,
+        path: &str,
+    ) -> Result<GuardedExactPathPlan, AppError> {
+        if !background_commit_allowed(repo, CommitIntent::SystemConfig) {
+            return Ok(classify_guarded_exact_path_preflight(false, false, false));
+        }
+        if ops::exact_path_has_changes(cli, repo, path).await? {
+            return Ok(classify_guarded_exact_path_preflight(true, true, false));
+        }
+        Ok(classify_guarded_exact_path_preflight(
+            true,
+            false,
+            ops::has_staged_changes(cli, repo).await?,
+        ))
+    }
+
+    /// Complete a previously planned background exact-path commit.
+    /// `target_matches_expected` is supplied by the artifact owner after it
+    /// re-reads and validates the just-published result.
+    pub async fn finish_guarded_exact_path_commit(
+        &self,
+        cli: &super::cli::GitCli,
+        space_path: &Path,
+        repo: &Path,
+        path: &str,
+        message: &str,
+        plan: GuardedExactPathPlan,
+        target_matches_expected: bool,
+    ) -> ExactPathPersistenceOutcome {
+        if let GuardedExactPathPlan::Pending(reason) = plan {
+            return ExactPathPersistenceOutcome::Pending { reason };
+        }
+        if !target_matches_expected {
+            return ExactPathPersistenceOutcome::Pending {
+                reason: ExactPathPendingReason::TargetChanged,
+            };
+        }
+        match ops::has_staged_changes(cli, repo).await {
+            Ok(true) => {
+                return ExactPathPersistenceOutcome::Pending {
+                    reason: ExactPathPendingReason::IndexInterference,
+                };
+            }
+            Ok(false) => {}
+            Err(error) => {
+                return ExactPathPersistenceOutcome::Failed {
+                    message: error.to_string(),
+                };
+            }
+        }
+        self.commit_exact_path_with_effects(cli, space_path, repo, path, message)
+            .await
+    }
+
+    /// Manual exact-path save. Background policy is intentionally ignored;
+    /// consent and stale-review validation belong to the artifact owner.
+    pub async fn commit_exact_path_manual(
+        &self,
+        cli: &super::cli::GitCli,
+        space_path: &Path,
+        repo: &Path,
+        path: &str,
+        message: &str,
+    ) -> ExactPathPersistenceOutcome {
+        self.commit_exact_path_with_effects(cli, space_path, repo, path, message)
+            .await
+    }
+
+    async fn commit_exact_path_with_effects(
+        &self,
+        cli: &super::cli::GitCli,
+        space_path: &Path,
+        repo: &Path,
+        path: &str,
+        message: &str,
+    ) -> ExactPathPersistenceOutcome {
+        match ops::commit_exact_path(cli, repo, path, message).await {
+            Ok(true) => {
+                emit_committed(&self.app, space_path, repo);
+                if is_auto_sync_enabled(repo) {
+                    let cli = cli.clone();
+                    let repo = repo.to_path_buf();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(error) = crate::git::sync::sync(&cli, &repo).await {
+                            tracing::warn!(
+                                "auto-sync (exact path) failed for {}: {}",
+                                repo.display(),
+                                error
+                            );
+                        }
+                    });
+                }
+                ExactPathPersistenceOutcome::Committed
+            }
+            Ok(false) => ExactPathPersistenceOutcome::Clean,
+            Err(error) => ExactPathPersistenceOutcome::Failed {
+                message: error.to_string(),
+            },
+        }
+    }
+
     /// Commit an explicit touched-path set with a fixed operational message.
     /// Stage-4 schema mutations use this when `schema.yaml` and migrated
     /// markdown entries must land in one path-scoped commit.
@@ -432,6 +569,22 @@ impl AutocommitService {
                 FLUSH_ALL_TIMEOUT_SECS
             );
         }
+    }
+}
+
+fn classify_guarded_exact_path_preflight(
+    policy_enabled: bool,
+    target_dirty: bool,
+    index_staged: bool,
+) -> GuardedExactPathPlan {
+    if !policy_enabled {
+        GuardedExactPathPlan::Pending(ExactPathPendingReason::PolicyOff)
+    } else if target_dirty {
+        GuardedExactPathPlan::Pending(ExactPathPendingReason::TargetDirty)
+    } else if index_staged {
+        GuardedExactPathPlan::Pending(ExactPathPendingReason::IndexStaged)
+    } else {
+        GuardedExactPathPlan::Eligible
     }
 }
 
@@ -1124,6 +1277,30 @@ mod tests {
 
     fn write_local_git_policy(path: &Path, policy: GitUserPolicy) {
         write_git_user_policy(path, &policy).expect("write local git policy");
+    }
+
+    #[test]
+    fn guarded_exact_path_preflight_covers_policy_target_and_index_matrix() {
+        assert_eq!(
+            classify_guarded_exact_path_preflight(false, false, false),
+            GuardedExactPathPlan::Pending(ExactPathPendingReason::PolicyOff)
+        );
+        assert_eq!(
+            classify_guarded_exact_path_preflight(true, true, false),
+            GuardedExactPathPlan::Pending(ExactPathPendingReason::TargetDirty)
+        );
+        assert_eq!(
+            classify_guarded_exact_path_preflight(true, false, true),
+            GuardedExactPathPlan::Pending(ExactPathPendingReason::IndexStaged)
+        );
+        assert_eq!(
+            classify_guarded_exact_path_preflight(true, false, false),
+            GuardedExactPathPlan::Eligible
+        );
+        assert_eq!(
+            classify_guarded_exact_path_preflight(false, true, true),
+            GuardedExactPathPlan::Pending(ExactPathPendingReason::PolicyOff)
+        );
     }
 
     #[test]

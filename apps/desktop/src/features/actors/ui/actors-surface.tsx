@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle } from "lucide-react";
-import { toast } from "sonner";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -17,12 +16,18 @@ import * as m from "@/paraglide/messages.js";
 
 import { useActorCatalog } from "../hooks/use-actor-catalog";
 import { useActorAccessPreflight } from "../hooks/use-actor-access-preflight";
+import { useActorMailmapSave } from "../hooks/use-actor-mailmap-save";
 import { useActorMutation } from "../hooks/use-actor-mutation";
 import type { ActorCatalogState } from "../model/catalog-state";
-import type { ActorMutationIntent } from "../model/identity-mutation";
-import type { ActorCatalogRow, ActorCatalogSnapshot } from "../model/types";
+import type {
+  ActorMutationIntent,
+  AppliedActorMutationResult,
+} from "../model/identity-mutation";
+import type { ActorCatalogRow } from "../model/types";
 import { ActorAccessPreflightDialog } from "./actor-access-preflight-dialog";
+import { ActorMailmapSaveDialog } from "./actor-mailmap-save-dialog";
 import { ActorMutationDialog } from "./actor-mutation-dialog";
+import { showActorMutationOutcome } from "./actor-mutation-outcome";
 import {
   actorCatalogBlockingError,
   createActorDetailRequest,
@@ -41,11 +46,11 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
     [state],
   );
   const onApplied = useCallback(
-    (snapshot: ActorCatalogSnapshot, canonicalEmail: string) => {
-      replaceSnapshot(snapshot);
-      setFocusRowId(canonicalEmail);
+    (result: AppliedActorMutationResult) => {
+      replaceSnapshot(result.catalog);
+      setFocusRowId(result.canonicalEmail);
       void detailController?.close();
-      toast.success(m.actors_mutation_success());
+      showActorMutationOutcome(result);
     },
     [detailController, replaceSnapshot],
   );
@@ -70,6 +75,11 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
   const mutation = useActorMutation({
     onApplied,
     onDuplicate,
+    projectPath: owner.projectPath,
+    spacePath: owner.spacePath,
+  });
+  const mailmapSave = useActorMailmapSave({
+    projectPath: owner.projectPath,
     spacePath: owner.spacePath,
   });
   const { openAdd, openEdit, openMerge } = mutation;
@@ -177,6 +187,7 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
       />
       <ActorMutationDialog
         key={mutation.sessionId}
+        commitExpectation={mutation.commitExpectation}
         duplicateEmail={mutation.duplicateEmail}
         failure={mutation.failure}
         intent={mutation.intent}
@@ -189,6 +200,13 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
         onOpenDuplicate={mutation.openDuplicate}
         onRequestPreview={(action) => void mutation.requestPreview(action)}
         onRetryReview={mutation.retryReview}
+      />
+      <ActorMailmapSaveDialog
+        failure={mailmapSave.failure}
+        pending={mailmapSave.pendingPhase === "commit"}
+        review={mailmapSave.review}
+        onClose={mailmapSave.close}
+        onConfirm={() => void mailmapSave.confirm()}
       />
     </div>
   );

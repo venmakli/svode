@@ -3,12 +3,17 @@ import { Badge } from "@/components/ui/badge";
 import { Field, FieldGroup, FieldTitle } from "@/components/ui/field";
 import * as m from "@/paraglide/messages.js";
 
-import type { ActorMutationReview } from "../model/identity-mutation";
+import type {
+  ActorCommitExpectation,
+  ActorMutationReview,
+} from "../model/identity-mutation";
 
 export function ActorMutationReviewStep({
   review,
+  commitExpectation,
 }: {
   review: ActorMutationReview;
+  commitExpectation: ActorCommitExpectation;
 }) {
   return (
     <div className="flex flex-col gap-4" data-actor-mutation-review>
@@ -52,7 +57,9 @@ export function ActorMutationReviewStep({
       ) : null}
 
       <p className="text-sm text-muted-foreground">
-        {m.actors_mutation_review_mailmap_notice()}
+        {commitExpectation === "automatic_if_safe"
+          ? m.actors_mutation_review_mailmap_automatic()
+          : m.actors_mutation_review_mailmap_manual()}
       </p>
     </div>
   );

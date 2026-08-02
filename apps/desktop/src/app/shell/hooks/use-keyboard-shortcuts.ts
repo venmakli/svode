@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
+import { requestActorMailmapSave } from "@/features/actors";
 import {
   useActiveEntrySelection,
   useCloseEntryDocument,
@@ -16,6 +17,10 @@ import {
 } from "@/features/git/app-shell";
 import { useToggleCommandPalette } from "@/features/search/app-shell";
 import { useSpace } from "@/features/space";
+import {
+  useScopeSurfaceStore,
+  type ScopeSurfaceId,
+} from "@/features/scope-surfaces";
 import { isTerminalKeyboardEvent } from "@/features/terminal";
 import { useShellStore } from "../model";
 import * as m from "@/paraglide/messages.js";
@@ -33,13 +38,19 @@ export function useKeyboardShortcuts() {
   const activeRootPath = useSpace((s) => s.activeRootPath);
   const goHome = useSpace((s) => s.goHome);
   const activeScopeSpace = useSpace((s) => {
-    if (!activeDocumentSpaceId) return null;
+    const scopeSpaceId = activeDocumentSpaceId ?? s.activeRootId;
+    if (!scopeSpaceId) return null;
     return (
-      s.rootSpaces.find((space) => space.id === activeDocumentSpaceId) ??
-      s.spaces.find((space) => space.id === activeDocumentSpaceId) ??
+      s.rootSpaces.find((space) => space.id === scopeSpaceId) ??
+      s.spaces.find((space) => space.id === scopeSpaceId) ??
       null
     );
   });
+  const activeScopeSurface = useScopeSurfaceStore((state) =>
+    activeScopeSpace
+      ? state.surfaceByOwnerKey[`space:${activeScopeSpace.id}`]
+      : undefined,
+  );
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -51,13 +62,22 @@ export function useKeyboardShortcuts() {
       if (isSaveKey && !activeDocument && activeScopeSpace) {
         e.preventDefault();
         const scope: GitSaveScope = { kind: "space", path: "", label: "space" };
-        if (e.shiftKey) {
+        const saveRoute = resolveScopeSaveShortcutRoute(
+          e.shiftKey,
+          activeScopeSurface,
+        );
+        if (saveRoute === "descendants") {
           void commitSaveScopeAndMaybeSync(
             activeScopeSpace.path,
             scope,
             [],
             activeRootPath ?? undefined,
           );
+        } else if (saveRoute === "actors") {
+          requestActorMailmapSave({
+            projectPath: activeRootPath ?? activeScopeSpace.path,
+            spacePath: activeScopeSpace.path,
+          });
         } else {
           showNoEditableSurfaceFeedback(activeScopeSpace.path, scope);
         }
@@ -109,6 +129,7 @@ export function useKeyboardShortcuts() {
     activeDocument,
     activeRootPath,
     activeScopeSpace,
+    activeScopeSurface,
     toggleCommandPalette,
     toggleChatPanel,
     closeDocument,
@@ -117,6 +138,14 @@ export function useKeyboardShortcuts() {
     navigate,
     detailController,
   ]);
+}
+
+export function resolveScopeSaveShortcutRoute(
+  shiftKey: boolean,
+  surface: ScopeSurfaceId | undefined,
+): "actors" | "descendants" | "feedback" {
+  if (shiftKey) return "descendants";
+  return surface === "actors" ? "actors" : "feedback";
 }
 
 function showNoEditableSurfaceFeedback(spacePath: string, scope: GitSaveScope) {

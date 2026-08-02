@@ -1,9 +1,11 @@
 import {
   applyActorMutation as applyActorMutationCommand,
   getActorActivity,
+  getActorMailmapSaveReview as getActorMailmapSaveReviewCommand,
   getActorsCatalog,
   previewActorMutation as previewActorMutationCommand,
   refreshActorsCatalog,
+  saveActorMailmap as saveActorMailmapCommand,
   type ActorActivityDto,
   type ActorCatalogDto,
   type ActorMutationReviewDto,
@@ -19,6 +21,11 @@ import type {
   ActorMutationPreviewResult,
   ActorMutationReview,
 } from "../model/identity-mutation";
+import type {
+  ActorMailmapSaveResult,
+  ActorMailmapSaveReview,
+  ActorMailmapSaveReviewResult,
+} from "../model/mailmap-save";
 
 export async function loadActorCatalog(
   spacePath: string,
@@ -47,15 +54,17 @@ export async function previewActorMutation(
   if (result.status !== "ready") return result;
   return {
     status: "ready",
+    commitExpectation: result.commitExpectation,
     review: toActorMutationReview(result.review),
   };
 }
 
 export async function applyActorMutation(
+  projectPath: string,
   spacePath: string,
   review: ActorMutationReview,
 ): Promise<ActorMutationApplyResult> {
-  const result = await applyActorMutationCommand(spacePath, {
+  const result = await applyActorMutationCommand(projectPath, spacePath, {
     ...review,
     transferredAliasEmails: [...review.transferredAliasEmails],
   });
@@ -64,7 +73,24 @@ export async function applyActorMutation(
     status: "applied",
     canonicalEmail: result.canonicalEmail,
     catalog: toActorCatalog(result.catalog),
+    currentIdentityUpdated: result.currentIdentityUpdated,
+    persistence: result.persistence,
   };
+}
+
+export async function getActorMailmapSaveReview(
+  projectPath: string,
+  spacePath: string,
+): Promise<ActorMailmapSaveReviewResult> {
+  return getActorMailmapSaveReviewCommand(projectPath, spacePath);
+}
+
+export async function saveActorMailmap(
+  projectPath: string,
+  spacePath: string,
+  review: ActorMailmapSaveReview,
+): Promise<ActorMailmapSaveResult> {
+  return saveActorMailmapCommand(projectPath, spacePath, review);
 }
 
 function toActorCatalog(dto: ActorCatalogDto): ActorCatalogSnapshot {

@@ -103,8 +103,28 @@ export interface ActorMutationReviewDto {
   currentIdentityFingerprint?: string | null;
 }
 
+export type ActorCommitExpectationDto = "automatic_if_safe" | "manual";
+
+export type ActorExactPathPendingReasonDto =
+  | "policy_off"
+  | "target_dirty"
+  | "index_staged"
+  | "target_changed"
+  | "index_interference"
+  | "submodule_deferred";
+
+export type ActorPersistenceOutcomeDto =
+  | { status: "committed" }
+  | { status: "pending"; reason: ActorExactPathPendingReasonDto }
+  | { status: "failed"; message: string }
+  | { status: "clean" };
+
 export type ActorMutationPreviewResultDto =
-  | { status: "ready"; review: ActorMutationReviewDto }
+  | {
+      status: "ready";
+      review: ActorMutationReviewDto;
+      commitExpectation: ActorCommitExpectationDto;
+    }
   | { status: "duplicate"; canonicalEmail: string }
   | {
       status: "blocked";
@@ -117,8 +137,41 @@ export type ActorMutationApplyResultDto =
       status: "applied";
       canonicalEmail: string;
       catalog: ActorCatalogDto;
+      currentIdentityUpdated: boolean;
+      persistence: ActorPersistenceOutcomeDto;
     }
   | { status: "duplicate"; canonicalEmail: string }
+  | {
+      status: "blocked";
+      reason: ActorMutationBlockReasonDto;
+      message: string;
+    };
+
+export interface ActorMailmapSaveReviewDto {
+  repositoryId: string;
+  fingerprint: string;
+}
+
+export type ActorMailmapSaveReviewResultDto =
+  | { status: "clean" }
+  | {
+      status: "ready";
+      review: ActorMailmapSaveReviewDto;
+      requiresConsent: boolean;
+    }
+  | { status: "deferred_submodule" }
+  | {
+      status: "blocked";
+      reason: ActorMutationBlockReasonDto;
+      message: string;
+    };
+
+export type ActorMailmapSaveResultDto =
+  | { status: "committed" }
+  | { status: "clean" }
+  | { status: "stale" }
+  | { status: "deferred_submodule" }
+  | { status: "failed"; message: string }
   | {
       status: "blocked";
       reason: ActorMutationBlockReasonDto;
@@ -153,10 +206,34 @@ export function previewActorMutation(
 }
 
 export function applyActorMutation(
+  projectPath: string,
   spacePath: string,
   review: ActorMutationReviewDto,
 ) {
   return invokeCommand<ActorMutationApplyResultDto>("actors_apply_mutation", {
+    projectPath,
+    review,
+    spacePath,
+  });
+}
+
+export function getActorMailmapSaveReview(
+  projectPath: string,
+  spacePath: string,
+) {
+  return invokeCommand<ActorMailmapSaveReviewResultDto>(
+    "actors_get_mailmap_save_review",
+    { projectPath, spacePath },
+  );
+}
+
+export function saveActorMailmap(
+  projectPath: string,
+  spacePath: string,
+  review: ActorMailmapSaveReviewDto,
+) {
+  return invokeCommand<ActorMailmapSaveResultDto>("actors_save_mailmap", {
+    projectPath,
     review,
     spacePath,
   });

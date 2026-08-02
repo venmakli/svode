@@ -48,8 +48,28 @@ export interface ActorMutationReview {
   currentIdentityFingerprint: string | null;
 }
 
+export type ActorCommitExpectation = "automatic_if_safe" | "manual";
+
+export type ActorExactPathPendingReason =
+  | "policy_off"
+  | "target_dirty"
+  | "index_staged"
+  | "target_changed"
+  | "index_interference"
+  | "submodule_deferred";
+
+export type ActorPersistenceOutcome =
+  | { status: "committed" }
+  | { status: "pending"; reason: ActorExactPathPendingReason }
+  | { status: "failed"; message: string }
+  | { status: "clean" };
+
 export type ActorMutationPreviewResult =
-  | { status: "ready"; review: ActorMutationReview }
+  | {
+      status: "ready";
+      review: ActorMutationReview;
+      commitExpectation: ActorCommitExpectation;
+    }
   | { status: "duplicate"; canonicalEmail: string }
   | {
       status: "blocked";
@@ -62,6 +82,8 @@ export type ActorMutationApplyResult =
       status: "applied";
       canonicalEmail: string;
       catalog: ActorCatalogSnapshot;
+      currentIdentityUpdated: boolean;
+      persistence: ActorPersistenceOutcome;
     }
   | { status: "duplicate"; canonicalEmail: string }
   | {
@@ -69,6 +91,11 @@ export type ActorMutationApplyResult =
       reason: ActorMutationBlockReason;
       message: string;
     };
+
+export type AppliedActorMutationResult = Extract<
+  ActorMutationApplyResult,
+  { status: "applied" }
+>;
 
 export interface ActorMutationFailure {
   reason: ActorMutationBlockReason | "unexpected";
