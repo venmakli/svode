@@ -5,7 +5,7 @@ import { JSDOM } from "jsdom";
 
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
-test("manual Actors save reviews a fingerprint and commits exact .mailmap", async () => {
+test("manual Actors save request stays one-shot across surface remounts", async () => {
   const dom = createDom();
   const restoreGlobals = installDomGlobals(dom);
   const { useActorMailmapSave } =
@@ -89,6 +89,19 @@ test("manual Actors save reviews a fingerprint and commits exact .mailmap", asyn
     expect(saveArgs.projectPath).toBe("/project");
     expect(saveArgs.spacePath).toBe("/repo");
     expect(saveArgs.review.fingerprint).toBe("mailmap-v2");
+
+    await act(async () => {
+      root.render(<Harness key="remounted" />);
+      await nextTurn();
+      await nextTurn();
+    });
+    expect(calls.map((call) => call.command)).toEqual([
+      "actors_get_mailmap_save_review",
+      "actors_save_mailmap",
+    ]);
+    expect(
+      dom.window.document.querySelector("[data-mailmap-review]")?.textContent,
+    ).toBe("");
   } finally {
     await act(async () => root.unmount());
     useActorMailmapSaveRequest.setState({ request: null });

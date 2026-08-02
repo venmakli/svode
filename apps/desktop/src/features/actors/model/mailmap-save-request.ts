@@ -24,3 +24,10 @@ export function requestActorMailmapSave(input: {
     request: { ...input, id: nextRequestId++ },
   });
 }
+
+export function consumeActorMailmapSaveRequest(requestId: number) {
+  const current = useActorMailmapSaveRequest.getState().request;
+  if (current?.id !== requestId) return false;
+  useActorMailmapSaveRequest.setState({ request: null });
+  return true;
+}

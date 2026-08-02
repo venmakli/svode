@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import * as m from "@/paraglide/messages.js";
 
 import { getActorMailmapSaveReview, saveActorMailmap } from "../api/actors-api";
 import type { ActorMailmapSaveReview } from "../model/mailmap-save";
-import { useActorMailmapSaveRequest } from "../model/mailmap-save-request";
+import {
+  consumeActorMailmapSaveRequest,
+  useActorMailmapSaveRequest,
+} from "../model/mailmap-save-request";
 
 type PendingPhase = "review" | "commit" | null;
 
@@ -17,7 +20,6 @@ export function useActorMailmapSave({
   spacePath: string;
 }) {
   const request = useActorMailmapSaveRequest((state) => state.request);
-  const handledRequestId = useRef(0);
   const [review, setReview] = useState<ActorMailmapSaveReview | null>(null);
   const [pendingPhase, setPendingPhase] = useState<PendingPhase>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -50,13 +52,12 @@ export function useActorMailmapSave({
   useEffect(() => {
     if (
       !request ||
-      request.id === handledRequestId.current ||
       request.projectPath !== projectPath ||
       request.spacePath !== spacePath
     ) {
       return;
     }
-    handledRequestId.current = request.id;
+    if (!consumeActorMailmapSaveRequest(request.id)) return;
     void requestReview();
   }, [projectPath, request, requestReview, spacePath]);
 
