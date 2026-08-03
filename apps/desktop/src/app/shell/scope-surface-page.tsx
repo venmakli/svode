@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { AgentContextSurface } from "@/features/agent-context";
 import { ActorsSurface } from "@/features/actors";
 import {
   CollectionViewsSurface,
@@ -103,6 +104,7 @@ export function ScopeSurfacePage({
     () =>
       createScopeSurfaceContributions({
         actors: (context) => <ActorsSurface {...context} />,
+        context: (context) => <AgentContextSurface {...context} />,
         readme: () => <ReadmeSurface />,
         collection: () => (
           <CollectionViewsSurface

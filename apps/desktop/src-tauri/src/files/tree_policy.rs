@@ -3,6 +3,13 @@ use std::path::{Component, Path, PathBuf};
 use crate::space::config::read_space_config;
 
 const SYSTEM_EXCLUDED_DIRS: &[&str] = &[".git", ".svode", ".assets", ".templates"];
+const SYSTEM_EXCLUDED_FILE_NAMES: &[&str] = &[
+    "AGENTS.md",
+    "AGENTS.override.md",
+    "CLAUDE.md",
+    "CLAUDE.local.md",
+];
+const ROOT_AGENT_CONTEXT_FILES: &[&str] = &["GEMINI.md", "SOUL.md", "USER.md", "MEMORY.md"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TreePathKind {
@@ -151,6 +158,12 @@ fn normalize_path(path: &Path) -> String {
 
 fn is_system_ignored_rel(rel: &str, kind: TreePathKind) -> bool {
     let components = rel.split('/').collect::<Vec<_>>();
+    let filename = components.last().copied().unwrap_or_default();
+    if SYSTEM_EXCLUDED_FILE_NAMES.contains(&filename)
+        || (components.len() == 1 && ROOT_AGENT_CONTEXT_FILES.contains(&filename))
+    {
+        return true;
+    }
     let last_index = components.len().saturating_sub(1);
 
     components.iter().enumerate().any(|(index, component)| {
@@ -233,6 +246,29 @@ mod tests {
         assert!(policy.is_ignored_rel(Path::new(".assets/image.png"), TreePathKind::File));
         assert!(policy.is_ignored_rel(Path::new(".templates/page.md"), TreePathKind::File));
         assert!(policy.is_ignored_rel(Path::new(".cache"), TreePathKind::Directory));
+    }
+
+    #[test]
+    fn agent_context_entrypoints_stay_out_of_the_content_tree() {
+        let policy = TreeIgnorePolicy::system_only(Path::new("/space"));
+
+        for path in [
+            "AGENTS.md",
+            "docs/AGENTS.override.md",
+            "CLAUDE.md",
+            "docs/CLAUDE.local.md",
+            "GEMINI.md",
+            "SOUL.md",
+            "USER.md",
+            "MEMORY.md",
+        ] {
+            assert!(
+                policy.is_ignored_rel(Path::new(path), TreePathKind::File),
+                "{path} must remain hidden"
+            );
+        }
+        assert!(!policy.is_ignored_rel(Path::new("README.md"), TreePathKind::File));
+        assert!(!policy.is_ignored_rel(Path::new("docs/GEMINI.md"), TreePathKind::File));
     }
 
     #[test]

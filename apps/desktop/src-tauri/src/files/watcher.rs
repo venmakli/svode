@@ -1,12 +1,13 @@
 use notify::event::{CreateKind, ModifyKind, RemoveKind, RenameMode};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::agent_context::AgentContextState;
 use crate::error::AppError;
 use crate::files::WriteNonceRegistry;
 use crate::files::tree::{child_folder_names, has_direct_schema};
@@ -171,12 +172,31 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle, root_schema_pr
     let mut any_dirty = false;
     let mut any_assets_changed = false;
     let mut any_tree_changed = false;
+    let mut agent_context_paths = BTreeSet::new();
+    let mut agent_context_targets = BTreeSet::new();
     let space_root = Path::new(space);
     let policy = TreeIgnorePolicy::from_space_root(space_root);
     let skip_dirs = child_folder_names(space_root);
     for event in events {
         for (path_index, path) in event.paths.iter().enumerate() {
             let event_kind = event_kind_for_path(event, path_index);
+            let standard_agent_context_path = agent_context_observed_path(space_root, path);
+            let observing_targets = app
+                .state::<AgentContextState>()
+                .targets_observing_project_path(path);
+            if standard_agent_context_path.is_some() || !observing_targets.is_empty() {
+                if let Some(relative) = relative_watched_path(space_root, path) {
+                    agent_context_paths.insert(relative);
+                }
+                agent_context_targets.extend(observing_targets);
+                if standard_agent_context_path
+                    .as_deref()
+                    .is_some_and(|relative| !is_under_child_space(relative, &skip_dirs))
+                {
+                    agent_context_targets.insert(space.to_string());
+                }
+                continue;
+            }
             // Detect `.assets/`-scoped changes so we can emit a targeted
             // event for the storage reactor to re-scan the assets table.
             if is_under_assets(path, space_root) {
@@ -224,6 +244,15 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle, root_schema_pr
             "space:assets_changed",
             serde_json::json!({ "space": space }),
         );
+    }
+    if !agent_context_paths.is_empty() {
+        let paths = agent_context_paths.into_iter().collect::<Vec<_>>();
+        for target in agent_context_targets {
+            let _ = app.emit(
+                "agent-context:changed",
+                serde_json::json!({ "spacePath": target, "paths": paths }),
+            );
+        }
     }
 
     let nonces = app.state::<Arc<WriteNonceRegistry>>();
@@ -369,6 +398,31 @@ fn is_under_child_space(rel_path: &str, skip_dirs: &HashSet<String>) -> bool {
     skip_dirs.iter().any(|child| {
         !child.is_empty() && (rel_path == child || rel_path.starts_with(&format!("{child}/")))
     })
+}
+
+fn agent_context_observed_path(space_root: &Path, path: &Path) -> Option<String> {
+    let relative = relative_watched_path(space_root, path)?;
+    let normalized = relative.replace('\\', "/");
+    let basename = Path::new(&normalized)
+        .file_name()
+        .and_then(|name| name.to_str())?;
+    let standard = matches!(
+        basename,
+        "AGENTS.md" | "AGENTS.override.md" | "CLAUDE.md" | "CLAUDE.local.md"
+    );
+    let recognized_root = !normalized.contains('/')
+        && matches!(basename, "GEMINI.md" | "SOUL.md" | "USER.md" | "MEMORY.md");
+    let exact_config = matches!(
+        normalized.as_str(),
+        ".claude/CLAUDE.md" | ".codex/config.toml" | ".svode/local.json"
+    );
+    (standard || recognized_root || exact_config).then_some(normalized)
+}
+
+fn relative_watched_path(space_root: &Path, path: &Path) -> Option<String> {
+    path.strip_prefix(space_root)
+        .ok()
+        .and_then(|relative| repo_relative_from_path(relative, RootMode::Reject).ok())
 }
 
 fn path_kind(path: &Path, event_kind: &EventKind) -> TreePathKind {
@@ -614,6 +668,32 @@ mod tests {
         assert_eq!(classification.parent_path, "docs");
         assert!(classification.affects_tree);
         assert!(!classification.affects_metadata);
+    }
+
+    #[test]
+    fn watcher_targets_agent_context_without_content_tree_events() {
+        let tmp = TempDir::new().unwrap();
+        let docs = tmp.path().join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+
+        for relative in [
+            "AGENTS.md",
+            "docs/CLAUDE.local.md",
+            "GEMINI.md",
+            ".claude/CLAUDE.md",
+            ".codex/config.toml",
+            ".svode/local.json",
+        ] {
+            let path = tmp.path().join(relative);
+            assert_eq!(
+                agent_context_observed_path(tmp.path(), &path).as_deref(),
+                Some(relative)
+            );
+            assert!(classify(&tmp, &path, EventKind::Modify(ModifyKind::Any)).is_none());
+        }
+        for relative in ["README.md", "docs/GEMINI.md", ".claude/rules/rule.md"] {
+            assert!(agent_context_observed_path(tmp.path(), &tmp.path().join(relative)).is_none());
+        }
     }
 
     #[test]

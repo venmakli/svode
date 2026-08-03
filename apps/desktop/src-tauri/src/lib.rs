@@ -1,5 +1,6 @@
 mod actors;
 mod agent;
+mod agent_context;
 mod agent_sessions;
 mod app_windows;
 mod commands;
@@ -17,6 +18,7 @@ mod properties;
 mod repo_path;
 mod space;
 mod storage;
+mod supported_adapters;
 mod system_path;
 mod terminal;
 
@@ -43,6 +45,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             app_windows::handle_single_instance(app, args, cwd);
         }))
+        .manage(agent_context::AgentContextState::new())
         .manage(files::FileWatcher::new())
         .manage(agent::AgentSessions::new())
         .manage(agent_sessions::AgentSessionsState::new())
@@ -84,6 +87,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            agent_context::commands::agent_context_get_instructions,
+            agent_context::commands::agent_context_refresh_instructions,
             actors::commands::actors_get_catalog,
             actors::commands::actors_refresh_catalog,
             actors::commands::actors_get_activity,
