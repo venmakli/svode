@@ -4,7 +4,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use chrono::{Days, Local, Months, NaiveDate, TimeZone};
+use chrono::{Datelike, Local, NaiveDate, TimeZone};
 use serde::Serialize;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -84,6 +84,7 @@ pub struct ActorCatalogRow {
     pub commit_count: u64,
     pub last_commit_at: Option<i64>,
     pub last_activity_date: Option<String>,
+    pub available_years: Vec<i32>,
     pub aliases: Vec<ActorCatalogAlias>,
     pub sources: Vec<ActorCatalogSource>,
 }
@@ -107,13 +108,43 @@ pub struct ActorActivityDay {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct ActorActivityCommit {
+    pub subject: String,
+    pub authored_at: i64,
+    pub local_date: String,
+    pub local_time: String,
+    pub short_sha: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActorActivityMonth {
+    pub month: String,
+    pub commit_count: u64,
+    pub commits: Vec<ActorActivityCommit>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActorActivityTimeline {
+    pub day: Option<String>,
+    pub months: Vec<ActorActivityMonth>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ActorActivity {
     pub repository_id: String,
     pub generation: u64,
     pub canonical_email: String,
+    pub available_years: Vec<i32>,
+    pub selected_year: i32,
     pub range_start: String,
     pub range_end_exclusive: String,
+    pub commit_count: u64,
     pub days: Vec<ActorActivityDay>,
+    pub timeline: ActorActivityTimeline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,6 +175,7 @@ struct ActorAlias {
 #[allow(dead_code)]
 struct ActorRow {
     candidate: ActorCandidate,
+    available_years: Vec<i32>,
     aliases: Vec<ActorAlias>,
     sources: Vec<ActorSource>,
     is_current: bool,
@@ -220,6 +252,7 @@ impl ActorSnapshot {
                         .last_commit_at
                         .and_then(local_date_for_timestamp)
                         .map(|date| date.format("%Y-%m-%d").to_string()),
+                    available_years: row.available_years.clone(),
                     aliases: row
                         .aliases
                         .iter()
@@ -312,28 +345,45 @@ pub(super) struct MutationActor {
 }
 
 const MAX_ACTIVITY_CACHE_ENTRIES: usize = 64;
+const ACTIVITY_PAGE_SIZE: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ActivityCacheKey {
     repository: PathBuf,
     generation: u64,
     canonical_email: String,
+    year: i32,
+}
+
+#[derive(Debug, Clone)]
+struct ActivityCommit {
+    sha: String,
+    subject: String,
+    authored_at: i64,
+    local_date: NaiveDate,
+    local_time: String,
+}
+
+#[derive(Debug)]
+struct ActorActivityYear {
     range_start: NaiveDate,
     range_end_exclusive: NaiveDate,
+    commits: Vec<ActivityCommit>,
+    days: BTreeMap<NaiveDate, u64>,
 }
 
 #[derive(Default)]
 struct ActorActivityCache {
-    entries: HashMap<ActivityCacheKey, Arc<ActorActivity>>,
+    entries: HashMap<ActivityCacheKey, Arc<ActorActivityYear>>,
     order: VecDeque<ActivityCacheKey>,
 }
 
 impl ActorActivityCache {
-    fn get(&self, key: &ActivityCacheKey) -> Option<Arc<ActorActivity>> {
+    fn get(&self, key: &ActivityCacheKey) -> Option<Arc<ActorActivityYear>> {
         self.entries.get(key).cloned()
     }
 
-    fn insert(&mut self, key: ActivityCacheKey, activity: Arc<ActorActivity>) {
+    fn insert(&mut self, key: ActivityCacheKey, activity: Arc<ActorActivityYear>) {
         if self.entries.insert(key.clone(), activity).is_some() {
             self.order.retain(|existing| existing != &key);
         }
@@ -407,63 +457,91 @@ impl ActorCatalogState {
         cli: &GitCli,
         space_path: &Path,
         canonical_email: &str,
-    ) -> Result<Arc<ActorActivity>, AppError> {
+        selected_year: Option<i32>,
+        selected_day: Option<&str>,
+        cursor: Option<&str>,
+    ) -> Result<ActorActivity, AppError> {
         let repository = resolve_repository(cli, space_path).await?;
         let snapshot = self.snapshot_at_repository(cli, &repository).await?;
         let canonical_email = normalize_email(canonical_email);
-        if !snapshot
+        let row = snapshot
             .rows
             .iter()
-            .any(|row| row.candidate.email == canonical_email)
-        {
-            return Err(AppError::FileNotFound(format!(
-                "actor {canonical_email:?} is not present in repository catalog"
-            )));
-        }
+            .find(|row| row.candidate.email == canonical_email)
+            .ok_or_else(|| {
+                AppError::FileNotFound(format!(
+                    "actor {canonical_email:?} is not present in repository catalog"
+                ))
+            })?;
 
-        let (range_start, range_end_exclusive) = activity_range(Local::now().date_naive())?;
+        let today = Local::now().date_naive();
+        let selected_year = selected_year.unwrap_or_else(|| {
+            if row.available_years.contains(&today.year()) {
+                today.year()
+            } else {
+                row.available_years.first().copied().unwrap_or(today.year())
+            }
+        });
+        let (range_start, range_end_exclusive) = activity_year_range(selected_year, today)?;
+        let selected_day = selected_day
+            .map(|day| parse_activity_day(day, range_start, range_end_exclusive))
+            .transpose()?;
         let key = ActivityCacheKey {
             repository: repository.clone(),
             generation: snapshot.generation,
             canonical_email: canonical_email.clone(),
-            range_start,
-            range_end_exclusive,
+            year: selected_year,
         };
-        if let Some(activity) = self.cached_activity(&key)? {
-            return Ok(activity);
-        }
+        let cursor_offset = cursor
+            .map(|cursor| {
+                validate_activity_cursor(cursor, &snapshot.repository_id, &key, selected_day)
+            })
+            .transpose()?;
 
-        let activity_lock = self.activity_lock(&key)?;
-        let _load_guard = activity_lock.lock().await;
-        if let Some(activity) = self.cached_activity(&key)? {
-            self.remove_activity_lock_if_idle(&key, &activity_lock)?;
-            return Ok(activity);
-        }
+        let activity = if let Some(activity) = self.cached_activity(&key)? {
+            activity
+        } else {
+            let activity_lock = self.activity_lock(&key)?;
+            let _load_guard = activity_lock.lock().await;
+            if let Some(activity) = self.cached_activity(&key)? {
+                self.remove_activity_lock_if_idle(&key, &activity_lock)?;
+                activity
+            } else {
+                let loaded = load_activity_year(
+                    cli,
+                    &repository,
+                    &snapshot,
+                    &canonical_email,
+                    range_start,
+                    range_end_exclusive,
+                )
+                .await;
+                match loaded {
+                    Ok(activity) => {
+                        let activity = Arc::new(activity);
+                        if self
+                            .cached(&repository)?
+                            .is_some_and(|current| current.generation == snapshot.generation)
+                        {
+                            self.activities
+                                .lock()
+                                .map_err(|_| {
+                                    AppError::General("actor activity cache lock poisoned".into())
+                                })?
+                                .insert(key.clone(), activity.clone());
+                        }
+                        self.remove_activity_lock_if_idle(&key, &activity_lock)?;
+                        activity
+                    }
+                    Err(error) => {
+                        self.remove_activity_lock_if_idle(&key, &activity_lock)?;
+                        return Err(error);
+                    }
+                }
+            }
+        };
 
-        let loaded = load_activity(
-            cli,
-            &repository,
-            &snapshot,
-            &canonical_email,
-            range_start,
-            range_end_exclusive,
-        )
-        .await;
-        match loaded {
-            Ok(activity) => {
-                let activity = Arc::new(activity);
-                self.activities
-                    .lock()
-                    .map_err(|_| AppError::General("actor activity cache lock poisoned".into()))?
-                    .insert(key.clone(), activity.clone());
-                self.remove_activity_lock_if_idle(&key, &activity_lock)?;
-                Ok(activity)
-            }
-            Err(error) => {
-                self.remove_activity_lock_if_idle(&key, &activity_lock)?;
-                Err(error)
-            }
-        }
+        project_activity(&snapshot, row, &key, &activity, selected_day, cursor_offset)
     }
 
     fn cached(&self, repository: &Path) -> Result<Option<Arc<ActorSnapshot>>, AppError> {
@@ -490,7 +568,7 @@ impl ActorCatalogState {
     fn cached_activity(
         &self,
         key: &ActivityCacheKey,
-    ) -> Result<Option<Arc<ActorActivity>>, AppError> {
+    ) -> Result<Option<Arc<ActorActivityYear>>, AppError> {
         self.activities
             .lock()
             .map(|activities| activities.get(key))
@@ -546,13 +624,24 @@ impl ActorCatalogState {
     }
 }
 
-fn activity_range(today: NaiveDate) -> Result<(NaiveDate, NaiveDate), AppError> {
-    let range_start = today
-        .checked_sub_months(Months::new(12))
-        .ok_or_else(|| AppError::General("actor activity range start is out of bounds".into()))?;
-    let range_end_exclusive = today
-        .checked_add_days(Days::new(1))
-        .ok_or_else(|| AppError::General("actor activity range end is out of bounds".into()))?;
+fn activity_year_range(year: i32, today: NaiveDate) -> Result<(NaiveDate, NaiveDate), AppError> {
+    if year > today.year() {
+        return Err(AppError::General(
+            "actor activity year cannot be in the future".into(),
+        ));
+    }
+    let range_start = NaiveDate::from_ymd_opt(year, 1, 1)
+        .ok_or_else(|| AppError::General("actor activity year is out of bounds".into()))?;
+    let range_end_exclusive = if year == today.year() {
+        today
+            .checked_add_days(chrono::Days::new(1))
+            .ok_or_else(|| {
+                AppError::General("actor activity current-day boundary is out of bounds".into())
+            })?
+    } else {
+        NaiveDate::from_ymd_opt(year.saturating_add(1), 1, 1)
+            .ok_or_else(|| AppError::General("actor activity year is out of bounds".into()))?
+    };
     Ok((range_start, range_end_exclusive))
 }
 
@@ -570,14 +659,21 @@ where
         .map(|instant| instant.date_naive())
 }
 
-async fn load_activity(
+fn local_activity_instant(timestamp: i64) -> Option<(NaiveDate, String)> {
+    Local
+        .timestamp_opt(timestamp, 0)
+        .single()
+        .map(|instant| (instant.date_naive(), instant.format("%H:%M").to_string()))
+}
+
+async fn load_activity_year(
     cli: &GitCli,
     repository: &Path,
     snapshot: &ActorSnapshot,
     canonical_email: &str,
     range_start: NaiveDate,
     range_end_exclusive: NaiveDate,
-) -> Result<ActorActivity, AppError> {
+) -> Result<ActorActivityYear, AppError> {
     let history = cli
         .exec(
             repository,
@@ -585,7 +681,7 @@ async fn load_activity(
                 "log",
                 "--no-use-mailmap",
                 "--all",
-                "--format=%H%x00%an%x00%ae%x00%at",
+                "--format=%H%x00%an%x00%ae%x00%at%x00%s",
             ],
         )
         .await?;
@@ -597,46 +693,43 @@ async fn load_activity(
         )));
     }
 
-    let counts = activity_counts_from_log(
+    let commits = activity_commits_from_log(
         &history.stdout,
         &snapshot.mailmap,
         canonical_email,
         range_start,
         range_end_exclusive,
-        local_date_for_timestamp,
+        local_activity_instant,
     );
-    Ok(ActorActivity {
-        repository_id: snapshot.repository_id.clone(),
-        generation: snapshot.generation,
-        canonical_email: canonical_email.to_string(),
-        range_start: range_start.format("%Y-%m-%d").to_string(),
-        range_end_exclusive: range_end_exclusive.format("%Y-%m-%d").to_string(),
-        days: counts
-            .into_iter()
-            .map(|(date, commit_count)| ActorActivityDay {
-                date: date.format("%Y-%m-%d").to_string(),
-                commit_count,
-            })
-            .collect(),
+    let mut days = BTreeMap::new();
+    for commit in &commits {
+        *days.entry(commit.local_date).or_insert(0) += 1;
+    }
+    Ok(ActorActivityYear {
+        range_start,
+        range_end_exclusive,
+        commits,
+        days,
     })
 }
 
-fn activity_counts_from_log(
+fn activity_commits_from_log(
     log: &str,
     mailmap: &MailmapDocument,
     canonical_email: &str,
     range_start: NaiveDate,
     range_end_exclusive: NaiveDate,
-    mut date_for_timestamp: impl FnMut(i64) -> Option<NaiveDate>,
-) -> BTreeMap<NaiveDate, u64> {
+    mut local_instant: impl FnMut(i64) -> Option<(NaiveDate, String)>,
+) -> Vec<ActivityCommit> {
     let mut seen_commits = HashSet::new();
-    let mut counts = BTreeMap::new();
+    let mut commits = Vec::new();
     for record in log.lines() {
-        let mut parts = record.splitn(4, '\0');
+        let mut parts = record.splitn(5, '\0');
         let commit_id = parts.next().unwrap_or_default().trim();
         let raw_name = parts.next().unwrap_or_default().trim();
         let raw_email = parts.next().unwrap_or_default().trim();
         let timestamp = parts.next().unwrap_or_default().trim().parse::<i64>().ok();
+        let subject = parts.next().unwrap_or_default();
         if commit_id.is_empty()
             || raw_email.is_empty()
             || !seen_commits.insert(commit_id.to_string())
@@ -646,15 +739,257 @@ fn activity_counts_from_log(
         if mailmap.resolve(raw_name, raw_email).email != canonical_email {
             continue;
         }
-        let Some(date) = timestamp.and_then(&mut date_for_timestamp) else {
+        let Some(authored_at) = timestamp else {
             continue;
         };
-        if date < range_start || date >= range_end_exclusive {
+        let Some((local_date, local_time)) = local_instant(authored_at) else {
+            continue;
+        };
+        if local_date < range_start || local_date >= range_end_exclusive {
             continue;
         }
-        *counts.entry(date).or_insert(0) += 1;
+        commits.push(ActivityCommit {
+            sha: commit_id.to_string(),
+            subject: subject.to_string(),
+            authored_at,
+            local_date,
+            local_time,
+        });
+    }
+    commits.sort_by(|left, right| {
+        right
+            .authored_at
+            .cmp(&left.authored_at)
+            .then_with(|| right.sha.cmp(&left.sha))
+    });
+    commits
+}
+
+#[cfg(test)]
+fn activity_counts_from_log(
+    log: &str,
+    mailmap: &MailmapDocument,
+    canonical_email: &str,
+    range_start: NaiveDate,
+    range_end_exclusive: NaiveDate,
+    mut date_for_timestamp: impl FnMut(i64) -> Option<NaiveDate>,
+) -> BTreeMap<NaiveDate, u64> {
+    let commits = activity_commits_from_log(
+        log,
+        mailmap,
+        canonical_email,
+        range_start,
+        range_end_exclusive,
+        |timestamp| date_for_timestamp(timestamp).map(|date| (date, String::new())),
+    );
+    let mut counts = BTreeMap::new();
+    for commit in commits {
+        *counts.entry(commit.local_date).or_insert(0) += 1;
     }
     counts
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActivityCursorPosition {
+    authored_at: i64,
+    sha: String,
+}
+
+fn parse_activity_day(
+    value: &str,
+    range_start: NaiveDate,
+    range_end_exclusive: NaiveDate,
+) -> Result<NaiveDate, AppError> {
+    let day = NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map_err(|_| AppError::General("actor activity day must use YYYY-MM-DD".into()))?;
+    if day < range_start || day >= range_end_exclusive {
+        return Err(AppError::General(
+            "actor activity day is outside the selected year range".into(),
+        ));
+    }
+    Ok(day)
+}
+
+fn hash_activity_cursor_value(hash: &mut u64, value: &str) {
+    for byte in value.as_bytes() {
+        *hash ^= u64::from(*byte);
+        *hash = hash.wrapping_mul(0x100000001b3);
+    }
+    *hash ^= 0xff;
+    *hash = hash.wrapping_mul(0x100000001b3);
+}
+
+fn activity_cursor_signature(
+    repository_id: &str,
+    key: &ActivityCacheKey,
+    selected_day: Option<NaiveDate>,
+) -> u64 {
+    let mut hash = 0xcbf29ce484222325_u64;
+    hash_activity_cursor_value(&mut hash, repository_id);
+    hash_activity_cursor_value(&mut hash, &key.canonical_email);
+    hash_activity_cursor_value(&mut hash, &key.year.to_string());
+    match selected_day {
+        Some(day) => {
+            hash_activity_cursor_value(&mut hash, "day");
+            hash_activity_cursor_value(&mut hash, &day.format("%Y-%m-%d").to_string());
+        }
+        None => hash_activity_cursor_value(&mut hash, "year"),
+    }
+    hash
+}
+
+fn activity_cursor(
+    repository_id: &str,
+    key: &ActivityCacheKey,
+    selected_day: Option<NaiveDate>,
+    commit: &ActivityCommit,
+) -> String {
+    format!(
+        "v1:{}:{}:{:016x}:{}:{}",
+        key.generation,
+        key.year,
+        activity_cursor_signature(repository_id, key, selected_day),
+        commit.authored_at,
+        commit.sha
+    )
+}
+
+fn validate_activity_cursor(
+    cursor: &str,
+    repository_id: &str,
+    key: &ActivityCacheKey,
+    selected_day: Option<NaiveDate>,
+) -> Result<ActivityCursorPosition, AppError> {
+    fn invalid_cursor() -> AppError {
+        AppError::General("actor activity cursor is stale or does not match this request".into())
+    }
+
+    let mut parts = cursor.split(':');
+    if parts.next() != Some("v1") {
+        return Err(invalid_cursor());
+    }
+    let generation = parts
+        .next()
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or_else(invalid_cursor)?;
+    let year = parts
+        .next()
+        .and_then(|value| value.parse::<i32>().ok())
+        .ok_or_else(invalid_cursor)?;
+    let signature = parts
+        .next()
+        .and_then(|value| u64::from_str_radix(value, 16).ok())
+        .ok_or_else(invalid_cursor)?;
+    let authored_at = parts
+        .next()
+        .and_then(|value| value.parse::<i64>().ok())
+        .ok_or_else(invalid_cursor)?;
+    let sha = parts
+        .next()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(invalid_cursor)?;
+    if parts.next().is_some()
+        || generation != key.generation
+        || year != key.year
+        || signature != activity_cursor_signature(repository_id, key, selected_day)
+    {
+        return Err(invalid_cursor());
+    }
+    Ok(ActivityCursorPosition {
+        authored_at,
+        sha: sha.to_string(),
+    })
+}
+
+fn project_activity(
+    snapshot: &ActorSnapshot,
+    row: &ActorRow,
+    key: &ActivityCacheKey,
+    activity: &ActorActivityYear,
+    selected_day: Option<NaiveDate>,
+    cursor: Option<ActivityCursorPosition>,
+) -> Result<ActorActivity, AppError> {
+    let commits: Vec<_> = activity
+        .commits
+        .iter()
+        .filter(|commit| selected_day.is_none_or(|day| commit.local_date == day))
+        .collect();
+    let start = if let Some(cursor) = cursor {
+        commits
+            .iter()
+            .position(|commit| commit.authored_at == cursor.authored_at && commit.sha == cursor.sha)
+            .map(|index| index + 1)
+            .ok_or_else(|| {
+                AppError::General(
+                    "actor activity cursor is stale or does not match this request".into(),
+                )
+            })?
+    } else {
+        0
+    };
+    let end = start.saturating_add(ACTIVITY_PAGE_SIZE).min(commits.len());
+    let page = &commits[start..end];
+
+    let mut month_counts = HashMap::new();
+    for commit in &commits {
+        *month_counts
+            .entry(commit.local_date.format("%Y-%m").to_string())
+            .or_insert(0_u64) += 1;
+    }
+    let mut months: Vec<ActorActivityMonth> = Vec::new();
+    for commit in page {
+        let month = commit.local_date.format("%Y-%m").to_string();
+        if months.last().is_none_or(|group| group.month != month) {
+            months.push(ActorActivityMonth {
+                commit_count: month_counts.get(&month).copied().unwrap_or_default(),
+                month,
+                commits: Vec::new(),
+            });
+        }
+        months
+            .last_mut()
+            .expect("activity month was inserted")
+            .commits
+            .push(ActorActivityCommit {
+                subject: commit.subject.clone(),
+                authored_at: commit.authored_at,
+                local_date: commit.local_date.format("%Y-%m-%d").to_string(),
+                local_time: commit.local_time.clone(),
+                short_sha: commit.sha.chars().take(7).collect(),
+            });
+    }
+    let next_cursor = (end < commits.len()).then(|| {
+        activity_cursor(
+            &snapshot.repository_id,
+            key,
+            selected_day,
+            page.last().expect("non-final activity page is not empty"),
+        )
+    });
+
+    Ok(ActorActivity {
+        repository_id: snapshot.repository_id.clone(),
+        generation: snapshot.generation,
+        canonical_email: key.canonical_email.clone(),
+        available_years: row.available_years.clone(),
+        selected_year: key.year,
+        range_start: activity.range_start.format("%Y-%m-%d").to_string(),
+        range_end_exclusive: activity.range_end_exclusive.format("%Y-%m-%d").to_string(),
+        commit_count: activity.commits.len() as u64,
+        days: activity
+            .days
+            .iter()
+            .map(|(date, commit_count)| ActorActivityDay {
+                date: date.format("%Y-%m-%d").to_string(),
+                commit_count: *commit_count,
+            })
+            .collect(),
+        timeline: ActorActivityTimeline {
+            day: selected_day.map(|day| day.format("%Y-%m-%d").to_string()),
+            months,
+            next_cursor,
+        },
+    })
 }
 
 pub(super) async fn resolve_repository(
@@ -910,6 +1245,7 @@ struct ActorRowBuilder {
     name: String,
     last_commit_at: Option<i64>,
     commit_count: u64,
+    available_years: HashSet<i32>,
     aliases: Vec<ActorAlias>,
     sources: Vec<ActorSource>,
     is_current: bool,
@@ -922,6 +1258,7 @@ impl ActorRowBuilder {
             name: display_name(identity),
             last_commit_at: None,
             commit_count: 0,
+            available_years: HashSet::new(),
             aliases: vec![ActorAlias {
                 name: (!identity.name.is_empty()).then(|| identity.name.clone()),
                 email: identity.email.clone(),
@@ -963,6 +1300,12 @@ impl ActorRowBuilder {
         timestamp: Option<i64>,
     ) {
         self.commit_count += 1;
+        if let Some(year) = timestamp
+            .and_then(local_date_for_timestamp)
+            .map(|date| date.year())
+        {
+            self.available_years.insert(year);
+        }
         let is_latest = timestamp > self.last_commit_at;
         if is_latest {
             self.last_commit_at = timestamp;
@@ -1006,6 +1349,8 @@ impl ActorRowBuilder {
     }
 
     fn finish(self, current_email: Option<&str>, mailmap: &MailmapDocument) -> ActorRow {
+        let mut available_years: Vec<_> = self.available_years.into_iter().collect();
+        available_years.sort_unstable_by(|left, right| right.cmp(left));
         let mut alias_emails: Vec<_> = self
             .aliases
             .iter()
@@ -1026,6 +1371,7 @@ impl ActorRowBuilder {
                 commit_count: self.commit_count,
                 alias_emails,
             },
+            available_years,
             aliases: self.aliases,
             sources: self.sources,
             is_current: self.is_current,
@@ -1079,6 +1425,31 @@ mod tests {
         git(path, &["commit", "--quiet", "-m", message]);
     }
 
+    fn local_timestamp(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> i64 {
+        Local
+            .with_ymd_and_hms(year, month, day, hour, minute, 0)
+            .single()
+            .expect("unambiguous local timestamp")
+            .timestamp()
+    }
+
+    fn commit_at(path: &Path, file: &str, contents: &str, message: &str, author_timestamp: i64) {
+        fs::write(path.join(file), contents).expect("write commit file");
+        git(path, &["add", file]);
+        let output = Command::new("git")
+            .args(["commit", "--quiet", "-m", message])
+            .current_dir(path)
+            .env("GIT_AUTHOR_DATE", format!("{author_timestamp} +0000"))
+            .env("GIT_COMMITTER_DATE", format!("{author_timestamp} +0000"))
+            .output()
+            .expect("commit at timestamp");
+        assert!(
+            output.status.success(),
+            "git commit failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     #[tokio::test]
     async fn current_identity_materializes_without_commits_and_unknown_value_does_not() {
         let repo = init_repo("Current User", "CURRENT@EXAMPLE.TEST");
@@ -1094,6 +1465,95 @@ mod tests {
             vec!["unknown@example.test"]
         );
         assert_eq!(snapshot.candidates().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn activity_defaults_to_current_then_latest_and_current_for_no_commits() {
+        let today = Local::now().date_naive();
+        let current_year = today.year();
+        let past_year = current_year - 1;
+        let cli = GitCli::detect().expect("git CLI");
+
+        let current_repo = init_repo("Actor", "actor@example.test");
+        commit_at(
+            current_repo.path(),
+            "past.txt",
+            "past",
+            "past",
+            local_timestamp(past_year, 6, 10, 12, 0),
+        );
+        commit_at(
+            current_repo.path(),
+            "current.txt",
+            "current",
+            "current",
+            local_timestamp(current_year, today.month(), today.day(), 0, 0),
+        );
+        let state = ActorCatalogState::new();
+        let catalog = state
+            .snapshot(&cli, current_repo.path())
+            .await
+            .expect("catalog")
+            .catalog();
+        assert_eq!(
+            catalog.rows[0].available_years,
+            vec![current_year, past_year]
+        );
+        let current = state
+            .activity(
+                &cli,
+                current_repo.path(),
+                "actor@example.test",
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("current activity");
+        assert_eq!(current.selected_year, current_year);
+        assert_eq!(current.commit_count, 1);
+
+        let past_repo = init_repo("Actor", "actor@example.test");
+        commit_at(
+            past_repo.path(),
+            "past.txt",
+            "past",
+            "past",
+            local_timestamp(past_year, 5, 10, 12, 0),
+        );
+        let past = ActorCatalogState::new()
+            .activity(
+                &cli,
+                past_repo.path(),
+                "actor@example.test",
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("latest activity");
+        assert_eq!(past.available_years, vec![past_year]);
+        assert_eq!(past.selected_year, past_year);
+        assert_eq!(past.commit_count, 1);
+
+        let empty_repo = init_repo("Actor", "actor@example.test");
+        let empty = ActorCatalogState::new()
+            .activity(
+                &cli,
+                empty_repo.path(),
+                "actor@example.test",
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("empty current-year activity");
+        assert!(empty.available_years.is_empty());
+        assert_eq!(empty.selected_year, current_year);
+        assert_eq!(empty.commit_count, 0);
+        assert!(empty.days.is_empty());
+        assert!(empty.timeline.months.is_empty());
+        assert!(empty.timeline.next_cursor.is_none());
     }
 
     #[tokio::test]
@@ -1381,23 +1841,23 @@ mod tests {
     }
 
     #[test]
-    fn calendar_range_and_timezone_boundaries_are_deterministic() {
+    fn calendar_year_range_and_timezone_boundaries_are_deterministic() {
         let leap_day = NaiveDate::from_ymd_opt(2024, 2, 29).expect("leap day");
         assert_eq!(
-            activity_range(leap_day).expect("range"),
+            activity_year_range(2024, leap_day).expect("range"),
             (
-                NaiveDate::from_ymd_opt(2023, 2, 28).expect("range start"),
+                NaiveDate::from_ymd_opt(2024, 1, 1).expect("range start"),
                 NaiveDate::from_ymd_opt(2024, 3, 1).expect("range end")
             )
         );
-        let month_end = NaiveDate::from_ymd_opt(2025, 2, 28).expect("month end");
         assert_eq!(
-            activity_range(month_end).expect("range"),
+            activity_year_range(2023, leap_day).expect("range"),
             (
-                NaiveDate::from_ymd_opt(2024, 2, 28).expect("range start"),
-                NaiveDate::from_ymd_opt(2025, 3, 1).expect("range end")
+                NaiveDate::from_ymd_opt(2023, 1, 1).expect("range start"),
+                NaiveDate::from_ymd_opt(2024, 1, 1).expect("range end")
             )
         );
+        assert!(activity_year_range(2025, leap_day).is_err());
 
         let west = chrono::FixedOffset::west_opt(60 * 60).expect("west offset");
         let east = chrono::FixedOffset::east_opt(60 * 60).expect("east offset");
@@ -1441,6 +1901,139 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn exact_day_uses_full_year_and_has_independent_bounded_continuation() {
+        let year = Local::now().year() - 1;
+        let repo = init_repo("Actor", "actor@example.test");
+        for index in 0..4 {
+            commit_at(
+                repo.path(),
+                &format!("newer-{index}.txt"),
+                &index.to_string(),
+                &format!("newer {index}"),
+                local_timestamp(year, 1, 11, 16 - index, 0),
+            );
+        }
+        let day_timestamp = local_timestamp(year, 1, 10, 12, 0);
+        for index in 0..5 {
+            commit_at(
+                repo.path(),
+                &format!("day-{index}.txt"),
+                &index.to_string(),
+                &format!("day {index}"),
+                day_timestamp,
+            );
+        }
+
+        let cli = GitCli::detect().expect("git CLI");
+        let state = ActorCatalogState::new();
+        let unfiltered = state
+            .activity(
+                &cli,
+                repo.path(),
+                "actor@example.test",
+                Some(year),
+                None,
+                None,
+            )
+            .await
+            .expect("unfiltered year");
+        assert_eq!(unfiltered.commit_count, 9);
+        assert_eq!(
+            unfiltered.timeline.months[0].commits.len(),
+            ACTIVITY_PAGE_SIZE
+        );
+        assert!(
+            unfiltered.timeline.months[0]
+                .commits
+                .iter()
+                .all(|commit| commit.local_date == format!("{year}-01-11"))
+        );
+
+        let selected_day = format!("{year}-01-10");
+        let first = state
+            .activity(
+                &cli,
+                repo.path(),
+                "actor@example.test",
+                Some(year),
+                Some(&selected_day),
+                None,
+            )
+            .await
+            .expect("first day page");
+        assert_eq!(first.commit_count, 9);
+        assert_eq!(
+            first
+                .days
+                .iter()
+                .find(|day| day.date == selected_day)
+                .map(|day| day.commit_count),
+            Some(5)
+        );
+        assert_eq!(first.timeline.day.as_deref(), Some(selected_day.as_str()));
+        assert_eq!(first.timeline.months[0].commit_count, 5);
+        assert_eq!(first.timeline.months[0].commits.len(), ACTIVITY_PAGE_SIZE);
+        let cursor = first
+            .timeline
+            .next_cursor
+            .as_deref()
+            .expect("day continuation");
+        let first_shas: Vec<_> = first.timeline.months[0]
+            .commits
+            .iter()
+            .map(|commit| commit.short_sha.as_str())
+            .collect();
+        assert!(first_shas.windows(2).all(|pair| pair[0] > pair[1]));
+
+        let second = state
+            .activity(
+                &cli,
+                repo.path(),
+                "actor@example.test",
+                Some(year),
+                Some(&selected_day),
+                Some(cursor),
+            )
+            .await
+            .expect("second day page");
+        assert_eq!(second.timeline.months[0].commits.len(), 1);
+        assert!(second.timeline.next_cursor.is_none());
+        assert!(first.timeline.months[0].commits.iter().all(|first_commit| {
+            second.timeline.months[0]
+                .commits
+                .iter()
+                .all(|second_commit| second_commit.short_sha != first_commit.short_sha)
+        }));
+
+        let cross_mode = state
+            .activity(
+                &cli,
+                repo.path(),
+                "actor@example.test",
+                Some(year),
+                None,
+                Some(cursor),
+            )
+            .await
+            .expect_err("day cursor must not continue the full-year timeline");
+        assert!(matches!(cross_mode, AppError::General(_)));
+
+        state.refresh(&cli, repo.path()).await.expect("refresh");
+        let stale = state
+            .activity(
+                &cli,
+                repo.path(),
+                "actor@example.test",
+                Some(year),
+                Some(&selected_day),
+                Some(cursor),
+            )
+            .await
+            .expect_err("previous generation cursor must be rejected");
+        assert!(matches!(stale, AppError::General(_)));
+    }
+
+    #[tokio::test]
     async fn catalog_and_activity_use_author_timestamp_not_committer_timestamp() {
         let repo = init_repo("Actor", "actor@example.test");
         fs::write(repo.path().join("one.txt"), "one").expect("write commit file");
@@ -1468,7 +2061,7 @@ mod tests {
         );
 
         let activity = state
-            .activity(&cli, repo.path(), "actor@example.test")
+            .activity(&cli, repo.path(), "actor@example.test", None, None, None)
             .await
             .expect("activity");
         assert_eq!(activity.days.len(), 1);
@@ -1478,6 +2071,19 @@ mod tests {
             local_date_for_timestamp(author_timestamp)
                 .expect("local author date")
                 .format("%Y-%m-%d")
+                .to_string()
+        );
+        assert_eq!(
+            activity.timeline.months[0].commits[0].authored_at,
+            author_timestamp
+        );
+        assert_eq!(
+            activity.timeline.months[0].commits[0].local_time,
+            Local
+                .timestamp_opt(author_timestamp, 0)
+                .single()
+                .expect("local author time")
+                .format("%H:%M")
                 .to_string()
         );
     }
@@ -1492,12 +2098,12 @@ mod tests {
         let state = ActorCatalogState::new();
 
         let (root, child) = tokio::join!(
-            state.activity(&cli, repo.path(), "CURRENT@EXAMPLE.TEST"),
-            state.activity(&cli, &inline, "current@example.test")
+            state.activity(&cli, repo.path(), "CURRENT@EXAMPLE.TEST", None, None, None),
+            state.activity(&cli, &inline, "current@example.test", None, None, None)
         );
         let root = root.expect("root activity");
         let child = child.expect("inline activity");
-        assert!(Arc::ptr_eq(&root, &child));
+        assert_eq!(root, child);
         assert_eq!(root.generation, 1);
         assert_eq!(root.days.iter().map(|day| day.commit_count).sum::<u64>(), 1);
         assert!(
@@ -1513,14 +2119,13 @@ mod tests {
             .await
             .expect("refresh snapshot");
         let refreshed = state
-            .activity(&cli, repo.path(), "current@example.test")
+            .activity(&cli, repo.path(), "current@example.test", None, None, None)
             .await
             .expect("refreshed activity");
-        assert!(!Arc::ptr_eq(&root, &refreshed));
         assert_eq!(refreshed.generation, 2);
 
         let error = state
-            .activity(&cli, repo.path(), "unknown@example.test")
+            .activity(&cli, repo.path(), "unknown@example.test", None, None, None)
             .await
             .expect_err("unknown actor must fail");
         assert!(matches!(error, AppError::FileNotFound(_)));
@@ -1533,8 +2138,7 @@ mod tests {
             repository: PathBuf::from("/repo"),
             generation: 1,
             canonical_email: "actor@example.test".into(),
-            range_start: NaiveDate::from_ymd_opt(2025, 1, 1).expect("start"),
-            range_end_exclusive: NaiveDate::from_ymd_opt(2026, 1, 2).expect("end"),
+            year: 2025,
         };
         let first = state.activity_lock(&key).expect("first lock");
         let joined = state.activity_lock(&key).expect("joined lock");
@@ -1562,8 +2166,22 @@ mod tests {
         let state = ActorCatalogState::new();
 
         let (first, second) = tokio::join!(
-            state.activity(&cli, first_repo.path(), "shared@example.test"),
-            state.activity(&cli, second_repo.path(), "shared@example.test")
+            state.activity(
+                &cli,
+                first_repo.path(),
+                "shared@example.test",
+                None,
+                None,
+                None
+            ),
+            state.activity(
+                &cli,
+                second_repo.path(),
+                "shared@example.test",
+                None,
+                None,
+                None
+            )
         );
         let first = first.expect("first activity");
         let second = second.expect("second activity");
@@ -1583,7 +2201,7 @@ mod tests {
     fn activity_cache_is_bounded() {
         let repository = PathBuf::from("/repo");
         let start = NaiveDate::from_ymd_opt(2025, 1, 1).expect("start");
-        let end = NaiveDate::from_ymd_opt(2026, 1, 2).expect("end");
+        let end = NaiveDate::from_ymd_opt(2026, 1, 1).expect("end");
         let mut cache = ActorActivityCache::default();
 
         for index in 0..=MAX_ACTIVITY_CACHE_ENTRIES {
@@ -1591,19 +2209,16 @@ mod tests {
             let key = ActivityCacheKey {
                 repository: repository.clone(),
                 generation: 1,
-                canonical_email: canonical_email.clone(),
-                range_start: start,
-                range_end_exclusive: end,
+                canonical_email,
+                year: 2025,
             };
             cache.insert(
                 key,
-                Arc::new(ActorActivity {
-                    repository_id: "actor-repo-test".into(),
-                    generation: 1,
-                    canonical_email,
-                    range_start: "2025-01-01".into(),
-                    range_end_exclusive: "2026-01-02".into(),
-                    days: Vec::new(),
+                Arc::new(ActorActivityYear {
+                    range_start: start,
+                    range_end_exclusive: end,
+                    commits: Vec::new(),
+                    days: BTreeMap::new(),
                 }),
             );
         }
@@ -1629,12 +2244,18 @@ mod tests {
         fs::write(repo.path().join(".git/shallow"), output.stdout).expect("mark shallow");
 
         let cli = GitCli::detect().expect("git CLI");
-        let catalog = ActorCatalogState::new()
+        let state = ActorCatalogState::new();
+        let catalog = state
             .snapshot(&cli, repo.path())
             .await
             .expect("snapshot")
             .catalog();
 
         assert!(catalog.shallow);
+        let activity = state
+            .activity(&cli, repo.path(), "shallow@example.test", None, None, None)
+            .await
+            .expect("locally available shallow activity");
+        assert_eq!(activity.commit_count, 1);
     }
 }

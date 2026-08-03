@@ -44,15 +44,23 @@ pub async fn actors_refresh_catalog(
 pub async fn actors_get_activity(
     space_path: String,
     canonical_email: String,
+    selected_year: Option<i32>,
+    selected_day: Option<String>,
+    cursor: Option<String>,
     git_state: State<'_, GitState>,
     actor_catalog: State<'_, ActorCatalogState>,
 ) -> Result<ActorActivity, AppError> {
     let cli = require_cli(&git_state)?;
-    Ok(actor_catalog
-        .activity(&cli, Path::new(&space_path), &canonical_email)
-        .await?
-        .as_ref()
-        .clone())
+    actor_catalog
+        .activity(
+            &cli,
+            Path::new(&space_path),
+            &canonical_email,
+            selected_year,
+            selected_day.as_deref(),
+            cursor.as_deref(),
+        )
+        .await
 }
 
 #[tauri::command]

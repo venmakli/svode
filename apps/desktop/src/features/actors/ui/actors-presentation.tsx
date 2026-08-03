@@ -17,12 +17,14 @@ import { ActorAvatar } from "./actor-avatar";
 import { ActorDetail } from "./actor-detail";
 
 export function createActorsPresentation({
+  catalogGeneration,
   mutations,
   onRefresh = () => undefined,
   refreshing = false,
   spacePath,
   state,
 }: {
+  catalogGeneration?: number;
   mutations?: ActorPresentationMutationActions;
   onRefresh?: () => void | Promise<void>;
   refreshing?: boolean;
@@ -31,6 +33,7 @@ export function createActorsPresentation({
 }) {
   return defineSystemCollectionPresentation({
     descriptor: createActorsPresentationDescriptor(spacePath, {
+      catalogGeneration,
       mutations,
       onRefresh,
       refreshing,
@@ -42,10 +45,12 @@ export function createActorsPresentation({
 export function createActorsPresentationDescriptor(
   spacePath: string,
   {
+    catalogGeneration,
     mutations,
     onRefresh = () => undefined,
     refreshing = false,
   }: {
+    catalogGeneration?: number;
     mutations?: ActorPresentationMutationActions;
     onRefresh?: () => void | Promise<void>;
     refreshing?: boolean;
@@ -96,7 +101,8 @@ export function createActorsPresentationDescriptor(
       label: m.actors_add(),
       run: () => mutations?.onAdd(),
     },
-    createDetailRequest: (row) => createActorDetailRequest(row, spacePath),
+    createDetailRequest: (row) =>
+      createActorDetailRequest(row, spacePath, catalogGeneration),
     fields,
     getRowId: (row) => row.canonicalEmail,
     id: "humans",
@@ -148,14 +154,28 @@ interface ActorPresentationMutationActions {
 export function createActorDetailRequest(
   row: ActorCatalogRow,
   spacePath: string,
+  catalogGeneration = 0,
 ): Omit<SystemCollectionDetailRequest, "selection"> {
   return {
-    content: <ActorDetail actor={row} spacePath={spacePath} />,
-    description: row.canonicalEmail,
+    content: (
+      <ActorDetail
+        actor={row}
+        catalogGeneration={catalogGeneration}
+        spacePath={spacePath}
+      />
+    ),
+    description: (
+      <span className="sr-only">{m.actors_detail_description()}</span>
+    ),
     title: (
-      <span className="flex min-w-0 items-center gap-2.5">
-        <ActorAvatar actor={row} size="sm" />
-        <span className="truncate">{row.displayName}</span>
+      <span className="flex min-w-0 items-center gap-3">
+        <ActorAvatar actor={row} size="lg" />
+        <span className="flex min-w-0 flex-col text-left">
+          <span className="truncate">{row.displayName}</span>
+          <span className="truncate text-sm font-normal text-muted-foreground">
+            {row.canonicalEmail}
+          </span>
+        </span>
       </span>
     ),
   };

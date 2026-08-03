@@ -10,6 +10,7 @@ import type { ActorCatalogRow } from "../model/types";
 
 const source: ActorCatalogRow = {
   aliases: [{ email: "ada@old.test", line: 2, name: "A. Lovelace" }],
+  availableYears: [2026],
   canonicalEmail: "ada@example.test",
   commitCount: 4,
   contribution: "contributor",
@@ -21,6 +22,7 @@ const source: ActorCatalogRow = {
 
 const target: ActorCatalogRow = {
   aliases: [],
+  availableYears: [2026],
   canonicalEmail: "grace@example.test",
   commitCount: 3,
   contribution: "contributor",
@@ -213,6 +215,7 @@ test("mutation state machine applies a reviewed snapshot and opens duplicates", 
           rows: [
             {
               aliases: [],
+              availableYears: [],
               canonicalEmail: "new@example.test",
               commitCount: 0,
               contribution: "no_commits",

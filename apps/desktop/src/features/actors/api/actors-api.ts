@@ -42,8 +42,15 @@ export async function refreshActorCatalog(
 export async function loadActorActivity(
   spacePath: string,
   canonicalEmail: string,
+  request: {
+    cursor?: string | null;
+    selectedDay?: string | null;
+    selectedYear?: number;
+  } = {},
 ): Promise<ActorActivitySnapshot> {
-  return toActorActivity(await getActorActivity(spacePath, canonicalEmail));
+  return toActorActivity(
+    await getActorActivity(spacePath, canonicalEmail, request),
+  );
 }
 
 export async function previewActorMutation(
@@ -107,6 +114,7 @@ function toActorCatalog(dto: ActorCatalogDto): ActorCatalogSnapshot {
       dto.rows.map((row) =>
         Object.freeze({
           ...row,
+          availableYears: Object.freeze([...row.availableYears]),
           aliases: Object.freeze(
             row.aliases.map((alias) =>
               Object.freeze({
@@ -142,7 +150,21 @@ function toActorCatalog(dto: ActorCatalogDto): ActorCatalogSnapshot {
 function toActorActivity(dto: ActorActivityDto): ActorActivitySnapshot {
   return Object.freeze({
     ...dto,
+    availableYears: Object.freeze([...dto.availableYears]),
     days: Object.freeze(dto.days.map((day) => Object.freeze({ ...day }))),
+    timeline: Object.freeze({
+      ...dto.timeline,
+      months: Object.freeze(
+        dto.timeline.months.map((month) =>
+          Object.freeze({
+            ...month,
+            commits: Object.freeze(
+              month.commits.map((commit) => Object.freeze({ ...commit })),
+            ),
+          }),
+        ),
+      ),
+    }),
   });
 }
 

@@ -12,6 +12,7 @@ import { ActorsSurface } from "./actors-surface";
 
 const actor: ActorCatalogRow = {
   aliases: [],
+  availableYears: [2026],
   canonicalEmail: "ada@example.test",
   commitCount: 4,
   contribution: "contributor",

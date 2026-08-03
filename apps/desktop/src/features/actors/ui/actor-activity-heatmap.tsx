@@ -1,7 +1,3 @@
-import { AlertCircle } from "lucide-react";
-
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tooltip,
   TooltipContent,
@@ -11,80 +7,50 @@ import {
 import * as m from "@/paraglide/messages.js";
 import { cn } from "@/shared/lib/utils";
 
-import { useActorActivity } from "../hooks/use-actor-activity";
 import {
-  actorActivityEndDate,
   buildActorHeatmapCells,
   type ActorHeatmapCell,
 } from "../model/actor-values";
+import type { ActorActivitySnapshot } from "../model/types";
 
 export function ActorActivityHeatmap({
-  canonicalEmail,
-  spacePath,
+  activity,
+  onSelectDay,
+  selectedDay,
 }: {
-  canonicalEmail: string;
-  spacePath: string;
+  activity: ActorActivitySnapshot;
+  onSelectDay: (day: string) => void;
+  selectedDay: string | null;
 }) {
-  const state = useActorActivity(spacePath, canonicalEmail);
-
-  if (state.phase === "initial") {
-    return (
-      <div
-        className="flex flex-col gap-2"
-        aria-label={m.actors_activity_loading()}
-      >
-        <Skeleton className="h-3 w-40" />
-        <Skeleton className="h-24 w-full" />
-      </div>
-    );
-  }
-
-  if (state.phase === "error") {
-    return (
-      <Alert variant="destructive" title={state.error}>
-        <AlertCircle />
-        <AlertDescription>{m.actors_activity_error()}</AlertDescription>
-      </Alert>
-    );
-  }
-
-  const cells = buildActorHeatmapCells(state.snapshot);
+  const cells = buildActorHeatmapCells(activity);
   const weekCount = Math.ceil(cells.length / 7);
-  const totalCommits = state.snapshot.days.reduce(
-    (total, day) => total + day.commitCount,
-    0,
-  );
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-        <span>
-          {m.actors_activity_range({
-            endDate: actorActivityEndDate(state.snapshot),
-            startDate: state.snapshot.rangeStart,
-          })}
-        </span>
-        {totalCommits === 0 ? <span>{m.actors_activity_empty()}</span> : null}
-      </div>
-      <div className="min-w-0 pb-2">
+    <div className="flex min-w-0 flex-col gap-2">
+      <div className="overflow-x-auto pb-1">
         <TooltipProvider delayDuration={100}>
           <div
-            className="grid w-full min-w-0 grid-flow-col grid-rows-7 gap-0.5"
+            className="grid min-w-[22rem] grid-flow-col grid-rows-7 gap-0.5"
             style={{
               gridTemplateColumns: `repeat(${weekCount}, minmax(0, 1fr))`,
             }}
-            role="img"
+            role="group"
             aria-label={m.actors_activity()}
             data-actor-activity-heatmap
             data-activity-weeks={weekCount}
           >
             {cells.map((cell, index) =>
               cell ? (
-                <HeatmapDay key={cell.date} cell={cell} />
+                <HeatmapDay
+                  key={cell.date}
+                  cell={cell}
+                  onSelect={onSelectDay}
+                  selected={selectedDay === cell.date}
+                />
               ) : (
                 <span
                   key={`padding-${index}`}
-                  className="aspect-square w-full min-w-0"
+                  className="aspect-square w-full min-w-1"
                   aria-hidden
                 />
               ),
@@ -92,34 +58,70 @@ export function ActorActivityHeatmap({
           </div>
         </TooltipProvider>
       </div>
+      <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span>
+          {m.actors_activity_total({
+            count: String(activity.commitCount),
+          })}
+        </span>
+        <div
+          className="flex items-center gap-1.5"
+          aria-label={m.actors_activity_legend()}
+        >
+          <span>{m.actors_activity_less()}</span>
+          {[0, 1, 2, 3, 4].map((level) => (
+            <span
+              key={level}
+              className={cn("size-2.5 rounded-[2px]", heatmapLevelClass(level))}
+              aria-hidden
+            />
+          ))}
+          <span>{m.actors_activity_more()}</span>
+        </div>
+      </div>
     </div>
   );
 }
 
-function HeatmapDay({ cell }: { cell: ActorHeatmapCell }) {
+function HeatmapDay({
+  cell,
+  onSelect,
+  selected,
+}: {
+  cell: ActorHeatmapCell;
+  onSelect: (day: string) => void;
+  selected: boolean;
+}) {
+  const label = m.actors_activity_day({
+    count: String(cell.commitCount),
+    date: cell.date,
+  });
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span
+        <button
+          type="button"
           className={cn(
-            "aspect-square w-full min-w-0 rounded-[1px]",
-            cell.level === 0 && "bg-muted",
-            cell.level === 1 && "bg-primary/20",
-            cell.level === 2 && "bg-primary/40",
-            cell.level === 3 && "bg-primary/70",
-            cell.level === 4 && "bg-primary",
+            "aspect-square w-full min-w-1 rounded-[2px] outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+            heatmapLevelClass(cell.level),
+            selected && "ring-2 ring-foreground ring-offset-1",
           )}
+          aria-label={label}
+          aria-pressed={selected}
           data-activity-date={cell.date}
           data-activity-count={cell.commitCount}
-          aria-hidden
+          onClick={() => onSelect(cell.date)}
         />
       </TooltipTrigger>
-      <TooltipContent>
-        {m.actors_activity_day({
-          count: String(cell.commitCount),
-          date: cell.date,
-        })}
-      </TooltipContent>
+      <TooltipContent>{label}</TooltipContent>
     </Tooltip>
   );
+}
+
+function heatmapLevelClass(level: number) {
+  if (level === 1) return "bg-primary/20";
+  if (level === 2) return "bg-primary/40";
+  if (level === 3) return "bg-primary/70";
+  if (level === 4) return "bg-primary";
+  return "bg-muted";
 }

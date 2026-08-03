@@ -45,6 +45,8 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
     () => (state.phase === "ready" ? state.snapshot.rows : []),
     [state],
   );
+  const catalogGeneration =
+    state.phase === "ready" ? state.snapshot.generation : 0;
   const onApplied = useCallback(
     (result: AppliedActorMutationResult) => {
       replaceSnapshot(result.catalog);
@@ -62,7 +64,7 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
       setFocusRowId(canonicalEmail);
       if (!actor || !detailController) return;
       void detailController.open({
-        ...createActorDetailRequest(actor, owner.spacePath),
+        ...createActorDetailRequest(actor, owner.spacePath, catalogGeneration),
         selection: {
           instanceKey,
           presentationId: "humans",
@@ -70,7 +72,13 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
         },
       });
     },
-    [catalogRows, detailController, instanceKey, owner.spacePath],
+    [
+      catalogGeneration,
+      catalogRows,
+      detailController,
+      instanceKey,
+      owner.spacePath,
+    ],
   );
   const mutation = useActorMutation({
     onApplied,
@@ -123,6 +131,7 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
     mutation.pendingPhase !== null,
   );
   const presentation = createActorsPresentation({
+    catalogGeneration,
     mutations: {
       createState: mutationState,
       getEditState: () => mutationState,

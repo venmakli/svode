@@ -25,6 +25,7 @@ export interface ActorCatalogRow {
   commitCount: number;
   lastCommitAt: number | null;
   lastActivityDate: string | null;
+  availableYears: readonly number[];
   aliases: readonly ActorAlias[];
   sources: readonly ActorSource[];
 }
@@ -49,11 +50,35 @@ export interface ActorActivityDay {
   commitCount: number;
 }
 
+export interface ActorActivityCommit {
+  subject: string;
+  authoredAt: number;
+  localDate: string;
+  localTime: string;
+  shortSha: string;
+}
+
+export interface ActorActivityMonth {
+  month: string;
+  commitCount: number;
+  commits: readonly ActorActivityCommit[];
+}
+
+export interface ActorActivityTimeline {
+  day: string | null;
+  months: readonly ActorActivityMonth[];
+  nextCursor: string | null;
+}
+
 export interface ActorActivitySnapshot {
   repositoryId: string;
   generation: number;
   canonicalEmail: string;
+  availableYears: readonly number[];
+  selectedYear: number;
   rangeStart: string;
   rangeEndExclusive: string;
+  commitCount: number;
   days: readonly ActorActivityDay[];
+  timeline: ActorActivityTimeline;
 }

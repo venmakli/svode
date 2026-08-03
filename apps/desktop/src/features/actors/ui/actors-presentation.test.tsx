@@ -21,6 +21,7 @@ import {
 const actors: readonly ActorCatalogRow[] = Object.freeze([
   {
     aliases: [{ email: "ada@old.test", line: 2, name: "A. Lovelace" }],
+    availableYears: [2026, 2025],
     canonicalEmail: "ada@example.test",
     commitCount: 4,
     contribution: "contributor",
@@ -44,6 +45,7 @@ const actors: readonly ActorCatalogRow[] = Object.freeze([
   },
   {
     aliases: [],
+    availableYears: [],
     canonicalEmail: "current@example.test",
     commitCount: 0,
     contribution: "no_commits",
@@ -187,6 +189,7 @@ test("singleton and query-empty actors reuse list keyboard, menu, and detail sea
     ? renderToStaticMarkup(
         <>
           {detail.title}
+          {detail.description}
           {detail.content}
         </>,
       )
@@ -214,7 +217,13 @@ test("singleton and query-empty actors reuse list keyboard, menu, and detail sea
   expect(singleton.includes("You")).toBe(false);
   expect(singleton.includes("Row actions")).toBe(false);
   expect(queryEmpty.includes("No results")).toBe(true);
-  expect(detailMarkup.includes("ada@old.test")).toBe(true);
   expect(detailMarkup.includes("data-actor-detail")).toBe(true);
+  expect(detailMarkup.includes("flex-col text-left")).toBe(true);
+  expect(detailMarkup.includes("ada@example.test")).toBe(true);
+  expect(detailMarkup.includes("Repository identity")).toBe(true);
   expect(detailMarkup.includes("Loading activity")).toBe(true);
+  expect(detailMarkup.includes("Git identities")).toBe(true);
+  expect(detailMarkup.includes("Has commits")).toBe(false);
+  expect(detailMarkup.includes("Commits: 4")).toBe(false);
+  expect(detailMarkup.includes('data-slot="separator"')).toBe(false);
 });

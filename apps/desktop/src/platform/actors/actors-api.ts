@@ -27,6 +27,7 @@ export interface ActorCatalogRowDto {
   commitCount: number;
   lastCommitAt: number | null;
   lastActivityDate: string | null;
+  availableYears: number[];
   aliases: ActorAliasDto[];
   sources: ActorSourceDto[];
 }
@@ -51,13 +52,43 @@ export interface ActorActivityDayDto {
   commitCount: number;
 }
 
+export interface ActorActivityCommitDto {
+  subject: string;
+  authoredAt: number;
+  localDate: string;
+  localTime: string;
+  shortSha: string;
+}
+
+export interface ActorActivityMonthDto {
+  month: string;
+  commitCount: number;
+  commits: ActorActivityCommitDto[];
+}
+
+export interface ActorActivityTimelineDto {
+  day: string | null;
+  months: ActorActivityMonthDto[];
+  nextCursor: string | null;
+}
+
 export interface ActorActivityDto {
   repositoryId: string;
   generation: number;
   canonicalEmail: string;
+  availableYears: number[];
+  selectedYear: number;
   rangeStart: string;
   rangeEndExclusive: string;
+  commitCount: number;
   days: ActorActivityDayDto[];
+  timeline: ActorActivityTimelineDto;
+}
+
+export interface ActorActivityRequestDto {
+  selectedYear?: number;
+  selectedDay?: string | null;
+  cursor?: string | null;
 }
 
 export type ActorMutationActionDto =
@@ -193,9 +224,16 @@ export function refreshActorsCatalog(spacePath: string) {
   });
 }
 
-export function getActorActivity(spacePath: string, canonicalEmail: string) {
+export function getActorActivity(
+  spacePath: string,
+  canonicalEmail: string,
+  request: ActorActivityRequestDto = {},
+) {
   return invokeCommand<ActorActivityDto>("actors_get_activity", {
     canonicalEmail,
+    cursor: request.cursor ?? null,
+    selectedDay: request.selectedDay ?? null,
+    selectedYear: request.selectedYear ?? null,
     spacePath,
   });
 }

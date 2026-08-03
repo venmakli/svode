@@ -108,6 +108,74 @@ export function actorActivityEndDate(activity: ActorActivitySnapshot) {
     : activity.rangeEndExclusive;
 }
 
+export function defaultActorActivityYear(
+  availableYears: readonly number[],
+  currentYear = new Date().getFullYear(),
+) {
+  return availableYears.includes(currentYear)
+    ? currentYear
+    : (availableYears[0] ?? currentYear);
+}
+
+export function mergeActorActivityPage(
+  current: ActorActivitySnapshot,
+  page: ActorActivitySnapshot,
+): ActorActivitySnapshot {
+  if (
+    current.repositoryId !== page.repositoryId ||
+    current.generation !== page.generation ||
+    current.canonicalEmail !== page.canonicalEmail ||
+    current.selectedYear !== page.selectedYear ||
+    current.timeline.day !== page.timeline.day
+  ) {
+    throw new Error("Actor activity continuation does not match its base page");
+  }
+
+  const months = current.timeline.months.map((month) => ({
+    ...month,
+    commits: [...month.commits],
+  }));
+  for (const nextMonth of page.timeline.months) {
+    const existing = months.find((month) => month.month === nextMonth.month);
+    if (!existing) {
+      months.push({ ...nextMonth, commits: [...nextMonth.commits] });
+      continue;
+    }
+    const seen = new Set(
+      existing.commits.map(
+        (commit) =>
+          `${commit.authoredAt}\0${commit.shortSha}\0${commit.subject}`,
+      ),
+    );
+    existing.commits = [
+      ...existing.commits,
+      ...nextMonth.commits.filter(
+        (commit) =>
+          !seen.has(
+            `${commit.authoredAt}\0${commit.shortSha}\0${commit.subject}`,
+          ),
+      ),
+    ];
+    existing.commitCount = nextMonth.commitCount;
+  }
+
+  return Object.freeze({
+    ...current,
+    timeline: Object.freeze({
+      ...current.timeline,
+      months: Object.freeze(
+        months.map((month) =>
+          Object.freeze({
+            ...month,
+            commits: Object.freeze([...month.commits]),
+          }),
+        ),
+      ),
+      nextCursor: page.timeline.nextCursor,
+    }),
+  });
+}
+
 function activityLevel(
   commitCount: number,
   maximum: number,

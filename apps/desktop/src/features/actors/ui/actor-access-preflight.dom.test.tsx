@@ -17,6 +17,7 @@ import type { ActorCatalogRow } from "../model/types";
 
 const actor: ActorCatalogRow = {
   aliases: [],
+  availableYears: [2026],
   canonicalEmail: "ada@example.test",
   commitCount: 4,
   contribution: "contributor",
