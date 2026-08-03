@@ -1,19 +1,16 @@
-import type { HTMLAttributes, MouseEvent } from "react";
+import type { HTMLAttributes } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Copy, Database, FileText, Folder, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { CardContent } from "@/components/ui/card";
 import {
-  ContextMenu,
-  ContextMenuContent,
+  ContextMenuGroup,
   ContextMenuItem,
-  ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { cn } from "@/shared/lib/utils";
 import { CardPropertyFlow } from "../card-property-flow";
 import { EntryTitleIcon } from "../entry-title-icon";
-import { CollectionCardShell } from "../presentation-layout";
+import { CollectionPresentationGalleryCard } from "../presentation-gallery-card";
 import { GalleryCover } from "./gallery-cover";
 import type { GalleryCardProps } from "./types";
 import * as m from "@/paraglide/messages.js";
@@ -89,115 +86,84 @@ function GalleryCardContent({
   const showDescription = cardFields.includes("description");
 
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <CollectionCardShell
-          ref={cardRef}
-          tabIndex={0}
-          data-gallery-card-path={entry.path}
-          selected={focused}
-          className={cn(
-            "cursor-pointer",
-            !disabledReorder && "active:cursor-grabbing",
-          )}
-          onFocus={() => onFocusCard(entry.path)}
-          onClick={(event) => {
-            if (shouldIgnoreCardOpen(event)) return;
-            onOpen(entry, nestedCollection);
-          }}
-          onDoubleClick={(event) => {
-            if (shouldIgnoreCardOpen(event)) return;
-            onOpenFullPage(entry);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "ArrowLeft") {
-              event.preventDefault();
-              onKeyboardMove(entry.path, "left");
-            } else if (event.key === "ArrowRight") {
-              event.preventDefault();
-              onKeyboardMove(entry.path, "right");
-            } else if (event.key === "ArrowUp") {
-              event.preventDefault();
-              onKeyboardMove(entry.path, "up");
-            } else if (event.key === "ArrowDown") {
-              event.preventDefault();
-              onKeyboardMove(entry.path, "down");
-            } else if (event.key === "Enter") {
-              event.preventDefault();
-              onOpen(entry, nestedCollection);
-            } else if (event.key === "Escape") {
-              event.currentTarget.blur();
-            }
-          }}
-          {...(!disabledReorder ? dragAttributes : {})}
-          {...(!disabledReorder ? dragListeners : {})}
-        >
-          <EntryKindMarker
-            folder={folder}
-            nestedCollection={nestedCollection}
-            onOpenNested={() => onOpenNestedCollection(entry)}
+    <CollectionPresentationGalleryCard
+      {...(!disabledReorder ? dragAttributes : {})}
+      {...(!disabledReorder ? dragListeners : {})}
+      cardRef={cardRef}
+      tabIndex={0}
+      data-gallery-card-path={entry.path}
+      density="compact"
+      selected={focused}
+      className={cn(!disabledReorder && "active:cursor-grabbing")}
+      cover={
+        <GalleryCover
+          cover={cover}
+          coverFit={coverFit}
+          coverAspect={coverAspect}
+        />
+      }
+      overlays={
+        <EntryKindMarker
+          folder={folder}
+          nestedCollection={nestedCollection}
+          onOpenNested={() => onOpenNestedCollection(entry)}
+        />
+      }
+      leading={
+        showIcon ? (
+          <EntryTitleIcon
+            icon={entry.meta.icon}
+            className="h-5 min-w-4 text-sm leading-5"
           />
-          <GalleryCover
-            cover={cover}
-            coverFit={coverFit}
-            coverAspect={coverAspect}
-          />
-          <CardContent className="flex flex-1 flex-col gap-1.5 px-2.5 py-2.5">
-            {showTitle ? (
-              <div className="flex min-w-0 items-start gap-1.5">
-                {showIcon ? (
-                  <EntryTitleIcon
-                    icon={entry.meta.icon}
-                    className="mt-px h-5 min-w-4 text-sm leading-5"
-                  />
-                ) : null}
-                <div className="line-clamp-2 min-w-0 text-[13px] font-medium leading-snug">
-                  {entry.meta.title}
-                </div>
-              </div>
-            ) : showIcon ? (
-              <EntryTitleIcon
-                icon={entry.meta.icon}
-                className="h-5 justify-start text-sm leading-5"
-              />
-            ) : null}
-            {showDescription && entry.meta.description ? (
-              <div className="truncate text-[12px] text-muted-foreground">
-                {entry.meta.description}
-              </div>
-            ) : null}
-            <CardPropertyFlow
-              entry={entry}
-              columns={metaColumns}
-              actors={actors}
-              relationContext={{
-                spacePath,
-                projectPath,
-                currentFilePath: entry.path,
-                onOpenPath,
-              }}
-              className="gap-x-1.5 gap-y-1 pt-0.5"
-              onRequestActors={onRequestActors}
-              onUpdateField={onUpdateField}
-            />
-          </CardContent>
-        </CollectionCardShell>
-      </ContextMenuTrigger>
-      <ContextMenuContent className="w-48">
-        <ContextMenuItem onClick={() => onOpen(entry, nestedCollection)}>
-          <FileText data-icon="inline-start" />
-          {m.collection_open_in_peek()}
-        </ContextMenuItem>
-        <ContextMenuItem onClick={() => onDuplicate(entry)}>
-          <Copy data-icon="inline-start" />
-          {m.collection_duplicate_entry()}
-        </ContextMenuItem>
-        <ContextMenuItem variant="destructive" onClick={() => onDelete(entry)}>
-          <Trash2 data-icon="inline-start" />
-          {m.space_delete()}
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
+        ) : undefined
+      }
+      title={showTitle ? entry.meta.title : undefined}
+      description={
+        showDescription && entry.meta.description
+          ? entry.meta.description
+          : undefined
+      }
+      properties={
+        <CardPropertyFlow
+          entry={entry}
+          columns={metaColumns}
+          actors={actors}
+          relationContext={{
+            spacePath,
+            projectPath,
+            currentFilePath: entry.path,
+            onOpenPath,
+          }}
+          className="gap-x-1.5 gap-y-1 pt-0.5"
+          onRequestActors={onRequestActors}
+          onUpdateField={onUpdateField}
+        />
+      }
+      contextMenu={
+        <ContextMenuGroup>
+          <ContextMenuItem onClick={() => onOpen(entry, nestedCollection)}>
+            <FileText data-icon="inline-start" />
+            {m.collection_open_in_peek()}
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => onDuplicate(entry)}>
+            <Copy data-icon="inline-start" />
+            {m.collection_duplicate_entry()}
+          </ContextMenuItem>
+          <ContextMenuItem
+            variant="destructive"
+            onClick={() => onDelete(entry)}
+          >
+            <Trash2 data-icon="inline-start" />
+            {m.space_delete()}
+          </ContextMenuItem>
+        </ContextMenuGroup>
+      }
+      contextMenuClassName="w-48"
+      onFocusCard={() => onFocusCard(entry.path)}
+      onMoveFocus={(key) => onKeyboardMove(entry.path, key)}
+      onOpen={() => onOpen(entry, nestedCollection)}
+      onDoubleOpen={() => onOpenFullPage(entry)}
+    />
   );
 }
 
@@ -237,29 +203,5 @@ function EntryKindMarker({
     >
       <Folder />
     </span>
-  );
-}
-
-function shouldIgnoreCardOpen(event: MouseEvent<HTMLElement>) {
-  const target = event.target;
-  if (!(target instanceof HTMLElement)) return true;
-  const interactive = target.closest(
-    [
-      "button",
-      "a",
-      "input",
-      "textarea",
-      "select",
-      "[role='button']",
-      "[role='checkbox']",
-      "[data-card-interactive]",
-      "[data-gallery-interactive]",
-      "[data-radix-collection-item]",
-    ].join(","),
-  );
-  return Boolean(
-    interactive &&
-    interactive !== event.currentTarget &&
-    event.currentTarget.contains(interactive),
   );
 }

@@ -175,13 +175,11 @@ const contextDescriptor: SystemCollectionPresentationDescriptor<ContextArtifactR
     id: "context",
     label: "Context",
     layout: {
-      kind: "cards",
-      renderCardContent: (row, context) => (
-        <>
-          <strong>{row.title}</strong>
-          {context.renderField("client")}
-        </>
-      ),
+      cardSize: "large",
+      density: "comfortable",
+      getTitle: (row) => row.title,
+      kind: "gallery",
+      visibleFields: ["client"],
     },
     query: { getSearchText: (row) => `${row.title} ${row.client}` },
   };
@@ -255,7 +253,7 @@ function renderPresentation(presentation: SystemCollectionPresentationRuntime) {
   );
 }
 
-test("heterogeneous owner snapshots use one public List/cards/query/detail seam", () => {
+test("heterogeneous owner snapshots use one public List/Gallery/query/detail seam", () => {
   expect(heterogeneousInstance.presentations.length).toBe(3);
   const tabs = renderToStaticMarkup(
     <SystemCollectionFixedTabs

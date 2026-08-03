@@ -3,6 +3,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { cn } from "@/shared/lib/utils";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 
+import { collectionGalleryCardWidth } from "../../model/presentation-layout";
 import {
   CollectionCardsShell,
   CollectionCardsSkeleton,
@@ -33,7 +34,6 @@ import {
   SystemCollectionSourceEmpty,
 } from "./presentation-states";
 
-const defaultCardWidth = 224;
 const cardGap = 14;
 const emptyRows: readonly unknown[] = [];
 
@@ -45,7 +45,6 @@ interface SystemCollectionSelectionState {
 export interface SystemCollectionPresentationShellProps {
   instanceKey: string;
   presentation: SystemCollectionPresentationRuntime;
-  cardWidth?: number;
   className?: string;
   detailController?: SystemCollectionDetailController;
   query: SystemCollectionQueryState;
@@ -56,7 +55,6 @@ export interface SystemCollectionPresentationShellProps {
 export function SystemCollectionPresentationShell({
   instanceKey,
   presentation,
-  cardWidth = defaultCardWidth,
   className,
   detailController,
   query,
@@ -65,6 +63,10 @@ export function SystemCollectionPresentationShell({
 }: SystemCollectionPresentationShellProps) {
   const { instance } = readSystemCollectionPresentationRuntime(presentation);
   const { descriptor, state } = instance;
+  const cardWidth =
+    descriptor.layout.kind === "gallery"
+      ? collectionGalleryCardWidth(descriptor.layout.cardSize)
+      : 1;
   const presentationScope = createSystemCollectionPresentationScope(
     instanceKey,
     descriptor.id,
@@ -120,7 +122,7 @@ export function SystemCollectionPresentationShell({
     (rowId: string, key: string) => {
       const currentIndex = rowIds.indexOf(rowId);
       const cardColumns =
-        descriptor.layout.kind === "cards"
+        descriptor.layout.kind === "gallery"
           ? Math.max(
               1,
               Math.floor(
@@ -153,8 +155,13 @@ export function SystemCollectionPresentationShell({
     return (
       <div className={cn(detailPageViewRowClassName, className)}>
         {state.skeleton ??
-          (descriptor.layout.kind === "cards" ? (
-            <CollectionCardsSkeleton cardWidth={cardWidth} />
+          (descriptor.layout.kind === "gallery" ? (
+            <CollectionCardsSkeleton
+              cardWidth={cardWidth}
+              density={descriptor.layout.density}
+              hasCover={Boolean(descriptor.layout.renderCover)}
+              maxColumns={2}
+            />
           ) : (
             <CollectionListSkeleton
               density={descriptor.layout.density ?? "comfortable"}
@@ -220,11 +227,12 @@ export function SystemCollectionPresentationShell({
         <SystemCollectionQueryEmpty
           onClear={() => onQueryChange(EMPTY_SYSTEM_COLLECTION_QUERY)}
         />
-      ) : descriptor.layout.kind === "cards" ? (
+      ) : descriptor.layout.kind === "gallery" ? (
         <CollectionCardsShell
           key={presentationScope}
           ref={cardsRef}
           cardWidth={cardWidth}
+          maxColumns={2}
           role="list"
           aria-label={descriptor.label}
         >

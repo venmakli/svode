@@ -113,7 +113,44 @@ function validateDescriptor<Row>(
     fieldKeys.add(field.key);
   }
 
-  if (descriptor.layout.kind === "list") {
+  const layoutKind = (descriptor.layout as { kind?: unknown }).kind;
+  if (layoutKind !== "list" && layoutKind !== "gallery") {
+    diagnostics.push(
+      diagnostic(
+        "invalid-layout",
+        `Presentation "${descriptor.id}" declares an unsupported layout.`,
+      ),
+    );
+  }
+
+  if (layoutKind === "gallery") {
+    const galleryLayout = descriptor.layout as Extract<
+      typeof descriptor.layout,
+      { kind: "gallery" }
+    >;
+    if (
+      !(["small", "medium", "large"] as const).includes(galleryLayout.cardSize)
+    ) {
+      diagnostics.push(
+        diagnostic(
+          "invalid-gallery-card-size",
+          `Presentation "${descriptor.id}" declares an invalid Gallery card size.`,
+        ),
+      );
+    }
+    if (
+      !(["compact", "comfortable"] as const).includes(galleryLayout.density)
+    ) {
+      diagnostics.push(
+        diagnostic(
+          "invalid-gallery-density",
+          `Presentation "${descriptor.id}" declares an invalid Gallery density.`,
+        ),
+      );
+    }
+  }
+
+  if (layoutKind === "list" || layoutKind === "gallery") {
     const visibleFieldKeys = new Set<string>();
     for (const fieldKey of descriptor.layout.visibleFields) {
       if (!fieldKeys.has(fieldKey)) {

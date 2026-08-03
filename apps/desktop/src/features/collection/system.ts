@@ -47,7 +47,6 @@ export type {
   SystemCollectionRefreshAction,
   SystemCollectionRenderer,
   SystemCollectionRowActionDescriptor,
-  SystemCollectionRowRenderContext,
   SystemCollectionSortDescriptor,
   SystemCollectionSortSemantics,
   SystemCollectionStateScope,

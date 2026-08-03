@@ -109,6 +109,7 @@
     "react-resizable-panels": "^4.7.3",
     "react-textarea-autosize": "^8.5.9",
     "react-tweet": "^3.3.0",
+    "rehype-harden": "^1.1.8",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "shadcn": "^4.0.8",

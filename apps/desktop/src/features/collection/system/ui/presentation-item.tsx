@@ -1,27 +1,13 @@
-import {
-  useCallback,
-  useId,
-  useState,
-  type KeyboardEvent,
-  type MouseEvent,
-} from "react";
+import { useCallback, useId, useState } from "react";
 
-import { CardContent } from "@/components/ui/card";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
-import { cn } from "@/shared/lib/utils";
 import * as m from "@/paraglide/messages.js";
 
 import {
   CollectionPresentationListRow,
   CollectionPresentationPropertyFlow,
   CollectionPresentationPropertyItem,
-  isCollectionPresentationInteractiveTarget,
 } from "../../ui/presentation-core";
-import { CollectionCardShell } from "../../ui/presentation-layout";
+import { CollectionPresentationGalleryCard } from "../../ui/presentation-gallery-card";
 import {
   createSystemCollectionDetailRequest,
   runSystemCollectionCallback,
@@ -30,7 +16,6 @@ import type {
   SystemCollectionDetailController,
   SystemCollectionInteractionError,
   SystemCollectionPresentationDescriptor,
-  SystemCollectionRowRenderContext,
 } from "../model/types";
 import {
   SystemCollectionFieldControl,
@@ -38,7 +23,6 @@ import {
   SystemCollectionInlineDiagnostic,
 } from "./field-renderers";
 import {
-  SystemCollectionRowActionButton,
   SystemCollectionRowActionsContextMenu,
   SystemCollectionRowActionsDropdownMenu,
 } from "./row-actions";
@@ -157,30 +141,8 @@ export function SystemCollectionPresentationItem({
     rowId,
   ]);
 
-  const renderContext: SystemCollectionRowRenderContext = {
-    openDetail: () => void openDetail(),
-    renderAction: (actionId) => {
-      const action = descriptor.rowActions?.find(
-        (candidate) => candidate.id === actionId,
-      );
-      if (!action) {
-        return (
-          <SystemCollectionInlineDiagnostic
-            message={m.system_collection_unknown_action({ action: actionId })}
-          />
-        );
-      }
-      return (
-        <SystemCollectionRowActionButton
-          action={action}
-          row={row}
-          onRejected={(targetId, message) =>
-            reportError("action", targetId, message)
-          }
-        />
-      );
-    },
-    renderField: (fieldKey) => {
+  const renderContext = {
+    renderField: (fieldKey: string) => {
       const field = descriptor.fields.find(
         (candidate) => candidate.key === fieldKey,
       );
@@ -193,7 +155,7 @@ export function SystemCollectionPresentationItem({
       }
       return <SystemCollectionFieldValue field={field} row={row} />;
     },
-    renderFieldControl: (fieldKey) => {
+    renderFieldControl: (fieldKey: string) => {
       const field = descriptor.fields.find(
         (candidate) => candidate.key === fieldKey,
       );
@@ -278,63 +240,47 @@ export function SystemCollectionPresentationItem({
     );
   }
 
-  const card = (
-    <CollectionCardShell
-      ref={(element) => registerRow(rowId, element)}
+  const layout = descriptor.layout;
+  const fields = layout.visibleFields.map((fieldKey) => (
+    <CollectionPresentationPropertyItem key={fieldKey}>
+      {descriptor.fields.find((field) => field.key === fieldKey)?.edit
+        ? renderContext.renderFieldControl(fieldKey)
+        : renderContext.renderField(fieldKey)}
+    </CollectionPresentationPropertyItem>
+  ));
+
+  return (
+    <CollectionPresentationGalleryCard
+      cardRef={(element) => registerRow(rowId, element)}
       aria-current={selected || undefined}
       data-system-collection-detail={detailEnabled || undefined}
       data-system-collection-row={rowId}
+      density={layout.density}
       id={focusTargetId}
       role="listitem"
       selected={selected}
       tabIndex={tabIndex}
-      className={cn(detailEnabled && "cursor-pointer")}
-      onClick={(event: MouseEvent<HTMLElement>) => {
-        if (isCollectionPresentationInteractiveTarget(event)) return;
-        event.currentTarget.focus();
-        if (detailEnabled) void openDetail();
-      }}
-      onFocus={() => onFocus(rowId)}
-      onKeyDown={(event: KeyboardEvent<HTMLElement>) => {
-        if (isCollectionPresentationInteractiveTarget(event)) return;
-        if (
-          event.key === "ArrowUp" ||
-          event.key === "ArrowDown" ||
-          event.key === "ArrowLeft" ||
-          event.key === "ArrowRight" ||
-          event.key === "Home" ||
-          event.key === "End"
-        ) {
-          event.preventDefault();
-          onMoveFocus(rowId, event.key);
-        } else if (
-          detailEnabled &&
-          (event.key === "Enter" || event.key === " ")
-        ) {
-          event.preventDefault();
-          void openDetail();
-        } else if (event.key === "Escape") {
-          event.currentTarget.blur();
-        }
-      }}
-    >
-      <CardContent className="flex flex-1 flex-col gap-2 p-3">
-        {descriptor.layout.renderCardContent(row, renderContext)}
-        {detailError ? (
+      contextMenu={rowActions.length > 0 ? actionContextMenu : undefined}
+      cover={layout.renderCover?.(row)}
+      description={layout.getDescription?.(row)}
+      diagnostic={
+        detailError ? (
           <SystemCollectionInlineDiagnostic message={detailError} />
-        ) : null}
-      </CardContent>
-    </CollectionCardShell>
-  );
-
-  if (rowActions.length === 0) return card;
-
-  return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>{card}</ContextMenuTrigger>
-      <ContextMenuContent className="w-56">
-        {actionContextMenu}
-      </ContextMenuContent>
-    </ContextMenu>
+        ) : undefined
+      }
+      leading={layout.renderLeading?.(row)}
+      overlays={layout.renderOverlays?.(row)}
+      properties={
+        fields.length > 0 ? (
+          <CollectionPresentationPropertyFlow className="justify-start gap-1.5 overflow-visible">
+            {fields}
+          </CollectionPresentationPropertyFlow>
+        ) : undefined
+      }
+      title={layout.getTitle(row)}
+      onFocusCard={() => onFocus(rowId)}
+      onMoveFocus={(key) => onMoveFocus(rowId, key)}
+      onOpen={detailEnabled ? () => void openDetail() : undefined}
+    />
   );
 }

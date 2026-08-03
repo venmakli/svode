@@ -127,14 +127,17 @@ test("list shell renders structured identity, property flow, context menu, and d
   expect(markup.includes('role="option"')).toBe(false);
 });
 
-test("cards shell uses the extracted responsive card layout without Entry", () => {
+test("structured Gallery uses fixed geometry and fields without Entry", () => {
   const presentation = defineSystemCollectionPresentation<TestRow>({
     descriptor: descriptor({
       createDetailRequest: undefined,
-      fields: [],
       layout: {
-        kind: "cards",
-        renderCardContent: (row) => <strong>{row.name}</strong>,
+        cardSize: "medium",
+        density: "comfortable",
+        getDescription: () => "Static artifact",
+        getTitle: (row) => row.name,
+        kind: "gallery",
+        visibleFields: ["name"],
       },
       rowActions: [],
     }),
@@ -147,16 +150,19 @@ test("cards shell uses the extracted responsive card layout without Entry", () =
     <SystemCollectionPresentationShell
       instanceKey="space:root:context"
       presentation={presentation}
-      cardWidth={248}
       query={EMPTY_SYSTEM_COLLECTION_QUERY}
       onQueryChange={onQueryChange}
     />,
   );
 
-  expect(markup.includes("repeat(auto-fill, minmax(248px, 1fr))")).toBe(true);
+  expect(markup.includes("repeat(auto-fill, minmax(240px, 1fr))")).toBe(true);
+  expect(markup.includes("max-width:494px")).toBe(true);
   expect(markup.includes('data-slot="card"')).toBe(true);
   expect(markup.includes("Review")).toBe(true);
+  expect(markup.includes("Static artifact")).toBe(true);
+  expect(markup.includes("data-field-value")).toBe(true);
   expect(markup.includes("entry")).toBe(false);
+  expect(markup.includes("aspect-video")).toBe(false);
 });
 
 test("ready presentation renders the controlled frontend query snapshot", () => {
@@ -190,8 +196,11 @@ test("initial presentation uses renderer-specific extracted skeleton", () => {
   const presentation = defineSystemCollectionPresentation<TestRow>({
     descriptor: descriptor({
       layout: {
-        kind: "cards",
-        renderCardContent: (row) => row.name,
+        cardSize: "large",
+        density: "comfortable",
+        getTitle: (row) => row.name,
+        kind: "gallery",
+        visibleFields: [],
       },
     }),
     state: { phase: "initial" },
@@ -205,8 +214,9 @@ test("initial presentation uses renderer-specific extracted skeleton", () => {
     />,
   );
 
-  expect(markup.match(/data-slot="skeleton"/g)?.length).toBe(40);
+  expect(markup.match(/data-slot="skeleton"/g)?.length).toBe(32);
   expect(markup.includes('aria-hidden="true"')).toBe(true);
+  expect(markup.includes("aspect-video")).toBe(false);
 });
 
 test("structured list layout fails closed for an unknown visible field", () => {

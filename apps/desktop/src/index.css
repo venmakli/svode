@@ -8,7 +8,17 @@
 @import "@xterm/xterm/css/xterm.css";
 @import "@fontsource-variable/nunito-sans";
 
+@source "../node_modules/@streamdown/code/dist/*.js";
+
 @custom-variant dark (&:is(.dark *));
+
+[data-markdown-reader] [data-streamdown="code-block-body"] pre {
+  white-space: pre;
+}
+
+[data-markdown-reader] [data-streamdown="code-block-body"] code > span {
+  display: block;
+}
 
 :root {
   --background: oklch(1 0 0);

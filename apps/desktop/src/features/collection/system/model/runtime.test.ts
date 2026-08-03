@@ -65,8 +65,11 @@ test("typed presentation factory erases heterogeneous row models", () => {
       id: "skills",
       label: "Skills",
       layout: {
-        kind: "cards",
-        renderCardContent: (row) => row.path,
+        cardSize: "large",
+        density: "comfortable",
+        getTitle: (row) => row.path,
+        kind: "gallery",
+        visibleFields: [],
       },
       query: {},
     },
@@ -105,6 +108,45 @@ test("invalid descriptor blocks only its presentation", () => {
   expect(
     readSystemCollectionPresentationRuntime(valid).instance.state.phase,
   ).toBe("ready");
+});
+
+test("runtime validation rejects unsupported and malformed Gallery layouts", () => {
+  const unsupported = testPresentation({
+    descriptor: testDescriptor({
+      layout: {
+        kind: "board",
+        visibleFields: [],
+      } as unknown as SystemCollectionPresentationDescriptor<TestRow>["layout"],
+    }),
+  });
+  const malformedGallery = testPresentation({
+    descriptor: testDescriptor({
+      layout: {
+        cardSize: "wide",
+        density: "dense",
+        getTitle: (row: TestRow) => row.name,
+        kind: "gallery",
+        visibleFields: ["missing", "missing"],
+      } as unknown as SystemCollectionPresentationDescriptor<TestRow>["layout"],
+    }),
+  });
+
+  expect(
+    readSystemCollectionPresentationRuntime(unsupported).diagnostics.map(
+      ({ code }) => code,
+    ),
+  ).toEqual(["invalid-layout"]);
+  expect(
+    readSystemCollectionPresentationRuntime(malformedGallery).diagnostics.map(
+      ({ code }) => code,
+    ),
+  ).toEqual([
+    "invalid-gallery-card-size",
+    "invalid-gallery-density",
+    "unknown-visible-field",
+    "unknown-visible-field",
+    "duplicate-visible-field",
+  ]);
 });
 
 test("duplicate row identity becomes a blocking developer diagnostic", () => {

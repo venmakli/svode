@@ -3,6 +3,9 @@ import type { ComponentProps, CSSProperties } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/shared/lib/utils";
+import type { CollectionGalleryCardDensity } from "../model/presentation-layout";
+
+const collectionCardGap = 14;
 
 export function CollectionListShell({
   className,
@@ -44,13 +47,18 @@ export function CollectionListRowShell({
 export function CollectionCardsShell({
   cardWidth,
   className,
+  maxColumns,
   style,
   ...props
 }: ComponentProps<"div"> & {
   cardWidth: number;
+  maxColumns?: number;
 }) {
   const gridStyle: CSSProperties = {
     gridTemplateColumns: `repeat(auto-fill, minmax(${cardWidth}px, 1fr))`,
+    maxWidth: maxColumns
+      ? cardWidth * maxColumns + collectionCardGap * (maxColumns - 1)
+      : undefined,
     ...style,
   };
 
@@ -112,17 +120,38 @@ export function CollectionListSkeleton({
   );
 }
 
-export function CollectionCardsSkeleton({ cardWidth }: { cardWidth: number }) {
+export function CollectionCardsSkeleton({
+  cardWidth,
+  density = "compact",
+  hasCover = true,
+  maxColumns,
+}: {
+  cardWidth: number;
+  density?: CollectionGalleryCardDensity;
+  hasCover?: boolean;
+  maxColumns?: number;
+}) {
   return (
-    <CollectionCardsShell cardWidth={cardWidth} aria-hidden="true">
+    <CollectionCardsShell
+      cardWidth={cardWidth}
+      maxColumns={maxColumns}
+      aria-hidden="true"
+    >
       {Array.from({ length: 8 }).map((_, index) => (
         <Card
           key={index}
-          size="sm"
+          size={density === "compact" ? "sm" : "default"}
           className="gap-0 overflow-hidden py-0 shadow-none ring-1 ring-foreground/10"
         >
-          <Skeleton className="aspect-video w-full rounded-none" />
-          <CardContent className="flex flex-col gap-2 p-3">
+          {hasCover ? (
+            <Skeleton className="aspect-video w-full rounded-none" />
+          ) : null}
+          <CardContent
+            className={cn(
+              "flex flex-col",
+              density === "compact" ? "gap-1.5 px-2.5 py-2.5" : "gap-2 p-3",
+            )}
+          >
             <Skeleton className="h-4 w-4/5" />
             <Skeleton className="h-3 w-3/5" />
             <div className="flex gap-1.5">

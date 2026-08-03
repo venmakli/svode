@@ -1,6 +1,11 @@
 import type { CollectionView } from "@/features/collection/query/model";
 import type { Entry } from "@/features/entry";
 import type { CollectionSchema, Column } from "@/features/properties";
+import {
+  COLLECTION_GALLERY_CARD_WIDTH,
+  collectionGalleryCardWidth,
+  type CollectionGalleryCardSize,
+} from "../model/presentation-layout";
 import { entryCollectionPath, isFolderEntry } from "./entry-tree";
 
 const GALLERY_BODY_SYSTEM_FIELDS = new Set([
@@ -15,21 +20,15 @@ const SYSTEM_META_COLUMNS: Record<string, Column> = {
   updated: { name: "updated", type: "date", display: "medium" },
 };
 
-export const GALLERY_CARD_WIDTH = {
-  small: 160,
-  medium: 240,
-  large: 320,
-};
+export const GALLERY_CARD_WIDTH = COLLECTION_GALLERY_CARD_WIDTH;
 
 export { isFolderEntry };
 
 export function galleryCardWidth(view: CollectionView) {
   const size = String(view.size ?? "medium");
-  return size === "small"
-    ? GALLERY_CARD_WIDTH.small
-    : size === "large"
-      ? GALLERY_CARD_WIDTH.large
-      : GALLERY_CARD_WIDTH.medium;
+  const normalizedSize: CollectionGalleryCardSize =
+    size === "small" || size === "large" ? size : "medium";
+  return collectionGalleryCardWidth(normalizedSize);
 }
 
 export function galleryCoverAspect(view: CollectionView) {

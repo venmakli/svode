@@ -4,6 +4,14 @@ import type { GalleryResolvedCover } from "../../model/gallery-cover-types";
 
 export type { GalleryViewProps } from "../../model/gallery-types";
 
+export type GalleryNavigationKey =
+  | "ArrowDown"
+  | "ArrowLeft"
+  | "ArrowRight"
+  | "ArrowUp"
+  | "End"
+  | "Home";
+
 export interface GalleryCardProps {
   entry: Entry;
   cover: GalleryResolvedCover | null;
@@ -27,9 +35,6 @@ export interface GalleryCardProps {
   onDuplicate: (entry: Entry) => void;
   onDelete: (entry: Entry) => void;
   onFocusCard: (path: string) => void;
-  onKeyboardMove: (
-    path: string,
-    direction: "left" | "right" | "up" | "down",
-  ) => void;
+  onKeyboardMove: (path: string, key: GalleryNavigationKey) => void;
   cardRef?: (element: HTMLElement | null) => void;
 }

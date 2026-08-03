@@ -1,8 +1,12 @@
 import type { ReactNode } from "react";
 
 import type { Column } from "@/features/properties";
+import type {
+  CollectionGalleryCardDensity,
+  CollectionGalleryCardSize,
+} from "../../model/presentation-layout";
 
-export type SystemCollectionRenderer = "list" | "cards";
+export type SystemCollectionRenderer = "list" | "gallery";
 export type SystemCollectionStateScope = "session" | "lifecycle";
 
 export type SystemCollectionPresentationLayout<Row> =
@@ -15,11 +19,15 @@ export type SystemCollectionPresentationLayout<Row> =
       density?: "compact" | "comfortable";
     }
   | {
-      kind: "cards";
-      renderCardContent(
-        row: Row,
-        context: SystemCollectionRowRenderContext,
-      ): ReactNode;
+      kind: "gallery";
+      cardSize: CollectionGalleryCardSize;
+      density: CollectionGalleryCardDensity;
+      getTitle(row: Row): ReactNode;
+      getDescription?(row: Row): ReactNode;
+      renderLeading?(row: Row): ReactNode;
+      renderCover?(row: Row): ReactNode;
+      renderOverlays?(row: Row): ReactNode;
+      visibleFields: readonly string[];
     };
 
 export interface SystemCollectionInstance {
@@ -191,13 +199,6 @@ export type SystemCollectionActionState =
   | { status: "disabled"; reason: string }
   | { status: "error"; message: string };
 
-export interface SystemCollectionRowRenderContext {
-  renderField(fieldKey: string): ReactNode;
-  renderFieldControl(fieldKey: string): ReactNode;
-  renderAction(actionId: string): ReactNode;
-  openDetail(): void;
-}
-
 export interface SystemCollectionDetailSelection {
   instanceKey: string;
   presentationId: string;
@@ -258,7 +259,10 @@ export type SystemCollectionDeveloperDiagnosticCode =
   | "invalid-default-presentation"
   | "invalid-default-sort"
   | "invalid-field-key"
+  | "invalid-gallery-card-size"
+  | "invalid-gallery-density"
   | "invalid-instance-key"
+  | "invalid-layout"
   | "invalid-presentation-id"
   | "invalid-property-adapter"
   | "invalid-row-id"

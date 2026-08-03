@@ -8,7 +8,7 @@ import {
 } from "./interaction";
 import type { SystemCollectionPresentationDescriptor } from "../model/types";
 
-test("list and card focus navigation stays within the snapshot", () => {
+test("list and Gallery focus navigation stays within the snapshot", () => {
   expect(
     resolveSystemCollectionFocusIndex({
       currentIndex: 2,
@@ -23,7 +23,7 @@ test("list and card focus navigation stays within the snapshot", () => {
       currentIndex: 4,
       itemCount: 8,
       key: "ArrowUp",
-      renderer: "cards",
+      renderer: "gallery",
     }),
   ).toBe(1);
   expect(
@@ -39,7 +39,7 @@ test("list and card focus navigation stays within the snapshot", () => {
       currentIndex: 3,
       itemCount: 5,
       key: "Home",
-      renderer: "cards",
+      renderer: "gallery",
     }),
   ).toBe(0);
 });

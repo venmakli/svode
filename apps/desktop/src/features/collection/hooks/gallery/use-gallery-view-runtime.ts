@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import type { Entry } from "@/features/entry";
 import type { GalleryViewProps } from "../../model/gallery-types";
+import type { GalleryNavigationKey } from "../../ui/gallery/types";
 import { titleFilter } from "../../lib/utils";
 import { entryParentDir } from "../../lib/entry-tree";
 import {
@@ -178,19 +179,27 @@ export function useGalleryViewRuntime({
   }, [cardWidth]);
 
   const moveFocus = useCallback(
-    (path: string, direction: "left" | "right" | "up" | "down") => {
+    (path: string, key: GalleryNavigationKey) => {
       const index = filteredEntries.findIndex((entry) => entry.path === path);
       if (index < 0) return;
       const columns = currentColumnCount();
       const offset =
-        direction === "left"
+        key === "ArrowLeft"
           ? -1
-          : direction === "right"
+          : key === "ArrowRight"
             ? 1
-            : direction === "up"
+            : key === "ArrowUp"
               ? -columns
-              : columns;
-      const next = filteredEntries[index + offset];
+              : key === "ArrowDown"
+                ? columns
+                : 0;
+      const nextIndex =
+        key === "Home"
+          ? 0
+          : key === "End"
+            ? filteredEntries.length - 1
+            : index + offset;
+      const next = filteredEntries[nextIndex];
       if (next) focusCard(next.path);
     },
     [currentColumnCount, filteredEntries, focusCard],
