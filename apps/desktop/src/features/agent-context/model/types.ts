@@ -24,6 +24,7 @@ export interface AgentContextAdapterSnapshot {
   nativeDefaultTarget: string;
   capabilities: {
     contextDiscovery: boolean;
+    skillsDiscovery: boolean;
     launch: false;
     modelSelection: false;
     permissions: false;
@@ -32,7 +33,11 @@ export interface AgentContextAdapterSnapshot {
 
 export interface AgentContextReference {
   path: string;
-  status: "available" | "outside_boundary" | "requires_client_approval" | "unreadable";
+  status:
+    | "available"
+    | "outside_boundary"
+    | "requires_client_approval"
+    | "unreadable";
 }
 
 export interface AgentContextInstructionRow {
@@ -54,11 +59,54 @@ export interface AgentContextInstructionRow {
   diagnostics: readonly string[];
 }
 
+export type AgentContextSkillAvailability = Exclude<
+  AgentContextAvailability,
+  "recognized_only"
+>;
+
+export type AgentContextSkillDiscoveryKind =
+  | "codex_project"
+  | "codex_standard_personal"
+  | "codex_compatibility_personal"
+  | "claude_project"
+  | "claude_personal";
+
+export interface AgentContextSkillAlias {
+  adapterId: SupportedAdapterId;
+  availability: AgentContextSkillAvailability;
+  availabilityReason: string | null;
+  discoveryKind: AgentContextSkillDiscoveryKind;
+  discoveryPath: string;
+  linkKind: "direct" | "symbolic_link" | "directory_alias";
+  ownerPath: string;
+  rootPath: string;
+  scope: AgentContextScope;
+}
+
+export interface AgentContextSkillRow {
+  aliases: readonly AgentContextSkillAlias[];
+  body: string;
+  canonicalPath: string;
+  clients: readonly SupportedAdapterId[];
+  compatibility: string | null;
+  description: string;
+  diagnostics: readonly string[];
+  id: string;
+  license: string | null;
+  manifestPath: string;
+  name: string;
+  scopes: readonly AgentContextScope[];
+  validation: "valid" | "warning";
+  warnings: readonly string[];
+}
+
 export interface AgentContextInstructionsSnapshot {
   targetPath: string;
   generation: number;
   adapters: readonly AgentContextAdapterSnapshot[];
+  instructionDiagnostics: readonly string[];
   rows: readonly AgentContextInstructionRow[];
-  diagnostics: readonly string[];
+  skillDiagnostics: readonly string[];
+  skills: readonly AgentContextSkillRow[];
   hasPersonalSources: boolean;
 }

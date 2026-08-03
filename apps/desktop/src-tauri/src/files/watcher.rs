@@ -416,7 +416,12 @@ fn agent_context_observed_path(space_root: &Path, path: &Path) -> Option<String>
         normalized.as_str(),
         ".claude/CLAUDE.md" | ".codex/config.toml" | ".svode/local.json"
     );
-    (standard || recognized_root || exact_config).then_some(normalized)
+    let skill_path = normalized
+        .split('/')
+        .collect::<Vec<_>>()
+        .windows(2)
+        .any(|parts| matches!(parts, [".agents", "skills"] | [".claude", "skills"]));
+    (standard || recognized_root || exact_config || skill_path).then_some(normalized)
 }
 
 fn relative_watched_path(space_root: &Path, path: &Path) -> Option<String> {
@@ -683,6 +688,9 @@ mod tests {
             ".claude/CLAUDE.md",
             ".codex/config.toml",
             ".svode/local.json",
+            ".agents/skills",
+            ".agents/skills/review/SKILL.md",
+            "docs/.claude/skills/review/SKILL.md",
         ] {
             let path = tmp.path().join(relative);
             assert_eq!(
@@ -691,7 +699,12 @@ mod tests {
             );
             assert!(classify(&tmp, &path, EventKind::Modify(ModifyKind::Any)).is_none());
         }
-        for relative in ["README.md", "docs/GEMINI.md", ".claude/rules/rule.md"] {
+        for relative in [
+            "README.md",
+            "docs/GEMINI.md",
+            ".claude/rules/rule.md",
+            ".agents/skills-other/review/SKILL.md",
+        ] {
             assert!(agent_context_observed_path(tmp.path(), &tmp.path().join(relative)).is_none());
         }
     }

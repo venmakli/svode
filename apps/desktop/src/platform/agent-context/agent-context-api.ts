@@ -1,4 +1,8 @@
-import { listen, type EventCallback, type UnlistenFn } from "@/platform/native/events";
+import {
+  listen,
+  type EventCallback,
+  type UnlistenFn,
+} from "@/platform/native/events";
 import { invokeCommand } from "@/platform/native/invoke";
 
 export type SupportedAdapterIdDto = "claude-code" | "codex";
@@ -7,6 +11,10 @@ export type AgentContextAvailabilityDto =
   | "shadowed"
   | "recognized_only"
   | "compatibility_unknown";
+export type AgentContextSkillAvailabilityDto = Exclude<
+  AgentContextAvailabilityDto,
+  "recognized_only"
+>;
 export interface AgentContextAdapterSnapshotDto {
   id: SupportedAdapterIdDto;
   displayName: string;
@@ -27,6 +35,15 @@ export interface AgentContextAdapterSnapshotDto {
     instructions: {
       availability: "available" | "unavailable";
       policy: "codex_agents" | "claude_memory";
+    };
+    skills: {
+      availability: "available" | "unavailable";
+      policy: "codex_directory_chain" | "claude_personal_shadows_project";
+      projectRelativeRoot: string;
+      personalRoots: {
+        kind: "compatibility_personal" | "standard_personal";
+        path: string;
+      }[];
     };
     launch: AgentContextUnavailableCapabilityDto;
     modelSelection: AgentContextUnavailableCapabilityDto;
@@ -91,6 +108,41 @@ export interface AgentContextDiagnosticDto {
   adapterId: SupportedAdapterIdDto | null;
 }
 
+export interface AgentContextSkillAliasDto {
+  adapterId: SupportedAdapterIdDto;
+  scope: "personal" | "project";
+  discoveryKind:
+    | "codex_project"
+    | "codex_standard_personal"
+    | "codex_compatibility_personal"
+    | "claude_project"
+    | "claude_personal";
+  path: string;
+  root: string;
+  owner: {
+    kind: "target_space" | "client_configuration";
+    root: string;
+  };
+  availability: AgentContextSkillAvailabilityDto;
+  reason: string | null;
+  linkKind: "direct" | "symbolic_link" | "directory_alias";
+}
+
+export interface AgentContextSkillRowDto {
+  id: string;
+  name: string;
+  description: string;
+  path: string;
+  canonicalPath: string;
+  license: string | null;
+  compatibility: string | null;
+  metadata: unknown | null;
+  validation: "valid" | "warning";
+  warnings: string[];
+  preview: AgentContextMarkdownPreviewDto;
+  aliases: AgentContextSkillAliasDto[];
+}
+
 export interface AgentContextInstructionsSnapshotDto {
   generation: number;
   projectRoot: string;
@@ -98,6 +150,7 @@ export interface AgentContextInstructionsSnapshotDto {
   repositoryRoot: string;
   adapters: AgentContextAdapterSnapshotDto[];
   instructions: AgentContextInstructionRowDto[];
+  skills: AgentContextSkillRowDto[];
   diagnostics: AgentContextDiagnosticDto[];
   observedProjectPaths: string[];
   observedPersonalPaths: string[];

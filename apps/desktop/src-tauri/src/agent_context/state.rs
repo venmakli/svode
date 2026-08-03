@@ -53,7 +53,6 @@ impl AgentContextState {
         let Ok(snapshots) = self.snapshots.lock() else {
             return Vec::new();
         };
-        let observed = path.to_string_lossy();
         let mut targets = snapshots
             .values()
             .filter(|snapshot| {
@@ -61,7 +60,10 @@ impl AgentContextState {
                     .content
                     .observed_project_paths
                     .iter()
-                    .any(|candidate| candidate == observed.as_ref())
+                    .any(|candidate| {
+                        let candidate = Path::new(candidate);
+                        path.starts_with(candidate) || candidate.starts_with(path)
+                    })
             })
             .map(|snapshot| snapshot.content.target_root.clone())
             .collect::<Vec<_>>();
@@ -82,6 +84,7 @@ mod tests {
             repository_root: "/project".to_string(),
             adapters: Vec::new(),
             instructions: Vec::new(),
+            skills: Vec::new(),
             diagnostics: Vec::new(),
             observed_project_paths: Vec::new(),
             observed_personal_paths: Vec::new(),
@@ -115,6 +118,27 @@ mod tests {
         assert_eq!(
             state.targets_observing_project_path(Path::new(observed)),
             vec!["/project".to_string(), "/project/inline".to_string()]
+        );
+    }
+
+    #[test]
+    fn observed_skill_root_invalidates_nested_creation_and_parent_creation() {
+        let state = AgentContextState::new();
+        let mut snapshot = content("/project/inline");
+        snapshot
+            .observed_project_paths
+            .push("/project/.agents/skills".to_string());
+        state.publish("inline".to_string(), snapshot).unwrap();
+
+        assert_eq!(
+            state.targets_observing_project_path(Path::new(
+                "/project/.agents/skills/review/SKILL.md"
+            )),
+            vec!["/project/inline".to_string()]
+        );
+        assert_eq!(
+            state.targets_observing_project_path(Path::new("/project/.agents")),
+            vec!["/project/inline".to_string()]
         );
     }
 }

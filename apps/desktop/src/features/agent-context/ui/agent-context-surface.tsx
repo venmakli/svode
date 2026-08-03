@@ -14,11 +14,19 @@ import * as m from "@/paraglide/messages.js";
 
 import { useAgentContextInstructions } from "../hooks/use-agent-context-instructions";
 import type { AgentContextCatalogState } from "../model/catalog-state";
-import type { AgentContextInstructionRow } from "../model/types";
 import {
   AgentContextInstructionsEmpty,
   createAgentContextInstructionsPresentation,
 } from "./instructions-presentation";
+import {
+  AgentContextSkillsEmpty,
+  createAgentContextSkillsPresentation,
+} from "./skills-presentation";
+
+interface OpenedAgentContextRow {
+  presentationId: "instructions" | "skills";
+  rowId: string;
+}
 
 export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
   const { refresh, state } = useAgentContextInstructions({
@@ -27,41 +35,70 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
     spacePath: owner.spacePath,
   });
   const detailController = useOptionalSystemCollectionDetailController();
-  const [openedRowId, setOpenedRowId] = useState<string | null>(null);
+  const [openedRow, setOpenedRow] = useState<OpenedAgentContextRow | null>(
+    null,
+  );
   const instanceKey = `agent-context:${owner.ownerKey}`;
   const refreshing = state.phase === "ready" && state.refreshing;
-  const presentationState = toPresentationState(state);
-  const presentation = useMemo(
+  const instructionsState = toPresentationState(
+    state,
+    (snapshot) => snapshot.rows,
+    (snapshot) => snapshot.instructionDiagnostics,
+    <AgentContextInstructionsEmpty />,
+  );
+  const skillsState = toPresentationState(
+    state,
+    (snapshot) => snapshot.skills,
+    (snapshot) => snapshot.skillDiagnostics,
+    <AgentContextSkillsEmpty />,
+  );
+  const instructionsPresentation = useMemo(
     () =>
       createAgentContextInstructionsPresentation({
-        onDetailRequested: setOpenedRowId,
+        onDetailRequested: (rowId) =>
+          setOpenedRow({ presentationId: "instructions", rowId }),
         onRefresh: refresh,
         refreshing,
-        state: presentationState,
+        state: instructionsState,
       }),
-    [presentationState, refresh, refreshing],
+    [instructionsState, refresh, refreshing],
+  );
+  const skillsPresentation = useMemo(
+    () =>
+      createAgentContextSkillsPresentation({
+        onDetailRequested: (rowId) =>
+          setOpenedRow({ presentationId: "skills", rowId }),
+        onRefresh: refresh,
+        refreshing,
+        state: skillsState,
+      }),
+    [refresh, refreshing, skillsState],
   );
   const instance = useMemo<SystemCollectionInstance>(
     () => ({
       defaultPresentationId: "instructions",
       instanceKey,
-      presentations: [presentation],
+      presentations: [instructionsPresentation, skillsPresentation],
       stateScope: "session",
     }),
-    [instanceKey, presentation],
+    [instanceKey, instructionsPresentation, skillsPresentation],
   );
   const collectionState = useSystemCollectionState(instance);
 
   useEffect(() => {
-    if (!openedRowId || state.phase !== "ready" || !detailController) return;
-    if (state.snapshot.rows.some((row) => row.id === openedRowId)) return;
+    if (!openedRow || state.phase !== "ready" || !detailController) return;
+    const rows =
+      openedRow.presentationId === "instructions"
+        ? state.snapshot.rows
+        : state.snapshot.skills;
+    if (rows.some((row) => row.id === openedRow.rowId)) return;
 
     void detailController.close({
       instanceKey,
-      presentationId: "instructions",
-      rowId: openedRowId,
+      presentationId: openedRow.presentationId,
+      rowId: openedRow.rowId,
     });
-  }, [detailController, instanceKey, openedRowId, state]);
+  }, [detailController, instanceKey, openedRow, state]);
 
   if (collectionState.phase === "blocking_error") {
     return (
@@ -92,9 +129,16 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
   );
 }
 
-function toPresentationState(
+function toPresentationState<Row>(
   state: AgentContextCatalogState,
-): SystemCollectionPresentationState<AgentContextInstructionRow> {
+  selectRows: (
+    snapshot: Extract<AgentContextCatalogState, { phase: "ready" }>["snapshot"],
+  ) => readonly Row[],
+  selectDiagnostics: (
+    snapshot: Extract<AgentContextCatalogState, { phase: "ready" }>["snapshot"],
+  ) => readonly string[],
+  sourceEmpty: React.ReactNode,
+): SystemCollectionPresentationState<Row> {
   if (state.phase === "initial") return { phase: "initial" };
   if (state.phase === "blocking_error") {
     return {
@@ -108,9 +152,11 @@ function toPresentationState(
     };
   }
 
-  const diagnostics = state.snapshot.diagnostics.map((diagnostic, index) => (
-    <span key={`${diagnostic}:${index}`}>{diagnostic}</span>
-  ));
+  const diagnostics = selectDiagnostics(state.snapshot).map(
+    (diagnostic, index) => (
+      <span key={`${diagnostic}:${index}`}>{diagnostic}</span>
+    ),
+  );
   if (state.refreshError) {
     diagnostics.push(
       <span key="refresh" title={state.refreshError}>
@@ -124,7 +170,7 @@ function toPresentationState(
     diagnostics,
     phase: "ready",
     refreshing: state.refreshing,
-    rows: state.snapshot.rows,
-    sourceEmpty: <AgentContextInstructionsEmpty />,
+    rows: selectRows(state.snapshot),
+    sourceEmpty,
   };
 }

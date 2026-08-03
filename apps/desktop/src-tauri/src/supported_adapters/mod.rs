@@ -66,6 +66,36 @@ pub enum InstructionDiscoveryPolicy {
     ClaudeMemory,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillDiscoveryPolicy {
+    CodexDirectoryChain,
+    ClaudePersonalShadowsProject,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillRootKind {
+    StandardPersonal,
+    CompatibilityPersonal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SupportedSkillRoot {
+    pub kind: SkillRootKind,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDiscoveryCapability {
+    pub availability: CapabilityAvailability,
+    pub policy: SkillDiscoveryPolicy,
+    pub project_relative_root: String,
+    pub personal_roots: Vec<SupportedSkillRoot>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstructionDiscoveryCapability {
@@ -93,6 +123,7 @@ impl UnavailableCapability {
 #[serde(rename_all = "camelCase")]
 pub struct AdapterCapabilities {
     pub instructions: InstructionDiscoveryCapability,
+    pub skills: SkillDiscoveryCapability,
     pub model_selection: UnavailableCapability,
     pub permission_modes: UnavailableCapability,
     pub launch: UnavailableCapability,
@@ -121,6 +152,7 @@ pub struct SupportedAdapterSnapshot {
 #[derive(Debug, Clone)]
 pub struct RegistryEnvironment {
     pub codex_home: PathBuf,
+    pub codex_standard_skills_dir: PathBuf,
     pub claude_config_dir: PathBuf,
     executables: BTreeMap<SupportedAdapterId, ExecutableEvidence>,
 }
@@ -140,6 +172,7 @@ impl RegistryEnvironment {
         ]);
         Self {
             codex_home: home_dir.join(".codex"),
+            codex_standard_skills_dir: home_dir.join(".agents/skills"),
             claude_config_dir: home_dir.join(".claude"),
             executables,
         }
@@ -181,18 +214,37 @@ impl SupportedAdapterRegistry {
         id: SupportedAdapterId,
         environment: &RegistryEnvironment,
     ) -> SupportedAdapterSnapshot {
-        let (display_name, policy, personal_root) = match id {
-            SupportedAdapterId::Codex => (
-                "Codex",
-                InstructionDiscoveryPolicy::CodexAgents,
-                &environment.codex_home,
-            ),
-            SupportedAdapterId::ClaudeCode => (
-                "Claude Code",
-                InstructionDiscoveryPolicy::ClaudeMemory,
-                &environment.claude_config_dir,
-            ),
-        };
+        let (display_name, policy, personal_root, skill_policy, project_skills, skill_roots) =
+            match id {
+                SupportedAdapterId::Codex => (
+                    "Codex",
+                    InstructionDiscoveryPolicy::CodexAgents,
+                    &environment.codex_home,
+                    SkillDiscoveryPolicy::CodexDirectoryChain,
+                    ".agents/skills",
+                    vec![
+                        SupportedSkillRoot {
+                            kind: SkillRootKind::StandardPersonal,
+                            path: path_string(&environment.codex_standard_skills_dir),
+                        },
+                        SupportedSkillRoot {
+                            kind: SkillRootKind::CompatibilityPersonal,
+                            path: path_string(&environment.codex_home.join("skills")),
+                        },
+                    ],
+                ),
+                SupportedAdapterId::ClaudeCode => (
+                    "Claude Code",
+                    InstructionDiscoveryPolicy::ClaudeMemory,
+                    &environment.claude_config_dir,
+                    SkillDiscoveryPolicy::ClaudePersonalShadowsProject,
+                    ".claude/skills",
+                    vec![SupportedSkillRoot {
+                        kind: SkillRootKind::StandardPersonal,
+                        path: path_string(&environment.claude_config_dir.join("skills")),
+                    }],
+                ),
+            };
         SupportedAdapterSnapshot {
             id,
             display_name: display_name.to_string(),
@@ -208,6 +260,12 @@ impl SupportedAdapterRegistry {
                 instructions: InstructionDiscoveryCapability {
                     availability: CapabilityAvailability::Available,
                     policy,
+                },
+                skills: SkillDiscoveryCapability {
+                    availability: CapabilityAvailability::Available,
+                    policy: skill_policy,
+                    project_relative_root: project_skills.to_string(),
+                    personal_roots: skill_roots,
                 },
                 model_selection: UnavailableCapability::phase_5_1(),
                 permission_modes: UnavailableCapability::phase_5_1(),
@@ -232,6 +290,7 @@ pub async fn system_registry_environment() -> Result<RegistryEnvironment, AppErr
     }
     Ok(RegistryEnvironment {
         codex_home,
+        codex_standard_skills_dir: home_dir.join(".agents/skills"),
         claude_config_dir,
         executables,
     })
@@ -301,6 +360,15 @@ mod tests {
         assert_eq!(snapshots[0].id.as_str(), "codex");
         assert_eq!(snapshots[1].id.as_str(), "claude-code");
         assert_eq!(
+            snapshots[0].capabilities.skills.project_relative_root,
+            ".agents/skills"
+        );
+        assert_eq!(snapshots[0].capabilities.skills.personal_roots.len(), 2);
+        assert_eq!(
+            snapshots[1].capabilities.skills.policy,
+            SkillDiscoveryPolicy::ClaudePersonalShadowsProject
+        );
+        assert_eq!(
             serde_json::to_value(snapshots[1].id).unwrap(),
             serde_json::json!("claude-code")
         );
@@ -309,6 +377,11 @@ mod tests {
                 snapshot.capabilities.instructions.availability,
                 CapabilityAvailability::Available
             );
+            assert_eq!(
+                snapshot.capabilities.skills.availability,
+                CapabilityAvailability::Available
+            );
+            assert!(!snapshot.capabilities.skills.personal_roots.is_empty());
             assert_eq!(
                 snapshot.capabilities.launch.availability,
                 CapabilityAvailability::Unavailable

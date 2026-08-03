@@ -1,6 +1,7 @@
 mod claude;
 mod codex;
 mod io;
+mod skills;
 
 use std::path::{Path, PathBuf};
 
@@ -12,7 +13,7 @@ use crate::supported_adapters::{
 use super::model::{
     AgentContextDiagnostic, AgentContextSnapshotContent, DiagnosticSeverity,
     InstructionAvailability, InstructionDiscovery, InstructionDiscoveryPolicy, InstructionOwner,
-    InstructionOwnerKind, InstructionRow, InstructionSourceKind,
+    InstructionOwnerKind, InstructionRow, InstructionSourceKind, SkillRow,
 };
 use io::{inspect, path_string};
 
@@ -22,6 +23,7 @@ const DEFAULT_PREVIEW_BYTES: usize = 64 * 1024;
 #[derive(Debug, Default)]
 pub(super) struct DiscoveryResult {
     rows: Vec<InstructionRow>,
+    skills: Vec<SkillRow>,
     diagnostics: Vec<AgentContextDiagnostic>,
     observed_project_paths: Vec<String>,
     observed_personal_paths: Vec<String>,
@@ -30,6 +32,7 @@ pub(super) struct DiscoveryResult {
 impl DiscoveryResult {
     fn append(&mut self, mut other: Self) {
         self.rows.append(&mut other.rows);
+        self.skills.append(&mut other.skills);
         self.diagnostics.append(&mut other.diagnostics);
         self.observed_project_paths
             .append(&mut other.observed_project_paths);
@@ -76,6 +79,11 @@ pub fn scan(
         &adapters[1],
     ));
     result.append(discover_recognized(&target_root));
+    result.append(skills::discover(
+        &repository_root,
+        &directory_chain,
+        &adapters,
+    ));
 
     result.rows.sort_by(|left, right| {
         row_sort_key(left)
@@ -89,6 +97,12 @@ pub fn scan(
             .then_with(|| left.path.cmp(&right.path))
             .then_with(|| left.code.cmp(&right.code))
     });
+    result.skills.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then_with(|| left.canonical_path.cmp(&right.canonical_path))
+    });
     sort_dedup(&mut result.observed_project_paths);
     sort_dedup(&mut result.observed_personal_paths);
 
@@ -98,6 +112,7 @@ pub fn scan(
         repository_root: path_string(&repository_root),
         adapters,
         instructions: result.rows,
+        skills: result.skills,
         diagnostics: result.diagnostics,
         observed_project_paths: result.observed_project_paths,
         observed_personal_paths: result.observed_personal_paths,
@@ -264,6 +279,7 @@ mod tests {
         assert_eq!(transport["adapters"][1]["id"], "claude-code");
         assert!(transport["targetRoot"].is_string());
         assert!(transport["instructions"].is_array());
+        assert!(transport["skills"].is_array());
         assert_eq!(codex_project_paths(&inline_snapshot).len(), 2);
         let independent_paths = codex_project_paths(&independent_snapshot);
         assert_eq!(independent_paths.len(), 1);

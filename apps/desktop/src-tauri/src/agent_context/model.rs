@@ -91,6 +91,77 @@ pub struct InstructionRow {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum SkillScope {
+    Project,
+    Personal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillAvailability {
+    Available,
+    Shadowed,
+    CompatibilityUnknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillDiscoveryKind {
+    CodexProject,
+    CodexStandardPersonal,
+    CodexCompatibilityPersonal,
+    ClaudeProject,
+    ClaudePersonal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillLinkKind {
+    Direct,
+    SymbolicLink,
+    DirectoryAlias,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillValidationStatus {
+    Valid,
+    Warning,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDiscoveryAlias {
+    pub adapter_id: SupportedAdapterId,
+    pub scope: SkillScope,
+    pub discovery_kind: SkillDiscoveryKind,
+    pub path: String,
+    pub root: String,
+    pub owner: InstructionOwner,
+    pub availability: SkillAvailability,
+    pub reason: Option<String>,
+    pub link_kind: SkillLinkKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillRow {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub path: String,
+    pub canonical_path: String,
+    pub license: Option<String>,
+    pub compatibility: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+    pub validation: SkillValidationStatus,
+    pub warnings: Vec<String>,
+    pub preview: MarkdownPreview,
+    pub aliases: Vec<SkillDiscoveryAlias>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DiagnosticSeverity {
     Warning,
     Error,
@@ -114,6 +185,7 @@ pub struct AgentContextSnapshotContent {
     pub repository_root: String,
     pub adapters: Vec<SupportedAdapterSnapshot>,
     pub instructions: Vec<InstructionRow>,
+    pub skills: Vec<SkillRow>,
     pub diagnostics: Vec<AgentContextDiagnostic>,
     pub observed_project_paths: Vec<String>,
     pub observed_personal_paths: Vec<String>,
