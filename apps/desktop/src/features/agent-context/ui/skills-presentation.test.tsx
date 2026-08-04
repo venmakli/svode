@@ -216,3 +216,38 @@ test("link, compatibility and manifest warnings share compact overlays", () => {
   expect(html.includes("Claude link support is not proven")).toBe(true);
   expect(html.includes("Name does not match its directory")).toBe(true);
 });
+
+test("skill external action opens its canonical manifest in the owning root", async () => {
+  const opened: unknown[] = [];
+  const runtime = createAgentContextSkillsPresentation({
+    artifactOpeners: [
+      {
+        capabilities: ["reveal_file"],
+        id: "file_manager",
+        kind: "file_manager",
+        label: "Finder",
+      },
+    ],
+    onOpenArtifact: (input) => opened.push(input),
+    onRefresh: () => undefined,
+    refreshing: false,
+    state: { phase: "ready", rows: [reviewSkill] },
+  }) as unknown as {
+    instance: {
+      descriptor: {
+        rowActions: Array<{ id: string; run(row: AgentContextSkillRow): void }>;
+      };
+    };
+  };
+
+  const action = runtime.instance.descriptor.rowActions[0]!;
+  await action.run(reviewSkill);
+  expect(action.id).toBe("open-in-file_manager");
+  expect(opened).toEqual([
+    {
+      canonicalArtifactPath: "/workspace/.agents/skills/review/SKILL.md",
+      ownerRoot: "/workspace",
+      tool: "file_manager",
+    },
+  ]);
+});

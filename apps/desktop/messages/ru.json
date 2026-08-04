@@ -1136,5 +1136,6 @@
   "agent_context_skill_label": "Навык",
   "agent_context_skill_detail_description": "Источник навыка только для чтения и сведения об обнаружении.",
   "agent_context_skill_provenance": "Обнаружение и доступность",
-  "agent_context_skill_alias": "Файловый псевдоним"
+  "agent_context_skill_alias": "Файловый псевдоним",
+  "agent_context_open_in": "Открыть в {name}"
 }

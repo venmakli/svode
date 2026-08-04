@@ -1136,5 +1136,6 @@
   "agent_context_skill_label": "Skill",
   "agent_context_skill_detail_description": "Read-only skill source and discovery provenance.",
   "agent_context_skill_provenance": "Discovery and availability",
-  "agent_context_skill_alias": "Filesystem alias"
+  "agent_context_skill_alias": "Filesystem alias",
+  "agent_context_open_in": "Open in {name}"
 }

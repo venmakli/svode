@@ -107,3 +107,41 @@ test("shadowed aliases expose link and warning overlays without a subtitle", () 
   expect(html.includes("AGENTS.override.md wins")).toBe(true);
   expect(html.includes("Codex project guidance")).toBe(false);
 });
+
+test("instruction external action keeps the canonical artifact and owner together", async () => {
+  const opened: unknown[] = [];
+  const presentation = createAgentContextInstructionsPresentation({
+    artifactOpeners: [
+      {
+        capabilities: ["open_workspace_file"],
+        id: "vscode",
+        kind: "editor",
+        label: "VS Code",
+      },
+    ],
+    onOpenArtifact: (input) => opened.push(input),
+    onRefresh: () => undefined,
+    refreshing: false,
+    state: { phase: "ready", rows: [available] },
+  }) as unknown as {
+    instance: {
+      descriptor: {
+        rowActions: Array<{
+          id: string;
+          run(row: AgentContextInstructionRow): void;
+        }>;
+      };
+    };
+  };
+
+  const action = presentation.instance.descriptor.rowActions[0]!;
+  await action.run(available);
+  expect(action.id).toBe("open-in-vscode");
+  expect(opened).toEqual([
+    {
+      canonicalArtifactPath: "/workspace/AGENTS.md",
+      ownerRoot: "/workspace",
+      tool: "vscode",
+    },
+  ]);
+});

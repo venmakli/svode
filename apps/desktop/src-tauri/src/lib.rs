@@ -204,6 +204,8 @@ pub fn run() {
             commands::space::remove_missing_space,
             commands::project_openers::list_project_openers,
             commands::project_openers::open_project_in_tool,
+            commands::project_openers::list_artifact_openers,
+            commands::project_openers::open_artifact_in_tool,
             agent::commands::agent_send,
             agent::commands::agent_stop,
             agent::commands::agent_list_available,

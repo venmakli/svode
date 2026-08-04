@@ -32,12 +32,37 @@ pub enum ProjectOpenerKind {
     Terminal,
 }
 
+/// A filesystem target whose owning workspace must be retained by an external app.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactOpenerTarget {
+    pub owner_root: String,
+    pub canonical_artifact_path: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactOpenerCapability {
+    OpenWorkspaceFile,
+    RevealFile,
+    OpenDirectory,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectOpenerInfo {
     id: ProjectOpenerId,
     label: &'static str,
     kind: ProjectOpenerKind,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactOpenerInfo {
+    id: ProjectOpenerId,
+    label: &'static str,
+    kind: ProjectOpenerKind,
+    capabilities: Vec<ArtifactOpenerCapability>,
 }
 
 #[tauri::command]
@@ -98,6 +123,89 @@ pub fn open_project_in_tool(project_path: String, tool: ProjectOpenerId) -> Resu
     }
 }
 
+/// Lists only tools whose capability contract is safe for opening an artifact.
+#[tauri::command]
+pub fn list_artifact_openers() -> Vec<ArtifactOpenerInfo> {
+    artifact_openers_with_availability(
+        is_vscode_available(),
+        is_cursor_available(),
+        is_terminal_available(),
+        is_iterm2_available(),
+    )
+}
+
+fn artifact_openers_with_availability(
+    vscode_available: bool,
+    cursor_available: bool,
+    terminal_available: bool,
+    iterm2_available: bool,
+) -> Vec<ArtifactOpenerInfo> {
+    let mut openers = Vec::new();
+
+    if vscode_available {
+        openers.push(ArtifactOpenerInfo {
+            id: ProjectOpenerId::Vscode,
+            label: "VS Code",
+            kind: ProjectOpenerKind::Editor,
+            capabilities: vec![ArtifactOpenerCapability::OpenWorkspaceFile],
+        });
+    }
+
+    if cursor_available {
+        openers.push(ArtifactOpenerInfo {
+            id: ProjectOpenerId::Cursor,
+            label: "Cursor",
+            kind: ProjectOpenerKind::Editor,
+            capabilities: vec![ArtifactOpenerCapability::OpenWorkspaceFile],
+        });
+    }
+
+    openers.push(ArtifactOpenerInfo {
+        id: ProjectOpenerId::FileManager,
+        label: file_manager_label(),
+        kind: ProjectOpenerKind::FileManager,
+        capabilities: vec![ArtifactOpenerCapability::RevealFile],
+    });
+
+    if terminal_available {
+        openers.push(ArtifactOpenerInfo {
+            id: ProjectOpenerId::Terminal,
+            label: terminal_label(),
+            kind: ProjectOpenerKind::Terminal,
+            capabilities: vec![ArtifactOpenerCapability::OpenDirectory],
+        });
+    }
+
+    if iterm2_available {
+        openers.push(ArtifactOpenerInfo {
+            id: ProjectOpenerId::Iterm2,
+            label: "iTerm2",
+            kind: ProjectOpenerKind::Terminal,
+            capabilities: vec![ArtifactOpenerCapability::OpenDirectory],
+        });
+    }
+
+    openers
+}
+
+#[tauri::command]
+pub fn open_artifact_in_tool(
+    target: ArtifactOpenerTarget,
+    tool: ProjectOpenerId,
+) -> Result<(), AppError> {
+    // Re-resolve immediately before spawning: a discovered alias may have gone stale
+    // or changed its canonical target since the Agent Context snapshot was produced.
+    let (owner_root, artifact_path) = resolve_artifact_target(&target)?;
+
+    match tool {
+        ProjectOpenerId::Vscode => open_vscode_workspace_file(&owner_root, &artifact_path),
+        ProjectOpenerId::FileManager => reveal_file(&artifact_path),
+        ProjectOpenerId::Terminal => open_terminal(&owner_root),
+        ProjectOpenerId::Iterm2 => open_iterm2(&owner_root),
+        ProjectOpenerId::Cursor => open_cursor_workspace_file(&owner_root, &artifact_path),
+    }
+}
+
 fn resolve_project_dir(project_path: &str) -> Result<PathBuf, AppError> {
     let path = PathBuf::from(project_path);
     let canonical = path
@@ -109,6 +217,51 @@ fn resolve_project_dir(project_path: &str) -> Result<PathBuf, AppError> {
     }
 
     Ok(PathBuf::from(system_path::user_facing_path(&canonical)))
+}
+
+fn resolve_artifact_target(target: &ArtifactOpenerTarget) -> Result<(PathBuf, PathBuf), AppError> {
+    let owner_root = canonicalize_accessible_path(&target.owner_root)?;
+    if !owner_root.is_dir() {
+        return Err(AppError::PathNotAccessible(target.owner_root.clone()));
+    }
+
+    let artifact_path = canonicalize_accessible_path(&target.canonical_artifact_path)?;
+    if !artifact_path.is_file() {
+        return Err(AppError::PathNotAccessible(
+            target.canonical_artifact_path.clone(),
+        ));
+    }
+
+    if !artifact_path.starts_with(&owner_root) {
+        return Err(AppError::PathNotAccessible(format!(
+            "artifact is outside its owner root: {}",
+            target.canonical_artifact_path
+        )));
+    }
+
+    Ok((owner_root, artifact_path))
+}
+
+fn canonicalize_accessible_path(path: &str) -> Result<PathBuf, AppError> {
+    PathBuf::from(path)
+        .canonicalize()
+        .map_err(|err| AppError::PathNotAccessible(format!("{path}: {err}")))
+}
+
+fn vscode_workspace_file_args(owner_root: &Path, artifact_path: &Path) -> Vec<PathBuf> {
+    workspace_file_args(owner_root, artifact_path)
+}
+
+fn cursor_workspace_file_args(owner_root: &Path, artifact_path: &Path) -> Vec<PathBuf> {
+    workspace_file_args(owner_root, artifact_path)
+}
+
+fn workspace_file_args(owner_root: &Path, artifact_path: &Path) -> Vec<PathBuf> {
+    vec![
+        PathBuf::from("--new-window"),
+        owner_root.to_path_buf(),
+        artifact_path.to_path_buf(),
+    ]
 }
 
 fn spawn(mut command: Command, label: &str) -> Result<(), AppError> {
@@ -389,6 +542,82 @@ fn open_vscode(path: &Path) -> Result<(), AppError> {
     spawn(command, "VS Code")
 }
 
+#[cfg(target_os = "windows")]
+fn open_vscode_workspace_file(owner_root: &Path, artifact_path: &Path) -> Result<(), AppError> {
+    let candidates = windows_vscode_candidates();
+    let candidate = select_existing_windows_candidate(&candidates, |path| path.is_file())
+        .ok_or_else(|| windows_vscode_not_found_error(&candidates))?;
+    let mut command = Command::new(&candidate.path);
+    command.args(vscode_workspace_file_args(owner_root, artifact_path));
+    crate::process::hide_window(&mut command);
+    command.spawn().map(|_| ()).map_err(|err| {
+        AppError::General(format!(
+            "Failed to open VS Code using {}: {err}. Tried: {}. {}",
+            candidate.path.display(),
+            describe_windows_candidates(&candidates),
+            windows_vscode_help(),
+        ))
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn open_vscode_workspace_file(owner_root: &Path, artifact_path: &Path) -> Result<(), AppError> {
+    if command_available("code") {
+        let mut command = Command::new("code");
+        command.args(vscode_workspace_file_args(owner_root, artifact_path));
+        return spawn(command, "VS Code");
+    }
+
+    if macos_app_exists("Visual Studio Code") {
+        let mut command = Command::new("open");
+        command
+            .arg("-na")
+            .arg("Visual Studio Code")
+            .arg("--args")
+            .args(vscode_workspace_file_args(owner_root, artifact_path));
+        return spawn(command, "VS Code");
+    }
+
+    Err(AppError::General("VS Code was not found".into()))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn open_vscode_workspace_file(owner_root: &Path, artifact_path: &Path) -> Result<(), AppError> {
+    let mut command = Command::new("code");
+    command.args(vscode_workspace_file_args(owner_root, artifact_path));
+    spawn(command, "VS Code")
+}
+
+#[cfg(target_os = "macos")]
+fn open_cursor_workspace_file(owner_root: &Path, artifact_path: &Path) -> Result<(), AppError> {
+    if command_available("cursor") {
+        let mut command = Command::new("cursor");
+        command.args(cursor_workspace_file_args(owner_root, artifact_path));
+        return spawn(command, "Cursor");
+    }
+
+    if macos_app_exists("Cursor") {
+        let mut command = Command::new("open");
+        command
+            .arg("-na")
+            .arg("Cursor")
+            .arg("--args")
+            .args(cursor_workspace_file_args(owner_root, artifact_path));
+        return spawn(command, "Cursor");
+    }
+
+    Err(AppError::General("Cursor was not found".into()))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn open_cursor_workspace_file(owner_root: &Path, artifact_path: &Path) -> Result<(), AppError> {
+    let mut command = Command::new("cursor");
+    command.args(cursor_workspace_file_args(owner_root, artifact_path));
+    #[cfg(target_os = "windows")]
+    crate::process::hide_window(&mut command);
+    spawn(command, "Cursor")
+}
+
 fn open_cursor(path: &Path) -> Result<(), AppError> {
     #[cfg(target_os = "macos")]
     {
@@ -421,6 +650,37 @@ fn open_file_manager(path: &Path) -> Result<(), AppError> {
     {
         let mut command = Command::new("xdg-open");
         command.arg(path);
+        return spawn(command, "Files");
+    }
+
+    #[allow(unreachable_code)]
+    Err(AppError::General("No supported file manager found".into()))
+}
+
+fn reveal_file(path: &Path) -> Result<(), AppError> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = Command::new("open");
+        command.arg("-R").arg(path);
+        return spawn(command, "Finder");
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut command = Command::new("explorer");
+        command.arg(format!("/select,{}", path.display()));
+        return spawn(command, "Explorer");
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // Freedesktop has no portable select-file CLI; opening the canonical parent
+        // is the safe fallback on platforms where file selection is unsupported.
+        let parent = path.parent().ok_or_else(|| {
+            AppError::PathNotAccessible(format!("file has no parent: {}", path.display()))
+        })?;
+        let mut command = Command::new("xdg-open");
+        command.arg(parent);
         return spawn(command, "Files");
     }
 
@@ -515,6 +775,143 @@ fn open_iterm2(path: &Path) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use std::ffi::OsString;
+    use tempfile::tempdir;
+
+    #[test]
+    fn artifact_target_requires_canonical_file_inside_canonical_owner_root() {
+        let temp = tempdir().expect("temporary directory");
+        let owner = temp.path().join("owner");
+        let nested = owner.join("nested");
+        std::fs::create_dir_all(&nested).expect("owner directory");
+        let artifact = nested.join("AGENTS.md");
+        std::fs::write(&artifact, "instructions").expect("artifact");
+
+        let (resolved_owner, resolved_artifact) = resolve_artifact_target(&ArtifactOpenerTarget {
+            owner_root: owner.to_string_lossy().into_owned(),
+            canonical_artifact_path: artifact.to_string_lossy().into_owned(),
+        })
+        .expect("valid artifact target");
+
+        assert_eq!(
+            resolved_owner,
+            owner.canonicalize().expect("canonical owner")
+        );
+        assert_eq!(
+            resolved_artifact,
+            artifact.canonicalize().expect("canonical artifact")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn artifact_target_revalidates_symlink_alias_against_canonical_owner() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir().expect("temporary directory");
+        let owner = temp.path().join("owner-source");
+        std::fs::create_dir_all(&owner).expect("owner directory");
+        let artifact = owner.join("AGENTS.md");
+        std::fs::write(&artifact, "instructions").expect("artifact");
+
+        let owner_alias = temp.path().join("owner-alias");
+        symlink(&owner, &owner_alias).expect("owner alias");
+        let artifact_alias = owner_alias.join("AGENTS.md");
+
+        let (resolved_owner, resolved_artifact) = resolve_artifact_target(&ArtifactOpenerTarget {
+            owner_root: owner_alias.to_string_lossy().into_owned(),
+            canonical_artifact_path: artifact_alias.to_string_lossy().into_owned(),
+        })
+        .expect("aliased target remains inside its canonical owner");
+
+        assert_eq!(
+            resolved_owner,
+            owner.canonicalize().expect("canonical owner")
+        );
+        assert_eq!(
+            resolved_artifact,
+            artifact.canonicalize().expect("canonical artifact")
+        );
+        assert!(resolved_artifact.starts_with(&resolved_owner));
+    }
+
+    #[test]
+    fn artifact_target_rejects_file_outside_owner_root() {
+        let temp = tempdir().expect("temporary directory");
+        let owner = temp.path().join("owner");
+        std::fs::create_dir_all(&owner).expect("owner directory");
+        let outside = temp.path().join("outside.md");
+        std::fs::write(&outside, "outside").expect("outside artifact");
+
+        let error = resolve_artifact_target(&ArtifactOpenerTarget {
+            owner_root: owner.to_string_lossy().into_owned(),
+            canonical_artifact_path: outside.to_string_lossy().into_owned(),
+        })
+        .expect_err("outside artifact must be rejected");
+
+        assert!(error.to_string().contains("outside its owner root"));
+    }
+
+    #[test]
+    fn artifact_target_rejects_stale_path_before_spawn() {
+        let temp = tempdir().expect("temporary directory");
+        let owner = temp.path().join("owner");
+        std::fs::create_dir_all(&owner).expect("owner directory");
+        let stale = owner.join("removed.md");
+
+        let error = resolve_artifact_target(&ArtifactOpenerTarget {
+            owner_root: owner.to_string_lossy().into_owned(),
+            canonical_artifact_path: stale.to_string_lossy().into_owned(),
+        })
+        .expect_err("stale path must be rejected");
+
+        assert!(matches!(error, AppError::PathNotAccessible(_)));
+    }
+
+    #[test]
+    fn vscode_workspace_file_args_use_new_window_owner_then_artifact() {
+        let owner = Path::new("/workspace/owner");
+        let artifact = Path::new("/workspace/owner/.agents/skills/SKILL.md");
+
+        assert_eq!(
+            vscode_workspace_file_args(owner, artifact),
+            vec![
+                PathBuf::from("--new-window"),
+                owner.to_path_buf(),
+                artifact.to_path_buf(),
+            ]
+        );
+    }
+
+    #[test]
+    fn cursor_workspace_file_args_use_new_window_owner_then_artifact() {
+        let owner = Path::new("/workspace/owner");
+        let artifact = Path::new("/workspace/owner/.agents/skills/SKILL.md");
+
+        assert_eq!(
+            cursor_workspace_file_args(owner, artifact),
+            vscode_workspace_file_args(owner, artifact)
+        );
+    }
+
+    #[test]
+    fn artifact_openers_include_cursor_only_when_available() {
+        let unavailable = artifact_openers_with_availability(false, false, false, false);
+        assert!(
+            unavailable
+                .iter()
+                .all(|opener| opener.id != ProjectOpenerId::Cursor)
+        );
+
+        let available = artifact_openers_with_availability(false, true, false, false);
+        let cursor = available
+            .iter()
+            .find(|opener| opener.id == ProjectOpenerId::Cursor)
+            .expect("Cursor should be listed when available");
+        assert_eq!(
+            cursor.capabilities,
+            vec![ArtifactOpenerCapability::OpenWorkspaceFile]
+        );
+    }
 
     fn user_code_exe(local_app_data: &str) -> PathBuf {
         PathBuf::from(local_app_data)

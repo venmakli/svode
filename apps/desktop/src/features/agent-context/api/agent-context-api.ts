@@ -6,6 +6,14 @@ import {
   type AgentContextReferenceDto,
   listenAgentContextChanged,
 } from "@/platform/agent-context/agent-context-api";
+import {
+  listArtifactOpeners,
+  openArtifactInTool,
+  type ArtifactOpener,
+  type ArtifactOpenTarget,
+} from "@/platform/project-openers";
+
+export type { ArtifactOpener, ArtifactOpenTarget };
 
 import type {
   AgentContextInstructionsSnapshot,
@@ -35,6 +43,17 @@ export function listenAgentContextInvalidation(
   handler: (payload: { spacePath: string; paths: readonly string[] }) => void,
 ) {
   return listenAgentContextChanged((event) => handler(event.payload));
+}
+
+export function listAgentContextArtifactOpeners(): Promise<ArtifactOpener[]> {
+  return listArtifactOpeners();
+}
+
+export function openAgentContextArtifact(
+  target: ArtifactOpenTarget,
+  tool: ArtifactOpener["id"],
+): Promise<void> {
+  return openArtifactInTool(target, tool);
 }
 
 export function toAgentContextInstructionsSnapshot(

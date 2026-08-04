@@ -35,6 +35,7 @@ import type {
   AgentContextSkillRow,
   SupportedAdapterId,
 } from "../model/types";
+import type { ArtifactOpener } from "../api/agent-context-api";
 import {
   instructionAdapterLabel,
   instructionScopeLabel,
@@ -42,11 +43,19 @@ import {
 import { AgentContextSkillDetail, skillWarnings } from "./skill-detail";
 
 export function createAgentContextSkillsPresentation({
+  artifactOpeners = [],
+  onOpenArtifact,
   onDetailRequested,
   onRefresh,
   refreshing,
   state,
 }: {
+  artifactOpeners?: readonly ArtifactOpener[];
+  onOpenArtifact?(input: {
+    ownerRoot: string;
+    canonicalArtifactPath: string;
+    tool: ArtifactOpener["id"];
+  }): void | Promise<void>;
   onDetailRequested?(rowId: string): void;
   onRefresh(): void | Promise<void>;
   refreshing: boolean;
@@ -115,6 +124,17 @@ export function createAgentContextSkillsPresentation({
         defaultCompare: compareSkillsByDefault,
         getSearchText: (row) => `${row.name} ${row.description}`,
       },
+      rowActions: artifactOpeners.map((opener) => ({
+        getState: () => ({ status: "idle" as const }),
+        id: `open-in-${opener.id}`,
+        label: m.agent_context_open_in({ name: opener.label }),
+        run: (row) =>
+          onOpenArtifact?.({
+            canonicalArtifactPath: row.manifestPath,
+            ownerRoot: skillOwnerRoot(row),
+            tool: opener.id,
+          }),
+      })),
       refresh: {
         getState: () =>
           refreshing ? { status: "pending" } : { status: "idle" },
@@ -125,6 +145,10 @@ export function createAgentContextSkillsPresentation({
     },
     state,
   });
+}
+
+function skillOwnerRoot(row: AgentContextSkillRow): string {
+  return row.aliases[0]?.ownerPath ?? row.canonicalPath;
 }
 
 export function AgentContextSkillsEmpty() {

@@ -21,6 +21,7 @@ import {
 import * as m from "@/paraglide/messages.js";
 
 import type { AgentContextInstructionRow } from "../model/types";
+import type { ArtifactOpener } from "../api/agent-context-api";
 import { AgentContextInstructionDetail } from "./instruction-detail";
 import {
   availabilityLabel,
@@ -30,11 +31,19 @@ import {
 } from "./instruction-labels";
 
 export function createAgentContextInstructionsPresentation({
+  artifactOpeners = [],
+  onOpenArtifact,
   onDetailRequested,
   onRefresh,
   refreshing,
   state,
 }: {
+  artifactOpeners?: readonly ArtifactOpener[];
+  onOpenArtifact?(input: {
+    ownerRoot: string;
+    canonicalArtifactPath: string;
+    tool: ArtifactOpener["id"];
+  }): void | Promise<void>;
   onDetailRequested?(rowId: string): void;
   onRefresh(): void | Promise<void>;
   refreshing: boolean;
@@ -46,13 +55,19 @@ export function createAgentContextInstructionsPresentation({
         "adapter",
         m.agent_context_adapter(),
         (row) => instructionAdapterLabel(row.adapterId),
-        (row) => <Badge variant="outline">{instructionAdapterLabel(row.adapterId)}</Badge>,
+        (row) => (
+          <Badge variant="outline">
+            {instructionAdapterLabel(row.adapterId)}
+          </Badge>
+        ),
       ),
       customBadgeField(
         "scope",
         m.agent_context_scope(),
         (row) => instructionScopeLabel(row.scope),
-        (row) => <Badge variant="outline">{instructionScopeLabel(row.scope)}</Badge>,
+        (row) => (
+          <Badge variant="outline">{instructionScopeLabel(row.scope)}</Badge>
+        ),
       ),
       customBadgeField(
         "availability",
@@ -96,6 +111,17 @@ export function createAgentContextInstructionsPresentation({
         visibleFields: ["adapter", "scope", "availability"],
       },
       query: {},
+      rowActions: artifactOpeners.map((opener) => ({
+        getState: () => ({ status: "idle" as const }),
+        id: `open-in-${opener.id}`,
+        label: m.agent_context_open_in({ name: opener.label }),
+        run: (row) =>
+          onOpenArtifact?.({
+            canonicalArtifactPath: row.canonicalPath,
+            ownerRoot: row.ownerPath,
+            tool: opener.id,
+          }),
+      })),
       refresh: {
         getState: () =>
           refreshing ? { status: "pending" } : { status: "idle" },
@@ -124,11 +150,7 @@ export function AgentContextInstructionsEmpty() {
   );
 }
 
-function InstructionCardOverlays({
-  row,
-}: {
-  row: AgentContextInstructionRow;
-}) {
+function InstructionCardOverlays({ row }: { row: AgentContextInstructionRow }) {
   const warning =
     row.availability === "shadowed" ||
     row.availability === "compatibility_unknown" ||
