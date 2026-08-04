@@ -95,6 +95,7 @@ export interface AgentContextSkillRow {
   license: string | null;
   manifestPath: string;
   name: string;
+  ownerPath: string;
   scopes: readonly AgentContextScope[];
   validation: "valid" | "warning";
   warnings: readonly string[];

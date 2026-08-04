@@ -151,6 +151,7 @@ pub struct SkillRow {
     pub description: String,
     pub path: String,
     pub canonical_path: String,
+    pub owner: InstructionOwner,
     pub license: Option<String>,
     pub compatibility: Option<String>,
     pub metadata: Option<serde_json::Value>,

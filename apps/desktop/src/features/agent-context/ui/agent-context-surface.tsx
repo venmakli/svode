@@ -12,12 +12,9 @@ import {
 import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
+import { openAgentContextArtifact } from "../api/agent-context-api";
+import { useAgentContextArtifactOpeners } from "../hooks/use-agent-context-artifact-openers";
 import { useAgentContextInstructions } from "../hooks/use-agent-context-instructions";
-import {
-  listAgentContextArtifactOpeners,
-  openAgentContextArtifact,
-  type ArtifactOpener,
-} from "../api/agent-context-api";
 import type { AgentContextCatalogState } from "../model/catalog-state";
 import {
   AgentContextInstructionsEmpty,
@@ -43,9 +40,7 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
   const [openedRow, setOpenedRow] = useState<OpenedAgentContextRow | null>(
     null,
   );
-  const [artifactOpeners, setArtifactOpeners] = useState<
-    readonly ArtifactOpener[]
-  >([]);
+  const artifactOpeners = useAgentContextArtifactOpeners();
   const instanceKey = `agent-context:${owner.ownerKey}`;
   const refreshing = state.phase === "ready" && state.refreshing;
   const instructionsState = toPresentationState(
@@ -98,21 +93,6 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
     [instanceKey, instructionsPresentation, skillsPresentation],
   );
   const collectionState = useSystemCollectionState(instance);
-
-  useEffect(() => {
-    let cancelled = false;
-    void listAgentContextArtifactOpeners().then(
-      (openers) => {
-        if (!cancelled) setArtifactOpeners(openers);
-      },
-      () => {
-        if (!cancelled) setArtifactOpeners([]);
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (!openedRow || state.phase !== "ready" || !detailController) return;

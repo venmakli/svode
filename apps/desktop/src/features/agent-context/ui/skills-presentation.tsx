@@ -81,7 +81,7 @@ export function createAgentContextSkillsPresentation({
       ),
     ];
 
-  return defineSystemCollectionPresentation({
+  return defineSystemCollectionPresentation<AgentContextSkillRow>({
     descriptor: {
       createDetailRequest: (row) => {
         onDetailRequested?.(row.id);
@@ -148,7 +148,7 @@ export function createAgentContextSkillsPresentation({
 }
 
 function skillOwnerRoot(row: AgentContextSkillRow): string {
-  return row.aliases[0]?.ownerPath ?? row.canonicalPath;
+  return row.ownerPath;
 }
 
 export function AgentContextSkillsEmpty() {

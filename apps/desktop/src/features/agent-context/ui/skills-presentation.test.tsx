@@ -39,6 +39,7 @@ const reviewSkill: AgentContextSkillRow = {
   license: null,
   manifestPath: "/workspace/.agents/skills/review/SKILL.md",
   name: "review",
+  ownerPath: "/workspace",
   scopes: ["project"],
   validation: "valid",
   warnings: [],
@@ -228,7 +229,9 @@ test("skill external action opens its canonical manifest in the owning root", as
         label: "Finder",
       },
     ],
-    onOpenArtifact: (input) => opened.push(input),
+    onOpenArtifact: (input) => {
+      opened.push(input);
+    },
     onRefresh: () => undefined,
     refreshing: false,
     state: { phase: "ready", rows: [reviewSkill] },
@@ -247,6 +250,56 @@ test("skill external action opens its canonical manifest in the owning root", as
     {
       canonicalArtifactPath: "/workspace/.agents/skills/review/SKILL.md",
       ownerRoot: "/workspace",
+      tool: "file_manager",
+    },
+  ]);
+});
+
+test("skill external action uses canonical owner instead of discovery alias owner", async () => {
+  const opened: unknown[] = [];
+  const linkedPersonalSkill: AgentContextSkillRow = {
+    ...reviewSkill,
+    aliases: [
+      {
+        ...reviewSkill.aliases[0]!,
+        discoveryPath: "/workspace/.agents/skills/personal-link",
+        linkKind: "symbolic_link",
+        ownerPath: "/workspace",
+      },
+    ],
+    canonicalPath: "/home/user/.agents/skills/personal",
+    id: "skill:/home/user/.agents/skills/personal",
+    manifestPath: "/home/user/.agents/skills/personal/SKILL.md",
+    ownerPath: "/home/user/.agents/skills",
+  };
+  const runtime = createAgentContextSkillsPresentation({
+    artifactOpeners: [
+      {
+        capabilities: ["reveal_file"],
+        id: "file_manager",
+        kind: "file_manager",
+        label: "Finder",
+      },
+    ],
+    onOpenArtifact: (input) => {
+      opened.push(input);
+    },
+    onRefresh: () => undefined,
+    refreshing: false,
+    state: { phase: "ready", rows: [linkedPersonalSkill] },
+  }) as unknown as {
+    instance: {
+      descriptor: {
+        rowActions: Array<{ run(row: AgentContextSkillRow): void }>;
+      };
+    };
+  };
+
+  await runtime.instance.descriptor.rowActions[0]!.run(linkedPersonalSkill);
+  expect(opened).toEqual([
+    {
+      canonicalArtifactPath: "/home/user/.agents/skills/personal/SKILL.md",
+      ownerRoot: "/home/user/.agents/skills",
       tool: "file_manager",
     },
   ]);

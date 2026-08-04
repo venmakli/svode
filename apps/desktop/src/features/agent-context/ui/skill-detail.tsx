@@ -38,6 +38,8 @@ export function AgentContextSkillDetail({
       </p>
 
       <dl className="grid min-w-0 grid-cols-[minmax(7rem,auto)_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
+        <DetailTerm>{m.agent_context_detail_owner()}</DetailTerm>
+        <DetailPath>{row.ownerPath}</DetailPath>
         <DetailTerm>{m.agent_context_detail_canonical_path()}</DetailTerm>
         <DetailPath>{row.manifestPath}</DetailPath>
       </dl>

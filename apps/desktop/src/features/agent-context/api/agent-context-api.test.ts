@@ -144,6 +144,7 @@ const dto: Parameters<typeof toAgentContextInstructionsSnapshot>[0] = {
       license: "MIT",
       metadata: { author: "Svode" },
       name: "review",
+      owner: { kind: "target_space", root: "/workspace" },
       path: "/workspace/shared/review/SKILL.md",
       preview: {
         bytesRead: 24,
@@ -174,6 +175,7 @@ test("transport provenance is normalized without recomputing precedence", () => 
   expect(snapshot.adapters[0]?.capabilities.launch).toBe(false);
   expect(snapshot.adapters[0]?.capabilities.skillsDiscovery).toBe(true);
   expect(snapshot.skills[0]?.clients).toEqual(["codex", "claude-code"]);
+  expect(snapshot.skills[0]?.ownerPath).toBe("/workspace");
   expect(snapshot.skills[0]?.scopes).toEqual(["project"]);
   expect(snapshot.skills[0]?.aliases[1]?.linkKind).toBe("symbolic_link");
   expect(snapshot.skills[0]?.diagnostics).toEqual([

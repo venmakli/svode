@@ -134,6 +134,10 @@ export interface AgentContextSkillRowDto {
   description: string;
   path: string;
   canonicalPath: string;
+  owner: {
+    kind: "target_space" | "client_configuration";
+    root: string;
+  };
   license: string | null;
   compatibility: string | null;
   metadata: unknown | null;

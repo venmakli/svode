@@ -188,6 +188,7 @@ function normalizeSkillRow(
     license: row.license,
     manifestPath: row.path,
     name: row.name,
+    ownerPath: row.owner.root,
     scopes: orderedUnique(
       row.aliases.map((alias) => alias.scope),
       ["project", "personal"],

@@ -81,7 +81,7 @@ export function createAgentContextInstructionsPresentation({
       ),
     ];
 
-  return defineSystemCollectionPresentation({
+  return defineSystemCollectionPresentation<AgentContextInstructionRow>({
     descriptor: {
       createDetailRequest: (row) => {
         onDetailRequested?.(row.id);

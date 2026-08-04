@@ -119,7 +119,9 @@ test("instruction external action keeps the canonical artifact and owner togethe
         label: "VS Code",
       },
     ],
-    onOpenArtifact: (input) => opened.push(input),
+    onOpenArtifact: (input) => {
+      opened.push(input);
+    },
     onRefresh: () => undefined,
     refreshing: false,
     state: { phase: "ready", rows: [available] },

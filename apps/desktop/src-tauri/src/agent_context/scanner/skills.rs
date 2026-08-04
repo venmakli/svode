@@ -43,6 +43,12 @@ struct RootSpec<'a> {
     owner: InstructionOwner,
 }
 
+#[derive(Debug)]
+struct CanonicalOwnerBoundary {
+    root: PathBuf,
+    owner: InstructionOwner,
+}
+
 pub(super) fn discover(
     repository_root: &Path,
     directory_chain: &[PathBuf],
@@ -51,16 +57,30 @@ pub(super) fn discover(
     let mut result = DiscoveryResult::default();
     let roots = roots(directory_chain, adapters);
     let mut allowed_boundaries = vec![repository_root.to_path_buf()];
+    let mut personal_owner_boundaries = Vec::new();
     for root in roots
         .iter()
         .filter(|root| root.scope == SkillScope::Personal)
     {
         if let Ok(canonical) = root.root.canonicalize() {
-            allowed_boundaries.push(canonical);
+            allowed_boundaries.push(canonical.clone());
+            personal_owner_boundaries.push(CanonicalOwnerBoundary {
+                root: canonical,
+                owner: root.owner.clone(),
+            });
         }
     }
     allowed_boundaries.sort();
     allowed_boundaries.dedup();
+    personal_owner_boundaries.sort_by(|left, right| {
+        right
+            .root
+            .components()
+            .count()
+            .cmp(&left.root.components().count())
+            .then_with(|| left.root.cmp(&right.root))
+    });
+    personal_owner_boundaries.dedup_by(|left, right| left.root == right.root);
 
     let mut parsed_cache: BTreeMap<PathBuf, Result<ParsedSkill, SkillFailure>> = BTreeMap::new();
     let mut rows: BTreeMap<PathBuf, SkillRow> = BTreeMap::new();
@@ -69,6 +89,9 @@ pub(super) fn discover(
         scan_root(
             &root,
             &allowed_boundaries,
+            repository_root,
+            directory_chain,
+            &personal_owner_boundaries,
             &mut parsed_cache,
             &mut rows,
             &mut result,
@@ -169,6 +192,9 @@ fn observe_root(root: &RootSpec<'_>, result: &mut DiscoveryResult) {
 fn scan_root(
     root: &RootSpec<'_>,
     allowed_boundaries: &[PathBuf],
+    repository_root: &Path,
+    directory_chain: &[PathBuf],
+    personal_owner_boundaries: &[CanonicalOwnerBoundary],
     parsed_cache: &mut BTreeMap<PathBuf, Result<ParsedSkill, SkillFailure>>,
     rows: &mut BTreeMap<PathBuf, SkillRow>,
     result: &mut DiscoveryResult,
@@ -281,6 +307,9 @@ fn scan_root(
                     .zip(root.root.file_name())
                     .is_some_and(|(parent, name)| canonical_root != parent.join(name)),
             allowed_boundaries,
+            repository_root,
+            directory_chain,
+            personal_owner_boundaries,
             parsed_cache,
             rows,
             result,
@@ -331,6 +360,9 @@ fn scan_entry(
     canonical_root: &Path,
     root_is_alias: bool,
     allowed_boundaries: &[PathBuf],
+    repository_root: &Path,
+    directory_chain: &[PathBuf],
+    personal_owner_boundaries: &[CanonicalOwnerBoundary],
     parsed_cache: &mut BTreeMap<PathBuf, Result<ParsedSkill, SkillFailure>>,
     rows: &mut BTreeMap<PathBuf, SkillRow>,
     result: &mut DiscoveryResult,
@@ -442,6 +474,24 @@ fn scan_entry(
         }
     };
     let (availability, reason) = native_availability(root.adapter, link_kind);
+    let Some(owner) = canonical_skill_owner(
+        &canonical_entry,
+        repository_root,
+        directory_chain,
+        personal_owner_boundaries,
+    ) else {
+        push_failure(
+            result,
+            root.adapter.id,
+            entry,
+            "skill_owner_unresolved",
+            format!(
+                "Could not resolve the canonical owner for skill {}",
+                canonical_entry.display()
+            ),
+        );
+        return;
+    };
     let alias = SkillDiscoveryAlias {
         adapter_id: root.adapter.id,
         scope: root.scope,
@@ -470,6 +520,7 @@ fn scan_entry(
             description: parsed.description,
             path: path_string(&parsed.manifest_path),
             canonical_path: path_string(&canonical_entry),
+            owner,
             license: parsed.license,
             compatibility: parsed.compatibility,
             metadata: parsed.metadata,
@@ -479,6 +530,30 @@ fn scan_entry(
             aliases: vec![alias],
         },
     );
+}
+
+fn canonical_skill_owner(
+    canonical_entry: &Path,
+    repository_root: &Path,
+    directory_chain: &[PathBuf],
+    personal_owner_boundaries: &[CanonicalOwnerBoundary],
+) -> Option<InstructionOwner> {
+    if canonical_entry.starts_with(repository_root) {
+        let owner_root = directory_chain
+            .iter()
+            .rev()
+            .find(|candidate| canonical_entry.starts_with(candidate))
+            .map_or(repository_root, PathBuf::as_path);
+        return Some(InstructionOwner {
+            kind: InstructionOwnerKind::TargetSpace,
+            root: path_string(owner_root),
+        });
+    }
+
+    personal_owner_boundaries
+        .iter()
+        .find(|boundary| canonical_entry.starts_with(&boundary.root))
+        .map(|boundary| boundary.owner.clone())
 }
 
 fn parse_skill(canonical_entry: &Path) -> Result<ParsedSkill, SkillFailure> {
@@ -1016,6 +1091,72 @@ mod tests {
         assert!(personal.aliases.iter().any(|alias| {
             alias.discovery_kind == SkillDiscoveryKind::CodexCompatibilityPersonal
         }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_alias_keeps_the_canonical_personal_owner() {
+        use std::os::unix::fs::symlink;
+
+        let (project, home, environment) = setup();
+        let personal_root = home.path().join(".agents/skills");
+        let personal_source = write_skill(
+            &personal_root.join(".sources"),
+            "personal-only",
+            "personal-only",
+            Some("Personal only"),
+        );
+        let project_root = project.path().join(".agents/skills");
+        fs::create_dir_all(&project_root).unwrap();
+        symlink(&personal_source, project_root.join("personal-link")).unwrap();
+
+        let snapshot = scan(project.path(), project.path(), &environment).unwrap();
+        let row = snapshot
+            .skills
+            .iter()
+            .find(|row| row.name == "personal-only")
+            .unwrap();
+
+        assert_eq!(row.aliases.len(), 1);
+        assert_eq!(row.aliases[0].scope, SkillScope::Project);
+        assert_eq!(row.owner.kind, InstructionOwnerKind::ClientConfiguration);
+        assert_eq!(row.owner.root, path_string(&personal_root));
+        assert!(
+            Path::new(&row.path).starts_with(Path::new(&row.owner.root).canonicalize().unwrap())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn personal_alias_keeps_the_canonical_project_owner() {
+        use std::os::unix::fs::symlink;
+
+        let (project, home, environment) = setup();
+        let project_source = write_skill(
+            &project.path().join("sources"),
+            "project-only",
+            "project-only",
+            Some("Project only"),
+        );
+        let personal_root = home.path().join(".agents/skills");
+        fs::create_dir_all(&personal_root).unwrap();
+        symlink(&project_source, personal_root.join("project-link")).unwrap();
+
+        let snapshot = scan(project.path(), project.path(), &environment).unwrap();
+        let row = snapshot
+            .skills
+            .iter()
+            .find(|row| row.name == "project-only")
+            .unwrap();
+
+        assert_eq!(row.aliases.len(), 1);
+        assert_eq!(row.aliases[0].scope, SkillScope::Personal);
+        assert_eq!(row.owner.kind, InstructionOwnerKind::TargetSpace);
+        assert_eq!(
+            row.owner.root,
+            path_string(&project.path().canonicalize().unwrap())
+        );
+        assert!(Path::new(&row.path).starts_with(Path::new(&row.owner.root)));
     }
 
     #[cfg(unix)]
