@@ -151,4 +151,39 @@ mod tests {
                 .contains("pinnedSessionIds")
         );
     }
+
+    #[test]
+    fn local_config_writes_preserve_agent_actor_overlay() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let dir = temp.path().join(".svode");
+        std::fs::create_dir_all(&dir).expect("create local config dir");
+        std::fs::write(
+            dir.join("local.json"),
+            r#"{
+                "agentActors": {
+                    "01arz3ndektsv4rrffq69g5fav": { "approvalMode": "full" }
+                }
+            }"#,
+        )
+        .expect("write local config");
+
+        write_git_user_policy(
+            temp.path(),
+            &GitUserPolicy {
+                auto_sync: false,
+                auto_commit_structural: false,
+                auto_commit_system: true,
+            },
+        )
+        .expect("update local policy");
+
+        let value: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join("local.json")).expect("read local config"),
+        )
+        .expect("parse local config");
+        assert_eq!(
+            value["agentActors"]["01arz3ndektsv4rrffq69g5fav"]["approvalMode"],
+            "full"
+        );
+    }
 }

@@ -1,5 +1,6 @@
 mod actors;
 mod agent;
+mod agent_actors;
 mod agent_context;
 mod agent_sessions;
 mod app_windows;
@@ -96,6 +97,8 @@ pub fn run() {
             actors::commands::actors_apply_mutation,
             actors::commands::actors_get_mailmap_save_review,
             actors::commands::actors_save_mailmap,
+            agent_actors::commands::agent_actors_get,
+            agent_actors::commands::agent_actors_mutate,
             git::access::repository_access_get,
             git::access::repository_access_verify,
             commands::greet::greet,

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::storage::lfs::LfsState;
@@ -209,6 +211,8 @@ pub struct LocalConfig {
     pub git: Option<GitUserPolicy>,
     #[serde(default)]
     pub expanded_paths: Vec<String>,
+    #[serde(flatten)]
+    pub extensions: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
