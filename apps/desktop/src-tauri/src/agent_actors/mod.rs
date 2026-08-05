@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::agent_adapters::AgentAdapterKind;
+
 const CATALOG_RELATIVE_PATH: &str = ".svode/agent-actors.json";
 const LOCAL_RELATIVE_PATH: &str = ".svode/local.json";
 const MAX_CATALOG_BYTES: u64 = 1024 * 1024;
@@ -50,13 +52,6 @@ pub struct AgentAdapter {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "kebab-case")]
-pub enum AgentAdapterKind {
-    Codex,
-    ClaudeCode,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

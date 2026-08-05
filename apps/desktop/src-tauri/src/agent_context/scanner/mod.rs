@@ -6,9 +6,7 @@ mod skills;
 use std::path::{Path, PathBuf};
 
 use crate::AppError;
-use crate::supported_adapters::{
-    RegistryEnvironment, SupportedAdapterId, SupportedAdapterRegistry,
-};
+use crate::agent_adapters::{AgentAdapterKind, AgentAdapterRegistry, RegistryEnvironment};
 
 use super::model::{
     AgentContextDiagnostic, AgentContextSnapshotContent, DiagnosticSeverity,
@@ -50,7 +48,7 @@ pub fn scan(
     let target_root = canonical_directory(space_path, "target space")?;
     let repository_root = nearest_repository_root(&target_root, &project_root);
     let directory_chain = root_to_target_chain(&repository_root, &target_root);
-    let adapters = SupportedAdapterRegistry.snapshots(environment);
+    let adapters = AgentAdapterRegistry.snapshots(environment);
     let mut result = DiscoveryResult::default();
 
     for adapter in &adapters {
@@ -92,8 +90,8 @@ pub fn scan(
     });
     result.diagnostics.sort_by(|left, right| {
         left.adapter_id
-            .map(SupportedAdapterId::as_str)
-            .cmp(&right.adapter_id.map(SupportedAdapterId::as_str))
+            .map(AgentAdapterKind::as_str)
+            .cmp(&right.adapter_id.map(AgentAdapterKind::as_str))
             .then_with(|| left.path.cmp(&right.path))
             .then_with(|| left.code.cmp(&right.code))
     });
@@ -206,7 +204,7 @@ fn discover_recognized(target_root: &Path) -> DiscoveryResult {
 fn row_sort_key(row: &InstructionRow) -> (&str, u8, usize, usize) {
     let adapter = row
         .adapter_id
-        .map_or("recognized", SupportedAdapterId::as_str);
+        .map_or("recognized", AgentAdapterKind::as_str);
     let source = match row.source_kind {
         InstructionSourceKind::Personal => 0,
         InstructionSourceKind::Project => 1,
@@ -266,7 +264,7 @@ mod tests {
                 .instructions
                 .iter()
                 .filter(|row| {
-                    row.adapter_id == Some(SupportedAdapterId::Codex)
+                    row.adapter_id == Some(AgentAdapterKind::Codex)
                         && row.source_kind == InstructionSourceKind::Project
                 })
                 .map(|row| row.path.clone())
@@ -336,12 +334,12 @@ mod tests {
         let codex = snapshot
             .instructions
             .iter()
-            .find(|row| row.adapter_id == Some(SupportedAdapterId::Codex))
+            .find(|row| row.adapter_id == Some(AgentAdapterKind::Codex))
             .unwrap();
         let claude = snapshot
             .instructions
             .iter()
-            .find(|row| row.adapter_id == Some(SupportedAdapterId::ClaudeCode))
+            .find(|row| row.adapter_id == Some(AgentAdapterKind::ClaudeCode))
             .unwrap();
 
         assert_eq!(

@@ -11,15 +11,14 @@ pub mod runtime;
 pub const CODEX_ADAPTER_ID: &str = "codex";
 pub const CLAUDE_CODE_ADAPTER_ID: &str = "claude-code";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SupportedAdapterId {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentAdapterKind {
     Codex,
-    #[serde(rename = "claude-code")]
     ClaudeCode,
 }
 
-impl SupportedAdapterId {
+impl AgentAdapterKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Codex => CODEX_ADAPTER_ID,
@@ -85,7 +84,7 @@ pub enum SkillRootKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SupportedSkillRoot {
+pub struct AgentSkillRoot {
     pub kind: SkillRootKind,
     pub path: String,
 }
@@ -96,7 +95,7 @@ pub struct SkillDiscoveryCapability {
     pub availability: CapabilityAvailability,
     pub policy: SkillDiscoveryPolicy,
     pub project_relative_root: String,
-    pub personal_roots: Vec<SupportedSkillRoot>,
+    pub personal_roots: Vec<AgentSkillRoot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,8 +142,8 @@ pub struct NativeDefaultTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SupportedAdapterSnapshot {
-    pub id: SupportedAdapterId,
+pub struct AgentAdapterSnapshot {
+    pub id: AgentAdapterKind,
     pub display_name: String,
     pub executable: ExecutableEvidence,
     pub personal_root: String,
@@ -157,7 +156,7 @@ pub struct RegistryEnvironment {
     pub codex_home: PathBuf,
     pub codex_standard_skills_dir: PathBuf,
     pub claude_config_dir: PathBuf,
-    executables: BTreeMap<SupportedAdapterId, ExecutableEvidence>,
+    executables: BTreeMap<AgentAdapterKind, ExecutableEvidence>,
 }
 
 impl RegistryEnvironment {
@@ -165,11 +164,11 @@ impl RegistryEnvironment {
     pub fn for_tests(home_dir: PathBuf) -> Self {
         let executables = BTreeMap::from([
             (
-                SupportedAdapterId::Codex,
+                AgentAdapterKind::Codex,
                 test_executable("codex", "codex 1.0.0"),
             ),
             (
-                SupportedAdapterId::ClaudeCode,
+                AgentAdapterKind::ClaudeCode,
                 test_executable("claude", "2.1.179"),
             ),
         ]);
@@ -181,7 +180,7 @@ impl RegistryEnvironment {
         }
     }
 
-    pub fn executable(&self, id: SupportedAdapterId) -> ExecutableEvidence {
+    pub fn executable(&self, id: AgentAdapterKind) -> ExecutableEvidence {
         self.executables.get(&id).cloned().unwrap_or_else(|| {
             ExecutableEvidence::missing(
                 id.executable(),
@@ -202,11 +201,11 @@ fn test_executable(executable: &str, version: &str) -> ExecutableEvidence {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-pub struct SupportedAdapterRegistry;
+pub struct AgentAdapterRegistry;
 
-impl SupportedAdapterRegistry {
-    pub fn snapshots(&self, environment: &RegistryEnvironment) -> Vec<SupportedAdapterSnapshot> {
-        [SupportedAdapterId::Codex, SupportedAdapterId::ClaudeCode]
+impl AgentAdapterRegistry {
+    pub fn snapshots(&self, environment: &RegistryEnvironment) -> Vec<AgentAdapterSnapshot> {
+        [AgentAdapterKind::Codex, AgentAdapterKind::ClaudeCode]
             .into_iter()
             .map(|id| self.snapshot(id, environment))
             .collect()
@@ -214,41 +213,41 @@ impl SupportedAdapterRegistry {
 
     fn snapshot(
         &self,
-        id: SupportedAdapterId,
+        id: AgentAdapterKind,
         environment: &RegistryEnvironment,
-    ) -> SupportedAdapterSnapshot {
+    ) -> AgentAdapterSnapshot {
         let (display_name, policy, personal_root, skill_policy, project_skills, skill_roots) =
             match id {
-                SupportedAdapterId::Codex => (
+                AgentAdapterKind::Codex => (
                     "Codex",
                     InstructionDiscoveryPolicy::CodexAgents,
                     &environment.codex_home,
                     SkillDiscoveryPolicy::CodexDirectoryChain,
                     ".agents/skills",
                     vec![
-                        SupportedSkillRoot {
+                        AgentSkillRoot {
                             kind: SkillRootKind::StandardPersonal,
                             path: path_string(&environment.codex_standard_skills_dir),
                         },
-                        SupportedSkillRoot {
+                        AgentSkillRoot {
                             kind: SkillRootKind::CompatibilityPersonal,
                             path: path_string(&environment.codex_home.join("skills")),
                         },
                     ],
                 ),
-                SupportedAdapterId::ClaudeCode => (
+                AgentAdapterKind::ClaudeCode => (
                     "Claude Code",
                     InstructionDiscoveryPolicy::ClaudeMemory,
                     &environment.claude_config_dir,
                     SkillDiscoveryPolicy::ClaudePersonalShadowsProject,
                     ".claude/skills",
-                    vec![SupportedSkillRoot {
+                    vec![AgentSkillRoot {
                         kind: SkillRootKind::StandardPersonal,
                         path: path_string(&environment.claude_config_dir.join("skills")),
                     }],
                 ),
             };
-        SupportedAdapterSnapshot {
+        AgentAdapterSnapshot {
             id,
             display_name: display_name.to_string(),
             executable: environment.executable(id),
@@ -288,7 +287,7 @@ pub async fn system_registry_environment() -> Result<RegistryEnvironment, AppErr
         .map(PathBuf::from)
         .unwrap_or_else(|| home_dir.join(".claude"));
     let mut executables = BTreeMap::new();
-    for id in [SupportedAdapterId::Codex, SupportedAdapterId::ClaudeCode] {
+    for id in [AgentAdapterKind::Codex, AgentAdapterKind::ClaudeCode] {
         executables.insert(id, detect_executable(id, None, &home_dir).await);
     }
     Ok(RegistryEnvironment {
@@ -306,7 +305,7 @@ pub(crate) fn system_home_dir() -> Option<PathBuf> {
 }
 
 async fn detect_executable(
-    id: SupportedAdapterId,
+    id: AgentAdapterKind,
     local_override: Option<&Path>,
     home_dir: &Path,
 ) -> ExecutableEvidence {
@@ -355,7 +354,7 @@ async fn detect_executable(
 }
 
 pub(crate) fn resolve_executable_path(
-    id: SupportedAdapterId,
+    id: AgentAdapterKind,
     local_override: Option<&Path>,
     home_dir: &Path,
 ) -> Option<PathBuf> {
@@ -363,7 +362,7 @@ pub(crate) fn resolve_executable_path(
 }
 
 fn resolve_executable_path_with(
-    id: SupportedAdapterId,
+    id: AgentAdapterKind,
     local_override: Option<&Path>,
     home_dir: &Path,
     path_lookup: impl FnOnce(&str) -> Option<PathBuf>,
@@ -398,15 +397,15 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
-fn common_executable_locations(id: SupportedAdapterId, home_dir: &Path) -> Vec<PathBuf> {
+fn common_executable_locations(id: AgentAdapterKind, home_dir: &Path) -> Vec<PathBuf> {
     let executable = id.executable();
     let mut candidates = match id {
-        SupportedAdapterId::Codex => vec![
+        AgentAdapterKind::Codex => vec![
             home_dir.join(".bun/bin").join(executable),
             home_dir.join(".local/bin").join(executable),
             home_dir.join(".cargo/bin").join(executable),
         ],
-        SupportedAdapterId::ClaudeCode => vec![
+        AgentAdapterKind::ClaudeCode => vec![
             home_dir.join(".local/bin").join(executable),
             home_dir.join(".npm/bin").join(executable),
             home_dir.join(".bun/bin").join(executable),
@@ -438,7 +437,7 @@ mod tests {
     #[test]
     fn registry_keeps_stable_ids_and_phase_capabilities_explicit() {
         let environment = RegistryEnvironment::for_tests(PathBuf::from("/home/test"));
-        let snapshots = SupportedAdapterRegistry.snapshots(&environment);
+        let snapshots = AgentAdapterRegistry.snapshots(&environment);
 
         assert_eq!(snapshots[0].id.as_str(), "codex");
         assert_eq!(snapshots[1].id.as_str(), "claude-code");
@@ -495,7 +494,7 @@ mod tests {
 
         assert_eq!(
             resolve_executable_path_with(
-                SupportedAdapterId::Codex,
+                AgentAdapterKind::Codex,
                 Some(&override_path),
                 directory.path(),
                 |_| Some(path_result.clone()),
@@ -503,13 +502,13 @@ mod tests {
             Some(override_path)
         );
         assert_eq!(
-            resolve_executable_path_with(SupportedAdapterId::Codex, None, directory.path(), |_| {
+            resolve_executable_path_with(AgentAdapterKind::Codex, None, directory.path(), |_| {
                 Some(path_result.clone())
             },),
             Some(path_result)
         );
         assert_eq!(
-            resolve_executable_path_with(SupportedAdapterId::Codex, None, directory.path(), |_| {
+            resolve_executable_path_with(AgentAdapterKind::Codex, None, directory.path(), |_| {
                 None
             },),
             Some(common)

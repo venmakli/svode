@@ -3,9 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::supported_adapters::{
-    RegistryEnvironment, SupportedAdapterId, SupportedAdapterSnapshot,
-};
+use crate::agent_adapters::{AgentAdapterKind, AgentAdapterSnapshot, RegistryEnvironment};
 
 use super::super::model::{
     AgentContextDiagnostic, InstructionAvailability, InstructionDiscovery,
@@ -31,9 +29,9 @@ pub(super) fn discover(
     _target_root: &Path,
     directory_chain: &[PathBuf],
     environment: &RegistryEnvironment,
-    adapter: &SupportedAdapterSnapshot,
+    adapter: &AgentAdapterSnapshot,
 ) -> DiscoveryResult {
-    let adapter_id = SupportedAdapterId::Codex;
+    let adapter_id = AgentAdapterKind::Codex;
     let (config, mut result) = read_config(environment, adapter_id);
     let max_bytes = config
         .project_doc_max_bytes
@@ -110,10 +108,10 @@ fn discover_group(
     policy: InstructionDiscoveryPolicy,
     directory_depth: usize,
     max_bytes: usize,
-    adapter: &SupportedAdapterSnapshot,
+    adapter: &AgentAdapterSnapshot,
     result: &mut DiscoveryResult,
 ) {
-    let adapter_id = SupportedAdapterId::Codex;
+    let adapter_id = AgentAdapterKind::Codex;
     let mut inspected = candidates
         .iter()
         .filter_map(|path| {
@@ -196,7 +194,7 @@ fn instruction_row(
 ) -> InstructionRow {
     InstructionRow {
         id: format!("codex:{}", path_string(path)),
-        adapter_id: Some(SupportedAdapterId::Codex),
+        adapter_id: Some(AgentAdapterKind::Codex),
         name: path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
@@ -253,7 +251,7 @@ fn floor_char_boundary(value: &str, requested: usize) -> usize {
 
 fn read_config(
     environment: &RegistryEnvironment,
-    adapter_id: SupportedAdapterId,
+    adapter_id: AgentAdapterKind,
 ) -> (CodexConfig, DiscoveryResult) {
     let config_path = environment.codex_home.join("config.toml");
     let mut result = DiscoveryResult::default();
@@ -325,7 +323,7 @@ fn validated_fallbacks(
         } else if !basename_only {
             diagnostics.push(diagnostic(
                 &config_root.join("config.toml"),
-                Some(SupportedAdapterId::Codex),
+                Some(AgentAdapterKind::Codex),
                 "codex_fallback_ignored",
                 format!("Ignored unsafe Codex project doc fallback filename: {value}"),
             ));
@@ -354,8 +352,7 @@ mod tests {
         .unwrap();
         std::fs::write(project.path().join("GUIDE.md"), "fallback").unwrap();
         let environment = RegistryEnvironment::for_tests(home.path().to_path_buf());
-        let adapter =
-            &crate::supported_adapters::SupportedAdapterRegistry.snapshots(&environment)[0];
+        let adapter = &crate::agent_adapters::AgentAdapterRegistry.snapshots(&environment)[0];
 
         let result = discover(
             project.path(),

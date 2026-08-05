@@ -2,7 +2,7 @@ use std::fs::{self, File};
 use std::io::{Read, Take};
 use std::path::{Path, PathBuf};
 
-use crate::supported_adapters::SupportedAdapterId;
+use crate::agent_adapters::AgentAdapterKind;
 
 use super::super::model::{AgentContextDiagnostic, DiagnosticSeverity, MarkdownPreview};
 
@@ -19,7 +19,7 @@ pub(super) fn inspect(
     path: &Path,
     allowed_root: &Path,
     max_bytes: usize,
-    adapter_id: Option<SupportedAdapterId>,
+    adapter_id: Option<AgentAdapterKind>,
 ) -> Option<InspectedSource> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -158,7 +158,7 @@ pub(super) fn inspect(
 
 fn failed_inspection(
     path: &Path,
-    adapter_id: Option<SupportedAdapterId>,
+    adapter_id: Option<AgentAdapterKind>,
     code: &str,
     message: String,
     compatibility_unknown: bool,
@@ -174,7 +174,7 @@ fn failed_inspection(
 
 pub(super) fn diagnostic(
     path: &Path,
-    adapter_id: Option<SupportedAdapterId>,
+    adapter_id: Option<AgentAdapterKind>,
     code: &str,
     message: String,
 ) -> AgentContextDiagnostic {

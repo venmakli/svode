@@ -3,7 +3,7 @@ use std::fs::{self, File};
 use std::io::{Read, Take};
 use std::path::{Path, PathBuf};
 
-use crate::supported_adapters::{SkillRootKind, SupportedAdapterId, SupportedAdapterSnapshot};
+use crate::agent_adapters::{AgentAdapterKind, AgentAdapterSnapshot, SkillRootKind};
 
 use super::super::model::{
     DiagnosticSeverity, InstructionOwner, InstructionOwnerKind, MarkdownPreview, SkillAvailability,
@@ -36,7 +36,7 @@ struct SkillFailure {
 
 #[derive(Debug)]
 struct RootSpec<'a> {
-    adapter: &'a SupportedAdapterSnapshot,
+    adapter: &'a AgentAdapterSnapshot,
     scope: SkillScope,
     discovery_kind: SkillDiscoveryKind,
     root: PathBuf,
@@ -52,7 +52,7 @@ struct CanonicalOwnerBoundary {
 pub(super) fn discover(
     repository_root: &Path,
     directory_chain: &[PathBuf],
-    adapters: &[SupportedAdapterSnapshot],
+    adapters: &[AgentAdapterSnapshot],
 ) -> DiscoveryResult {
     let mut result = DiscoveryResult::default();
     let roots = roots(directory_chain, adapters);
@@ -102,7 +102,7 @@ pub(super) fn discover(
         .iter()
         .filter(|adapter| {
             adapter.capabilities.skills.policy
-                == crate::supported_adapters::SkillDiscoveryPolicy::ClaudePersonalShadowsProject
+                == crate::agent_adapters::SkillDiscoveryPolicy::ClaudePersonalShadowsProject
         })
         .map(|adapter| adapter.id)
         .collect::<BTreeSet<_>>();
@@ -137,7 +137,7 @@ pub(super) fn discover(
 
 fn roots<'a>(
     directory_chain: &[PathBuf],
-    adapters: &'a [SupportedAdapterSnapshot],
+    adapters: &'a [AgentAdapterSnapshot],
 ) -> Vec<RootSpec<'a>> {
     let mut roots = Vec::new();
     for adapter in adapters {
@@ -147,8 +147,8 @@ fn roots<'a>(
                 adapter,
                 scope: SkillScope::Project,
                 discovery_kind: match adapter.id {
-                    SupportedAdapterId::Codex => SkillDiscoveryKind::CodexProject,
-                    SupportedAdapterId::ClaudeCode => SkillDiscoveryKind::ClaudeProject,
+                    AgentAdapterKind::Codex => SkillDiscoveryKind::CodexProject,
+                    AgentAdapterKind::ClaudeCode => SkillDiscoveryKind::ClaudeProject,
                 },
                 root: directory.join(project_relative_root),
                 owner: InstructionOwner {
@@ -162,13 +162,13 @@ fn roots<'a>(
                 adapter,
                 scope: SkillScope::Personal,
                 discovery_kind: match (adapter.id, personal_root.kind) {
-                    (SupportedAdapterId::Codex, SkillRootKind::StandardPersonal) => {
+                    (AgentAdapterKind::Codex, SkillRootKind::StandardPersonal) => {
                         SkillDiscoveryKind::CodexStandardPersonal
                     }
-                    (SupportedAdapterId::Codex, SkillRootKind::CompatibilityPersonal) => {
+                    (AgentAdapterKind::Codex, SkillRootKind::CompatibilityPersonal) => {
                         SkillDiscoveryKind::CodexCompatibilityPersonal
                     }
-                    (SupportedAdapterId::ClaudeCode, _) => SkillDiscoveryKind::ClaudePersonal,
+                    (AgentAdapterKind::ClaudeCode, _) => SkillDiscoveryKind::ClaudePersonal,
                 },
                 root: PathBuf::from(&personal_root.path),
                 owner: InstructionOwner {
@@ -851,7 +851,7 @@ fn valid_skill_name(name: &str) -> bool {
 }
 
 fn native_availability(
-    adapter: &SupportedAdapterSnapshot,
+    adapter: &AgentAdapterSnapshot,
     link_kind: SkillLinkKind,
 ) -> (SkillAvailability, Option<String>) {
     let executable_known =
@@ -865,7 +865,7 @@ fn native_availability(
             )),
         );
     }
-    if adapter.id == SupportedAdapterId::ClaudeCode && link_kind != SkillLinkKind::Direct {
+    if adapter.id == AgentAdapterKind::ClaudeCode && link_kind != SkillLinkKind::Direct {
         let version_supported = adapter
             .executable
             .version
@@ -900,7 +900,7 @@ fn version_at_least(raw: &str, required: [u64; 3]) -> bool {
 
 fn apply_personal_shadowing(
     rows: &mut BTreeMap<PathBuf, SkillRow>,
-    adapters: &BTreeSet<SupportedAdapterId>,
+    adapters: &BTreeSet<AgentAdapterKind>,
 ) {
     let personal_names = rows
         .values()
@@ -929,7 +929,7 @@ fn apply_personal_shadowing(
 
 fn push_failure(
     result: &mut DiscoveryResult,
-    adapter_id: SupportedAdapterId,
+    adapter_id: AgentAdapterKind,
     path: &Path,
     code: &str,
     message: String,
@@ -959,8 +959,8 @@ fn discovery_kind_order(kind: SkillDiscoveryKind) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_adapters::RegistryEnvironment;
     use crate::agent_context::scanner::scan;
-    use crate::supported_adapters::RegistryEnvironment;
     use std::collections::HashSet;
     use tempfile::TempDir;
 
@@ -1070,11 +1070,11 @@ mod tests {
         assert!(shared_rows.iter().any(|row| {
             row.aliases
                 .iter()
-                .any(|alias| alias.adapter_id == SupportedAdapterId::Codex)
+                .any(|alias| alias.adapter_id == AgentAdapterKind::Codex)
                 && row
                     .aliases
                     .iter()
-                    .any(|alias| alias.adapter_id == SupportedAdapterId::ClaudeCode)
+                    .any(|alias| alias.adapter_id == AgentAdapterKind::ClaudeCode)
         }));
         let personal = snapshot
             .skills

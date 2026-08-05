@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use tauri::State;
 
 use crate::AppError;
-use crate::supported_adapters::system_registry_environment;
+use crate::agent_adapters::system_registry_environment;
 
 use super::model::AgentContextSnapshot;
 use super::scanner;

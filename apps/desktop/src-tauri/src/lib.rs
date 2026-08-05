@@ -1,6 +1,7 @@
 mod actors;
 mod agent;
 mod agent_actors;
+mod agent_adapters;
 mod agent_context;
 mod agent_sessions;
 mod app_windows;
@@ -19,7 +20,6 @@ mod properties;
 mod repo_path;
 mod space;
 mod storage;
-mod supported_adapters;
 mod system_path;
 mod terminal;
 

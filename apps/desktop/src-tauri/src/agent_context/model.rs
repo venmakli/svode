@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::supported_adapters::{SupportedAdapterId, SupportedAdapterSnapshot};
+use crate::agent_adapters::{AgentAdapterKind, AgentAdapterSnapshot};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -76,7 +76,7 @@ pub struct InstructionReference {
 #[serde(rename_all = "camelCase")]
 pub struct InstructionRow {
     pub id: String,
-    pub adapter_id: Option<SupportedAdapterId>,
+    pub adapter_id: Option<AgentAdapterKind>,
     pub name: String,
     pub path: String,
     pub canonical_path: Option<String>,
@@ -132,7 +132,7 @@ pub enum SkillValidationStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillDiscoveryAlias {
-    pub adapter_id: SupportedAdapterId,
+    pub adapter_id: AgentAdapterKind,
     pub scope: SkillScope,
     pub discovery_kind: SkillDiscoveryKind,
     pub path: String,
@@ -175,7 +175,7 @@ pub struct AgentContextDiagnostic {
     pub severity: DiagnosticSeverity,
     pub message: String,
     pub path: Option<String>,
-    pub adapter_id: Option<SupportedAdapterId>,
+    pub adapter_id: Option<AgentAdapterKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,7 +184,7 @@ pub struct AgentContextSnapshotContent {
     pub project_root: String,
     pub target_root: String,
     pub repository_root: String,
-    pub adapters: Vec<SupportedAdapterSnapshot>,
+    pub adapters: Vec<AgentAdapterSnapshot>,
     pub instructions: Vec<InstructionRow>,
     pub skills: Vec<SkillRow>,
     pub diagnostics: Vec<AgentContextDiagnostic>,

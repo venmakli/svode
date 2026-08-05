@@ -8,11 +8,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
-use super::{
-    SupportedAdapterId, SupportedAdapterRegistry, resolve_executable_path, system_home_dir,
-};
+use super::{AgentAdapterKind, AgentAdapterRegistry, resolve_executable_path, system_home_dir};
 use crate::agent::types::load_space_agent_config;
-use crate::agent_actors::{AgentAdapter, AgentAdapterKind, ApprovalMode};
+use crate::agent_actors::{AgentAdapter, ApprovalMode};
 use crate::process;
 
 const DIAGNOSTIC_TIMEOUT: Duration = Duration::from_secs(5);
@@ -28,7 +26,7 @@ pub struct AdapterSelectOption {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdapterRuntimeDescriptor {
-    pub id: SupportedAdapterId,
+    pub id: AgentAdapterKind,
     pub label: String,
     pub model_options: Vec<AdapterSelectOption>,
     pub default_model_label: String,
@@ -47,7 +45,7 @@ pub enum AdapterDiagnosticStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdapterDiagnostic {
-    pub adapter: SupportedAdapterId,
+    pub adapter: AgentAdapterKind,
     pub status: AdapterDiagnosticStatus,
     pub executable_path: Option<String>,
     pub version: Option<String>,
@@ -206,7 +204,7 @@ pub struct AgentSessionLaunchMetadata {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TypedAgentLaunch {
-    pub adapter: SupportedAdapterId,
+    pub adapter: AgentAdapterKind,
     pub program: String,
     pub argv: Vec<String>,
     pub cwd: String,
@@ -230,7 +228,7 @@ pub struct AgentLaunchRequest {
 #[serde(rename_all = "camelCase")]
 pub struct PreStartBindingAttempt {
     pub binding_index: usize,
-    pub adapter: SupportedAdapterId,
+    pub adapter: AgentAdapterKind,
     pub eligible: bool,
     pub reason_code: Option<String>,
 }
@@ -248,11 +246,11 @@ pub struct StartedRuntimeProvenance {
     pub actor_reference: String,
     pub actor_owner_path: String,
     pub requested_binding_index: usize,
-    pub requested_adapter: SupportedAdapterId,
+    pub requested_adapter: AgentAdapterKind,
     pub requested_model: Option<String>,
     pub requested_effort: Option<String>,
     pub requested_approval_mode: ApprovalMode,
-    pub actual_adapter: SupportedAdapterId,
+    pub actual_adapter: AgentAdapterKind,
     pub actual_model: Option<String>,
     pub actual_effort: Option<String>,
     pub native_approval_mode: NativeApprovalMode,
@@ -268,9 +266,9 @@ pub enum FallbackAfterStart {
     Forbidden,
 }
 
-impl SupportedAdapterRegistry {
+impl AgentAdapterRegistry {
     pub fn descriptors(&self) -> Vec<AdapterRuntimeDescriptor> {
-        [SupportedAdapterId::Codex, SupportedAdapterId::ClaudeCode]
+        [AgentAdapterKind::Codex, AgentAdapterKind::ClaudeCode]
             .into_iter()
             .map(descriptor)
             .collect()
@@ -278,7 +276,7 @@ impl SupportedAdapterRegistry {
 
     pub fn effort_options(
         &self,
-        adapter: SupportedAdapterId,
+        adapter: AgentAdapterKind,
         model: Option<&str>,
     ) -> Vec<AdapterSelectOption> {
         effort_options(adapter, model)
@@ -290,7 +288,7 @@ impl SupportedAdapterRegistry {
 
     pub fn approval_mapping(
         &self,
-        adapter: SupportedAdapterId,
+        adapter: AgentAdapterKind,
         mode: ApprovalMode,
     ) -> ApprovalMapping {
         approval_mapping(adapter, mode)
@@ -311,14 +309,14 @@ impl SupportedAdapterRegistry {
     pub fn select_pre_start(
         &self,
         bindings: &[AgentAdapter],
-        diagnostics: &BTreeMap<SupportedAdapterId, AdapterDiagnostic>,
+        diagnostics: &BTreeMap<AgentAdapterKind, AdapterDiagnostic>,
     ) -> PreStartSelection {
         let mut selected = None;
         let attempts = bindings
             .iter()
             .enumerate()
             .map(|(index, binding)| {
-                let adapter = supported_id(binding.adapter);
+                let adapter = binding.adapter;
                 let validation = validate_binding(binding);
                 let diagnostic = diagnostics.get(&adapter);
                 let reason_code = validation
@@ -361,7 +359,7 @@ impl SupportedAdapterRegistry {
         actual_effort: Option<String>,
         pre_start_fallback_reason: Option<String>,
     ) -> StartedRuntimeProvenance {
-        let adapter = supported_id(request.binding.adapter);
+        let adapter = request.binding.adapter;
         StartedRuntimeProvenance {
             actor_reference: request.actor_reference.clone(),
             actor_owner_path: request.actor_owner_path.clone(),
@@ -383,7 +381,7 @@ impl SupportedAdapterRegistry {
 
     pub async fn diagnose(
         &self,
-        adapter: SupportedAdapterId,
+        adapter: AgentAdapterKind,
         target: &AdapterTarget,
         runner: &dyn RuntimeCommandRunner,
     ) -> AdapterDiagnostic {
@@ -413,7 +411,7 @@ impl SupportedAdapterRegistry {
 
     async fn diagnose_resolved(
         &self,
-        adapter: SupportedAdapterId,
+        adapter: AgentAdapterKind,
         target: &AdapterTarget,
         path: PathBuf,
         runner: &dyn RuntimeCommandRunner,
@@ -440,8 +438,8 @@ impl SupportedAdapterRegistry {
             }
         };
         let auth_arguments = match adapter {
-            SupportedAdapterId::Codex => vec!["login".into(), "status".into()],
-            SupportedAdapterId::ClaudeCode => {
+            AgentAdapterKind::Codex => vec!["login".into(), "status".into()],
+            AgentAdapterKind::ClaudeCode => {
                 vec!["auth".into(), "status".into(), "--json".into()]
             }
         };
@@ -484,11 +482,11 @@ impl SupportedAdapterRegistry {
     }
 }
 
-fn target_executable_override(adapter: SupportedAdapterId, target_space: &Path) -> Option<PathBuf> {
+fn target_executable_override(adapter: AgentAdapterKind, target_space: &Path) -> Option<PathBuf> {
     let config = load_space_agent_config(target_space);
     let keys: &[&str] = match adapter {
-        SupportedAdapterId::Codex => &["codex"],
-        SupportedAdapterId::ClaudeCode => &["claude-code", "claude"],
+        AgentAdapterKind::Codex => &["codex"],
+        AgentAdapterKind::ClaudeCode => &["claude-code", "claude"],
     };
     keys.iter().find_map(|key| {
         config.cli_paths.get(*key).map(|path| {
@@ -509,7 +507,7 @@ fn nonempty(value: String, fallback: &str) -> String {
     }
 }
 
-fn unknown_diagnostic(adapter: SupportedAdapterId, code: &str, message: &str) -> AdapterDiagnostic {
+fn unknown_diagnostic(adapter: AgentAdapterKind, code: &str, message: &str) -> AdapterDiagnostic {
     AdapterDiagnostic {
         adapter,
         status: AdapterDiagnosticStatus::Unknown,
@@ -522,7 +520,7 @@ fn unknown_diagnostic(adapter: SupportedAdapterId, code: &str, message: &str) ->
 }
 
 fn unknown_diagnostic_with_path(
-    adapter: SupportedAdapterId,
+    adapter: AgentAdapterKind,
     path: &Path,
     code: &str,
     message: impl Into<String>,
@@ -538,9 +536,9 @@ fn unknown_diagnostic_with_path(
     }
 }
 
-fn descriptor(id: SupportedAdapterId) -> AdapterRuntimeDescriptor {
+fn descriptor(id: AgentAdapterKind) -> AdapterRuntimeDescriptor {
     let (label, models) = match id {
-        SupportedAdapterId::Codex => (
+        AgentAdapterKind::Codex => (
             "Codex",
             [
                 ("gpt-5.6", "GPT-5.6 (recommended alias)"),
@@ -550,7 +548,7 @@ fn descriptor(id: SupportedAdapterId) -> AdapterRuntimeDescriptor {
             ]
             .as_slice(),
         ),
-        SupportedAdapterId::ClaudeCode => (
+        AgentAdapterKind::ClaudeCode => (
             "Claude Code",
             [
                 ("sonnet", "Sonnet (latest alias)"),
@@ -577,11 +575,11 @@ fn descriptor(id: SupportedAdapterId) -> AdapterRuntimeDescriptor {
     }
 }
 
-fn effort_options(adapter: SupportedAdapterId, model: Option<&str>) -> Vec<AdapterSelectOption> {
+fn effort_options(adapter: AgentAdapterKind, model: Option<&str>) -> Vec<AdapterSelectOption> {
     let values: &[&str] = match adapter {
-        SupportedAdapterId::Codex => &["none", "low", "medium", "high", "xhigh", "max"],
-        SupportedAdapterId::ClaudeCode if model == Some("haiku") => &[],
-        SupportedAdapterId::ClaudeCode => &["low", "medium", "high"],
+        AgentAdapterKind::Codex => &["none", "low", "medium", "high", "xhigh", "max"],
+        AgentAdapterKind::ClaudeCode if model == Some("haiku") => &[],
+        AgentAdapterKind::ClaudeCode => &["low", "medium", "high"],
     };
     std::iter::once(AdapterSelectOption {
         value: None,
@@ -603,7 +601,7 @@ fn title_case(value: &str) -> String {
 }
 
 fn validate_binding(binding: &AgentAdapter) -> BindingValidation {
-    let adapter = supported_id(binding.adapter);
+    let adapter = binding.adapter;
     let descriptor = descriptor(adapter);
     let mut issues = Vec::new();
     if let Some(model) = binding.model.as_deref()
@@ -639,44 +637,44 @@ fn validate_binding(binding: &AgentAdapter) -> BindingValidation {
     }
 }
 
-fn approval_mapping(adapter: SupportedAdapterId, mode: ApprovalMode) -> ApprovalMapping {
+fn approval_mapping(adapter: AgentAdapterKind, mode: ApprovalMode) -> ApprovalMapping {
     match (adapter, mode) {
-        (SupportedAdapterId::Codex, ApprovalMode::Ask) => ApprovalMapping {
+        (AgentAdapterKind::Codex, ApprovalMode::Ask) => ApprovalMapping {
             requested: mode,
             native: NativeApprovalMode::CodexUserReview,
             label: "Ask".into(),
             effective_boundary: "Codex uses workspace-write and on-request approvals; ordinary in-workspace edits do not necessarily prompt.".into(),
             danger: false,
         },
-        (SupportedAdapterId::Codex, ApprovalMode::Auto) => ApprovalMapping {
+        (AgentAdapterKind::Codex, ApprovalMode::Auto) => ApprovalMapping {
             requested: mode,
             native: NativeApprovalMode::CodexAutoReview,
             label: "Auto-review".into(),
             effective_boundary: "Codex stays in workspace-write; its automatic reviewer may approve, deny, or still require native policy handling.".into(),
             danger: false,
         },
-        (SupportedAdapterId::Codex, ApprovalMode::Full) => ApprovalMapping {
+        (AgentAdapterKind::Codex, ApprovalMode::Full) => ApprovalMapping {
             requested: mode,
             native: NativeApprovalMode::CodexFullAccess,
             label: "Full access".into(),
             effective_boundary: "Codex bypasses approvals and sandboxing; native first-run warnings remain visible.".into(),
             danger: true,
         },
-        (SupportedAdapterId::ClaudeCode, ApprovalMode::Ask) => ApprovalMapping {
+        (AgentAdapterKind::ClaudeCode, ApprovalMode::Ask) => ApprovalMapping {
             requested: mode,
             native: NativeApprovalMode::ClaudeDefault,
             label: "Ask".into(),
             effective_boundary: "Claude Code uses its native default permission prompts and policy.".into(),
             danger: false,
         },
-        (SupportedAdapterId::ClaudeCode, ApprovalMode::Auto) => ApprovalMapping {
+        (AgentAdapterKind::ClaudeCode, ApprovalMode::Auto) => ApprovalMapping {
             requested: mode,
             native: NativeApprovalMode::ClaudeAuto,
             label: "Auto-review".into(),
             effective_boundary: "Claude Code auto mode may allow, deny, or prompt according to its native classifier and policy.".into(),
             danger: false,
         },
-        (SupportedAdapterId::ClaudeCode, ApprovalMode::Full) => ApprovalMapping {
+        (AgentAdapterKind::ClaudeCode, ApprovalMode::Full) => ApprovalMapping {
             requested: mode,
             native: NativeApprovalMode::ClaudeBypassPermissions,
             label: "Full access".into(),
@@ -687,7 +685,7 @@ fn approval_mapping(adapter: SupportedAdapterId, mode: ApprovalMode) -> Approval
 }
 
 fn build_launch(request: &AgentLaunchRequest, executable_path: &Path) -> TypedAgentLaunch {
-    let adapter = supported_id(request.binding.adapter);
+    let adapter = request.binding.adapter;
     let approval = approval_mapping(adapter, request.approval_mode);
     let mut argv = match approval.native {
         NativeApprovalMode::CodexUserReview => vec![
@@ -722,11 +720,11 @@ fn build_launch(request: &AgentLaunchRequest, executable_path: &Path) -> TypedAg
     }
     if let Some(effort) = &request.binding.effort {
         match adapter {
-            SupportedAdapterId::Codex => argv.extend([
+            AgentAdapterKind::Codex => argv.extend([
                 "--config".into(),
                 format!("model_reasoning_effort=\"{effort}\""),
             ]),
-            SupportedAdapterId::ClaudeCode => argv.extend(["--effort".into(), effort.clone()]),
+            AgentAdapterKind::ClaudeCode => argv.extend(["--effort".into(), effort.clone()]),
         }
     }
     TypedAgentLaunch {
@@ -742,13 +740,6 @@ fn build_launch(request: &AgentLaunchRequest, executable_path: &Path) -> TypedAg
             cancel_via_managed_pty: true,
             prompt_transport: PromptTransport::ManagedPtyInput,
         },
-    }
-}
-
-fn supported_id(kind: AgentAdapterKind) -> SupportedAdapterId {
-    match kind {
-        AgentAdapterKind::Codex => SupportedAdapterId::Codex,
-        AgentAdapterKind::ClaudeCode => SupportedAdapterId::ClaudeCode,
     }
 }
 
@@ -782,7 +773,7 @@ mod tests {
 
     #[test]
     fn descriptors_and_unknown_selectors_are_fail_closed_without_mutation() {
-        let registry = SupportedAdapterRegistry;
+        let registry = AgentAdapterRegistry;
         let descriptors = registry.descriptors();
         assert_eq!(descriptors.len(), 2);
         assert_eq!(descriptors[0].model_options[0].value, None);
@@ -809,7 +800,7 @@ mod tests {
 
     #[test]
     fn launch_argv_snapshots_are_typed_and_prompt_free() {
-        let registry = SupportedAdapterRegistry;
+        let registry = AgentAdapterRegistry;
         let codex = registry
             .build_launch(
                 &request(
@@ -867,9 +858,9 @@ mod tests {
 
     #[test]
     fn full_access_mapping_is_explicit_for_each_adapter() {
-        let registry = SupportedAdapterRegistry;
-        let codex = registry.approval_mapping(SupportedAdapterId::Codex, ApprovalMode::Full);
-        let claude = registry.approval_mapping(SupportedAdapterId::ClaudeCode, ApprovalMode::Full);
+        let registry = AgentAdapterRegistry;
+        let codex = registry.approval_mapping(AgentAdapterKind::Codex, ApprovalMode::Full);
+        let claude = registry.approval_mapping(AgentAdapterKind::ClaudeCode, ApprovalMode::Full);
         assert_eq!(codex.native, NativeApprovalMode::CodexFullAccess);
         assert_eq!(claude.native, NativeApprovalMode::ClaudeBypassPermissions);
         assert!(codex.danger && claude.danger);
@@ -877,7 +868,7 @@ mod tests {
 
     #[test]
     fn approval_mode_argv_snapshots_do_not_silently_downgrade() {
-        let registry = SupportedAdapterRegistry;
+        let registry = AgentAdapterRegistry;
         let cases = [
             (
                 AgentAdapterKind::Codex,
@@ -937,16 +928,16 @@ mod tests {
 
     #[test]
     fn selection_falls_back_only_before_runtime_start() {
-        let registry = SupportedAdapterRegistry;
+        let registry = AgentAdapterRegistry;
         let bindings = vec![
             binding(AgentAdapterKind::Codex, Some("gpt-5.6"), None),
             binding(AgentAdapterKind::ClaudeCode, Some("sonnet"), None),
         ];
         let diagnostics = BTreeMap::from([
             (
-                SupportedAdapterId::Codex,
+                AgentAdapterKind::Codex,
                 AdapterDiagnostic {
-                    adapter: SupportedAdapterId::Codex,
+                    adapter: AgentAdapterKind::Codex,
                     status: AdapterDiagnosticStatus::Unauthenticated,
                     executable_path: Some("/bin/codex".into()),
                     version: Some("1".into()),
@@ -956,9 +947,9 @@ mod tests {
                 },
             ),
             (
-                SupportedAdapterId::ClaudeCode,
+                AgentAdapterKind::ClaudeCode,
                 AdapterDiagnostic {
-                    adapter: SupportedAdapterId::ClaudeCode,
+                    adapter: AgentAdapterKind::ClaudeCode,
                     status: AdapterDiagnosticStatus::Ready,
                     executable_path: Some("/bin/claude".into()),
                     version: Some("2".into()),
@@ -979,11 +970,11 @@ mod tests {
             Some("adapter_unauthenticated".into()),
         );
         assert_eq!(provenance.fallback, FallbackAfterStart::Forbidden);
-        assert_eq!(provenance.requested_adapter, SupportedAdapterId::ClaudeCode);
+        assert_eq!(provenance.requested_adapter, AgentAdapterKind::ClaudeCode);
         assert_eq!(provenance.requested_model.as_deref(), Some("sonnet"));
         assert_eq!(provenance.requested_effort, None);
         assert_eq!(provenance.requested_approval_mode, ApprovalMode::Ask);
-        assert_eq!(provenance.actual_adapter, SupportedAdapterId::ClaudeCode);
+        assert_eq!(provenance.actual_adapter, AgentAdapterKind::ClaudeCode);
         assert_eq!(
             provenance.actual_model.as_deref(),
             Some("claude-sonnet-effective")
@@ -1019,7 +1010,7 @@ mod tests {
 
     #[tokio::test]
     async fn auth_diagnostics_use_read_only_native_commands() {
-        let registry = SupportedAdapterRegistry;
+        let registry = AgentAdapterRegistry;
         let runner = FakeRunner::new(vec![
             Ok(RuntimeCommandOutput {
                 exit_code: Some(0),
@@ -1037,7 +1028,7 @@ mod tests {
         };
         let diagnostic = registry
             .diagnose_resolved(
-                SupportedAdapterId::ClaudeCode,
+                AgentAdapterKind::ClaudeCode,
                 &target,
                 PathBuf::from("/bin/claude"),
                 &runner,
@@ -1051,7 +1042,7 @@ mod tests {
 
     #[tokio::test]
     async fn codex_auth_diagnostic_uses_login_status_without_prompt() {
-        let registry = SupportedAdapterRegistry;
+        let registry = AgentAdapterRegistry;
         let runner = FakeRunner::new(vec![
             Ok(RuntimeCommandOutput {
                 exit_code: Some(0),
@@ -1066,7 +1057,7 @@ mod tests {
         ]);
         let diagnostic = registry
             .diagnose_resolved(
-                SupportedAdapterId::Codex,
+                AgentAdapterKind::Codex,
                 &AdapterTarget {
                     cwd: PathBuf::from("/project"),
                 },
@@ -1086,7 +1077,7 @@ mod tests {
 
     #[tokio::test]
     async fn diagnostic_runner_failures_are_unknown_not_authenticated() {
-        let registry = SupportedAdapterRegistry;
+        let registry = AgentAdapterRegistry;
         let runner = FakeRunner::new(vec![
             Ok(RuntimeCommandOutput {
                 exit_code: Some(0),
@@ -1097,7 +1088,7 @@ mod tests {
         ]);
         let diagnostic = registry
             .diagnose_resolved(
-                SupportedAdapterId::Codex,
+                AgentAdapterKind::Codex,
                 &AdapterTarget {
                     cwd: PathBuf::from("/project"),
                 },
@@ -1111,13 +1102,13 @@ mod tests {
 
     #[test]
     fn serde_contract_uses_stable_adapter_and_mode_values() {
-        let mapping = approval_mapping(SupportedAdapterId::ClaudeCode, ApprovalMode::Auto);
+        let mapping = approval_mapping(AgentAdapterKind::ClaudeCode, ApprovalMode::Auto);
         assert_eq!(
             serde_json::to_value(mapping).unwrap()["native"],
             serde_json::json!("claude_auto")
         );
         assert_eq!(
-            serde_json::to_value(SupportedAdapterId::ClaudeCode).unwrap(),
+            serde_json::to_value(AgentAdapterKind::ClaudeCode).unwrap(),
             serde_json::json!("claude-code")
         );
     }
@@ -1142,11 +1133,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            target_executable_override(SupportedAdapterId::Codex, target.path()),
+            target_executable_override(AgentAdapterKind::Codex, target.path()),
             Some(target.path().join("bin/codex"))
         );
         assert_eq!(
-            target_executable_override(SupportedAdapterId::ClaudeCode, target.path()),
+            target_executable_override(AgentAdapterKind::ClaudeCode, target.path()),
             Some(PathBuf::from("/opt/custom/claude"))
         );
     }

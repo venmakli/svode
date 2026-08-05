@@ -3,9 +3,7 @@ use std::path::{Component, Path, PathBuf};
 
 use regex::Regex;
 
-use crate::supported_adapters::{
-    RegistryEnvironment, SupportedAdapterId, SupportedAdapterSnapshot,
-};
+use crate::agent_adapters::{AgentAdapterKind, AgentAdapterSnapshot, RegistryEnvironment};
 
 use super::super::model::{
     InstructionAvailability, InstructionDiscovery, InstructionDiscoveryPolicy, InstructionOwner,
@@ -23,7 +21,7 @@ pub(super) fn discover(
     _target_root: &Path,
     directory_chain: &[PathBuf],
     environment: &RegistryEnvironment,
-    adapter: &SupportedAdapterSnapshot,
+    adapter: &AgentAdapterSnapshot,
 ) -> DiscoveryResult {
     let mut result = DiscoveryResult::default();
     let personal = environment.claude_config_dir.join("CLAUDE.md");
@@ -91,10 +89,10 @@ fn discover_group(
     source_kind: InstructionSourceKind,
     owner: InstructionOwner,
     directory_depth: usize,
-    adapter: &SupportedAdapterSnapshot,
+    adapter: &AgentAdapterSnapshot,
     result: &mut DiscoveryResult,
 ) {
-    let adapter_id = SupportedAdapterId::ClaudeCode;
+    let adapter_id = AgentAdapterKind::ClaudeCode;
     let mut inspected = candidates
         .iter()
         .filter_map(|path| {
@@ -215,7 +213,7 @@ fn collect_references(
         if references.len() >= MAX_IMPORT_REFERENCES {
             result.diagnostics.push(diagnostic(
                 source_path,
-                Some(SupportedAdapterId::ClaudeCode),
+                Some(AgentAdapterKind::ClaudeCode),
                 "claude_import_limit",
                 format!("Claude import graph exceeded {MAX_IMPORT_REFERENCES} references"),
             ));
@@ -247,7 +245,7 @@ fn collect_references(
             });
             result.diagnostics.push(diagnostic(
                 source_path,
-                Some(SupportedAdapterId::ClaudeCode),
+                Some(AgentAdapterKind::ClaudeCode),
                 "claude_import_external",
                 format!(
                     "Claude import {} is outside the allowed scan boundary and requires client approval",
@@ -260,7 +258,7 @@ fn collect_references(
             &candidate,
             allowed_root,
             PREVIEW_BYTES,
-            Some(SupportedAdapterId::ClaudeCode),
+            Some(AgentAdapterKind::ClaudeCode),
         ) else {
             references.push(InstructionReference {
                 path: path_string(&candidate),
@@ -290,7 +288,7 @@ fn collect_references(
             });
             result.diagnostics.push(diagnostic(
                 source_path,
-                Some(SupportedAdapterId::ClaudeCode),
+                Some(AgentAdapterKind::ClaudeCode),
                 "claude_import_cycle",
                 format!("Claude import cycle includes {}", candidate.display()),
             ));
@@ -330,7 +328,7 @@ fn collect_references(
         {
             result.diagnostics.push(diagnostic(
                 &candidate,
-                Some(SupportedAdapterId::ClaudeCode),
+                Some(AgentAdapterKind::ClaudeCode),
                 "claude_import_depth",
                 format!("Claude import graph reached maximum depth {MAX_IMPORT_DEPTH}"),
             ));
@@ -383,8 +381,7 @@ mod tests {
         std::fs::write(project.path().join(".claude/CLAUDE.md"), "shadowed").unwrap();
         let home = TempDir::new().unwrap();
         let environment = RegistryEnvironment::for_tests(home.path().to_path_buf());
-        let adapter =
-            &crate::supported_adapters::SupportedAdapterRegistry.snapshots(&environment)[1];
+        let adapter = &crate::agent_adapters::AgentAdapterRegistry.snapshots(&environment)[1];
 
         let result = discover(
             project.path(),
