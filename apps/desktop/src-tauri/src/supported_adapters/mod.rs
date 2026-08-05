@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{AppError, process};
+use crate::AppError;
+
+#[allow(dead_code)]
+pub mod runtime;
 
 pub const CODEX_ADAPTER_ID: &str = "codex";
 pub const CLAUDE_CODE_ADAPTER_ID: &str = "claude-code";
@@ -24,7 +27,7 @@ impl SupportedAdapterId {
         }
     }
 
-    fn executable(self) -> &'static str {
+    pub(crate) fn executable(self) -> &'static str {
         match self {
             Self::Codex => "codex",
             Self::ClaudeCode => "claude",
@@ -42,7 +45,7 @@ pub struct ExecutableEvidence {
 }
 
 impl ExecutableEvidence {
-    fn missing(executable: &str, diagnostic: String) -> Self {
+    pub(crate) fn missing(executable: &str, diagnostic: String) -> Self {
         Self {
             executable: executable.to_string(),
             path: None,
@@ -286,7 +289,7 @@ pub async fn system_registry_environment() -> Result<RegistryEnvironment, AppErr
         .unwrap_or_else(|| home_dir.join(".claude"));
     let mut executables = BTreeMap::new();
     for id in [SupportedAdapterId::Codex, SupportedAdapterId::ClaudeCode] {
-        executables.insert(id, detect_executable(id).await);
+        executables.insert(id, detect_executable(id, None, &home_dir).await);
     }
     Ok(RegistryEnvironment {
         codex_home,
@@ -296,29 +299,36 @@ pub async fn system_registry_environment() -> Result<RegistryEnvironment, AppErr
     })
 }
 
-fn system_home_dir() -> Option<PathBuf> {
+pub(crate) fn system_home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
 }
 
-async fn detect_executable(id: SupportedAdapterId) -> ExecutableEvidence {
+async fn detect_executable(
+    id: SupportedAdapterId,
+    local_override: Option<&Path>,
+    home_dir: &Path,
+) -> ExecutableEvidence {
     let executable = id.executable();
-    let path = match which::which(executable) {
-        Ok(path) => path,
-        Err(error) => {
+    let path = match resolve_executable_path(id, local_override, home_dir) {
+        Some(path) => path,
+        None => {
             return ExecutableEvidence::missing(
                 executable,
-                format!("{executable} executable was not found: {error}"),
+                format!("{executable} executable was not found"),
             );
         }
     };
-    let mut command = tokio::process::Command::new(&path);
-    command.arg("--version");
-    process::hide_tokio_window(&mut command);
-    match command.output().await {
-        Ok(output) if output.status.success() => {
-            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let runner = runtime::SystemRuntimeCommandRunner;
+    let request = runtime::RuntimeCommandRequest {
+        program: path.clone(),
+        arguments: vec!["--version".into()],
+        cwd: home_dir.to_path_buf(),
+    };
+    match runtime::RuntimeCommandRunner::run(&runner, &request).await {
+        Ok(output) if output.exit_code == Some(0) => {
+            let version = output.stdout;
             ExecutableEvidence {
                 executable: executable.to_string(),
                 path: Some(path_string(&path)),
@@ -331,17 +341,80 @@ async fn detect_executable(id: SupportedAdapterId) -> ExecutableEvidence {
             path: Some(path_string(&path)),
             version: None,
             diagnostic: Some(format!(
-                "{executable} --version exited with {}",
-                output.status
+                "{executable} --version exited with {:?}: {}",
+                output.exit_code, output.stderr
             )),
         },
         Err(error) => ExecutableEvidence {
             executable: executable.to_string(),
             path: Some(path_string(&path)),
             version: None,
-            diagnostic: Some(format!("failed to run {executable} --version: {error}")),
+            diagnostic: Some(error),
         },
     }
+}
+
+pub(crate) fn resolve_executable_path(
+    id: SupportedAdapterId,
+    local_override: Option<&Path>,
+    home_dir: &Path,
+) -> Option<PathBuf> {
+    resolve_executable_path_with(id, local_override, home_dir, |name| which::which(name).ok())
+}
+
+fn resolve_executable_path_with(
+    id: SupportedAdapterId,
+    local_override: Option<&Path>,
+    home_dir: &Path,
+    path_lookup: impl FnOnce(&str) -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    if let Some(path) = local_override.filter(|path| is_executable_file(path)) {
+        return Some(path.to_path_buf());
+    }
+    if let Some(path) = path_lookup(id.executable()) {
+        return Some(path);
+    }
+    common_executable_locations(id, home_dir)
+        .into_iter()
+        .find(|path| is_executable_file(path))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn common_executable_locations(id: SupportedAdapterId, home_dir: &Path) -> Vec<PathBuf> {
+    let executable = id.executable();
+    let mut candidates = match id {
+        SupportedAdapterId::Codex => vec![
+            home_dir.join(".bun/bin").join(executable),
+            home_dir.join(".local/bin").join(executable),
+            home_dir.join(".cargo/bin").join(executable),
+        ],
+        SupportedAdapterId::ClaudeCode => vec![
+            home_dir.join(".local/bin").join(executable),
+            home_dir.join(".npm/bin").join(executable),
+            home_dir.join(".bun/bin").join(executable),
+        ],
+    };
+    candidates.push(PathBuf::from("/opt/homebrew/bin").join(executable));
+    candidates.push(PathBuf::from("/usr/local/bin").join(executable));
+    candidates
 }
 
 fn path_string(path: &Path) -> String {
@@ -351,6 +424,16 @@ fn path_string(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    fn make_executable(path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::write(path, b"test").unwrap();
+        let mut permissions = path.metadata().unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(path, permissions).unwrap();
+    }
 
     #[test]
     fn registry_keeps_stable_ids_and_phase_capabilities_explicit() {
@@ -396,5 +479,40 @@ mod tests {
             );
             assert!(!snapshot.native_default.projected_context);
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn executable_resolution_prefers_override_then_path_then_common_location() {
+        let directory = tempfile::tempdir().unwrap();
+        let override_path = directory.path().join("override-codex");
+        let path_result = directory.path().join("path-codex");
+        let common = directory.path().join(".bun/bin/codex");
+        std::fs::create_dir_all(common.parent().unwrap()).unwrap();
+        make_executable(&override_path);
+        make_executable(&path_result);
+        make_executable(&common);
+
+        assert_eq!(
+            resolve_executable_path_with(
+                SupportedAdapterId::Codex,
+                Some(&override_path),
+                directory.path(),
+                |_| Some(path_result.clone()),
+            ),
+            Some(override_path)
+        );
+        assert_eq!(
+            resolve_executable_path_with(SupportedAdapterId::Codex, None, directory.path(), |_| {
+                Some(path_result.clone())
+            },),
+            Some(path_result)
+        );
+        assert_eq!(
+            resolve_executable_path_with(SupportedAdapterId::Codex, None, directory.path(), |_| {
+                None
+            },),
+            Some(common)
+        );
     }
 }
