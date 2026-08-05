@@ -156,3 +156,13 @@ export const useSystemCollectionSessionQueryState =
         return { stateByInstanceKey };
       }),
   }));
+
+export function useSystemCollectionActivePresentationId(
+  instanceKey: string | null,
+): string | null {
+  return useSystemCollectionSessionQueryState((state) =>
+    instanceKey
+      ? (state.stateByInstanceKey[instanceKey]?.activePresentationId ?? null)
+      : null,
+  );
+}

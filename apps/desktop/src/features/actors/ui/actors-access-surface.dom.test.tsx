@@ -39,6 +39,14 @@ test("Actors has no access chrome and open or refresh never probes", async () =>
         status: "unknown",
       };
     }
+    if (command === "agent_actors_get") {
+      return {
+        adapterDescriptors: [],
+        bindings: [],
+        ownerFingerprints: { "/repo": "agent-catalog-fingerprint" },
+        resolution: { actors: [], diagnostics: [] },
+      };
+    }
     if (command === "actors_get_catalog") return catalogSnapshot(1);
     if (command === "actors_refresh_catalog") return catalogSnapshot(2);
     throw new Error(`Unexpected command: ${command}`);

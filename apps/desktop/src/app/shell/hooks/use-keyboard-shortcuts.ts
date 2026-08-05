@@ -2,7 +2,10 @@ import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
-import { requestActorMailmapSave } from "@/features/actors";
+import {
+  requestActorMailmapSave,
+  requestAgentActorCatalogSave,
+} from "@/features/actors";
 import {
   useActiveEntrySelection,
   useCloseEntryDocument,
@@ -26,6 +29,7 @@ import { useShellStore } from "../model";
 import * as m from "@/paraglide/messages.js";
 import {
   runSystemCollectionNavigation,
+  useSystemCollectionActivePresentationId,
   useSystemCollectionDetailController,
 } from "@/features/collection/system";
 
@@ -51,6 +55,9 @@ export function useKeyboardShortcuts() {
       ? state.surfaceByOwnerKey[`space:${activeScopeSpace.id}`]
       : undefined,
   );
+  const actorsPresentationId = useSystemCollectionActivePresentationId(
+    activeScopeSpace ? `actors:space:${activeScopeSpace.id}` : null,
+  );
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -74,10 +81,15 @@ export function useKeyboardShortcuts() {
             activeRootPath ?? undefined,
           );
         } else if (saveRoute === "actors") {
-          requestActorMailmapSave({
+          const request = {
             projectPath: activeRootPath ?? activeScopeSpace.path,
             spacePath: activeScopeSpace.path,
-          });
+          };
+          if (actorsPresentationId === "agents") {
+            requestAgentActorCatalogSave(request);
+          } else {
+            requestActorMailmapSave(request);
+          }
         } else {
           showNoEditableSurfaceFeedback(activeScopeSpace.path, scope);
         }
@@ -130,6 +142,7 @@ export function useKeyboardShortcuts() {
     activeRootPath,
     activeScopeSpace,
     activeScopeSurface,
+    actorsPresentationId,
     toggleCommandPalette,
     toggleChatPanel,
     closeDocument,

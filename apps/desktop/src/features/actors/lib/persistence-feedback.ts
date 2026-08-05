@@ -20,13 +20,13 @@ export function actorMutationPersistenceFeedback(
   const identityDescription = result.currentIdentityUpdated
     ? m.actors_mutation_current_identity_updated()
     : undefined;
-  const rootDescription = rootPointerDescription(rootPointer);
+  const rootDescription = actorRootPointerDescription(rootPointer);
 
   if (mailmap.status === "committed") {
     return {
       description: joinDescriptions(rootDescription, identityDescription),
       title: m.actors_mutation_success_committed(),
-      tone: isPendingOrFailed(rootPointer) ? "warning" : "success",
+      tone: actorPersistenceNeedsAttention(rootPointer) ? "warning" : "success",
     };
   }
   if (mailmap.status === "pending") {
@@ -54,7 +54,7 @@ export function actorMutationPersistenceFeedback(
   return {
     description: joinDescriptions(rootDescription, identityDescription),
     title: m.actors_mutation_success_clean(),
-    tone: isPendingOrFailed(rootPointer) ? "warning" : "success",
+    tone: actorPersistenceNeedsAttention(rootPointer) ? "warning" : "success",
   };
 }
 
@@ -62,13 +62,13 @@ export function actorManualSaveFeedback(
   persistence: ActorRepositoryPersistenceOutcome,
 ): ActorPersistenceFeedback {
   const rootPointer = persistence.rootPointer;
-  const rootDescription = rootPointerDescription(rootPointer);
+  const rootDescription = actorRootPointerDescription(rootPointer);
 
   if (persistence.mailmap.status === "committed") {
     return {
       description: rootDescription,
       title: m.actors_mailmap_save_committed(),
-      tone: isPendingOrFailed(rootPointer) ? "warning" : "success",
+      tone: actorPersistenceNeedsAttention(rootPointer) ? "warning" : "success",
     };
   }
   if (
@@ -82,7 +82,7 @@ export function actorManualSaveFeedback(
   }
   if (
     persistence.mailmap.status === "clean" &&
-    isPendingOrFailed(rootPointer)
+    actorPersistenceNeedsAttention(rootPointer)
   ) {
     return {
       description: rootDescription,
@@ -113,11 +113,11 @@ export function actorManualSaveFeedback(
   return {
     description: rootDescription,
     title: m.actors_mailmap_save_clean(),
-    tone: isPendingOrFailed(rootPointer) ? "warning" : "info",
+    tone: actorPersistenceNeedsAttention(rootPointer) ? "warning" : "info",
   };
 }
 
-function rootPointerDescription(outcome?: ActorPersistenceOutcome) {
+export function actorRootPointerDescription(outcome?: ActorPersistenceOutcome) {
   if (!outcome) return undefined;
   if (outcome.status === "committed") {
     return m.actors_mutation_root_pointer_committed();
@@ -157,7 +157,9 @@ function mailmapPendingDescription(
   }
 }
 
-function isPendingOrFailed(outcome?: ActorPersistenceOutcome) {
+export function actorPersistenceNeedsAttention(
+  outcome?: ActorPersistenceOutcome,
+) {
   return outcome?.status === "pending" || outcome?.status === "failed";
 }
 

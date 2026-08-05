@@ -18,6 +18,7 @@ import { useActorCatalog } from "../hooks/use-actor-catalog";
 import { useActorAccessPreflight } from "../hooks/use-actor-access-preflight";
 import { useActorMailmapSave } from "../hooks/use-actor-mailmap-save";
 import { useActorMutation } from "../hooks/use-actor-mutation";
+import { useAgentActorsController } from "../hooks/use-agent-actors-controller";
 import type { ActorCatalogState } from "../model/catalog-state";
 import type {
   ActorMutationIntent,
@@ -33,6 +34,7 @@ import {
   createActorDetailRequest,
   createActorsPresentation,
 } from "./actors-presentation";
+import { createAgentActorsPresentation } from "./agent-actors-presentation";
 
 export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
   const { refresh, replaceSnapshot, state } = useActorCatalog(owner.spacePath);
@@ -41,6 +43,11 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const [focusRowId, setFocusRowId] = useState<string | null>(null);
   const instanceKey = `actors:${owner.ownerKey}`;
+  const agentActors = useAgentActorsController({
+    detailController,
+    instanceKey,
+    owner,
+  });
   const catalogRows = useMemo(
     () => (state.phase === "ready" ? state.snapshot.rows : []),
     [state],
@@ -151,10 +158,18 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
     spacePath: owner.spacePath,
     state: presentationState,
   });
+  const agentActorsPresentation = createAgentActorsPresentation({
+    actions: agentActors.actions,
+    inheritedVisible: agentActors.inheritedVisible,
+    onRefresh: agentActors.onRefresh,
+    refreshing: agentActors.refreshing,
+    renderDetail: agentActors.renderDetail,
+    state: agentActors.presentationState,
+  });
   const instance: SystemCollectionInstance = {
     defaultPresentationId: "humans",
     instanceKey,
-    presentations: [presentation],
+    presentations: [presentation, agentActorsPresentation],
     stateScope: "session",
   };
   const collectionState = useSystemCollectionState(instance);
@@ -218,6 +233,7 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
         onClose={mailmapSave.close}
         onConfirm={() => void mailmapSave.confirm()}
       />
+      {agentActors.overlays}
     </div>
   );
 }

@@ -18,7 +18,6 @@ import {
 import type { RepositoryAccessSnapshot } from "@/features/git";
 import * as m from "@/paraglide/messages.js";
 
-import type { ActorMutationIntent } from "../model/identity-mutation";
 import {
   actorAccessPreflightCopy,
   type ActorAccessPreflightKind,
@@ -33,7 +32,7 @@ export function ActorAccessPreflightDialog({
   onVerify,
 }: {
   error: string | null;
-  intent: ActorMutationIntent | null;
+  intent: ActorAccessIntent | null;
   snapshot: RepositoryAccessSnapshot | null;
   verifying: boolean;
   onClose(): void;
@@ -111,8 +110,24 @@ function accessPresentation(kind: ActorAccessPreflightKind) {
   return { destructive: false, icon: CircleHelp };
 }
 
-function intentLabel(intent: ActorMutationIntent) {
+type ActorAccessIntent = {
+  kind:
+    | "add"
+    | "merge"
+    | "edit"
+    | "add-agent"
+    | "edit-agent"
+    | "delete-agent"
+    | "save-agent-catalog";
+};
+
+function intentLabel(intent: ActorAccessIntent) {
   if (intent.kind === "add") return m.actors_add();
   if (intent.kind === "merge") return m.actors_merge();
+  if (intent.kind === "add-agent") return m.agent_actors_add();
+  if (intent.kind === "delete-agent") return m.agent_actors_delete();
+  if (intent.kind === "save-agent-catalog")
+    return m.agent_actors_save_catalog();
+  if (intent.kind === "edit-agent") return m.agent_actors_edit();
   return m.actors_edit();
 }

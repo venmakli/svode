@@ -1,25 +1,26 @@
 import { useCallback, useRef, useState } from "react";
 
 import type { RepositoryAccessSnapshot } from "@/features/git";
-
 import type { ActorMutationIntent } from "../model/identity-mutation";
 
-interface ActorAccessPreflightOptions {
+interface ActorAccessPreflightOptions<Intent extends { kind: string }> {
   error: string | null;
   snapshot: RepositoryAccessSnapshot | null;
   verifying: boolean;
-  onContinue(intent: ActorMutationIntent): void;
+  onContinue(intent: Intent): void;
   onVerify(): Promise<RepositoryAccessSnapshot | null>;
 }
 
-export function useActorAccessPreflight({
+export function useActorAccessPreflight<
+  Intent extends { kind: string } = ActorMutationIntent,
+>({
   error,
   snapshot,
   verifying,
   onContinue,
   onVerify,
-}: ActorAccessPreflightOptions) {
-  const [intent, setIntent] = useState<ActorMutationIntent | null>(null);
+}: ActorAccessPreflightOptions<Intent>) {
+  const [intent, setIntent] = useState<Intent | null>(null);
   const attemptIdRef = useRef(0);
   const verificationRef = useRef<{
     attemptId: number;
@@ -28,7 +29,7 @@ export function useActorAccessPreflight({
   } | null>(null);
 
   const verifyAndContinue = useCallback(
-    (pendingIntent: ActorMutationIntent, attemptId: number) => {
+    (pendingIntent: Intent, attemptId: number) => {
       if (verificationRef.current?.attemptId === attemptId) {
         return verificationRef.current.promise;
       }
@@ -58,7 +59,7 @@ export function useActorAccessPreflight({
   );
 
   const request = useCallback(
-    (nextIntent: ActorMutationIntent) => {
+    (nextIntent: Intent) => {
       if (!error && !verifying && allowsMutation(snapshot)) {
         onContinue(nextIntent);
         return;
