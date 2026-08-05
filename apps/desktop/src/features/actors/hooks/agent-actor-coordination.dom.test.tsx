@@ -102,10 +102,12 @@ test("closing edit clears its session so unrelated rerenders cannot reopen it", 
       await nextTurn();
     });
     expect(openCount).toBe(1);
-    expect(latestRequest?.canClose).toBeFunction();
+    const openedRequest = latestRequest as SystemCollectionDetailRequest | null;
+    if (!openedRequest) throw new Error("Expected edit detail to open");
+    expect(typeof openedRequest.canClose).toBe("function");
 
     await act(async () => {
-      expect(await latestRequest!.canClose!()).toBe(true);
+      expect(await openedRequest.canClose!()).toBe(true);
       await nextTurn();
     });
     await act(async () => {

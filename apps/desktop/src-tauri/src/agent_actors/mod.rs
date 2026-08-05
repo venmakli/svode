@@ -4,6 +4,8 @@
 //! catalog is shareable Git content, while approvals are local-only state.
 
 pub mod commands;
+#[allow(dead_code)]
+pub mod launch;
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
