@@ -8,9 +8,9 @@ use serde_json::Value;
 use super::{
     CandidateCwdSource, PersistedAgentSessionCandidate, PersistedAgentSessionStatus,
     SourceFingerprint, SourceInputFile, SourceScan, build_fingerprint, collect_optional_file,
-    collect_recursive_dirs, collect_recursive_files, metadata_mtime, nested_string_field,
-    read_jsonl, short_id, source_file_ref, string_field, timestamp_from_fields, title_from_text,
-    user_prompt_title_from_text,
+    collect_recursive_dirs, collect_recursive_files, launch_id_from_text, metadata_mtime,
+    nested_string_field, read_jsonl, short_id, source_file_ref, string_field,
+    timestamp_from_fields, title_from_text, user_prompt_title_from_text,
 };
 use crate::agent_sessions::types::{
     AgentSessionCounts, AgentSessionDiagnosticSeverity, AgentSessionSource,
@@ -274,6 +274,9 @@ fn parse_detail(
         if role == Some("user") {
             if !is_tool_result_line(&value) {
                 parsed.counts.user_messages += 1;
+                if parsed.launch_id.is_none() {
+                    parsed.launch_id = extract_claude_launch_id(&value);
+                }
                 if parsed.first_user_cwd.is_none() {
                     parsed.first_user_cwd = string_field(&value, &["cwd"])
                         .or_else(|| nested_string_field(&value, &["message", "cwd"]))
@@ -306,6 +309,9 @@ fn parse_detail(
     }
 
     let builder = builder_for(builders, session_id);
+    if builder.candidate.launch_id.is_none() {
+        builder.candidate.launch_id = parsed.launch_id;
+    }
     builder.candidate.source_meta.detail_present = true;
     builder.candidate.source_meta.detail_file_count += 1;
     builder.candidate.source_meta.detail_line_count += parsed.line_count;
@@ -414,6 +420,25 @@ fn extract_claude_user_text(value: &Value) -> Option<String> {
         }
     }
     string_field(message, &["text", "prompt"]).and_then(user_prompt_title_from_text)
+}
+
+fn extract_claude_launch_id(value: &Value) -> Option<String> {
+    if is_tool_result_line(value) {
+        return None;
+    }
+    let message = value.get("message").unwrap_or(value);
+    message
+        .get("content")
+        .and_then(|content| {
+            content.as_str().and_then(launch_id_from_text).or_else(|| {
+                content.as_array().and_then(|items| {
+                    items.iter().find_map(|item| {
+                        string_field(item, &["text"]).and_then(launch_id_from_text)
+                    })
+                })
+            })
+        })
+        .or_else(|| string_field(message, &["text", "prompt"]).and_then(launch_id_from_text))
 }
 
 fn builder_for<'a>(
@@ -550,6 +575,7 @@ impl SessionBuilder {
 struct DetailParse {
     custom_title: Option<String>,
     first_prompt: Option<String>,
+    launch_id: Option<String>,
     worktree_original_cwd: Option<String>,
     first_user_cwd: Option<String>,
     first_timestamp: Option<DateTime<Utc>>,
@@ -872,6 +898,28 @@ mod tests {
         assert_eq!(
             scan.candidates[0].title_source,
             AgentSessionTitleSource::FirstUserPrompt
+        );
+    }
+
+    #[test]
+    fn agent_sessions_claude_parser_reconciles_preassigned_session_launch_marker() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().join(".claude");
+        write(
+            &root.join("projects/-tmp-project/123e4567-e89b-42d3-a456-426614174000.jsonl"),
+            r##"{"sessionId":"123e4567-e89b-42d3-a456-426614174000","type":"user","message":{"role":"user","content":[{"type":"text","text":"Prepare report\n\n<!-- svode-launch:launch-claude -->"}]},"cwd":"/tmp/project","timestamp":1700000000}"##,
+        );
+
+        let scan = scan_root(&root);
+        assert_eq!(scan.candidates.len(), 1);
+        assert_eq!(
+            scan.candidates[0].launch_id.as_deref(),
+            Some("launch-claude")
+        );
+        assert_eq!(scan.candidates[0].title.as_deref(), Some("Prepare report"));
+        assert_eq!(
+            scan.candidates[0].source_session_id,
+            "123e4567-e89b-42d3-a456-426614174000"
         );
     }
 }

@@ -6,7 +6,10 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { AgentSessionsScreen } from "@/features/agent-sessions";
+import {
+  AgentSessionsScreen,
+  type AgentSessionOpenRequest,
+} from "@/features/agent-sessions";
 import * as m from "@/paraglide/messages.js";
 
 export function InboxSurface() {
@@ -24,9 +27,16 @@ export function InboxSurface() {
 }
 
 export function SessionsSurface({
+  openRequest,
   onOpenAppSettings,
 }: {
+  openRequest?: AgentSessionOpenRequest | null;
   onOpenAppSettings?: () => void;
 }) {
-  return <AgentSessionsScreen onOpenAppSettings={onOpenAppSettings} />;
+  return (
+    <AgentSessionsScreen
+      openRequest={openRequest}
+      onOpenAppSettings={onOpenAppSettings}
+    />
+  );
 }

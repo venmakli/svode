@@ -3,4 +3,5 @@ export type {
   RoutineCatalogSnapshot,
   RoutineDefinition,
   RoutineRow,
+  RoutineSessionTarget,
 } from "./model/types";

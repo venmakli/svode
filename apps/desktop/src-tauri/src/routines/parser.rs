@@ -701,6 +701,7 @@ fn row_from_file(owner: &ResolvedRoutineOwner, file: DiscoveredRoutineFile) -> R
         executor,
         last_run_at: None,
         next_run_at: None,
+        last_run: None,
         fingerprint: file.fingerprint,
         definition,
         diagnostics: file

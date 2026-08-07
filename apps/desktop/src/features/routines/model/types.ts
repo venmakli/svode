@@ -65,7 +65,57 @@ export interface RoutineRow {
   valid: boolean;
   lastRunAt: string | null;
   nextRunAt: string | null;
+  lastRun: RoutineRunRef | null;
 }
+
+export interface RoutineRunRef {
+  routineRunId: string;
+  launchId: string;
+  agentSessionId: string;
+  sourceSessionId: string | null;
+  ptyId: string | null;
+  active: boolean;
+}
+
+export interface RoutineSessionTarget {
+  sessionId: string;
+  launchId: string;
+}
+
+export type RoutineDispatchBlockedCode =
+  | "invalid_routine"
+  | "non_manual_trigger"
+  | "unsupported_action"
+  | "missing_executor"
+  | "missing_actor_id"
+  | "ambiguous_actor_id"
+  | "unavailable_executor"
+  | "repository_access_denied";
+
+export type RoutineManualDispatchResult =
+  | {
+      status: "started" | "focused";
+      routineId: string;
+      routineRunId: string;
+      launchId: string;
+      agentSessionId: string;
+      sourceSessionId: string | null;
+      ptyId: string | null;
+    }
+  | {
+      status: "blocked";
+      routineId: string;
+      code: RoutineDispatchBlockedCode;
+      message: string;
+    }
+  | {
+      status: "failed";
+      routineId: string;
+      routineRunId: string;
+      launchId: string;
+      agentSessionId: string;
+      message: string;
+    };
 
 export interface RoutineCatalogSnapshot {
   catalogFingerprint: string;

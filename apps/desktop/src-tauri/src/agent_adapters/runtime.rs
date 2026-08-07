@@ -212,6 +212,16 @@ pub struct TypedAgentLaunch {
     pub requested_model: Option<String>,
     pub requested_effort: Option<String>,
     pub session: AgentSessionLaunchMetadata,
+    pub launch_id: Option<String>,
+    pub source_session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManualRoutineLaunchInput {
+    pub instruction: String,
+    pub launch_id: String,
+    pub owner_kind: String,
+    pub owner_path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -304,6 +314,28 @@ impl AgentAdapterRegistry {
             return Err(validation);
         }
         Ok(build_launch(request, executable_path))
+    }
+
+    pub fn build_manual_routine_launch(
+        &self,
+        request: &AgentLaunchRequest,
+        executable_path: &Path,
+        input: &ManualRoutineLaunchInput,
+    ) -> Result<TypedAgentLaunch, BindingValidation> {
+        let mut launch = self.build_launch(request, executable_path)?;
+        let prompt = manual_routine_prompt(input);
+        match launch.adapter {
+            AgentAdapterKind::Codex => launch.argv.push(prompt),
+            AgentAdapterKind::ClaudeCode => {
+                let source_session_id = new_uuid_v4();
+                launch
+                    .argv
+                    .extend(["--session-id".into(), source_session_id.clone(), prompt]);
+                launch.source_session_id = Some(source_session_id);
+            }
+        }
+        launch.launch_id = Some(input.launch_id.clone());
+        Ok(launch)
     }
 
     pub fn select_pre_start(
@@ -740,7 +772,46 @@ fn build_launch(request: &AgentLaunchRequest, executable_path: &Path) -> TypedAg
             cancel_via_managed_pty: true,
             prompt_transport: PromptTransport::ManagedPtyInput,
         },
+        launch_id: None,
+        source_session_id: None,
     }
+}
+
+fn manual_routine_prompt(input: &ManualRoutineLaunchInput) -> String {
+    let mut prompt = input.instruction.trim().to_string();
+    if !prompt.is_empty() {
+        prompt.push_str("\n\n");
+    }
+    prompt.push_str(&format!(
+        "<!-- svode-owner:{}:{} -->\n<!-- svode-launch:{} -->",
+        input.owner_kind, input.owner_path, input.launch_id
+    ));
+    prompt
+}
+
+fn new_uuid_v4() -> String {
+    let mut bytes = ulid::Ulid::new().to_bytes();
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15]
+    )
 }
 
 #[cfg(test)]
@@ -854,6 +925,63 @@ mod tests {
                 "high"
             ]
         );
+    }
+
+    #[test]
+    fn manual_routine_launch_is_adapter_owned_and_carries_launch_marker() {
+        let registry = AgentAdapterRegistry;
+        let input = ManualRoutineLaunchInput {
+            instruction: "Review backlog".into(),
+            launch_id: "launch-one".into(),
+            owner_kind: "space".into(),
+            owner_path: ".".into(),
+        };
+        let codex = registry
+            .build_manual_routine_launch(
+                &request(
+                    binding(AgentAdapterKind::Codex, None, None),
+                    ApprovalMode::Ask,
+                ),
+                Path::new("/bin/codex"),
+                &input,
+            )
+            .unwrap();
+        assert_eq!(codex.launch_id.as_deref(), Some("launch-one"));
+        assert_eq!(codex.source_session_id, None);
+        assert!(
+            codex
+                .argv
+                .last()
+                .expect("prompt")
+                .contains("<!-- svode-launch:launch-one -->")
+        );
+
+        let claude = registry
+            .build_manual_routine_launch(
+                &request(
+                    binding(AgentAdapterKind::ClaudeCode, None, None),
+                    ApprovalMode::Ask,
+                ),
+                Path::new("/bin/claude"),
+                &input,
+            )
+            .unwrap();
+        let session_index = claude
+            .argv
+            .iter()
+            .position(|argument| argument == "--session-id")
+            .expect("session id argument");
+        let session_id = &claude.argv[session_index + 1];
+        assert_eq!(
+            claude.source_session_id.as_deref(),
+            Some(session_id.as_str())
+        );
+        assert_eq!(session_id.len(), 36);
+        assert_eq!(session_id.as_bytes()[14], b'4');
+        assert!(matches!(
+            session_id.as_bytes()[19],
+            b'8' | b'9' | b'a' | b'b'
+        ));
     }
 
     #[test]

@@ -138,6 +138,10 @@ pub enum AgentSessionsCacheMode {
 #[serde(rename_all = "camelCase")]
 pub struct AgentSession {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routine_run_id: Option<String>,
     pub source: AgentSessionSource,
     pub source_session_id: String,
     pub title: String,
@@ -190,6 +194,8 @@ pub struct AgentSessionRuntime {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
     pub live: bool,
+    #[serde(default)]
+    pub provisional: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_output_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

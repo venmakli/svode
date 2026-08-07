@@ -3,8 +3,8 @@ use chrono::{SecondsFormat, Utc};
 use super::sources::{PersistedAgentSessionCandidate, PersistedAgentSessionStatus, short_id};
 use super::types::{
     AgentSession, AgentSessionActiveFlag, AgentSessionCapabilities, AgentSessionResumeCommand,
-    AgentSessionRuntime, AgentSessionScope, AgentSessionStatus, AgentSessionStatusConfidence,
-    AgentSessionStatusSource, AgentSessionTitleSource,
+    AgentSessionRuntime, AgentSessionScope, AgentSessionSourceMeta, AgentSessionStatus,
+    AgentSessionStatusConfidence, AgentSessionStatusSource, AgentSessionTitleSource,
 };
 use crate::terminal::{AgentTerminalStatusEvidence, AgentTerminalSurface};
 
@@ -76,6 +76,8 @@ pub(super) fn map_candidate(
 
     AgentSession {
         id,
+        launch_id: candidate.launch_id,
+        routine_run_id: None,
         source: candidate.source,
         source_session_id: candidate.source_session_id,
         title,
@@ -124,6 +126,7 @@ pub(super) fn apply_terminal_overlay(
             surface.agent_session_id == session.id
                 || (surface.source == session.source
                     && surface.source_session_id == session.source_session_id)
+                || (session.launch_id.is_some() && session.launch_id == surface.launch_id)
         })
         .collect::<Vec<_>>();
     if matching.is_empty() {
@@ -134,10 +137,19 @@ pub(super) fn apply_terminal_overlay(
         .iter()
         .max_by(|a, b| surface_activity_key(a).cmp(&surface_activity_key(b)))
         .expect("matching surface");
+    session.launch_id = session
+        .launch_id
+        .clone()
+        .or_else(|| runtime_surface.launch_id.clone());
+    session.routine_run_id = session
+        .routine_run_id
+        .clone()
+        .or_else(|| runtime_surface.routine_run_id.clone());
     session.runtime = Some(AgentSessionRuntime {
-        pty_id: Some(runtime_surface.pty_id.clone()),
+        pty_id: runtime_surface.live.then(|| runtime_surface.pty_id.clone()),
         pid: None,
-        live: true,
+        live: runtime_surface.live,
+        provisional: false,
         last_output_at: runtime_surface.last_output_at.clone(),
         last_input_at: runtime_surface.last_input_at.clone(),
     });
@@ -150,7 +162,19 @@ pub(super) fn apply_terminal_overlay(
         return;
     }
     if matches!(session.status_source, AgentSessionStatusSource::SourceLog) {
-        return;
+        match session.status {
+            AgentSessionStatus::Done | AgentSessionStatus::Failed | AgentSessionStatus::Stopped => {
+                return;
+            }
+            AgentSessionStatus::Active
+                if evidences
+                    .iter()
+                    .all(|evidence| evidence.status == AgentSessionStatus::Active) =>
+            {
+                return;
+            }
+            AgentSessionStatus::Active | AgentSessionStatus::Unknown => {}
+        }
     }
 
     let first_status = evidences[0].status;
@@ -183,6 +207,101 @@ pub(super) fn apply_terminal_overlay(
     } else {
         session.active_flags.clear();
         session.waiting_since = None;
+    }
+}
+
+pub(super) fn map_provisional_surface(
+    surface: &AgentTerminalSurface,
+    scope: AgentSessionScope,
+) -> AgentSession {
+    let evidence = surface_status_evidence(surface);
+    let (status, active_flags, status_confidence, status_reason, waiting_since) = match evidence {
+        Some(evidence) => {
+            let waiting_since = (evidence.status == AgentSessionStatus::Active
+                && !evidence.active_flags.is_empty())
+            .then(|| evidence.observed_at.clone());
+            (
+                evidence.status,
+                evidence.active_flags,
+                AgentSessionStatusConfidence::Strong,
+                Some(evidence.reason),
+                waiting_since,
+            )
+        }
+        None if surface.live => (
+            AgentSessionStatus::Unknown,
+            Vec::new(),
+            AgentSessionStatusConfidence::Unknown,
+            Some("routine launch is visible in a managed PTY".to_string()),
+            None,
+        ),
+        None => (
+            AgentSessionStatus::Unknown,
+            Vec::new(),
+            AgentSessionStatusConfidence::Unknown,
+            Some("routine launch has no source session or terminal outcome evidence".to_string()),
+            None,
+        ),
+    };
+    let last_activity_at = surface
+        .last_input_at
+        .as_deref()
+        .into_iter()
+        .chain(surface.last_output_at.as_deref())
+        .chain(Some(surface.created_at.as_str()))
+        .max()
+        .unwrap_or(surface.created_at.as_str())
+        .to_string();
+
+    AgentSession {
+        id: surface.agent_session_id.clone(),
+        launch_id: surface.launch_id.clone(),
+        routine_run_id: surface.routine_run_id.clone(),
+        source: surface.source,
+        source_session_id: surface.source_session_id.clone(),
+        title: surface.title.clone().unwrap_or_else(|| {
+            surface
+                .launch_id
+                .as_deref()
+                .map(short_id)
+                .unwrap_or_else(|| short_id(&surface.agent_session_id))
+        }),
+        title_source: AgentSessionTitleSource::CliTitle,
+        status,
+        active_flags,
+        status_source: AgentSessionStatusSource::SvodeAgentRuntime,
+        status_confidence,
+        status_reason,
+        runtime: Some(AgentSessionRuntime {
+            pty_id: surface.live.then(|| surface.pty_id.clone()),
+            pid: None,
+            live: surface.live,
+            provisional: true,
+            last_output_at: surface.last_output_at.clone(),
+            last_input_at: surface.last_input_at.clone(),
+        }),
+        project_id: None,
+        project_path: Some(scope.project_path.clone()),
+        scope_kind: scope.kind,
+        scope_status: scope.status,
+        space_id: scope.space_id.clone(),
+        space_path: scope.space_path.clone(),
+        scope_confidence: scope.confidence,
+        cwd: scope.cwd,
+        started_at: Some(surface.created_at.clone()),
+        last_activity_at,
+        waiting_since,
+        duration_ms: None,
+        resume_command: None,
+        source_file: None,
+        counts: None,
+        capabilities: AgentSessionCapabilities {
+            can_resume: false,
+            can_reveal_file: false,
+            has_readable_log: false,
+        },
+        pinned: false,
+        source_meta: AgentSessionSourceMeta::default(),
     }
 }
 

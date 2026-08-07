@@ -87,6 +87,7 @@ pub fn terminal_list_agent_surfaces(
     Ok(manager
         .list_agent_surfaces()?
         .into_iter()
+        .filter(|surface| surface.live)
         .map(TerminalAgentSurfaceSession::from)
         .collect())
 }

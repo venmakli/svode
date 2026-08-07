@@ -9,9 +9,9 @@ use serde_json::Value;
 use super::{
     CandidateCwdSource, PersistedAgentSessionCandidate, PersistedAgentSessionStatus,
     SourceFingerprint, SourceInputFile, SourceScan, build_fingerprint, collect_optional_file,
-    collect_recursive_dirs, collect_recursive_files, metadata_mtime, nested_string_field,
-    read_jsonl, short_id, source_file_ref, string_field, timestamp_from_fields, title_from_text,
-    user_prompt_title_from_text,
+    collect_recursive_dirs, collect_recursive_files, launch_id_from_text, metadata_mtime,
+    nested_string_field, read_jsonl, short_id, source_file_ref, string_field,
+    timestamp_from_fields, title_from_text, user_prompt_title_from_text,
 };
 use crate::agent_sessions::types::{
     AgentSessionActiveFlag, AgentSessionCounts, AgentSessionDiagnosticSeverity, AgentSessionSource,
@@ -333,6 +333,9 @@ fn parse_detail(
         match string_field(payload, &["role"]) {
             Some("user") => {
                 parsed.counts.user_messages += 1;
+                if parsed.launch_id.is_none() {
+                    parsed.launch_id = extract_codex_launch_id(payload);
+                }
                 if parsed.first_prompt.is_none() {
                     parsed.first_prompt = extract_codex_user_text(payload);
                 }
@@ -370,6 +373,9 @@ fn parse_detail(
     };
 
     let builder = builder_for(builders, id);
+    if builder.candidate.launch_id.is_none() {
+        builder.candidate.launch_id = parsed.launch_id;
+    }
     builder.candidate.source_meta.detail_present = true;
     builder.candidate.source_meta.detail_file_count += 1;
     builder.candidate.source_meta.detail_line_count += parsed.line_count;
@@ -461,6 +467,23 @@ fn extract_codex_user_text(payload: &Value) -> Option<String> {
         .and_then(|message| message.get("content"))
         .and_then(Value::as_str)
         .and_then(user_prompt_title_from_text)
+}
+
+fn extract_codex_launch_id(payload: &Value) -> Option<String> {
+    string_field(payload, &["text", "prompt"])
+        .and_then(launch_id_from_text)
+        .or_else(|| {
+            payload.get("content").and_then(|content| {
+                content.as_str().and_then(launch_id_from_text).or_else(|| {
+                    content.as_array().and_then(|items| {
+                        items.iter().find_map(|item| {
+                            string_field(item, &["text", "input_text"])
+                                .and_then(launch_id_from_text)
+                        })
+                    })
+                })
+            })
+        })
 }
 
 fn is_function_call(value: &Value) -> bool {
@@ -641,6 +664,7 @@ struct DetailParse {
     session_id: Option<String>,
     cwd: Option<String>,
     first_prompt: Option<String>,
+    launch_id: Option<String>,
     first_timestamp: Option<DateTime<Utc>>,
     last_timestamp: Option<DateTime<Utc>>,
     counts: AgentSessionCounts,
@@ -1037,5 +1061,24 @@ not-json"#,
             scan.candidates[0].title_source,
             AgentSessionTitleSource::FirstUserPrompt
         );
+    }
+
+    #[test]
+    fn agent_sessions_codex_parser_reconciles_launch_marker_without_title_leak() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().join(".codex");
+        write(
+            &root.join("sessions/2026/07/04/a/rollout-launch-marker.jsonl"),
+            r##"{"type":"session_meta","payload":{"id":"codex-launch","cwd":"/tmp/project"},"timestamp":"2026-07-04T10:00:00Z"}
+{"type":"response_item","payload":{"role":"user","content":[{"type":"input_text","text":"Review backlog\n\n<!-- svode-launch:launch-codex -->"}]},"timestamp":"2026-07-04T10:01:00Z"}"##,
+        );
+
+        let scan = scan_root(&root);
+        assert_eq!(scan.candidates.len(), 1);
+        assert_eq!(
+            scan.candidates[0].launch_id.as_deref(),
+            Some("launch-codex")
+        );
+        assert_eq!(scan.candidates[0].title.as_deref(), Some("Review backlog"));
     }
 }

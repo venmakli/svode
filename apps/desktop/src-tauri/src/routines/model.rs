@@ -182,6 +182,155 @@ pub enum RoutineActionType {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutineRunTerminalStatus {
+    Done,
+    Failed,
+    Stopped,
+    Unknown,
+}
+
+impl RoutineRunTerminalStatus {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Done => "done",
+            Self::Failed => "failed",
+            Self::Stopped => "stopped",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub(crate) fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "done" => Some(Self::Done),
+            "failed" => Some(Self::Failed),
+            "stopped" => Some(Self::Stopped),
+            "unknown" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RoutineRunRecord {
+    pub routine_run_id: String,
+    pub routine_id: String,
+    pub owner_path: String,
+    pub launch_id: String,
+    pub pty_id: Option<String>,
+    pub source: String,
+    pub source_session_id: Option<String>,
+    pub agent_session_id: String,
+    pub created_at: String,
+    pub terminal_status: Option<RoutineRunTerminalStatus>,
+    pub terminal_exit_code: Option<i32>,
+    pub terminal_reason: Option<String>,
+    pub terminal_observed_at: Option<String>,
+    pub session_status: Option<String>,
+}
+
+impl RoutineRunRecord {
+    pub(crate) fn has_live_pty(&self, live_pty_ids: &std::collections::HashSet<String>) -> bool {
+        self.pty_id
+            .as_ref()
+            .is_some_and(|pty_id| live_pty_ids.contains(pty_id))
+    }
+
+    pub(crate) fn blocks_relaunch(&self, live_pty_ids: &std::collections::HashSet<String>) -> bool {
+        match self.session_status.as_deref() {
+            Some("active") => self.has_live_pty(live_pty_ids),
+            Some("done" | "failed" | "stopped") => false,
+            Some("unknown") => self.has_live_pty(live_pty_ids),
+            Some(_) => self.has_live_pty(live_pty_ids),
+            None => match self.terminal_status {
+                Some(
+                    RoutineRunTerminalStatus::Done
+                    | RoutineRunTerminalStatus::Failed
+                    | RoutineRunTerminalStatus::Stopped,
+                ) => false,
+                Some(RoutineRunTerminalStatus::Unknown) => self.has_live_pty(live_pty_ids),
+                None => self.has_live_pty(live_pty_ids),
+            },
+        }
+    }
+
+    pub(crate) fn to_ref(&self, live_pty_ids: &std::collections::HashSet<String>) -> RoutineRunRef {
+        RoutineRunRef {
+            routine_run_id: self.routine_run_id.clone(),
+            launch_id: self.launch_id.clone(),
+            agent_session_id: self.agent_session_id.clone(),
+            source_session_id: self.source_session_id.clone(),
+            pty_id: self.pty_id.clone(),
+            active: self.blocks_relaunch(live_pty_ids),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutineRunRef {
+    pub routine_run_id: String,
+    pub launch_id: String,
+    pub agent_session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pty_id: Option<String>,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutineDispatchBlockedCode {
+    InvalidRoutine,
+    NonManualTrigger,
+    UnsupportedAction,
+    MissingExecutor,
+    MissingActorId,
+    AmbiguousActorId,
+    UnavailableExecutor,
+    RepositoryAccessDenied,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(
+    tag = "status",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum RoutineManualDispatchResult {
+    Started {
+        routine_id: String,
+        routine_run_id: String,
+        launch_id: String,
+        agent_session_id: String,
+        source_session_id: Option<String>,
+        pty_id: String,
+    },
+    Focused {
+        routine_id: String,
+        routine_run_id: String,
+        launch_id: String,
+        agent_session_id: String,
+        source_session_id: Option<String>,
+        pty_id: Option<String>,
+    },
+    Blocked {
+        routine_id: String,
+        code: RoutineDispatchBlockedCode,
+        message: String,
+    },
+    Failed {
+        routine_id: String,
+        routine_run_id: String,
+        launch_id: String,
+        agent_session_id: String,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RoutineActionTarget {
     #[serde(rename = "trigger.entry")]
     TriggerEntry,
@@ -235,6 +384,8 @@ pub struct RoutineRow {
     pub executor: Option<String>,
     pub last_run_at: Option<String>,
     pub next_run_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run: Option<RoutineRunRef>,
     pub fingerprint: String,
     pub definition: Option<RoutineDefinition>,
     pub diagnostics: Vec<RoutineDiagnostic>,

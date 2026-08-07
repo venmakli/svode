@@ -1298,5 +1298,12 @@
   "routines_not_applicable": "Not applicable",
   "routines_enabled_yes": "Enabled",
   "routines_enabled_no": "Disabled",
-  "routines_instruction_empty": "No instruction."
+  "routines_instruction_empty": "No instruction.",
+  "routines_run_now": "Run now",
+  "routines_starting": "Starting…",
+  "routines_open_session": "Open session",
+  "routines_dispatch_failed": "The agent session could not be started.",
+  "routines_invalid_run_disabled": "Fix the routine definition before running it.",
+  "routines_manual_run_only": "Only manual routines can be run from this action.",
+  "routines_run_agent_only": "This action is available only for run_agent routines."
 }

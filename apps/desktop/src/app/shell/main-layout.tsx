@@ -327,6 +327,9 @@ function ShellMainInset({
   onOpenAppSettings?: () => void;
 }) {
   const isSessionsSurface = mainSurface === "sessions";
+  const agentSessionOpenRequest = useShellStore(
+    (state) => state.agentSessionOpenRequest,
+  );
 
   return (
     <SidebarInset
@@ -348,7 +351,10 @@ function ShellMainInset({
           {mainSurface === "inbox" ? (
             <InboxSurface />
           ) : isSessionsSurface ? (
-            <SessionsSurface onOpenAppSettings={onOpenAppSettings} />
+            <SessionsSurface
+              openRequest={agentSessionOpenRequest}
+              onOpenAppSettings={onOpenAppSettings}
+            />
           ) : (
             <ActiveSpaceContent />
           )}

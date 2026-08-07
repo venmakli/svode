@@ -16,10 +16,12 @@ import {
   buildHotStatusSessionIds,
   buildPendingAgentSession,
   findMatchingSessionForPendingTerminal,
+  findAgentSessionForOpenRequest,
   isPendingSessionId,
   pendingSessionId,
   type AgentSession,
   type AgentSessionGroupingResult,
+  type AgentSessionOpenRequest,
   type AgentSessionSelectionSource,
   type AgentSessionScopeGroup,
   type PendingAgentSessionTerminal,
@@ -79,6 +81,7 @@ interface UseAgentSessionsResult {
 export function useAgentSessions(
   projectPath: string | null,
   spaceScopes: AgentSessionScopeGroup[] = [],
+  openRequest?: AgentSessionOpenRequest | null,
 ): UseAgentSessionsResult {
   const [result, setResult] = useState<AgentSessionsListResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -120,7 +123,10 @@ export function useAgentSessions(
   const projectPathRef = useRef(projectPath);
   const resultRef = useRef<AgentSessionsListResult | null>(null);
   const selectedSessionIdRef = useRef<string | null>(null);
+  const selectedLaunchIdRef = useRef<string | null>(null);
   const pendingTerminalsRef = useRef<PendingAgentSessionTerminal[]>([]);
+  const handledOpenRequestKeyRef = useRef<number | null>(null);
+  const openRequestLoadKeyRef = useRef<number | null>(null);
   const loadInFlightRef = useRef<{
     projectPath: string;
     requestId: number;
@@ -212,6 +218,7 @@ export function useAgentSessions(
       const match = matches.find(({ pending }) => pending.id === current);
       if (match) {
         selectedSessionIdRef.current = match.session.id;
+        selectedLaunchIdRef.current = match.session.launchId ?? null;
       }
       return match?.session.id ?? current;
     });
@@ -339,6 +346,9 @@ export function useAgentSessions(
     resultRef.current = null;
     setResult(null);
     selectedSessionIdRef.current = null;
+    selectedLaunchIdRef.current = null;
+    handledOpenRequestKeyRef.current = null;
+    openRequestLoadKeyRef.current = null;
     setSelectedSessionId(null);
     setSelectedStableGroupId(null);
     setSelectedReentryResult(null);
@@ -351,6 +361,18 @@ export function useAgentSessions(
     setCollapsedGroupIds(new Set());
     void load(false);
   }, [load, projectPath]);
+
+  useEffect(() => {
+    if (
+      !projectPath ||
+      !openRequest ||
+      openRequestLoadKeyRef.current === openRequest.requestKey
+    ) {
+      return;
+    }
+    openRequestLoadKeyRef.current = openRequest.requestKey;
+    void load(false);
+  }, [load, openRequest, projectPath]);
 
   useEffect(() => {
     if (!projectPath) return;
@@ -384,6 +406,18 @@ export function useAgentSessions(
     const pendingSessions = pendingTerminals.map(buildPendingAgentSession);
     return [...backendSessions, ...pendingSessions];
   }, [pendingTerminals, result?.sessions, terminalsBySession]);
+
+  const hasProvisionalSession = sessionsForUi.some(
+    (session) => session.runtime?.provisional === true,
+  );
+
+  useEffect(() => {
+    if (!projectPath || !hasProvisionalSession) return;
+    const interval = window.setInterval(() => {
+      void load(false);
+    }, PENDING_POLL_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [hasProvisionalSession, load, projectPath]);
 
   const hotStatusSessionIdsKey = useMemo(
     () =>
@@ -455,6 +489,7 @@ export function useAgentSessions(
 
       const selectionRequestId = ++selectionRequestIdRef.current;
       selectedSessionIdRef.current = session.id;
+      selectedLaunchIdRef.current = session.launchId ?? null;
       setSelectedSessionId(session.id);
       setSelectedStableGroupId(source === "space" ? groupId : null);
       setSelectedReentryResult(null);
@@ -518,6 +553,47 @@ export function useAgentSessions(
     },
     [load, projectPath],
   );
+
+  useEffect(() => {
+    const selectedId = selectedSessionIdRef.current;
+    const launchId = selectedLaunchIdRef.current;
+    if (
+      !selectedId ||
+      !launchId ||
+      sessionsForUi.some((session) => session.id === selectedId)
+    ) {
+      return;
+    }
+
+    const canonical = sessionsForUi.find(
+      (session) =>
+        session.launchId === launchId && session.runtime?.provisional !== true,
+    );
+    if (!canonical) return;
+
+    selectionRequestIdRef.current += 1;
+    selectedSessionIdRef.current = canonical.id;
+    selectedLaunchIdRef.current = canonical.launchId ?? null;
+    setSelectedSessionId(canonical.id);
+    setSelectedStableGroupId(null);
+    setSelectedReentryResult(null);
+    setReenteringSessionId(null);
+  }, [sessionsForUi]);
+
+  useEffect(() => {
+    if (
+      !openRequest ||
+      handledOpenRequestKeyRef.current === openRequest.requestKey
+    ) {
+      return;
+    }
+
+    const session = findAgentSessionForOpenRequest(sessionsForUi, openRequest);
+    if (!session) return;
+
+    handledOpenRequestKeyRef.current = openRequest.requestKey;
+    void selectSession(session, "now", "now");
+  }, [openRequest, selectSession, sessionsForUi]);
 
   const togglePinned = useCallback(
     async (session: AgentSession) => {
@@ -637,6 +713,7 @@ export function useAgentSessions(
       }));
       setSelectedSessionId(pending.id);
       selectedSessionIdRef.current = pending.id;
+      selectedLaunchIdRef.current = null;
       setSelectedStableGroupId(null);
       setSelectedReentryResult(null);
       setReenteringSessionId(null);

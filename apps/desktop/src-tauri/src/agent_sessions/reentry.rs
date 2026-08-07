@@ -150,6 +150,9 @@ where
         command: command.clone(),
         cwd: cwd.clone(),
         mcp_project_path: Some(system_path::user_facing_path(project)),
+        launch_id: None,
+        routine_run_id: None,
+        lifecycle_sink: None,
     };
     match spawn_shell(spawn) {
         Ok(pty_id) => Ok(AgentSessionReentryResult {
@@ -395,9 +398,12 @@ mod tests {
         AgentTerminalSurface {
             pty_id: pty_id.to_string(),
             agent_session_id: format!("codex:{source_session_id}"),
+            launch_id: None,
+            routine_run_id: None,
             title: Some(format!("Session {source_session_id}")),
             source: AgentSessionSource::Codex,
             source_session_id: source_session_id.to_string(),
+            live: true,
             initial_agent_argv: vec![
                 "codex".to_string(),
                 "resume".to_string(),
@@ -412,6 +418,7 @@ mod tests {
             exit_code: None,
             failure_reason: None,
             status_evidence: None,
+            exit_marker_buffer: String::new(),
         }
     }
 

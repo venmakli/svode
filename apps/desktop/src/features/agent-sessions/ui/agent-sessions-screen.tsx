@@ -29,6 +29,7 @@ import {
   childSpaceScopeGroupId,
   projectScopeGroupId,
   type AgentSession,
+  type AgentSessionOpenRequest,
   type AgentSessionScopeGroup,
 } from "../model";
 import {
@@ -43,10 +44,12 @@ import { statusLabel } from "./session-status";
 import * as m from "@/paraglide/messages.js";
 
 interface AgentSessionsScreenProps {
+  openRequest?: AgentSessionOpenRequest | null;
   onOpenAppSettings?: () => void;
 }
 
 export function AgentSessionsScreen({
+  openRequest,
   onOpenAppSettings,
 }: AgentSessionsScreenProps) {
   const {
@@ -69,7 +72,7 @@ export function AgentSessionsScreen({
   );
   const rootScope =
     spaceScopes.find((scope) => scope.kind === "project") ?? null;
-  const sessions = useAgentSessions(activeRootPath, spaceScopes);
+  const sessions = useAgentSessions(activeRootPath, spaceScopes, openRequest);
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [sessionsSidebarOpen, setSessionsSidebarOpen] = useState(true);
   const spaceNames = useMemo(() => {

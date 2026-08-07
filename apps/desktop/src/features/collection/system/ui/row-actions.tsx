@@ -57,6 +57,17 @@ function readActionState(
   }
 }
 
+function readActionLabel(
+  action: SystemCollectionRowActionDescriptor<unknown>,
+  row: unknown,
+) {
+  try {
+    return action.getLabel?.(row) ?? action.label;
+  } catch {
+    return action.label;
+  }
+}
+
 function useSystemCollectionRowAction({
   action,
   row,
@@ -109,6 +120,7 @@ export function SystemCollectionRowActionButton(
 ) {
   const { action } = props;
   const { run, state } = useSystemCollectionRowAction(props);
+  const label = readActionLabel(action, props.row);
   const button = (
     <Button
       type="button"
@@ -128,7 +140,7 @@ export function SystemCollectionRowActionButton(
       {state.pending ? (
         <LoaderCircle data-icon="inline-start" className="animate-spin" />
       ) : null}
-      {action.label}
+      {label}
     </Button>
   );
 
@@ -157,6 +169,7 @@ function SystemCollectionRowActionDropdownItem(
 ) {
   const { action, onSuccess } = props;
   const { run, state } = useSystemCollectionRowAction(props);
+  const label = readActionLabel(action, props.row);
 
   return (
     <DropdownMenuItem
@@ -176,7 +189,7 @@ function SystemCollectionRowActionDropdownItem(
       {state.pending ? (
         <LoaderCircle data-icon="inline-start" className="animate-spin" />
       ) : null}
-      <span>{action.label}</span>
+      <span>{label}</span>
       {state.message ? (
         <span className="sr-only"> — {state.message}</span>
       ) : null}
@@ -189,6 +202,7 @@ function SystemCollectionRowActionContextItem(
 ) {
   const { action } = props;
   const { run, state } = useSystemCollectionRowAction(props);
+  const label = readActionLabel(action, props.row);
 
   return (
     <ContextMenuItem
@@ -205,7 +219,7 @@ function SystemCollectionRowActionContextItem(
       {state.pending ? (
         <LoaderCircle data-icon="inline-start" className="animate-spin" />
       ) : null}
-      <span>{action.label}</span>
+      <span>{label}</span>
       {state.message ? (
         <span className="sr-only"> — {state.message}</span>
       ) : null}

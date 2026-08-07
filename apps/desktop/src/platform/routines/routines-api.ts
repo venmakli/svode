@@ -65,9 +65,19 @@ export interface RoutineRowDto {
   executor: string | null;
   lastRunAt: string | null;
   nextRunAt: string | null;
+  lastRun?: RoutineRunRefDto | null;
   fingerprint: string;
   definition: RoutineDefinitionDto | null;
   diagnostics: RoutineDiagnosticDto[];
+}
+
+export interface RoutineRunRefDto {
+  routineRunId: string;
+  launchId: string;
+  agentSessionId: string;
+  sourceSessionId?: string | null;
+  ptyId?: string | null;
+  active: boolean;
 }
 
 export interface RoutineCatalogSnapshotDto {
@@ -90,6 +100,41 @@ export type RoutineMutationResultDto =
     }
   | { status: "stale"; currentFingerprint?: string | null }
   | { status: "blocked"; message: string };
+
+export type RoutineDispatchBlockedCodeDto =
+  | "invalid_routine"
+  | "non_manual_trigger"
+  | "unsupported_action"
+  | "missing_executor"
+  | "missing_actor_id"
+  | "ambiguous_actor_id"
+  | "unavailable_executor"
+  | "repository_access_denied";
+
+export type RoutineManualDispatchResultDto =
+  | {
+      status: "started" | "focused";
+      routineId: string;
+      routineRunId: string;
+      launchId: string;
+      agentSessionId: string;
+      sourceSessionId?: string | null;
+      ptyId?: string | null;
+    }
+  | {
+      status: "blocked";
+      routineId: string;
+      code: RoutineDispatchBlockedCodeDto;
+      message: string;
+    }
+  | {
+      status: "failed";
+      routineId: string;
+      routineRunId: string;
+      launchId: string;
+      agentSessionId: string;
+      message: string;
+    };
 
 interface RoutineOwnerCommandInput {
   projectPath: string;
@@ -145,4 +190,13 @@ export function deleteRoutine(
   return invokeCommand<RoutineMutationResultDto>("routines_delete", {
     ...input,
   });
+}
+
+export function dispatchManualRoutine(
+  input: RoutineOwnerCommandInput & { routineId: string },
+) {
+  return invokeCommand<RoutineManualDispatchResultDto>(
+    "routines_dispatch_manual",
+    { ...input },
+  );
 }

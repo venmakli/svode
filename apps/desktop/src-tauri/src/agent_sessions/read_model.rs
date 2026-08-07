@@ -11,9 +11,9 @@ use super::cache::{
     SourceRead, candidates_for_session_ids, disk_snapshot_reads, memory_is_empty, read_source,
     source_root, update_candidate, write_snapshot,
 };
-use super::live_status::{apply_terminal_overlay, map_candidate};
+use super::live_status::{apply_terminal_overlay, map_candidate, map_provisional_surface};
 use super::scope::{ScopeIndex, load_child_spaces, normalize_project_path, resolve_scope};
-use super::sources::{PersistedAgentSessionCandidate, claude_code, codex};
+use super::sources::{CandidateCwdSource, PersistedAgentSessionCandidate, claude_code, codex};
 use super::types::{
     AgentSession, AgentSessionSource, AgentSessionSourceFileRef, AgentSessionSourceReport,
     AgentSessionSourceStatus, AgentSessionStatus, AgentSessionTitleSource, AgentSessionsCacheMode,
@@ -129,6 +129,15 @@ fn build_list_result(
         reports.push(read.report);
     }
 
+    append_provisional_sessions(
+        &mut sessions,
+        terminal_surfaces,
+        scope_index,
+        pinned_ids,
+        home,
+        None,
+    );
+
     sessions.sort_by(|a, b| compare_sessions(a, b));
     summary.returned_sessions = sessions.len();
     summary.pinned_sessions = sessions.iter().filter(|session| session.pinned).count();
@@ -234,6 +243,15 @@ pub(crate) fn hot_status_with_surfaces(
         sessions.push(session);
     }
 
+    append_provisional_sessions(
+        &mut sessions,
+        &terminal_surfaces,
+        &scope_index,
+        &pinned_ids,
+        &state.home_dir,
+        Some(&requested),
+    );
+
     sessions.sort_by(compare_sessions);
 
     Ok(AgentSessionsHotStatusResult {
@@ -245,6 +263,48 @@ pub(crate) fn hot_status_with_surfaces(
         skipped_sessions,
         sources: reports.into_values().collect(),
     })
+}
+
+fn append_provisional_sessions(
+    sessions: &mut Vec<AgentSession>,
+    terminal_surfaces: &[AgentTerminalSurface],
+    scope_index: &ScopeIndex,
+    pinned_ids: &HashSet<String>,
+    home: &Path,
+    requested: Option<&HashSet<String>>,
+) {
+    let canonical_launch_ids = sessions
+        .iter()
+        .filter_map(|session| session.launch_id.clone())
+        .collect::<HashSet<_>>();
+    let existing_ids = sessions
+        .iter()
+        .map(|session| session.id.clone())
+        .collect::<HashSet<_>>();
+
+    for surface in terminal_surfaces {
+        let Some(launch_id) = surface.launch_id.as_ref() else {
+            continue;
+        };
+        if canonical_launch_ids.contains(launch_id)
+            || existing_ids.contains(&surface.agent_session_id)
+        {
+            continue;
+        }
+        if requested.is_some_and(|ids| !ids.contains(&surface.agent_session_id)) {
+            continue;
+        }
+        let mut candidate =
+            PersistedAgentSessionCandidate::new(surface.source, surface.source_session_id.clone());
+        candidate.cwd = Some(surface.shell_cwd.clone());
+        candidate.cwd_source = CandidateCwdSource::Cwd;
+        let Some(scope) = resolve_scope(scope_index, &candidate, home) else {
+            continue;
+        };
+        let mut session = map_provisional_surface(surface, scope);
+        session.pinned = pinned_ids.contains(&session.id);
+        sessions.push(session);
+    }
 }
 
 fn source_file_metadata_changed(source_file: &AgentSessionSourceFileRef) -> bool {
@@ -558,9 +618,12 @@ mod tests {
         AgentTerminalSurface {
             pty_id: pty_id.to_string(),
             agent_session_id: format!("{}:{source_session_id}", source.as_str()),
+            launch_id: None,
+            routine_run_id: None,
             title: Some(format!("Session {source_session_id}")),
             source,
             source_session_id: source_session_id.to_string(),
+            live: true,
             initial_agent_argv: source.resume_argv(source_session_id),
             initial_agent_cwd: Some("/tmp/project".to_string()),
             shell_cwd: "/tmp/project".to_string(),
@@ -571,7 +634,110 @@ mod tests {
             exit_code: None,
             failure_reason: None,
             status_evidence: evidence,
+            exit_marker_buffer: String::new(),
         }
+    }
+
+    #[test]
+    fn routine_launch_is_visible_before_source_session_reconciliation() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_root_config(&project, Vec::new());
+        let state = AgentSessionsState::with_home(home);
+        let mut provisional = surface(
+            "pty-routine",
+            AgentSessionSource::Codex,
+            "launch:launch-123",
+            None,
+        );
+        provisional.agent_session_id = "codex:launch:launch-123".to_string();
+        provisional.launch_id = Some("launch-123".to_string());
+        provisional.routine_run_id = Some("run-123".to_string());
+        provisional.title = Some("Review backlog".to_string());
+        provisional.shell_cwd = project.to_string_lossy().into_owned();
+        provisional.initial_agent_cwd = Some(project.to_string_lossy().into_owned());
+
+        let result = list_sessions_with_surfaces(
+            &state,
+            project.to_string_lossy().into_owned(),
+            false,
+            vec![provisional],
+        )
+        .expect("list sessions");
+
+        assert_eq!(result.sessions.len(), 1);
+        let session = &result.sessions[0];
+        assert_eq!(session.id, "codex:launch:launch-123");
+        assert_eq!(session.launch_id.as_deref(), Some("launch-123"));
+        assert_eq!(session.routine_run_id.as_deref(), Some("run-123"));
+        assert_eq!(session.status, AgentSessionStatus::Unknown);
+        assert!(session.runtime.as_ref().expect("runtime").provisional);
+        assert!(session.runtime.as_ref().expect("runtime").live);
+        assert_eq!(session.title, "Review backlog");
+    }
+
+    #[test]
+    fn routine_launch_reconciles_to_canonical_session_by_launch_id_not_cwd() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_root_config(&project, Vec::new());
+        write_codex_detail(
+            &home,
+            "canonical-one",
+            vec![
+                serde_json::json!({
+                    "type": "session_meta",
+                    "payload": {"id": "canonical-one", "cwd": project.to_string_lossy()},
+                    "timestamp": "2026-08-07T10:00:00Z"
+                }),
+                serde_json::json!({
+                    "type": "response_item",
+                    "payload": {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "Review backlog\n<!-- svode-launch:launch-one -->"}]
+                    },
+                    "timestamp": "2026-08-07T10:00:01Z"
+                }),
+            ],
+        );
+        let state = AgentSessionsState::with_home(home);
+        let mut provisional = surface(
+            "pty-one",
+            AgentSessionSource::Codex,
+            "launch:launch-one",
+            None,
+        );
+        provisional.agent_session_id = "codex:launch:launch-one".to_string();
+        provisional.launch_id = Some("launch-one".to_string());
+        provisional.routine_run_id = Some("run-one".to_string());
+        provisional.shell_cwd = project.to_string_lossy().into_owned();
+        provisional.initial_agent_cwd = Some(project.to_string_lossy().into_owned());
+
+        let result = list_sessions_with_surfaces(
+            &state,
+            project.to_string_lossy().into_owned(),
+            true,
+            vec![provisional],
+        )
+        .expect("list sessions");
+
+        assert_eq!(result.sessions.len(), 1);
+        let session = &result.sessions[0];
+        assert_eq!(session.id, "codex:canonical-one");
+        assert_eq!(session.launch_id.as_deref(), Some("launch-one"));
+        assert_eq!(session.routine_run_id.as_deref(), Some("run-one"));
+        assert_eq!(
+            session
+                .runtime
+                .as_ref()
+                .and_then(|runtime| runtime.pty_id.as_deref()),
+            Some("pty-one")
+        );
+        assert!(!session.runtime.as_ref().expect("runtime").provisional);
     }
 
     fn evidence(
@@ -1405,6 +1571,59 @@ mod tests {
         assert_eq!(
             session.runtime.as_ref().expect("runtime").pty_id.as_deref(),
             Some("pty-answered")
+        );
+    }
+
+    #[test]
+    fn agent_sessions_terminal_exit_overrides_stale_source_log_active_status() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_codex_detail(
+            &home,
+            "exited-after-start",
+            vec![
+                serde_json::json!({
+                    "type": "session_meta",
+                    "payload": {
+                        "id": "exited-after-start",
+                        "cwd": project.to_string_lossy()
+                    },
+                    "timestamp": recent_source_log_timestamp()
+                }),
+                serde_json::json!({
+                    "type": "event_msg",
+                    "payload": { "type": "task_started" },
+                    "timestamp": recent_source_log_timestamp()
+                }),
+            ],
+        );
+        let done_surface = surface(
+            "pty-exited",
+            AgentSessionSource::Codex,
+            "exited-after-start",
+            Some(evidence(
+                AgentSessionStatus::Done,
+                Vec::new(),
+                "initial agent command exited successfully",
+            )),
+        );
+
+        let state = AgentSessionsState::with_home(home);
+        let result = list_sessions_with_surfaces(
+            &state,
+            project.to_string_lossy().into_owned(),
+            false,
+            vec![done_surface],
+        )
+        .expect("list sessions");
+
+        let session = &result.sessions[0];
+        assert_eq!(session.status, AgentSessionStatus::Done);
+        assert_eq!(
+            session.status_source,
+            AgentSessionStatusSource::EmbeddedTerminal
         );
     }
 

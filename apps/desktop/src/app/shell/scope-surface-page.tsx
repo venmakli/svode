@@ -3,6 +3,10 @@ import { AgentContextSurface } from "@/features/agent-context";
 import { ActorsSurface } from "@/features/actors";
 import { RoutinesSurface } from "@/features/routines";
 import {
+  runSystemCollectionNavigation,
+  useSystemCollectionDetailController,
+} from "@/features/collection/system";
+import {
   CollectionViewsSurface,
   type CollectionViewsSurfaceProps,
 } from "@/features/collection/scope-surface";
@@ -27,6 +31,7 @@ import {
 } from "@/features/scope-surfaces";
 import type { Entry } from "@/features/entry";
 import { createScopeSurfaceContributions } from "./scope-surface-contributions";
+import { useShellStore } from "./model";
 
 interface ScopeSurfacePageProps {
   owner: ScopeOwnerRef;
@@ -68,6 +73,18 @@ export function ScopeSurfacePage({
   const collectionRouteState =
     presentation === "compact" ? (routeState ?? compactRouteState) : routeState;
   const openDocument = useOpenEntryDocument();
+  const detailController = useSystemCollectionDetailController();
+  const openSessionsSurface = useShellStore(
+    (state) => state.openSessionsSurface,
+  );
+  const openRoutineSession = useCallback(
+    (target: { sessionId: string; launchId: string }) => {
+      void runSystemCollectionNavigation(detailController, () => {
+        openSessionsSurface(target);
+      });
+    },
+    [detailController, openSessionsSurface],
+  );
   const openPath = useCallback(
     (path: string, spaceId?: string | null) =>
       openDocument(path, spaceId ?? owner.spaceId),
@@ -106,7 +123,9 @@ export function ScopeSurfacePage({
       createScopeSurfaceContributions({
         actors: (context) => <ActorsSurface {...context} />,
         context: (context) => <AgentContextSurface {...context} />,
-        routines: (context) => <RoutinesSurface {...context} />,
+        routines: (context) => (
+          <RoutinesSurface {...context} onOpenSession={openRoutineSession} />
+        ),
         readme: () => <ReadmeSurface />,
         collection: () => (
           <CollectionViewsSurface
@@ -119,7 +138,7 @@ export function ScopeSurfacePage({
           />
         ),
       }),
-    [collectionRouteState, owner, renderNested],
+    [collectionRouteState, openRoutineSession, owner, renderNested],
   );
   return (
     <EntryDetailProvider

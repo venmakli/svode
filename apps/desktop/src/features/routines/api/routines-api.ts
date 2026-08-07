@@ -1,6 +1,7 @@
 import {
   createRoutine as createRoutineCommand,
   deleteRoutine as deleteRoutineCommand,
+  dispatchManualRoutine as dispatchManualRoutineCommand,
   listRoutines as listRoutinesCommand,
   refreshRoutines as refreshRoutinesCommand,
   updateRoutine as updateRoutineCommand,
@@ -16,6 +17,7 @@ import type {
   RoutineDefinition,
   RoutineDiagnostic,
   RoutineMutationResult,
+  RoutineManualDispatchResult,
   RoutineOwnerKind,
   RoutineRow,
 } from "../model/types";
@@ -83,6 +85,22 @@ export async function deleteRoutine(
   );
 }
 
+export async function dispatchManualRoutine(
+  owner: RoutineOwnerInput,
+  row: RoutineRow,
+): Promise<RoutineManualDispatchResult> {
+  const result = await dispatchManualRoutineCommand({
+    ...owner,
+    routineId: row.id,
+  });
+  if (result.status === "blocked" || result.status === "failed") return result;
+  return {
+    ...result,
+    ptyId: result.ptyId ?? null,
+    sourceSessionId: result.sourceSessionId ?? null,
+  };
+}
+
 function normalizeMutationResult(
   result: RoutineMutationResultDto,
 ): RoutineMutationResult {
@@ -128,6 +146,13 @@ function normalizeRow(
     fingerprint: row.fingerprint,
     id: row.routineId,
     lastRunAt: row.lastRunAt,
+    lastRun: row.lastRun
+      ? Object.freeze({
+          ...row.lastRun,
+          ptyId: row.lastRun.ptyId ?? null,
+          sourceSessionId: row.lastRun.sourceSessionId ?? null,
+        })
+      : null,
     nextRunAt: row.nextRunAt,
     title: row.title,
     valid: row.definition !== null && row.diagnostics.length === 0,

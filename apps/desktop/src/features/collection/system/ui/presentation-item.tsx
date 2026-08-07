@@ -1,4 +1,4 @@
-import { useCallback, useId, useState } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 
 import * as m from "@/paraglide/messages.js";
 
@@ -61,6 +61,17 @@ export function SystemCollectionPresentationItem({
   const detailEnabled = Boolean(
     descriptor.createDetailRequest && detailController,
   );
+  const rowActions = useMemo(
+    () =>
+      (descriptor.rowActions ?? []).filter((action) => {
+        try {
+          return action.isVisible?.(row) ?? true;
+        } catch {
+          return true;
+        }
+      }),
+    [descriptor.rowActions, row],
+  );
 
   const reportError = useCallback(
     (
@@ -96,9 +107,9 @@ export function SystemCollectionPresentationItem({
       });
       if (request) {
         const descriptorActions =
-          (descriptor.rowActions?.length ?? 0) > 0 ? (
+          rowActions.length > 0 ? (
             <SystemCollectionRowActionsDropdownMenu
-              actions={descriptor.rowActions ?? []}
+              actions={rowActions}
               row={row}
               onRejected={(targetId, message) =>
                 reportError("action", targetId, message)
@@ -138,6 +149,7 @@ export function SystemCollectionPresentationItem({
     instanceKey,
     reportError,
     row,
+    rowActions,
     rowId,
   ]);
 
@@ -177,7 +189,6 @@ export function SystemCollectionPresentationItem({
       );
     },
   };
-  const rowActions = descriptor.rowActions ?? [];
   const actionContextMenu = (
     <SystemCollectionRowActionsContextMenu
       actions={rowActions}

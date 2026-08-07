@@ -29,6 +29,8 @@ pub(crate) enum CandidateCwdSource {
 pub(crate) struct PersistedAgentSessionCandidate {
     pub source: AgentSessionSource,
     pub source_session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_id: Option<String>,
     pub title: Option<String>,
     pub title_source: AgentSessionTitleSource,
     pub cwd: Option<String>,
@@ -46,6 +48,7 @@ impl PersistedAgentSessionCandidate {
         Self {
             source,
             source_session_id,
+            launch_id: None,
             title: None,
             title_source: AgentSessionTitleSource::SessionId,
             cwd: None,
@@ -120,12 +123,44 @@ pub(crate) fn title_from_text(text: &str) -> Option<String> {
 }
 
 pub(crate) fn user_prompt_title_from_text(text: &str) -> Option<String> {
-    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let visible = strip_launch_context(text);
+    let collapsed = visible.split_whitespace().collect::<Vec<_>>().join(" ");
     let trimmed = collapsed.trim();
     if trimmed.is_empty() || is_command_only_text(trimmed) || is_context_wrapper_text(trimmed) {
         return None;
     }
     Some(trim_chars(trimmed, 80))
+}
+
+const MAX_LAUNCH_CONTEXT_BYTES: usize = 16 * 1024;
+const LAUNCH_MARKER_PREFIX: &str = "<!-- svode-launch:";
+
+pub(crate) fn launch_id_from_text(text: &str) -> Option<String> {
+    let mut start = text.len().saturating_sub(MAX_LAUNCH_CONTEXT_BYTES);
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+    let bounded = &text[start..];
+    let marker = bounded.rfind(LAUNCH_MARKER_PREFIX)? + LAUNCH_MARKER_PREFIX.len();
+    let rest = &bounded[marker..];
+    let end = rest.find(" -->")?;
+    let id = &rest[..end];
+    (!id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'))
+    .then(|| id.to_string())
+}
+
+fn strip_launch_context(text: &str) -> &str {
+    let launch = text.rfind(LAUNCH_MARKER_PREFIX);
+    let owner = text.rfind("<!-- svode-owner:");
+    match (launch, owner) {
+        (Some(a), Some(b)) => &text[..a.min(b)],
+        (Some(index), None) | (None, Some(index)) => &text[..index],
+        (None, None) => text,
+    }
 }
 
 pub(crate) fn trim_chars(value: &str, max: usize) -> String {
@@ -620,6 +655,49 @@ mod tests {
         assert_eq!(
             user_prompt_title_from_text("fix session title"),
             Some("fix session title".to_string())
+        );
+    }
+
+    #[test]
+    fn routine_launch_context_is_machine_readable_but_not_user_facing() {
+        let prompt = concat!(
+            "Проверь проект\n\n",
+            "<!-- svode-owner:space:. -->\n",
+            "<!-- svode-launch:launch-a1 -->"
+        );
+
+        assert_eq!(launch_id_from_text(prompt).as_deref(), Some("launch-a1"));
+        assert_eq!(
+            user_prompt_title_from_text(prompt).as_deref(),
+            Some("Проверь проект")
+        );
+    }
+
+    #[test]
+    fn routine_launch_ids_distinguish_same_cwd_prompts() {
+        let first = "same task\n<!-- svode-launch:launch-one -->";
+        let second = "same task\n<!-- svode-launch:launch-two -->";
+
+        assert_eq!(launch_id_from_text(first).as_deref(), Some("launch-one"));
+        assert_eq!(launch_id_from_text(second).as_deref(), Some("launch-two"));
+        assert_ne!(launch_id_from_text(first), launch_id_from_text(second));
+    }
+
+    #[test]
+    fn routine_launch_uses_the_appended_marker_after_long_or_marker_like_body() {
+        let instruction = format!(
+            "{}\n<!-- svode-launch:user-authored -->",
+            "длинная инструкция ".repeat(2_000)
+        );
+        let prompt = format!(
+            "{instruction}\n\n<!-- svode-owner:space:. -->\n<!-- svode-launch:launch-real -->"
+        );
+
+        assert_eq!(launch_id_from_text(&prompt).as_deref(), Some("launch-real"));
+        assert!(
+            user_prompt_title_from_text(&prompt)
+                .as_deref()
+                .is_some_and(|title| title.starts_with("длинная инструкция"))
         );
     }
 }

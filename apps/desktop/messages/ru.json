@@ -1298,5 +1298,12 @@
   "routines_not_applicable": "Не применяется",
   "routines_enabled_yes": "Включена",
   "routines_enabled_no": "Выключена",
-  "routines_instruction_empty": "Инструкция не задана."
+  "routines_instruction_empty": "Инструкция не задана.",
+  "routines_run_now": "Запустить сейчас",
+  "routines_starting": "Запуск…",
+  "routines_open_session": "Открыть сессию",
+  "routines_dispatch_failed": "Не удалось запустить сессию агента.",
+  "routines_invalid_run_disabled": "Исправьте definition рутины перед запуском.",
+  "routines_manual_run_only": "Этим действием можно запускать только manual-рутины.",
+  "routines_run_agent_only": "Действие доступно только для рутин с run_agent."
 }

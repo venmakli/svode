@@ -35,6 +35,7 @@ export interface AgentSessionRuntime {
   ptyId?: string;
   pid?: number;
   live: boolean;
+  provisional?: boolean;
   lastOutputAt?: string;
   lastInputAt?: string;
 }
@@ -80,6 +81,8 @@ export interface AgentSessionSourceMeta {
 
 export interface AgentSession {
   id: string;
+  launchId?: string;
+  routineRunId?: string;
   source: AgentSessionSource;
   sourceSessionId: string;
   title: string;

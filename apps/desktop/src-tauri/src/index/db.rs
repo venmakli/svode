@@ -23,7 +23,10 @@ use crate::error::AppError;
 ///
 /// Bumped to 6 in Stage 7 Phase 7.1: adds the rebuildable routine definition
 /// cache used by owner-scoped Routines surfaces and later dispatch phases.
-const SCHEMA_VERSION: i64 = 6;
+///
+/// Bumped to 7 in Stage 7 Phase 7.2: adds local technical routine runs and
+/// their launch, managed PTY, source-session and terminal-evidence mapping.
+const SCHEMA_VERSION: i64 = 7;
 
 /// Create a connection pool for a space's index database.
 /// Ensures the parent directory exists and enables WAL mode.
@@ -169,6 +172,30 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         )
         "#,
         "CREATE INDEX IF NOT EXISTS idx_routine_definitions_owner ON routine_definitions(owner_path)",
+        r#"
+        CREATE TABLE IF NOT EXISTS routine_runs (
+            routine_run_id TEXT PRIMARY KEY,
+            routine_id TEXT NOT NULL,
+            owner_path TEXT NOT NULL,
+            trigger_type TEXT NOT NULL,
+            definition_fingerprint TEXT NOT NULL,
+            definition_json TEXT NOT NULL,
+            launch_id TEXT NOT NULL UNIQUE,
+            pty_id TEXT,
+            source TEXT NOT NULL,
+            source_session_id TEXT,
+            agent_session_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            terminal_status TEXT,
+            terminal_exit_code INTEGER,
+            terminal_reason TEXT,
+            terminal_observed_at TEXT,
+            session_status TEXT,
+            updated_at TEXT NOT NULL
+        )
+        "#,
+        "CREATE INDEX IF NOT EXISTS idx_routine_runs_owner_routine ON routine_runs(owner_path, routine_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_routine_runs_launch ON routine_runs(launch_id)",
     ];
 
     for stmt in ddl {

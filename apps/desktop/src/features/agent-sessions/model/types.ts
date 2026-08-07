@@ -54,3 +54,12 @@ export interface AgentSessionGroupingResult {
 }
 
 export type AgentSessionSelectionSource = "pinned" | "now" | "space";
+
+export interface AgentSessionOpenTarget {
+  sessionId: string;
+  launchId: string;
+}
+
+export interface AgentSessionOpenRequest extends AgentSessionOpenTarget {
+  requestKey: number;
+}

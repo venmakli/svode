@@ -1,25 +1,35 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use chrono::{SecondsFormat, Utc};
 use tauri::{AppHandle, State};
 
 use super::cache;
 use super::model::{
     CollectionEvent, MissedRuns, ResolvedRoutineOwner, RoutineAction, RoutineCatalogSnapshot,
-    RoutineDefinition, RoutineDiagnostic, RoutineMutationResult, RoutineOwnerDescriptor,
-    RoutineOwnerInputKind, RoutineOwnerKind, RoutineTrigger, RoutineTriggerType,
+    RoutineDefinition, RoutineDiagnostic, RoutineDispatchBlockedCode, RoutineManualDispatchResult,
+    RoutineMutationResult, RoutineOwnerDescriptor, RoutineOwnerInputKind, RoutineOwnerKind,
+    RoutineTrigger, RoutineTriggerType,
 };
 use super::parser;
 use crate::AppError;
 use crate::agent_actors;
+use crate::agent_actors::launch::{AgentLaunchResolution, AgentLaunchValidationCode};
+use crate::agent_adapters::runtime::{
+    AdapterDiagnostic, AdapterTarget, ManualRoutineLaunchInput, SystemRuntimeCommandRunner,
+};
+use crate::agent_adapters::{AgentAdapterKind, AgentAdapterRegistry};
+use crate::agent_sessions::types::{AgentSessionResumeCommand, AgentSessionSource};
 use crate::git;
 use crate::git::access::{RepositoryAccessState, access_store_path};
 use crate::git::commands::{GitState, require_cli};
 use crate::index::{IndexKey, IndexState};
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::config;
+use crate::terminal::{AgentTerminalSpawn, TerminalManager, quote_agent_shell_command};
 
 const DEFAULT_SCHEDULE_CRON: &str = "0 9 * * 1-5";
 
@@ -58,6 +68,7 @@ pub async fn routines_list(
     owner_path: String,
     owner_kind: RoutineOwnerInputKind,
     index_state: State<'_, IndexState>,
+    terminal_manager: State<'_, TerminalManager>,
 ) -> Result<RoutineCatalogSnapshot, AppError> {
     let owner = RoutineOwnerInput {
         project_path,
@@ -67,7 +78,7 @@ pub async fn routines_list(
         owner_kind,
     }
     .resolve()?;
-    refresh_owner(&index_state, &owner).await
+    refresh_owner(&index_state, &terminal_manager, &owner).await
 }
 
 #[tauri::command]
@@ -78,6 +89,7 @@ pub async fn routines_refresh(
     owner_path: String,
     owner_kind: RoutineOwnerInputKind,
     index_state: State<'_, IndexState>,
+    terminal_manager: State<'_, TerminalManager>,
 ) -> Result<RoutineCatalogSnapshot, AppError> {
     routines_list(
         project_path,
@@ -86,6 +98,7 @@ pub async fn routines_refresh(
         owner_path,
         owner_kind,
         index_state,
+        terminal_manager,
     )
     .await
 }
@@ -106,6 +119,7 @@ pub async fn routines_create(
     git_state: State<'_, GitState>,
     access_state: State<'_, RepositoryAccessState>,
     index_state: State<'_, IndexState>,
+    terminal_manager: State<'_, TerminalManager>,
 ) -> Result<RoutineMutationResult, AppError> {
     let owner = RoutineOwnerInput {
         project_path,
@@ -137,7 +151,7 @@ pub async fn routines_create(
     })
     .await
     .map_err(blocking_task_error)??;
-    let snapshot = refresh_owner(&index_state, &owner).await?;
+    let snapshot = refresh_owner(&index_state, &terminal_manager, &owner).await?;
     let Some(row) = snapshot
         .routines
         .iter()
@@ -168,6 +182,7 @@ pub async fn routines_update(
     git_state: State<'_, GitState>,
     access_state: State<'_, RepositoryAccessState>,
     index_state: State<'_, IndexState>,
+    terminal_manager: State<'_, TerminalManager>,
 ) -> Result<RoutineMutationResult, AppError> {
     let owner = RoutineOwnerInput {
         project_path,
@@ -219,7 +234,7 @@ pub async fn routines_update(
             current_fingerprint: Some(current_fingerprint),
         });
     }
-    let snapshot = refresh_owner(&index_state, &owner).await?;
+    let snapshot = refresh_owner(&index_state, &terminal_manager, &owner).await?;
     Ok(RoutineMutationResult::Applied {
         routine_id,
         snapshot,
@@ -240,6 +255,7 @@ pub async fn routines_delete(
     git_state: State<'_, GitState>,
     access_state: State<'_, RepositoryAccessState>,
     index_state: State<'_, IndexState>,
+    terminal_manager: State<'_, TerminalManager>,
 ) -> Result<RoutineMutationResult, AppError> {
     let owner = RoutineOwnerInput {
         project_path,
@@ -282,11 +298,342 @@ pub async fn routines_delete(
             current_fingerprint: Some(current_fingerprint),
         });
     }
-    let snapshot = refresh_owner(&index_state, &owner).await?;
+    let snapshot = refresh_owner(&index_state, &terminal_manager, &owner).await?;
     Ok(RoutineMutationResult::Applied {
         routine_id,
         snapshot,
     })
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn routines_dispatch_manual(
+    app: AppHandle,
+    project_path: String,
+    space_path: String,
+    space_id: String,
+    owner_path: String,
+    owner_kind: RoutineOwnerInputKind,
+    routine_id: String,
+    git_state: State<'_, GitState>,
+    access_state: State<'_, RepositoryAccessState>,
+    index_state: State<'_, IndexState>,
+    terminal_manager: State<'_, TerminalManager>,
+) -> Result<RoutineManualDispatchResult, AppError> {
+    let owner = RoutineOwnerInput {
+        project_path,
+        space_path,
+        space_id,
+        owner_path,
+        owner_kind,
+    }
+    .resolve()?;
+    let snapshot = discover_owner(&owner).await?;
+    let Some(row) = snapshot
+        .routines
+        .iter()
+        .find(|row| row.routine_id == routine_id)
+    else {
+        return Ok(dispatch_blocked(
+            routine_id,
+            RoutineDispatchBlockedCode::InvalidRoutine,
+            "routine definition was not found for this owner",
+        ));
+    };
+    let Some(definition) = row.definition.clone() else {
+        return Ok(dispatch_blocked(
+            routine_id,
+            RoutineDispatchBlockedCode::InvalidRoutine,
+            "routine definition is invalid and cannot be launched",
+        ));
+    };
+    if !row.diagnostics.is_empty() {
+        return Ok(dispatch_blocked(
+            routine_id,
+            RoutineDispatchBlockedCode::InvalidRoutine,
+            row.diagnostics
+                .first()
+                .map(|diagnostic| diagnostic.message.as_str())
+                .unwrap_or("routine definition is invalid"),
+        ));
+    }
+    if !matches!(definition.trigger, RoutineTrigger::Manual) {
+        return Ok(dispatch_blocked(
+            routine_id,
+            RoutineDispatchBlockedCode::NonManualTrigger,
+            "only manual routines can be launched from this action",
+        ));
+    }
+    let executor = match &definition.action {
+        RoutineAction::RunAgent { executor } => Some(executor.as_str()),
+        RoutineAction::UpdateProperties { .. } => {
+            return Ok(dispatch_blocked(
+                routine_id,
+                RoutineDispatchBlockedCode::UnsupportedAction,
+                "manual update_properties routines are not supported",
+            ));
+        }
+    };
+
+    let repository = mutation_repository(&git_state, &owner).await?;
+    let lock = git_state.get_lock(&repository).await;
+    let _guard = lock.lock().await;
+    let pool = index_state.get_or_create(&owner.index_key).await?;
+    let live_pty_ids = live_agent_pty_ids(&terminal_manager)?;
+    if let Some(run) = cache::latest_run(&pool, &owner.descriptor.owner_path, &routine_id).await?
+        && run.blocks_relaunch(&live_pty_ids)
+    {
+        return Ok(RoutineManualDispatchResult::Focused {
+            routine_id,
+            routine_run_id: run.routine_run_id,
+            launch_id: run.launch_id,
+            agent_session_id: run.agent_session_id,
+            source_session_id: run.source_session_id,
+            pty_id: run.pty_id,
+        });
+    }
+
+    if let Err(error) = authorize_mutation(&app, &git_state, &access_state, &repository).await {
+        return Ok(dispatch_blocked(
+            routine_id,
+            RoutineDispatchBlockedCode::RepositoryAccessDenied,
+            error.to_string(),
+        ));
+    }
+
+    let diagnostics = collect_adapter_diagnostics(&owner.space_path).await;
+    let inherited_root =
+        (owner.space_path != owner.project_path).then_some(owner.project_path.as_path());
+    let resolution = agent_actors::launch::resolve_agent_launch_request(
+        &owner.space_path,
+        inherited_root,
+        executor,
+        &diagnostics,
+    );
+    let (request, selected_binding_index, attempts) = match resolution {
+        AgentLaunchResolution::Ready {
+            request,
+            selected_binding_index,
+            attempts,
+        } => (request, selected_binding_index, attempts),
+        AgentLaunchResolution::MissingExecutor { code }
+        | AgentLaunchResolution::MissingActorId { code, .. }
+        | AgentLaunchResolution::AmbiguousActorId { code, .. }
+        | AgentLaunchResolution::UnavailableExecutor { code, .. } => {
+            let (blocked_code, message) = launch_resolution_block(code);
+            return Ok(dispatch_blocked(routine_id, blocked_code, message));
+        }
+    };
+    let executable_path = attempts
+        .iter()
+        .find(|attempt| attempt.binding_index == selected_binding_index)
+        .and_then(|attempt| attempt.diagnostic.as_ref())
+        .and_then(|diagnostic| diagnostic.executable_path.as_deref())
+        .ok_or_else(|| {
+            AppError::General("resolved Agent Actor binding has no executable path".into())
+        })?;
+    let routine_run_id = new_runtime_id();
+    let launch_id = new_runtime_id();
+    let registry = AgentAdapterRegistry;
+    let launch = match registry.build_manual_routine_launch(
+        &request,
+        Path::new(executable_path),
+        &ManualRoutineLaunchInput {
+            instruction: definition.body.clone(),
+            launch_id: launch_id.clone(),
+            owner_kind: routine_owner_kind_name(owner.descriptor.kind).to_string(),
+            owner_path: owner.descriptor.owner_path.clone(),
+        },
+    ) {
+        Ok(launch) => launch,
+        Err(validation) => {
+            let message = validation
+                .issues
+                .first()
+                .map(|issue| issue.message.clone())
+                .unwrap_or_else(|| "Agent Actor binding is unavailable".to_string());
+            return Ok(dispatch_blocked(
+                routine_id,
+                RoutineDispatchBlockedCode::UnavailableExecutor,
+                message,
+            ));
+        }
+    };
+    let source = adapter_session_source(launch.adapter);
+    let source_session_id = launch
+        .source_session_id
+        .clone()
+        .unwrap_or_else(|| format!("launch:{launch_id}"));
+    let agent_session_id = format!("{}:{source_session_id}", source.as_str());
+    let created_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+
+    cache::create_run(
+        &pool,
+        cache::NewRoutineRun {
+            routine_run_id: &routine_run_id,
+            routine_id: &routine_id,
+            owner_path: &owner.descriptor.owner_path,
+            trigger_type: "manual",
+            definition_fingerprint: &row.fingerprint,
+            definition: &definition,
+            launch_id: &launch_id,
+            source: source.as_str(),
+            source_session_id: launch.source_session_id.as_deref(),
+            agent_session_id: &agent_session_id,
+            created_at: &created_at,
+        },
+    )
+    .await?;
+
+    let command_display = quote_agent_shell_command(&launch.program, &launch.argv);
+    let spawn = AgentTerminalSpawn {
+        agent_session_id: agent_session_id.clone(),
+        title: Some(row.title.clone()),
+        source,
+        source_session_id: source_session_id.clone(),
+        command: AgentSessionResumeCommand {
+            display: command_display,
+            program: launch.program.clone(),
+            args: launch.argv.clone(),
+            cwd: Some(launch.cwd.clone()),
+        },
+        cwd: launch.cwd,
+        mcp_project_path: Some(owner.project_path.to_string_lossy().into_owned()),
+        launch_id: Some(launch_id.clone()),
+        routine_run_id: Some(routine_run_id.clone()),
+        lifecycle_sink: Some(Arc::new(cache::RoutineRunLifecycleSink::new(
+            pool.clone(),
+            owner.space_path.join(".svode").join("index.db"),
+            routine_run_id.clone(),
+        ))),
+    };
+    let terminal = match terminal_manager.spawn_agent_shell_session(app, spawn) {
+        Ok(terminal) => terminal,
+        Err(error) => {
+            let message = format!("failed to start agent CLI: {error}");
+            cache::record_terminal_outcome(
+                &pool,
+                &routine_run_id,
+                super::model::RoutineRunTerminalStatus::Failed,
+                None,
+                &message,
+                &Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+            )
+            .await?;
+            return Ok(RoutineManualDispatchResult::Failed {
+                routine_id,
+                routine_run_id,
+                launch_id,
+                agent_session_id,
+                message,
+            });
+        }
+    };
+    if let Err(error) = cache::attach_pty(
+        &pool,
+        &routine_run_id,
+        &terminal.pty_id,
+        &Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+    )
+    .await
+    {
+        let _ = terminal_manager.kill(&terminal.pty_id);
+        return Ok(RoutineManualDispatchResult::Failed {
+            routine_id,
+            routine_run_id,
+            launch_id,
+            agent_session_id,
+            message: format!("failed to persist managed PTY mapping: {error}"),
+        });
+    }
+
+    Ok(RoutineManualDispatchResult::Started {
+        routine_id,
+        routine_run_id,
+        launch_id,
+        agent_session_id,
+        source_session_id: launch.source_session_id,
+        pty_id: terminal.pty_id,
+    })
+}
+
+fn dispatch_blocked(
+    routine_id: String,
+    code: RoutineDispatchBlockedCode,
+    message: impl Into<String>,
+) -> RoutineManualDispatchResult {
+    RoutineManualDispatchResult::Blocked {
+        routine_id,
+        code,
+        message: message.into(),
+    }
+}
+
+fn launch_resolution_block(
+    code: AgentLaunchValidationCode,
+) -> (RoutineDispatchBlockedCode, &'static str) {
+    match code {
+        AgentLaunchValidationCode::MissingExecutor => (
+            RoutineDispatchBlockedCode::MissingExecutor,
+            "routine has no Agent Actor executor",
+        ),
+        AgentLaunchValidationCode::MissingActorId => (
+            RoutineDispatchBlockedCode::MissingActorId,
+            "routine Agent Actor no longer exists",
+        ),
+        AgentLaunchValidationCode::AmbiguousActorId => (
+            RoutineDispatchBlockedCode::AmbiguousActorId,
+            "routine Agent Actor reference is ambiguous between owner catalogs",
+        ),
+        AgentLaunchValidationCode::UnavailableExecutor => (
+            RoutineDispatchBlockedCode::UnavailableExecutor,
+            "routine Agent Actor has no eligible local CLI binding",
+        ),
+    }
+}
+
+async fn collect_adapter_diagnostics(
+    launch_space: &Path,
+) -> BTreeMap<AgentAdapterKind, AdapterDiagnostic> {
+    let registry = AgentAdapterRegistry;
+    let target = AdapterTarget {
+        cwd: launch_space.to_path_buf(),
+    };
+    let (codex, claude) = tokio::join!(
+        registry.diagnose(
+            AgentAdapterKind::Codex,
+            &target,
+            &SystemRuntimeCommandRunner,
+        ),
+        registry.diagnose(
+            AgentAdapterKind::ClaudeCode,
+            &target,
+            &SystemRuntimeCommandRunner,
+        ),
+    );
+    BTreeMap::from([
+        (AgentAdapterKind::Codex, codex),
+        (AgentAdapterKind::ClaudeCode, claude),
+    ])
+}
+
+fn adapter_session_source(adapter: AgentAdapterKind) -> AgentSessionSource {
+    match adapter {
+        AgentAdapterKind::Codex => AgentSessionSource::Codex,
+        AgentAdapterKind::ClaudeCode => AgentSessionSource::ClaudeCode,
+    }
+}
+
+fn routine_owner_kind_name(kind: RoutineOwnerKind) -> &'static str {
+    match kind {
+        RoutineOwnerKind::Project => "project",
+        RoutineOwnerKind::Space => "space",
+        RoutineOwnerKind::Collection => "collection",
+    }
+}
+
+fn new_runtime_id() -> String {
+    ulid::Ulid::new().to_string().to_ascii_lowercase()
 }
 
 async fn mutation_repository(
@@ -314,6 +661,7 @@ async fn authorize_mutation(
 
 async fn refresh_owner(
     index_state: &IndexState,
+    terminal_manager: &TerminalManager,
     owner: &ResolvedRoutineOwner,
 ) -> Result<RoutineCatalogSnapshot, AppError> {
     let mut snapshot = discover_owner(owner).await?;
@@ -329,6 +677,28 @@ async fn refresh_owner(
                     "routine files were read, but the local definition cache could not be refreshed",
                 ));
             }
+            let live_pty_ids = live_agent_pty_ids(terminal_manager)?;
+            for row in &mut snapshot.routines {
+                match cache::latest_run(&pool, &owner.descriptor.owner_path, &row.routine_id).await
+                {
+                    Ok(Some(run)) => {
+                        row.last_run_at = Some(run.created_at.clone());
+                        row.last_run = Some(run.to_ref(&live_pty_ids));
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::warn!(
+                            routine_id = %row.routine_id,
+                            "failed to load latest routine run: {error}"
+                        );
+                        snapshot.diagnostics.push(RoutineDiagnostic::new(
+                            "routine_run_cache_unavailable",
+                            "routine definitions were read, but latest local run references are unavailable",
+                        ));
+                        break;
+                    }
+                }
+            }
         }
         Err(error) => {
             tracing::warn!(
@@ -342,6 +712,15 @@ async fn refresh_owner(
         }
     }
     Ok(snapshot)
+}
+
+fn live_agent_pty_ids(terminal_manager: &TerminalManager) -> Result<HashSet<String>, AppError> {
+    Ok(terminal_manager
+        .list_agent_surfaces()?
+        .into_iter()
+        .filter(|surface| surface.live)
+        .map(|surface| surface.pty_id)
+        .collect())
 }
 
 async fn discover_owner(owner: &ResolvedRoutineOwner) -> Result<RoutineCatalogSnapshot, AppError> {

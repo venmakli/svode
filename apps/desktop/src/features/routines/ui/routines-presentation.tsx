@@ -23,10 +23,12 @@ export interface RoutinePresentationActions {
   getDeleteState(row: RoutineRow): SystemCollectionActionState;
   getEditState(row: RoutineRow): SystemCollectionActionState;
   getEnabledState(row: RoutineRow): SystemCollectionActionState;
+  getRunState(row: RoutineRow): SystemCollectionActionState;
   onAdd(): void;
   onDelete(row: RoutineRow): void;
   onEdit(row: RoutineRow): void;
   onEnabledChange(row: RoutineRow, enabled: boolean): Promise<void>;
+  onRun(row: RoutineRow): Promise<void>;
 }
 
 export function createRoutinesPresentation({
@@ -186,6 +188,18 @@ export function createRoutinesPresentationDescriptor({
       run: onRefresh,
     },
     rowActions: [
+      {
+        getLabel: (row) =>
+          row.lastRun?.active
+            ? m.routines_open_session()
+            : m.routines_run_now(),
+        getState: actions.getRunState,
+        id: "run-routine",
+        isVisible: (row) =>
+          row.definition?.trigger.type === "manual" || !row.definition,
+        label: m.routines_run_now(),
+        run: actions.onRun,
+      },
       {
         getState: actions.getEditState,
         id: "edit-routine",

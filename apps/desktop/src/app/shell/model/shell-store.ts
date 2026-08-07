@@ -1,6 +1,10 @@
 import { create } from "zustand";
 import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
 import { getActiveEntrySelection } from "@/features/entry/selection";
+import type {
+  AgentSessionOpenRequest,
+  AgentSessionOpenTarget,
+} from "@/features/agent-sessions";
 
 type SettingsDialog = "app" | "space" | null;
 export type MainSurface = "content" | "inbox" | "sessions";
@@ -16,6 +20,8 @@ interface ShellState {
   settingsDialog: SettingsDialog;
   settingsSpacePath: string | null;
   mainSurface: MainSurface;
+  agentSessionOpenRequest: AgentSessionOpenRequest | null;
+  nextAgentSessionOpenRequestKey: number;
   sidebarWidth: number;
 
   toggleChatPanel: () => void;
@@ -26,7 +32,7 @@ interface ShellState {
   closeSettings: () => void;
   openContentSurface: () => void;
   openInboxSurface: () => void;
-  openSessionsSurface: () => void;
+  openSessionsSurface: (target?: AgentSessionOpenTarget) => void;
 }
 
 function clampSidebarWidth(width: number) {
@@ -68,6 +74,8 @@ export const useShellStore = create<ShellState>((set) => ({
   settingsDialog: null,
   settingsSpacePath: null,
   mainSurface: "content",
+  agentSessionOpenRequest: null,
+  nextAgentSessionOpenRequestKey: 1,
   sidebarWidth: readStoredSidebarWidth(),
 
   toggleChatPanel: () => {
@@ -95,5 +103,19 @@ export const useShellStore = create<ShellState>((set) => ({
 
   openContentSurface: () => set({ mainSurface: "content" }),
   openInboxSurface: () => set({ mainSurface: "inbox" }),
-  openSessionsSurface: () => set({ mainSurface: "sessions" }),
+  openSessionsSurface: (target) =>
+    set((state) => {
+      if (!target) {
+        return { agentSessionOpenRequest: null, mainSurface: "sessions" };
+      }
+      return {
+        agentSessionOpenRequest: {
+          ...target,
+          requestKey: state.nextAgentSessionOpenRequestKey,
+        },
+        mainSurface: "sessions",
+        nextAgentSessionOpenRequestKey:
+          state.nextAgentSessionOpenRequestKey + 1,
+      };
+    }),
 }));

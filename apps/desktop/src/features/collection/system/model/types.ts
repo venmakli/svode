@@ -190,6 +190,8 @@ export interface SystemCollectionRefreshAction {
 export interface SystemCollectionRowActionDescriptor<Row> {
   id: string;
   label: string;
+  getLabel?(row: Row): string;
+  isVisible?(row: Row): boolean;
   getState(row: Row): SystemCollectionActionState;
   run(row: Row): void | Promise<void>;
 }

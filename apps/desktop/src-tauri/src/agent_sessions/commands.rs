@@ -29,12 +29,14 @@ pub async fn agent_sessions_list(
             AgentSessionsReadKind::Discovery,
             "agent_sessions_list",
             move || {
-                read_model::list_sessions_with_surfaces(
+                let result = read_model::list_sessions_with_surfaces(
                     &state,
                     project_path,
                     false,
                     terminal_manager.list_agent_surfaces()?,
-                )
+                )?;
+                terminal_manager.reconcile_agent_sessions(&result.sessions)?;
+                Ok(result)
             },
         )
         .await
@@ -58,12 +60,14 @@ pub async fn agent_sessions_refresh(
             AgentSessionsReadKind::FullRefresh,
             "agent_sessions_refresh",
             move || {
-                read_model::list_sessions_with_surfaces(
+                let result = read_model::list_sessions_with_surfaces(
                     &state,
                     project_path,
                     true,
                     terminal_manager.list_agent_surfaces()?,
-                )
+                )?;
+                terminal_manager.reconcile_agent_sessions(&result.sessions)?;
+                Ok(result)
             },
         )
         .await
@@ -79,12 +83,14 @@ pub async fn agent_sessions_hot_status(
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
     run_blocking(move || {
-        read_model::hot_status_with_surfaces(
+        let result = read_model::hot_status_with_surfaces(
             &state,
             project_path,
             session_ids,
             terminal_manager.list_agent_surfaces()?,
-        )
+        )?;
+        terminal_manager.reconcile_agent_sessions(&result.sessions)?;
+        Ok(result)
     })
     .await
 }

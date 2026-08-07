@@ -10,7 +10,7 @@ import type { ScopeOwnerRef } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
 import type { RoutineOwnerInput } from "../api/routines-api";
-import type { RoutineRow } from "../model/types";
+import type { RoutineRow, RoutineSessionTarget } from "../model/types";
 import { RoutineCreateDialog } from "../ui/routine-create-dialog";
 import { RoutineDeleteDialog } from "../ui/routine-delete-dialog";
 import {
@@ -20,10 +20,14 @@ import {
 } from "../ui/routines-presentation";
 import { useRoutineCatalog } from "./use-routine-catalog";
 import { useRoutineDetail } from "./use-routine-detail";
+import { useRoutineDispatch } from "./use-routine-dispatch";
 import { useRoutineExecutors } from "./use-routine-executors";
 import { useRoutineMutations } from "./use-routine-mutations";
 
-export function useRoutinesController(owner: ScopeOwnerRef) {
+export function useRoutinesController(
+  owner: ScopeOwnerRef,
+  onOpenSession: (target: RoutineSessionTarget) => void,
+) {
   const routineOwner = useMemo<RoutineOwnerInput>(
     () => ({
       ownerKind:
@@ -50,6 +54,7 @@ export function useRoutinesController(owner: ScopeOwnerRef) {
     refresh,
     replaceSnapshot,
   });
+  const dispatch = useRoutineDispatch({ onOpenSession, owner: routineOwner });
   const createReadOnlyDetail = useRoutineDetail({
     applyUpdate: mutations.applyUpdate,
     detailController,
@@ -58,6 +63,9 @@ export function useRoutinesController(owner: ScopeOwnerRef) {
     executors: executors.options,
     instanceKey,
     mutationError: mutations.error,
+    getRunState: dispatch.getRunState,
+    onOpenSession: dispatch.openLastSession,
+    onRun: dispatch.run,
     owner: routineOwner,
     pending: mutations.pending,
     setEditSession: mutations.setEditSession,
@@ -91,6 +99,7 @@ export function useRoutinesController(owner: ScopeOwnerRef) {
               : m.routines_invalid_edit_disabled(),
             status: "disabled",
           },
+    getRunState: dispatch.getRunState,
     onAdd: mutations.openCreate,
     onDelete: mutations.openDelete,
     onEdit: mutations.openEdit,
@@ -102,6 +111,7 @@ export function useRoutinesController(owner: ScopeOwnerRef) {
       });
       if (!updated) throw new Error(m.routines_mutation_blocked());
     },
+    onRun: dispatch.run,
   };
   const presentation = createRoutinesPresentation({
     actions,

@@ -7,6 +7,7 @@ import type { AgentActorOption } from "@/features/actors";
 import type {
   SystemCollectionDetailController,
   SystemCollectionDetailRequest,
+  SystemCollectionActionState,
 } from "@/features/collection/system";
 import * as m from "@/paraglide/messages.js";
 
@@ -14,6 +15,7 @@ import type { RoutineOwnerInput } from "../api/routines-api";
 import type { RoutineDefinition, RoutineRow } from "../model/types";
 import { RoutineDefinitionForm } from "../ui/routine-definition-form";
 import { RoutineDetailView } from "../ui/routine-detail-view";
+import { RoutineDetailActions } from "../ui/routine-detail-actions";
 import { routineDetailTitle } from "../ui/routines-presentation";
 import type { RoutineEditSession } from "./use-routine-mutations";
 
@@ -25,6 +27,9 @@ export function useRoutineDetail({
   executors,
   instanceKey,
   mutationError,
+  getRunState,
+  onOpenSession,
+  onRun,
   owner,
   pending,
   setEditSession,
@@ -39,6 +44,9 @@ export function useRoutineDetail({
   executors: readonly AgentActorOption[];
   instanceKey: string;
   mutationError: string | null;
+  getRunState(row: RoutineRow): SystemCollectionActionState;
+  onOpenSession(row: RoutineRow): void;
+  onRun(row: RoutineRow): Promise<void>;
   owner: RoutineOwnerInput;
   pending: boolean;
   setEditSession(
@@ -54,9 +62,17 @@ export function useRoutineDetail({
       description: (
         <span className="sr-only">{m.routines_detail_description()}</span>
       ),
+      footerActions: (
+        <RoutineDetailActions
+          row={row}
+          runState={getRunState(row)}
+          onOpenSession={onOpenSession}
+          onRun={onRun}
+        />
+      ),
       title: routineDetailTitle(row),
     }),
-    [],
+    [getRunState, onOpenSession, onRun],
   );
 
   useEffect(() => {
@@ -169,6 +185,9 @@ export function useRoutineDetail({
     executors,
     instanceKey,
     mutationError,
+    getRunState,
+    onOpenSession,
+    onRun,
     owner.ownerKind,
     pending,
     setEditSession,

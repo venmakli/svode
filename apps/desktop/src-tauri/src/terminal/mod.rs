@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
 use crate::agent_sessions::types::{
-    AgentSessionActiveFlag, AgentSessionResumeCommand, AgentSessionSource, AgentSessionStatus,
+    AgentSession, AgentSessionActiveFlag, AgentSessionResumeCommand, AgentSessionSource,
+    AgentSessionStatus,
 };
 use crate::error::AppError;
 use crate::system_path;
@@ -79,7 +80,7 @@ pub struct TerminalResourcePath {
     pub relative_path: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct AgentTerminalSpawn {
     pub agent_session_id: String,
     pub title: Option<String>,
@@ -88,6 +89,40 @@ pub(crate) struct AgentTerminalSpawn {
     pub command: AgentSessionResumeCommand,
     pub cwd: String,
     pub mcp_project_path: Option<String>,
+    pub launch_id: Option<String>,
+    pub routine_run_id: Option<String>,
+    pub lifecycle_sink: Option<Arc<dyn AgentTerminalLifecycleSink>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AgentTerminalOutcomeStatus {
+    Done,
+    Failed,
+    Stopped,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AgentTerminalOutcomeEvidence {
+    pub status: AgentTerminalOutcomeStatus,
+    pub exit_code: Option<i32>,
+    pub reason: String,
+    pub observed_at: String,
+}
+
+pub(crate) trait AgentTerminalLifecycleSink: Send + Sync {
+    fn record_terminal_outcome(
+        &self,
+        evidence: &AgentTerminalOutcomeEvidence,
+    ) -> Result<(), AppError>;
+
+    fn reconcile_agent_session(
+        &self,
+        source_session_id: &str,
+        agent_session_id: &str,
+        session_status: AgentSessionStatus,
+        observed_at: &str,
+    ) -> Result<(), AppError>;
 }
 
 #[derive(Clone, Serialize)]
@@ -96,9 +131,14 @@ pub(crate) struct AgentTerminalSurface {
     pub pty_id: String,
     pub agent_session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routine_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     pub source: AgentSessionSource,
     pub source_session_id: String,
+    pub live: bool,
     pub initial_agent_argv: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_agent_cwd: Option<String>,
@@ -116,6 +156,8 @@ pub(crate) struct AgentTerminalSurface {
     pub failure_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_evidence: Option<AgentTerminalStatusEvidence>,
+    #[serde(skip)]
+    pub(crate) exit_marker_buffer: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -138,6 +180,7 @@ struct AgentTerminalStatusSignal {
 pub struct TerminalManager {
     sessions: Arc<Mutex<HashMap<String, TerminalProcess>>>,
     agent_surfaces: Arc<Mutex<HashMap<String, AgentTerminalSurface>>>,
+    lifecycle_sinks: Arc<Mutex<HashMap<String, Arc<dyn AgentTerminalLifecycleSink>>>>,
 }
 
 impl TerminalManager {
@@ -145,6 +188,7 @@ impl TerminalManager {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             agent_surfaces: Arc::new(Mutex::new(HashMap::new())),
+            lifecycle_sinks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -230,6 +274,7 @@ impl TerminalManager {
             app,
             self.sessions.clone(),
             self.agent_surfaces.clone(),
+            self.lifecycle_sinks.clone(),
             pty_id.clone(),
             reader,
         ) {
@@ -271,9 +316,22 @@ impl TerminalManager {
             return Err(error);
         }
 
+        if let Some(sink) = spawn.lifecycle_sink.clone() {
+            self.lifecycle_sinks
+                .lock()
+                .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?
+                .insert(session.pty_id.clone(), sink);
+        }
+
+        let shell_kind = self.shell_kind(&session.pty_id)?;
         if let Err(error) = self.write(
             &session.pty_id,
-            &agent_initial_shell_input(&spawn.command.program, &spawn.command.args),
+            &agent_initial_shell_input(
+                &spawn.command.program,
+                &spawn.command.args,
+                spawn.launch_id.as_deref(),
+                shell_kind,
+            ),
         ) {
             let _ = self.kill(&session.pty_id);
             return Err(error);
@@ -377,9 +435,12 @@ impl TerminalManager {
         } else {
             Ok(())
         };
-        if let Ok(mut surfaces) = self.agent_surfaces.lock() {
-            surfaces.remove(pty_id);
-        }
+        self.finish_surface(
+            pty_id,
+            AgentTerminalOutcomeStatus::Stopped,
+            None,
+            "managed terminal stopped by user",
+        );
 
         kill_result
     }
@@ -402,8 +463,18 @@ impl TerminalManager {
             }
             let _ = process.child.wait();
         }
-        if let Ok(mut surfaces) = self.agent_surfaces.lock() {
-            surfaces.clear();
+        let pty_ids = self
+            .agent_surfaces
+            .lock()
+            .map(|surfaces| surfaces.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for pty_id in pty_ids {
+            self.finish_surface(
+                &pty_id,
+                AgentTerminalOutcomeStatus::Stopped,
+                None,
+                "managed terminal stopped during application shutdown",
+            );
         }
     }
 
@@ -481,6 +552,121 @@ impl TerminalManager {
         Ok(surfaces.values().cloned().collect())
     }
 
+    pub(crate) fn reconcile_agent_sessions(
+        &self,
+        sessions: &[AgentSession],
+    ) -> Result<(), AppError> {
+        let observed_at = now_rfc3339();
+        let mut reconciliations = Vec::new();
+        {
+            let mut surfaces = self
+                .agent_surfaces
+                .lock()
+                .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?;
+            let sinks = self
+                .lifecycle_sinks
+                .lock()
+                .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?;
+
+            for session in sessions {
+                let Some(launch_id) = session.launch_id.as_deref() else {
+                    continue;
+                };
+                if session
+                    .runtime
+                    .as_ref()
+                    .is_some_and(|runtime| runtime.provisional)
+                {
+                    continue;
+                }
+                for surface in surfaces
+                    .values_mut()
+                    .filter(|surface| surface.launch_id.as_deref() == Some(launch_id))
+                {
+                    surface.agent_session_id = session.id.clone();
+                    surface.source_session_id = session.source_session_id.clone();
+                    if let Some(sink) = sinks.get(&surface.pty_id) {
+                        reconciliations.push((
+                            sink.clone(),
+                            session.source_session_id.clone(),
+                            session.id.clone(),
+                            session.status,
+                        ));
+                    }
+                }
+            }
+        }
+
+        for (sink, source_session_id, agent_session_id, status) in reconciliations {
+            if let Err(error) = sink.reconcile_agent_session(
+                &source_session_id,
+                &agent_session_id,
+                status,
+                &observed_at,
+            ) {
+                tracing::warn!(
+                    agent_session_id,
+                    "failed to persist agent session reconciliation: {error}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn finish_surface(
+        &self,
+        pty_id: &str,
+        status: AgentTerminalOutcomeStatus,
+        exit_code: Option<i32>,
+        reason: &str,
+    ) {
+        let observed_at = now_rfc3339();
+        let should_record = self.agent_surfaces.lock().ok().and_then(|mut surfaces| {
+            let surface = surfaces.get_mut(pty_id)?;
+            if surface.routine_run_id.is_none() {
+                surfaces.remove(pty_id);
+                return None;
+            }
+            surface.live = false;
+            if surface.finished_at.is_some() {
+                return Some(false);
+            }
+            surface.finished_at = Some(observed_at.clone());
+            surface.exit_code = exit_code;
+            surface.failure_reason = Some(reason.to_string());
+            surface.status_evidence = Some(outcome_status_evidence(
+                status,
+                reason.to_string(),
+                observed_at.clone(),
+            ));
+            Some(true)
+        });
+        let Some(should_record) = should_record else {
+            if let Ok(mut sinks) = self.lifecycle_sinks.lock() {
+                sinks.remove(pty_id);
+            }
+            return;
+        };
+        if !should_record {
+            return;
+        }
+        let sink = self
+            .lifecycle_sinks
+            .lock()
+            .ok()
+            .and_then(|sinks| sinks.get(pty_id).cloned());
+        if let Some(sink) = sink
+            && let Err(error) = sink.record_terminal_outcome(&AgentTerminalOutcomeEvidence {
+                status,
+                exit_code,
+                reason: reason.to_string(),
+                observed_at,
+            })
+        {
+            tracing::warn!("failed to persist agent terminal outcome: {error}");
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn insert_agent_surface_for_test(&self, surface: AgentTerminalSurface) {
         self.agent_surfaces
@@ -500,6 +686,7 @@ fn spawn_reader_loop(
     app: AppHandle,
     sessions: Arc<Mutex<HashMap<String, TerminalProcess>>>,
     agent_surfaces: Arc<Mutex<HashMap<String, AgentTerminalSurface>>>,
+    lifecycle_sinks: Arc<Mutex<HashMap<String, Arc<dyn AgentTerminalLifecycleSink>>>>,
     pty_id: String,
     mut reader: Box<dyn Read + Send>,
 ) -> Result<(), AppError> {
@@ -514,7 +701,12 @@ fn spawn_reader_loop(
                     Ok(0) => break,
                     Ok(n) => {
                         let data = String::from_utf8_lossy(&buffer[..n]).to_string();
-                        update_agent_surface_output(&agent_surfaces, &pty_id, &data);
+                        let data = update_agent_surface_output(
+                            &agent_surfaces,
+                            &lifecycle_sinks,
+                            &pty_id,
+                            &data,
+                        );
                         let payload = TerminalOutputEvent {
                             pty_id: pty_id.clone(),
                             data,
@@ -542,9 +734,7 @@ fn spawn_reader_loop(
             if let Some(mut process) = process {
                 let _ = process.child.wait();
             }
-            if let Ok(mut surfaces) = agent_surfaces.lock() {
-                surfaces.remove(&pty_id);
-            }
+            finish_reader_surface(&agent_surfaces, &lifecycle_sinks, &pty_id);
 
             let _ = app.emit(
                 EXIT_EVENT,
@@ -559,29 +749,195 @@ fn spawn_reader_loop(
 
 fn update_agent_surface_output(
     agent_surfaces: &Arc<Mutex<HashMap<String, AgentTerminalSurface>>>,
+    lifecycle_sinks: &Arc<Mutex<HashMap<String, Arc<dyn AgentTerminalLifecycleSink>>>>,
     pty_id: &str,
     data: &str,
-) {
+) -> String {
     let observed_at = now_rfc3339();
     let mut surfaces = match agent_surfaces.lock() {
         Ok(surfaces) => surfaces,
         Err(_) => {
             tracing::warn!("Failed to update agent terminal surface: state lock poisoned");
-            return;
+            return data.to_string();
         }
     };
     let Some(surface) = surfaces.get_mut(pty_id) else {
-        return;
+        return data.to_string();
     };
 
     surface.last_output_at = Some(observed_at.clone());
-    if let Some(signal) = classify_agent_terminal_output(surface.source, data) {
+    let (visible, exit_code) = strip_agent_exit_marker(surface, data);
+    let mut outcome = None;
+    if let Some(exit_code) = exit_code {
+        let (session_status, outcome_status, reason) = agent_exit_outcome(exit_code);
+        surface.finished_at = Some(observed_at.clone());
+        surface.exit_code = Some(exit_code);
+        surface.failure_reason =
+            (outcome_status != AgentTerminalOutcomeStatus::Done).then_some(reason.clone());
+        surface.status_evidence = Some(AgentTerminalStatusEvidence {
+            status: session_status,
+            active_flags: Vec::new(),
+            reason: reason.clone(),
+            observed_at: observed_at.clone(),
+        });
+        outcome = Some(AgentTerminalOutcomeEvidence {
+            status: outcome_status,
+            exit_code: Some(exit_code),
+            reason,
+            observed_at: observed_at.clone(),
+        });
+    }
+    if outcome.is_none()
+        && let Some(signal) = classify_agent_terminal_output(surface.source, &visible)
+    {
         surface.status_evidence = Some(AgentTerminalStatusEvidence {
             status: AgentSessionStatus::Active,
             active_flags: signal.active_flags,
             reason: signal.reason.to_string(),
             observed_at,
         });
+    }
+    drop(surfaces);
+    if let Some(outcome) = outcome
+        && let Ok(sinks) = lifecycle_sinks.lock()
+        && let Some(sink) = sinks.get(pty_id)
+        && let Err(error) = sink.record_terminal_outcome(&outcome)
+    {
+        tracing::warn!("failed to persist agent terminal outcome: {error}");
+    }
+    visible
+}
+
+fn strip_agent_exit_marker(
+    surface: &mut AgentTerminalSurface,
+    data: &str,
+) -> (String, Option<i32>) {
+    let Some(launch_id) = surface.launch_id.as_deref() else {
+        return (data.to_string(), None);
+    };
+    let prefix = format!("__SVODE_AGENT_EXIT__:{launch_id}:");
+    let mut remaining = std::mem::take(&mut surface.exit_marker_buffer);
+    remaining.push_str(data);
+    let mut visible = String::new();
+
+    loop {
+        let Some(start) = remaining.find(&prefix) else {
+            let keep = marker_prefix_suffix_len(&remaining, &prefix);
+            let split = remaining.len().saturating_sub(keep);
+            visible.push_str(&remaining[..split]);
+            surface.exit_marker_buffer = remaining[split..].to_string();
+            return (visible, None);
+        };
+        let line_start = remaining[..start]
+            .rfind(['\n', '\r'])
+            .map_or(0, |index| index + 1);
+        visible.push_str(&remaining[..line_start]);
+        let value_start = start + prefix.len();
+        let Some(line_break_offset) = remaining[value_start..].find(['\n', '\r']) else {
+            surface.exit_marker_buffer = remaining[line_start..].to_string();
+            return (visible, None);
+        };
+        let value_end = value_start + line_break_offset;
+        let line_end = value_end
+            + remaining[value_end..]
+                .chars()
+                .take_while(|character| matches!(character, '\n' | '\r'))
+                .map(char::len_utf8)
+                .sum::<usize>();
+        let exit_code = remaining[value_start..value_end].trim().parse::<i32>().ok();
+        remaining = remaining[line_end..].to_string();
+        if let Some(exit_code) = exit_code {
+            visible.push_str(&remaining);
+            surface.exit_marker_buffer.clear();
+            return (visible, Some(exit_code));
+        }
+    }
+}
+
+fn marker_prefix_suffix_len(value: &str, prefix: &str) -> usize {
+    let max = value.len().min(prefix.len().saturating_sub(1));
+    (1..=max)
+        .rev()
+        .find(|length| value.ends_with(&prefix[..*length]))
+        .unwrap_or(0)
+}
+
+fn finish_reader_surface(
+    agent_surfaces: &Arc<Mutex<HashMap<String, AgentTerminalSurface>>>,
+    lifecycle_sinks: &Arc<Mutex<HashMap<String, Arc<dyn AgentTerminalLifecycleSink>>>>,
+    pty_id: &str,
+) {
+    let observed_at = now_rfc3339();
+    let outcome = agent_surfaces.lock().ok().and_then(|mut surfaces| {
+        let surface = surfaces.get_mut(pty_id)?;
+        if surface.routine_run_id.is_none() {
+            surfaces.remove(pty_id);
+            return None;
+        }
+        surface.live = false;
+        if surface.finished_at.is_some() {
+            return None;
+        }
+        let reason =
+            "managed terminal shell exited before terminal outcome was observed".to_string();
+        surface.finished_at = Some(observed_at.clone());
+        surface.failure_reason = Some(reason.clone());
+        surface.status_evidence = Some(outcome_status_evidence(
+            AgentTerminalOutcomeStatus::Unknown,
+            reason.clone(),
+            observed_at.clone(),
+        ));
+        Some(AgentTerminalOutcomeEvidence {
+            status: AgentTerminalOutcomeStatus::Unknown,
+            exit_code: None,
+            reason,
+            observed_at: observed_at.clone(),
+        })
+    });
+    if let Some(outcome) = outcome
+        && let Ok(sinks) = lifecycle_sinks.lock()
+        && let Some(sink) = sinks.get(pty_id)
+        && let Err(error) = sink.record_terminal_outcome(&outcome)
+    {
+        tracing::warn!("failed to persist agent terminal outcome: {error}");
+    }
+}
+
+fn outcome_status_evidence(
+    status: AgentTerminalOutcomeStatus,
+    reason: String,
+    observed_at: String,
+) -> AgentTerminalStatusEvidence {
+    AgentTerminalStatusEvidence {
+        status: match status {
+            AgentTerminalOutcomeStatus::Done => AgentSessionStatus::Done,
+            AgentTerminalOutcomeStatus::Failed => AgentSessionStatus::Failed,
+            AgentTerminalOutcomeStatus::Stopped => AgentSessionStatus::Stopped,
+            AgentTerminalOutcomeStatus::Unknown => AgentSessionStatus::Unknown,
+        },
+        active_flags: Vec::new(),
+        reason,
+        observed_at,
+    }
+}
+
+fn agent_exit_outcome(exit_code: i32) -> (AgentSessionStatus, AgentTerminalOutcomeStatus, String) {
+    match exit_code {
+        0 => (
+            AgentSessionStatus::Done,
+            AgentTerminalOutcomeStatus::Done,
+            "initial agent command exited successfully".to_string(),
+        ),
+        130 | 143 => (
+            AgentSessionStatus::Stopped,
+            AgentTerminalOutcomeStatus::Stopped,
+            format!("initial agent command was cancelled with code {exit_code}"),
+        ),
+        _ => (
+            AgentSessionStatus::Failed,
+            AgentTerminalOutcomeStatus::Failed,
+            format!("initial agent command exited with code {exit_code}"),
+        ),
     }
 }
 
@@ -615,9 +971,12 @@ fn agent_surface_from_spawn(
     AgentTerminalSurface {
         pty_id,
         agent_session_id: spawn.agent_session_id,
+        launch_id: spawn.launch_id,
+        routine_run_id: spawn.routine_run_id,
         title: spawn.title,
         source: spawn.source,
         source_session_id: spawn.source_session_id,
+        live: true,
         initial_agent_argv,
         initial_agent_cwd: spawn.command.cwd,
         shell_cwd,
@@ -628,6 +987,7 @@ fn agent_surface_from_spawn(
         exit_code: None,
         failure_reason: None,
         status_evidence: None,
+        exit_marker_buffer: String::new(),
     }
 }
 
@@ -643,9 +1003,12 @@ fn agent_surface_from_existing_session(
     AgentTerminalSurface {
         pty_id,
         agent_session_id,
+        launch_id: None,
+        routine_run_id: None,
         title,
         source,
         source_session_id: source_session_id.clone(),
+        live: true,
         initial_agent_argv: source.resume_argv(&source_session_id),
         initial_agent_cwd: None,
         shell_cwd,
@@ -656,15 +1019,50 @@ fn agent_surface_from_existing_session(
         exit_code: None,
         failure_reason: None,
         status_evidence: None,
+        exit_marker_buffer: String::new(),
     }
 }
 
-fn agent_initial_shell_input(program: &str, args: &[String]) -> String {
+fn agent_initial_shell_input(
+    program: &str,
+    args: &[String],
+    launch_id: Option<&str>,
+    shell_kind: TerminalShellKind,
+) -> String {
+    let command = quote_agent_shell_command(program, args);
+    let command = match launch_id {
+        Some(launch_id) => agent_command_with_exit_marker(&command, launch_id, shell_kind),
+        None => command,
+    };
+    format!("{command}{}", shell_submit_sequence())
+}
+
+#[cfg(not(windows))]
+fn agent_command_with_exit_marker(
+    command: &str,
+    launch_id: &str,
+    _shell_kind: TerminalShellKind,
+) -> String {
     format!(
-        "{}{}",
-        quote_agent_shell_command(program, args),
-        shell_submit_sequence()
+        "{command}; __svode_agent_exit=$?; printf '\\n__SVODE_AGENT_EXIT__:{launch_id}:%s\\n' \"$__svode_agent_exit\""
     )
+}
+
+#[cfg(windows)]
+fn agent_command_with_exit_marker(
+    command: &str,
+    launch_id: &str,
+    shell_kind: TerminalShellKind,
+) -> String {
+    match shell_kind {
+        TerminalShellKind::PowerShell => format!(
+            "{command}; $__svodeAgentExit = $LASTEXITCODE; Write-Output '__SVODE_AGENT_EXIT__:{launch_id}:'$__svodeAgentExit"
+        ),
+        TerminalShellKind::Cmd => {
+            format!("{command} & call echo __SVODE_AGENT_EXIT__:{launch_id}:%%ERRORLEVEL%%")
+        }
+        TerminalShellKind::Posix => unreachable!("POSIX shell is unavailable on Windows"),
+    }
 }
 
 #[cfg(windows)]
@@ -1073,9 +1471,12 @@ mod tests {
         AgentTerminalSurface {
             pty_id: "pty-agent".to_string(),
             agent_session_id: "codex:session".to_string(),
+            launch_id: None,
+            routine_run_id: None,
             title: Some("Test session".to_string()),
             source: AgentSessionSource::Codex,
             source_session_id: "session".to_string(),
+            live: true,
             initial_agent_argv: vec![
                 "codex".to_string(),
                 "resume".to_string(),
@@ -1090,6 +1491,7 @@ mod tests {
             exit_code: None,
             failure_reason: None,
             status_evidence: None,
+            exit_marker_buffer: String::new(),
         }
     }
 
@@ -1107,6 +1509,9 @@ mod tests {
             },
             cwd: "/tmp/project".to_string(),
             mcp_project_path: Some("/tmp/project".to_string()),
+            launch_id: None,
+            routine_run_id: None,
+            lifecycle_sink: None,
         }
     }
 
@@ -1382,6 +1787,78 @@ mod tests {
         assert!(surface.status_evidence.is_none());
     }
 
+    #[test]
+    fn terminal_agent_exit_marker_survives_split_pty_chunks() {
+        let mut surface = test_surface();
+        surface.launch_id = Some("launch-123".to_string());
+
+        let (first, first_exit) = strip_agent_exit_marker(&mut surface, "before\n__SVODE_AGENT_EX");
+        let (second, second_exit) =
+            strip_agent_exit_marker(&mut surface, "IT__:launch-123:17\r\nafter");
+
+        assert_eq!(first, "before\n");
+        assert_eq!(first_exit, None);
+        assert_eq!(second, "after");
+        assert_eq!(second_exit, Some(17));
+        assert!(surface.exit_marker_buffer.is_empty());
+    }
+
+    #[test]
+    fn terminal_agent_exit_marker_hides_shell_echo_and_keeps_prompt() {
+        let mut surface = test_surface();
+        surface.launch_id = Some("launch-123".to_string());
+        let output = concat!(
+            "$ printf '__SVODE_AGENT_EXIT__:launch-123:%s'\r\n",
+            "__SVODE_AGENT_EXIT__:launch-123:0\r\n",
+            "$ "
+        );
+
+        let (visible, exit_code) = strip_agent_exit_marker(&mut surface, output);
+
+        assert_eq!(visible, "$ ");
+        assert_eq!(exit_code, Some(0));
+    }
+
+    #[test]
+    fn terminal_agent_exit_maps_interrupt_to_stopped() {
+        let (session_status, outcome_status, reason) = agent_exit_outcome(130);
+
+        assert_eq!(session_status, AgentSessionStatus::Stopped);
+        assert_eq!(outcome_status, AgentTerminalOutcomeStatus::Stopped);
+        assert!(reason.contains("cancelled"));
+    }
+
+    #[test]
+    fn closing_completed_routine_shell_preserves_initial_command_outcome() {
+        let manager = TerminalManager::new();
+        let mut surface = test_surface();
+        surface.routine_run_id = Some("run-one".to_string());
+        surface.finished_at = Some("2026-08-07T10:00:00Z".to_string());
+        surface.exit_code = Some(0);
+        surface.status_evidence = Some(AgentTerminalStatusEvidence {
+            status: AgentSessionStatus::Done,
+            active_flags: Vec::new(),
+            reason: "initial agent command exited successfully".to_string(),
+            observed_at: "2026-08-07T10:00:00Z".to_string(),
+        });
+        manager.insert_agent_surface_for_test(surface);
+
+        manager.finish_surface(
+            "pty-agent",
+            AgentTerminalOutcomeStatus::Stopped,
+            None,
+            "managed terminal stopped by user",
+        );
+
+        let retained = manager.list_agent_surfaces().unwrap().pop().unwrap();
+        assert!(!retained.live);
+        assert_eq!(retained.exit_code, Some(0));
+        assert_eq!(
+            retained.status_evidence.unwrap().status,
+            AgentSessionStatus::Done
+        );
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn terminal_agent_shell_input_quotes_structured_resume_command() {
@@ -1392,6 +1869,8 @@ mod tests {
                 "session with spaces".to_string(),
                 "quote'and;separator".to_string(),
             ],
+            None,
+            TerminalShellKind::Posix,
         );
 
         assert_eq!(
@@ -1403,8 +1882,12 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn terminal_agent_shell_resume_input_does_not_exec_initial_command() {
-        let input =
-            agent_initial_shell_input("codex", &["resume".to_string(), "session".to_string()]);
+        let input = agent_initial_shell_input(
+            "codex",
+            &["resume".to_string(), "session".to_string()],
+            None,
+            TerminalShellKind::Posix,
+        );
 
         assert_eq!(input, "codex resume session\n");
         assert!(!input.starts_with("exec "));
@@ -1413,8 +1896,12 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn terminal_agent_shell_resume_input_submits_with_conpty_enter() {
-        let input =
-            agent_initial_shell_input("codex", &["resume".to_string(), "session".to_string()]);
+        let input = agent_initial_shell_input(
+            "codex",
+            &["resume".to_string(), "session".to_string()],
+            None,
+            TerminalShellKind::PowerShell,
+        );
 
         assert_eq!(input, "codex resume session\r");
         assert!(!input.contains('\n'));

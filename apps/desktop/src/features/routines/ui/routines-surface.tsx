@@ -6,9 +6,15 @@ import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
 import { useRoutinesController } from "../hooks/use-routines-controller";
+import type { RoutineSessionTarget } from "../model/types";
 
-export function RoutinesSurface({ owner }: ScopeSurfaceRenderContext) {
-  const controller = useRoutinesController(owner);
+export function RoutinesSurface({
+  owner,
+  onOpenSession,
+}: ScopeSurfaceRenderContext & {
+  onOpenSession(target: RoutineSessionTarget): void;
+}) {
+  const controller = useRoutinesController(owner, onOpenSession);
   const body =
     controller.collectionState.phase === "ready" ? (
       <SystemCollectionPresentationCore

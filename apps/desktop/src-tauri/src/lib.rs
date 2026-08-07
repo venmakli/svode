@@ -111,6 +111,7 @@ pub fn run() {
             routines::commands::routines_create,
             routines::commands::routines_update,
             routines::commands::routines_delete,
+            routines::commands::routines_dispatch_manual,
             git::access::repository_access_get,
             git::access::repository_access_verify,
             commands::greet::greet,

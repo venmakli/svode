@@ -35,6 +35,7 @@ const review: RoutineRow = {
   filename: "review.md",
   fingerprint: "fingerprint:review",
   id: "routine:review",
+  lastRun: null,
   lastRunAt: null,
   nextRunAt: null,
   title: "Review",
@@ -67,11 +68,15 @@ function actions(calls: string[]): RoutinePresentationActions {
     getDeleteState: () => ({ status: "idle" }),
     getEditState: () => ({ status: "idle" }),
     getEnabledState: () => ({ status: "idle" }),
+    getRunState: () => ({ status: "idle" }),
     onAdd: () => calls.push("add"),
     onDelete: (row) => calls.push(`delete:${row.id}`),
     onEdit: (row) => calls.push(`edit:${row.id}`),
     onEnabledChange: async (row, enabled) => {
       calls.push(`enabled:${row.id}:${enabled}`);
+    },
+    onRun: async (row) => {
+      calls.push(`run:${row.id}`);
     },
   };
 }
@@ -109,9 +114,27 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
   expect(descriptor.create?.id).toBe("add-routine");
   expect(descriptor.refresh?.id).toBe("refresh-routines");
   expect(descriptor.rowActions?.map((action) => action.id)).toEqual([
+    "run-routine",
     "edit-routine",
     "delete-routine",
   ]);
+  const runAction = descriptor.rowActions?.[0];
+  expect(runAction?.getLabel?.(review)).toBe("Run now");
+  expect(runAction?.isVisible?.(review)).toBe(true);
+  expect(runAction?.isVisible?.(scheduled)).toBe(false);
+  expect(
+    runAction?.getLabel?.({
+      ...review,
+      lastRun: {
+        active: true,
+        agentSessionId: "codex:launch:launch-one",
+        launchId: "launch-one",
+        ptyId: "pty-one",
+        routineRunId: "run-one",
+        sourceSessionId: null,
+      },
+    }),
+  ).toBe("Open session");
 });
 
 test("routines query searches definitions and defaults to title ordering", () => {
@@ -161,7 +184,8 @@ test("routines delegate create, row actions, and inline enabled edits", async ()
   await descriptor.create?.run();
   await descriptor.refresh?.run();
   for (const action of descriptor.rowActions ?? []) {
-    await action.run(scheduled);
+    if (action.isVisible?.(review) === false) continue;
+    await action.run(review);
   }
   await descriptor.fields
     .find((field) => field.key === "enabled")
@@ -170,8 +194,9 @@ test("routines delegate create, row actions, and inline enabled edits", async ()
   expect(calls).toEqual([
     "add",
     "refresh",
-    "edit:routine:summary",
-    "delete:routine:summary",
+    "run:routine:review",
+    "edit:routine:review",
+    "delete:routine:review",
     "enabled:routine:summary:true",
   ]);
 });
