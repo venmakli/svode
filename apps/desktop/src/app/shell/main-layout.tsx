@@ -79,9 +79,11 @@ interface DesktopResizableShellProps {
 
 export function MainLayout() {
   return (
-    <SystemCollectionDetailDrawerProvider>
-      <MainLayoutRuntime />
-    </SystemCollectionDetailDrawerProvider>
+    <TooltipProvider delayDuration={300}>
+      <SystemCollectionDetailDrawerProvider>
+        <MainLayoutRuntime />
+      </SystemCollectionDetailDrawerProvider>
+    </TooltipProvider>
   );
 }
 
@@ -156,30 +158,28 @@ function MainLayoutRuntime() {
   }
 
   return (
-    <TooltipProvider delayDuration={300}>
-      <SidebarProvider
-        ref={sidebarProviderRef}
-        style={sidebarProviderStyle}
-        className="relative min-h-0 h-dvh overflow-hidden bg-sidebar"
-      >
-        <ShellLayoutContent
-          sidebarProviderRef={sidebarProviderRef}
-          identityName={identityName}
-          identityEmail={identityEmail}
-          mainSurface={mainSurface}
-          onActivateContent={openContentSurface}
-          onBeforeNavigation={prepareForNavigation}
-          onOpenInbox={() => runNavigation(openInboxSurface)}
-          onOpenSessions={() => runNavigation(openSessionsSurface)}
-          onOpenSearch={() => setCommandPaletteOpen(true)}
-          onOpenAppSettings={openAppSettings}
-        />
-        <SpaceFileWatcher />
-        {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
-        <GitMissingDialog open={available === false} onRecheck={recheck} />
-        <CommandPalette onBeforeNavigation={prepareForNavigation} />
-      </SidebarProvider>
-    </TooltipProvider>
+    <SidebarProvider
+      ref={sidebarProviderRef}
+      style={sidebarProviderStyle}
+      className="relative min-h-0 h-dvh overflow-hidden bg-sidebar"
+    >
+      <ShellLayoutContent
+        sidebarProviderRef={sidebarProviderRef}
+        identityName={identityName}
+        identityEmail={identityEmail}
+        mainSurface={mainSurface}
+        onActivateContent={openContentSurface}
+        onBeforeNavigation={prepareForNavigation}
+        onOpenInbox={() => runNavigation(openInboxSurface)}
+        onOpenSessions={() => runNavigation(openSessionsSurface)}
+        onOpenSearch={() => setCommandPaletteOpen(true)}
+        onOpenAppSettings={openAppSettings}
+      />
+      <SpaceFileWatcher />
+      {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
+      <GitMissingDialog open={available === false} onRecheck={recheck} />
+      <CommandPalette onBeforeNavigation={prepareForNavigation} />
+    </SidebarProvider>
   );
 }
 

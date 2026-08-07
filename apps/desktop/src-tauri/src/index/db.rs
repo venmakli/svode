@@ -20,7 +20,10 @@ use crate::error::AppError;
 ///
 /// Bumped to 5 in stage-6 Phase 12: entries are keyed by file_path; legacy
 /// YAML id is indexed only as a custom field.
-const SCHEMA_VERSION: i64 = 5;
+///
+/// Bumped to 6 in Stage 7 Phase 7.1: adds the rebuildable routine definition
+/// cache used by owner-scoped Routines surfaces and later dispatch phases.
+const SCHEMA_VERSION: i64 = 6;
 
 /// Create a connection pool for a space's index database.
 /// Ensures the parent directory exists and enables WAL mode.
@@ -75,6 +78,7 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         "DROP TABLE IF EXISTS entries",
         "DROP TABLE IF EXISTS assets",
         "DROP TABLE IF EXISTS broken_links",
+        "DROP TABLE IF EXISTS routine_definitions",
     ];
     for stmt in drops {
         sqlx::query(stmt).execute(pool).await?;
@@ -154,6 +158,17 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         )
         "#,
         "CREATE INDEX IF NOT EXISTS idx_broken_links_source ON broken_links(source_rel_path)",
+        r#"
+        CREATE TABLE IF NOT EXISTS routine_definitions (
+            owner_path TEXT NOT NULL,
+            routine_id TEXT NOT NULL,
+            fingerprint TEXT NOT NULL,
+            row_json TEXT NOT NULL,
+            refreshed_at TEXT NOT NULL,
+            PRIMARY KEY (owner_path, routine_id)
+        )
+        "#,
+        "CREATE INDEX IF NOT EXISTS idx_routine_definitions_owner ON routine_definitions(owner_path)",
     ];
 
     for stmt in ddl {

@@ -21,6 +21,13 @@ import type {
   AgentActorMutationApplied,
 } from "../model/agent-actor-types";
 
+export interface AgentActorOption {
+  description: string | null;
+  label: string;
+  ownerLabel: string;
+  value: `agent:${string}`;
+}
+
 export async function loadAgentActors(
   projectPath: string,
   launchSpacePath: string,
@@ -92,6 +99,23 @@ export async function loadAgentActors(
       ),
     ),
   });
+}
+
+export async function listAgentActorOptions(
+  projectPath: string,
+  launchSpacePath: string,
+): Promise<readonly AgentActorOption[]> {
+  const snapshot = await loadAgentActors(projectPath, launchSpacePath);
+  return Object.freeze(
+    snapshot.rows.map((row) =>
+      Object.freeze({
+        description: row.description,
+        label: row.name,
+        ownerLabel: row.ownerLabel,
+        value: row.actorRef,
+      }),
+    ),
+  );
 }
 
 export function diagnoseAgentActorAdapter(

@@ -1,0 +1,88 @@
+import type { ReactNode } from "react";
+
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { ControlledMarkdownEditor } from "@/features/editor";
+import * as m from "@/paraglide/messages.js";
+
+import {
+  routineActionSummary,
+  routineTriggerSummary,
+} from "../model/routine-values";
+import type { RoutineRow } from "../model/types";
+import { RoutineDiagnostics } from "./routine-diagnostics";
+
+export function RoutineDetailView({ row }: { row: RoutineRow }) {
+  if (!row.definition) {
+    return (
+      <div className="flex flex-col gap-4">
+        <RoutineDiagnostics diagnostics={row.diagnostics} />
+        <DetailValue label={m.routines_definition_path_label()}>
+          {row.definitionPath}
+        </DetailValue>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      {row.diagnostics.length > 0 ? (
+        <RoutineDiagnostics diagnostics={row.diagnostics} />
+      ) : null}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <DetailValue label={m.routines_field_trigger()}>
+          <Badge variant="secondary">{routineTriggerSummary(row)}</Badge>
+        </DetailValue>
+        <DetailValue label={m.routines_field_action()}>
+          <Badge variant="secondary">{routineActionSummary(row)}</Badge>
+        </DetailValue>
+        <DetailValue label={m.routines_field_enabled()}>
+          {row.definition.trigger.type === "manual"
+            ? m.routines_not_applicable()
+            : row.definition.enabled
+              ? m.routines_enabled_yes()
+              : m.routines_enabled_no()}
+        </DetailValue>
+        <DetailValue label={m.routines_field_executor()}>
+          {row.definition.action.type === "run_agent"
+            ? row.definition.action.executor
+            : m.routines_not_applicable()}
+        </DetailValue>
+      </div>
+      <Separator />
+      <DetailValue
+        label={
+          row.definition.action.type === "run_agent"
+            ? m.routines_instruction_label()
+            : m.routines_rule_description_label()
+        }
+      >
+        <ControlledMarkdownEditor
+          key={row.fingerprint}
+          disabled
+          value={row.definition.body}
+          placeholder={m.routines_instruction_empty()}
+          onChange={() => undefined}
+        />
+      </DetailValue>
+      <DetailValue label={m.routines_definition_path_label()}>
+        {row.definitionPath}
+      </DetailValue>
+    </div>
+  );
+}
+
+function DetailValue({
+  children,
+  label,
+}: {
+  children: ReactNode;
+  label: string;
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <div className="min-w-0 break-words text-sm">{children}</div>
+    </div>
+  );
+}

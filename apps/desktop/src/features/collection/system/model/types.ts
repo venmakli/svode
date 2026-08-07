@@ -119,6 +119,7 @@ export type SystemCollectionSortSemantics<Row> =
 
 export interface SystemCollectionFieldEdit<Row> {
   getState(row: Row): SystemCollectionActionState;
+  showDisabledReason?: boolean;
   update(row: Row, value: unknown): Promise<void>;
 }
 

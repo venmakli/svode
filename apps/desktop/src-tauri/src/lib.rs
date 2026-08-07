@@ -18,6 +18,7 @@ mod native_file_drop;
 mod process;
 mod properties;
 mod repo_path;
+mod routines;
 mod space;
 mod storage;
 mod system_path;
@@ -105,6 +106,11 @@ pub fn run() {
             agent_actors::commands::agent_actors_get_catalog_save_review,
             agent_actors::commands::agent_actors_save_catalog,
             agent_actors::commands::agent_actors_preview_delete_references,
+            routines::commands::routines_list,
+            routines::commands::routines_refresh,
+            routines::commands::routines_create,
+            routines::commands::routines_update,
+            routines::commands::routines_delete,
             git::access::repository_access_get,
             git::access::repository_access_verify,
             commands::greet::greet,

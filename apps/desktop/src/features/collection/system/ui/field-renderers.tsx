@@ -147,7 +147,9 @@ export function SystemCollectionFieldControl({
           />
         ) : null}
       </div>
-      {message ? (
+      {message &&
+      (ownerState.status !== "disabled" ||
+        edit.showDisabledReason !== false) ? (
         <span
           role={status === "error" ? "alert" : undefined}
           className="max-w-64 truncate text-xs text-muted-foreground"
