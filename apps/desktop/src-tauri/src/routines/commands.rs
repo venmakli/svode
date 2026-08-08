@@ -23,8 +23,12 @@ use crate::agent_adapters::runtime::{
 };
 use crate::agent_adapters::{AgentAdapterKind, AgentAdapterRegistry};
 use crate::agent_sessions::types::{AgentSessionResumeCommand, AgentSessionSource};
+use crate::files::WriteNonceRegistry;
 use crate::git;
-use crate::git::access::{RepositoryAccessState, access_store_path};
+use crate::git::access::{
+    RepositoryAccessState, access_store_path, require_repository_mutation_paths,
+    scope_authorized_mutation_paths,
+};
 use crate::git::commands::{GitState, require_cli};
 use crate::index::{IndexKey, IndexState};
 use crate::repo_path::{RootMode, normalize_repo_relative};
@@ -377,10 +381,96 @@ pub async fn routines_dispatch_manual(
     .await
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 enum DispatchKind {
     Manual,
     Scheduled,
+    Event {
+        payload: super::events::CollectionEventPayload,
+        execution_run_id: String,
+        definition_fingerprint: String,
+    },
+}
+
+pub(crate) async fn dispatch_event(
+    app: &AppHandle,
+    owner: ResolvedRoutineOwner,
+    event: cache::QueuedRoutineEvent,
+    execution_run_id: String,
+) -> Result<RoutineManualDispatchResult, AppError> {
+    let payload = serde_json::from_str(&event.payload_json)?;
+    let git_state = app.state::<GitState>();
+    let access_state = app.state::<RepositoryAccessState>();
+    let index_state = app.state::<IndexState>();
+    let terminal_manager = app.state::<TerminalManager>();
+    dispatch_routine(
+        app,
+        owner,
+        event.routine_id,
+        DispatchKind::Event {
+            payload,
+            execution_run_id,
+            definition_fingerprint: event.definition_fingerprint,
+        },
+        &git_state,
+        &access_state,
+        &index_state,
+        &terminal_manager,
+    )
+    .await
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum EventDispatchPreflight {
+    RunAgent,
+    UpdateProperties { mutation_paths: Vec<PathBuf> },
+}
+
+pub(crate) async fn event_dispatch_preflight(
+    owner: &ResolvedRoutineOwner,
+    event: &cache::QueuedRoutineEvent,
+) -> Option<EventDispatchPreflight> {
+    let Ok(snapshot) = discover_owner(owner).await else {
+        return None;
+    };
+    let Some(row) = snapshot.routines.iter().find(|row| {
+        row.routine_id == event.routine_id
+            && row.fingerprint == event.definition_fingerprint
+            && row.diagnostics.is_empty()
+    }) else {
+        return None;
+    };
+    let Some(definition) = row.definition.as_ref().filter(|definition| {
+        definition.enabled == Some(true)
+            && matches!(definition.trigger, RoutineTrigger::Event { .. })
+    }) else {
+        return None;
+    };
+    match &definition.action {
+        RoutineAction::RunAgent { .. } => scheduled_dispatch_ready(owner, definition)
+            .await
+            .then_some(EventDispatchPreflight::RunAgent),
+        RoutineAction::UpdateProperties { set, .. } => {
+            let Ok(payload) =
+                serde_json::from_str::<super::events::CollectionEventPayload>(&event.payload_json)
+            else {
+                return None;
+            };
+            if payload.event_type == CollectionEvent::EntryDeleted.as_str()
+                || payload.new_entry.is_none()
+            {
+                return None;
+            }
+            crate::properties::entry_property_batch_mutation_paths_with_project(
+                &owner.space_path.to_string_lossy(),
+                Some(&owner.project_path.to_string_lossy()),
+                &payload.entry_path,
+                set,
+            )
+            .ok()
+            .map(|mutation_paths| EventDispatchPreflight::UpdateProperties { mutation_paths })
+        }
+    }
 }
 
 pub(crate) async fn dispatch_scheduled(
@@ -445,6 +535,7 @@ pub(crate) async fn scheduled_dispatch_ready(
                 launch_id: "schedule-preflight".into(),
                 owner_kind: routine_owner_kind_name(owner.descriptor.kind).into(),
                 owner_path: owner.descriptor.owner_path.clone(),
+                event_context: None,
             },
         )
         .is_ok()
@@ -490,10 +581,14 @@ async fn dispatch_routine(
                 .unwrap_or("routine definition is invalid"),
         ));
     }
-    let trigger_allowed = match dispatch_kind {
+    let trigger_allowed = match &dispatch_kind {
         DispatchKind::Manual => !matches!(definition.trigger, RoutineTrigger::Event { .. }),
         DispatchKind::Scheduled => {
             matches!(definition.trigger, RoutineTrigger::Schedule { .. })
+                && definition.enabled == Some(true)
+        }
+        DispatchKind::Event { .. } => {
+            matches!(definition.trigger, RoutineTrigger::Event { .. })
                 && definition.enabled == Some(true)
         }
     };
@@ -501,14 +596,20 @@ async fn dispatch_routine(
         return Ok(dispatch_blocked(
             routine_id,
             RoutineDispatchBlockedCode::NonManualTrigger,
-            match dispatch_kind {
+            match &dispatch_kind {
                 DispatchKind::Manual => "event routines require a concrete Collection event",
                 DispatchKind::Scheduled => "routine is not an enabled schedule",
+                DispatchKind::Event { .. } => "routine is not an enabled event routine",
             },
         ));
     }
     let executor = match &definition.action {
         RoutineAction::RunAgent { executor } => Some(executor.as_str()),
+        RoutineAction::UpdateProperties { .. }
+            if matches!(dispatch_kind, DispatchKind::Event { .. }) =>
+        {
+            None
+        }
         RoutineAction::UpdateProperties { .. } => {
             return Ok(dispatch_blocked(
                 routine_id,
@@ -522,6 +623,18 @@ async fn dispatch_routine(
     let lock = git_state.get_lock(&repository).await;
     let _guard = lock.lock().await;
     let pool = index_state.get_or_create(&owner.index_key).await?;
+    if let DispatchKind::Event {
+        definition_fingerprint,
+        ..
+    } = &dispatch_kind
+        && definition_fingerprint != &row.fingerprint
+    {
+        return Ok(dispatch_blocked(
+            routine_id,
+            RoutineDispatchBlockedCode::InvalidRoutine,
+            "queued event definition is stale",
+        ));
+    }
     let live_pty_ids = live_agent_pty_ids(&terminal_manager)?;
     if let Some(run) = cache::latest_run(&pool, &owner.descriptor.owner_path, &routine_id).await?
         && run.blocks_relaunch(&live_pty_ids)
@@ -542,6 +655,71 @@ async fn dispatch_routine(
             RoutineDispatchBlockedCode::RepositoryAccessDenied,
             error.to_string(),
         ));
+    }
+
+    if let (
+        RoutineAction::UpdateProperties { set, .. },
+        DispatchKind::Event {
+            payload,
+            execution_run_id,
+            ..
+        },
+    ) = (&definition.action, &dispatch_kind)
+    {
+        if payload.event_type == CollectionEvent::EntryDeleted.as_str()
+            || payload.new_entry.is_none()
+        {
+            return Ok(dispatch_blocked(
+                routine_id,
+                RoutineDispatchBlockedCode::UnsupportedAction,
+                "update_properties requires a live trigger entry",
+            ));
+        }
+        let space = owner.space_path.to_string_lossy().into_owned();
+        let project = owner.project_path.to_string_lossy().into_owned();
+        let paths = crate::properties::entry_property_batch_mutation_paths_with_project(
+            &space,
+            Some(&project),
+            &payload.entry_path,
+            set,
+        )?;
+        require_repository_mutation_paths(app, paths.clone()).await?;
+        let mutation = scope_authorized_mutation_paths(paths, async {
+            crate::properties::update_entry_properties_atomic(
+                &space,
+                Some(&project),
+                &payload.entry_path,
+                set,
+            )
+        })
+        .await;
+        return match mutation {
+            Ok(_) => {
+                let joined = owner.space_path.join(&payload.entry_path);
+                let canonical = std::fs::canonicalize(&joined).unwrap_or(joined);
+                app.state::<WriteNonceRegistry>().register_with_origin(
+                    canonical,
+                    new_runtime_id(),
+                    Some(execution_run_id.clone()),
+                    "routine_update_properties",
+                );
+                Ok(RoutineManualDispatchResult::Focused {
+                    routine_id,
+                    routine_run_id: execution_run_id.clone(),
+                    launch_id: execution_run_id.clone(),
+                    agent_session_id: String::new(),
+                    source_session_id: None,
+                    pty_id: None,
+                })
+            }
+            Err(error) => Ok(RoutineManualDispatchResult::Failed {
+                routine_id,
+                routine_run_id: execution_run_id.clone(),
+                launch_id: execution_run_id.clone(),
+                agent_session_id: String::new(),
+                message: error.to_string(),
+            }),
+        };
     }
 
     let diagnostics = collect_adapter_diagnostics(&owner.space_path).await;
@@ -575,7 +753,12 @@ async fn dispatch_routine(
         .ok_or_else(|| {
             AppError::General("resolved Agent Actor binding has no executable path".into())
         })?;
-    let routine_run_id = new_runtime_id();
+    let routine_run_id = match &dispatch_kind {
+        DispatchKind::Event {
+            execution_run_id, ..
+        } => execution_run_id.clone(),
+        _ => new_runtime_id(),
+    };
     let launch_id = new_runtime_id();
     let registry = AgentAdapterRegistry;
     let launch = match registry.build_manual_routine_launch(
@@ -586,6 +769,10 @@ async fn dispatch_routine(
             launch_id: launch_id.clone(),
             owner_kind: routine_owner_kind_name(owner.descriptor.kind).to_string(),
             owner_path: owner.descriptor.owner_path.clone(),
+            event_context: match &dispatch_kind {
+                DispatchKind::Event { payload, .. } => Some(serde_json::to_string(payload)?),
+                _ => None,
+            },
         },
     ) {
         Ok(launch) => launch,
@@ -616,9 +803,10 @@ async fn dispatch_routine(
             routine_run_id: &routine_run_id,
             routine_id: &routine_id,
             owner_path: &owner.descriptor.owner_path,
-            trigger_type: match dispatch_kind {
+            trigger_type: match &dispatch_kind {
                 DispatchKind::Manual => "manual",
                 DispatchKind::Scheduled => "schedule",
+                DispatchKind::Event { .. } => "event",
             },
             definition_fingerprint: &row.fingerprint,
             definition: &definition,
@@ -1518,5 +1706,96 @@ mod tests {
         fs::remove_file(owner.routines_dir().join(&filename)).unwrap();
         sync_directory(&owner.routines_dir()).unwrap();
         assert!(parser::discover_owner(&owner).routines.is_empty());
+    }
+
+    #[tokio::test]
+    async fn event_property_preflight_carries_the_exact_mutation_plan() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path();
+        let collection = project.join("tasks");
+        fs::create_dir_all(&collection).unwrap();
+        write_space_config(project, &space_config("Project", None)).unwrap();
+        fs::write(
+            collection.join("schema.yaml"),
+            "columns:\n  - { name: reviewed, type: checkbox }\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            collection.join("item.md"),
+            "---\ntitle: Item\nreviewed: false\n---\n",
+        )
+        .unwrap();
+        let owner = resolve_owner(
+            project,
+            project,
+            "root-id",
+            "tasks",
+            RoutineOwnerInputKind::CollectionDirectory,
+        )
+        .unwrap();
+        let definition = RoutineDefinition {
+            title: Some("Review item".into()),
+            description: None,
+            enabled: Some(true),
+            trigger: RoutineTrigger::Event {
+                event: CollectionEvent::FieldChanged,
+                match_: Some(super::super::model::EventMatch {
+                    field: "reviewed".into(),
+                    from: Some(serde_json::Value::Bool(false)),
+                    to: Some(serde_json::Value::Bool(true)),
+                }),
+            },
+            action: RoutineAction::UpdateProperties {
+                target: super::super::model::RoutineActionTarget::TriggerEntry,
+                set: BTreeMap::from([("reviewed".into(), serde_json::Value::Bool(true))]),
+            },
+            body: String::new(),
+        };
+        create_definition_file(&owner, &definition).unwrap();
+        let row = parser::discover_owner(&owner).routines.remove(0);
+        let snapshot = super::super::events::IndexedEntrySnapshot {
+            repository_path: project.to_string_lossy().into_owned(),
+            collection_path: "tasks".into(),
+            entry_path: "tasks/item.md".into(),
+            title: "Item".into(),
+            fields: BTreeMap::from([("reviewed".into(), serde_json::Value::Bool(false))]),
+            created: "2026-08-08T00:00:00Z".into(),
+            updated: "2026-08-08T00:00:00Z".into(),
+        };
+        let payload = super::super::events::CollectionEventPayload {
+            repository_path: snapshot.repository_path.clone(),
+            collection_path: snapshot.collection_path.clone(),
+            entry_path: snapshot.entry_path.clone(),
+            event_type: CollectionEvent::FieldChanged.as_str().into(),
+            property_key: Some("reviewed".into()),
+            old_value: Some(serde_json::Value::Bool(false)),
+            new_value: Some(serde_json::Value::Bool(true)),
+            old_entry: Some(snapshot.clone()),
+            new_entry: Some(snapshot),
+            observed_at: "2026-08-08T00:00:01Z".into(),
+            source_kind: "watcher".into(),
+            origin: None,
+            routine_run_id: None,
+            lineage_depth: 0,
+            execution_run_id: None,
+        };
+        let event = cache::QueuedRoutineEvent {
+            queue_key: "queue".into(),
+            event_key: "event".into(),
+            owner_path: "tasks".into(),
+            routine_id: row.routine_id,
+            definition_fingerprint: row.fingerprint,
+            payload_json: serde_json::to_string(&payload).unwrap(),
+        };
+
+        let Some(EventDispatchPreflight::UpdateProperties { mutation_paths }) =
+            event_dispatch_preflight(&owner, &event).await
+        else {
+            panic!("expected update_properties preflight");
+        };
+        assert_eq!(
+            mutation_paths,
+            vec![collection.join("item.md").canonicalize().unwrap()]
+        );
     }
 }

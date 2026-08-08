@@ -15,6 +15,7 @@ use super::model::{
 use crate::AppError;
 use crate::git::access::{
     RepositoryAccessState, RepositoryAccessStatus, RoutineClaimResult, access_store_path,
+    require_repository_mutation_paths,
 };
 use crate::git::commands::{GitState, require_cli};
 use crate::index::{IndexKey, IndexState};
@@ -92,6 +93,7 @@ async fn tick_owner(
     let index_state = app.state::<IndexState>();
     let terminal_manager = app.state::<TerminalManager>();
     let pool = index_state.get_or_create(&owner.index_key).await?;
+    dispatch_next_event(app, owner, consent, &pool).await?;
     let snapshot = commands::discover_owner(owner).await?;
     let live_pty_ids = commands::live_agent_pty_ids(&terminal_manager)?;
     let now = Utc::now();
@@ -303,6 +305,155 @@ async fn tick_owner(
         }
     }
     Ok(())
+}
+
+async fn dispatch_next_event(
+    app: &AppHandle,
+    owner: &ResolvedRoutineOwner,
+    consent: bool,
+    pool: &sqlx::SqlitePool,
+) -> Result<(), AppError> {
+    if !consent {
+        return Ok(());
+    }
+    let Some(event) = cache::next_pending_event(pool, &owner.descriptor.owner_path).await? else {
+        return Ok(());
+    };
+    let terminal_manager = app.state::<TerminalManager>();
+    let live_pty_ids = commands::live_agent_pty_ids(&terminal_manager)?;
+    if let Some(run) = cache::latest_run(pool, &event.owner_path, &event.routine_id).await?
+        && run.blocks_relaunch(&live_pty_ids)
+    {
+        return Ok(());
+    }
+    let Some(preflight) = commands::event_dispatch_preflight(owner, &event).await else {
+        cache::finish_event(pool, &event.queue_key, "failed").await?;
+        return Ok(());
+    };
+    if let commands::EventDispatchPreflight::UpdateProperties { mutation_paths } = &preflight
+        && let Err(error) = require_repository_mutation_paths(app, mutation_paths.clone()).await
+    {
+        tracing::debug!(
+            routine_id = %event.routine_id,
+            "event property mutation access is not ready: {error}"
+        );
+        return Ok(());
+    }
+
+    let repository = commands::mutation_repository(&app.state::<GitState>(), owner).await?;
+    let git_state = app.state::<GitState>();
+    let cli = require_cli(&git_state)?;
+    let access_state = app.state::<RepositoryAccessState>();
+    let store_path = access_store_path(app)?;
+    let access = access_state
+        .snapshot(&cli, &repository, &store_path)
+        .await?;
+    if !matches!(
+        access.status,
+        RepositoryAccessStatus::Local | RepositoryAccessStatus::Writable
+    ) {
+        return Ok(());
+    }
+    let Some(repository_id) = access_state
+        .routine_repository_id(&cli, &repository, &access)
+        .await?
+    else {
+        return Ok(());
+    };
+    let run_key = event_run_key(&repository_id, &event.routine_id, &event.event_key);
+    let now = Utc::now();
+    let claim = access_state
+        .claim_routine(
+            &cli,
+            &repository,
+            &store_path,
+            &access,
+            &event.routine_id,
+            &run_key,
+            &event.definition_fingerprint,
+            now.timestamp(),
+        )
+        .await?;
+    let should_dispatch = match claim {
+        RoutineClaimResult::Local => {
+            cache::claim_local_run(
+                pool,
+                &run_key,
+                &event.routine_id,
+                &now.to_rfc3339_opts(SecondsFormat::Secs, true),
+                &(now + TimeDelta::minutes(5)).to_rfc3339_opts(SecondsFormat::Secs, true),
+            )
+            .await?
+        }
+        RoutineClaimResult::Claimed {
+            claimed_by,
+            claimed_at,
+        } => {
+            record_claim(
+                pool,
+                owner,
+                &event.routine_id,
+                &run_key,
+                &event.definition_fingerprint,
+                &claimed_by,
+                claimed_at,
+            )
+            .await?;
+            true
+        }
+        RoutineClaimResult::AlreadyClaimed {
+            claimed_by,
+            claimed_at,
+        } => {
+            record_claim(
+                pool,
+                owner,
+                &event.routine_id,
+                &run_key,
+                &event.definition_fingerprint,
+                &claimed_by,
+                claimed_at,
+            )
+            .await?;
+            false
+        }
+        RoutineClaimResult::Unavailable { .. } => return Ok(()),
+    };
+    if !should_dispatch {
+        cache::finish_event(pool, &event.queue_key, "completed").await?;
+        return Ok(());
+    }
+    let execution_run_id = ulid::Ulid::new().to_string().to_ascii_lowercase();
+    if !cache::activate_event(pool, &event.queue_key, &execution_run_id).await? {
+        return Ok(());
+    }
+    let result =
+        commands::dispatch_event(app, owner.clone(), event.clone(), execution_run_id).await;
+    let state = match &result {
+        Ok(RoutineManualDispatchResult::Started { .. })
+        | Ok(RoutineManualDispatchResult::Focused { .. }) => "completed",
+        Ok(RoutineManualDispatchResult::Blocked { message, .. })
+        | Ok(RoutineManualDispatchResult::Failed { message, .. }) => {
+            tracing::warn!(routine_id = %event.routine_id, "event routine failed: {message}");
+            "failed"
+        }
+        Err(error) => {
+            tracing::warn!(routine_id = %event.routine_id, "event routine dispatch failed: {error}");
+            "failed"
+        }
+    };
+    cache::finish_event(pool, &event.queue_key, state).await?;
+    result.map(|_| ())
+}
+
+fn event_run_key(repository_id: &str, routine_id: &str, event_key: &str) -> String {
+    let value = format!("{repository_id}\0{routine_id}\0{event_key}");
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("event-{hash:016x}")
 }
 
 async fn write_baseline(

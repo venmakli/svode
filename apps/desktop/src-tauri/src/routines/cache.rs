@@ -28,6 +28,78 @@ pub(crate) struct RemoteRoutineClaim {
     pub claimed_at: String,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct QueuedRoutineEvent {
+    pub queue_key: String,
+    pub event_key: String,
+    pub owner_path: String,
+    pub routine_id: String,
+    pub definition_fingerprint: String,
+    pub payload_json: String,
+}
+
+pub(crate) async fn next_pending_event(
+    pool: &SqlitePool,
+    owner_path: &str,
+) -> Result<Option<QueuedRoutineEvent>, AppError> {
+    let row = sqlx::query(
+        r#"SELECT queue_key, event_key, owner_path, routine_id,
+                  definition_fingerprint, payload_json
+           FROM routine_event_queue
+           WHERE owner_path = ? AND state = 'pending'
+             AND NOT EXISTS (
+               SELECT 1 FROM routine_event_queue active
+               WHERE active.owner_path = routine_event_queue.owner_path
+                 AND active.routine_id = routine_event_queue.routine_id
+                 AND active.state = 'active'
+             )
+           ORDER BY observed_at, queue_key LIMIT 1"#,
+    )
+    .bind(owner_path)
+    .fetch_optional(pool)
+    .await?;
+    row.map(|row| {
+        Ok(QueuedRoutineEvent {
+            queue_key: row.try_get("queue_key")?,
+            event_key: row.try_get("event_key")?,
+            owner_path: row.try_get("owner_path")?,
+            routine_id: row.try_get("routine_id")?,
+            definition_fingerprint: row.try_get("definition_fingerprint")?,
+            payload_json: row.try_get("payload_json")?,
+        })
+    })
+    .transpose()
+}
+
+pub(crate) async fn activate_event(
+    pool: &SqlitePool,
+    queue_key: &str,
+    execution_run_id: &str,
+) -> Result<bool, AppError> {
+    let result = sqlx::query(
+        "UPDATE routine_event_queue SET state = 'active', payload_json = json_set(payload_json, '$.executionRunId', ?) WHERE queue_key = ? AND state = 'pending'",
+    )
+    .bind(execution_run_id)
+    .bind(queue_key)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+pub(crate) async fn finish_event(
+    pool: &SqlitePool,
+    queue_key: &str,
+    state: &str,
+) -> Result<(), AppError> {
+    debug_assert!(matches!(state, "completed" | "failed" | "pending"));
+    sqlx::query("UPDATE routine_event_queue SET state = ? WHERE queue_key = ?")
+        .bind(state)
+        .bind(queue_key)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub(crate) async fn schedule_state(
     pool: &SqlitePool,
     owner_path: &str,
@@ -565,6 +637,55 @@ mod tests {
             vec!["current"]
         );
         assert_eq!(read_owner_rows(&pool, "notes").await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn event_queue_is_ordered_and_one_active_per_routine() {
+        let temp = tempdir().unwrap();
+        let pool = db::create_pool(&temp.path().join("index.db"))
+            .await
+            .unwrap();
+        db::ensure_schema(&pool).await.unwrap();
+        for (queue_key, routine_id, entry_path, observed_at) in [
+            (
+                "second",
+                "routine-a",
+                "tasks/two.md",
+                "2026-08-08T00:00:02Z",
+            ),
+            ("first", "routine-a", "tasks/one.md", "2026-08-08T00:00:01Z"),
+            (
+                "other",
+                "routine-b",
+                "tasks/three.md",
+                "2026-08-08T00:00:03Z",
+            ),
+        ] {
+            sqlx::query("INSERT INTO routine_event_queue (queue_key, event_key, owner_path, routine_id, definition_fingerprint, event_type, entry_path, payload_json, observed_at, state) VALUES (?, ?, 'tasks', ?, 'fp', 'collection.field_changed', ?, '{}', ?, 'pending')")
+                .bind(queue_key)
+                .bind(queue_key)
+                .bind(routine_id)
+                .bind(entry_path)
+                .bind(observed_at)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        let first = next_pending_event(&pool, "tasks").await.unwrap().unwrap();
+        assert_eq!(first.queue_key, "first");
+        assert!(activate_event(&pool, "first", "run-first").await.unwrap());
+        let next = next_pending_event(&pool, "tasks").await.unwrap().unwrap();
+        assert_eq!(next.queue_key, "other");
+        finish_event(&pool, "first", "completed").await.unwrap();
+        assert_eq!(
+            next_pending_event(&pool, "tasks")
+                .await
+                .unwrap()
+                .unwrap()
+                .queue_key,
+            "second"
+        );
     }
 
     #[tokio::test]

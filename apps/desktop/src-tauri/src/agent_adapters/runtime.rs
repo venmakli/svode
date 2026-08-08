@@ -222,6 +222,7 @@ pub struct ManualRoutineLaunchInput {
     pub launch_id: String,
     pub owner_kind: String,
     pub owner_path: String,
+    pub event_context: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -786,6 +787,11 @@ fn manual_routine_prompt(input: &ManualRoutineLaunchInput) -> String {
         "<!-- svode-owner:{}:{} -->\n<!-- svode-launch:{} -->",
         input.owner_kind, input.owner_path, input.launch_id
     ));
+    if let Some(context) = input.event_context.as_deref() {
+        prompt.push_str("\n<svode-event-context>");
+        prompt.push_str(context);
+        prompt.push_str("</svode-event-context>");
+    }
     prompt
 }
 
@@ -935,6 +941,7 @@ mod tests {
             launch_id: "launch-one".into(),
             owner_kind: "space".into(),
             owner_path: ".".into(),
+            event_context: None,
         };
         let codex = registry
             .build_manual_routine_launch(
@@ -982,6 +989,31 @@ mod tests {
             session_id.as_bytes()[19],
             b'8' | b'9' | b'a' | b'b'
         ));
+    }
+
+    #[test]
+    fn event_routine_prompt_carries_typed_context_after_the_instruction() {
+        let prompt = manual_routine_prompt(&ManualRoutineLaunchInput {
+            instruction: "Review changed entry".into(),
+            launch_id: "launch-event".into(),
+            owner_kind: "collection".into(),
+            owner_path: "tasks".into(),
+            event_context: Some(
+                serde_json::json!({
+                    "entryPath": "tasks/item.md",
+                    "eventType": "collection.field_changed",
+                    "oldValue": "Open",
+                    "newValue": "Done"
+                })
+                .to_string(),
+            ),
+        });
+
+        assert!(prompt.starts_with("Review changed entry\n\n"));
+        assert!(prompt.contains("<!-- svode-launch:launch-event -->"));
+        assert!(prompt.contains("<svode-event-context>{"));
+        assert!(prompt.contains("\"entryPath\":\"tasks/item.md\""));
+        assert!(prompt.ends_with("</svode-event-context>"));
     }
 
     #[test]

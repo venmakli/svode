@@ -1,6 +1,7 @@
 use super::*;
 use crate::space::config::write_space_config;
 use crate::space::types::{SpaceConfig, SpaceRef, TreeSpaceConfig};
+use std::collections::BTreeMap;
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -47,6 +48,118 @@ fn write_test_space_config(
         },
     )
     .unwrap();
+}
+
+#[test]
+fn routine_property_batch_applies_multiple_values_null_and_date_sentinel() {
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path();
+    fs::create_dir_all(space.join("tasks")).unwrap();
+    fs::write(
+        space.join("tasks/schema.yaml"),
+        r#"columns:
+  - { name: completed_at, type: date }
+  - { name: note, type: text }
+  - { name: reviewed, type: checkbox }
+views: []
+"#,
+    )
+    .unwrap();
+    fs::write(
+        space.join("tasks/item.md"),
+        "---\ntitle: Item\nnote: old\nreviewed: false\n---\nBody\n",
+    )
+    .unwrap();
+
+    let updated = update_entry_properties_atomic(
+        space.to_str().unwrap(),
+        None,
+        "tasks/item.md",
+        &BTreeMap::from([
+            (
+                "completed_at".to_string(),
+                serde_json::Value::String("{{date}}".into()),
+            ),
+            ("note".to_string(), serde_json::Value::Null),
+            ("reviewed".to_string(), serde_json::Value::Bool(true)),
+        ]),
+    )
+    .unwrap();
+
+    let completed_at = updated
+        .meta
+        .extra
+        .get("completed_at")
+        .and_then(serde_yml::Value::as_str)
+        .unwrap();
+    assert_eq!(completed_at.len(), 10);
+    assert_eq!(completed_at.as_bytes()[4], b'-');
+    assert_eq!(completed_at.as_bytes()[7], b'-');
+    assert!(!updated.meta.extra.contains_key("note"));
+    assert_eq!(
+        updated.meta.extra.get("reviewed"),
+        Some(&serde_yml::Value::Bool(true))
+    );
+    assert_eq!(updated.body, "Body\n");
+}
+
+#[test]
+fn routine_property_batch_rolls_back_source_and_reverse_relation_on_late_failure() {
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path();
+    fs::create_dir_all(space.join("tasks")).unwrap();
+    fs::create_dir_all(space.join("people")).unwrap();
+    fs::write(
+        space.join("tasks/schema.yaml"),
+        r#"columns:
+  - name: A_Link
+    type: relation
+    relation: people
+    limit: one
+    two_way: Tasks
+  - { name: Z_Count, type: number }
+views: []
+"#,
+    )
+    .unwrap();
+    fs::write(
+        space.join("people/schema.yaml"),
+        r#"columns:
+  - name: Tasks
+    type: relation
+    relation: tasks
+    two_way: A_Link
+views: []
+"#,
+    )
+    .unwrap();
+    let source_path = space.join("tasks/item.md");
+    let target_path = space.join("people/person.md");
+    fs::write(&source_path, "---\ntitle: Item\nZ_Count: 1\n---\nTask\n").unwrap();
+    fs::write(&target_path, "---\ntitle: Person\n---\nPerson\n").unwrap();
+    let source_before = fs::read(&source_path).unwrap();
+    let target_before = fs::read(&target_path).unwrap();
+
+    let error = update_entry_properties_atomic(
+        space.to_str().unwrap(),
+        None,
+        "tasks/item.md",
+        &BTreeMap::from([
+            (
+                "A_Link".to_string(),
+                serde_json::Value::String("person.md".into()),
+            ),
+            (
+                "Z_Count".to_string(),
+                serde_json::Value::String("not-a-number".into()),
+            ),
+        ]),
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("Z_Count"));
+    assert_eq!(fs::read(&source_path).unwrap(), source_before);
+    assert_eq!(fs::read(&target_path).unwrap(), target_before);
 }
 
 #[test]

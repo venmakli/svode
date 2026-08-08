@@ -2252,6 +2252,71 @@ pub fn relation_entry_field_mutation_paths_with_project(
     dedupe_paths(paths)
 }
 
+/// Plans every file that may be touched by an entry property batch.  The
+/// returned set is suitable for the repository access gate and is re-used by
+/// the atomic executor below.
+pub(crate) fn entry_property_batch_mutation_paths_with_project(
+    space: &str,
+    project_path: Option<&str>,
+    file_path: &str,
+    values: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> Result<Vec<PathBuf>, AppError> {
+    let mut paths = vec![Path::new(space).join(normalize_rel_path(file_path))];
+    for (field, raw) in values {
+        ensure_entry_field_writable(space, file_path, field)?;
+        let value = resolve_routine_runtime_value(raw);
+        paths.extend(relation_entry_field_mutation_paths_with_project(
+            space,
+            project_path,
+            file_path,
+            field,
+            serde_yml::to_value(value)
+                .map_err(|error| schema_error(format!("{field}: {error}")))?,
+        )?);
+    }
+    dedupe_paths(paths)
+}
+
+/// Applies a routine property batch through the ordinary entry/property
+/// mutation services while keeping relation reverse writes all-or-nothing.
+pub(crate) fn update_entry_properties_atomic(
+    space: &str,
+    project_path: Option<&str>,
+    file_path: &str,
+    values: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> Result<entry::Entry, AppError> {
+    if values.is_empty() {
+        return Err(schema_error("property batch cannot be empty"));
+    }
+    let paths =
+        entry_property_batch_mutation_paths_with_project(space, project_path, file_path, values)?;
+    with_rollback(paths, || {
+        let mut updated = None;
+        for (field, raw) in values {
+            updated = Some(entry::update_field(
+                space,
+                project_path,
+                file_path,
+                field,
+                resolve_routine_runtime_value(raw),
+            )?);
+        }
+        updated.ok_or_else(|| schema_error("property batch cannot be empty"))
+    })
+}
+
+fn resolve_routine_runtime_value(value: &serde_json::Value) -> serde_json::Value {
+    match value.as_str() {
+        Some("{{date}}") => {
+            serde_json::Value::String(Local::now().date_naive().format("%Y-%m-%d").to_string())
+        }
+        Some("{{datetime}}") => {
+            serde_json::Value::String(Local::now().format("%Y-%m-%dT%H:%M:%S").to_string())
+        }
+        _ => value.clone(),
+    }
+}
+
 pub fn relation_field_target_mutation_paths_for_value_with_project(
     space: &str,
     project_path: Option<&str>,

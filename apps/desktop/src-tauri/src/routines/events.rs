@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use chrono::{SecondsFormat, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{Row, Sqlite, Transaction};
 
@@ -14,7 +14,7 @@ use crate::error::AppError;
 use crate::index::reindex::IndexedEntry;
 use crate::properties::CollectionSchema;
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct IndexedEntrySnapshot {
     pub repository_path: String,
@@ -26,29 +26,33 @@ pub(crate) struct IndexedEntrySnapshot {
     pub updated: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CollectionEventPayload<'a> {
-    repository_path: &'a str,
-    collection_path: &'a str,
-    entry_path: &'a str,
-    event_type: &'a str,
+pub(crate) struct CollectionEventPayload {
+    pub repository_path: String,
+    pub collection_path: String,
+    pub entry_path: String,
+    pub event_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    property_key: Option<&'a str>,
+    pub property_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    old_value: Option<&'a Value>,
+    pub old_value: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    new_value: Option<&'a Value>,
+    pub new_value: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    old_entry: Option<&'a IndexedEntrySnapshot>,
+    pub old_entry: Option<IndexedEntrySnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    new_entry: Option<&'a IndexedEntrySnapshot>,
-    observed_at: &'a str,
-    source_kind: &'a str,
+    pub new_entry: Option<IndexedEntrySnapshot>,
+    pub observed_at: String,
+    pub source_kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    origin: Option<&'a str>,
+    pub origin: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    routine_run_id: Option<&'a str>,
+    pub routine_run_id: Option<String>,
+    #[serde(default)]
+    pub lineage_depth: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_run_id: Option<String>,
 }
 
 pub(crate) async fn read_indexed_snapshot(
@@ -157,6 +161,11 @@ pub(crate) async fn queue_collection_events(
     }
 
     let routines = event_routines(transaction, collection_path).await?;
+    let parent = parent_execution(transaction, origin.routine_run_id.as_deref()).await?;
+    if parent.as_ref().is_some_and(|(_, depth)| *depth >= 3) {
+        return Ok(0);
+    }
+    let lineage_depth = parent.as_ref().map_or(0, |(_, depth)| depth + 1);
     let observed_at = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
     let mut inserted = 0;
     for change in &changes {
@@ -174,25 +183,58 @@ pub(crate) async fn queue_collection_events(
                 continue;
             }
             let entry = current.or(previous).expect("change always has an entry");
+            if !lineage_allows(parent.as_ref(), &routine.routine_id) {
+                continue;
+            }
+            let already_active: bool = sqlx::query_scalar(
+                r#"SELECT EXISTS(
+                     SELECT 1 FROM routine_event_queue queued
+                     WHERE queued.owner_path = ? AND queued.routine_id = ?
+                       AND queued.entry_path = ? AND queued.state = 'active'
+                     UNION ALL
+                     SELECT 1
+                     FROM routine_runs run
+                     JOIN routine_event_queue source
+                       ON json_extract(source.payload_json, '$.executionRunId') = run.routine_run_id
+                     WHERE run.owner_path = ? AND run.routine_id = ?
+                       AND source.entry_path = ? AND run.trigger_type = 'event'
+                       AND run.pty_id IS NOT NULL
+                       AND run.terminal_status IS NULL
+                       AND (run.session_status IS NULL OR run.session_status IN ('active', 'unknown'))
+                   )"#,
+            )
+            .bind(collection_path)
+            .bind(&routine.routine_id)
+            .bind(&entry.entry_path)
+            .bind(collection_path)
+            .bind(&routine.routine_id)
+            .bind(&entry.entry_path)
+            .fetch_one(&mut **transaction)
+            .await?;
+            if already_active {
+                continue;
+            }
             let event_key = stable_key(&change.key_material(previous, current));
             let queue_key = stable_key(&format!(
                 "event-queue\0{}\0{}\0{}\0{}",
                 collection_path, routine.routine_id, routine.fingerprint, event_key
             ));
             let payload = CollectionEventPayload {
-                repository_path: &entry.repository_path,
-                collection_path,
-                entry_path: &entry.entry_path,
-                event_type: change.event.as_str(),
-                property_key: change.property_key.as_deref(),
-                old_value: change.old_value.as_ref(),
-                new_value: change.new_value.as_ref(),
-                old_entry: previous,
-                new_entry: current,
-                observed_at: &observed_at,
-                source_kind: origin.source_kind.as_str(),
-                origin: origin.origin.as_deref(),
-                routine_run_id: origin.routine_run_id.as_deref(),
+                repository_path: entry.repository_path.clone(),
+                collection_path: collection_path.to_string(),
+                entry_path: entry.entry_path.clone(),
+                event_type: change.event.as_str().to_string(),
+                property_key: change.property_key.clone(),
+                old_value: change.old_value.clone(),
+                new_value: change.new_value.clone(),
+                old_entry: previous.cloned(),
+                new_entry: current.cloned(),
+                observed_at: observed_at.clone(),
+                source_kind: origin.source_kind.as_str().to_string(),
+                origin: origin.origin.clone(),
+                routine_run_id: origin.routine_run_id.clone(),
+                lineage_depth,
+                execution_run_id: None,
             };
             let result = sqlx::query(
                 r#"INSERT OR IGNORE INTO routine_event_queue (
@@ -216,6 +258,31 @@ pub(crate) async fn queue_collection_events(
         }
     }
     Ok(inserted)
+}
+
+fn lineage_allows(parent: Option<&(String, u8)>, routine_id: &str) -> bool {
+    parent.is_none_or(|(parent_routine_id, depth)| parent_routine_id != routine_id && *depth < 3)
+}
+
+async fn parent_execution(
+    transaction: &mut Transaction<'_, Sqlite>,
+    routine_run_id: Option<&str>,
+) -> Result<Option<(String, u8)>, AppError> {
+    let Some(routine_run_id) = routine_run_id else {
+        return Ok(None);
+    };
+    let row = sqlx::query(
+        "SELECT routine_id, payload_json FROM routine_event_queue WHERE json_extract(payload_json, '$.executionRunId') = ? ORDER BY observed_at DESC LIMIT 1",
+    )
+    .bind(routine_run_id)
+    .fetch_optional(&mut **transaction)
+    .await?;
+    row.map(|row| {
+        let payload: CollectionEventPayload =
+            serde_json::from_str(&row.try_get::<String, _>("payload_json")?)?;
+        Ok((row.try_get("routine_id")?, payload.lineage_depth))
+    })
+    .transpose()
 }
 
 async fn event_routines(
@@ -394,5 +461,13 @@ mod tests {
             change.key_material(Some(&first), None),
             change.key_material(Some(&second), None)
         );
+    }
+
+    #[test]
+    fn lineage_suppresses_self_and_stops_after_depth_three() {
+        assert!(!lineage_allows(Some(&("routine-a".into(), 0)), "routine-a"));
+        assert!(lineage_allows(Some(&("routine-a".into(), 2)), "routine-b"));
+        assert!(!lineage_allows(Some(&("routine-a".into(), 3)), "routine-b"));
+        assert!(lineage_allows(None, "routine-a"));
     }
 }
