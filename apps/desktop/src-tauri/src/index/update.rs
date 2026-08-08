@@ -6,6 +6,7 @@ use crate::git::dates::derive_date_overrides;
 use crate::index::normalize_rel_result;
 use crate::index::reindex::{build_entry_with_dates, full_reindex, upsert_entry};
 use crate::index::{IndexKey, IndexState};
+use crate::routines::CollectionEventOrigin;
 
 /// Verify that an absolute path resolves inside the space root, guarding
 /// against `..` traversal in user-supplied relative paths. If either side
@@ -40,9 +41,19 @@ pub async fn update_entry(
     project: &Path,
     abs_path: &Path,
 ) -> Result<(), AppError> {
+    update_entry_with_origin(state, project, abs_path, CollectionEventOrigin::managed()).await
+}
+
+pub(crate) async fn update_entry_with_origin(
+    state: &IndexState,
+    project: &Path,
+    abs_path: &Path,
+    origin: CollectionEventOrigin,
+) -> Result<(), AppError> {
     let (key, rel_path) = state.resolve(project, abs_path).await?;
     let dir = state.dir_for_key(&key).await?;
     let pool = state.get_or_create(&key).await?;
+    let automatic_events_enabled = automatic_events_enabled(state, project).await?;
 
     let normalized = normalize_rel_result(&rel_path)?;
     let abs = dir.join(&normalized);
@@ -54,7 +65,16 @@ pub async fn update_entry(
     let _guard = lock.lock().await;
 
     if !abs.exists() {
-        return delete_entry_path(&pool, &normalized).await;
+        return apply_targeted_change(
+            &pool,
+            &dir,
+            &normalized,
+            None,
+            false,
+            automatic_events_enabled,
+            &origin,
+        )
+        .await;
     }
 
     ensure_inside_space(&dir, &abs)?;
@@ -66,13 +86,31 @@ pub async fn update_entry(
         .unwrap_or(false);
     if !is_md {
         tracing::debug!("non-md file in update_entry, removing any stale row: {normalized}");
-        return delete_entry_path(&pool, &normalized).await;
+        return apply_targeted_change(
+            &pool,
+            &dir,
+            &normalized,
+            None,
+            false,
+            automatic_events_enabled,
+            &origin,
+        )
+        .await;
     }
 
     let date_overrides = derive_date_overrides(&dir, std::slice::from_ref(&normalized)).await;
     let entry = build_entry_with_dates(&dir, &abs, date_overrides.get(&normalized))?;
-    upsert_entry(&pool, &entry).await?;
-    Ok(())
+    let frontmatter_valid = markdown_frontmatter_diff_safe(&abs);
+    apply_targeted_change(
+        &pool,
+        &dir,
+        &normalized,
+        Some(&entry),
+        frontmatter_valid,
+        automatic_events_enabled,
+        &origin,
+    )
+    .await
 }
 
 /// Incrementally delete the entry for a single absolute path. Resolves to
@@ -84,19 +122,84 @@ pub async fn delete_entry(
 ) -> Result<(), AppError> {
     let (key, rel_path) = state.resolve(project, abs_path).await?;
     let pool = state.get_or_create(&key).await?;
+    let automatic_events_enabled = automatic_events_enabled(state, project).await?;
     let lock = state.reindex_lock(&key).await;
     let _guard = lock.lock().await;
-    delete_entry_path(&pool, &rel_path).await
+    apply_targeted_change(
+        &pool,
+        &state.dir_for_key(&key).await?,
+        &rel_path,
+        None,
+        false,
+        automatic_events_enabled,
+        &CollectionEventOrigin::managed(),
+    )
+    .await
 }
 
-/// Delete an entry row by its relative path inside an already-resolved pool.
-pub async fn delete_entry_path(pool: &SqlitePool, rel_path: &str) -> Result<(), AppError> {
+async fn apply_targeted_change(
+    pool: &SqlitePool,
+    space_dir: &Path,
+    rel_path: &str,
+    entry: Option<&crate::index::reindex::IndexedEntry>,
+    current_frontmatter_diff_safe: bool,
+    automatic_events_enabled: bool,
+    origin: &CollectionEventOrigin,
+) -> Result<(), AppError> {
     let normalized = normalize_rel_result(rel_path)?;
-    sqlx::query("DELETE FROM entries WHERE file_path = ?")
-        .bind(&normalized)
-        .execute(pool)
+    let mut transaction = pool.begin().await?;
+    let previous =
+        crate::routines::events::read_indexed_snapshot(&mut transaction, space_dir, &normalized)
+            .await?;
+    let current = entry
+        .map(|entry| crate::routines::events::snapshot_from_entry(space_dir, entry))
+        .transpose()?
+        .flatten();
+    if automatic_events_enabled {
+        crate::routines::events::queue_collection_events(
+            &mut transaction,
+            space_dir,
+            previous.as_ref(),
+            current.as_ref(),
+            current_frontmatter_diff_safe,
+            origin,
+        )
         .await?;
+    }
+    if let Some(entry) = entry {
+        upsert_entry(&mut *transaction, entry).await?;
+    } else {
+        sqlx::query("DELETE FROM entries WHERE file_path = ?")
+            .bind(&normalized)
+            .execute(&mut *transaction)
+            .await?;
+    }
+    transaction.commit().await?;
     Ok(())
+}
+
+async fn automatic_events_enabled(state: &IndexState, project: &Path) -> Result<bool, AppError> {
+    let root_pool = state
+        .get_or_create(&IndexKey::Root(project.to_path_buf()))
+        .await?;
+    crate::routines::automatic_consent(&root_pool, &project.to_string_lossy()).await
+}
+
+fn markdown_frontmatter_diff_safe(path: &Path) -> bool {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    if matches!(
+        crate::files::frontmatter::parse_status(&raw),
+        crate::files::frontmatter::ParseStatus::Malformed { .. }
+    ) {
+        tracing::warn!(
+            "collection event field diff skipped for malformed frontmatter: {}",
+            path.display()
+        );
+        return false;
+    }
+    true
 }
 
 /// Apply a batch of file changes reported by a git pull. The `key` identifies
@@ -111,16 +214,14 @@ pub async fn reindex_after_pull(
     let dir = state.dir_for_key(key).await?;
     let lock = state.reindex_lock(key).await;
     let _guard = lock.lock().await;
+    let automatic_events_enabled = automatic_events_enabled(state, key.project()).await?;
 
-    if changed_files.iter().any(|rel| {
+    let schema_changed = changed_files.iter().any(|rel| {
         Path::new(rel)
             .file_name()
             .and_then(|name| name.to_str())
             .is_some_and(|name| name == "schema.yaml")
-    }) {
-        let skip = state.skip_folders_for(key).await;
-        return full_reindex(&pool, &dir, &skip).await;
-    }
+    });
 
     let changed_md_paths = changed_files
         .iter()
@@ -144,7 +245,17 @@ pub async fn reindex_after_pull(
         // Don't filter by extension — pull may have deleted .md files and we
         // still want to drop their rows. The branching mirrors update_entry.
         if !abs.exists() {
-            if let Err(e) = delete_entry_path(&pool, &normalized).await {
+            if let Err(e) = apply_targeted_change(
+                &pool,
+                &dir,
+                &normalized,
+                None,
+                false,
+                automatic_events_enabled,
+                &CollectionEventOrigin::git_sync(),
+            )
+            .await
+            {
                 tracing::warn!("failed to drop index row for {normalized}: {e}");
             }
             continue;
@@ -156,7 +267,17 @@ pub async fn reindex_after_pull(
             .map(|e| e.eq_ignore_ascii_case("md"))
             .unwrap_or(false);
         if !is_md {
-            if let Err(e) = delete_entry_path(&pool, &normalized).await {
+            if let Err(e) = apply_targeted_change(
+                &pool,
+                &dir,
+                &normalized,
+                None,
+                false,
+                automatic_events_enabled,
+                &CollectionEventOrigin::git_sync(),
+            )
+            .await
+            {
                 tracing::warn!("failed to drop index row for {normalized}: {e}");
             }
             continue;
@@ -164,7 +285,17 @@ pub async fn reindex_after_pull(
 
         match build_entry_with_dates(&dir, &abs, date_overrides.get(&normalized)) {
             Ok(entry) => {
-                if let Err(e) = upsert_entry(&pool, &entry).await {
+                if let Err(e) = apply_targeted_change(
+                    &pool,
+                    &dir,
+                    &normalized,
+                    Some(&entry),
+                    markdown_frontmatter_diff_safe(&abs),
+                    automatic_events_enabled,
+                    &CollectionEventOrigin::git_sync(),
+                )
+                .await
+                {
                     tracing::warn!("failed to upsert index row for {normalized}: {e}");
                 }
             }
@@ -172,6 +303,11 @@ pub async fn reindex_after_pull(
                 tracing::warn!("failed to build index entry for {normalized}: {e}");
             }
         }
+    }
+
+    if schema_changed {
+        let skip = state.skip_folders_for(key).await;
+        full_reindex(&pool, &dir, &skip).await?;
     }
     Ok(())
 }
@@ -184,6 +320,93 @@ mod tests {
     use crate::space::types::SpaceStatus;
     use std::collections::HashMap;
     use tempfile::TempDir;
+
+    async fn insert_event_routine(
+        pool: &SqlitePool,
+        owner_path: &str,
+        routine_id: &str,
+        event: &str,
+        matcher: Option<serde_json::Value>,
+    ) {
+        let mut trigger = serde_json::json!({ "type": "event", "event": event });
+        if let Some(matcher) = matcher {
+            trigger["match"] = matcher;
+        }
+        let row = serde_json::json!({
+            "routineId": routine_id,
+            "filename": format!("{routine_id}.md"),
+            "path": format!("{owner_path}/.routines/{routine_id}.md"),
+            "title": routine_id,
+            "description": null,
+            "enabled": true,
+            "triggerType": "event",
+            "triggerSummary": null,
+            "actionType": "run_agent",
+            "actionSummary": null,
+            "executor": "agent:01arz3ndektsv4rrffq69g5fav",
+            "lastRunAt": null,
+            "nextRunAt": null,
+            "fingerprint": format!("fingerprint:{routine_id}"),
+            "definition": {
+                "enabled": true,
+                "trigger": trigger,
+                "action": {
+                    "type": "run_agent",
+                    "executor": "agent:01arz3ndektsv4rrffq69g5fav"
+                },
+                "body": "Handle event"
+            },
+            "diagnostics": []
+        });
+        sqlx::query(
+            "INSERT INTO routine_definitions (owner_path, routine_id, fingerprint, row_json, refreshed_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(owner_path)
+        .bind(routine_id)
+        .bind(format!("fingerprint:{routine_id}"))
+        .bind(row.to_string())
+        .bind("2026-08-08T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn mark_routine_invalid(pool: &SqlitePool, owner_path: &str, routine_id: &str) {
+        let raw: String = sqlx::query_scalar(
+            "SELECT row_json FROM routine_definitions WHERE owner_path = ? AND routine_id = ?",
+        )
+        .bind(owner_path)
+        .bind(routine_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let mut row: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        row["diagnostics"] = serde_json::json!([{
+            "code": "routine_invalid",
+            "message": "invalid routine"
+        }]);
+        sqlx::query(
+            "UPDATE routine_definitions SET row_json = ? WHERE owner_path = ? AND routine_id = ?",
+        )
+        .bind(row.to_string())
+        .bind(owner_path)
+        .bind(routine_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn set_automatic_events_enabled(pool: &SqlitePool, project: &Path, enabled: bool) {
+        sqlx::query(
+            "INSERT OR REPLACE INTO routine_automatic_consent (project_path, enabled, updated_at) VALUES (?, ?, ?)",
+        )
+        .bind(project.to_string_lossy().as_ref())
+        .bind(if enabled { 1_i64 } else { 0_i64 })
+        .bind("2026-08-08T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+    }
 
     async fn indexed_pool(state: &IndexState, space: &Path) -> SqlitePool {
         state
@@ -473,5 +696,278 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn targeted_collection_diff_queues_matched_events_once_and_survives_restart() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let collection = space.join("tasks");
+        std::fs::create_dir_all(&collection).unwrap();
+        std::fs::write(
+            collection.join("schema.yaml"),
+            "columns:\n  - { name: Status, type: text }\n  - { name: Priority, type: number }\nviews: []\n",
+        )
+        .unwrap();
+        let file = collection.join("item.md");
+        std::fs::write(
+            &file,
+            "---\ntitle: Item\nStatus: Open\nPriority: 1\n---\nBody\n",
+        )
+        .unwrap();
+
+        let state = IndexState::new();
+        let pool = indexed_pool(&state, space).await;
+        full_reindex(&pool, space, &[]).await.unwrap();
+        set_automatic_events_enabled(&pool, space, true).await;
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM routine_event_queue")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0
+        );
+        insert_event_routine(
+            &pool,
+            "tasks",
+            "status-done",
+            "collection.field_changed",
+            Some(serde_json::json!({ "field": "Status", "from": "Open", "to": "Done" })),
+        )
+        .await;
+        insert_event_routine(
+            &pool,
+            "tasks",
+            "invalid-status-done",
+            "collection.field_changed",
+            Some(serde_json::json!({ "field": "Status", "from": "Open", "to": "Done" })),
+        )
+        .await;
+        mark_routine_invalid(&pool, "tasks", "invalid-status-done").await;
+        insert_event_routine(
+            &pool,
+            "tasks",
+            "priority-only",
+            "collection.field_changed",
+            Some(serde_json::json!({ "field": "Priority" })),
+        )
+        .await;
+
+        std::fs::write(
+            &file,
+            "---\ntitle: Item\nStatus: Done\nPriority: 1\nUnmodeled: changed\n---\nBody\n",
+        )
+        .unwrap();
+        update_entry_with_origin(&state, space, &file, CollectionEventOrigin::watcher())
+            .await
+            .unwrap();
+        update_entry_with_origin(&state, space, &file, CollectionEventOrigin::watcher())
+            .await
+            .unwrap();
+
+        let queued: (i64, String, String, String) = sqlx::query_as(
+            "SELECT COUNT(*), routine_id, property_key, payload_json FROM routine_event_queue",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(queued.0, 1);
+        assert_eq!(queued.1, "status-done");
+        assert_eq!(queued.2, "Status");
+        let payload: serde_json::Value = serde_json::from_str(&queued.3).unwrap();
+        assert_eq!(payload["oldValue"], "Open");
+        assert_eq!(payload["newValue"], "Done");
+        assert_eq!(payload["sourceKind"], "watcher");
+
+        let queue_key: String =
+            sqlx::query_scalar("SELECT queue_key FROM routine_event_queue LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(!queue_key.is_empty());
+        let (_, _, db_path): (i64, String, String) = sqlx::query_as("PRAGMA database_list")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+        let reopened = crate::index::db::create_pool(Path::new(&db_path))
+            .await
+            .unwrap();
+        crate::index::db::ensure_schema(&reopened).await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT queue_key FROM routine_event_queue LIMIT 1")
+                .fetch_one(&reopened)
+                .await
+                .unwrap(),
+            queue_key
+        );
+    }
+
+    #[tokio::test]
+    async fn git_sync_preserves_changed_entry_events_when_schema_also_changed() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let collection = space.join("tasks");
+        std::fs::create_dir_all(&collection).unwrap();
+        std::fs::write(
+            collection.join("schema.yaml"),
+            "columns:\n  - { name: Status, type: text }\nviews: []\n",
+        )
+        .unwrap();
+        let file = collection.join("item.md");
+        std::fs::write(&file, "---\ntitle: Item\nStatus: Open\n---\nBody\n").unwrap();
+
+        let state = IndexState::new();
+        let key = IndexKey::Root(space.to_path_buf());
+        let pool = indexed_pool(&state, space).await;
+        full_reindex(&pool, space, &[]).await.unwrap();
+        set_automatic_events_enabled(&pool, space, true).await;
+        insert_event_routine(
+            &pool,
+            "tasks",
+            "status-done",
+            "collection.field_changed",
+            Some(serde_json::json!({ "field": "Status", "to": "Done" })),
+        )
+        .await;
+
+        std::fs::write(
+            collection.join("schema.yaml"),
+            "columns:\n  - { name: Status, type: text }\n  - { name: Priority, type: number }\nviews: []\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &file,
+            "---\ntitle: Item\nStatus: Done\nPriority: 1\n---\nBody\n",
+        )
+        .unwrap();
+
+        reindex_after_pull(
+            &state,
+            &key,
+            vec!["tasks/schema.yaml".to_string(), "tasks/item.md".to_string()],
+        )
+        .await
+        .unwrap();
+
+        let payload: String = sqlx::query_scalar(
+            "SELECT payload_json FROM routine_event_queue WHERE routine_id = 'status-done'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(payload["oldValue"], "Open");
+        assert_eq!(payload["newValue"], "Done");
+        assert_eq!(payload["sourceKind"], "git_sync");
+    }
+
+    #[tokio::test]
+    async fn disabled_automatic_consent_updates_index_without_queueing_events() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let collection = space.join("tasks");
+        std::fs::create_dir_all(&collection).unwrap();
+        std::fs::write(
+            collection.join("schema.yaml"),
+            "columns:\n  - { name: Status, type: text }\nviews: []\n",
+        )
+        .unwrap();
+        let state = IndexState::new();
+        let pool = indexed_pool(&state, space).await;
+        set_automatic_events_enabled(&pool, space, false).await;
+        insert_event_routine(&pool, "tasks", "created", "collection.entry_created", None).await;
+
+        let file = collection.join("item.md");
+        std::fs::write(&file, "---\ntitle: Item\nStatus: Open\n---\nBody\n").unwrap();
+        update_entry(&state, space, &file).await.unwrap();
+
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM routine_event_queue")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM entries WHERE file_path = ?")
+                .bind("tasks/item.md")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn collection_create_delete_and_malformed_frontmatter_follow_event_contract() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let collection = space.join("tasks");
+        std::fs::create_dir_all(&collection).unwrap();
+        std::fs::write(
+            collection.join("schema.yaml"),
+            "columns:\n  - { name: Status, type: text }\nviews: []\n",
+        )
+        .unwrap();
+        let state = IndexState::new();
+        let pool = indexed_pool(&state, space).await;
+        set_automatic_events_enabled(&pool, space, true).await;
+        insert_event_routine(&pool, "tasks", "created", "collection.entry_created", None).await;
+        insert_event_routine(
+            &pool,
+            "tasks",
+            "changed",
+            "collection.field_changed",
+            Some(serde_json::json!({ "field": "Status" })),
+        )
+        .await;
+        insert_event_routine(&pool, "tasks", "deleted", "collection.entry_deleted", None).await;
+
+        let file = collection.join("item.md");
+        std::fs::write(&file, "---\ntitle: Item\nStatus: Open\n---\nBody\n").unwrap();
+        update_entry(&state, space, &file).await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM routine_event_queue")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            1
+        );
+        let created_payload: String = sqlx::query_scalar(
+            "SELECT payload_json FROM routine_event_queue WHERE event_type = 'collection.entry_created'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let created_payload: serde_json::Value = serde_json::from_str(&created_payload).unwrap();
+        assert_eq!(created_payload["sourceKind"], "managed");
+        assert_eq!(created_payload["origin"], "managed");
+
+        std::fs::write(&file, "---\ntitle: [broken\n---\nBody\n").unwrap();
+        update_entry_with_origin(&state, space, &file, CollectionEventOrigin::watcher())
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM routine_event_queue")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            1
+        );
+
+        std::fs::remove_file(&file).unwrap();
+        update_entry_with_origin(&state, space, &file, CollectionEventOrigin::git_sync())
+            .await
+            .unwrap();
+        let payload: String = sqlx::query_scalar(
+            "SELECT payload_json FROM routine_event_queue WHERE event_type = 'collection.entry_deleted'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(payload["oldEntry"]["entryPath"], "tasks/item.md");
+        assert_eq!(payload["sourceKind"], "git_sync");
     }
 }

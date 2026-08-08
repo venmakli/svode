@@ -29,7 +29,10 @@ use crate::error::AppError;
 ///
 /// Bumped to 8 in Stage 7 Phase 7.3: adds durable schedule checkpoints,
 /// project-local automatic consent, local leases and observed remote claims.
-const SCHEMA_VERSION: i64 = 8;
+///
+/// Bumped to 9 in Stage 7 Phase 7.4: adds the durable, deduplicated Collection
+/// event queue populated by targeted index updates.
+const SCHEMA_VERSION: i64 = 9;
 
 /// Create a connection pool for a space's index database.
 /// Ensures the parent directory exists and enables WAL mode.
@@ -85,6 +88,7 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         "DROP TABLE IF EXISTS assets",
         "DROP TABLE IF EXISTS broken_links",
         "DROP TABLE IF EXISTS routine_definitions",
+        "DROP TABLE IF EXISTS routine_event_queue",
     ];
     for stmt in drops {
         sqlx::query(stmt).execute(pool).await?;
@@ -240,6 +244,23 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         )
         "#,
         "CREATE INDEX IF NOT EXISTS idx_routine_remote_claims_owner_routine ON routine_remote_claims(owner_path, routine_id, claimed_at DESC)",
+        r#"
+        CREATE TABLE IF NOT EXISTS routine_event_queue (
+            queue_key TEXT PRIMARY KEY,
+            event_key TEXT NOT NULL,
+            owner_path TEXT NOT NULL,
+            routine_id TEXT NOT NULL,
+            definition_fingerprint TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            entry_path TEXT NOT NULL,
+            property_key TEXT,
+            payload_json TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'pending'
+        )
+        "#,
+        "CREATE INDEX IF NOT EXISTS idx_routine_event_queue_pending ON routine_event_queue(state, observed_at)",
+        "CREATE INDEX IF NOT EXISTS idx_routine_event_queue_event ON routine_event_queue(event_key)",
     ];
 
     for stmt in ddl {

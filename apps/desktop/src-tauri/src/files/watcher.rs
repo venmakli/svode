@@ -14,6 +14,7 @@ use crate::files::tree::{child_folder_names, has_direct_schema};
 use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
 use crate::index::{IndexKey, IndexState};
 use crate::repo_path::{RootMode, repo_relative_from_base, repo_relative_from_path};
+use crate::routines::{CollectionEventOrigin, CollectionEventSourceKind};
 
 struct WatcherHandle {
     _watcher: RecommendedWatcher,
@@ -271,15 +272,23 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle, root_schema_pr
             _ => continue,
         };
 
-        sync_index_for_watched_path(space_root, &path, classification.kind, app);
-
-        // Only `file:changed` carries a write-nonce — our own writes surface
-        // as Modify events, so Create/Remove never need echo-guarding here.
-        let nonce = if matches!(kind, EventKind::Modify(_)) {
-            nonces.take(&path)
+        let write_metadata = nonces.take_metadata(&path);
+        let event_origin = if let Some(metadata) = write_metadata.as_ref() {
+            CollectionEventOrigin {
+                source_kind: CollectionEventSourceKind::Managed,
+                origin: Some(metadata.origin.clone()),
+                routine_run_id: metadata.routine_run_id.clone(),
+            }
         } else {
-            None
+            CollectionEventOrigin::watcher()
         };
+        sync_index_for_watched_path(space_root, &path, classification.kind, app, event_origin);
+
+        // Only `file:changed` exposes writeNonce to the frontend. Metadata is
+        // still consumed for creates so Collection events retain managed origin.
+        let nonce = matches!(kind, EventKind::Modify(_))
+            .then(|| write_metadata.map(|metadata| metadata.nonce))
+            .flatten();
         let mut payload = serde_json::json!({
             "space": space,
             "path": classification.rel_path,
@@ -302,6 +311,7 @@ fn sync_index_for_watched_path(
     path: &Path,
     kind: ContentTreeEventKind,
     app: &AppHandle,
+    origin: CollectionEventOrigin,
 ) {
     if kind == ContentTreeEventKind::Folder {
         return;
@@ -322,7 +332,9 @@ fn sync_index_for_watched_path(
         }
 
         let project = key.project().to_path_buf();
-        if let Err(e) = crate::index::update::update_entry(&state, &project, path).await {
+        if let Err(e) =
+            crate::index::update::update_entry_with_origin(&state, &project, path, origin).await
+        {
             tracing::warn!("watcher index update failed for {}: {e}", path.display());
         }
     });

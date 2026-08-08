@@ -126,6 +126,57 @@ pub enum CollectionEvent {
     EntryDeleted,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CollectionEventSourceKind {
+    Managed,
+    Watcher,
+    GitSync,
+}
+
+impl CollectionEventSourceKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Managed => "managed",
+            Self::Watcher => "watcher",
+            Self::GitSync => "git_sync",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CollectionEventOrigin {
+    pub source_kind: CollectionEventSourceKind,
+    pub origin: Option<String>,
+    pub routine_run_id: Option<String>,
+}
+
+impl CollectionEventOrigin {
+    pub(crate) fn managed() -> Self {
+        Self {
+            source_kind: CollectionEventSourceKind::Managed,
+            origin: Some("managed".to_string()),
+            routine_run_id: None,
+        }
+    }
+
+    pub(crate) fn watcher() -> Self {
+        Self {
+            source_kind: CollectionEventSourceKind::Watcher,
+            origin: None,
+            routine_run_id: None,
+        }
+    }
+
+    pub(crate) fn git_sync() -> Self {
+        Self {
+            source_kind: CollectionEventSourceKind::GitSync,
+            origin: None,
+            routine_run_id: None,
+        }
+    }
+}
+
 impl CollectionEvent {
     pub fn as_str(self) -> &'static str {
         match self {
