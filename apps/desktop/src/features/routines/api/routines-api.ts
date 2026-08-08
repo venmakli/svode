@@ -2,8 +2,10 @@ import {
   createRoutine as createRoutineCommand,
   deleteRoutine as deleteRoutineCommand,
   dispatchManualRoutine as dispatchManualRoutineCommand,
+  getRoutineAutomaticConsent as getRoutineAutomaticConsentCommand,
   listRoutines as listRoutinesCommand,
   refreshRoutines as refreshRoutinesCommand,
+  setRoutineAutomaticConsent as setRoutineAutomaticConsentCommand,
   updateRoutine as updateRoutineCommand,
   type RoutineCatalogSnapshotDto,
   type RoutineDefinitionDto,
@@ -101,6 +103,17 @@ export async function dispatchManualRoutine(
   };
 }
 
+export async function loadRoutineAutomaticConsent(projectPath: string) {
+  return getRoutineAutomaticConsentCommand(projectPath);
+}
+
+export async function updateRoutineAutomaticConsent(
+  projectPath: string,
+  enabled: boolean,
+) {
+  return setRoutineAutomaticConsentCommand(projectPath, enabled);
+}
+
 function normalizeMutationResult(
   result: RoutineMutationResultDto,
 ): RoutineMutationResult {
@@ -146,6 +159,7 @@ function normalizeRow(
     fingerprint: row.fingerprint,
     id: row.routineId,
     lastRunAt: row.lastRunAt,
+    lastRunOrigin: row.lastRunOrigin ?? null,
     lastRun: row.lastRun
       ? Object.freeze({
           ...row.lastRun,

@@ -29,7 +29,13 @@ fn collect_md_files(
     skip_top_level: &[String],
     policy: &TreeIgnorePolicy,
     out: &mut Vec<PathBuf>,
+    routine_owner_paths: &mut Vec<String>,
 ) -> Result<(), AppError> {
+    if dir != base && dir.join("schema.yaml").is_file() && dir.join(".routines").is_dir() {
+        if let Ok(path) = repo_relative_from_base(base, dir, RootMode::Reject) {
+            routine_owner_paths.push(path);
+        }
+    }
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) => {
@@ -69,7 +75,14 @@ fn collect_md_files(
         }
 
         if meta.is_dir() {
-            collect_md_files(base, &path, skip_top_level, policy, out)?;
+            collect_md_files(
+                base,
+                &path,
+                skip_top_level,
+                policy,
+                out,
+                routine_owner_paths,
+            )?;
         } else if meta.is_file() && name.ends_with(".md") {
             out.push(path);
         }
@@ -139,7 +152,16 @@ mod tests {
     fn collect_rel_paths(tmp: &TempDir) -> Vec<String> {
         let policy = TreeIgnorePolicy::from_space_root(tmp.path());
         let mut files = Vec::new();
-        collect_md_files(tmp.path(), tmp.path(), &[], &policy, &mut files).expect("collect files");
+        let mut routine_owners = Vec::new();
+        collect_md_files(
+            tmp.path(),
+            tmp.path(),
+            &[],
+            &policy,
+            &mut files,
+            &mut routine_owners,
+        )
+        .expect("collect files");
         let mut rels = files
             .iter()
             .map(|path| {
@@ -230,6 +252,31 @@ mod tests {
             collect_rel_paths(&tmp),
             vec!["docs/guides/keep.md".to_string()]
         );
+    }
+
+    #[tokio::test]
+    async fn full_reindex_records_collection_routine_owners_in_the_existing_walk() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join("tasks/.routines")).unwrap();
+        std::fs::write(tmp.path().join("tasks/schema.yaml"), "columns: []\n").unwrap();
+        std::fs::create_dir_all(tmp.path().join("child/hidden/.routines")).unwrap();
+        std::fs::write(tmp.path().join("child/hidden/schema.yaml"), "columns: []\n").unwrap();
+        let pool = crate::index::db::create_pool(&tmp.path().join("index.db"))
+            .await
+            .unwrap();
+        crate::index::db::ensure_schema(&pool).await.unwrap();
+
+        full_reindex(&pool, tmp.path(), &["child".into()])
+            .await
+            .unwrap();
+
+        let owners = sqlx::query_scalar::<_, String>(
+            "SELECT owner_path FROM routine_owner_roots ORDER BY owner_path",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(owners, vec!["tasks"]);
     }
 }
 
@@ -537,8 +584,16 @@ pub async fn full_reindex(
 
     // ── Phase 1: filesystem walk + parse, no locks held ──────────────────
     let mut md_files: Vec<PathBuf> = Vec::new();
+    let mut routine_owner_paths = Vec::new();
     let policy = TreeIgnorePolicy::from_space_root(space_dir);
-    collect_md_files(space_dir, space_dir, skip_top_level, &policy, &mut md_files)?;
+    collect_md_files(
+        space_dir,
+        space_dir,
+        skip_top_level,
+        &policy,
+        &mut md_files,
+        &mut routine_owner_paths,
+    )?;
     let md_rel_paths = md_files
         .iter()
         .filter_map(|path| repo_relative_from_base(space_dir, path, RootMode::Reject).ok())
@@ -584,12 +639,21 @@ pub async fn full_reindex(
 
     sqlx::query("DELETE FROM entries").execute(&mut *tx).await?;
     sqlx::query("DELETE FROM assets").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM routine_owner_roots")
+        .execute(&mut *tx)
+        .await?;
 
     for entry in &entries {
         upsert_entry(&mut *tx, entry).await?;
     }
     for asset in &assets {
         insert_asset(&mut *tx, asset).await?;
+    }
+    for owner_path in &routine_owner_paths {
+        sqlx::query("INSERT OR IGNORE INTO routine_owner_roots (owner_path) VALUES (?)")
+            .bind(owner_path)
+            .execute(&mut *tx)
+            .await?;
     }
 
     tx.commit().await?;

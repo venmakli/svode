@@ -37,6 +37,7 @@ const review: RoutineRow = {
   id: "routine:review",
   lastRun: null,
   lastRunAt: null,
+  lastRunOrigin: null,
   nextRunAt: null,
   title: "Review",
   valid: true,
@@ -121,7 +122,7 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
   const runAction = descriptor.rowActions?.[0];
   expect(runAction?.getLabel?.(review)).toBe("Run now");
   expect(runAction?.isVisible?.(review)).toBe(true);
-  expect(runAction?.isVisible?.(scheduled)).toBe(false);
+  expect(runAction?.isVisible?.(scheduled)).toBe(true);
   expect(
     runAction?.getLabel?.({
       ...review,

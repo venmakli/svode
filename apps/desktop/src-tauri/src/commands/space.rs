@@ -486,6 +486,8 @@ pub async fn open_project(
             project_path.display()
         );
     }
+    app.state::<crate::routines::RoutineSchedulerState>()
+        .start_project(app.clone(), id.clone(), project_path.clone());
 
     let project = root_project_info(id, &project_path, &cfg, sp_ref.last_opened);
     Ok(OpenProjectResult {

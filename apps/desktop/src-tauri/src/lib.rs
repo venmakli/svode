@@ -55,6 +55,7 @@ pub fn run() {
         .manage(git::GitState::new())
         .manage(git::access::RepositoryAccessState::new())
         .manage(index::IndexState::new())
+        .manage(routines::RoutineSchedulerState::new())
         .manage(app_windows::AppWindowState::new())
         .manage(mcp::active::ActiveProjectState::new())
         .manage(properties::ActorCatalogState::new())
@@ -108,6 +109,8 @@ pub fn run() {
             agent_actors::commands::agent_actors_preview_delete_references,
             routines::commands::routines_list,
             routines::commands::routines_refresh,
+            routines::commands::routines_get_automatic_consent,
+            routines::commands::routines_set_automatic_consent,
             routines::commands::routines_create,
             routines::commands::routines_update,
             routines::commands::routines_delete,

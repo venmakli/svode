@@ -19,6 +19,7 @@ import {
   type RoutinePresentationActions,
 } from "../ui/routines-presentation";
 import { useRoutineCatalog } from "./use-routine-catalog";
+import { useRoutineAutomaticConsent } from "./use-routine-automatic-consent";
 import { useRoutineDetail } from "./use-routine-detail";
 import { useRoutineDispatch } from "./use-routine-dispatch";
 import { useRoutineExecutors } from "./use-routine-executors";
@@ -42,6 +43,7 @@ export function useRoutinesController(
     [owner],
   );
   const { refresh, replaceSnapshot, state } = useRoutineCatalog(routineOwner);
+  const automaticConsent = useRoutineAutomaticConsent(owner.projectPath);
   const executors = useRoutineExecutors(owner.projectPath, owner.spacePath);
   const detailController = useOptionalSystemCollectionDetailController();
   const instanceKey = `routines:${owner.ownerKey}`;
@@ -153,7 +155,13 @@ export function useRoutinesController(
     </>
   );
 
-  return { collectionState, detailController, instance, overlays };
+  return {
+    automaticConsent,
+    collectionState,
+    detailController,
+    instance,
+    overlays,
+  };
 }
 
 function executorLabel(

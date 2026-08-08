@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ControlledMarkdownEditor } from "@/features/editor";
 import * as m from "@/paraglide/messages.js";
+import { getLocale } from "@/paraglide/runtime.js";
 
 import {
   routineActionSummary,
@@ -48,6 +49,18 @@ export function RoutineDetailView({ row }: { row: RoutineRow }) {
             ? row.definition.action.executor
             : m.routines_not_applicable()}
         </DetailValue>
+        {row.lastRunAt ? (
+          <DetailValue label={m.routines_field_last_run()}>
+            <span className="flex flex-wrap items-center gap-2">
+              <time dateTime={row.lastRunAt}>
+                {formatRoutineRunDate(row.lastRunAt)}
+              </time>
+              {row.lastRunOrigin === "remote" ? (
+                <Badge variant="outline">{m.routines_last_run_remote()}</Badge>
+              ) : null}
+            </span>
+          </DetailValue>
+        ) : null}
       </div>
       <Separator />
       <DetailValue
@@ -70,6 +83,15 @@ export function RoutineDetailView({ row }: { row: RoutineRow }) {
       </DetailValue>
     </div>
   );
+}
+
+function formatRoutineRunDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(getLocale(), {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
 }
 
 function DetailValue({

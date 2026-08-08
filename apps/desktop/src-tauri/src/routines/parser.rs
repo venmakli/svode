@@ -256,22 +256,15 @@ pub(crate) fn validate_definition(
             }
         }
         RoutineTrigger::Schedule { cron, timezone, .. } => {
-            if !is_obviously_valid_five_field_cron(cron) {
+            if let Err(message) = super::schedule::validate_cron(cron) {
                 diagnostics.push(
-                    RoutineDiagnostic::new(
-                        "routine_cron_invalid",
-                        "schedule cron must contain exactly five non-empty standard cron fields",
-                    )
-                    .field("trigger.cron"),
+                    RoutineDiagnostic::new("routine_cron_invalid", message).field("trigger.cron"),
                 );
             }
-            if !is_iana_timezone_shape(timezone) {
+            if let Err(message) = super::schedule::validate_timezone(timezone) {
                 diagnostics.push(
-                    RoutineDiagnostic::new(
-                        "routine_timezone_invalid",
-                        "schedule timezone must be a non-empty IANA timezone such as Europe/Paris",
-                    )
-                    .field("trigger.timezone"),
+                    RoutineDiagnostic::new("routine_timezone_invalid", message)
+                        .field("trigger.timezone"),
                 );
             }
             if !matches!(definition.action, RoutineAction::RunAgent { .. }) {
@@ -381,34 +374,6 @@ fn valid_executor(value: &str) -> bool {
     id.len() == 26
         && id == id.to_ascii_lowercase()
         && ulid::Ulid::from_string(&id.to_ascii_uppercase()).is_ok()
-}
-
-fn is_obviously_valid_five_field_cron(value: &str) -> bool {
-    let fields = value.split_whitespace().collect::<Vec<_>>();
-    fields.len() == 5
-        && fields.iter().all(|field| {
-            !field.is_empty()
-                && field.chars().all(|character| {
-                    character.is_ascii_alphanumeric()
-                        || matches!(character, '*' | ',' | '-' | '/' | '?')
-                })
-        })
-}
-
-fn is_iana_timezone_shape(value: &str) -> bool {
-    if value == "UTC" {
-        return true;
-    }
-    let parts = value.split('/').collect::<Vec<_>>();
-    parts.len() >= 2
-        && parts.iter().all(|part| {
-            !part.is_empty()
-                && part != &"."
-                && part != &".."
-                && part.chars().all(|character| {
-                    character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '+')
-                })
-        })
 }
 
 pub(crate) fn scan_routine_directory(
@@ -700,6 +665,7 @@ fn row_from_file(owner: &ResolvedRoutineOwner, file: DiscoveredRoutineFile) -> R
         action_summary,
         executor,
         last_run_at: None,
+        last_run_origin: None,
         next_run_at: None,
         last_run: None,
         fingerprint: file.fingerprint,

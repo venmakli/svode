@@ -64,6 +64,7 @@ export interface RoutineRowDto {
   actionSummary: string | null;
   executor: string | null;
   lastRunAt: string | null;
+  lastRunOrigin?: "local" | "remote" | null;
   nextRunAt: string | null;
   lastRun?: RoutineRunRefDto | null;
   fingerprint: string;
@@ -90,6 +91,10 @@ export interface RoutineCatalogSnapshotDto {
   diagnostics: RoutineDiagnosticDto[];
   catalogFingerprint: string;
   refreshedAt: string;
+}
+
+export interface RoutineAutomaticConsentDto {
+  enabled: boolean;
 }
 
 export type RoutineMutationResultDto =
@@ -198,5 +203,22 @@ export function dispatchManualRoutine(
   return invokeCommand<RoutineManualDispatchResultDto>(
     "routines_dispatch_manual",
     { ...input },
+  );
+}
+
+export function getRoutineAutomaticConsent(projectPath: string) {
+  return invokeCommand<RoutineAutomaticConsentDto>(
+    "routines_get_automatic_consent",
+    { projectPath },
+  );
+}
+
+export function setRoutineAutomaticConsent(
+  projectPath: string,
+  enabled: boolean,
+) {
+  return invokeCommand<RoutineAutomaticConsentDto>(
+    "routines_set_automatic_consent",
+    { enabled, projectPath },
   );
 }

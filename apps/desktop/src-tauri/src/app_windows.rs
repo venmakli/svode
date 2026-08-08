@@ -92,6 +92,15 @@ impl AppWindowState {
             .cloned()
     }
 
+    fn project_id_for_window(&self, label: &str) -> Option<String> {
+        self.inner
+            .lock()
+            .expect("app window mutex poisoned")
+            .window_projects
+            .get(label)
+            .cloned()
+    }
+
     fn focus_window(&self, label: &str) {
         self.inner
             .lock()
@@ -116,29 +125,33 @@ impl AppWindowState {
             .cloned()
     }
 
-    fn release_window_project(&self, label: &str) {
+    fn release_window_project(&self, label: &str) -> Option<String> {
         let mut inner = self.inner.lock().expect("app window mutex poisoned");
-        if let Some(project_id) = inner.window_projects.remove(label) {
-            if inner.project_windows.get(&project_id) == Some(&label.to_string()) {
-                inner.project_windows.remove(&project_id);
+        let released = inner.window_projects.remove(label);
+        if let Some(project_id) = released.as_ref() {
+            if inner.project_windows.get(project_id) == Some(&label.to_string()) {
+                inner.project_windows.remove(project_id);
             }
         }
         inner
             .window_intents
             .insert(label.to_string(), WindowOpenIntent::Home);
+        released
     }
 
-    fn remove_window(&self, label: &str) {
+    fn remove_window(&self, label: &str) -> Option<String> {
         let mut inner = self.inner.lock().expect("app window mutex poisoned");
-        if let Some(project_id) = inner.window_projects.remove(label) {
-            if inner.project_windows.get(&project_id) == Some(&label.to_string()) {
-                inner.project_windows.remove(&project_id);
+        let released = inner.window_projects.remove(label);
+        if let Some(project_id) = released.as_ref() {
+            if inner.project_windows.get(project_id) == Some(&label.to_string()) {
+                inner.project_windows.remove(project_id);
             }
         }
         inner.window_intents.remove(label);
         if inner.last_focused_window.as_deref() == Some(label) {
             inner.last_focused_window = None;
         }
+        released
     }
 }
 
@@ -161,8 +174,14 @@ pub fn get_window_open_intent(
 }
 
 #[tauri::command]
-pub fn release_current_project_window(state: tauri::State<'_, AppWindowState>, window: Window) {
-    state.release_window_project(window.label());
+pub fn release_current_project_window(app: AppHandle, window: Window) {
+    if let Some(project_id) = app
+        .state::<AppWindowState>()
+        .release_window_project(window.label())
+    {
+        app.state::<crate::routines::RoutineSchedulerState>()
+            .stop_project(&project_id);
+    }
 }
 
 #[tauri::command]
@@ -290,8 +309,14 @@ pub fn rebuild_app_menu(app: &AppHandle) -> Result<(), AppError> {
 }
 
 pub fn register_current_project_window(app: &AppHandle, project_id: &str, window_label: &str) {
-    app.state::<AppWindowState>()
-        .register_project_window(project_id, window_label);
+    let state = app.state::<AppWindowState>();
+    if let Some(previous) = state.project_id_for_window(window_label)
+        && previous != project_id
+    {
+        app.state::<crate::routines::RoutineSchedulerState>()
+            .stop_project(&previous);
+    }
+    state.register_project_window(project_id, window_label);
 }
 
 pub fn handle_menu_event(app: &AppHandle, id: &str) {
@@ -329,7 +354,10 @@ pub fn handle_window_event(app: &AppHandle, window: &Window, event: &WindowEvent
             active_state.focus_window(label);
         }
         WindowEvent::Destroyed => {
-            window_state.remove_window(&label);
+            if let Some(project_id) = window_state.remove_window(&label) {
+                app.state::<crate::routines::RoutineSchedulerState>()
+                    .stop_project(&project_id);
+            }
             active_state.remove_window(&label);
         }
         _ => {}

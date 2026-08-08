@@ -43,9 +43,14 @@ impl ResolvedRoutineOwner {
     }
 
     pub fn identity(&self) -> String {
+        let portable_space_id = if self.project_path == self.space_path {
+            "root"
+        } else {
+            &self.descriptor.space_id
+        };
         format!(
             "{}\0{:?}\0{}",
-            self.descriptor.space_id, self.descriptor.kind, self.descriptor.owner_path
+            portable_space_id, self.descriptor.kind, self.descriptor.owner_path
         )
     }
 }
@@ -383,12 +388,21 @@ pub struct RoutineRow {
     pub action_summary: Option<String>,
     pub executor: Option<String>,
     pub last_run_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_origin: Option<RoutineRunOrigin>,
     pub next_run_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_run: Option<RoutineRunRef>,
     pub fingerprint: String,
     pub definition: Option<RoutineDefinition>,
     pub diagnostics: Vec<RoutineDiagnostic>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutineRunOrigin {
+    Local,
+    Remote,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -419,4 +433,34 @@ pub enum RoutineMutationResult {
     Blocked {
         message: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutineAutomaticConsent {
+    pub enabled: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn root_owner_identity_is_portable_between_clones() {
+        let owner = |path: &str, local_id: &str| ResolvedRoutineOwner {
+            descriptor: RoutineOwnerDescriptor {
+                kind: RoutineOwnerKind::Project,
+                space_id: local_id.into(),
+                owner_path: ".".into(),
+            },
+            project_path: PathBuf::from(path),
+            space_path: PathBuf::from(path),
+            owner_root: PathBuf::from(path),
+            index_key: IndexKey::Root(PathBuf::from(path)),
+        };
+        assert_eq!(
+            owner("/clone-one", "local-one").identity(),
+            owner("/clone-two", "local-two").identity()
+        );
+    }
 }

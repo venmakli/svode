@@ -23,13 +23,13 @@ export function RoutineDetailActions({
   const [error, setError] = useState<string | null>(
     runState.status === "error" ? runState.message : null,
   );
-  const manual = row.definition?.trigger.type === "manual";
+  const manuallyRunnable = row.definition?.trigger.type !== "event";
   const active = row.lastRun?.active === true;
   const disabled = pending || runState.status === "disabled";
   const disabledReason =
     runState.status === "disabled" ? runState.reason : undefined;
 
-  if (!manual && row.definition && !row.lastRun) return null;
+  if (!manuallyRunnable && row.definition && !row.lastRun) return null;
 
   async function run() {
     if (disabled) return;
@@ -70,7 +70,7 @@ export function RoutineDetailActions({
           <Button type="button" onClick={() => onOpenSession(row)}>
             {m.routines_open_session()}
           </Button>
-        ) : manual || !row.definition ? (
+        ) : manuallyRunnable || !row.definition ? (
           <Button
             type="button"
             disabled={disabled}

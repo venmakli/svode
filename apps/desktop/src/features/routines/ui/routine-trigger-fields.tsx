@@ -1,6 +1,5 @@
 import {
   Field,
-  FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
@@ -28,6 +27,7 @@ import type {
   RoutineEventType,
   RoutineTriggerType,
 } from "../model/types";
+import { RoutineScheduleFields } from "./routine-schedule-fields";
 
 export function RoutineTriggerFields({
   collectionOwner,
@@ -81,85 +81,13 @@ export function RoutineTriggerFields({
       </Field>
 
       {trigger.type === "schedule" ? (
-        <>
-          <Field data-invalid={issues.has("cron")}>
-            <FieldLabel htmlFor="routine-cron">
-              {m.routines_cron_label()}
-            </FieldLabel>
-            <Input
-              id="routine-cron"
-              value={trigger.cron}
-              aria-invalid={issues.has("cron")}
-              onChange={(event) =>
-                onChange({
-                  ...definition,
-                  trigger: {
-                    ...trigger,
-                    cron: event.target.value,
-                  },
-                })
-              }
-            />
-            {issues.has("cron") ? (
-              <FieldError>{m.routines_cron_required()}</FieldError>
-            ) : (
-              <FieldDescription>{m.routines_cron_hint()}</FieldDescription>
-            )}
-          </Field>
-          <Field data-invalid={issues.has("timezone")}>
-            <FieldLabel htmlFor="routine-timezone">
-              {m.routines_timezone_label()}
-            </FieldLabel>
-            <Input
-              id="routine-timezone"
-              value={trigger.timezone}
-              aria-invalid={issues.has("timezone")}
-              onChange={(event) =>
-                onChange({
-                  ...definition,
-                  trigger: {
-                    ...trigger,
-                    timezone: event.target.value,
-                  },
-                })
-              }
-            />
-            {issues.has("timezone") ? (
-              <FieldError>{m.routines_timezone_required()}</FieldError>
-            ) : (
-              <FieldDescription>{m.routines_timezone_hint()}</FieldDescription>
-            )}
-          </Field>
-          <Field>
-            <FieldLabel>{m.routines_missed_runs_label()}</FieldLabel>
-            <Select
-              value={trigger.missedRuns}
-              onValueChange={(missedRuns) =>
-                onChange({
-                  ...definition,
-                  trigger: {
-                    ...trigger,
-                    missedRuns: missedRuns as "skip" | "run_once",
-                  },
-                })
-              }
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem value="skip">
-                    {m.routines_missed_runs_skip()}
-                  </SelectItem>
-                  <SelectItem value="run_once">
-                    {m.routines_missed_runs_run_once()}
-                  </SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </Field>
-        </>
+        <RoutineScheduleFields
+          trigger={trigger}
+          issues={issues}
+          onChange={(nextTrigger) =>
+            onChange({ ...definition, trigger: nextTrigger })
+          }
+        />
       ) : null}
 
       {trigger.type === "event" ? (

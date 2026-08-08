@@ -76,7 +76,7 @@ export function useRoutineDispatch({
 
 function routineRunDisabledReason(row: RoutineRow) {
   if (!row.valid || !row.definition) return m.routines_invalid_run_disabled();
-  if (row.definition.trigger.type !== "manual") {
+  if (row.definition.trigger.type === "event") {
     return m.routines_manual_run_only();
   }
   if (row.definition.action.type !== "run_agent") {

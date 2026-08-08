@@ -26,7 +26,10 @@ use crate::error::AppError;
 ///
 /// Bumped to 7 in Stage 7 Phase 7.2: adds local technical routine runs and
 /// their launch, managed PTY, source-session and terminal-evidence mapping.
-const SCHEMA_VERSION: i64 = 7;
+///
+/// Bumped to 8 in Stage 7 Phase 7.3: adds durable schedule checkpoints,
+/// project-local automatic consent, local leases and observed remote claims.
+const SCHEMA_VERSION: i64 = 8;
 
 /// Create a connection pool for a space's index database.
 /// Ensures the parent directory exists and enables WAL mode.
@@ -196,6 +199,47 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         "#,
         "CREATE INDEX IF NOT EXISTS idx_routine_runs_owner_routine ON routine_runs(owner_path, routine_id, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_routine_runs_launch ON routine_runs(launch_id)",
+        r#"
+        CREATE TABLE IF NOT EXISTS routine_schedule_state (
+            owner_path TEXT NOT NULL,
+            routine_id TEXT NOT NULL,
+            definition_fingerprint TEXT NOT NULL,
+            checkpoint_at TEXT NOT NULL,
+            next_run_at TEXT NOT NULL,
+            PRIMARY KEY (owner_path, routine_id)
+        )
+        "#,
+        r#"
+        CREATE TABLE IF NOT EXISTS routine_owner_roots (
+            owner_path TEXT PRIMARY KEY
+        )
+        "#,
+        r#"
+        CREATE TABLE IF NOT EXISTS routine_automatic_consent (
+            project_path TEXT PRIMARY KEY,
+            enabled INTEGER NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        "#,
+        r#"
+        CREATE TABLE IF NOT EXISTS routine_automatic_leases (
+            run_key TEXT PRIMARY KEY,
+            routine_id TEXT NOT NULL,
+            leased_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        )
+        "#,
+        r#"
+        CREATE TABLE IF NOT EXISTS routine_remote_claims (
+            run_key TEXT PRIMARY KEY,
+            owner_path TEXT NOT NULL,
+            routine_id TEXT NOT NULL,
+            definition_fingerprint TEXT NOT NULL,
+            claimed_by TEXT NOT NULL,
+            claimed_at TEXT NOT NULL
+        )
+        "#,
+        "CREATE INDEX IF NOT EXISTS idx_routine_remote_claims_owner_routine ON routine_remote_claims(owner_path, routine_id, claimed_at DESC)",
     ];
 
     for stmt in ddl {

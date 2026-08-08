@@ -196,7 +196,7 @@ export function createRoutinesPresentationDescriptor({
         getState: actions.getRunState,
         id: "run-routine",
         isVisible: (row) =>
-          row.definition?.trigger.type === "manual" || !row.definition,
+          row.definition?.trigger.type !== "event" || !row.definition,
         label: m.routines_run_now(),
         run: actions.onRun,
       },

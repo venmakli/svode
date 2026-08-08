@@ -20,6 +20,8 @@ pub(crate) const ACCESS_EVIDENCE_TTL_SECONDS: i64 = 24 * 60 * 60;
 
 const SERVICE_AUTHOR_NAME: &str = "Svode Access Probe";
 const SERVICE_AUTHOR_EMAIL: &str = "access@svode.invalid";
+const ROUTINE_SERVICE_AUTHOR_NAME: &str = "Svode Routine Claim";
+const ROUTINE_SERVICE_AUTHOR_EMAIL: &str = "routines@svode.invalid";
 
 tokio::task_local! {
     static AUTHORIZED_MUTATION_REPOSITORIES: Option<Arc<std::collections::HashSet<PathBuf>>>;
@@ -63,6 +65,22 @@ pub struct RepositoryAccessSnapshot {
     pub expires_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_known_status: Option<RepositoryAccessStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RoutineClaimResult {
+    Local,
+    Claimed { claimed_by: String, claimed_at: i64 },
+    AlreadyClaimed { claimed_by: String, claimed_at: i64 },
+    Unavailable { reason: RepositoryAccessReason },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RoutineClaimPayload {
+    run_key: String,
+    definition_hash: String,
+    claimed_by: String,
+    claimed_at: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -338,6 +356,74 @@ impl RepositoryAccessState {
         let snapshot = self.snapshot(cli, space_path, store_path).await?;
         ensure_mutation_allowed(&snapshot, self.clock.now_unix())?;
         Ok(snapshot)
+    }
+
+    pub(crate) async fn claim_routine(
+        &self,
+        cli: &GitCli,
+        repository: &Path,
+        store_path: &Path,
+        snapshot: &RepositoryAccessSnapshot,
+        routine_id: &str,
+        run_key: &str,
+        definition_hash: &str,
+        claimed_at: i64,
+    ) -> Result<RoutineClaimResult, AppError> {
+        ensure_mutation_allowed(snapshot, self.clock.now_unix())?;
+        let repository = resolve_repository(cli, repository).await?;
+        let remote = match inspect_remote(cli, &repository).await? {
+            RemoteInspection::Local => return Ok(RoutineClaimResult::Local),
+            RemoteInspection::Unsupported => {
+                return Ok(RoutineClaimResult::Unavailable {
+                    reason: RepositoryAccessReason::UnsupportedRemoteConfiguration,
+                });
+            }
+            RemoteInspection::Remote(remote) => remote,
+        };
+        if snapshot.status != RepositoryAccessStatus::Writable
+            || self
+                .cached(&repository)?
+                .and_then(|current| current.remote_fingerprint.clone())
+                .as_deref()
+                != Some(remote.fingerprint.as_str())
+        {
+            return Ok(RoutineClaimResult::Unavailable {
+                reason: RepositoryAccessReason::RemoteChanged,
+            });
+        }
+        let payload = RoutineClaimPayload {
+            run_key: run_key.to_string(),
+            definition_hash: definition_hash.to_string(),
+            claimed_by: self.ensure_installation_id(store_path)?,
+            claimed_at,
+        };
+        claim_remote_routine(cli, &repository, &remote, routine_id, &payload).await
+    }
+
+    pub(crate) async fn routine_repository_id(
+        &self,
+        cli: &GitCli,
+        repository: &Path,
+        snapshot: &RepositoryAccessSnapshot,
+    ) -> Result<Option<String>, AppError> {
+        ensure_mutation_allowed(snapshot, self.clock.now_unix())?;
+        let repository = resolve_repository(cli, repository).await?;
+        match inspect_remote(cli, &repository).await? {
+            RemoteInspection::Local if snapshot.status == RepositoryAccessStatus::Local => {
+                Ok(Some(snapshot.repository_id.clone()))
+            }
+            RemoteInspection::Remote(remote)
+                if snapshot.status == RepositoryAccessStatus::Writable
+                    && self
+                        .cached(&repository)?
+                        .and_then(|current| current.remote_fingerprint.clone())
+                        .as_deref()
+                        == Some(remote.fingerprint.as_str()) =>
+            {
+                Ok(Some(opaque_id("routine-repo", &remote.fingerprint)))
+            }
+            _ => Ok(None),
+        }
     }
 
     pub(crate) async fn record_writable_evidence(
@@ -860,6 +946,179 @@ async fn probe_remote(
     Ok(failure)
 }
 
+async fn claim_remote_routine(
+    cli: &GitCli,
+    repository: &Path,
+    remote: &RemoteConfig,
+    routine_id: &str,
+    payload: &RoutineClaimPayload,
+) -> Result<RoutineClaimResult, AppError> {
+    let reference = format!("refs/svode/routines/{}", stable_hash(routine_id));
+    let current = read_remote_ref(cli, repository, &remote.push_url, &reference).await?;
+    let expected = match current {
+        RemoteRead::Oid(oid) => {
+            if let Some(existing) =
+                read_routine_claim(cli, repository, &remote.push_url, &reference, &oid).await?
+                && existing.run_key == payload.run_key
+            {
+                return Ok(RoutineClaimResult::AlreadyClaimed {
+                    claimed_by: existing.claimed_by,
+                    claimed_at: existing.claimed_at,
+                });
+            }
+            oid
+        }
+        RemoteRead::Missing => String::new(),
+        RemoteRead::Failure(result) => {
+            return Ok(RoutineClaimResult::Unavailable {
+                reason: result
+                    .reason
+                    .unwrap_or(RepositoryAccessReason::AmbiguousRejection),
+            });
+        }
+    };
+    let new_oid = create_routine_claim_commit(cli, repository, &expected, payload).await?;
+    let lease = exact_lease(&reference, &expected);
+    let refspec = format!("{new_oid}:{reference}");
+    let output = cli
+        .exec_sensitive_with_stdin(
+            repository,
+            &["push", "--porcelain", &lease, "origin", &refspec],
+            &[],
+            None,
+            PROBE_TIMEOUT,
+        )
+        .await?;
+    if output.exit_code == 0 {
+        return Ok(RoutineClaimResult::Claimed {
+            claimed_by: payload.claimed_by.clone(),
+            claimed_at: payload.claimed_at,
+        });
+    }
+
+    let failure = classify_failure(&output);
+    let readback = read_remote_ref(cli, repository, &remote.push_url, &reference).await?;
+    if routine_claim_readback_confirms(&new_oid, &readback) {
+        return Ok(RoutineClaimResult::Claimed {
+            claimed_by: payload.claimed_by.clone(),
+            claimed_at: payload.claimed_at,
+        });
+    }
+    if let RemoteRead::Oid(oid) = readback
+        && let Some(existing) =
+            read_routine_claim(cli, repository, &remote.push_url, &reference, &oid).await?
+        && existing.run_key == payload.run_key
+    {
+        return Ok(RoutineClaimResult::AlreadyClaimed {
+            claimed_by: existing.claimed_by,
+            claimed_at: existing.claimed_at,
+        });
+    }
+    Ok(RoutineClaimResult::Unavailable {
+        reason: failure
+            .reason
+            .unwrap_or(RepositoryAccessReason::AmbiguousRejection),
+    })
+}
+
+fn routine_claim_readback_confirms(new_oid: &str, readback: &RemoteRead) -> bool {
+    matches!(readback, RemoteRead::Oid(oid) if oid == new_oid)
+}
+
+async fn read_routine_claim(
+    cli: &GitCli,
+    repository: &Path,
+    push_url: &str,
+    reference: &str,
+    oid: &str,
+) -> Result<Option<RoutineClaimPayload>, AppError> {
+    let fetch = cli
+        .exec_sensitive_with_stdin(
+            repository,
+            &["fetch", "--no-tags", "--quiet", push_url, reference],
+            &[],
+            None,
+            PROBE_TIMEOUT,
+        )
+        .await?;
+    if fetch.exit_code != 0 {
+        return Ok(None);
+    }
+    let show = cli
+        .exec(repository, &["show", "-s", "--format=%B", oid])
+        .await?;
+    if show.exit_code != 0 {
+        return Ok(None);
+    }
+    Ok(parse_routine_claim(&show.stdout))
+}
+
+fn parse_routine_claim(message: &str) -> Option<RoutineClaimPayload> {
+    let values = message
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .collect::<HashMap<_, _>>();
+    if values.get("version") != Some(&"1") {
+        return None;
+    }
+    Some(RoutineClaimPayload {
+        run_key: values.get("run-key")?.to_string(),
+        definition_hash: values.get("definition-hash")?.to_string(),
+        claimed_by: values.get("claimed-by")?.to_string(),
+        claimed_at: values.get("claimed-at")?.parse().ok()?,
+    })
+}
+
+async fn create_routine_claim_commit(
+    cli: &GitCli,
+    repository: &Path,
+    parent: &str,
+    payload: &RoutineClaimPayload,
+) -> Result<String, AppError> {
+    let empty_tree = cli
+        .exec_sensitive_with_stdin(
+            repository,
+            &["hash-object", "-w", "-t", "tree", "--stdin"],
+            &[],
+            Some(""),
+            PROBE_TIMEOUT,
+        )
+        .await?;
+    if empty_tree.exit_code != 0 {
+        return Err(AppError::GitCommandFailed(format!(
+            "failed to create routine claim tree: {}",
+            bounded_detail(&empty_tree.stderr)
+        )));
+    }
+    let message = format!(
+        "version=1\nrun-key={}\ndefinition-hash={}\nclaimed-by={}\nclaimed-at={}\n",
+        payload.run_key, payload.definition_hash, payload.claimed_by, payload.claimed_at
+    );
+    let git_date = format!("@{} +0000", payload.claimed_at);
+    let env = [
+        ("GIT_AUTHOR_NAME", ROUTINE_SERVICE_AUTHOR_NAME),
+        ("GIT_AUTHOR_EMAIL", ROUTINE_SERVICE_AUTHOR_EMAIL),
+        ("GIT_COMMITTER_NAME", ROUTINE_SERVICE_AUTHOR_NAME),
+        ("GIT_COMMITTER_EMAIL", ROUTINE_SERVICE_AUTHOR_EMAIL),
+        ("GIT_AUTHOR_DATE", git_date.as_str()),
+        ("GIT_COMMITTER_DATE", git_date.as_str()),
+    ];
+    let mut args = vec!["commit-tree", empty_tree.stdout.trim()];
+    if !parent.is_empty() {
+        args.extend(["-p", parent]);
+    }
+    let commit = cli
+        .exec_sensitive_with_stdin(repository, &args, &env, Some(&message), PROBE_TIMEOUT)
+        .await?;
+    if commit.exit_code != 0 {
+        return Err(AppError::GitCommandFailed(format!(
+            "failed to create routine claim commit: {}",
+            bounded_detail(&commit.stderr)
+        )));
+    }
+    Ok(commit.stdout.trim().to_string())
+}
+
 enum RemoteRead {
     Oid(String),
     Missing,
@@ -1309,6 +1568,130 @@ mod tests {
             exact_lease(&reference, ""),
             format!("--force-with-lease={reference}:")
         );
+    }
+
+    #[tokio::test]
+    async fn routine_claim_allows_only_one_clone_and_keeps_service_ref_history() {
+        let temp = TempDir::new().expect("temp dir");
+        let first = temp.path().join("first");
+        let second = temp.path().join("second");
+        let remote = temp.path().join("remote.git");
+        let cli = GitCli::detect().expect("git");
+        init_repository(&cli, &first).await;
+        init_repository(&cli, &second).await;
+        init_bare(&cli, &remote).await;
+        add_origin(&cli, &first, &remote).await;
+        add_origin(&cli, &second, &remote).await;
+        let first_state = test_state(Arc::new(TestClock::new(1_700_000_000)));
+        let second_state = test_state(Arc::new(TestClock::new(1_700_000_000)));
+        let first_store = temp.path().join("first-access.json");
+        let second_store = temp.path().join("second-access.json");
+        let first_access = first_state
+            .verify(&cli, &first, &first_store)
+            .await
+            .expect("first writable access");
+        let second_access = second_state
+            .verify(&cli, &second, &second_store)
+            .await
+            .expect("second writable access");
+        assert_eq!(
+            first_state
+                .routine_repository_id(&cli, &first, &first_access)
+                .await
+                .unwrap(),
+            second_state
+                .routine_repository_id(&cli, &second, &second_access)
+                .await
+                .unwrap()
+        );
+
+        let (first_claim, second_claim) = tokio::join!(
+            first_state.claim_routine(
+                &cli,
+                &first,
+                &first_store,
+                &first_access,
+                "routine-one",
+                "slot-one",
+                "definition-one",
+                1_700_000_100,
+            ),
+            second_state.claim_routine(
+                &cli,
+                &second,
+                &second_store,
+                &second_access,
+                "routine-one",
+                "slot-one",
+                "definition-one",
+                1_700_000_100,
+            )
+        );
+        let claims = [first_claim.unwrap(), second_claim.unwrap()];
+        assert_eq!(
+            claims
+                .iter()
+                .filter(|claim| matches!(claim, RoutineClaimResult::Claimed { .. }))
+                .count(),
+            1,
+            "claims: {claims:?}"
+        );
+        assert_eq!(
+            claims
+                .iter()
+                .filter(|claim| matches!(claim, RoutineClaimResult::AlreadyClaimed { .. }))
+                .count(),
+            1
+        );
+
+        let second_slot = first_state
+            .claim_routine(
+                &cli,
+                &first,
+                &first_store,
+                &first_access,
+                "routine-one",
+                "slot-two",
+                "definition-one",
+                1_700_000_200,
+            )
+            .await
+            .expect("second slot claim");
+        assert!(matches!(second_slot, RoutineClaimResult::Claimed { .. }));
+        let reference = format!("refs/svode/routines/{}", stable_hash("routine-one"));
+        let oid = git_ok(&cli, &remote, &["rev-parse", &reference])
+            .await
+            .stdout
+            .trim()
+            .to_string();
+        let commit = git_ok(&cli, &remote, &["cat-file", "-p", &oid])
+            .await
+            .stdout;
+        assert!(commit.lines().any(|line| line.starts_with("parent ")));
+        assert!(commit.contains("run-key=slot-two"));
+        assert!(commit.contains("definition-hash=definition-one"));
+        assert!(
+            git_ok(&cli, &first, &["status", "--porcelain"])
+                .await
+                .stdout
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn routine_claim_uncertain_push_requires_exact_readback() {
+        assert!(routine_claim_readback_confirms(
+            "own-oid",
+            &RemoteRead::Oid("own-oid".into())
+        ));
+        assert!(!routine_claim_readback_confirms(
+            "own-oid",
+            &RemoteRead::Oid("other-oid".into())
+        ));
+        assert!(!routine_claim_readback_confirms(
+            "own-oid",
+            &RemoteRead::Missing
+        ));
     }
 
     #[tokio::test]

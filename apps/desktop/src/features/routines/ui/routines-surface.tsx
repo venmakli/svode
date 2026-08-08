@@ -7,9 +7,11 @@ import * as m from "@/paraglide/messages.js";
 
 import { useRoutinesController } from "../hooks/use-routines-controller";
 import type { RoutineSessionTarget } from "../model/types";
+import { RoutineAutomaticConsent } from "./routine-automatic-consent";
 
 export function RoutinesSurface({
   owner,
+  presentation,
   onOpenSession,
 }: ScopeSurfaceRenderContext & {
   onOpenSession(target: RoutineSessionTarget): void;
@@ -37,6 +39,16 @@ export function RoutinesSurface({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-routines-surface>
+      <RoutineAutomaticConsent
+        compact={presentation === "compact"}
+        enabled={controller.automaticConsent.enabled}
+        error={controller.automaticConsent.error}
+        loading={controller.automaticConsent.loading}
+        pending={controller.automaticConsent.pending}
+        onChange={(enabled) =>
+          void controller.automaticConsent.setEnabled(enabled)
+        }
+      />
       {body}
       {controller.overlays}
     </div>

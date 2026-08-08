@@ -64,6 +64,7 @@ export interface RoutineRow {
   diagnostics: readonly RoutineDiagnostic[];
   valid: boolean;
   lastRunAt: string | null;
+  lastRunOrigin: "local" | "remote" | null;
   nextRunAt: string | null;
   lastRun: RoutineRunRef | null;
 }

@@ -1310,6 +1310,15 @@ impl IndexState {
         keys
     }
 
+    pub async fn routine_owner_paths(&self, key: &IndexKey) -> Result<Vec<String>, AppError> {
+        let pool = self.get_or_create(key).await?;
+        Ok(sqlx::query_scalar::<_, String>(
+            "SELECT owner_path FROM routine_owner_roots ORDER BY owner_path",
+        )
+        .fetch_all(&pool)
+        .await?)
+    }
+
     /// Reverse lookup for callers that only know the absolute space directory
     /// (e.g. `git_sync` flow). Searches every loaded project for a child whose
     /// directory matches, falling back to `Root` when the dir IS the project.

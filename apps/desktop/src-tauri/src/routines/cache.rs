@@ -14,11 +14,192 @@ use crate::terminal::{
     AgentTerminalLifecycleSink, AgentTerminalOutcomeEvidence, AgentTerminalOutcomeStatus,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RoutineScheduleState {
+    pub definition_fingerprint: String,
+    pub checkpoint_at: String,
+    pub next_run_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RemoteRoutineClaim {
+    pub run_key: String,
+    pub claimed_by: String,
+    pub claimed_at: String,
+}
+
+pub(crate) async fn schedule_state(
+    pool: &SqlitePool,
+    owner_path: &str,
+    routine_id: &str,
+) -> Result<Option<RoutineScheduleState>, AppError> {
+    let row = sqlx::query(
+        "SELECT definition_fingerprint, checkpoint_at, next_run_at FROM routine_schedule_state WHERE owner_path = ? AND routine_id = ?",
+    )
+    .bind(owner_path)
+    .bind(routine_id)
+    .fetch_optional(pool)
+    .await?;
+    row.map(|row| {
+        Ok(RoutineScheduleState {
+            definition_fingerprint: row.try_get("definition_fingerprint")?,
+            checkpoint_at: row.try_get("checkpoint_at")?,
+            next_run_at: row.try_get("next_run_at")?,
+        })
+    })
+    .transpose()
+}
+
+pub(crate) async fn write_schedule_state(
+    pool: &SqlitePool,
+    owner_path: &str,
+    routine_id: &str,
+    definition_fingerprint: &str,
+    checkpoint_at: &str,
+    next_run_at: &str,
+) -> Result<(), AppError> {
+    sqlx::query(
+        r#"
+        INSERT INTO routine_schedule_state (
+            owner_path, routine_id, definition_fingerprint, checkpoint_at, next_run_at
+        ) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(owner_path, routine_id) DO UPDATE SET
+            definition_fingerprint = excluded.definition_fingerprint,
+            checkpoint_at = excluded.checkpoint_at,
+            next_run_at = excluded.next_run_at
+        "#,
+    )
+    .bind(owner_path)
+    .bind(routine_id)
+    .bind(definition_fingerprint)
+    .bind(checkpoint_at)
+    .bind(next_run_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub(crate) async fn automatic_consent(
+    pool: &SqlitePool,
+    project_path: &str,
+) -> Result<bool, AppError> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT enabled FROM routine_automatic_consent WHERE project_path = ?",
+    )
+    .bind(project_path)
+    .fetch_optional(pool)
+    .await?
+    .is_some_and(|enabled| enabled != 0))
+}
+
+pub(crate) async fn set_automatic_consent(
+    pool: &SqlitePool,
+    project_path: &str,
+    enabled: bool,
+    updated_at: &str,
+) -> Result<(), AppError> {
+    sqlx::query(
+        r#"
+        INSERT INTO routine_automatic_consent (project_path, enabled, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(project_path) DO UPDATE SET
+            enabled = excluded.enabled,
+            updated_at = excluded.updated_at
+        "#,
+    )
+    .bind(project_path)
+    .bind(enabled)
+    .bind(updated_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub(crate) async fn claim_local_run(
+    pool: &SqlitePool,
+    run_key: &str,
+    routine_id: &str,
+    leased_at: &str,
+    expires_at: &str,
+) -> Result<bool, AppError> {
+    let result = sqlx::query(
+        "INSERT OR IGNORE INTO routine_automatic_leases (run_key, routine_id, leased_at, expires_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(run_key)
+    .bind(routine_id)
+    .bind(leased_at)
+    .bind(expires_at)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+pub(crate) async fn record_remote_claim(
+    pool: &SqlitePool,
+    owner_path: &str,
+    routine_id: &str,
+    run_key: &str,
+    definition_fingerprint: &str,
+    claimed_by: &str,
+    claimed_at: &str,
+) -> Result<(), AppError> {
+    sqlx::query(
+        r#"
+        INSERT OR REPLACE INTO routine_remote_claims (
+            run_key, owner_path, routine_id, definition_fingerprint, claimed_by, claimed_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(run_key)
+    .bind(owner_path)
+    .bind(routine_id)
+    .bind(definition_fingerprint)
+    .bind(claimed_by)
+    .bind(claimed_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub(crate) async fn latest_remote_claim(
+    pool: &SqlitePool,
+    owner_path: &str,
+    routine_id: &str,
+) -> Result<Option<RemoteRoutineClaim>, AppError> {
+    let row = sqlx::query(
+        r#"
+        SELECT run_key, claimed_by, claimed_at
+        FROM routine_remote_claims
+        WHERE owner_path = ? AND routine_id = ?
+        ORDER BY claimed_at DESC, run_key DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(owner_path)
+    .bind(routine_id)
+    .fetch_optional(pool)
+    .await?;
+    row.map(|row| {
+        Ok(RemoteRoutineClaim {
+            run_key: row.try_get("run_key")?,
+            claimed_by: row.try_get("claimed_by")?,
+            claimed_at: row.try_get("claimed_at")?,
+        })
+    })
+    .transpose()
+}
+
 pub(crate) async fn replace_owner_snapshot(
     pool: &SqlitePool,
     snapshot: &RoutineCatalogSnapshot,
 ) -> Result<(), AppError> {
     let mut transaction = pool.begin().await?;
+    if snapshot.owner.kind == super::model::RoutineOwnerKind::Collection {
+        sqlx::query("INSERT OR IGNORE INTO routine_owner_roots (owner_path) VALUES (?)")
+            .bind(&snapshot.owner.owner_path)
+            .execute(&mut *transaction)
+            .await?;
+    }
     delete_owner_rows(&mut transaction, &snapshot.owner.owner_path).await?;
     for row in &snapshot.routines {
         let row_json = serde_json::to_string(row)?;
@@ -347,6 +528,7 @@ mod tests {
             action_summary: None,
             executor: None,
             last_run_at: None,
+            last_run_origin: None,
             next_run_at: None,
             last_run: None,
             fingerprint: format!("fingerprint:{id}"),
@@ -485,5 +667,82 @@ mod tests {
             Some("source-after-reload")
         );
         assert_eq!(after_reload.agent_session_id, "codex:source-after-reload");
+    }
+
+    #[tokio::test]
+    async fn schedule_checkpoint_consent_and_claim_evidence_are_durable() {
+        let temp = tempdir().unwrap();
+        let db_path = temp.path().join("index.db");
+        let pool = db::create_pool(&db_path).await.unwrap();
+        db::ensure_schema(&pool).await.unwrap();
+
+        assert!(!automatic_consent(&pool, "/project").await.unwrap());
+        set_automatic_consent(&pool, "/project", true, "2026-08-07T09:00:00Z")
+            .await
+            .unwrap();
+        write_schedule_state(
+            &pool,
+            ".",
+            "routine-one",
+            "fingerprint",
+            "2026-08-07T09:00:00Z",
+            "2026-08-08T09:00:00Z",
+        )
+        .await
+        .unwrap();
+        assert!(
+            claim_local_run(
+                &pool,
+                "slot-one",
+                "routine-one",
+                "2026-08-07T09:00:00Z",
+                "2026-08-07T09:05:00Z",
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !claim_local_run(
+                &pool,
+                "slot-one",
+                "routine-one",
+                "2026-08-07T09:00:01Z",
+                "2026-08-07T09:05:01Z",
+            )
+            .await
+            .unwrap()
+        );
+        record_remote_claim(
+            &pool,
+            ".",
+            "routine-one",
+            "slot-remote",
+            "fingerprint",
+            "device-two",
+            "2026-08-07T10:00:00Z",
+        )
+        .await
+        .unwrap();
+
+        pool.close().await;
+        let reopened = db::create_pool(&db_path).await.unwrap();
+        db::ensure_schema(&reopened).await.unwrap();
+        assert!(automatic_consent(&reopened, "/project").await.unwrap());
+        assert_eq!(
+            schedule_state(&reopened, ".", "routine-one")
+                .await
+                .unwrap()
+                .unwrap()
+                .next_run_at,
+            "2026-08-08T09:00:00Z"
+        );
+        assert_eq!(
+            latest_remote_claim(&reopened, ".", "routine-one")
+                .await
+                .unwrap()
+                .unwrap()
+                .claimed_by,
+            "device-two"
+        );
     }
 }
