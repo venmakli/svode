@@ -41,6 +41,7 @@ const allowedFeatureSubpathExceptions = new Set([
   "@/features/properties/control",
   "@/features/properties/display",
   "@/features/properties/panel",
+  "@/features/routines/catalog",
   "@/features/search/app-shell",
   "@/features/space/app-shell",
   "@/features/space/resource-drag",
