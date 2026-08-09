@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { recentEntries, searchEntries, searchEntriesByTitle } from "../api";
 import { dedupKey } from "../lib/utils";
 import type { SearchItem } from "../model";
+import type { SearchScope } from "../api";
 
 const DEBOUNCE_MS = 150;
 const LIMIT = 10;
@@ -29,6 +30,7 @@ const EMPTY_STATE: Omit<SearchState, "query" | "isEmpty"> = {
 export function useSearch(
   query: string,
   projectPath: string | null,
+  scope?: SearchScope,
 ): SearchState {
   const [state, setState] = useState<SearchState>({
     query,
@@ -64,6 +66,7 @@ export function useSearch(
       recentEntries({
         projectPath,
         limit: LIMIT,
+        scope,
       })
         .then((res) => {
           if (!isCurrent()) return;
@@ -93,11 +96,13 @@ export function useSearch(
           projectPath,
           query: trimmed,
           limit: LIMIT,
+          scope,
         }),
         searchEntries({
           projectPath,
           query: trimmed,
           limit: LIMIT,
+          scope,
         }),
       ])
         .then(([titleRes, ftsRes]) => {
@@ -132,7 +137,7 @@ export function useSearch(
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, projectPath]);
+  }, [projectPath, query, scope]);
 
   return state;
 }

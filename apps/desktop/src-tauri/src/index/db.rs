@@ -32,7 +32,11 @@ use crate::error::AppError;
 ///
 /// Bumped to 9 in Stage 7 Phase 7.4: adds the durable, deduplicated Collection
 /// event queue populated by targeted index updates.
-const SCHEMA_VERSION: i64 = 9;
+///
+/// Bumped to 10 in Stage 7 Phase 8.1: adds the rebuildable document knowledge
+/// projection (document nodes, searchable fragments, explicit links and a
+/// per-pool freshness manifest).
+const SCHEMA_VERSION: i64 = 10;
 
 /// Create a connection pool for a space's index database.
 /// Ensures the parent directory exists and enables WAL mode.
@@ -89,6 +93,10 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         "DROP TABLE IF EXISTS broken_links",
         "DROP TABLE IF EXISTS routine_definitions",
         "DROP TABLE IF EXISTS routine_event_queue",
+        "DROP TABLE IF EXISTS knowledge_links",
+        "DROP TABLE IF EXISTS knowledge_fragments",
+        "DROP TABLE IF EXISTS knowledge_documents",
+        "DROP TABLE IF EXISTS knowledge_manifest",
     ];
     for stmt in drops {
         sqlx::query(stmt).execute(pool).await?;
@@ -261,6 +269,47 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         "#,
         "CREATE INDEX IF NOT EXISTS idx_routine_event_queue_pending ON routine_event_queue(state, observed_at)",
         "CREATE INDEX IF NOT EXISTS idx_routine_event_queue_event ON routine_event_queue(event_key)",
+        r#"
+        CREATE TABLE IF NOT EXISTS knowledge_documents (
+            source_path TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            source_updated_at TEXT NOT NULL,
+            checked_at TEXT NOT NULL
+        )
+        "#,
+        r#"
+        CREATE TABLE IF NOT EXISTS knowledge_fragments (
+            source_path TEXT NOT NULL,
+            ordinal INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            PRIMARY KEY (source_path, ordinal),
+            FOREIGN KEY (source_path) REFERENCES knowledge_documents(source_path) ON DELETE CASCADE
+        )
+        "#,
+        r#"
+        CREATE TABLE IF NOT EXISTS knowledge_links (
+            source_path TEXT NOT NULL,
+            target_url TEXT NOT NULL,
+            byte_start INTEGER NOT NULL,
+            byte_end INTEGER NOT NULL,
+            origin TEXT NOT NULL CHECK (origin = 'explicit'),
+            PRIMARY KEY (source_path, target_url, byte_start),
+            FOREIGN KEY (source_path) REFERENCES knowledge_documents(source_path) ON DELETE CASCADE
+        )
+        "#,
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_links_source ON knowledge_links(source_path)",
+        r#"
+        CREATE TABLE IF NOT EXISTS knowledge_manifest (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            checked_at TEXT NOT NULL,
+            document_count INTEGER NOT NULL,
+            link_count INTEGER NOT NULL,
+            skipped_count INTEGER NOT NULL,
+            failure_count INTEGER NOT NULL
+        )
+        "#,
     ];
 
     for stmt in ddl {

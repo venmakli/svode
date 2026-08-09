@@ -271,6 +271,7 @@ pub fn run() {
             index::commands::search_project_entries,
             index::commands::recent_project_entries,
             index::commands::count_broken_links,
+            index::commands::get_knowledge_documents,
             storage::commands::upload_asset,
             storage::commands::read_file_for_upload,
             storage::commands::list_assets,

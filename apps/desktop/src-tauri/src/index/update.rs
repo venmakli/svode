@@ -168,11 +168,13 @@ async fn apply_targeted_change(
     }
     if let Some(entry) = entry {
         upsert_entry(&mut *transaction, entry).await?;
+        crate::index::knowledge::upsert_artifact(&mut transaction, &entry.knowledge).await?;
     } else {
         sqlx::query("DELETE FROM entries WHERE file_path = ?")
             .bind(&normalized)
             .execute(&mut *transaction)
             .await?;
+        crate::index::knowledge::delete_artifact(&mut transaction, &normalized).await?;
     }
     transaction.commit().await?;
     Ok(())

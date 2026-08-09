@@ -49,7 +49,7 @@ import {
   SHELL_SIDEBAR_WIDTH_MIN,
   useShellStore,
 } from "./model";
-import { InboxSurface, SessionsSurface } from "./main-surfaces";
+import { GraphSurface, InboxSurface, SessionsSurface } from "./main-surfaces";
 import { ActiveSpaceContent } from "./active-space-content";
 import { cn } from "@/shared/lib/utils";
 
@@ -61,7 +61,7 @@ interface ShellLayoutContentProps {
   sidebarProviderRef: RefObject<HTMLDivElement | null>;
   identityName: string | null;
   identityEmail: string | null;
-  mainSurface: "content" | "inbox" | "sessions";
+  mainSurface: "content" | "inbox" | "sessions" | "graph";
   onActivateContent: () => void;
   onBeforeNavigation: () => Promise<boolean>;
   onOpenInbox: () => void;
@@ -73,7 +73,8 @@ interface ShellLayoutContentProps {
 interface DesktopResizableShellProps {
   sidebarProviderRef: RefObject<HTMLDivElement | null>;
   sidebar: ReactNode;
-  mainSurface: "content" | "inbox" | "sessions";
+  mainSurface: "content" | "inbox" | "sessions" | "graph";
+  onBeforeNavigation: () => Promise<boolean>;
   onOpenAppSettings: () => void;
 }
 
@@ -104,6 +105,7 @@ function MainLayoutRuntime() {
   const openSessionsSurface = useShellStore(
     (state) => state.openSessionsSurface,
   );
+  const openGraphSurface = useShellStore((state) => state.openGraphSurface);
   const sidebarWidth = useShellStore((state) => state.sidebarWidth);
   const setCommandPaletteOpen = useOpenCommandPalette();
   const bootstrapAttempted = useRef(false);
@@ -178,7 +180,11 @@ function MainLayoutRuntime() {
       <SpaceFileWatcher />
       {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
       <GitMissingDialog open={available === false} onRecheck={recheck} />
-      <CommandPalette onBeforeNavigation={prepareForNavigation} />
+      <CommandPalette
+        onBeforeNavigation={prepareForNavigation}
+        onAfterNavigation={openContentSurface}
+        onOpenGraph={openGraphSurface}
+      />
     </SidebarProvider>
   );
 }
@@ -221,6 +227,7 @@ function ShellLayoutContent({
         {sidebar}
         <ShellMainInset
           mainSurface={mainSurface}
+          onBeforeNavigation={onBeforeNavigation}
           onOpenAppSettings={onOpenAppSettings}
         />
       </>
@@ -234,6 +241,7 @@ function ShellLayoutContent({
         sidebarProviderRef={sidebarProviderRef}
         sidebar={sidebar}
         mainSurface={mainSurface}
+        onBeforeNavigation={onBeforeNavigation}
         onOpenAppSettings={onOpenAppSettings}
       />
     </>
@@ -244,6 +252,7 @@ function DesktopResizableShell({
   sidebarProviderRef,
   sidebar,
   mainSurface,
+  onBeforeNavigation,
   onOpenAppSettings,
 }: DesktopResizableShellProps) {
   const [initialSidebarWidth] = useState(
@@ -310,6 +319,7 @@ function DesktopResizableShell({
         <ShellMainInset
           mainSurface={mainSurface}
           resizable
+          onBeforeNavigation={onBeforeNavigation}
           onOpenAppSettings={onOpenAppSettings}
         />
       </ResizablePanel>
@@ -320,16 +330,22 @@ function DesktopResizableShell({
 function ShellMainInset({
   mainSurface,
   resizable = false,
+  onBeforeNavigation,
   onOpenAppSettings,
 }: {
-  mainSurface: "content" | "inbox" | "sessions";
+  mainSurface: "content" | "inbox" | "sessions" | "graph";
   resizable?: boolean;
+  onBeforeNavigation: () => Promise<boolean>;
   onOpenAppSettings?: () => void;
 }) {
   const isSessionsSurface = mainSurface === "sessions";
   const agentSessionOpenRequest = useShellStore(
     (state) => state.agentSessionOpenRequest,
   );
+  const knowledgeGraphOpenRequest = useShellStore(
+    (state) => state.knowledgeGraphOpenRequest,
+  );
+  const openContentSurface = useShellStore((state) => state.openContentSurface);
 
   return (
     <SidebarInset
@@ -354,6 +370,12 @@ function ShellMainInset({
             <SessionsSurface
               openRequest={agentSessionOpenRequest}
               onOpenAppSettings={onOpenAppSettings}
+            />
+          ) : mainSurface === "graph" ? (
+            <GraphSurface
+              openRequest={knowledgeGraphOpenRequest}
+              onBeforeNavigation={onBeforeNavigation}
+              onActivateContent={openContentSurface}
             />
           ) : (
             <ActiveSpaceContent />

@@ -9,6 +9,7 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use crate::error::AppError;
+use crate::index::knowledge::{KnowledgeResponse, KnowledgeScope};
 use crate::index::search::{self, SearchResult};
 use crate::index::{IndexKey, IndexState};
 
@@ -24,7 +25,11 @@ const ICON_TABLE_ROW: &str = "\u{1F4CB}"; // 📋
 /// space pool. `Space { space_id }` → restrict to one pool.
 /// `Space { space_id: None }` is equivalent to root-only.
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "kind")]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "kind"
+)]
 pub enum SearchScope {
     Project,
     Space { space_id: Option<String> },
@@ -456,4 +461,52 @@ pub async fn count_broken_links(
         total += count;
     }
     Ok(total)
+}
+
+/// Read the already prepared project/Space document graph and quick-search
+/// projection. This adapter never schedules or runs a reindex.
+#[tauri::command]
+pub async fn get_knowledge_documents(
+    state: State<'_, IndexState>,
+    project_path: String,
+    scope: Option<KnowledgeScope>,
+    query: Option<String>,
+    node_offset: Option<usize>,
+    edge_offset: Option<usize>,
+    node_limit: Option<usize>,
+    edge_limit: Option<usize>,
+    search_limit: Option<usize>,
+) -> Result<KnowledgeResponse, AppError> {
+    Ok(crate::index::knowledge::read_project_snapshot(
+        &state,
+        &PathBuf::from(project_path),
+        scope,
+        query.as_deref(),
+        node_offset,
+        edge_offset,
+        node_limit,
+        edge_limit,
+        search_limit,
+    )
+    .await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SearchScope;
+
+    #[test]
+    fn search_space_scope_deserializes_frontend_space_id() {
+        let scope: SearchScope = serde_json::from_value(serde_json::json!({
+            "kind": "space",
+            "spaceId": "space-develop"
+        }))
+        .expect("deserialize frontend search scope payload");
+        match scope {
+            SearchScope::Space { space_id } => {
+                assert_eq!(space_id.as_deref(), Some("space-develop"));
+            }
+            SearchScope::Project => panic!("expected Space scope"),
+        }
+    }
 }

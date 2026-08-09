@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod db;
+pub mod knowledge;
 pub mod reindex;
 pub mod search;
 pub mod update;
@@ -978,6 +979,13 @@ impl IndexState {
         }
         pools.insert(key.clone(), pool.clone());
         Ok(pool)
+    }
+
+    /// Return only an already-open pool. Read-only snapshot surfaces use this
+    /// to avoid creating or migrating derived storage as a side effect of an
+    /// open/search gesture.
+    pub(crate) async fn existing_pool(&self, key: &IndexKey) -> Option<SqlitePool> {
+        self.pools.lock().await.get(key).cloned()
     }
 
     /// Get (or create) the runtime backlink index for this key. Lazy-build:

@@ -295,6 +295,7 @@ pub(crate) struct IndexedEntry {
     pub is_entry_head: bool,
     pub fields_json: String,
     pub body_preview: String,
+    pub knowledge: crate::index::knowledge::KnowledgeArtifact,
 }
 
 /// Build an `IndexedEntry` using precomputed runtime date overrides when
@@ -351,7 +352,7 @@ pub(crate) fn build_entry_with_dates(
                 None,
                 None,
                 "{}".to_string(),
-                raw,
+                raw.clone(),
             ),
         };
 
@@ -368,6 +369,9 @@ pub(crate) fn build_entry_with_dates(
     };
     let in_collection = collection_root_path.is_some();
 
+    let knowledge =
+        crate::index::knowledge::build_artifact(&rel_path, &title, &updated, &raw, &body_preview);
+
     Ok(IndexedEntry {
         parent_path: parent_path_for(&rel_path)?,
         rel_path,
@@ -382,6 +386,7 @@ pub(crate) fn build_entry_with_dates(
         is_entry_head: true,
         fields_json,
         body_preview,
+        knowledge,
     })
 }
 
@@ -634,6 +639,11 @@ pub async fn full_reindex(
         }
     }
 
+    let knowledge_artifacts = entries
+        .iter()
+        .map(|entry| entry.knowledge.clone())
+        .collect::<Vec<_>>();
+
     // ── Phase 2: short pure-SQL transaction ──────────────────────────────
     let mut tx = pool.begin().await?;
 
@@ -642,6 +652,8 @@ pub async fn full_reindex(
     sqlx::query("DELETE FROM routine_owner_roots")
         .execute(&mut *tx)
         .await?;
+
+    crate::index::knowledge::replace_all(&mut tx, &knowledge_artifacts, 0, entries_skipped).await?;
 
     for entry in &entries {
         upsert_entry(&mut *tx, entry).await?;

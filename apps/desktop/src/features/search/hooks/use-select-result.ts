@@ -13,21 +13,27 @@ import * as m from "@/paraglide/messages.js";
 // `ready+missing-file` toast land with Phase 7 §Q8 (cross-space links).
 export function useSelectResult({
   onBeforeNavigation,
+  onAfterNavigation,
 }: {
   onBeforeNavigation?: () => Promise<boolean>;
+  onAfterNavigation?: () => void;
 } = {}) {
   const spaces = useSpace((s) => s.spaces);
   const activeRootId = useSpace((s) => s.activeRootId);
+  const activeRootPath = useSpace((s) => s.activeRootPath);
   const openSpace = useSpace((s) => s.openSpace);
   const clearActiveSpace = useSpace((s) => s.clearActiveSpace);
   const openDocument = useOpenEntryDocument();
   const setOpen = useCommandPaletteStore((s) => s.setOpen);
 
   return useCallback(
-    async (item: SearchItem) => {
+    async (item: SearchNavigationTarget) => {
+      const targetSpace =
+        item.spaceId === null
+          ? null
+          : spaces.find((space) => space.id === item.spaceId);
       if (item.spaceId !== null) {
-        const target = spaces.find((s) => s.id === item.spaceId);
-        if (!target || target.status !== "ready") {
+        if (!targetSpace || targetSpace.status !== "ready") {
           toast.error(m.search_space_unavailable({ name: item.spaceName }));
           return;
         }
@@ -44,23 +50,37 @@ export function useSelectResult({
       }
 
       const targetSpaceId = item.spaceId === null ? activeRootId : item.spaceId;
+      const targetSpacePath =
+        item.spaceId === null ? activeRootPath : targetSpace?.path;
+      if (!targetSpacePath) {
+        toast.error(m.search_space_unavailable({ name: item.spaceName }));
+        return;
+      }
       openDocument(
-        joinAbs(item.spacePath, item.path),
+        joinAbs(targetSpacePath, item.path),
         targetSpaceId ?? undefined,
         {
           reveal: true,
         },
       );
       setOpen(false);
+      onAfterNavigation?.();
     },
     [
       spaces,
       activeRootId,
+      activeRootPath,
       clearActiveSpace,
       onBeforeNavigation,
+      onAfterNavigation,
       openSpace,
       openDocument,
       setOpen,
     ],
   );
 }
+
+export type SearchNavigationTarget = Pick<
+  SearchItem,
+  "spaceId" | "spaceName" | "path"
+>;

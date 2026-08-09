@@ -5,9 +5,13 @@ import type {
   AgentSessionOpenRequest,
   AgentSessionOpenTarget,
 } from "@/features/agent-sessions";
+import type {
+  KnowledgeGraphOpenRequest,
+  KnowledgeGraphState,
+} from "@/features/knowledge";
 
 type SettingsDialog = "app" | "space" | null;
-export type MainSurface = "content" | "inbox" | "sessions";
+export type MainSurface = "content" | "inbox" | "sessions" | "graph";
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "svode:shell:sidebar-width";
 
@@ -22,6 +26,8 @@ interface ShellState {
   mainSurface: MainSurface;
   agentSessionOpenRequest: AgentSessionOpenRequest | null;
   nextAgentSessionOpenRequestKey: number;
+  knowledgeGraphOpenRequest: KnowledgeGraphOpenRequest | null;
+  nextKnowledgeGraphOpenRequestKey: number;
   sidebarWidth: number;
 
   toggleChatPanel: () => void;
@@ -33,6 +39,7 @@ interface ShellState {
   openContentSurface: () => void;
   openInboxSurface: () => void;
   openSessionsSurface: (target?: AgentSessionOpenTarget) => void;
+  openGraphSurface: (state: KnowledgeGraphState) => void;
 }
 
 function clampSidebarWidth(width: number) {
@@ -76,6 +83,8 @@ export const useShellStore = create<ShellState>((set) => ({
   mainSurface: "content",
   agentSessionOpenRequest: null,
   nextAgentSessionOpenRequestKey: 1,
+  knowledgeGraphOpenRequest: null,
+  nextKnowledgeGraphOpenRequestKey: 1,
   sidebarWidth: readStoredSidebarWidth(),
 
   toggleChatPanel: () => {
@@ -118,4 +127,14 @@ export const useShellStore = create<ShellState>((set) => ({
           state.nextAgentSessionOpenRequestKey + 1,
       };
     }),
+  openGraphSurface: (graphState) =>
+    set((state) => ({
+      knowledgeGraphOpenRequest: {
+        ...graphState,
+        requestKey: state.nextKnowledgeGraphOpenRequestKey,
+      },
+      nextKnowledgeGraphOpenRequestKey:
+        state.nextKnowledgeGraphOpenRequestKey + 1,
+      mainSurface: "graph",
+    })),
 }));

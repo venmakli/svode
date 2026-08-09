@@ -14,7 +14,7 @@ import { cn } from "@/shared/lib/utils";
 import { NavSpaces } from "./nav-spaces";
 import * as m from "@/paraglide/messages.js";
 
-type MainSurface = "content" | "inbox" | "sessions";
+type MainSurface = "content" | "inbox" | "sessions" | "graph";
 
 interface SpaceSidebarProps {
   identityName: string | null;
