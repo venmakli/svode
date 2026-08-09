@@ -19,7 +19,8 @@ pub async fn call_tool_with_context(
     // Freeze the desktop active context for the whole request. Authorization
     // and the handler must resolve the same active Space even if the user
     // changes selection while the tool call is in flight.
-    let request_context = resolved_context.or_else(|| app.state::<ActiveProjectState>().get());
+    let request_context =
+        freeze_request_context(resolved_context, &app.state::<ActiveProjectState>());
 
     if let Some(context) = request_context {
         return match MCP_CONTEXT_OVERRIDE
@@ -35,6 +36,13 @@ pub async fn call_tool_with_context(
         Ok(result) => result,
         Err(error) => ToolCallResult::business_error(error),
     }
+}
+
+fn freeze_request_context(
+    resolved_context: Option<ActiveProjectContext>,
+    active_state: &ActiveProjectState,
+) -> Option<ActiveProjectContext> {
+    resolved_context.or_else(|| active_state.get())
 }
 
 async fn call_tool_inner(
@@ -60,6 +68,13 @@ async fn call_tool_inner(
                 collections::convert_to_collection(&app, decode(args)?).await
             }
             "search_documents" => documents::search_documents(&app, decode(args)?).await,
+            "search_knowledge" => knowledge::search_knowledge(&app, decode(args)?).await,
+            "get_knowledge_node" => knowledge::get_knowledge_node(&app, decode(args)?).await,
+            "get_knowledge_neighbors" => {
+                knowledge::get_knowledge_neighbors(&app, decode(args)?).await
+            }
+            "get_related_context" => knowledge::get_related_context(&app, decode(args)?).await,
+            "get_knowledge_status" => knowledge::get_knowledge_status(&app, decode(args)?).await,
             "list_collections" => collections::list_collections(&app, decode(args)?).await,
             "get_collection_schema" => {
                 collections::get_collection_schema(&app, decode(args)?).await
@@ -285,6 +300,55 @@ async fn authorize_mutating_tool(
     paths.dedup();
     crate::git::access::require_repository_mutation_paths(app, paths.clone()).await?;
     Ok(Some(paths))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn context(space_id: &str) -> ActiveProjectContext {
+        ActiveProjectContext {
+            project_path: "/project".to_string(),
+            active_space_id: Some(space_id.to_string()),
+            active_space_path: format!("/project/{space_id}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn desktop_selection_change_does_not_replace_frozen_request_context() {
+        let state = ActiveProjectState::new();
+        state.set(context("first"));
+        let frozen = freeze_request_context(None, &state);
+
+        MCP_CONTEXT_OVERRIDE
+            .scope(frozen, async {
+                state.set(context("second"));
+                assert_eq!(
+                    MCP_CONTEXT_OVERRIDE
+                        .try_with(Clone::clone)
+                        .unwrap()
+                        .unwrap()
+                        .active_space_id
+                        .as_deref(),
+                    Some("first")
+                );
+                assert_eq!(
+                    state.get().unwrap().active_space_id.as_deref(),
+                    Some("second")
+                );
+            })
+            .await;
+    }
+
+    #[test]
+    fn explicit_caller_context_wins_over_desktop_selection() {
+        let state = ActiveProjectState::new();
+        state.set(context("desktop"));
+
+        let frozen = freeze_request_context(Some(context("caller")), &state).unwrap();
+
+        assert_eq!(frozen.active_space_id.as_deref(), Some("caller"));
+    }
 }
 
 async fn extend_entry_move_plan(

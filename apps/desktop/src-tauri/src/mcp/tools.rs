@@ -172,6 +172,72 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
+            "search_knowledge",
+            "Search the prepared Svode Knowledge projection. Defaults to the frozen caller Space; use scope project only for explicit cross-Space discovery.",
+            schema(
+                &[
+                    knowledge_scope(),
+                    space_id(),
+                    str_req("query"),
+                    bounded_int_opt("limit", 1, 50),
+                    knowledge_kinds_opt("nodeKinds"),
+                ],
+                &["query"],
+            ),
+            read_only_ann(),
+            None,
+        ),
+        def(
+            "get_knowledge_node",
+            "Return one Knowledge node with its bounded summary, public source pointer, freshness, and provenance.",
+            schema(
+                &[knowledge_scope(), space_id(), str_req("nodeId")],
+                &["nodeId"],
+            ),
+            read_only_ann(),
+            None,
+        ),
+        def(
+            "get_knowledge_neighbors",
+            "Return only direct explicit Knowledge neighbors of one node, with bounded filters and limit. This tool never performs multi-hop traversal.",
+            schema(
+                &[
+                    knowledge_scope(),
+                    space_id(),
+                    str_req("nodeId"),
+                    bounded_int_opt("limit", 1, 100),
+                    knowledge_edge_kinds_opt(),
+                ],
+                &["nodeId"],
+            ),
+            read_only_ann(),
+            None,
+        ),
+        def(
+            "get_related_context",
+            "Assemble a compact Knowledge context pack from relevant fragments and their direct explicit neighbors under a hard UTF-8 text budget.",
+            schema(
+                &[
+                    knowledge_scope(),
+                    space_id(),
+                    str_req("query"),
+                    bounded_int_opt("limit", 1, 20),
+                    bounded_int_opt("textBudget", 1, 16_000),
+                    knowledge_kinds_opt("nodeKinds"),
+                ],
+                &["query"],
+            ),
+            read_only_ann(),
+            None,
+        ),
+        def(
+            "get_knowledge_status",
+            "Return per-scope prepared Knowledge counts, freshness, truncation, and skipped or failed pool diagnostics without rebuilding indexes.",
+            schema(&[knowledge_scope(), space_id()], &[]),
+            read_only_ann(),
+            None,
+        ),
+        def(
             "list_collections",
             "List collections in a space.",
             schema(&[space_id()], &[]),
@@ -610,6 +676,56 @@ fn space_id() -> (&'static str, Value) {
     (
         "spaceId",
         json!({"type": ["string", "null"], "description": "Svode MCP space id. Use \"root\" for the project root, a child id from list_spaces for a child space, or null/omit for the active/default space."}),
+    )
+}
+
+fn knowledge_scope() -> (&'static str, Value) {
+    (
+        "scope",
+        json!({
+            "type": ["string", "null"],
+            "enum": ["space", "project", null],
+            "description": "Knowledge scope. Omit/null for the bounded frozen caller Space; use project only for explicit cross-Space discovery."
+        }),
+    )
+}
+
+fn knowledge_kinds_opt(name: &'static str) -> (&'static str, Value) {
+    (
+        name,
+        json!({
+            "type": ["array", "null"],
+            "items": {
+                "type": "string",
+                "enum": ["document", "collection", "entry", "agent_instruction", "skill"]
+            },
+            "uniqueItems": true,
+        }),
+    )
+}
+
+fn knowledge_edge_kinds_opt() -> (&'static str, Value) {
+    (
+        "edgeKinds",
+        json!({
+            "type": ["array", "null"],
+            "items": {
+                "type": "string",
+                "enum": ["links_to", "relation", "member_of", "references"]
+            },
+            "uniqueItems": true,
+        }),
+    )
+}
+
+fn bounded_int_opt(name: &'static str, minimum: usize, maximum: usize) -> (&'static str, Value) {
+    (
+        name,
+        json!({
+            "type": ["integer", "null"],
+            "minimum": minimum,
+            "maximum": maximum,
+        }),
     )
 }
 
@@ -1101,6 +1217,68 @@ mod tests {
         assert!(definition.description.contains("markdownUrl"));
         assert!(guide_text().contains("Managed file assets"));
         assert!(guide_text().contains("AGENTS.md"));
+    }
+
+    #[test]
+    fn knowledge_tools_are_bounded_read_only_and_publish_strict_schemas() {
+        let definitions = definitions();
+        let knowledge_names = [
+            "search_knowledge",
+            "get_knowledge_node",
+            "get_knowledge_neighbors",
+            "get_related_context",
+            "get_knowledge_status",
+        ];
+        for name in knowledge_names {
+            let definition = definitions
+                .iter()
+                .find(|definition| definition.name == name)
+                .unwrap_or_else(|| panic!("missing {name}"));
+            assert_eq!(
+                definition.annotations.as_ref().unwrap().read_only_hint,
+                Some(true),
+                "{name} must stay read-only"
+            );
+            assert_eq!(definition.input_schema["type"], "object");
+            assert_eq!(definition.input_schema["additionalProperties"], false);
+            assert_eq!(
+                definition.input_schema["properties"]["scope"]["enum"],
+                json!(["space", "project", null])
+            );
+            assert!(definition.output_schema.is_none());
+            assert_eq!(is_mutating_tool(name), Some(false));
+        }
+
+        let search = definitions
+            .iter()
+            .find(|definition| definition.name == "search_knowledge")
+            .unwrap();
+        assert_eq!(search.input_schema["properties"]["limit"]["maximum"], 50);
+        let neighbors = definitions
+            .iter()
+            .find(|definition| definition.name == "get_knowledge_neighbors")
+            .unwrap();
+        assert_eq!(
+            neighbors.input_schema["properties"]["limit"]["maximum"],
+            100
+        );
+        let related = definitions
+            .iter()
+            .find(|definition| definition.name == "get_related_context")
+            .unwrap();
+        assert_eq!(
+            related.input_schema["properties"]["textBudget"]["maximum"],
+            16_000
+        );
+        assert!(!definitions.iter().any(|definition| {
+            matches!(
+                definition.name,
+                "rebuild_knowledge"
+                    | "mutate_knowledge"
+                    | "get_knowledge_path"
+                    | "explain_knowledge_connection"
+            )
+        }));
     }
 
     #[test]

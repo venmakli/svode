@@ -34,6 +34,7 @@ mod collections;
 mod context;
 mod dispatch;
 mod documents;
+mod knowledge;
 #[path = "service/project.rs"]
 mod project_tools;
 

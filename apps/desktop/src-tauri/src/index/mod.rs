@@ -955,7 +955,7 @@ impl IndexState {
         let _guard = lock.lock().await;
         flag.store(true, Ordering::SeqCst);
         let _flag_guard = ReindexActiveGuard(flag);
-        reindex::full_reindex(&pool, &dir, &skip).await
+        reindex::full_reindex_for_target(&pool, key.project(), &dir, &skip).await
     }
 
     /// Get an existing pool for the key, or open one (creating the DB

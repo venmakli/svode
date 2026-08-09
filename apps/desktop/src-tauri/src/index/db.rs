@@ -40,7 +40,10 @@ use crate::error::AppError;
 /// Bumped to 11 in Stage 7 Phase 8.2: generalizes the projection to logical
 /// Collections, entries and project Agent Context artifacts, typed explicit
 /// edges, safe provenance and fragment source locations.
-const SCHEMA_VERSION: i64 = 11;
+///
+/// Bumped to 12 in Stage 7 Phase 8.3: stores target-specific Agent Context
+/// applicability without duplicating inherited root artifacts in child pools.
+const SCHEMA_VERSION: i64 = 12;
 
 /// Create a connection pool for a space's index database.
 /// Ensures the parent directory exists and enables WAL mode.
@@ -99,6 +102,7 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         "DROP TABLE IF EXISTS routine_event_queue",
         "DROP TABLE IF EXISTS knowledge_links",
         "DROP TABLE IF EXISTS knowledge_fragments",
+        "DROP TABLE IF EXISTS knowledge_agent_applicability",
         "DROP TABLE IF EXISTS knowledge_documents",
         "DROP TABLE IF EXISTS knowledge_manifest",
     ];
@@ -321,6 +325,15 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         "CREATE INDEX IF NOT EXISTS idx_knowledge_links_source ON knowledge_links(source_path)",
         "CREATE INDEX IF NOT EXISTS idx_knowledge_links_target ON knowledge_links(target_scope, target_path)",
         "CREATE INDEX IF NOT EXISTS idx_knowledge_links_kind_source ON knowledge_links(edge_kind, source_path)",
+        r#"
+        CREATE TABLE IF NOT EXISTS knowledge_agent_applicability (
+            source_scope TEXT NOT NULL CHECK (source_scope IN ('current', 'root')),
+            source_path TEXT NOT NULL,
+            node_kind TEXT NOT NULL CHECK (node_kind IN ('agent_instruction', 'skill')),
+            provenance_json TEXT NOT NULL,
+            PRIMARY KEY (source_scope, source_path, node_kind)
+        )
+        "#,
         r#"
         CREATE TABLE IF NOT EXISTS knowledge_manifest (
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),

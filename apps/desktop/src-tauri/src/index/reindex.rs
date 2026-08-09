@@ -623,8 +623,18 @@ fn build_asset(space_dir: &Path, abs_path: &Path) -> Result<IndexedAsset, AppErr
 /// - Per-file build failures (unreadable file, invalid repo path) are logged
 ///   and skipped *without* aborting the tx. Malformed frontmatter is indexed as
 ///   plain markdown with synthesized runtime metadata.
+#[cfg(test)]
 pub async fn full_reindex(
     pool: &SqlitePool,
+    space_dir: &Path,
+    skip_top_level: &[String],
+) -> Result<(), AppError> {
+    full_reindex_for_target(pool, space_dir, space_dir, skip_top_level).await
+}
+
+pub async fn full_reindex_for_target(
+    pool: &SqlitePool,
+    project_dir: &Path,
     space_dir: &Path,
     skip_top_level: &[String],
 ) -> Result<(), AppError> {
@@ -713,10 +723,14 @@ pub async fn full_reindex(
             }
         }
     }
-    match crate::agent_context::projection::project_knowledge_projection(space_dir).await {
+    let mut agent_applicability = Vec::new();
+    match crate::agent_context::projection::target_knowledge_projection(project_dir, space_dir)
+        .await
+    {
         Ok(projected) => {
             let agent_context_paths = projected
                 .iter()
+                .filter(|artifact| artifact.owner_scope == "current")
                 .flat_map(|artifact| {
                     std::iter::once(&artifact.source_path).chain(artifact.aliases.iter())
                 })
@@ -726,8 +740,14 @@ pub async fn full_reindex(
             knowledge_artifacts.extend(
                 projected
                     .iter()
+                    .filter(|artifact| artifact.owner_scope == "current")
                     .map(crate::index::knowledge::build_agent_artifact),
             );
+            agent_applicability = projected
+                .iter()
+                .filter(|artifact| artifact.is_effectively_applicable())
+                .map(crate::index::knowledge::build_agent_applicability)
+                .collect();
         }
         Err(error) => {
             knowledge_failures += 1;
@@ -748,6 +768,7 @@ pub async fn full_reindex(
     crate::index::knowledge::replace_all(
         &mut tx,
         &knowledge_artifacts,
+        &agent_applicability,
         0,
         entries_skipped + knowledge_failures,
     )

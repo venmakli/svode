@@ -4,7 +4,9 @@ use std::path::Path;
 use crate::error::AppError;
 use crate::git::dates::derive_date_overrides;
 use crate::index::normalize_rel_result;
-use crate::index::reindex::{build_entry_with_dates, full_reindex, upsert_entry};
+#[cfg(test)]
+use crate::index::reindex::full_reindex;
+use crate::index::reindex::{build_entry_with_dates, upsert_entry};
 use crate::index::{IndexKey, IndexState};
 use crate::routines::CollectionEventOrigin;
 
@@ -237,18 +239,42 @@ pub async fn refresh_agent_context_projection(
         .key_for_space_dir(space_dir)
         .await
         .unwrap_or_else(|| IndexKey::Root(space_dir.to_path_buf()));
-    let pool = state.get_or_create(&key).await?;
-    let lock = state.reindex_lock(&key).await;
-    let _guard = lock.lock().await;
-    let projected =
-        crate::agent_context::projection::project_knowledge_projection(space_dir).await?;
-    let artifacts = projected
-        .iter()
-        .map(crate::index::knowledge::build_agent_artifact)
-        .collect::<Vec<_>>();
-    let mut transaction = pool.begin().await?;
-    crate::index::knowledge::replace_agent_context(&mut transaction, &artifacts).await?;
-    transaction.commit().await?;
+    let keys = if matches!(&key, IndexKey::Root(_)) {
+        state.keys_for_project(&key.project().to_path_buf()).await
+    } else {
+        vec![key]
+    };
+    for key in keys {
+        let Some(pool) = state.existing_pool(&key).await else {
+            continue;
+        };
+        let target_dir = state.dir_for_key(&key).await?;
+        let lock = state.reindex_lock(&key).await;
+        let _guard = lock.lock().await;
+        let projected = crate::agent_context::projection::target_knowledge_projection(
+            key.project(),
+            &target_dir,
+        )
+        .await?;
+        let artifacts = projected
+            .iter()
+            .filter(|artifact| artifact.owner_scope == "current")
+            .map(crate::index::knowledge::build_agent_artifact)
+            .collect::<Vec<_>>();
+        let applicability = projected
+            .iter()
+            .filter(|artifact| artifact.is_effectively_applicable())
+            .map(crate::index::knowledge::build_agent_applicability)
+            .collect::<Vec<_>>();
+        let mut transaction = pool.begin().await?;
+        crate::index::knowledge::replace_agent_context(
+            &mut transaction,
+            &artifacts,
+            &applicability,
+        )
+        .await?;
+        transaction.commit().await?;
+    }
     Ok(())
 }
 
@@ -381,7 +407,7 @@ pub async fn reindex_after_pull(
 
     if schema_changed {
         let skip = state.skip_folders_for(key).await;
-        full_reindex(&pool, &dir, &skip).await?;
+        crate::index::reindex::full_reindex_for_target(&pool, key.project(), &dir, &skip).await?;
     }
     Ok(())
 }

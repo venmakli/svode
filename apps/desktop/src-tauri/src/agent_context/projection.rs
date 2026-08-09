@@ -24,6 +24,7 @@ pub struct ProjectKnowledgeReference {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectKnowledgeArtifact {
+    pub owner_scope: String,
     pub kind: String,
     pub source_path: String,
     pub canonical_source_path: String,
@@ -37,35 +38,55 @@ pub struct ProjectKnowledgeArtifact {
     pub truncated: bool,
 }
 
-/// Owner facade for the normalized, project-only Agent Context projection.
-/// Consumers never see scanner internals or personal/system/vendor sources.
-pub async fn project_knowledge_projection(
-    space_root: &Path,
+impl ProjectKnowledgeArtifact {
+    /// A canonical source is effective for the target when at least one
+    /// supported native adapter proves it available. Shadowed, recognized-only
+    /// and compatibility-unknown candidates remain project-wide inventory but
+    /// are not part of the target's effective MCP scope.
+    pub fn is_effectively_applicable(&self) -> bool {
+        self.availability.iter().any(|value| value == "available")
+    }
+}
+
+/// Prepared, target-specific Agent Context projection. This is called only by
+/// existing index write paths; Knowledge reads consume the materialized rows.
+pub async fn target_knowledge_projection(
+    project_root: &Path,
+    target_root: &Path,
 ) -> Result<Vec<ProjectKnowledgeArtifact>, AppError> {
     let environment = system_registry_environment().await?;
-    let root = space_root.to_path_buf();
-    let scan_root = root.clone();
+    let project = project_root.to_path_buf();
+    let target = target_root.to_path_buf();
+    let scan_project = project.clone();
+    let scan_target = target.clone();
     let content = tokio::task::spawn_blocking(move || {
-        super::scanner::scan(&scan_root, &scan_root, &environment)
+        super::scanner::scan(&scan_project, &scan_target, &environment)
     })
     .await
     .map_err(|error| {
         AppError::General(format!("agent context projection task failed: {error}"))
     })??;
-    normalize_project_snapshot(&root, &content)
+    normalize_project_snapshot(&project, &target, &content)
 }
 
 fn normalize_project_snapshot(
-    space_root: &Path,
+    project_root: &Path,
+    target_root: &Path,
     content: &AgentContextSnapshotContent,
 ) -> Result<Vec<ProjectKnowledgeArtifact>, AppError> {
-    let canonical_root = space_root.canonicalize().map_err(|error| {
+    let canonical_project = project_root.canonicalize().map_err(|error| {
         AppError::General(format!(
             "could not canonicalize Agent Context projection root {}: {error}",
-            space_root.display()
+            project_root.display()
         ))
     })?;
-    let mut rows = BTreeMap::<(String, String), Accumulator>::new();
+    let canonical_target = target_root.canonicalize().map_err(|error| {
+        AppError::General(format!(
+            "could not canonicalize Agent Context projection target {}: {error}",
+            target_root.display()
+        ))
+    })?;
+    let mut rows = BTreeMap::<(String, String, String), Accumulator>::new();
 
     for instruction in &content.instructions {
         if instruction.owner.kind != InstructionOwnerKind::TargetSpace
@@ -79,14 +100,23 @@ fn normalize_project_snapshot(
         let Some(canonical_path) = instruction.canonical_path.as_deref() else {
             continue;
         };
-        let Some(source_path) = safe_relative_file(&canonical_root, canonical_path) else {
+        let Some((owner_scope, owner_root, source_path)) = projection_location(
+            &canonical_project,
+            &canonical_target,
+            Path::new(canonical_path),
+        ) else {
             continue;
         };
         let Some(preview) = instruction.preview.as_ref() else {
             continue;
         };
-        let key = ("agent_instruction".to_string(), source_path.clone());
+        let key = (
+            owner_scope.to_string(),
+            "agent_instruction".to_string(),
+            source_path.clone(),
+        );
         let row = rows.entry(key).or_insert_with(|| Accumulator {
+            owner_scope: owner_scope.to_string(),
             kind: "agent_instruction".to_string(),
             source_path: source_path.clone(),
             canonical_source_path: source_path.clone(),
@@ -99,7 +129,7 @@ fn normalize_project_snapshot(
             references: BTreeSet::new(),
             truncated: preview.truncated,
         });
-        if let Some(alias) = safe_alias_file(&canonical_root, &instruction.path) {
+        if let Some(alias) = safe_alias_file(owner_root, &instruction.path) {
             row.aliases.insert(alias);
         }
         row.availability
@@ -119,7 +149,7 @@ fn normalize_project_snapshot(
             let Some(canonical_reference) = reference.canonical_path.as_deref() else {
                 continue;
             };
-            let Some(path) = safe_relative_file(&canonical_root, canonical_reference) else {
+            let Some(path) = safe_relative_file(owner_root, canonical_reference) else {
                 continue;
             };
             row.references
@@ -132,7 +162,9 @@ fn normalize_project_snapshot(
             continue;
         }
         let canonical_manifest = Path::new(&skill.canonical_path).join("SKILL.md");
-        let Some(source_path) = safe_relative_path(&canonical_root, &canonical_manifest) else {
+        let Some((owner_scope, owner_root, source_path)) =
+            projection_location(&canonical_project, &canonical_target, &canonical_manifest)
+        else {
             continue;
         };
         let project_aliases = skill
@@ -140,14 +172,19 @@ fn normalize_project_snapshot(
             .iter()
             .filter(|alias| alias.scope == SkillScope::Project)
             .filter_map(|alias| {
-                safe_alias_path(&canonical_root, &Path::new(&alias.path).join("SKILL.md"))
+                safe_alias_path(owner_root, &Path::new(&alias.path).join("SKILL.md"))
             })
             .collect::<Vec<_>>();
         if project_aliases.is_empty() {
             continue;
         }
-        let key = ("skill".to_string(), source_path.clone());
+        let key = (
+            owner_scope.to_string(),
+            "skill".to_string(),
+            source_path.clone(),
+        );
         let row = rows.entry(key).or_insert_with(|| Accumulator {
+            owner_scope: owner_scope.to_string(),
             kind: "skill".to_string(),
             source_path: source_path.clone(),
             canonical_source_path: source_path.clone(),
@@ -166,7 +203,7 @@ fn normalize_project_snapshot(
             .filter(|alias| alias.scope == SkillScope::Project)
         {
             if let Some(path) =
-                safe_alias_path(&canonical_root, &Path::new(&alias.path).join("SKILL.md"))
+                safe_alias_path(owner_root, &Path::new(&alias.path).join("SKILL.md"))
             {
                 row.aliases.insert(path);
             }
@@ -184,6 +221,7 @@ fn normalize_project_snapshot(
 }
 
 struct Accumulator {
+    owner_scope: String,
     kind: String,
     source_path: String,
     canonical_source_path: String,
@@ -200,6 +238,7 @@ struct Accumulator {
 impl Accumulator {
     fn finish(self) -> ProjectKnowledgeArtifact {
         ProjectKnowledgeArtifact {
+            owner_scope: self.owner_scope,
             kind: self.kind,
             source_path: self.source_path,
             canonical_source_path: self.canonical_source_path,
@@ -217,6 +256,23 @@ impl Accumulator {
             truncated: self.truncated,
         }
     }
+}
+
+fn projection_location<'a>(
+    project_root: &'a Path,
+    target_root: &'a Path,
+    path: &Path,
+) -> Option<(&'static str, &'a Path, String)> {
+    let canonical = path.canonicalize().ok()?;
+    if canonical.starts_with(target_root) {
+        let relative = repo_relative_from_base(target_root, &canonical, RootMode::Reject).ok()?;
+        return Some(("current", target_root, relative));
+    }
+    if canonical.starts_with(project_root) {
+        let relative = repo_relative_from_base(project_root, &canonical, RootMode::Reject).ok()?;
+        return Some(("root", project_root, relative));
+    }
+    None
 }
 
 fn safe_relative_file(root: &Path, path: &str) -> Option<String> {
@@ -333,9 +389,14 @@ mod tests {
             observed_personal_paths: Vec::new(),
         };
 
-        let projected = normalize_project_snapshot(temp.path(), &content).unwrap();
+        let projected = normalize_project_snapshot(temp.path(), temp.path(), &content).unwrap();
         assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].owner_scope, "current");
         assert_eq!(projected[0].source_path, "AGENTS.md");
         assert_eq!(projected[0].discovery.len(), 2);
+        assert!(projected[0].is_effectively_applicable());
+        let mut shadowed = projected[0].clone();
+        shadowed.availability = vec!["shadowed".to_string()];
+        assert!(!shadowed.is_effectively_applicable());
     }
 }

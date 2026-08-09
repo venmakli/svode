@@ -25,6 +25,10 @@ const MAX_EDGE_LIMIT: usize = 2_000;
 const MAX_SEARCH_LIMIT: usize = 100;
 const MAX_NEIGHBOR_LIMIT: usize = 100;
 const MAX_INCOMING_LINK_SCAN: usize = 2_000;
+const MAX_RELATED_CONTEXT_ITEMS: usize = 20;
+const MAX_RELATED_CONTEXT_BYTES: usize = 16_000;
+const MAX_RELATED_NEIGHBORS: usize = 100;
+const RELATED_NEIGHBORS_PER_ITEM: usize = 5;
 const NODE_KINDS: [&str; 5] = [
     "document",
     "collection",
@@ -69,6 +73,15 @@ pub(crate) struct KnowledgeEdgeArtifact {
     pub location_path: String,
     pub byte_start: i64,
     pub byte_end: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeAgentApplicability {
+    pub source_scope: String,
+    pub source_path: String,
+    pub node_kind: String,
+    pub provenance: serde_json::Value,
 }
 
 pub(crate) fn build_file_artifact(
@@ -192,16 +205,32 @@ pub(crate) fn build_agent_artifact(projection: &ProjectKnowledgeArtifact) -> Kno
         &projection.source_updated_at,
         &projection.text,
         &projection.source_path,
-        serde_json::json!({
-            "canonicalSourcePath": projection.canonical_source_path,
-            "aliases": projection.aliases,
-            "availability": projection.availability,
-            "discovery": projection.discovery,
-            "truncated": projection.truncated,
-        }),
+        agent_provenance(projection),
         projection.text.clone(),
         edges,
     )
+}
+
+pub(crate) fn build_agent_applicability(
+    projection: &ProjectKnowledgeArtifact,
+) -> KnowledgeAgentApplicability {
+    KnowledgeAgentApplicability {
+        source_scope: projection.owner_scope.clone(),
+        source_path: projection.source_path.clone(),
+        node_kind: projection.kind.clone(),
+        provenance: agent_provenance(projection),
+    }
+}
+
+fn agent_provenance(projection: &ProjectKnowledgeArtifact) -> serde_json::Value {
+    serde_json::json!({
+        "canonicalSourcePath": projection.canonical_source_path,
+        "aliases": projection.aliases,
+        "availability": projection.availability,
+        "discovery": projection.discovery,
+        "truncated": projection.truncated,
+        "scopeApplicability": if projection.owner_scope == "root" { "inherited" } else { "local" },
+    })
 }
 
 fn finish_artifact(
@@ -313,6 +342,7 @@ fn is_collection_readme(source_path: &str, collection_root: Option<&str>) -> boo
 pub(crate) async fn replace_all(
     tx: &mut Transaction<'_, Sqlite>,
     artifacts: &[KnowledgeArtifact],
+    applicability: &[KnowledgeAgentApplicability],
     skipped_count: usize,
     failure_count: usize,
 ) -> Result<(), AppError> {
@@ -325,6 +355,7 @@ pub(crate) async fn replace_all(
     sqlx::query("DELETE FROM knowledge_documents")
         .execute(&mut **tx)
         .await?;
+    replace_applicability(tx, applicability).await?;
     for artifact in artifacts {
         insert_artifact(tx, artifact).await?;
     }
@@ -334,6 +365,7 @@ pub(crate) async fn replace_all(
 pub(crate) async fn replace_agent_context(
     tx: &mut Transaction<'_, Sqlite>,
     artifacts: &[KnowledgeArtifact],
+    applicability: &[KnowledgeAgentApplicability],
 ) -> Result<bool, AppError> {
     let existing: Vec<(String, String)> = sqlx::query_as(
         "SELECT source_path, content_hash FROM knowledge_documents \
@@ -345,7 +377,8 @@ pub(crate) async fn replace_agent_context(
         .iter()
         .map(|artifact| (artifact.source_path.clone(), artifact.content_hash.clone()))
         .collect::<Vec<_>>();
-    if existing == next {
+    let existing_applicability = read_agent_applicability_tx(tx).await?;
+    if existing == next && existing_applicability == applicability {
         return Ok(false);
     }
     sqlx::query(
@@ -381,8 +414,68 @@ pub(crate) async fn replace_agent_context(
         }
         insert_artifact(tx, artifact).await?;
     }
+    replace_applicability(tx, applicability).await?;
     refresh_manifest_preserving_diagnostics(tx).await?;
     Ok(true)
+}
+
+async fn replace_applicability(
+    tx: &mut Transaction<'_, Sqlite>,
+    applicability: &[KnowledgeAgentApplicability],
+) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM knowledge_agent_applicability")
+        .execute(&mut **tx)
+        .await?;
+    for row in applicability {
+        sqlx::query(
+            "INSERT INTO knowledge_agent_applicability \
+             (source_scope,source_path,node_kind,provenance_json) VALUES (?,?,?,?)",
+        )
+        .bind(&row.source_scope)
+        .bind(&row.source_path)
+        .bind(&row.node_kind)
+        .bind(serde_json::to_string(&row.provenance).unwrap_or_else(|_| "{}".to_string()))
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn read_agent_applicability_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+) -> Result<Vec<KnowledgeAgentApplicability>, AppError> {
+    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT source_scope,source_path,node_kind,provenance_json \
+         FROM knowledge_agent_applicability ORDER BY source_scope,node_kind,source_path",
+    )
+    .fetch_all(&mut **tx)
+    .await?;
+    Ok(applicability_rows(rows))
+}
+
+pub async fn read_agent_applicability(
+    pool: &SqlitePool,
+) -> Result<Vec<KnowledgeAgentApplicability>, AppError> {
+    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT source_scope,source_path,node_kind,provenance_json \
+         FROM knowledge_agent_applicability ORDER BY source_scope,node_kind,source_path",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(applicability_rows(rows))
+}
+
+fn applicability_rows(
+    rows: Vec<(String, String, String, String)>,
+) -> Vec<KnowledgeAgentApplicability> {
+    rows.into_iter()
+        .map(|row| KnowledgeAgentApplicability {
+            source_scope: row.0,
+            source_path: row.1,
+            node_kind: row.2,
+            provenance: serde_json::from_str(&row.3).unwrap_or_else(|_| serde_json::json!({})),
+        })
+        .collect()
 }
 
 pub(crate) async fn upsert_artifact(
@@ -559,8 +652,16 @@ pub enum KnowledgeScope {
 pub struct KnowledgeFilters {
     pub node_kinds: Option<Vec<String>>,
     pub edge_kinds: Option<Vec<String>>,
+    #[serde(default)]
+    pub edge_source_kinds: Option<Vec<String>>,
     pub neighbor: Option<KnowledgeSource>,
     pub neighbor_limit: Option<usize>,
+    #[serde(default)]
+    pub source: Option<KnowledgeSource>,
+    #[serde(default)]
+    pub sources: Option<Vec<KnowledgeSource>>,
+    #[serde(default)]
+    pub edge_sources: Option<Vec<KnowledgeSource>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -605,6 +706,7 @@ pub struct KnowledgeEdge {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KnowledgeSearchItem {
+    pub rank: usize,
     pub node_id: String,
     pub source: KnowledgeSource,
     pub space_name: String,
@@ -613,6 +715,8 @@ pub struct KnowledgeSearchItem {
     pub location_path: Option<String>,
     pub line_start: Option<usize>,
     pub line_end: Option<usize>,
+    pub provenance: serde_json::Value,
+    pub snippet_truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -657,6 +761,40 @@ pub struct KnowledgeResponse {
     pub has_more_edges: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeContextItem {
+    pub node_id: String,
+    pub source: KnowledgeSource,
+    pub title: String,
+    pub text: String,
+    pub location_path: Option<String>,
+    pub line_start: Option<usize>,
+    pub line_end: Option<usize>,
+    pub provenance: serde_json::Value,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeContextNeighbor {
+    pub edge: KnowledgeEdge,
+    pub text: String,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeRelatedContext {
+    pub context: Vec<KnowledgeContextItem>,
+    pub neighbors: Vec<KnowledgeContextNeighbor>,
+    pub text_budget: usize,
+    pub used_budget: usize,
+    pub truncated: bool,
+    pub status: String,
+    pub diagnostics: Vec<KnowledgeDiagnostic>,
+}
+
 #[derive(Debug)]
 struct PoolNode {
     key: IndexKey,
@@ -696,6 +834,8 @@ struct PoolSearchItem {
     location_path: Option<String>,
     line_start: Option<i64>,
     line_end: Option<i64>,
+    provenance_json: String,
+    snippet_truncated: bool,
 }
 
 #[allow(dead_code)]
@@ -723,6 +863,571 @@ pub async fn read_project_snapshot(
         KnowledgeFilters::default(),
     )
     .await
+}
+
+/// Reads one physical Space pool plus the root-owned Agent Context artifacts that the
+/// prepared target-specific applicability map marks as effective for that Space.
+///
+/// This is the canonical backend read path for Space-scoped consumers. It never scans
+/// the filesystem or opens a missing pool; project-wide reads continue to use
+/// `read_project_snapshot_filtered` so root and child artifacts are returned once by
+/// their physical owner.
+#[allow(clippy::too_many_arguments)]
+pub async fn read_effective_space_snapshot_filtered(
+    state: &IndexState,
+    project: &Path,
+    space_id: Option<String>,
+    query: Option<&str>,
+    node_limit: usize,
+    edge_limit: usize,
+    search_limit: usize,
+    filters: KnowledgeFilters,
+) -> KnowledgeResponse {
+    let scope = KnowledgeScope::Space {
+        space_id: space_id.clone(),
+    };
+    let mut non_agent_filters = filters.clone();
+    non_agent_filters.node_kinds = Some(non_agent_kinds(filters.node_kinds.as_deref()));
+    non_agent_filters.edge_source_kinds =
+        Some(non_agent_kinds(filters.edge_source_kinds.as_deref()));
+    let mut primary = read_project_snapshot_filtered(
+        state,
+        project,
+        Some(scope.clone()),
+        query,
+        None,
+        None,
+        Some(node_limit),
+        Some(edge_limit),
+        Some(search_limit),
+        non_agent_filters,
+    )
+    .await;
+    let applicability = match state
+        .key_for_project_space_id(project, space_id.as_deref())
+        .await
+    {
+        Ok(key) => match state.existing_pool(&key).await {
+            Some(pool) => match read_agent_applicability(&pool).await {
+                Ok(rows) => rows,
+                Err(error) => {
+                    tracing::warn!(
+                        "prepared Agent Context applicability read failed for {:?}: {error}",
+                        space_id
+                    );
+                    primary.diagnostics.push(KnowledgeDiagnostic {
+                        space_id: space_id.clone(),
+                        code: "agent_applicability_unavailable".to_string(),
+                        message: "The prepared Agent Context scope could not be read".to_string(),
+                    });
+                    primary.status = combined_status(&primary).to_string();
+                    Vec::new()
+                }
+            },
+            None => Vec::new(),
+        },
+        Err(_) => Vec::new(),
+    };
+    let current_node_kinds = inherited_agent_kinds(filters.node_kinds.as_deref());
+    let current_edge_source_kinds = inherited_agent_kinds(filters.edge_source_kinds.as_deref());
+    let current_sources = applicability_sources(
+        &applicability,
+        "current",
+        space_id.as_deref(),
+        filters.source.as_ref(),
+        filters.sources.as_deref(),
+    );
+    let current_edge_sources = applicability_sources(
+        &applicability,
+        "current",
+        space_id.as_deref(),
+        None,
+        filters.edge_sources.as_deref(),
+    );
+    if (!current_node_kinds.is_empty() && !current_sources.is_empty())
+        || (!current_edge_source_kinds.is_empty() && !current_edge_sources.is_empty())
+    {
+        let mut current_filters = filters.clone();
+        current_filters.node_kinds = Some(current_node_kinds);
+        current_filters.edge_source_kinds = Some(current_edge_source_kinds);
+        current_filters.source = None;
+        current_filters.sources = Some(current_sources);
+        current_filters.edge_sources = Some(current_edge_sources);
+        let mut current = read_project_snapshot_filtered(
+            state,
+            project,
+            Some(scope),
+            query,
+            None,
+            None,
+            Some(node_limit),
+            Some(edge_limit),
+            Some(search_limit),
+            current_filters,
+        )
+        .await;
+        apply_prepared_applicability(&mut current, &applicability, "current", space_id.as_deref());
+        primary = merge_same_pool_responses(primary, current, node_limit, edge_limit, search_limit);
+    }
+    let Some(space_id) = space_id else {
+        return primary;
+    };
+
+    let inherited_node_kinds = inherited_agent_kinds(filters.node_kinds.as_deref());
+    let inherited_edge_source_kinds = inherited_agent_kinds(filters.edge_source_kinds.as_deref());
+    let inherited_sources = applicability_sources(
+        &applicability,
+        "root",
+        None,
+        filters.source.as_ref(),
+        filters.sources.as_deref(),
+    );
+    let inherited_edge_sources = applicability_sources(
+        &applicability,
+        "root",
+        None,
+        None,
+        filters.edge_sources.as_deref(),
+    );
+    if inherited_sources.is_empty()
+        || (inherited_node_kinds.is_empty() && inherited_edge_source_kinds.is_empty())
+    {
+        return primary;
+    }
+
+    let mut inherited_filters = filters;
+    inherited_filters.node_kinds = Some(inherited_node_kinds);
+    inherited_filters.edge_source_kinds = Some(inherited_edge_source_kinds);
+    inherited_filters.source = None;
+    inherited_filters.sources = Some(inherited_sources);
+    inherited_filters.edge_sources = Some(inherited_edge_sources);
+    let mut inherited = read_project_snapshot_filtered(
+        state,
+        project,
+        Some(KnowledgeScope::Space { space_id: None }),
+        query,
+        None,
+        None,
+        Some(node_limit),
+        Some(edge_limit),
+        Some(search_limit),
+        inherited_filters,
+    )
+    .await;
+    apply_prepared_applicability(&mut inherited, &applicability, "root", Some(&space_id));
+    merge_effective_responses(primary, inherited, node_limit, edge_limit, search_limit)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn read_scoped_snapshot_filtered(
+    state: &IndexState,
+    project: &Path,
+    scope: KnowledgeScope,
+    query: Option<&str>,
+    node_limit: usize,
+    edge_limit: usize,
+    search_limit: usize,
+    filters: KnowledgeFilters,
+) -> KnowledgeResponse {
+    match scope {
+        KnowledgeScope::Project => {
+            read_project_snapshot_filtered(
+                state,
+                project,
+                Some(KnowledgeScope::Project),
+                query,
+                None,
+                None,
+                Some(node_limit),
+                Some(edge_limit),
+                Some(search_limit),
+                filters,
+            )
+            .await
+        }
+        KnowledgeScope::Space { space_id } => {
+            read_effective_space_snapshot_filtered(
+                state,
+                project,
+                space_id,
+                query,
+                node_limit,
+                edge_limit,
+                search_limit,
+                filters,
+            )
+            .await
+        }
+    }
+}
+
+pub async fn read_related_context(
+    state: &IndexState,
+    project: &Path,
+    scope: KnowledgeScope,
+    query: &str,
+    limit: usize,
+    text_budget: usize,
+    node_kinds: Option<Vec<String>>,
+) -> KnowledgeRelatedContext {
+    let limit = limit.clamp(1, MAX_RELATED_CONTEXT_ITEMS);
+    let text_budget = text_budget.clamp(1, MAX_RELATED_CONTEXT_BYTES);
+    let mut response = read_scoped_snapshot_filtered(
+        state,
+        project,
+        scope.clone(),
+        Some(query),
+        1,
+        1,
+        limit.saturating_add(1),
+        KnowledgeFilters {
+            node_kinds,
+            edge_kinds: Some(Vec::new()),
+            edge_source_kinds: Some(Vec::new()),
+            neighbor: None,
+            neighbor_limit: None,
+            source: None,
+            sources: None,
+            edge_sources: None,
+        },
+    )
+    .await;
+    response.search_items.sort_by(|left, right| {
+        left.rank
+            .cmp(&right.rank)
+            .then_with(|| left.title.to_lowercase().cmp(&right.title.to_lowercase()))
+            .then_with(|| left.node_id.cmp(&right.node_id))
+    });
+    let mut truncated = response.search_items.len() > limit;
+    response.search_items.truncate(limit);
+    let mut used_budget = 0usize;
+    let mut context = Vec::new();
+    let mut neighbor_items = Vec::new();
+    for item in std::mem::take(&mut response.search_items) {
+        let Some(snippet) = item.snippet.as_deref() else {
+            continue;
+        };
+        let remaining = text_budget.saturating_sub(used_budget);
+        if remaining == 0 {
+            truncated = true;
+            break;
+        }
+        let (text, cut) = utf8_prefix(snippet, remaining);
+        used_budget += text.len();
+        truncated |= cut || item.snippet_truncated;
+        let source = item.source.clone();
+        context.push(KnowledgeContextItem {
+            node_id: item.node_id,
+            source: item.source,
+            title: item.title,
+            text: text.to_string(),
+            location_path: item.location_path,
+            line_start: item.line_start,
+            line_end: item.line_end,
+            provenance: item.provenance,
+            truncated: cut || item.snippet_truncated,
+        });
+        if cut {
+            break;
+        }
+        if neighbor_items.len() >= MAX_RELATED_NEIGHBORS {
+            truncated = true;
+            break;
+        }
+        let mut neighbors = read_scoped_snapshot_filtered(
+            state,
+            project,
+            scope.clone(),
+            None,
+            1,
+            RELATED_NEIGHBORS_PER_ITEM.saturating_add(1),
+            1,
+            KnowledgeFilters {
+                node_kinds: Some(Vec::new()),
+                edge_kinds: None,
+                edge_source_kinds: None,
+                neighbor: Some(source),
+                neighbor_limit: Some(RELATED_NEIGHBORS_PER_ITEM.saturating_add(1)),
+                source: None,
+                sources: None,
+                edge_sources: None,
+            },
+        )
+        .await;
+        truncated |= neighbors.truncated || neighbors.edges.len() > RELATED_NEIGHBORS_PER_ITEM;
+        for diagnostic in neighbors.diagnostics.drain(..) {
+            if !response.diagnostics.iter().any(|current| {
+                current.space_id == diagnostic.space_id && current.code == diagnostic.code
+            }) {
+                response.diagnostics.push(diagnostic);
+            }
+        }
+        for edge in neighbors.edges.drain(..).take(RELATED_NEIGHBORS_PER_ITEM) {
+            let compact = format!(
+                "{} {} {}",
+                edge.source_id,
+                edge.kind,
+                edge.target_id.as_deref().unwrap_or(&edge.target_url)
+            );
+            let remaining = text_budget.saturating_sub(used_budget);
+            if remaining == 0 {
+                truncated = true;
+                break;
+            }
+            let (text, cut) = utf8_prefix(&compact, remaining);
+            used_budget += text.len();
+            neighbor_items.push(KnowledgeContextNeighbor {
+                edge,
+                text: text.to_string(),
+                truncated: cut,
+            });
+            if cut {
+                truncated = true;
+                break;
+            }
+        }
+    }
+    response.status = combined_status(&response).to_string();
+    KnowledgeRelatedContext {
+        context,
+        neighbors: neighbor_items,
+        text_budget,
+        used_budget,
+        truncated,
+        status: response.status,
+        diagnostics: response.diagnostics,
+    }
+}
+
+fn utf8_prefix(value: &str, max_bytes: usize) -> (&str, bool) {
+    if value.len() <= max_bytes {
+        return (value, false);
+    }
+    let mut end = max_bytes.min(value.len());
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    (&value[..end], true)
+}
+
+const AGENT_NODE_KINDS: [&str; 2] = ["agent_instruction", "skill"];
+const NON_AGENT_NODE_KINDS: [&str; 3] = ["document", "collection", "entry"];
+
+fn inherited_agent_kinds(requested: Option<&[String]>) -> Vec<String> {
+    match requested {
+        Some(kinds) => kinds
+            .iter()
+            .filter(|kind| AGENT_NODE_KINDS.contains(&kind.as_str()))
+            .cloned()
+            .collect(),
+        None => AGENT_NODE_KINDS
+            .iter()
+            .map(|kind| (*kind).to_string())
+            .collect(),
+    }
+}
+
+fn non_agent_kinds(requested: Option<&[String]>) -> Vec<String> {
+    match requested {
+        Some(kinds) => kinds
+            .iter()
+            .filter(|kind| NON_AGENT_NODE_KINDS.contains(&kind.as_str()))
+            .cloned()
+            .collect(),
+        None => NON_AGENT_NODE_KINDS
+            .iter()
+            .map(|kind| (*kind).to_string())
+            .collect(),
+    }
+}
+
+fn applicability_sources(
+    rows: &[KnowledgeAgentApplicability],
+    source_scope: &str,
+    source_space_id: Option<&str>,
+    requested: Option<&KnowledgeSource>,
+    requested_many: Option<&[KnowledgeSource]>,
+) -> Vec<KnowledgeSource> {
+    rows.iter()
+        .filter(|row| row.source_scope == source_scope)
+        .map(|row| KnowledgeSource {
+            space_id: source_space_id.map(ToString::to_string),
+            path: row.source_path.clone(),
+            kind: row.node_kind.clone(),
+        })
+        .filter(|source| {
+            requested.is_none_or(|candidate| candidate == source)
+                && requested_many.is_none_or(|candidates| candidates.contains(source))
+        })
+        .collect()
+}
+
+fn apply_prepared_applicability(
+    response: &mut KnowledgeResponse,
+    rows: &[KnowledgeAgentApplicability],
+    source_scope: &str,
+    effective_space_id: Option<&str>,
+) {
+    let provenance = rows
+        .iter()
+        .filter(|row| row.source_scope == source_scope)
+        .map(|row| {
+            (
+                (row.source_path.as_str(), row.node_kind.as_str()),
+                &row.provenance,
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    response.nodes.retain(|node| {
+        !AGENT_NODE_KINDS.contains(&node.source.kind.as_str())
+            || provenance.contains_key(&(node.source.path.as_str(), node.source.kind.as_str()))
+    });
+    response.search_items.retain(|item| {
+        !AGENT_NODE_KINDS.contains(&item.source.kind.as_str())
+            || provenance.contains_key(&(item.source.path.as_str(), item.source.kind.as_str()))
+    });
+    response.edges.retain(|edge| {
+        !AGENT_NODE_KINDS.contains(&edge.source.kind.as_str())
+            || provenance.contains_key(&(edge.source.path.as_str(), edge.source.kind.as_str()))
+    });
+    for node in &mut response.nodes {
+        if let Some(prepared) =
+            provenance.get(&(node.source.path.as_str(), node.source.kind.as_str()))
+        {
+            node.provenance = (*prepared).clone();
+            annotate_effective_space(&mut node.provenance, effective_space_id);
+        }
+    }
+    for item in &mut response.search_items {
+        if let Some(prepared) =
+            provenance.get(&(item.source.path.as_str(), item.source.kind.as_str()))
+        {
+            item.provenance = (*prepared).clone();
+            annotate_effective_space(&mut item.provenance, effective_space_id);
+        }
+    }
+}
+
+fn annotate_effective_space(provenance: &mut serde_json::Value, effective_space_id: Option<&str>) {
+    if !provenance.is_object() {
+        *provenance = serde_json::json!({});
+    }
+    if let Some(object) = provenance.as_object_mut() {
+        object.insert(
+            "effectiveSpaceId".to_string(),
+            effective_space_id.map_or(serde_json::Value::Null, |id| {
+                serde_json::Value::String(id.to_string())
+            }),
+        );
+    }
+}
+
+fn merge_effective_responses(
+    mut primary: KnowledgeResponse,
+    mut inherited: KnowledgeResponse,
+    node_limit: usize,
+    edge_limit: usize,
+    search_limit: usize,
+) -> KnowledgeResponse {
+    append_response_content(&mut primary, &mut inherited);
+    primary.freshness.append(&mut inherited.freshness);
+    primary.diagnostics.append(&mut inherited.diagnostics);
+    primary.readable_pools += inherited.readable_pools;
+    primary.total_pools += inherited.total_pools;
+    finalize_merged_response(
+        &mut primary,
+        inherited.truncated,
+        node_limit,
+        edge_limit,
+        search_limit,
+    );
+    primary
+}
+
+fn merge_same_pool_responses(
+    mut primary: KnowledgeResponse,
+    mut additional: KnowledgeResponse,
+    node_limit: usize,
+    edge_limit: usize,
+    search_limit: usize,
+) -> KnowledgeResponse {
+    append_response_content(&mut primary, &mut additional);
+    for diagnostic in additional.diagnostics.drain(..) {
+        if !primary.diagnostics.iter().any(|current| {
+            current.space_id == diagnostic.space_id && current.code == diagnostic.code
+        }) {
+            primary.diagnostics.push(diagnostic);
+        }
+    }
+    finalize_merged_response(
+        &mut primary,
+        additional.truncated,
+        node_limit,
+        edge_limit,
+        search_limit,
+    );
+    primary
+}
+
+fn append_response_content(primary: &mut KnowledgeResponse, additional: &mut KnowledgeResponse) {
+    primary.nodes.append(&mut additional.nodes);
+    primary.edges.append(&mut additional.edges);
+    primary.search_items.append(&mut additional.search_items);
+    primary.search_items.sort_by(|left, right| {
+        left.rank
+            .cmp(&right.rank)
+            .then_with(|| left.title.to_lowercase().cmp(&right.title.to_lowercase()))
+            .then_with(|| left.node_id.cmp(&right.node_id))
+    });
+    primary.total_node_count += additional.total_node_count;
+    primary.total_edge_count += additional.total_edge_count;
+}
+
+fn finalize_merged_response(
+    primary: &mut KnowledgeResponse,
+    additional_truncated: bool,
+    node_limit: usize,
+    edge_limit: usize,
+    search_limit: usize,
+) {
+    let nodes_before_truncate = primary.nodes.len();
+    let edges_before_truncate = primary.edges.len();
+    let search_truncated = primary.search_items.len() > search_limit;
+    primary.nodes.truncate(node_limit);
+    primary.edges.truncate(edge_limit);
+    primary.search_items.truncate(search_limit);
+    primary.omitted_node_count = primary.total_node_count.saturating_sub(primary.nodes.len());
+    primary.omitted_edge_count = primary.total_edge_count.saturating_sub(primary.edges.len());
+    primary.has_more_nodes =
+        nodes_before_truncate > primary.nodes.len() || primary.omitted_node_count > 0;
+    primary.has_more_edges =
+        edges_before_truncate > primary.edges.len() || primary.omitted_edge_count > 0;
+    primary.truncated |= additional_truncated
+        || primary.has_more_nodes
+        || primary.has_more_edges
+        || search_truncated;
+    primary.next_node_offset = primary.has_more_nodes.then_some(primary.nodes.len());
+    primary.next_edge_offset = primary.has_more_edges.then_some(primary.edges.len());
+    primary.status = combined_status(primary).to_string();
+}
+
+fn combined_status(response: &KnowledgeResponse) -> &'static str {
+    if response.readable_pools == 0 && !response.diagnostics.is_empty() {
+        "error"
+    } else if response
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code != "pool_stale")
+        || response.readable_pools < response.total_pools
+    {
+        "partial"
+    } else if response.freshness.iter().any(|freshness| freshness.stale) {
+        "stale"
+    } else if response.total_node_count == 0 {
+        "empty"
+    } else {
+        "complete"
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -762,6 +1467,7 @@ pub async fn read_project_snapshot_filtered(
         .clamp(1, MAX_SEARCH_LIMIT);
     let node_kinds = sanitize_kinds(filters.node_kinds.as_deref(), &NODE_KINDS);
     let edge_kinds = sanitize_kinds(filters.edge_kinds.as_deref(), &EDGE_KINDS);
+    let edge_source_kinds = sanitize_kinds(filters.edge_source_kinds.as_deref(), &NODE_KINDS);
     let (mut keys, mut diagnostics, total_pools) = scoped_keys(state, project, scope).await;
     keys.sort_by_key(key_sort);
     let mut nodes = Vec::new();
@@ -781,6 +1487,9 @@ pub async fn read_project_snapshot_filtered(
     let mut incoming_link_scan_truncated = false;
 
     for key in keys {
+        let node_sources =
+            scoped_sources(&key, filters.source.as_ref(), filters.sources.as_deref());
+        let edge_sources = scoped_sources(&key, None, filters.edge_sources.as_deref());
         let space_id = IndexState::space_id_for_key(&key);
         let stale = state.reindex_active_flag(&key).await.load(Ordering::SeqCst);
         if stale {
@@ -820,10 +1529,19 @@ pub async fn read_project_snapshot_filtered(
             }
         };
         readable_pools += 1;
-        let pool_node_count = count_nodes(&pool, &node_kinds).await.unwrap_or(0);
-        let pool_edge_count = count_edges(&pool, &edge_kinds, filters.neighbor.as_ref(), &key)
+        let pool_node_count = count_nodes(&pool, &node_kinds, node_sources.as_deref())
             .await
             .unwrap_or(0);
+        let pool_edge_count = count_edges(
+            &pool,
+            &edge_kinds,
+            &edge_source_kinds,
+            edge_sources.as_deref(),
+            filters.neighbor.as_ref(),
+            &key,
+        )
+        .await
+        .unwrap_or(0);
         total_nodes += pool_node_count;
         total_edges += pool_edge_count;
         freshness.push(KnowledgePoolFreshness {
@@ -844,6 +1562,7 @@ pub async fn read_project_snapshot_filtered(
                 local_node_offset,
                 local_node_limit,
                 &node_kinds,
+                node_sources.as_deref(),
             )
             .await
             {
@@ -864,6 +1583,8 @@ pub async fn read_project_snapshot_filtered(
                 local_edge_offset,
                 local_edge_limit,
                 &edge_kinds,
+                &edge_source_kinds,
+                edge_sources.as_deref(),
                 filters.neighbor.as_ref(),
             )
             .await
@@ -872,33 +1593,42 @@ pub async fn read_project_snapshot_filtered(
                 Err(error) => diagnostics.push(read_diagnostic(&key, "pool_read_failed", &error)),
             }
         }
-        match read_pool_search(&pool, &key, query, search_limit, &node_kinds).await {
+        match read_pool_search(
+            &pool,
+            &key,
+            query,
+            search_limit,
+            &node_kinds,
+            node_sources.as_deref(),
+        )
+        .await
+        {
             Ok(mut rows) => searches.append(&mut rows),
             Err(error) => diagnostics.push(read_diagnostic(&key, "pool_search_failed", &error)),
         }
-        if edge_kinds.iter().any(|kind| kind == "links_to") {
-            if let Some(neighbor) = filters.neighbor.as_ref() {
-                match read_incoming_markdown_links(
-                    state,
-                    project,
-                    &pool,
-                    &key,
-                    neighbor,
-                    incoming_link_scan_remaining,
-                )
-                .await
-                {
-                    Ok((mut matches, scanned, truncated)) => {
-                        incoming_link_scan_remaining =
-                            incoming_link_scan_remaining.saturating_sub(scanned);
-                        incoming_link_scan_truncated |= truncated;
-                        incoming_links.append(&mut matches);
-                    }
-                    Err(error) => diagnostics.push(read_diagnostic(
-                        &key,
-                        "incoming_links_read_failed",
-                        &error,
-                    )),
+        if edge_kinds.iter().any(|kind| kind == "links_to")
+            && let Some(neighbor) = filters.neighbor.as_ref()
+        {
+            match read_incoming_markdown_links(
+                state,
+                project,
+                &pool,
+                &key,
+                neighbor,
+                &edge_source_kinds,
+                edge_sources.as_deref(),
+                incoming_link_scan_remaining,
+            )
+            .await
+            {
+                Ok((mut matches, scanned, truncated)) => {
+                    incoming_link_scan_remaining =
+                        incoming_link_scan_remaining.saturating_sub(scanned);
+                    incoming_link_scan_truncated |= truncated;
+                    incoming_links.append(&mut matches);
+                }
+                Err(error) => {
+                    diagnostics.push(read_diagnostic(&key, "incoming_links_read_failed", &error))
                 }
             }
         }
@@ -936,9 +1666,9 @@ pub async fn read_project_snapshot_filtered(
     }
 
     searches.sort_by(|left, right| {
-        left.title
-            .to_lowercase()
-            .cmp(&right.title.to_lowercase())
+        search_rank(&left.title, left.snippet.as_deref(), query)
+            .cmp(&search_rank(&right.title, right.snippet.as_deref(), query))
+            .then_with(|| left.title.to_lowercase().cmp(&right.title.to_lowercase()))
             .then_with(|| left.path.cmp(&right.path))
     });
     searches.truncate(search_limit);
@@ -979,6 +1709,7 @@ pub async fn read_project_snapshot_filtered(
         .map(|row| {
             let source = source_for(&row.key, &row.path, &row.kind);
             KnowledgeSearchItem {
+                rank: search_rank(&row.title, row.snippet.as_deref(), query),
                 node_id: node_id(&source),
                 source,
                 space_name: space_names.get(&row.key).cloned().unwrap_or_default(),
@@ -987,6 +1718,9 @@ pub async fn read_project_snapshot_filtered(
                 location_path: row.location_path,
                 line_start: row.line_start.map(|value| value as usize),
                 line_end: row.line_end.map(|value| value as usize),
+                provenance: serde_json::from_str(&row.provenance_json)
+                    .unwrap_or_else(|_| serde_json::json!({})),
+                snippet_truncated: row.snippet_truncated,
             }
         })
         .collect();
@@ -1126,8 +1860,12 @@ fn sanitize_kinds(requested: Option<&[String]>, allowed: &[&str]) -> Vec<String>
     values
 }
 
-async fn count_nodes(pool: &SqlitePool, kinds: &[String]) -> Result<usize, AppError> {
-    if kinds.is_empty() {
+async fn count_nodes(
+    pool: &SqlitePool,
+    kinds: &[String],
+    sources: Option<&[KnowledgeSource]>,
+) -> Result<usize, AppError> {
+    if kinds.is_empty() || sources.is_some_and(<[KnowledgeSource]>::is_empty) {
         return Ok(0);
     }
     let mut query = QueryBuilder::<Sqlite>::new(
@@ -1138,6 +1876,7 @@ async fn count_nodes(pool: &SqlitePool, kinds: &[String]) -> Result<usize, AppEr
         separated.push_bind(kind);
     }
     separated.push_unseparated(")");
+    push_source_filter(&mut query, "source_path", "node_kind", sources);
     let count: i64 = query.build_query_scalar().fetch_one(pool).await?;
     Ok(count as usize)
 }
@@ -1145,13 +1884,25 @@ async fn count_nodes(pool: &SqlitePool, kinds: &[String]) -> Result<usize, AppEr
 async fn count_edges(
     pool: &SqlitePool,
     kinds: &[String],
+    source_kinds: &[String],
+    sources: Option<&[KnowledgeSource]>,
     neighbor: Option<&KnowledgeSource>,
     key: &IndexKey,
 ) -> Result<usize, AppError> {
-    if kinds.is_empty() {
+    if kinds.is_empty()
+        || source_kinds.is_empty()
+        || sources.is_some_and(<[KnowledgeSource]>::is_empty)
+    {
         return Ok(0);
     }
-    let mut query = edge_query("SELECT COUNT(*)", kinds, neighbor, key);
+    let mut query = edge_query(
+        "SELECT COUNT(*)",
+        kinds,
+        source_kinds,
+        sources,
+        neighbor,
+        key,
+    );
     let count: i64 = query.build_query_scalar().fetch_one(pool).await?;
     Ok(count as usize)
 }
@@ -1159,6 +1910,8 @@ async fn count_edges(
 fn edge_query<'a>(
     select: &str,
     kinds: &'a [String],
+    source_kinds: &'a [String],
+    sources: Option<&'a [KnowledgeSource]>,
     neighbor: Option<&'a KnowledgeSource>,
     key: &IndexKey,
 ) -> QueryBuilder<'a, Sqlite> {
@@ -1169,6 +1922,13 @@ fn edge_query<'a>(
         separated.push_bind(kind);
     }
     separated.push_unseparated(")");
+    query.push(" AND d.node_kind IN (");
+    let mut separated = query.separated(",");
+    for kind in source_kinds {
+        separated.push_bind(kind);
+    }
+    separated.push_unseparated(")");
+    push_source_filter(&mut query, "l.source_path", "d.node_kind", sources);
     if let Some(neighbor) = neighbor {
         let source_pool_matches = neighbor.space_id == IndexState::space_id_for_key(key);
         query.push(" AND (");
@@ -1204,8 +1964,9 @@ async fn read_pool_nodes(
     offset: usize,
     limit: usize,
     kinds: &[String],
+    sources: Option<&[KnowledgeSource]>,
 ) -> Result<Vec<PoolNode>, AppError> {
-    if kinds.is_empty() {
+    if kinds.is_empty() || sources.is_some_and(<[KnowledgeSource]>::is_empty) {
         return Ok(Vec::new());
     }
     let mut query = QueryBuilder::<Sqlite>::new(
@@ -1216,6 +1977,7 @@ async fn read_pool_nodes(
         separated.push_bind(kind);
     }
     separated.push_unseparated(")");
+    push_source_filter(&mut query, "source_path", "node_kind", sources);
     query
         .push(" ORDER BY node_kind,source_path LIMIT ")
         .push_bind(limit as i64)
@@ -1253,14 +2015,21 @@ async fn read_pool_edges(
     offset: usize,
     limit: usize,
     kinds: &[String],
+    source_kinds: &[String],
+    sources: Option<&[KnowledgeSource]>,
     neighbor: Option<&KnowledgeSource>,
 ) -> Result<Vec<PoolEdge>, AppError> {
-    if kinds.is_empty() {
+    if kinds.is_empty()
+        || source_kinds.is_empty()
+        || sources.is_some_and(<[KnowledgeSource]>::is_empty)
+    {
         return Ok(Vec::new());
     }
     let mut query = edge_query(
         "SELECT l.source_path,d.node_kind,l.edge_kind,l.target_url,l.target_scope,l.target_path,l.target_kind,l.field_name,l.location_path,l.byte_start,l.byte_end",
         kinds,
+        source_kinds,
+        sources,
         neighbor,
         key,
     );
@@ -1307,19 +2076,21 @@ async fn read_pool_search(
     query_text: Option<&str>,
     limit: usize,
     kinds: &[String],
+    sources: Option<&[KnowledgeSource]>,
 ) -> Result<Vec<PoolSearchItem>, AppError> {
-    if kinds.is_empty() {
+    if kinds.is_empty() || sources.is_some_and(<[KnowledgeSource]>::is_empty) {
         return Ok(Vec::new());
     }
     let query_text = query_text.unwrap_or("").trim();
     let mut query = QueryBuilder::<Sqlite>::new(
-        "SELECT d.source_path,d.node_kind,d.title,substr(f.text,1,240),f.location_path,f.line_start,f.line_end FROM knowledge_documents d LEFT JOIN knowledge_fragments f ON f.source_path=d.source_path AND f.ordinal=0 WHERE d.node_kind IN (",
+        "SELECT d.source_path,d.node_kind,d.title,substr(f.text,1,240),f.location_path,f.line_start,f.line_end,d.provenance_json,length(COALESCE(f.text,''))>240 FROM knowledge_documents d LEFT JOIN knowledge_fragments f ON f.source_path=d.source_path AND f.ordinal=0 WHERE d.node_kind IN (",
     );
     let mut separated = query.separated(",");
     for kind in kinds {
         separated.push_bind(kind);
     }
     separated.push_unseparated(")");
+    push_source_filter(&mut query, "d.source_path", "d.node_kind", sources);
     if !query_text.is_empty() {
         query
             .push(" AND (instr(lower(d.title),lower(")
@@ -1339,6 +2110,8 @@ async fn read_pool_search(
         Option<String>,
         Option<i64>,
         Option<i64>,
+        String,
+        bool,
     )> = query.build_query_as().fetch_all(pool).await?;
     Ok(rows
         .into_iter()
@@ -1351,8 +2124,74 @@ async fn read_pool_search(
             location_path: row.4,
             line_start: row.5,
             line_end: row.6,
+            provenance_json: row.7,
+            snippet_truncated: row.8,
         })
         .collect())
+}
+
+fn scoped_sources(
+    key: &IndexKey,
+    source: Option<&KnowledgeSource>,
+    sources: Option<&[KnowledgeSource]>,
+) -> Option<Vec<KnowledgeSource>> {
+    if source.is_none() && sources.is_none() {
+        return None;
+    }
+    let key_space_id = IndexState::space_id_for_key(key);
+    Some(
+        source
+            .into_iter()
+            .chain(sources.into_iter().flatten())
+            .filter(|source| source.space_id == key_space_id)
+            .cloned()
+            .collect(),
+    )
+}
+
+fn push_source_filter<'a>(
+    query: &mut QueryBuilder<'a, Sqlite>,
+    path_column: &str,
+    kind_column: &str,
+    sources: Option<&'a [KnowledgeSource]>,
+) {
+    let Some(sources) = sources else {
+        return;
+    };
+    query.push(" AND (");
+    for (index, source) in sources.iter().enumerate() {
+        if index > 0 {
+            query.push(" OR ");
+        }
+        query
+            .push("(")
+            .push(path_column)
+            .push(" = ")
+            .push_bind(&source.path)
+            .push(" AND ")
+            .push(kind_column)
+            .push(" = ")
+            .push_bind(&source.kind)
+            .push(")");
+    }
+    query.push(")");
+}
+
+fn search_rank(title: &str, snippet: Option<&str>, query: Option<&str>) -> usize {
+    let query = query.unwrap_or_default().trim().to_lowercase();
+    if query.is_empty() {
+        return 0;
+    }
+    let title = title.to_lowercase();
+    if title == query {
+        0
+    } else if title.contains(&query) {
+        1
+    } else if snippet.is_some_and(|snippet| snippet.to_lowercase().contains(&query)) {
+        2
+    } else {
+        3
+    }
 }
 
 async fn read_incoming_markdown_links(
@@ -1361,14 +2200,26 @@ async fn read_incoming_markdown_links(
     pool: &SqlitePool,
     key: &IndexKey,
     neighbor: &KnowledgeSource,
+    source_kinds: &[String],
+    sources: Option<&[KnowledgeSource]>,
     scan_limit: usize,
 ) -> Result<(Vec<PoolEdge>, usize, bool), AppError> {
+    if source_kinds.is_empty() || sources.is_some_and(<[KnowledgeSource]>::is_empty) {
+        return Ok((Vec::new(), 0, false));
+    }
     let fetch_limit = scan_limit.saturating_add(1).min(MAX_INCOMING_LINK_SCAN + 1);
     let mut query = QueryBuilder::<Sqlite>::new(
         "SELECT l.source_path,d.node_kind,l.edge_kind,l.target_url,l.target_scope,l.target_path,l.target_kind,l.field_name,l.location_path,l.byte_start,l.byte_end \
          FROM knowledge_links l JOIN knowledge_documents d ON d.source_path=l.source_path \
-         WHERE l.edge_kind='links_to'",
+        WHERE l.edge_kind='links_to'",
     );
+    query.push(" AND d.node_kind IN (");
+    let mut separated = query.separated(",");
+    for kind in source_kinds {
+        separated.push_bind(kind);
+    }
+    separated.push_unseparated(")");
+    push_source_filter(&mut query, "l.source_path", "d.node_kind", sources);
     if neighbor.space_id == IndexState::space_id_for_key(key) {
         query
             .push(" AND l.source_path != ")
@@ -1533,9 +2384,37 @@ fn key_sort(key: &IndexKey) -> (u8, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::{reindex::full_reindex, update};
+    use crate::index::{ProjectSpacesCache, reindex::full_reindex, update};
+    use crate::space::types::SpaceStatus;
+    use std::collections::{BTreeSet, HashMap};
     use std::fs;
     use tempfile::TempDir;
+
+    fn test_artifact(path: &str, kind: &str, text: &str) -> KnowledgeArtifact {
+        finish_artifact(
+            path,
+            kind,
+            path,
+            "2026-08-09T00:00:00Z",
+            text,
+            path,
+            serde_json::json!({ "physical": true }),
+            text.to_string(),
+            Vec::new(),
+        )
+    }
+
+    async fn replace_test_snapshot(
+        pool: &SqlitePool,
+        artifacts: &[KnowledgeArtifact],
+        applicability: &[KnowledgeAgentApplicability],
+    ) {
+        let mut tx = pool.begin().await.unwrap();
+        replace_all(&mut tx, artifacts, applicability, 0, 0)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
 
     #[tokio::test]
     async fn templates_are_excluded_and_unlinked_entries_remain_nodes() {
@@ -1566,6 +2445,262 @@ mod tests {
                 ("tasks/item.md".to_string(), "entry".to_string())
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn effective_child_scope_uses_prepared_agent_applicability_without_document_leakage() {
+        let temp = TempDir::new().unwrap();
+        let project = temp.path();
+        fs::create_dir_all(project.join(".svode")).unwrap();
+        fs::create_dir_all(project.join("child/.svode")).unwrap();
+        fs::create_dir_all(project.join("sibling/.svode")).unwrap();
+
+        let state = IndexState::new();
+        state.spaces_cache.lock().await.insert(
+            project.to_path_buf(),
+            ProjectSpacesCache {
+                by_folder: HashMap::from([
+                    ("child".to_string(), "child-space".to_string()),
+                    ("sibling".to_string(), "sibling-space".to_string()),
+                ]),
+                folder_by_id: HashMap::from([
+                    ("child-space".to_string(), "child".to_string()),
+                    ("sibling-space".to_string(), "sibling".to_string()),
+                ]),
+                status_by_id: HashMap::from([
+                    ("child-space".to_string(), SpaceStatus::Ready),
+                    ("sibling-space".to_string(), SpaceStatus::Ready),
+                ]),
+                root_name: "Root".to_string(),
+                name_by_id: HashMap::from([
+                    ("child-space".to_string(), "Child".to_string()),
+                    ("sibling-space".to_string(), "Sibling".to_string()),
+                ]),
+            },
+        );
+
+        let root_pool = state
+            .get_or_create(&IndexKey::Root(project.to_path_buf()))
+            .await
+            .unwrap();
+        let child_pool = state
+            .get_or_create(&IndexKey::Space {
+                project: project.to_path_buf(),
+                space_id: "child-space".to_string(),
+            })
+            .await
+            .unwrap();
+        let sibling_pool = state
+            .get_or_create(&IndexKey::Space {
+                project: project.to_path_buf(),
+                space_id: "sibling-space".to_string(),
+            })
+            .await
+            .unwrap();
+
+        replace_test_snapshot(
+            &root_pool,
+            &[
+                test_artifact("root.md", "document", "root document"),
+                test_artifact(
+                    "AGENTS.md",
+                    "agent_instruction",
+                    "effective root instructions",
+                ),
+                test_artifact(
+                    "shadowed/AGENTS.md",
+                    "agent_instruction",
+                    "not effective for child",
+                ),
+            ],
+            &[],
+        )
+        .await;
+        let mut child_document = test_artifact("child.md", "document", "🙂🙂");
+        child_document.edges = (0..=RELATED_NEIGHBORS_PER_ITEM)
+            .map(|index| KnowledgeEdgeArtifact {
+                kind: "links_to".to_string(),
+                target_url: format!("related-{index}.md"),
+                target_scope: "resolve".to_string(),
+                target_path: None,
+                target_kind: None,
+                field_name: None,
+                location_path: "child.md".to_string(),
+                byte_start: index as i64,
+                byte_end: index as i64,
+            })
+            .collect();
+        replace_test_snapshot(
+            &child_pool,
+            &[
+                child_document,
+                test_artifact("AGENTS.md", "agent_instruction", "local instructions"),
+            ],
+            &[
+                KnowledgeAgentApplicability {
+                    source_scope: "current".to_string(),
+                    source_path: "AGENTS.md".to_string(),
+                    node_kind: "agent_instruction".to_string(),
+                    provenance: serde_json::json!({ "scopeApplicability": "local" }),
+                },
+                KnowledgeAgentApplicability {
+                    source_scope: "root".to_string(),
+                    source_path: "AGENTS.md".to_string(),
+                    node_kind: "agent_instruction".to_string(),
+                    provenance: serde_json::json!({ "scopeApplicability": "inherited" }),
+                },
+            ],
+        )
+        .await;
+        replace_test_snapshot(
+            &sibling_pool,
+            &[test_artifact("sibling.md", "document", "sibling document")],
+            &[],
+        )
+        .await;
+
+        let effective = read_effective_space_snapshot_filtered(
+            &state,
+            project,
+            Some("child-space".to_string()),
+            None,
+            32,
+            32,
+            32,
+            KnowledgeFilters::default(),
+        )
+        .await;
+        let sources = effective
+            .nodes
+            .iter()
+            .map(|node| {
+                (
+                    node.source.space_id.clone(),
+                    node.source.path.clone(),
+                    node.source.kind.clone(),
+                )
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            sources,
+            BTreeSet::from([
+                (
+                    None,
+                    "AGENTS.md".to_string(),
+                    "agent_instruction".to_string(),
+                ),
+                (
+                    Some("child-space".to_string()),
+                    "AGENTS.md".to_string(),
+                    "agent_instruction".to_string(),
+                ),
+                (
+                    Some("child-space".to_string()),
+                    "child.md".to_string(),
+                    "document".to_string(),
+                ),
+            ])
+        );
+        assert!(!sources.iter().any(|(_, path, _)| path == "root.md"));
+        assert!(!sources.iter().any(|(_, path, _)| path == "sibling.md"));
+        assert!(
+            !sources
+                .iter()
+                .any(|(_, path, _)| path == "shadowed/AGENTS.md")
+        );
+        let inherited = effective
+            .nodes
+            .iter()
+            .find(|node| node.source.space_id.is_none() && node.source.path == "AGENTS.md")
+            .unwrap();
+        assert_eq!(inherited.provenance["scopeApplicability"], "inherited");
+        assert_eq!(inherited.provenance["effectiveSpaceId"], "child-space");
+
+        let related = read_related_context(
+            &state,
+            project,
+            KnowledgeScope::Space {
+                space_id: Some("child-space".to_string()),
+            },
+            "🙂",
+            8,
+            5,
+            None,
+        )
+        .await;
+        assert_eq!(related.used_budget, 4);
+        assert!(related.used_budget <= related.text_budget);
+        assert_eq!(related.context.len(), 1);
+        assert_eq!(related.context[0].text, "🙂");
+        assert!(related.context[0].truncated);
+        assert!(related.truncated);
+
+        let related = read_related_context(
+            &state,
+            project,
+            KnowledgeScope::Space {
+                space_id: Some("child-space".to_string()),
+            },
+            "🙂",
+            8,
+            4_000,
+            None,
+        )
+        .await;
+        assert_eq!(related.neighbors.len(), RELATED_NEIGHBORS_PER_ITEM);
+        assert!(related.truncated);
+
+        let root = read_effective_space_snapshot_filtered(
+            &state,
+            project,
+            None,
+            None,
+            32,
+            32,
+            32,
+            KnowledgeFilters::default(),
+        )
+        .await;
+        assert!(root.nodes.iter().any(|node| node.source.path == "root.md"));
+        assert!(!root.nodes.iter().any(|node| node.source.space_id.is_some()));
+
+        let project_wide = read_project_snapshot_filtered(
+            &state,
+            project,
+            Some(KnowledgeScope::Project),
+            None,
+            None,
+            None,
+            Some(32),
+            Some(32),
+            Some(32),
+            KnowledgeFilters::default(),
+        )
+        .await;
+        assert!(
+            project_wide
+                .nodes
+                .iter()
+                .any(|node| node.source.path == "sibling.md")
+        );
+        assert_eq!(
+            project_wide
+                .nodes
+                .iter()
+                .filter(|node| node.source.path == "AGENTS.md")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn related_context_utf8_budget_never_splits_a_codepoint() {
+        let (prefix, truncated) = utf8_prefix("a🙂b", 4);
+        assert_eq!(prefix, "a");
+        assert!(truncated);
+        let (prefix, truncated) = utf8_prefix("a🙂b", 5);
+        assert_eq!(prefix, "a🙂");
+        assert!(truncated);
     }
 
     #[tokio::test]
@@ -1750,12 +2885,16 @@ mod tests {
             KnowledgeFilters {
                 node_kinds: Some(vec!["collection".to_string()]),
                 edge_kinds: Some(vec!["relation".to_string(), "member_of".to_string()]),
+                edge_source_kinds: None,
                 neighbor: Some(KnowledgeSource {
                     space_id: None,
                     path: "tasks/item.md".to_string(),
                     kind: "entry".to_string(),
                 }),
                 neighbor_limit: Some(10),
+                source: None,
+                sources: None,
+                edge_sources: None,
             },
         )
         .await;
@@ -1784,12 +2923,16 @@ mod tests {
             KnowledgeFilters {
                 node_kinds: None,
                 edge_kinds: Some(vec!["links_to".to_string()]),
+                edge_source_kinds: None,
                 neighbor: Some(KnowledgeSource {
                     space_id: None,
                     path: "tasks/item.md".to_string(),
                     kind: "entry".to_string(),
                 }),
                 neighbor_limit: Some(10),
+                source: None,
+                sources: None,
+                edge_sources: None,
             },
         )
         .await;
