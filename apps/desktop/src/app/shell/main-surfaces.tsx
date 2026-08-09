@@ -12,6 +12,7 @@ import {
 } from "@/features/agent-sessions";
 import {
   KnowledgeGraphScreen,
+  knowledgeOpenPath,
   type KnowledgeGraphOpenRequest,
   type KnowledgeNode,
 } from "@/features/knowledge";
@@ -70,7 +71,8 @@ export function GraphSurface({
     openSource({
       spaceId: node.source.spaceId,
       spaceName: node.spaceName,
-      path: node.source.path,
+      path: knowledgeOpenPath(node),
+      kind: node.source.kind,
     });
 
   return (

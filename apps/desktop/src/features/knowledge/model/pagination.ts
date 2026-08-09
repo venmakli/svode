@@ -43,6 +43,7 @@ export function mergeKnowledgePages(
 
 export function knowledgeEdgeKey(edge: KnowledgeEdge): string {
   return [
+    edge.kind,
     edge.sourceId,
     edge.targetId ?? "",
     edge.targetUrl,

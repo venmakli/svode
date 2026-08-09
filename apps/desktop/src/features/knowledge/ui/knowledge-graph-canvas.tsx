@@ -24,6 +24,7 @@ export function KnowledgeGraphCanvas({
   edges,
   totalNodeCount,
   selectedNodeId,
+  focusedNodeId,
   matchedNodeIds,
   resetKey,
   loadingMore,
@@ -33,6 +34,7 @@ export function KnowledgeGraphCanvas({
   edges: KnowledgeEdge[];
   totalNodeCount: number;
   selectedNodeId: string | null;
+  focusedNodeId: string | null;
   matchedNodeIds: Set<string>;
   resetKey: number;
   loadingMore: boolean;
@@ -48,8 +50,10 @@ export function KnowledgeGraphCanvas({
     links: [],
   });
   const neighborsRef = useRef(new Map<string, Set<string>>());
+  const graphNodeIdsRef = useRef(new Set<string>());
   const hoveredNodeIdRef = useRef<string | null>(null);
   const selectedNodeIdRef = useRef(selectedNodeId);
+  const focusedNodeIdRef = useRef(focusedNodeId);
   const matchedNodeIdsRef = useRef(matchedNodeIds);
   const activeNodeIdsRef = useRef<Set<string> | null>(null);
   const onNodeSelectRef = useRef(onNodeSelect);
@@ -57,15 +61,27 @@ export function KnowledgeGraphCanvas({
   const wasLoadingMoreRef = useRef(loadingMore);
 
   const refreshActiveSubgraph = useCallback(() => {
-    const seed = hoveredNodeIdRef.current ?? selectedNodeIdRef.current;
+    const seedCandidate =
+      hoveredNodeIdRef.current ??
+      focusedNodeIdRef.current ??
+      selectedNodeIdRef.current;
+    const seed =
+      seedCandidate && graphNodeIdsRef.current.has(seedCandidate)
+        ? seedCandidate
+        : null;
     if (seed) {
       activeNodeIdsRef.current = new Set([
         seed,
         ...(neighborsRef.current.get(seed) ?? []),
       ]);
     } else {
+      const visibleMatches = new Set(
+        [...matchedNodeIdsRef.current].filter((nodeId) =>
+          graphNodeIdsRef.current.has(nodeId),
+        ),
+      );
       activeNodeIdsRef.current =
-        matchedNodeIdsRef.current.size > 0 ? matchedNodeIdsRef.current : null;
+        visibleMatches.size > 0 ? visibleMatches : null;
     }
     activeNodeIdsRefForAccessor.current = activeNodeIdsRef.current;
 
@@ -83,12 +99,14 @@ export function KnowledgeGraphCanvas({
 
   useEffect(() => {
     selectedNodeIdRef.current = selectedNodeId;
+    focusedNodeIdRef.current = focusedNodeId;
     matchedNodeIdsRef.current = matchedNodeIds;
     refreshActiveSubgraph();
 
     const renderer = rendererRef.current;
-    const selectedNode = selectedNodeId
-      ? dataRef.current.nodes.find((node) => node.id === selectedNodeId)
+    const centeredNodeId = focusedNodeId ?? selectedNodeId;
+    const selectedNode = centeredNodeId
+      ? dataRef.current.nodes.find((node) => node.id === centeredNodeId)
       : null;
     if (
       renderer &&
@@ -98,7 +116,7 @@ export function KnowledgeGraphCanvas({
       renderer.centerAt(selectedNode.x, selectedNode.y, 350);
       renderer.zoom(Math.max(renderer.zoom(), 1.6), 350);
     }
-  }, [matchedNodeIds, refreshActiveSubgraph, selectedNodeId]);
+  }, [focusedNodeId, matchedNodeIds, refreshActiveSubgraph, selectedNodeId]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -192,6 +210,7 @@ export function KnowledgeGraphCanvas({
     });
     const firstProjection = dataRef.current.nodes.length === 0;
     neighborsRef.current = nextData.neighbors;
+    graphNodeIdsRef.current = new Set(nextData.nodes.map((node) => node.id));
     dataRef.current = { nodes: nextData.nodes, links: nextData.links };
     renderer.graphData(dataRef.current).d3ReheatSimulation();
     refreshActiveSubgraph();

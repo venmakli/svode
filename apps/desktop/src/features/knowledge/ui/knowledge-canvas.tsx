@@ -13,6 +13,7 @@ export function KnowledgeCanvas({
   edges,
   totalNodeCount,
   selectedNodeId,
+  focusedNodeId,
   matchedNodeIds,
   resetKey,
   graphKey,
@@ -23,6 +24,7 @@ export function KnowledgeCanvas({
   edges: KnowledgeEdge[];
   totalNodeCount: number;
   selectedNodeId: string | null;
+  focusedNodeId: string | null;
   matchedNodeIds: Set<string>;
   resetKey: number;
   graphKey: string;
@@ -37,6 +39,7 @@ export function KnowledgeCanvas({
         edges={edges}
         totalNodeCount={totalNodeCount}
         selectedNodeId={selectedNodeId}
+        focusedNodeId={focusedNodeId}
         matchedNodeIds={matchedNodeIds}
         resetKey={resetKey}
         loadingMore={loadingMore}

@@ -1,4 +1,5 @@
-import { Badge } from "@/components/ui/badge";
+import { RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   Empty,
   EmptyDescription,
@@ -6,7 +7,11 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { KnowledgeCanvas } from "./knowledge-canvas";
-import { knowledgeSpaceColor } from "../lib/space-color";
+import { KnowledgeStatus } from "./knowledge-status";
+import {
+  knowledgeSpaceColorKey,
+  knowledgeSpaceColorMap,
+} from "../lib/space-color";
 import type { KnowledgeSnapshotState } from "../hooks/use-knowledge-snapshot";
 import type { KnowledgeSnapshot } from "../model/types";
 import * as m from "@/paraglide/messages.js";
@@ -14,12 +19,14 @@ import * as m from "@/paraglide/messages.js";
 export function KnowledgeGraphView({
   state,
   selectedNodeId,
+  focusedNodeId,
   matchedNodeIds,
   resetKey,
   onNodeSelect,
 }: {
   state: KnowledgeSnapshotState;
   selectedNodeId: string | null;
+  focusedNodeId?: string | null;
   matchedNodeIds: Set<string>;
   resetKey: number;
   onNodeSelect: (nodeId: string | null) => void;
@@ -32,7 +39,12 @@ export function KnowledgeGraphView({
     !snapshot ||
     (snapshot.status === "error" && snapshot.nodes.length === 0)
   ) {
-    return <GraphMessage description={m.knowledge_graph_error()} />;
+    return (
+      <GraphMessage
+        description={m.knowledge_graph_error()}
+        onRetry={state.retry}
+      />
+    );
   }
   if (snapshot.nodes.length === 0) {
     return <GraphMessage description={m.knowledge_graph_empty()} />;
@@ -45,6 +57,7 @@ export function KnowledgeGraphView({
         edges={snapshot.edges}
         totalNodeCount={snapshot.totalNodeCount}
         selectedNodeId={selectedNodeId}
+        focusedNodeId={focusedNodeId ?? null}
         matchedNodeIds={matchedNodeIds}
         resetKey={resetKey}
         graphKey={state.projectionKey}
@@ -52,7 +65,7 @@ export function KnowledgeGraphView({
         onNodeSelect={onNodeSelect}
       />
       <GraphLegend snapshot={snapshot} />
-      <GraphStatus snapshot={snapshot} loading={state.loading} />
+      <KnowledgeStatus state={state} />
     </div>
   );
 }
@@ -66,6 +79,9 @@ function GraphLegend({ snapshot }: { snapshot: KnowledgeSnapshot }) {
     }
   }
   const visibleSpaces = [...spaces.values()].slice(0, 4);
+  const spaceColors = knowledgeSpaceColorMap(
+    snapshot.nodes.map((node) => node.source.spaceId),
+  );
   const hiddenSpaceCount = Math.max(0, spaces.size - visibleSpaces.length);
   const readyLinkCount = snapshot.edges.filter(
     (edge) => edge.targetStatus === "ready" && edge.targetId,
@@ -87,7 +103,11 @@ function GraphLegend({ snapshot }: { snapshot: KnowledgeSnapshot }) {
           >
             <span
               className="size-2 rounded-full"
-              style={{ backgroundColor: knowledgeSpaceColor(space.id) }}
+              style={{
+                backgroundColor: spaceColors.get(
+                  knowledgeSpaceColorKey(space.id),
+                ),
+              }}
             />
             <span className="max-w-28 truncate">{space.name}</span>
           </span>
@@ -98,58 +118,25 @@ function GraphLegend({ snapshot }: { snapshot: KnowledgeSnapshot }) {
   );
 }
 
-function GraphStatus({
-  snapshot,
-  loading,
+function GraphMessage({
+  description,
+  onRetry,
 }: {
-  snapshot: KnowledgeSnapshot;
-  loading: boolean;
+  description: string;
+  onRetry?: () => void;
 }) {
-  const partial = snapshot.status === "partial";
-  if (!partial && !snapshot.truncated && !loading) return null;
-  return (
-    <div className="pointer-events-none absolute bottom-3 left-3 flex max-w-[calc(100%-1.5rem)] flex-wrap gap-1.5">
-      {loading && (
-        <Badge variant="secondary">
-          {partial && !snapshot.hasMoreNodes && !snapshot.hasMoreEdges
-            ? m.knowledge_graph_waiting_for_spaces()
-            : snapshot.totalNodeCount > 0
-              ? m.knowledge_graph_loading_progress({
-                  nodes: snapshot.nodes.length,
-                  totalNodes: snapshot.totalNodeCount,
-                  edges: snapshot.edges.length,
-                  totalEdges: snapshot.totalEdgeCount,
-                })
-              : m.knowledge_graph_loading()}
-        </Badge>
-      )}
-      {partial && (
-        <Badge variant="secondary">
-          {m.knowledge_graph_partial({
-            ready: snapshot.readablePools,
-            total: snapshot.totalPools,
-          })}
-        </Badge>
-      )}
-      {snapshot.truncated && !loading && (
-        <Badge variant="outline">
-          {m.knowledge_graph_truncated({
-            nodes: snapshot.omittedNodeCount,
-            edges: snapshot.omittedEdgeCount,
-          })}
-        </Badge>
-      )}
-    </div>
-  );
-}
-
-function GraphMessage({ description }: { description: string }) {
   return (
     <Empty className="size-full border-0">
       <EmptyHeader>
         <EmptyTitle>{m.knowledge_graph_title()}</EmptyTitle>
         <EmptyDescription>{description}</EmptyDescription>
       </EmptyHeader>
+      {onRetry && (
+        <Button type="button" variant="outline" onClick={onRetry}>
+          <RefreshCw data-icon="inline-start" />
+          {m.knowledge_graph_retry()}
+        </Button>
+      )}
     </Empty>
   );
 }

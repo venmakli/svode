@@ -39,6 +39,9 @@ function CommandDialog({
   showCloseButton = false,
   shouldFilter,
   filter,
+  commandValue,
+  onCommandValueChange,
+  loop,
   ...props
 }: React.ComponentProps<typeof Dialog> & {
   title?: string
@@ -47,6 +50,9 @@ function CommandDialog({
   showCloseButton?: boolean
   shouldFilter?: boolean
   filter?: React.ComponentProps<typeof CommandPrimitive>["filter"]
+  commandValue?: string
+  onCommandValueChange?: (value: string) => void
+  loop?: boolean
 }) {
   return (
     <Dialog {...props}>
@@ -61,7 +67,13 @@ function CommandDialog({
         )}
         showCloseButton={showCloseButton}
       >
-        <Command shouldFilter={shouldFilter} filter={filter}>
+        <Command
+          shouldFilter={shouldFilter}
+          filter={filter}
+          value={commandValue}
+          onValueChange={onCommandValueChange}
+          loop={loop}
+        >
           {children}
         </Command>
       </DialogContent>

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { useShellStore } from "./shell-store";
+import { createDefaultKnowledgeFilters } from "@/features/knowledge";
 
 test("graph handoff transfers query, scope, and selection without replacing content state", () => {
   useShellStore.setState({
@@ -11,6 +12,7 @@ test("graph handoff transfers query, scope, and selection without replacing cont
   useShellStore.getState().openGraphSurface({
     query: "architecture",
     scope: { kind: "space", spaceId: "child" },
+    filters: createDefaultKnowledgeFilters(),
     selectedNodeId: "document:child:README.md",
   });
 
@@ -18,6 +20,7 @@ test("graph handoff transfers query, scope, and selection without replacing cont
   expect(useShellStore.getState().knowledgeGraphOpenRequest).toEqual({
     query: "architecture",
     scope: { kind: "space", spaceId: "child" },
+    filters: createDefaultKnowledgeFilters(),
     selectedNodeId: "document:child:README.md",
     requestKey: 1,
   });

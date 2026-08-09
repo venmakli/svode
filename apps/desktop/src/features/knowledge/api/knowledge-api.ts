@@ -8,6 +8,7 @@ export interface GetKnowledgeSnapshotInput {
   projectPath: string;
   scope?: GetKnowledgeDocumentsInputDto["scope"];
   query?: string;
+  filters?: GetKnowledgeDocumentsInputDto["filters"];
   nodeOffset?: number;
   edgeOffset?: number;
   nodeLimit?: number;
@@ -22,6 +23,7 @@ export function getKnowledgeSnapshot(
     projectPath: input.projectPath,
     scope: input.scope,
     query: input.query,
+    filters: input.filters,
     nodeOffset: input.nodeOffset,
     edgeOffset: input.edgeOffset,
     nodeLimit: input.nodeLimit,

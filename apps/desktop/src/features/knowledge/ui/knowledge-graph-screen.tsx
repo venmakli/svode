@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
-import { FileText, Search } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Search } from "lucide-react";
 import {
   InputGroup,
   InputGroupAddon,
@@ -11,13 +10,15 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { useKnowledgeSnapshot } from "../hooks/use-knowledge-snapshot";
+import { useKnowledgeNeighbors } from "../hooks/use-knowledge-neighbors";
 import {
-  getDirectNeighbors,
+  getDirectNeighborDetails,
   getMatchedNodeIds,
   getNodeById,
+  withSearchResultNodes,
 } from "../model/projection";
+import { createDefaultKnowledgeFilters } from "../model/filters";
 import type {
   KnowledgeGraphState,
   KnowledgeNode,
@@ -25,6 +26,7 @@ import type {
 } from "../model/types";
 import { KnowledgeGraphView } from "./knowledge-graph-view";
 import { KnowledgeNodeDetail } from "./knowledge-node-detail";
+import { KnowledgeResultList } from "./knowledge-search-results";
 import { KnowledgeToolbar } from "./knowledge-toolbar";
 import * as m from "@/paraglide/messages.js";
 
@@ -47,24 +49,35 @@ export function KnowledgeGraphScreen({
     stateFromRequest(openRequest),
   );
   const [resetKey, setResetKey] = useState(0);
+  const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
 
   const knowledge = useKnowledgeSnapshot(
     projectPath,
     graphState.scope,
     graphState.query,
+    graphState.filters,
     "complete",
   );
-  const selectedNode = getNodeById(
-    knowledge.snapshot,
-    graphState.selectedNodeId,
+  const visibleSnapshot = useMemo(
+    () => withSearchResultNodes(knowledge.snapshot),
+    [knowledge.snapshot],
   );
-  const neighbors = getDirectNeighbors(
-    knowledge.snapshot,
+  const visibleKnowledge = { ...knowledge, snapshot: visibleSnapshot };
+  const selectedNode = getNodeById(visibleSnapshot, graphState.selectedNodeId);
+  const neighborState = useKnowledgeNeighbors(
+    projectPath,
+    graphState.scope,
+    graphState.filters,
+    selectedNode,
+  );
+  const neighbors = getDirectNeighborDetails(
+    visibleSnapshot,
     graphState.selectedNodeId,
+    neighborState.edges,
   );
   const matchedNodeIds = useMemo(
-    () => getMatchedNodeIds(knowledge.snapshot, graphState.query),
-    [graphState.query, knowledge.snapshot],
+    () => getMatchedNodeIds(visibleSnapshot, graphState.query),
+    [graphState.query, visibleSnapshot],
   );
 
   return (
@@ -77,13 +90,14 @@ export function KnowledgeGraphScreen({
           <InputGroupInput
             value={graphState.query}
             placeholder={m.search_placeholder()}
-            onChange={(event) =>
+            onChange={(event) => {
+              setFocusedNodeId(null);
               setGraphState((previous) => ({
                 ...previous,
                 query: event.target.value,
                 selectedNodeId: null,
-              }))
-            }
+              }));
+            }}
           />
           <InputGroupAddon>
             <Search />
@@ -91,22 +105,33 @@ export function KnowledgeGraphScreen({
         </InputGroup>
         <KnowledgeToolbar
           scope={graphState.scope}
+          filters={graphState.filters}
           spaces={spaces}
-          onScopeChange={(scope) =>
+          onScopeChange={(scope) => {
+            setFocusedNodeId(null);
             setGraphState((previous) => ({
               ...previous,
               scope,
               selectedNodeId: null,
-            }))
-          }
+            }));
+          }}
+          onFiltersChange={(filters) => {
+            setFocusedNodeId(null);
+            setGraphState((previous) => ({
+              ...previous,
+              filters,
+              selectedNodeId: null,
+            }));
+          }}
           onReset={() => setResetKey((value) => value + 1)}
         />
       </header>
       <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
         <ResizablePanel defaultSize="65%" minSize="40%">
           <KnowledgeGraphView
-            state={knowledge}
+            state={visibleKnowledge}
             selectedNodeId={graphState.selectedNodeId}
+            focusedNodeId={focusedNodeId}
             matchedNodeIds={matchedNodeIds}
             resetKey={resetKey}
             onNodeSelect={(selectedNodeId) =>
@@ -120,14 +145,18 @@ export function KnowledgeGraphScreen({
             <KnowledgeNodeDetail
               node={selectedNode}
               neighbors={neighbors}
+              neighborsLoading={neighborState.loading}
+              neighborsError={neighborState.error}
               onSelectNode={(selectedNodeId) =>
                 setGraphState((previous) => ({ ...previous, selectedNodeId }))
               }
               onOpenSource={onOpenSource}
             />
           ) : (
-            <KnowledgeResults
-              nodes={knowledge.snapshot?.searchItems ?? []}
+            <KnowledgeResultList
+              items={visibleSnapshot?.searchItems ?? []}
+              loading={knowledge.loading}
+              onFocus={setFocusedNodeId}
               onSelect={(selectedNodeId) =>
                 setGraphState((previous) => ({ ...previous, selectedNodeId }))
               }
@@ -139,46 +168,6 @@ export function KnowledgeGraphScreen({
   );
 }
 
-function KnowledgeResults({
-  nodes,
-  onSelect,
-}: {
-  nodes: Array<{
-    nodeId: string;
-    title: string;
-    spaceName: string;
-    source: { path: string };
-  }>;
-  onSelect: (nodeId: string) => void;
-}) {
-  return (
-    <ScrollArea className="size-full">
-      <div className="flex flex-col gap-1 p-2">
-        <p className="px-2 py-1 text-xs font-medium text-muted-foreground">
-          {m.knowledge_graph_results()}
-        </p>
-        {nodes.map((node) => (
-          <Button
-            key={node.nodeId}
-            type="button"
-            variant="ghost"
-            className="h-auto justify-start px-2 py-2"
-            onClick={() => onSelect(node.nodeId)}
-          >
-            <FileText data-icon="inline-start" />
-            <span className="min-w-0 flex-1 text-left">
-              <span className="block truncate">{node.title}</span>
-              <span className="block truncate text-xs text-muted-foreground">
-                {node.spaceName} · {node.source.path}
-              </span>
-            </span>
-          </Button>
-        ))}
-      </div>
-    </ScrollArea>
-  );
-}
-
 function stateFromRequest(
   request: KnowledgeGraphOpenRequest | null,
 ): KnowledgeGraphState {
@@ -186,7 +175,13 @@ function stateFromRequest(
     ? {
         query: request.query,
         scope: request.scope,
+        filters: request.filters,
         selectedNodeId: request.selectedNodeId,
       }
-    : { query: "", scope: { kind: "project" }, selectedNodeId: null };
+    : {
+        query: "",
+        scope: { kind: "project" },
+        filters: createDefaultKnowledgeFilters(),
+        selectedNodeId: null,
+      };
 }

@@ -9,7 +9,7 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use crate::error::AppError;
-use crate::index::knowledge::{KnowledgeResponse, KnowledgeScope};
+use crate::index::knowledge::{KnowledgeFilters, KnowledgeResponse, KnowledgeScope};
 use crate::index::search::{self, SearchResult};
 use crate::index::{IndexKey, IndexState};
 
@@ -476,8 +476,9 @@ pub async fn get_knowledge_documents(
     node_limit: Option<usize>,
     edge_limit: Option<usize>,
     search_limit: Option<usize>,
+    filters: Option<KnowledgeFilters>,
 ) -> Result<KnowledgeResponse, AppError> {
-    Ok(crate::index::knowledge::read_project_snapshot(
+    Ok(crate::index::knowledge::read_project_snapshot_filtered(
         &state,
         &PathBuf::from(project_path),
         scope,
@@ -487,6 +488,7 @@ pub async fn get_knowledge_documents(
         node_limit,
         edge_limit,
         search_limit,
+        filters.unwrap_or_default(),
     )
     .await)
 }

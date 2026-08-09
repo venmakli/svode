@@ -36,7 +36,11 @@ use crate::error::AppError;
 /// Bumped to 10 in Stage 7 Phase 8.1: adds the rebuildable document knowledge
 /// projection (document nodes, searchable fragments, explicit links and a
 /// per-pool freshness manifest).
-const SCHEMA_VERSION: i64 = 10;
+///
+/// Bumped to 11 in Stage 7 Phase 8.2: generalizes the projection to logical
+/// Collections, entries and project Agent Context artifacts, typed explicit
+/// edges, safe provenance and fragment source locations.
+const SCHEMA_VERSION: i64 = 11;
 
 /// Create a connection pool for a space's index database.
 /// Ensures the parent directory exists and enables WAL mode.
@@ -272,18 +276,27 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         r#"
         CREATE TABLE IF NOT EXISTS knowledge_documents (
             source_path TEXT PRIMARY KEY,
+            node_kind TEXT NOT NULL CHECK (node_kind IN ('document', 'collection', 'entry', 'agent_instruction', 'skill')),
             title TEXT NOT NULL,
             content_hash TEXT NOT NULL,
             source_updated_at TEXT NOT NULL,
-            checked_at TEXT NOT NULL
+            checked_at TEXT NOT NULL,
+            canonical_source_path TEXT NOT NULL,
+            provenance_json TEXT NOT NULL
         )
         "#,
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_documents_kind_path ON knowledge_documents(node_kind, source_path)",
         r#"
         CREATE TABLE IF NOT EXISTS knowledge_fragments (
             source_path TEXT NOT NULL,
             ordinal INTEGER NOT NULL,
             text TEXT NOT NULL,
             content_hash TEXT NOT NULL,
+            location_path TEXT NOT NULL,
+            line_start INTEGER NOT NULL,
+            line_end INTEGER NOT NULL,
+            byte_start INTEGER NOT NULL,
+            byte_end INTEGER NOT NULL,
             PRIMARY KEY (source_path, ordinal),
             FOREIGN KEY (source_path) REFERENCES knowledge_documents(source_path) ON DELETE CASCADE
         )
@@ -291,15 +304,23 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         r#"
         CREATE TABLE IF NOT EXISTS knowledge_links (
             source_path TEXT NOT NULL,
+            edge_kind TEXT NOT NULL CHECK (edge_kind IN ('links_to', 'relation', 'member_of', 'references')),
             target_url TEXT NOT NULL,
+            target_scope TEXT NOT NULL,
+            target_path TEXT,
+            target_kind TEXT,
+            field_name TEXT,
+            location_path TEXT NOT NULL,
             byte_start INTEGER NOT NULL,
             byte_end INTEGER NOT NULL,
             origin TEXT NOT NULL CHECK (origin = 'explicit'),
-            PRIMARY KEY (source_path, target_url, byte_start),
+            PRIMARY KEY (source_path, edge_kind, target_url, byte_start, field_name),
             FOREIGN KEY (source_path) REFERENCES knowledge_documents(source_path) ON DELETE CASCADE
         )
         "#,
         "CREATE INDEX IF NOT EXISTS idx_knowledge_links_source ON knowledge_links(source_path)",
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_links_target ON knowledge_links(target_scope, target_path)",
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_links_kind_source ON knowledge_links(edge_kind, source_path)",
         r#"
         CREATE TABLE IF NOT EXISTS knowledge_manifest (
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),

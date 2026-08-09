@@ -248,11 +248,27 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle, root_schema_pr
     }
     if !agent_context_paths.is_empty() {
         let paths = agent_context_paths.into_iter().collect::<Vec<_>>();
-        for target in agent_context_targets {
+        let targets = agent_context_targets.into_iter().collect::<Vec<_>>();
+        for target in &targets {
             let _ = app.emit(
                 "agent-context:changed",
                 serde_json::json!({ "spacePath": target, "paths": paths }),
             );
+        }
+        for target in targets {
+            tauri::async_runtime::block_on(async {
+                let state = app.state::<IndexState>();
+                if let Err(error) = crate::index::update::refresh_agent_context_projection(
+                    &state,
+                    Path::new(&target),
+                )
+                .await
+                {
+                    tracing::warn!(
+                        "watcher Agent Context knowledge refresh failed for {target}: {error}"
+                    );
+                }
+            });
         }
     }
 

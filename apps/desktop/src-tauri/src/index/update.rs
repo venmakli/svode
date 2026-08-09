@@ -147,6 +147,7 @@ async fn apply_targeted_change(
     origin: &CollectionEventOrigin,
 ) -> Result<(), AppError> {
     let normalized = normalize_rel_result(rel_path)?;
+    let folded_collection = folded_collection_artifact(space_dir, &normalized);
     let mut transaction = pool.begin().await?;
     let previous =
         crate::routines::events::read_indexed_snapshot(&mut transaction, space_dir, &normalized)
@@ -168,14 +169,85 @@ async fn apply_targeted_change(
     }
     if let Some(entry) = entry {
         upsert_entry(&mut *transaction, entry).await?;
-        crate::index::knowledge::upsert_artifact(&mut transaction, &entry.knowledge).await?;
+        if let Some(artifact) = entry.knowledge.as_ref() {
+            crate::index::knowledge::upsert_artifact(&mut transaction, artifact).await?;
+        } else if let Some(artifact) = folded_collection.as_ref() {
+            crate::index::knowledge::delete_artifact(&mut transaction, &normalized).await?;
+            crate::index::knowledge::upsert_artifact(&mut transaction, artifact).await?;
+        } else {
+            crate::index::knowledge::delete_artifact(&mut transaction, &normalized).await?;
+        }
     } else {
         sqlx::query("DELETE FROM entries WHERE file_path = ?")
             .bind(&normalized)
             .execute(&mut *transaction)
             .await?;
         crate::index::knowledge::delete_artifact(&mut transaction, &normalized).await?;
+        if let Some(artifact) = folded_collection.as_ref() {
+            crate::index::knowledge::upsert_artifact(&mut transaction, artifact).await?;
+        }
     }
+    transaction.commit().await?;
+    Ok(())
+}
+
+fn folded_collection_artifact(
+    space_dir: &Path,
+    rel_path: &str,
+) -> Option<crate::index::knowledge::KnowledgeArtifact> {
+    let path = Path::new(rel_path);
+    if !path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
+    {
+        return None;
+    }
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    let collection_path = parent
+        .map(|parent| parent.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|| ".".to_string());
+    let schema_path = if collection_path == "." {
+        space_dir.join("schema.yaml")
+    } else {
+        space_dir.join(&collection_path).join("schema.yaml")
+    };
+    if !schema_path.is_file() {
+        return None;
+    }
+    let projection =
+        crate::properties::knowledge_projection::project_collection(space_dir, &collection_path)
+            .ok()?;
+    Some(crate::index::knowledge::build_collection_artifact(
+        &projection,
+        &crate::index::reindex::file_modified_iso(&schema_path),
+    ))
+}
+
+/// Refresh only the normalized project Agent Context rows for an already-open
+/// owning pool. This is a write-path hook for the existing watcher invalidation
+/// seam; graph/search reads never call it.
+pub async fn refresh_agent_context_projection(
+    state: &IndexState,
+    space_dir: &Path,
+) -> Result<(), AppError> {
+    let key = state
+        .key_for_space_dir(space_dir)
+        .await
+        .unwrap_or_else(|| IndexKey::Root(space_dir.to_path_buf()));
+    let pool = state.get_or_create(&key).await?;
+    let lock = state.reindex_lock(&key).await;
+    let _guard = lock.lock().await;
+    let projected =
+        crate::agent_context::projection::project_knowledge_projection(space_dir).await?;
+    let artifacts = projected
+        .iter()
+        .map(crate::index::knowledge::build_agent_artifact)
+        .collect::<Vec<_>>();
+    let mut transaction = pool.begin().await?;
+    crate::index::knowledge::replace_agent_context(&mut transaction, &artifacts).await?;
     transaction.commit().await?;
     Ok(())
 }

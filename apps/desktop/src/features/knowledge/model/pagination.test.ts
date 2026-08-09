@@ -59,6 +59,8 @@ function node(id: string): KnowledgeNode {
     contentHash: id,
     sourceUpdatedAt: "2026-08-09T00:00:00Z",
     checkedAt: "2026-08-09T00:00:00Z",
+    canonicalSourcePath: `${id}.md`,
+    provenance: {},
   };
 }
 
@@ -68,6 +70,7 @@ function edge(
   byteStart: number,
 ): KnowledgeEdge {
   return {
+    kind: "links_to",
     sourceId,
     source: { spaceId: null, path: `${sourceId}.md`, kind: "document" },
     targetId,
@@ -75,6 +78,8 @@ function edge(
     targetUrl: `${targetId}.md`,
     targetStatus: "ready",
     origin: "explicit",
+    fieldName: null,
+    locationPath: `${sourceId}.md`,
     byteStart,
     byteEnd: byteStart + 1,
   };

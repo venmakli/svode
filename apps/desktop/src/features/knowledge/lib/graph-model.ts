@@ -1,7 +1,10 @@
 import type { LinkObject, NodeObject } from "force-graph";
 import { knowledgeEdgeKey } from "../model/pagination";
 import type { KnowledgeEdge, KnowledgeNode } from "../model/types";
-import { knowledgeSpaceColor } from "./space-color";
+import {
+  knowledgeSpaceColorKey,
+  knowledgeSpaceColorMap,
+} from "./space-color";
 
 export interface GraphRenderNode extends NodeObject {
   id: string;
@@ -35,6 +38,9 @@ export function buildGraphRenderData({
   previousNodes: GraphRenderNode[];
 }) {
   const nodeIds = new Set(nodes.map((node) => node.id));
+  const spaceColors = knowledgeSpaceColorMap(
+    nodes.map((node) => node.source.spaceId),
+  );
   const readyEdges = edges.filter(
     (edge) =>
       edge.targetStatus === "ready" &&
@@ -64,7 +70,9 @@ export function buildGraphRenderData({
     const existing = previousById.get(node.id);
     const display = {
       label: node.title || node.source.path,
-      color: knowledgeSpaceColor(node.source.spaceId),
+      color:
+        spaceColors.get(knowledgeSpaceColorKey(node.source.spaceId)) ??
+        SPACE_COLOR_FALLBACK,
       degree,
       connected,
       value: 0.9 + Math.min(Math.log2(degree + 1) * 0.82, 5.2),
@@ -104,6 +112,8 @@ export function buildGraphRenderData({
 
   return { nodes: graphNodes, links: graphLinks, neighbors };
 }
+
+const SPACE_COLOR_FALLBACK = "#64748b";
 
 export function resetGraphRenderPositions(
   nodes: GraphRenderNode[],

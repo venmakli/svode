@@ -1,0 +1,341 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::Path;
+use std::time::SystemTime;
+
+use chrono::{DateTime, SecondsFormat, Utc};
+use serde::Serialize;
+
+use crate::agent_adapters::system_registry_environment;
+use crate::error::AppError;
+use crate::repo_path::{RootMode, repo_relative_from_base};
+
+use super::model::{
+    AgentContextSnapshotContent, InstructionOwnerKind, InstructionSourceKind, SkillScope,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectKnowledgeReference {
+    pub path: String,
+    pub availability: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectKnowledgeArtifact {
+    pub kind: String,
+    pub source_path: String,
+    pub canonical_source_path: String,
+    pub title: String,
+    pub text: String,
+    pub source_updated_at: String,
+    pub aliases: Vec<String>,
+    pub availability: Vec<String>,
+    pub discovery: Vec<String>,
+    pub references: Vec<ProjectKnowledgeReference>,
+    pub truncated: bool,
+}
+
+/// Owner facade for the normalized, project-only Agent Context projection.
+/// Consumers never see scanner internals or personal/system/vendor sources.
+pub async fn project_knowledge_projection(
+    space_root: &Path,
+) -> Result<Vec<ProjectKnowledgeArtifact>, AppError> {
+    let environment = system_registry_environment().await?;
+    let root = space_root.to_path_buf();
+    let scan_root = root.clone();
+    let content = tokio::task::spawn_blocking(move || {
+        super::scanner::scan(&scan_root, &scan_root, &environment)
+    })
+    .await
+    .map_err(|error| {
+        AppError::General(format!("agent context projection task failed: {error}"))
+    })??;
+    normalize_project_snapshot(&root, &content)
+}
+
+fn normalize_project_snapshot(
+    space_root: &Path,
+    content: &AgentContextSnapshotContent,
+) -> Result<Vec<ProjectKnowledgeArtifact>, AppError> {
+    let canonical_root = space_root.canonicalize().map_err(|error| {
+        AppError::General(format!(
+            "could not canonicalize Agent Context projection root {}: {error}",
+            space_root.display()
+        ))
+    })?;
+    let mut rows = BTreeMap::<(String, String), Accumulator>::new();
+
+    for instruction in &content.instructions {
+        if instruction.owner.kind != InstructionOwnerKind::TargetSpace
+            || !matches!(
+                instruction.source_kind,
+                InstructionSourceKind::Project | InstructionSourceKind::Recognized
+            )
+        {
+            continue;
+        }
+        let Some(canonical_path) = instruction.canonical_path.as_deref() else {
+            continue;
+        };
+        let Some(source_path) = safe_relative_file(&canonical_root, canonical_path) else {
+            continue;
+        };
+        let Some(preview) = instruction.preview.as_ref() else {
+            continue;
+        };
+        let key = ("agent_instruction".to_string(), source_path.clone());
+        let row = rows.entry(key).or_insert_with(|| Accumulator {
+            kind: "agent_instruction".to_string(),
+            source_path: source_path.clone(),
+            canonical_source_path: source_path.clone(),
+            title: instruction.name.clone(),
+            text: preview.markdown.clone(),
+            source_updated_at: modified_at(Path::new(canonical_path)),
+            aliases: BTreeSet::new(),
+            availability: BTreeSet::new(),
+            discovery: BTreeSet::new(),
+            references: BTreeSet::new(),
+            truncated: preview.truncated,
+        });
+        if let Some(alias) = safe_alias_file(&canonical_root, &instruction.path) {
+            row.aliases.insert(alias);
+        }
+        row.availability
+            .insert(enum_value(&instruction.availability));
+        row.discovery.insert(format!(
+            "{}:{}:{}:{}",
+            instruction
+                .adapter_id
+                .map(|adapter| adapter.as_str())
+                .unwrap_or("recognized"),
+            enum_value(&instruction.discovery.policy),
+            instruction.discovery.directory_depth,
+            instruction.discovery.precedence
+        ));
+        row.truncated |= preview.truncated;
+        for reference in &instruction.references {
+            let Some(canonical_reference) = reference.canonical_path.as_deref() else {
+                continue;
+            };
+            let Some(path) = safe_relative_file(&canonical_root, canonical_reference) else {
+                continue;
+            };
+            row.references
+                .insert((path, enum_value(&reference.availability)));
+        }
+    }
+
+    for skill in &content.skills {
+        if skill.owner.kind != InstructionOwnerKind::TargetSpace {
+            continue;
+        }
+        let canonical_manifest = Path::new(&skill.canonical_path).join("SKILL.md");
+        let Some(source_path) = safe_relative_path(&canonical_root, &canonical_manifest) else {
+            continue;
+        };
+        let project_aliases = skill
+            .aliases
+            .iter()
+            .filter(|alias| alias.scope == SkillScope::Project)
+            .filter_map(|alias| {
+                safe_alias_path(&canonical_root, &Path::new(&alias.path).join("SKILL.md"))
+            })
+            .collect::<Vec<_>>();
+        if project_aliases.is_empty() {
+            continue;
+        }
+        let key = ("skill".to_string(), source_path.clone());
+        let row = rows.entry(key).or_insert_with(|| Accumulator {
+            kind: "skill".to_string(),
+            source_path: source_path.clone(),
+            canonical_source_path: source_path.clone(),
+            title: skill.name.clone(),
+            text: skill.preview.markdown.clone(),
+            source_updated_at: modified_at(&canonical_manifest),
+            aliases: BTreeSet::new(),
+            availability: BTreeSet::new(),
+            discovery: BTreeSet::new(),
+            references: BTreeSet::new(),
+            truncated: skill.preview.truncated,
+        });
+        for alias in skill
+            .aliases
+            .iter()
+            .filter(|alias| alias.scope == SkillScope::Project)
+        {
+            if let Some(path) =
+                safe_alias_path(&canonical_root, &Path::new(&alias.path).join("SKILL.md"))
+            {
+                row.aliases.insert(path);
+            }
+            row.availability.insert(enum_value(&alias.availability));
+            row.discovery.insert(format!(
+                "{}:{}:{}",
+                alias.adapter_id.as_str(),
+                enum_value(&alias.discovery_kind),
+                enum_value(&alias.link_kind)
+            ));
+        }
+    }
+
+    Ok(rows.into_values().map(Accumulator::finish).collect())
+}
+
+struct Accumulator {
+    kind: String,
+    source_path: String,
+    canonical_source_path: String,
+    title: String,
+    text: String,
+    source_updated_at: String,
+    aliases: BTreeSet<String>,
+    availability: BTreeSet<String>,
+    discovery: BTreeSet<String>,
+    references: BTreeSet<(String, String)>,
+    truncated: bool,
+}
+
+impl Accumulator {
+    fn finish(self) -> ProjectKnowledgeArtifact {
+        ProjectKnowledgeArtifact {
+            kind: self.kind,
+            source_path: self.source_path,
+            canonical_source_path: self.canonical_source_path,
+            title: self.title,
+            text: self.text,
+            source_updated_at: self.source_updated_at,
+            aliases: self.aliases.into_iter().collect(),
+            availability: self.availability.into_iter().collect(),
+            discovery: self.discovery.into_iter().collect(),
+            references: self
+                .references
+                .into_iter()
+                .map(|(path, availability)| ProjectKnowledgeReference { path, availability })
+                .collect(),
+            truncated: self.truncated,
+        }
+    }
+}
+
+fn safe_relative_file(root: &Path, path: &str) -> Option<String> {
+    safe_relative_path(root, Path::new(path)).filter(|relative| root.join(relative).is_file())
+}
+
+fn safe_alias_file(root: &Path, path: &str) -> Option<String> {
+    safe_alias_path(root, Path::new(path)).filter(|relative| root.join(relative).is_file())
+}
+
+fn safe_relative_path(root: &Path, path: &Path) -> Option<String> {
+    let canonical = path.canonicalize().ok()?;
+    if !canonical.starts_with(root) {
+        return None;
+    }
+    repo_relative_from_base(root, &canonical, RootMode::Reject).ok()
+}
+
+fn safe_alias_path(root: &Path, path: &Path) -> Option<String> {
+    let canonical = path.canonicalize().ok()?;
+    if !canonical.starts_with(root) || !path.starts_with(root) {
+        return None;
+    }
+    repo_relative_from_base(root, path, RootMode::Reject).ok()
+}
+
+fn modified_at(path: &Path) -> String {
+    let time = fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+    let date: DateTime<Utc> = time.into();
+    date.to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+fn enum_value<T: Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(ToString::to_string))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_adapters::AgentAdapterKind;
+    use crate::agent_context::model::{
+        InstructionAvailability, InstructionDiscovery, InstructionDiscoveryPolicy,
+        InstructionOwner, InstructionRow, MarkdownPreview,
+    };
+    use tempfile::TempDir;
+
+    fn preview(text: &str) -> MarkdownPreview {
+        MarkdownPreview {
+            markdown: text.to_string(),
+            truncated: false,
+            bytes_read: text.len(),
+            total_bytes: text.len() as u64,
+        }
+    }
+
+    #[test]
+    fn project_projection_excludes_personal_and_dedupes_canonical_instructions() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("AGENTS.md"), "project").unwrap();
+        let canonical = temp.path().join("AGENTS.md").canonicalize().unwrap();
+        let row = |adapter_id, source_kind| InstructionRow {
+            id: format!("{adapter_id:?}"),
+            adapter_id,
+            name: "AGENTS.md".to_string(),
+            path: canonical.to_string_lossy().to_string(),
+            canonical_path: Some(canonical.to_string_lossy().to_string()),
+            owner: InstructionOwner {
+                kind: if source_kind == InstructionSourceKind::Personal {
+                    InstructionOwnerKind::ClientConfiguration
+                } else {
+                    InstructionOwnerKind::TargetSpace
+                },
+                root: temp.path().to_string_lossy().to_string(),
+            },
+            source_kind,
+            availability: InstructionAvailability::Available,
+            reason: None,
+            discovery: InstructionDiscovery {
+                policy: InstructionDiscoveryPolicy::CodexDirectoryPrecedence,
+                directory_depth: 0,
+                precedence: 0,
+                effective: true,
+            },
+            preview: Some(preview("project")),
+            references: Vec::new(),
+        };
+        let content = AgentContextSnapshotContent {
+            project_root: temp.path().to_string_lossy().to_string(),
+            target_root: temp.path().to_string_lossy().to_string(),
+            repository_root: temp.path().to_string_lossy().to_string(),
+            adapters: Vec::new(),
+            instructions: vec![
+                row(
+                    Some(AgentAdapterKind::Codex),
+                    InstructionSourceKind::Project,
+                ),
+                row(
+                    Some(AgentAdapterKind::ClaudeCode),
+                    InstructionSourceKind::Project,
+                ),
+                row(
+                    Some(AgentAdapterKind::Codex),
+                    InstructionSourceKind::Personal,
+                ),
+            ],
+            skills: Vec::new(),
+            diagnostics: Vec::new(),
+            observed_project_paths: Vec::new(),
+            observed_personal_paths: Vec::new(),
+        };
+
+        let projected = normalize_project_snapshot(temp.path(), &content).unwrap();
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].source_path, "AGENTS.md");
+        assert_eq!(projected[0].discovery.len(), 2);
+    }
+}

@@ -8,7 +8,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { KnowledgeScope, KnowledgeSpaceOption } from "../model/types";
+import type {
+  KnowledgeGraphFilters,
+  KnowledgeScope,
+  KnowledgeSpaceOption,
+} from "../model/types";
+import { KnowledgeFilters } from "./knowledge-filters";
 import * as m from "@/paraglide/messages.js";
 
 const PROJECT_SCOPE_VALUE = "project";
@@ -16,14 +21,18 @@ const ROOT_SCOPE_VALUE = "space:root";
 
 export function KnowledgeToolbar({
   scope,
+  filters,
   spaces,
   onScopeChange,
+  onFiltersChange,
   onReset,
   onExpand,
 }: {
   scope: KnowledgeScope;
+  filters: KnowledgeGraphFilters;
   spaces: KnowledgeSpaceOption[];
   onScopeChange: (scope: KnowledgeScope) => void;
+  onFiltersChange: (filters: KnowledgeGraphFilters) => void;
   onReset: () => void;
   onExpand?: () => void;
 }) {
@@ -57,6 +66,7 @@ export function KnowledgeToolbar({
           </SelectGroup>
         </SelectContent>
       </Select>
+      <KnowledgeFilters filters={filters} onChange={onFiltersChange} />
       <Button
         type="button"
         variant="ghost"

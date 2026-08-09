@@ -30,7 +30,16 @@ fn collect_md_files(
     policy: &TreeIgnorePolicy,
     out: &mut Vec<PathBuf>,
     routine_owner_paths: &mut Vec<String>,
+    collection_paths: &mut Vec<String>,
 ) -> Result<(), AppError> {
+    if dir.join("schema.yaml").is_file() {
+        let collection_path = if dir == base {
+            ".".to_string()
+        } else {
+            repo_relative_from_base(base, dir, RootMode::Reject)?
+        };
+        collection_paths.push(collection_path);
+    }
     if dir != base && dir.join("schema.yaml").is_file() && dir.join(".routines").is_dir() {
         if let Ok(path) = repo_relative_from_base(base, dir, RootMode::Reject) {
             routine_owner_paths.push(path);
@@ -82,6 +91,7 @@ fn collect_md_files(
                 policy,
                 out,
                 routine_owner_paths,
+                collection_paths,
             )?;
         } else if meta.is_file() && name.ends_with(".md") {
             out.push(path);
@@ -153,6 +163,7 @@ mod tests {
         let policy = TreeIgnorePolicy::from_space_root(tmp.path());
         let mut files = Vec::new();
         let mut routine_owners = Vec::new();
+        let mut collection_paths = Vec::new();
         collect_md_files(
             tmp.path(),
             tmp.path(),
@@ -160,6 +171,7 @@ mod tests {
             &policy,
             &mut files,
             &mut routine_owners,
+            &mut collection_paths,
         )
         .expect("collect files");
         let mut rels = files
@@ -295,7 +307,7 @@ pub(crate) struct IndexedEntry {
     pub is_entry_head: bool,
     pub fields_json: String,
     pub body_preview: String,
-    pub knowledge: crate::index::knowledge::KnowledgeArtifact,
+    pub knowledge: Option<crate::index::knowledge::KnowledgeArtifact>,
 }
 
 /// Build an `IndexedEntry` using precomputed runtime date overrides when
@@ -369,8 +381,39 @@ pub(crate) fn build_entry_with_dates(
     };
     let in_collection = collection_root_path.is_some();
 
-    let knowledge =
-        crate::index::knowledge::build_artifact(&rel_path, &title, &updated, &raw, &body_preview);
+    let knowledge_collection_root = collection_root_path.clone().or_else(|| {
+        abs_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| name.eq_ignore_ascii_case("README.md"))
+            .and_then(|_| abs_path.parent())
+            .filter(|parent| parent.join("schema.yaml").is_file())
+            .and_then(|parent| {
+                if parent == space_dir {
+                    Some(".".to_string())
+                } else {
+                    repo_relative_from_base(space_dir, parent, RootMode::Reject).ok()
+                }
+            })
+    });
+    let relations = crate::properties::knowledge_projection::project_entry_relations(
+        space_dir,
+        &rel_path,
+        &fields_json,
+    )
+    .unwrap_or_else(|error| {
+        tracing::warn!("knowledge relation projection failed for {rel_path}: {error}");
+        Vec::new()
+    });
+    let knowledge = crate::index::knowledge::build_file_artifact(
+        &rel_path,
+        &title,
+        &updated,
+        &raw,
+        &body_preview,
+        knowledge_collection_root.as_deref(),
+        &relations,
+    );
 
     Ok(IndexedEntry {
         parent_path: parent_path_for(&rel_path)?,
@@ -444,7 +487,7 @@ fn file_created_iso(path: &Path) -> String {
         .unwrap_or_else(|_| file_modified_iso(path))
 }
 
-fn file_modified_iso(path: &Path) -> String {
+pub(crate) fn file_modified_iso(path: &Path) -> String {
     fs::metadata(path)
         .and_then(|m| m.modified())
         .map(format_system_time)
@@ -590,6 +633,7 @@ pub async fn full_reindex(
     // ── Phase 1: filesystem walk + parse, no locks held ──────────────────
     let mut md_files: Vec<PathBuf> = Vec::new();
     let mut routine_owner_paths = Vec::new();
+    let mut collection_paths = Vec::new();
     let policy = TreeIgnorePolicy::from_space_root(space_dir);
     collect_md_files(
         space_dir,
@@ -598,6 +642,7 @@ pub async fn full_reindex(
         &policy,
         &mut md_files,
         &mut routine_owner_paths,
+        &mut collection_paths,
     )?;
     let md_rel_paths = md_files
         .iter()
@@ -639,10 +684,57 @@ pub async fn full_reindex(
         }
     }
 
-    let knowledge_artifacts = entries
+    let mut knowledge_artifacts = entries
         .iter()
-        .map(|entry| entry.knowledge.clone())
+        .filter_map(|entry| entry.knowledge.clone())
         .collect::<Vec<_>>();
+    let mut knowledge_failures = 0usize;
+    for collection_path in &collection_paths {
+        match crate::properties::knowledge_projection::project_collection(
+            space_dir,
+            collection_path,
+        ) {
+            Ok(projection) => {
+                let schema_path = if collection_path == "." {
+                    space_dir.join("schema.yaml")
+                } else {
+                    space_dir.join(collection_path).join("schema.yaml")
+                };
+                knowledge_artifacts.push(crate::index::knowledge::build_collection_artifact(
+                    &projection,
+                    &file_modified_iso(&schema_path),
+                ));
+            }
+            Err(error) => {
+                knowledge_failures += 1;
+                tracing::warn!(
+                    "failed to build Collection knowledge artifact {collection_path}: {error}"
+                );
+            }
+        }
+    }
+    match crate::agent_context::projection::project_knowledge_projection(space_dir).await {
+        Ok(projected) => {
+            let agent_context_paths = projected
+                .iter()
+                .flat_map(|artifact| {
+                    std::iter::once(&artifact.source_path).chain(artifact.aliases.iter())
+                })
+                .collect::<std::collections::HashSet<_>>();
+            knowledge_artifacts
+                .retain(|artifact| !agent_context_paths.contains(&artifact.source_path));
+            knowledge_artifacts.extend(
+                projected
+                    .iter()
+                    .map(crate::index::knowledge::build_agent_artifact),
+            );
+        }
+        Err(error) => {
+            knowledge_failures += 1;
+            tracing::warn!("Agent Context knowledge projection failed: {error}");
+        }
+    }
+    knowledge_artifacts.sort_by(|left, right| left.source_path.cmp(&right.source_path));
 
     // ── Phase 2: short pure-SQL transaction ──────────────────────────────
     let mut tx = pool.begin().await?;
@@ -653,7 +745,13 @@ pub async fn full_reindex(
         .execute(&mut *tx)
         .await?;
 
-    crate::index::knowledge::replace_all(&mut tx, &knowledge_artifacts, 0, entries_skipped).await?;
+    crate::index::knowledge::replace_all(
+        &mut tx,
+        &knowledge_artifacts,
+        0,
+        entries_skipped + knowledge_failures,
+    )
+    .await?;
 
     for entry in &entries {
         upsert_entry(&mut *tx, entry).await?;

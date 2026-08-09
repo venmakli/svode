@@ -4,7 +4,7 @@ import { getSpaceSnapshot, useSpace } from "@/features/space";
 import { useOpenEntryDocument } from "@/features/entry/selection";
 import { useCommandPaletteStore } from "../model";
 import { joinAbs } from "../lib/utils";
-import type { SearchItem } from "../model";
+import type { KnowledgeNodeKind } from "@/features/knowledge";
 import * as m from "@/paraglide/messages.js";
 
 // Click handler for a search result. Implements the §Q4 stale-result branch
@@ -80,7 +80,9 @@ export function useSelectResult({
   );
 }
 
-export type SearchNavigationTarget = Pick<
-  SearchItem,
-  "spaceId" | "spaceName" | "path"
->;
+export interface SearchNavigationTarget {
+  spaceId: string | null;
+  spaceName: string;
+  path: string;
+  kind?: KnowledgeNodeKind;
+}

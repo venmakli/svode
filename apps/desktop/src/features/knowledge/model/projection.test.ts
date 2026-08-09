@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import {
+  getDirectNeighborDetails,
   getDirectNeighbors,
   getMatchedNodeIds,
   getNodeById,
+  withSearchResultNodes,
 } from "./projection";
 import type { KnowledgeSnapshot } from "./types";
 
@@ -24,6 +26,9 @@ const snapshot: KnowledgeSnapshot = {
       spaceName: "Root",
       title: "B",
       snippet: null,
+      locationPath: "b.md",
+      lineStart: 1,
+      lineEnd: 1,
     },
   ],
   freshness: [],
@@ -48,11 +53,38 @@ test("knowledge graph finds a selected node and both neighbor directions", () =>
       (item) => item.source.path,
     ),
   ).toEqual(["b.md", "c.md"]);
+  expect(
+    getDirectNeighborDetails(snapshot, "document:root:a.md").map(
+      ({ node: item, edgeKinds, fieldNames }) => [
+        item?.source.path,
+        edgeKinds,
+        fieldNames,
+      ],
+    ),
+  ).toEqual([
+    ["b.md", ["links_to"], []],
+    ["c.md", ["links_to"], []],
+  ]);
 });
 
 test("knowledge graph uses backend search projection for focus", () => {
   expect([...getMatchedNodeIds(snapshot, "b")]).toEqual(["document:root:b.md"]);
   expect(getMatchedNodeIds(snapshot, "").size).toBe(0);
+});
+
+test("knowledge graph keeps a bounded search result visible as its logical node", () => {
+  const resultOnlySnapshot: KnowledgeSnapshot = {
+    ...snapshot,
+    nodes: snapshot.nodes.slice(0, 1),
+    omittedNodeCount: 2,
+  };
+  const projected = withSearchResultNodes(resultOnlySnapshot);
+  expect(projected?.nodes.map(({ id }) => id)).toEqual([
+    "document:root:a.md",
+    "document:root:b.md",
+  ]);
+  expect(projected?.omittedNodeCount).toBe(1);
+  expect(projected?.nodes.at(-1)?.canonicalSourcePath).toBe("b.md");
 });
 
 function node(id: string, path: string) {
@@ -64,6 +96,8 @@ function node(id: string, path: string) {
     contentHash: id,
     sourceUpdatedAt: "2026-08-08T00:00:00Z",
     checkedAt: "2026-08-08T00:00:00Z",
+    canonicalSourcePath: path,
+    provenance: {},
   };
 }
 
@@ -71,6 +105,7 @@ function edge(sourceId: string, targetId: string) {
   const sourcePath = sourceId.split(":").at(-1) ?? "";
   const targetPath = targetId.split(":").at(-1) ?? "";
   return {
+    kind: "links_to" as const,
     sourceId,
     source: { kind: "document" as const, spaceId: null, path: sourcePath },
     targetId,
@@ -78,6 +113,8 @@ function edge(sourceId: string, targetId: string) {
     targetUrl: targetPath,
     targetStatus: "ready" as const,
     origin: "explicit" as const,
+    fieldName: null,
+    locationPath: sourcePath,
     byteStart: 0,
     byteEnd: 1,
   };

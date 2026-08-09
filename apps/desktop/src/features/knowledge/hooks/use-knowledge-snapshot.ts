@@ -1,7 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getKnowledgeSnapshot } from "../api/knowledge-api";
 import { mergeKnowledgePages } from "../model/pagination";
-import type { KnowledgeScope, KnowledgeSnapshot } from "../model/types";
+import type {
+  KnowledgeGraphFilters,
+  KnowledgeScope,
+  KnowledgeSnapshot,
+} from "../model/types";
 
 const COMPACT_NODE_LIMIT = 300;
 const COMPACT_EDGE_LIMIT = 600;
@@ -17,27 +21,36 @@ export interface KnowledgeSnapshotState {
   error: string | null;
   mode: KnowledgeLoadMode;
   projectionKey: string;
+  retry: () => void;
 }
+
+type KnowledgeSnapshotData = Omit<KnowledgeSnapshotState, "retry">;
 
 export function useKnowledgeSnapshot(
   projectPath: string | null,
   scope: KnowledgeScope,
   query: string,
+  filters: KnowledgeGraphFilters,
   mode: KnowledgeLoadMode = "compact",
 ): KnowledgeSnapshotState {
   const scopeKind = scope.kind;
   const scopeSpaceId = scope.kind === "space" ? scope.spaceId : null;
+  const nodeKindsKey = [...filters.nodeKinds].sort().join(",");
+  const edgeKindsKey = [...filters.edgeKinds].sort().join(",");
   const projectionKey = useMemo(
     () =>
       JSON.stringify([
         projectPath,
         scopeKind,
         scopeKind === "space" ? scopeSpaceId : null,
+        nodeKindsKey,
+        edgeKindsKey,
       ]),
-    [projectPath, scopeKind, scopeSpaceId],
+    [edgeKindsKey, nodeKindsKey, projectPath, scopeKind, scopeSpaceId],
   );
   const normalizedQuery = query.trim();
-  const [state, setState] = useState<KnowledgeSnapshotState>({
+  const [reloadKey, setReloadKey] = useState(0);
+  const [state, setState] = useState<KnowledgeSnapshotData>({
     snapshot: null,
     loading: projectPath !== null,
     error: null,
@@ -46,6 +59,7 @@ export function useKnowledgeSnapshot(
   });
   const graphRequestId = useRef(0);
   const searchRequestId = useRef(0);
+  const retry = useCallback(() => setReloadKey((value) => value + 1), []);
 
   useEffect(() => {
     const currentRequest = ++graphRequestId.current;
@@ -71,13 +85,17 @@ export function useKnowledgeSnapshot(
 
     queueMicrotask(() => {
       if (!cancelled && currentRequest === graphRequestId.current) {
-        setState({
-          snapshot: null,
-          loading: true,
-          error: null,
-          mode,
-          projectionKey,
-        });
+        setState((previous) =>
+          previous.projectionKey === projectionKey
+            ? { ...previous, loading: true, error: null, mode }
+            : {
+                snapshot: null,
+                loading: true,
+                error: null,
+                mode,
+                projectionKey,
+              },
+        );
       }
     });
 
@@ -99,6 +117,10 @@ export function useKnowledgeSnapshot(
             projectPath,
             scope: scopeInput,
             query: "",
+            filters: {
+              nodeKinds: filters.nodeKinds,
+              edgeKinds: filters.edgeKinds,
+            },
             nodeOffset,
             edgeOffset,
             nodeLimit:
@@ -165,7 +187,18 @@ export function useKnowledgeSnapshot(
     return () => {
       cancelled = true;
     };
-  }, [mode, projectPath, projectionKey, scopeKind, scopeSpaceId]);
+  }, [
+    edgeKindsKey,
+    filters.edgeKinds,
+    filters.nodeKinds,
+    mode,
+    nodeKindsKey,
+    projectPath,
+    projectionKey,
+    reloadKey,
+    scopeKind,
+    scopeSpaceId,
+  ]);
 
   const graphTotalNodeCount =
     state.projectionKey === projectionKey
@@ -196,6 +229,10 @@ export function useKnowledgeSnapshot(
       projectPath,
       scope: scopeInput,
       query: normalizedQuery,
+      filters: {
+        nodeKinds: filters.nodeKinds,
+        edgeKinds: filters.edgeKinds,
+      },
       nodeOffset: graphTotalNodeCount,
       edgeOffset: graphTotalEdgeCount,
       nodeLimit: 1,
@@ -217,17 +254,25 @@ export function useKnowledgeSnapshot(
           };
         });
       })
-      .catch(() => {
-        // Search refinement is best-effort and must not discard a loaded graph.
+      .catch((error: unknown) => {
+        if (cancelled || currentRequest !== searchRequestId.current) return;
+        setState((previous) => ({
+          ...previous,
+          error: error instanceof Error ? error.message : String(error),
+        }));
       });
 
     return () => {
       cancelled = true;
     };
   }, [
+    edgeKindsKey,
+    filters.edgeKinds,
+    filters.nodeKinds,
     graphTotalEdgeCount,
     graphTotalNodeCount,
     mode,
+    nodeKindsKey,
     normalizedQuery,
     projectPath,
     projectionKey,
@@ -242,10 +287,11 @@ export function useKnowledgeSnapshot(
       error: null,
       mode,
       projectionKey,
+      retry,
     };
   }
 
-  return state;
+  return { ...state, retry };
 }
 
 function yieldToRenderer(): Promise<void> {

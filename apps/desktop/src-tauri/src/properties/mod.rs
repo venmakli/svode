@@ -30,6 +30,8 @@ const RESERVED_FIELDS: &[&str] = &[
 mod model;
 pub use model::*;
 
+pub mod knowledge_projection;
+
 mod actors;
 pub use actors::{ActorCandidate, ActorCatalogState, list_actors, refresh_actors};
 use actors::{actor_multiple, canonical_actor_email, is_actor_type, normalize_actor_value};

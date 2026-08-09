@@ -2,10 +2,23 @@ export type KnowledgeScopeDto =
   | { kind: "project" }
   | { kind: "space"; spaceId: string | null };
 
+export type KnowledgeNodeKindDto =
+  | "document"
+  | "collection"
+  | "entry"
+  | "agent_instruction"
+  | "skill";
+
+export type KnowledgeEdgeKindDto =
+  | "links_to"
+  | "relation"
+  | "member_of"
+  | "references";
+
 export interface KnowledgeSourceDto {
   spaceId: string | null;
   path: string;
-  kind: "document";
+  kind: KnowledgeNodeKindDto;
 }
 
 export interface KnowledgeNodeDto {
@@ -16,9 +29,12 @@ export interface KnowledgeNodeDto {
   contentHash: string;
   sourceUpdatedAt: string;
   checkedAt: string;
+  canonicalSourcePath: string;
+  provenance: Record<string, unknown>;
 }
 
 export interface KnowledgeEdgeDto {
+  kind: KnowledgeEdgeKindDto;
   sourceId: string;
   source: KnowledgeSourceDto;
   targetId: string | null;
@@ -26,6 +42,8 @@ export interface KnowledgeEdgeDto {
   targetUrl: string;
   targetStatus: "ready" | "broken";
   origin: "explicit";
+  fieldName: string | null;
+  locationPath: string;
   byteStart: number;
   byteEnd: number;
 }
@@ -36,6 +54,9 @@ export interface KnowledgeSearchItemDto {
   spaceName: string;
   title: string;
   snippet: string | null;
+  locationPath: string | null;
+  lineStart: number | null;
+  lineEnd: number | null;
 }
 
 export interface KnowledgePoolFreshnessDto {
@@ -45,6 +66,7 @@ export interface KnowledgePoolFreshnessDto {
   linkCount: number;
   skippedCount: number;
   failureCount: number;
+  stale: boolean;
 }
 
 export interface KnowledgeDiagnosticDto {
@@ -54,7 +76,7 @@ export interface KnowledgeDiagnosticDto {
 }
 
 export interface KnowledgeResponseDto {
-  status: "complete" | "partial" | "empty" | "error";
+  status: "complete" | "partial" | "empty" | "error" | "stale";
   nodes: KnowledgeNodeDto[];
   edges: KnowledgeEdgeDto[];
   searchItems: KnowledgeSearchItemDto[];
