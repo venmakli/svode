@@ -1,6 +1,7 @@
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 use std::path::Path;
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::AppError;
 
@@ -43,7 +44,10 @@ use crate::error::AppError;
 ///
 /// Bumped to 12 in Stage 7 Phase 8.3: stores target-specific Agent Context
 /// applicability without duplicating inherited root artifacts in child pools.
-const SCHEMA_VERSION: i64 = 12;
+///
+/// Bumped to 13 in Stage 7 Phase 8.4: adds the per-source reconciliation
+/// manifest plus independent content revision and source generation counters.
+const SCHEMA_VERSION: i64 = 13;
 
 /// Create a connection pool for a space's index database.
 /// Ensures the parent directory exists and enables WAL mode.
@@ -64,6 +68,48 @@ pub async fn create_pool(db_path: &Path) -> Result<SqlitePool, AppError> {
         .connect_with(options)
         .await?;
     Ok(pool)
+}
+
+pub(crate) fn is_corrupt_database_error(error: &AppError) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("database disk image is malformed")
+        || message.contains("file is not a database")
+        || message.contains("database corruption")
+}
+
+/// Move an unreadable derived index aside before creating a fresh cache.
+/// The quarantined files remain available for manual inspection/recovery.
+pub(crate) fn quarantine_corrupt_database(db_path: &Path) -> Result<(), AppError> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    for suffix in ["", "-wal", "-shm"] {
+        let source = if suffix.is_empty() {
+            db_path.to_path_buf()
+        } else {
+            db_path.with_file_name(format!(
+                "{}{}",
+                db_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("index.db"),
+                suffix
+            ))
+        };
+        if !source.exists() {
+            continue;
+        }
+        let backup = source.with_file_name(format!(
+            "{}.corrupt-{stamp}",
+            source
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("index.db")
+        ));
+        std::fs::rename(source, backup)?;
+    }
+    Ok(())
 }
 
 /// Ensure the schema is at the current version. If the stored version differs
@@ -104,6 +150,7 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         "DROP TABLE IF EXISTS knowledge_fragments",
         "DROP TABLE IF EXISTS knowledge_agent_applicability",
         "DROP TABLE IF EXISTS knowledge_documents",
+        "DROP TABLE IF EXISTS knowledge_source_manifest",
         "DROP TABLE IF EXISTS knowledge_manifest",
     ];
     for stmt in drops {
@@ -341,9 +388,24 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
             document_count INTEGER NOT NULL,
             link_count INTEGER NOT NULL,
             skipped_count INTEGER NOT NULL,
-            failure_count INTEGER NOT NULL
+            failure_count INTEGER NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 0,
+            generation INTEGER NOT NULL DEFAULT 0
         )
         "#,
+        r#"
+        CREATE TABLE IF NOT EXISTS knowledge_source_manifest (
+            source_path TEXT NOT NULL,
+            source_kind TEXT NOT NULL CHECK (source_kind IN ('markdown', 'collection_schema', 'agent_context')),
+            fingerprint TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            modified_ns INTEGER NOT NULL,
+            checked_at TEXT NOT NULL,
+            diagnostic_code TEXT,
+            PRIMARY KEY (source_path, source_kind)
+        )
+        "#,
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_source_manifest_diagnostic ON knowledge_source_manifest(diagnostic_code, source_path)",
     ];
 
     for stmt in ddl {
@@ -359,4 +421,26 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn corrupt_index_is_quarantined_before_fresh_schema_creation() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let db_path = temp.path().join("index.db");
+        std::fs::write(&db_path, "not a sqlite database").unwrap();
+
+        let replacement = crate::index::open_prepared_pool(&db_path).await.unwrap();
+        ensure_schema(&replacement).await.unwrap();
+        assert!(db_path.exists());
+        assert!(
+            std::fs::read_dir(temp.path())
+                .unwrap()
+                .flatten()
+                .any(|entry| entry.file_name().to_string_lossy().contains(".corrupt-"))
+        );
+    }
 }

@@ -21,6 +21,7 @@ pub enum TreePathKind {
 #[derive(Debug, Clone)]
 pub struct TreeIgnorePolicy {
     root: PathBuf,
+    git_rules: Vec<GitIgnoreRule>,
     user_excludes: Vec<TreePattern>,
     user_includes: Vec<TreePattern>,
     pub show_ignored_placeholders: bool,
@@ -30,6 +31,7 @@ impl TreeIgnorePolicy {
     pub fn system_only(root: &Path) -> Self {
         Self {
             root: root.to_path_buf(),
+            git_rules: read_gitignore_rules(root),
             user_excludes: Vec::new(),
             user_includes: Vec::new(),
             show_ignored_placeholders: false,
@@ -72,6 +74,9 @@ impl TreeIgnorePolicy {
         if is_system_ignored_rel(&rel, kind) {
             return true;
         }
+        if self.is_git_ignored(&rel, kind) {
+            return true;
+        }
         let is_user_excluded = self
             .user_excludes
             .iter()
@@ -85,6 +90,54 @@ impl TreeIgnorePolicy {
         });
         !is_user_included
     }
+
+    fn is_git_ignored(&self, rel: &str, kind: TreePathKind) -> bool {
+        let last_match = self
+            .git_rules
+            .iter()
+            .enumerate()
+            .filter(|(_, rule)| rule.pattern.matches(rel))
+            .last();
+        let Some((index, rule)) = last_match else {
+            return false;
+        };
+        if !rule.ignored {
+            return false;
+        }
+        if kind == TreePathKind::Directory
+            && self.git_rules[index + 1..]
+                .iter()
+                .any(|rule| !rule.ignored && rule.pattern.can_match_descendant_of(rel))
+        {
+            return false;
+        }
+        true
+    }
+}
+
+#[derive(Debug, Clone)]
+struct GitIgnoreRule {
+    ignored: bool,
+    pattern: TreePattern,
+}
+
+fn read_gitignore_rules(root: &Path) -> Vec<GitIgnoreRule> {
+    let Ok(raw) = std::fs::read_to_string(root.join(".gitignore")) else {
+        return Vec::new();
+    };
+    raw.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let (ignored, pattern) = match line.strip_prefix('!') {
+                Some(pattern) => (false, pattern),
+                None => (true, line),
+            };
+            TreePattern::new_gitignore(pattern).map(|pattern| GitIgnoreRule { ignored, pattern })
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +146,7 @@ struct TreePattern {
     segments: Vec<String>,
     has_slash: bool,
     has_glob: bool,
+    anchored: bool,
 }
 
 impl TreePattern {
@@ -107,11 +161,30 @@ impl TreePattern {
             has_glob: raw.contains('*') || raw.contains('?'),
             raw,
             segments,
+            anchored: false,
         })
     }
 
+    fn new_gitignore(pattern: &str) -> Option<Self> {
+        let anchored = pattern.trim_start().starts_with('/');
+        let mut pattern = Self::new(pattern)?;
+        pattern.anchored = anchored;
+        Some(pattern)
+    }
+
     fn matches(&self, rel: &str) -> bool {
+        if self.anchored && !self.has_slash {
+            return rel
+                .split('/')
+                .next()
+                .is_some_and(|component| segment_matches(&self.raw, component));
+        }
         if self.has_glob {
+            if !self.has_slash {
+                return rel
+                    .split('/')
+                    .any(|component| segment_matches(&self.raw, component));
+            }
             let path_segments = rel.split('/').collect::<Vec<_>>();
             return glob_segments_match(&self.segments, &path_segments);
         }
@@ -125,7 +198,7 @@ impl TreePattern {
 
     fn can_match_descendant_of(&self, rel: &str) -> bool {
         if !self.has_slash {
-            return false;
+            return true;
         }
 
         let prefix = format!("{rel}/");
@@ -318,5 +391,23 @@ mod tests {
         assert!(pattern.matches("docs/guides/index.md"));
         assert!(!pattern.matches("docs/guides/image.png"));
         assert!(!pattern.matches("src/docs/index.md"));
+    }
+
+    #[test]
+    fn root_gitignore_rules_and_negations_are_shared_with_tree_consumers() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            temp.path().join(".gitignore"),
+            "ignored/\n*.secret.md\n!ignored/keep.md\n/root-only.md\n",
+        )
+        .unwrap();
+        let policy = TreeIgnorePolicy::system_only(temp.path());
+
+        assert!(!policy.is_ignored_rel(Path::new("ignored"), TreePathKind::Directory));
+        assert!(policy.is_ignored_rel(Path::new("ignored/drop.md"), TreePathKind::File));
+        assert!(!policy.is_ignored_rel(Path::new("ignored/keep.md"), TreePathKind::File));
+        assert!(policy.is_ignored_rel(Path::new("nested/token.secret.md"), TreePathKind::File));
+        assert!(policy.is_ignored_rel(Path::new("root-only.md"), TreePathKind::File));
+        assert!(!policy.is_ignored_rel(Path::new("nested/root-only.md"), TreePathKind::File));
     }
 }

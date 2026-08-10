@@ -301,6 +301,35 @@ fn is_excluded_source(source_path: &str) -> bool {
     })
 }
 
+pub(crate) fn is_secret_like_source(source_path: &str) -> bool {
+    let Some(filename) = Path::new(source_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_ascii_lowercase)
+    else {
+        return false;
+    };
+    let stem = filename.strip_suffix(".md").unwrap_or(&filename);
+    let tokens = stem
+        .split(['.', '-', '_'])
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    tokens.iter().any(|token| {
+        matches!(
+            *token,
+            "secret"
+                | "secrets"
+                | "credential"
+                | "credentials"
+                | "password"
+                | "passwords"
+                | "token"
+                | "tokens"
+        )
+    }) || stem.contains("api-key")
+        || stem.contains("private-key")
+}
+
 pub(crate) fn is_agent_context_source(source_path: &str) -> bool {
     let path = Path::new(source_path);
     let filename = path.file_name().and_then(|name| name.to_str());
@@ -592,7 +621,7 @@ async fn insert_artifact(
     Ok(())
 }
 
-async fn refresh_manifest_preserving_diagnostics(
+pub(crate) async fn refresh_manifest_preserving_diagnostics(
     tx: &mut Transaction<'_, Sqlite>,
 ) -> Result<(), AppError> {
     let diagnostics: Option<(i64, i64)> = sqlx::query_as(
@@ -1417,7 +1446,7 @@ fn combined_status(response: &KnowledgeResponse) -> &'static str {
     } else if response
         .diagnostics
         .iter()
-        .any(|diagnostic| diagnostic.code != "pool_stale")
+        .any(|diagnostic| !matches!(diagnostic.code.as_str(), "pool_stale" | "pool_checking"))
         || response.readable_pools < response.total_pools
     {
         "partial"
@@ -1491,13 +1520,25 @@ pub async fn read_project_snapshot_filtered(
             scoped_sources(&key, filters.source.as_ref(), filters.sources.as_deref());
         let edge_sources = scoped_sources(&key, None, filters.edge_sources.as_deref());
         let space_id = IndexState::space_id_for_key(&key);
-        let stale = state.reindex_active_flag(&key).await.load(Ordering::SeqCst);
-        if stale {
+        let rebuilding = state.reindex_active_flag(&key).await.load(Ordering::SeqCst);
+        let reconciling = state
+            .reconcile_active_flag(&key)
+            .await
+            .load(Ordering::SeqCst);
+        let stale = rebuilding || reconciling;
+        if rebuilding {
             saw_stale = true;
             diagnostics.push(KnowledgeDiagnostic {
                 space_id: space_id.clone(),
                 code: "pool_stale".to_string(),
                 message: "A previous prepared snapshot is being refreshed".to_string(),
+            });
+        } else if reconciling {
+            saw_stale = true;
+            diagnostics.push(KnowledgeDiagnostic {
+                space_id: space_id.clone(),
+                code: "pool_checking".to_string(),
+                message: "The cached snapshot is being checked for source changes".to_string(),
             });
         }
         let Some(pool) = state.existing_pool(&key).await else {
@@ -1730,7 +1771,9 @@ pub async fn read_project_snapshot_filtered(
     let next_edge_cursor = edge_offset.saturating_add(edge_limit).min(total_edges);
     let has_more_nodes = next_node_cursor < total_nodes;
     let has_more_edges = next_edge_cursor < total_edges;
-    let hard_diagnostics = diagnostics.iter().any(|item| item.code != "pool_stale");
+    let hard_diagnostics = diagnostics
+        .iter()
+        .any(|item| !matches!(item.code.as_str(), "pool_stale" | "pool_checking"));
     let status = if readable_pools == 0 && !diagnostics.is_empty() {
         "error"
     } else if hard_diagnostics || readable_pools < total_pools {

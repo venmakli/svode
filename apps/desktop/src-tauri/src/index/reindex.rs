@@ -1,20 +1,176 @@
 use chrono::{DateTime, SecondsFormat, Utc};
 use sqlx::{Executor, Sqlite, SqlitePool};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::AppError;
 use crate::files::frontmatter;
 use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
 use crate::git::dates::{EntryDateOverride, derive_date_overrides};
 use crate::index::normalize_rel_root_result;
+use crate::index::reconcile::{MAX_INDEXED_MARKDOWN_BYTES, SourceManifestRecord};
 use crate::repo_path::{RootMode, repo_relative_from_base};
 
 /// Format a SystemTime as RFC3339 UTC.
 fn format_system_time(time: SystemTime) -> String {
     let dt: DateTime<Utc> = time.into();
     dt.to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+#[derive(Debug)]
+pub(crate) struct ReindexInventory {
+    pub markdown_files: Vec<PathBuf>,
+    pub routine_owner_paths: Vec<String>,
+    pub collection_paths: Vec<String>,
+    pub source_manifest: Vec<SourceManifestRecord>,
+    pub scan_failure_count: usize,
+}
+
+pub(crate) fn collect_reindex_inventory(
+    space_dir: &Path,
+    skip_top_level: &[String],
+) -> Result<ReindexInventory, AppError> {
+    let mut discovered_markdown = Vec::new();
+    let mut routine_owner_paths = Vec::new();
+    let mut collection_paths = Vec::new();
+    let mut scan_failure_count = 0usize;
+    let policy = TreeIgnorePolicy::from_space_root(space_dir);
+    collect_md_files(
+        space_dir,
+        space_dir,
+        skip_top_level,
+        &policy,
+        &mut discovered_markdown,
+        &mut routine_owner_paths,
+        &mut collection_paths,
+        &mut scan_failure_count,
+    )?;
+
+    let mut markdown_files = Vec::new();
+    let mut source_manifest = Vec::new();
+    for path in discovered_markdown {
+        let record = markdown_source_record(space_dir, &path)?;
+        if record.diagnostic_code.is_none() {
+            markdown_files.push(path);
+        }
+        source_manifest.push(record);
+    }
+    let mut safe_collection_paths = Vec::new();
+    for collection_path in &collection_paths {
+        let schema_path = if collection_path == "." {
+            space_dir.join("schema.yaml")
+        } else {
+            space_dir.join(collection_path).join("schema.yaml")
+        };
+        let diagnostic_code = (fs::metadata(&schema_path)?.len() > MAX_INDEXED_MARKDOWN_BYTES)
+            .then(|| "oversized_source".to_string());
+        let record = source_record(
+            space_dir,
+            &schema_path,
+            "collection_schema",
+            diagnostic_code,
+        )?;
+        if record.diagnostic_code.is_none() {
+            safe_collection_paths.push(collection_path.clone());
+        }
+        source_manifest.push(record);
+    }
+    source_manifest.sort_by(|left, right| {
+        left.source_kind
+            .cmp(&right.source_kind)
+            .then_with(|| left.source_path.cmp(&right.source_path))
+    });
+    safe_collection_paths.sort();
+    routine_owner_paths.sort();
+
+    Ok(ReindexInventory {
+        markdown_files,
+        routine_owner_paths,
+        collection_paths: safe_collection_paths,
+        source_manifest,
+        scan_failure_count,
+    })
+}
+
+pub(crate) fn markdown_source_record(
+    space_dir: &Path,
+    path: &Path,
+) -> Result<SourceManifestRecord, AppError> {
+    let rel_path = repo_relative_from_base(space_dir, path, RootMode::Reject)?;
+    let diagnostic_code = if crate::index::knowledge::is_secret_like_source(&rel_path) {
+        Some("excluded_secret_like".to_string())
+    } else {
+        let size = fs::metadata(path)?.len();
+        (size > MAX_INDEXED_MARKDOWN_BYTES).then(|| "oversized_source".to_string())
+    };
+    source_record(space_dir, path, "markdown", diagnostic_code)
+}
+
+fn source_record(
+    space_dir: &Path,
+    path: &Path,
+    source_kind: &str,
+    diagnostic_code: Option<String>,
+) -> Result<SourceManifestRecord, AppError> {
+    let source_path = repo_relative_from_base(space_dir, path, RootMode::Reject)?;
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() {
+        return Err(AppError::Index(format!(
+            "source manifest rejected symlink: {source_path}"
+        )));
+    }
+    let size_bytes = metadata.len().min(i64::MAX as u64) as i64;
+    let modified_ns = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos().min(i64::MAX as u128) as i64)
+        .unwrap_or(0);
+    let (fingerprint, diagnostic_code) = if diagnostic_code.is_some() {
+        (
+            format!("excluded-v1:{size_bytes}:{modified_ns}"),
+            diagnostic_code,
+        )
+    } else {
+        match source_content_fingerprint(path) {
+            Ok(fingerprint) => (fingerprint, None),
+            Err(error) => {
+                tracing::warn!("source fingerprint failed for {source_path}: {error}");
+                (
+                    format!("unreadable-v1:{size_bytes}:{modified_ns}"),
+                    Some("unreadable_source".to_string()),
+                )
+            }
+        }
+    };
+    Ok(SourceManifestRecord {
+        fingerprint,
+        source_path,
+        source_kind: source_kind.to_string(),
+        size_bytes,
+        modified_ns,
+        checked_at: crate::index::reconcile::now(),
+        diagnostic_code,
+    })
+}
+
+fn source_content_fingerprint(path: &Path) -> Result<String, AppError> {
+    let mut file = fs::File::open(path)?;
+    let mut hash = 0xcbf29ce484222325_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        for byte in &buffer[..read] {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+    Ok(format!("fnv1a64:{hash:016x}"))
 }
 
 /// Walk a directory, collecting paths of `.md` files while applying the same
@@ -31,6 +187,7 @@ fn collect_md_files(
     out: &mut Vec<PathBuf>,
     routine_owner_paths: &mut Vec<String>,
     collection_paths: &mut Vec<String>,
+    scan_failure_count: &mut usize,
 ) -> Result<(), AppError> {
     if dir.join("schema.yaml").is_file() {
         let collection_path = if dir == base {
@@ -49,13 +206,22 @@ fn collect_md_files(
         Ok(e) => e,
         Err(e) => {
             tracing::warn!("cannot read dir {}: {e}", dir.display());
+            *scan_failure_count += 1;
             return Ok(());
         }
     };
 
     let at_base = dir == base;
 
-    for entry in entries.filter_map(|e| e.ok()) {
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                tracing::warn!("cannot read an entry under {}: {error}", dir.display());
+                *scan_failure_count += 1;
+                continue;
+            }
+        };
         let name = entry.file_name().to_string_lossy().to_string();
         let path = entry.path();
 
@@ -92,6 +258,7 @@ fn collect_md_files(
                 out,
                 routine_owner_paths,
                 collection_paths,
+                scan_failure_count,
             )?;
         } else if meta.is_file() && name.ends_with(".md") {
             out.push(path);
@@ -164,6 +331,7 @@ mod tests {
         let mut files = Vec::new();
         let mut routine_owners = Vec::new();
         let mut collection_paths = Vec::new();
+        let mut scan_failure_count = 0;
         collect_md_files(
             tmp.path(),
             tmp.path(),
@@ -172,6 +340,7 @@ mod tests {
             &mut files,
             &mut routine_owners,
             &mut collection_paths,
+            &mut scan_failure_count,
         )
         .expect("collect files");
         let mut rels = files
@@ -308,6 +477,7 @@ pub(crate) struct IndexedEntry {
     pub fields_json: String,
     pub body_preview: String,
     pub knowledge: Option<crate::index::knowledge::KnowledgeArtifact>,
+    pub source_diagnostic: Option<String>,
 }
 
 /// Build an `IndexedEntry` using precomputed runtime date overrides when
@@ -320,6 +490,13 @@ pub(crate) fn build_entry_with_dates(
 ) -> Result<IndexedEntry, AppError> {
     let rel_path = repo_relative_from_base(space_dir, abs_path, RootMode::Reject)?;
 
+    let source_record = markdown_source_record(space_dir, abs_path)?;
+    if let Some(code) = source_record.diagnostic_code {
+        return Err(AppError::Index(format!(
+            "knowledge source {rel_path} was skipped: {code}"
+        )));
+    }
+
     let raw = fs::read_to_string(abs_path)?;
 
     let fs_created = file_created_iso(abs_path);
@@ -330,7 +507,7 @@ pub(crate) fn build_entry_with_dates(
     let updated = date_override
         .and_then(|dates| dates.updated.clone())
         .unwrap_or(fs_updated);
-    let (title, icon, description, cover_json, fields_json, body_preview) =
+    let (title, icon, description, cover_json, fields_json, body_preview, source_diagnostic) =
         match frontmatter::parse_status(&raw) {
             frontmatter::ParseStatus::Valid { meta, body } => {
                 let fields_json = serialize_fields(&meta, &rel_path);
@@ -356,15 +533,26 @@ pub(crate) fn build_entry_with_dates(
                     cover_json,
                     fields_json,
                     body,
+                    None,
                 )
             }
-            _ => (
+            frontmatter::ParseStatus::Missing { body } => (
                 title_for_path(abs_path),
                 None,
                 None,
                 None,
                 "{}".to_string(),
-                raw.clone(),
+                body,
+                None,
+            ),
+            frontmatter::ParseStatus::Malformed { body, .. } => (
+                title_for_path(abs_path),
+                None,
+                None,
+                None,
+                "{}".to_string(),
+                body,
+                Some("invalid_frontmatter".to_string()),
             ),
         };
 
@@ -430,6 +618,7 @@ pub(crate) fn build_entry_with_dates(
         fields_json,
         body_preview,
         knowledge,
+        source_diagnostic,
     })
 }
 
@@ -641,19 +830,18 @@ pub async fn full_reindex_for_target(
     tracing::debug!("full reindex of space: {}", space_dir.display());
 
     // ── Phase 1: filesystem walk + parse, no locks held ──────────────────
-    let mut md_files: Vec<PathBuf> = Vec::new();
-    let mut routine_owner_paths = Vec::new();
-    let mut collection_paths = Vec::new();
-    let policy = TreeIgnorePolicy::from_space_root(space_dir);
-    collect_md_files(
-        space_dir,
-        space_dir,
-        skip_top_level,
-        &policy,
-        &mut md_files,
-        &mut routine_owner_paths,
-        &mut collection_paths,
-    )?;
+    let inventory_dir = space_dir.to_path_buf();
+    let inventory_skip = skip_top_level.to_vec();
+    let inventory = tokio::task::spawn_blocking(move || {
+        collect_reindex_inventory(&inventory_dir, &inventory_skip)
+    })
+    .await
+    .map_err(|error| AppError::Index(format!("source inventory task failed: {error}")))??;
+    let md_files = inventory.markdown_files;
+    let routine_owner_paths = inventory.routine_owner_paths;
+    let collection_paths = inventory.collection_paths;
+    let mut source_manifest = inventory.source_manifest;
+    let scan_failure_count = inventory.scan_failure_count;
     let md_rel_paths = md_files
         .iter()
         .filter_map(|path| repo_relative_from_base(space_dir, path, RootMode::Reject).ok())
@@ -669,14 +857,29 @@ pub async fn full_reindex_for_target(
     let mut entries: Vec<IndexedEntry> = Vec::with_capacity(md_files.len());
     let mut entries_skipped = 0usize;
     for path in &md_files {
+        tokio::task::yield_now().await;
         let rel_path = repo_relative_from_base(space_dir, path, RootMode::Reject).ok();
         let date_overrides = rel_path
             .as_ref()
             .and_then(|rel_path| entry_date_overrides.get(rel_path));
         match build_entry_with_dates(space_dir, path, date_overrides) {
-            Ok(entry) => entries.push(entry),
+            Ok(entry) => {
+                if let Some(record) = source_manifest.iter_mut().find(|record| {
+                    record.source_kind == "markdown" && record.source_path == entry.rel_path
+                }) {
+                    record.diagnostic_code = entry.source_diagnostic.clone();
+                }
+                entries.push(entry)
+            }
             Err(e) => {
                 entries_skipped += 1;
+                if let Some(rel_path) = rel_path.as_ref() {
+                    if let Some(record) = source_manifest.iter_mut().find(|record| {
+                        record.source_kind == "markdown" && record.source_path == *rel_path
+                    }) {
+                        record.diagnostic_code = Some("unreadable_source".to_string());
+                    }
+                }
                 tracing::warn!("failed to build index entry for {}: {e}", path.display());
             }
         }
@@ -743,6 +946,24 @@ pub async fn full_reindex_for_target(
                     .filter(|artifact| artifact.owner_scope == "current")
                     .map(crate::index::knowledge::build_agent_artifact),
             );
+            source_manifest.extend(
+                knowledge_artifacts
+                    .iter()
+                    .filter(|artifact| {
+                        matches!(artifact.kind.as_str(), "agent_instruction" | "skill")
+                    })
+                    .map(|artifact| {
+                        crate::index::reconcile::SourceManifestRecord::agent_context(
+                            artifact.source_path.clone(),
+                            artifact.content_hash.clone(),
+                            artifact
+                                .fragments
+                                .iter()
+                                .map(|fragment| fragment.text.len())
+                                .sum(),
+                        )
+                    }),
+            );
             agent_applicability = projected
                 .iter()
                 .filter(|artifact| artifact.is_effectively_applicable())
@@ -769,10 +990,15 @@ pub async fn full_reindex_for_target(
         &mut tx,
         &knowledge_artifacts,
         &agent_applicability,
-        0,
-        entries_skipped + knowledge_failures,
+        source_manifest
+            .iter()
+            .filter(|record| record.diagnostic_code.is_some())
+            .count(),
+        entries_skipped + knowledge_failures + scan_failure_count,
     )
     .await?;
+    crate::index::reconcile::replace_source_manifest(&mut tx, &source_manifest).await?;
+    crate::index::reconcile::advance_generation(&mut tx, true, true).await?;
 
     for entry in &entries {
         upsert_entry(&mut *tx, entry).await?;

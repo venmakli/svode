@@ -6,7 +6,7 @@ use crate::git::dates::derive_date_overrides;
 use crate::index::normalize_rel_result;
 #[cfg(test)]
 use crate::index::reindex::full_reindex;
-use crate::index::reindex::{build_entry_with_dates, upsert_entry};
+use crate::index::reindex::{build_entry_with_dates, markdown_source_record, upsert_entry};
 use crate::index::{IndexKey, IndexState};
 use crate::routines::CollectionEventOrigin;
 
@@ -100,6 +100,19 @@ pub(crate) async fn update_entry_with_origin(
         .await;
     }
 
+    let source_record = markdown_source_record(&dir, &abs)?;
+    if source_record.diagnostic_code.is_some() {
+        return apply_targeted_change(
+            &pool,
+            &dir,
+            &normalized,
+            None,
+            false,
+            automatic_events_enabled,
+            &origin,
+        )
+        .await;
+    }
     let date_overrides = derive_date_overrides(&dir, std::slice::from_ref(&normalized)).await;
     let entry = build_entry_with_dates(&dir, &abs, date_overrides.get(&normalized))?;
     let frontmatter_valid = markdown_frontmatter_diff_safe(&abs);
@@ -149,6 +162,20 @@ async fn apply_targeted_change(
     origin: &CollectionEventOrigin,
 ) -> Result<(), AppError> {
     let normalized = normalize_rel_result(rel_path)?;
+    let source_path = space_dir.join(&normalized);
+    let mut source_record = if source_path.is_file()
+        && source_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+    {
+        Some(markdown_source_record(space_dir, &source_path)?)
+    } else {
+        None
+    };
+    if let (Some(record), Some(entry)) = (source_record.as_mut(), entry) {
+        record.diagnostic_code = entry.source_diagnostic.clone();
+    }
     let folded_collection = folded_collection_artifact(space_dir, &normalized);
     let mut transaction = pool.begin().await?;
     let previous =
@@ -169,31 +196,67 @@ async fn apply_targeted_change(
         )
         .await?;
     }
+    let mut knowledge_changed = false;
     if let Some(entry) = entry {
         upsert_entry(&mut *transaction, entry).await?;
         if let Some(artifact) = entry.knowledge.as_ref() {
-            crate::index::knowledge::upsert_artifact(&mut transaction, artifact).await?;
+            knowledge_changed |=
+                crate::index::knowledge::upsert_artifact(&mut transaction, artifact).await?;
         } else if let Some(artifact) = folded_collection.as_ref() {
-            crate::index::knowledge::delete_artifact(&mut transaction, &normalized).await?;
-            crate::index::knowledge::upsert_artifact(&mut transaction, artifact).await?;
+            knowledge_changed |=
+                crate::index::knowledge::delete_artifact(&mut transaction, &normalized).await?;
+            knowledge_changed |=
+                crate::index::knowledge::upsert_artifact(&mut transaction, artifact).await?;
         } else {
-            crate::index::knowledge::delete_artifact(&mut transaction, &normalized).await?;
+            knowledge_changed |=
+                crate::index::knowledge::delete_artifact(&mut transaction, &normalized).await?;
         }
     } else {
         sqlx::query("DELETE FROM entries WHERE file_path = ?")
             .bind(&normalized)
             .execute(&mut *transaction)
             .await?;
-        crate::index::knowledge::delete_artifact(&mut transaction, &normalized).await?;
+        knowledge_changed |=
+            crate::index::knowledge::delete_artifact(&mut transaction, &normalized).await?;
         if let Some(artifact) = folded_collection.as_ref() {
-            crate::index::knowledge::upsert_artifact(&mut transaction, artifact).await?;
+            knowledge_changed |=
+                crate::index::knowledge::upsert_artifact(&mut transaction, artifact).await?;
         }
     }
+    let manifest_changed = crate::index::reconcile::reconcile_source_record(
+        &mut transaction,
+        &normalized,
+        "markdown",
+        source_record.as_ref(),
+    )
+    .await?;
+    let manifest_exists: i64 =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM knowledge_manifest WHERE singleton = 1)")
+            .fetch_one(&mut *transaction)
+            .await?;
+    if manifest_exists == 0 {
+        crate::index::knowledge::refresh_manifest_preserving_diagnostics(&mut transaction).await?;
+    }
+    let skipped_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM knowledge_source_manifest WHERE diagnostic_code IS NOT NULL",
+    )
+    .fetch_one(&mut *transaction)
+    .await?;
+    sqlx::query("UPDATE knowledge_manifest SET skipped_count = ? WHERE singleton = 1")
+        .bind(skipped_count)
+        .execute(&mut *transaction)
+        .await?;
+    crate::index::reconcile::advance_generation(
+        &mut transaction,
+        knowledge_changed,
+        manifest_changed || knowledge_changed,
+    )
+    .await?;
     transaction.commit().await?;
     Ok(())
 }
 
-fn folded_collection_artifact(
+pub(crate) fn folded_collection_artifact(
     space_dir: &Path,
     rel_path: &str,
 ) -> Option<crate::index::knowledge::KnowledgeArtifact> {
@@ -266,11 +329,40 @@ pub async fn refresh_agent_context_projection(
             .filter(|artifact| artifact.is_effectively_applicable())
             .map(crate::index::knowledge::build_agent_applicability)
             .collect::<Vec<_>>();
+        let previous_manifest = crate::index::reconcile::read_source_manifest(&pool).await?;
+        let mut current_manifest = previous_manifest
+            .iter()
+            .filter(|record| record.source_kind != "agent_context")
+            .cloned()
+            .collect::<Vec<_>>();
+        current_manifest.extend(artifacts.iter().map(|artifact| {
+            crate::index::reconcile::SourceManifestRecord::agent_context(
+                artifact.source_path.clone(),
+                artifact.content_hash.clone(),
+                artifact
+                    .fragments
+                    .iter()
+                    .map(|fragment| fragment.text.len())
+                    .sum(),
+            )
+        }));
         let mut transaction = pool.begin().await?;
-        crate::index::knowledge::replace_agent_context(
+        let knowledge_changed = crate::index::knowledge::replace_agent_context(
             &mut transaction,
             &artifacts,
             &applicability,
+        )
+        .await?;
+        let manifest_changed = crate::index::reconcile::reconcile_source_manifest(
+            &mut transaction,
+            &previous_manifest,
+            &current_manifest,
+        )
+        .await?;
+        crate::index::reconcile::advance_generation(
+            &mut transaction,
+            knowledge_changed,
+            manifest_changed || knowledge_changed,
         )
         .await?;
         transaction.commit().await?;
@@ -381,6 +473,30 @@ pub async fn reindex_after_pull(
                 tracing::warn!("failed to drop index row for {normalized}: {e}");
             }
             continue;
+        }
+
+        match markdown_source_record(&dir, &abs) {
+            Ok(record) if record.diagnostic_code.is_some() => {
+                if let Err(e) = apply_targeted_change(
+                    &pool,
+                    &dir,
+                    &normalized,
+                    None,
+                    false,
+                    automatic_events_enabled,
+                    &CollectionEventOrigin::git_sync(),
+                )
+                .await
+                {
+                    tracing::warn!("failed to exclude index source {normalized}: {e}");
+                }
+                continue;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!("failed to inspect index source {normalized}: {e}");
+                continue;
+            }
         }
 
         match build_entry_with_dates(&dir, &abs, date_overrides.get(&normalized)) {

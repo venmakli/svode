@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod db;
 pub mod knowledge;
+pub mod reconcile;
 pub mod reindex;
 pub mod search;
 pub mod update;
@@ -149,6 +150,37 @@ fn read_child_space_name(space_dir: &Path, folder_name: &str) -> String {
     }
 }
 
+async fn open_prepared_pool(db_path: &Path) -> Result<SqlitePool, AppError> {
+    match db::create_pool(db_path).await {
+        Ok(pool) => match db::ensure_schema(&pool).await {
+            Ok(()) => Ok(pool),
+            Err(error) if db::is_corrupt_database_error(&error) => {
+                pool.close().await;
+                tracing::warn!(
+                    "quarantining corrupt derived index at {}",
+                    db_path.display()
+                );
+                db::quarantine_corrupt_database(db_path)?;
+                let replacement = db::create_pool(db_path).await?;
+                db::ensure_schema(&replacement).await?;
+                Ok(replacement)
+            }
+            Err(error) => Err(error),
+        },
+        Err(error) if db::is_corrupt_database_error(&error) => {
+            tracing::warn!(
+                "quarantining corrupt derived index at {}",
+                db_path.display()
+            );
+            db::quarantine_corrupt_database(db_path)?;
+            let replacement = db::create_pool(db_path).await?;
+            db::ensure_schema(&replacement).await?;
+            Ok(replacement)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Resolve `abs_path` to the index pool that owns it plus the relative path
 /// inside that pool.
 ///
@@ -226,6 +258,9 @@ pub struct IndexState {
     /// pools per §Q3 — separate from `reindex_locks` so that concurrent
     /// search reads don't serialize against each other on the same Mutex.
     reindex_active: Mutex<HashMap<IndexKey, Arc<AtomicBool>>>,
+    /// Per-key flag raised while a cached snapshot is being reconciled with
+    /// its source manifest. Cached rows stay readable throughout this pass.
+    reconcile_active: Mutex<HashMap<IndexKey, Arc<AtomicBool>>>,
     /// Per-key runtime backlink index. Mirrors `pools` lifecycle. Lazy-build:
     /// `BacklinkIndex::build` runs on first access (preserves current
     /// behaviour — not eager at `open_project`).
@@ -254,6 +289,7 @@ impl IndexState {
             pools: Mutex::new(HashMap::new()),
             reindex_locks: Mutex::new(HashMap::new()),
             reindex_active: Mutex::new(HashMap::new()),
+            reconcile_active: Mutex::new(HashMap::new()),
             backlinks: Mutex::new(HashMap::new()),
             spaces_cache: Mutex::new(HashMap::new()),
             lfs_states: Mutex::new(HashMap::new()),
@@ -942,6 +978,33 @@ impl IndexState {
             .clone()
     }
 
+    pub async fn reconcile_active_flag(&self, key: &IndexKey) -> Arc<AtomicBool> {
+        let mut map = self.reconcile_active.lock().await;
+        map.entry(key.clone())
+            .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+            .clone()
+    }
+
+    /// Compare the per-source manifest with disk and apply only known diffs.
+    /// A missing/incompatible manifest takes the explicit full-rebuild
+    /// fallback; concurrent targeted writes are detected by the generation
+    /// fence and retried from a fresh inventory.
+    pub async fn run_reconciliation(&self, key: &IndexKey) -> Result<(), AppError> {
+        let flag = self.reconcile_active_flag(key).await;
+        flag.store(true, Ordering::SeqCst);
+        let _flag_guard = ReindexActiveGuard(flag);
+        for _ in 0..3 {
+            match reconcile::reconcile_pool(self, key).await? {
+                reconcile::ReconcileOutcome::Applied => return Ok(()),
+                reconcile::ReconcileOutcome::Retry => continue,
+                reconcile::ReconcileOutcome::Rebuild => return self.run_full_reindex(key).await,
+            }
+        }
+        Err(AppError::Index(format!(
+            "source manifest kept changing during reconciliation for {key:?}"
+        )))
+    }
+
     /// Run `full_reindex` for `key` under the per-key serialization lock and
     /// with the `reindex_active` flag raised for the duration. Centralizes the
     /// "open pool + dir + skip + lock + flag" boilerplate that every
@@ -970,8 +1033,7 @@ impl IndexState {
 
         let dir = self.dir_for_key(key).await?;
         let db_path = dir.join(".svode").join("index.db");
-        let pool = db::create_pool(&db_path).await?;
-        db::ensure_schema(&pool).await?;
+        let pool = open_prepared_pool(&db_path).await?;
 
         let mut pools = self.pools.lock().await;
         if let Some(existing) = pools.get(key) {
@@ -1018,17 +1080,16 @@ impl IndexState {
         self.backlinks.lock().await.remove(key);
         self.reindex_locks.lock().await.remove(key);
         self.reindex_active.lock().await.remove(key);
+        self.reconcile_active.lock().await.remove(key);
         self.lfs_states.lock().await.remove(key);
     }
 
-    /// Open root + all ready child-space pools for `project` and spawn a
-    /// background `full_reindex` for each (under reindex lock + a Semaphore-4
-    /// concurrency limit).
+    /// Open root + all ready child-space pools for `project` and reconcile
+    /// their cached source manifests in the background (Semaphore-4 limit).
     ///
-    /// Order: cache snapshot → open pools → spawn reindex. Watcher events
-    /// arriving during reindex can be safely dropped — the full_reindex will
-    /// pick up everything; events after the snapshot are handled by
-    /// subsequent `update_entry` calls.
+    /// Order: cache snapshot → open pools → spawn reconciliation. Watcher
+    /// writes share the per-pool lock and advance generation, so a stale
+    /// reconciliation plan retries instead of overwriting newer rows.
     pub async fn open_project(&self, app: &AppHandle, project: &Path) -> Result<(), AppError> {
         let cfg = config::read_space_config(project)?;
         let cache = ProjectSpacesCache::from_config(project, &cfg);
@@ -1064,7 +1125,8 @@ impl IndexState {
             }
         }
 
-        // Spawn fan-out full_reindex.
+        // Spawn cached-first manifest reconciliation. A new or incompatible
+        // pool falls back to one full rebuild inside run_reconciliation.
         let semaphore = Arc::new(Semaphore::new(REINDEX_PARALLELISM));
         let app_handle = app.clone();
         for key in keys {
@@ -1076,8 +1138,8 @@ impl IndexState {
                     Err(_) => return,
                 };
                 let state = app.state::<IndexState>();
-                if let Err(e) = state.run_full_reindex(&key).await {
-                    tracing::warn!("background reindex failed for {:?}: {e}", key);
+                if let Err(e) = state.run_reconciliation(&key).await {
+                    tracing::warn!("background reconciliation failed for {:?}: {e}", key);
                 }
             });
         }

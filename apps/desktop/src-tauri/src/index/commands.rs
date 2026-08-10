@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
@@ -91,16 +90,9 @@ struct PoolHits {
     hits: Vec<SearchResult>,
 }
 
-/// Run `query_fn` against every key in parallel, skipping pools whose
-/// `full_reindex` is currently in flight (per §Q3). Returns the per-pool
-/// results plus the count of pools that actually contributed — `total_spaces`
-/// is the input length, `indexed_spaces` is the returned `Vec<PoolHits>`
-/// length.
-///
-/// The skip is a non-blocking flag check, not a mutex acquisition: parallel
-/// search IPCs (title + FTS fired together via `Promise.all`) must not
-/// serialize against each other on the same pool. SQLite handles concurrent
-/// reads safely.
+/// Run `query_fn` against every already-open key in parallel. Reconciliation
+/// and full rebuilds keep the previous committed SQLite snapshot readable,
+/// so search never opens/migrates a pool and never disappears during refresh.
 async fn fan_out<F, Fut>(
     app: &AppHandle,
     keys: Vec<IndexKey>,
@@ -116,14 +108,10 @@ where
         let q = query_fn.clone();
         set.spawn(async move {
             let state = app.state::<IndexState>();
-            let flag = state.reindex_active_flag(&key).await;
-            if flag.load(Ordering::SeqCst) {
-                return None;
-            }
-            let pool = match state.get_or_create(&key).await {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::warn!("fan_out: get_or_create failed for {:?}: {e}", key);
+            let pool = match state.existing_pool(&key).await {
+                Some(pool) => pool,
+                None => {
+                    tracing::debug!("fan_out: cached pool unavailable for {:?}", key);
                     return None;
                 }
             };
@@ -301,11 +289,7 @@ async fn search_unique_id_exact(
         if results.len() >= limit as usize {
             break;
         }
-        let flag = state.reindex_active_flag(key).await;
-        if flag.load(Ordering::SeqCst) {
-            continue;
-        }
-        let Ok(pool) = state.get_or_create(key).await else {
+        let Some(pool) = state.existing_pool(key).await else {
             continue;
         };
         let Ok(space_path) = state.dir_for_key(key).await else {
