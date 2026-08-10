@@ -31,3 +31,7 @@ export function getKnowledgeDocuments(
 ): Promise<KnowledgeResponseDto> {
   return invokeCommand<KnowledgeResponseDto>("get_knowledge_documents", input);
 }
+
+export function repairKnowledgeIndex(projectPath: string): Promise<void> {
+  return invokeCommand<void>("reindex_project", { projectPath });
+}

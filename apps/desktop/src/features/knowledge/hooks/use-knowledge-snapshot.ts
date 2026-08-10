@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getKnowledgeSnapshot } from "../api/knowledge-api";
 import { mergeKnowledgePages } from "../model/pagination";
+import { useKnowledgeRepair } from "./use-knowledge-repair";
 import type {
   KnowledgeGraphFilters,
   KnowledgeScope,
@@ -22,9 +23,15 @@ export interface KnowledgeSnapshotState {
   mode: KnowledgeLoadMode;
   projectionKey: string;
   retry: () => void;
+  repair: () => Promise<void>;
+  repairing: boolean;
+  repairError: string | null;
 }
 
-type KnowledgeSnapshotData = Omit<KnowledgeSnapshotState, "retry">;
+type KnowledgeSnapshotData = Omit<
+  KnowledgeSnapshotState,
+  "retry" | "repair" | "repairing" | "repairError"
+>;
 
 export function useKnowledgeSnapshot(
   projectPath: string | null,
@@ -60,6 +67,7 @@ export function useKnowledgeSnapshot(
   const graphRequestId = useRef(0);
   const searchRequestId = useRef(0);
   const retry = useCallback(() => setReloadKey((value) => value + 1), []);
+  const repairState = useKnowledgeRepair(projectPath, retry);
 
   useEffect(() => {
     const currentRequest = ++graphRequestId.current;
@@ -288,10 +296,11 @@ export function useKnowledgeSnapshot(
       mode,
       projectionKey,
       retry,
+      ...repairState,
     };
   }
 
-  return { ...state, retry };
+  return { ...state, retry, ...repairState };
 }
 
 function yieldToRenderer(): Promise<void> {
@@ -302,9 +311,13 @@ function yieldToRenderer(): Promise<void> {
 
 function hasTransientPoolDiagnostic(snapshot: KnowledgeSnapshot): boolean {
   return snapshot.diagnostics.some(({ code }) =>
-    ["pool_reindexing", "pool_unavailable", "snapshot_unavailable"].includes(
-      code,
-    ),
+    [
+      "pool_stale",
+      "pool_checking",
+      "pool_reindexing",
+      "pool_unavailable",
+      "snapshot_unavailable",
+    ].includes(code),
   );
 }
 

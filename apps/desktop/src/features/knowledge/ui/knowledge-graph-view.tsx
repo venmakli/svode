@@ -1,4 +1,4 @@
-import { RefreshCw } from "lucide-react";
+import { LoaderCircle, RefreshCw, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -43,6 +43,9 @@ export function KnowledgeGraphView({
       <GraphMessage
         description={m.knowledge_graph_error()}
         onRetry={state.retry}
+        onRepair={() => void state.repair()}
+        repairing={state.repairing}
+        repairError={state.repairError}
       />
     );
   }
@@ -121,9 +124,15 @@ function GraphLegend({ snapshot }: { snapshot: KnowledgeSnapshot }) {
 function GraphMessage({
   description,
   onRetry,
+  onRepair,
+  repairing = false,
+  repairError,
 }: {
   description: string;
   onRetry?: () => void;
+  onRepair?: () => void;
+  repairing?: boolean;
+  repairError?: string | null;
 }) {
   return (
     <Empty className="size-full border-0">
@@ -136,6 +145,28 @@ function GraphMessage({
           <RefreshCw data-icon="inline-start" />
           {m.knowledge_graph_retry()}
         </Button>
+      )}
+      {onRepair && (
+        <Button
+          type="button"
+          variant="outline"
+          disabled={repairing}
+          onClick={onRepair}
+        >
+          {repairing ? (
+            <LoaderCircle data-icon="inline-start" className="animate-spin" />
+          ) : (
+            <RotateCcw data-icon="inline-start" />
+          )}
+          {repairing
+            ? m.knowledge_graph_rebuilding()
+            : m.knowledge_graph_rebuild()}
+        </Button>
+      )}
+      {repairError && (
+        <EmptyDescription className="text-destructive">
+          {m.knowledge_graph_rebuild_error()}
+        </EmptyDescription>
       )}
     </Empty>
   );

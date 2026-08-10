@@ -1,5 +1,6 @@
 import {
   getKnowledgeDocuments,
+  repairKnowledgeIndex,
   type GetKnowledgeDocumentsInputDto,
 } from "@/platform/knowledge/knowledge-api";
 import type { KnowledgeSnapshot } from "../model/types";
@@ -30,4 +31,8 @@ export function getKnowledgeSnapshot(
     edgeLimit: input.edgeLimit,
     searchLimit: input.searchLimit,
   });
+}
+
+export function repairKnowledgeSnapshot(projectPath: string): Promise<void> {
+  return repairKnowledgeIndex(projectPath);
 }

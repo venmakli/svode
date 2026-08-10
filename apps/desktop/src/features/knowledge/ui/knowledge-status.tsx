@@ -2,7 +2,9 @@ import {
   CircleAlert,
   CircleCheck,
   Clock3,
+  LoaderCircle,
   RefreshCw,
+  RotateCcw,
   TriangleAlert,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -111,6 +113,27 @@ export function KnowledgeStatus({ state }: { state: KnowledgeSnapshotState }) {
               {m.knowledge_graph_retry()}
             </Button>
           )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={state.repairing}
+            onClick={() => void state.repair()}
+          >
+            {state.repairing ? (
+              <LoaderCircle data-icon="inline-start" className="animate-spin" />
+            ) : (
+              <RotateCcw data-icon="inline-start" />
+            )}
+            {state.repairing
+              ? m.knowledge_graph_rebuilding()
+              : m.knowledge_graph_rebuild()}
+          </Button>
+          {state.repairError && (
+            <p className="break-words text-xs text-destructive">
+              {m.knowledge_graph_rebuild_error()}
+            </p>
+          )}
         </PopoverContent>
       </Popover>
       {snapshot.truncated && (
@@ -136,9 +159,9 @@ export function KnowledgeStatus({ state }: { state: KnowledgeSnapshotState }) {
 }
 
 function readStatus(state: KnowledgeSnapshotState): ReadStatus {
-  if (state.error) return "stale";
+  if (state.error || state.repairError) return "stale";
+  if (state.loading || state.repairing) return "checking";
   if (state.snapshot?.status === "stale") return "stale";
-  if (state.loading) return "checking";
   if (state.snapshot?.status === "partial") return "partial";
   return "fresh";
 }
