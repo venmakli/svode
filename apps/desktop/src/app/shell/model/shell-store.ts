@@ -11,7 +11,7 @@ import type {
 } from "@/features/knowledge";
 
 type SettingsDialog = "app" | "space" | null;
-export type MainSurface = "content" | "inbox" | "sessions" | "graph";
+export type MainSurface = "content" | "sessions" | "graph";
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "svode:shell:sidebar-width";
 
@@ -37,7 +37,6 @@ interface ShellState {
   openSpaceSettings: (spacePath: string) => void;
   closeSettings: () => void;
   openContentSurface: () => void;
-  openInboxSurface: () => void;
   openSessionsSurface: (target?: AgentSessionOpenTarget) => void;
   openGraphSurface: (state: KnowledgeGraphState) => void;
 }
@@ -111,7 +110,6 @@ export const useShellStore = create<ShellState>((set) => ({
   closeSettings: () => set({ settingsDialog: null, settingsSpacePath: null }),
 
   openContentSurface: () => set({ mainSurface: "content" }),
-  openInboxSurface: () => set({ mainSurface: "inbox" }),
   openSessionsSurface: (target) =>
     set((state) => {
       if (!target) {

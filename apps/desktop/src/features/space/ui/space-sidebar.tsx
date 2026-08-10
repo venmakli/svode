@@ -1,4 +1,4 @@
-import { BotMessageSquare, ChevronsUpDown, Inbox, Search } from "lucide-react";
+import { BotMessageSquare, ChevronsUpDown, Search } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Sidebar,
@@ -14,7 +14,7 @@ import { cn } from "@/shared/lib/utils";
 import { NavSpaces } from "./nav-spaces";
 import * as m from "@/paraglide/messages.js";
 
-type MainSurface = "content" | "inbox" | "sessions" | "graph";
+type MainSurface = "content" | "sessions" | "graph";
 
 interface SpaceSidebarProps {
   identityName: string | null;
@@ -23,7 +23,6 @@ interface SpaceSidebarProps {
   mainSurface: MainSurface;
   onActivateContent: () => void;
   onBeforeNavigation: () => Promise<boolean>;
-  onOpenInbox: () => void;
   onOpenSessions: () => void;
   onOpenSearch: () => void;
   onOpenAppSettings: () => void;
@@ -36,7 +35,6 @@ export function SpaceSidebar({
   mainSurface,
   onActivateContent,
   onBeforeNavigation,
-  onOpenInbox,
   onOpenSessions,
   onOpenSearch,
   onOpenAppSettings,
@@ -56,7 +54,6 @@ export function SpaceSidebar({
       <SidebarContent>
         <TopLevelSidebarActions
           mainSurface={mainSurface}
-          onOpenInbox={onOpenInbox}
           onOpenSessions={onOpenSessions}
           onOpenSearch={onOpenSearch}
         />
@@ -97,26 +94,15 @@ export function SpaceSidebar({
 
 function TopLevelSidebarActions({
   mainSurface,
-  onOpenInbox,
   onOpenSessions,
   onOpenSearch,
 }: {
   mainSurface: MainSurface;
-  onOpenInbox: () => void;
   onOpenSessions: () => void;
   onOpenSearch: () => void;
 }) {
   return (
     <SidebarMenu className="px-2 py-2">
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          isActive={mainSurface === "inbox"}
-          onClick={onOpenInbox}
-        >
-          <Inbox />
-          <span>{m.sidebar_inbox()}</span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
       <SidebarMenuItem>
         <SidebarMenuButton
           isActive={mainSurface === "sessions"}

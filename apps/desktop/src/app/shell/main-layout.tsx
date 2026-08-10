@@ -49,7 +49,7 @@ import {
   SHELL_SIDEBAR_WIDTH_MIN,
   useShellStore,
 } from "./model";
-import { GraphSurface, InboxSurface, SessionsSurface } from "./main-surfaces";
+import { GraphSurface, SessionsSurface } from "./main-surfaces";
 import { ActiveSpaceContent } from "./active-space-content";
 import { cn } from "@/shared/lib/utils";
 
@@ -61,10 +61,9 @@ interface ShellLayoutContentProps {
   sidebarProviderRef: RefObject<HTMLDivElement | null>;
   identityName: string | null;
   identityEmail: string | null;
-  mainSurface: "content" | "inbox" | "sessions" | "graph";
+  mainSurface: "content" | "sessions" | "graph";
   onActivateContent: () => void;
   onBeforeNavigation: () => Promise<boolean>;
-  onOpenInbox: () => void;
   onOpenSessions: () => void;
   onOpenSearch: () => void;
   onOpenAppSettings: () => void;
@@ -73,7 +72,7 @@ interface ShellLayoutContentProps {
 interface DesktopResizableShellProps {
   sidebarProviderRef: RefObject<HTMLDivElement | null>;
   sidebar: ReactNode;
-  mainSurface: "content" | "inbox" | "sessions" | "graph";
+  mainSurface: "content" | "sessions" | "graph";
   onBeforeNavigation: () => Promise<boolean>;
   onOpenAppSettings: () => void;
 }
@@ -101,7 +100,6 @@ function MainLayoutRuntime() {
   const openAppSettings = useShellStore((state) => state.openAppSettings);
   const mainSurface = useShellStore((state) => state.mainSurface);
   const openContentSurface = useShellStore((state) => state.openContentSurface);
-  const openInboxSurface = useShellStore((state) => state.openInboxSurface);
   const openSessionsSurface = useShellStore(
     (state) => state.openSessionsSurface,
   );
@@ -172,7 +170,6 @@ function MainLayoutRuntime() {
         mainSurface={mainSurface}
         onActivateContent={openContentSurface}
         onBeforeNavigation={prepareForNavigation}
-        onOpenInbox={() => runNavigation(openInboxSurface)}
         onOpenSessions={() => runNavigation(openSessionsSurface)}
         onOpenSearch={() => setCommandPaletteOpen(true)}
         onOpenAppSettings={openAppSettings}
@@ -196,7 +193,6 @@ function ShellLayoutContent({
   mainSurface,
   onActivateContent,
   onBeforeNavigation,
-  onOpenInbox,
   onOpenSessions,
   onOpenSearch,
   onOpenAppSettings,
@@ -213,7 +209,6 @@ function ShellLayoutContent({
       mainSurface={mainSurface}
       onActivateContent={onActivateContent}
       onBeforeNavigation={onBeforeNavigation}
-      onOpenInbox={onOpenInbox}
       onOpenSessions={onOpenSessions}
       onOpenSearch={onOpenSearch}
       onOpenAppSettings={onOpenAppSettings}
@@ -333,7 +328,7 @@ function ShellMainInset({
   onBeforeNavigation,
   onOpenAppSettings,
 }: {
-  mainSurface: "content" | "inbox" | "sessions" | "graph";
+  mainSurface: "content" | "sessions" | "graph";
   resizable?: boolean;
   onBeforeNavigation: () => Promise<boolean>;
   onOpenAppSettings?: () => void;
@@ -364,9 +359,7 @@ function ShellMainInset({
             !isSessionsSurface && "pb-6",
           )}
         >
-          {mainSurface === "inbox" ? (
-            <InboxSurface />
-          ) : isSessionsSurface ? (
+          {isSessionsSurface ? (
             <SessionsSurface
               openRequest={agentSessionOpenRequest}
               onOpenAppSettings={onOpenAppSettings}

@@ -1,11 +1,3 @@
-import { Inbox } from "lucide-react";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
 import {
   AgentSessionsScreen,
   type AgentSessionOpenRequest,
@@ -18,21 +10,6 @@ import {
 } from "@/features/knowledge";
 import { useSelectResult } from "@/features/search/app-shell";
 import { useSpace } from "@/features/space";
-import * as m from "@/paraglide/messages.js";
-
-export function InboxSurface() {
-  return (
-    <Empty className="h-full border-0">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <Inbox />
-        </EmptyMedia>
-        <EmptyTitle>{m.inbox_empty_title()}</EmptyTitle>
-        <EmptyDescription>{m.inbox_empty_description()}</EmptyDescription>
-      </EmptyHeader>
-    </Empty>
-  );
-}
 
 export function SessionsSurface({
   openRequest,
