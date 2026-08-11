@@ -140,7 +140,7 @@ pub fn normalize_prefix_path(prefix: &str, fallback: &str) -> String {
         .trim()
         .trim_matches('/')
         .split(['/', '\\'])
-        .map(|segment| slug_source(segment))
+        .map(slug_source)
         .filter(|segment| !segment.is_empty())
         .collect::<Vec<_>>();
 
@@ -396,9 +396,7 @@ pub fn operator_for(
         .endpoint(endpoint)
         .access_key_id(access_key)
         .secret_access_key(secret_key);
-    Operator::new(builder)
-        .map_err(|e| AppError::Storage(format!("opendal build: {e}")))
-        .map(|b| b.finish())
+    Operator::new(builder).map_err(|e| AppError::Storage(format!("opendal build: {e}")))
 }
 
 /// Real S3 connection check. Round-trips a 0-byte probe object — write,

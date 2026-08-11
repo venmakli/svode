@@ -135,7 +135,7 @@ pub(super) fn apply_terminal_overlay(
 
     let runtime_surface = matching
         .iter()
-        .max_by(|a, b| surface_activity_key(a).cmp(&surface_activity_key(b)))
+        .max_by(|a, b| surface_activity_key(a).cmp(surface_activity_key(b)))
         .expect("matching surface");
     session.launch_id = session
         .launch_id

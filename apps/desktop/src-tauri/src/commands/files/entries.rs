@@ -624,8 +624,8 @@ pub async fn rename_entry_shared(
             "rename_entry cannot change parent; use move_entry to move an entry".to_string(),
         ));
     }
-    let backlink_index = backlinks_for_space(&index_state, &space).await;
-    let was_dir = Path::new(&space).join(&from).is_dir();
+    let backlink_index = backlinks_for_space(index_state, space).await;
+    let was_dir = Path::new(&space).join(from).is_dir();
     ensure_backlinks_before_structural(index_state, project_path).await;
     revalidate_entry_backlink_mutation_plan(index_state, space, project_path, from, was_dir)
         .await?;
@@ -662,7 +662,7 @@ pub async fn rename_entry_shared(
                 "rename_entry",
             )
             .await
-        } else if !same_parent(&from, &to) {
+        } else if !same_parent(from, to) {
             rebase_project_source_after_move(
                 index_state,
                 project_path,
@@ -779,8 +779,8 @@ pub async fn move_entry_shared(
     index_state: &IndexState,
     autocommit: Option<&AutocommitService>,
 ) -> Result<String, AppError> {
-    let backlink_index = backlinks_for_space(&index_state, &space).await;
-    let was_dir = Path::new(&space).join(&from).is_dir();
+    let backlink_index = backlinks_for_space(index_state, space).await;
+    let was_dir = Path::new(&space).join(from).is_dir();
     let old_abs = Path::new(space).join(from);
     ensure_backlinks_before_structural(index_state, project_path).await;
     revalidate_entry_backlink_mutation_plan(index_state, space, project_path, from, was_dir)

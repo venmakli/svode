@@ -120,7 +120,7 @@ fn build_list_result(
             };
 
             let mut session = map_candidate(candidate, scope, last_activity_at);
-            apply_terminal_overlay(&mut session, &terminal_surfaces);
+            apply_terminal_overlay(&mut session, terminal_surfaces);
             session.pinned = pinned_ids.contains(&session.id);
             read.report.counts.returned_sessions += 1;
             sessions.push(session);
@@ -138,7 +138,7 @@ fn build_list_result(
         None,
     );
 
-    sessions.sort_by(|a, b| compare_sessions(a, b));
+    sessions.sort_by(compare_sessions);
     summary.returned_sessions = sessions.len();
     summary.pinned_sessions = sessions.iter().filter(|session| session.pinned).count();
 

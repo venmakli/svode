@@ -14,7 +14,7 @@
     },
     "apps/desktop": {
       "name": "@svode/desktop",
-      "version": "0.0.6",
+      "version": "0.0.7",
       "dependencies": {
         "@ai-sdk/react": "3",
         "@ariakit/react": "^0.4.23",

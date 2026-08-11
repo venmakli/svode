@@ -590,14 +590,14 @@ impl SessionBuilder {
                 self.candidate.created_at = Some(timestamp);
                 self.created_priority = Some(priority);
             }
-            Some(current) if priority == current => {
-                if self
-                    .candidate
-                    .created_at
-                    .is_none_or(|existing| timestamp < existing)
-                {
-                    self.candidate.created_at = Some(timestamp);
-                }
+            Some(current)
+                if priority == current
+                    && self
+                        .candidate
+                        .created_at
+                        .is_none_or(|existing| timestamp < existing) =>
+            {
+                self.candidate.created_at = Some(timestamp);
             }
             _ => {}
         }
@@ -613,14 +613,14 @@ impl SessionBuilder {
                 self.candidate.last_activity_at = Some(timestamp);
                 self.last_priority = Some(priority);
             }
-            Some(current) if priority == current => {
-                if self
-                    .candidate
-                    .last_activity_at
-                    .is_none_or(|existing| timestamp > existing)
-                {
-                    self.candidate.last_activity_at = Some(timestamp);
-                }
+            Some(current)
+                if priority == current
+                    && self
+                        .candidate
+                        .last_activity_at
+                        .is_none_or(|existing| timestamp > existing) =>
+            {
+                self.candidate.last_activity_at = Some(timestamp);
             }
             _ => {}
         }

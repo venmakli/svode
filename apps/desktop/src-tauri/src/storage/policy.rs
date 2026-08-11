@@ -172,7 +172,7 @@ pub(crate) async fn check_lfs_filters(
 
 fn parse_check_attr_z(stdout: &str) -> Result<Vec<LfsFilterCheck>, AppError> {
     let fields: Vec<&str> = stdout.split_terminator('\0').collect();
-    if fields.len() % 3 != 0 {
+    if !fields.len().is_multiple_of(3) {
         return Err(AppError::GitCommandFailed(
             "git check-attr returned malformed NUL-delimited output".to_string(),
         ));

@@ -386,7 +386,7 @@ enum DispatchKind {
     Manual,
     Scheduled,
     Event {
-        payload: super::events::CollectionEventPayload,
+        payload: Box<super::events::CollectionEventPayload>,
         execution_run_id: String,
         definition_fingerprint: String,
     },
@@ -408,7 +408,7 @@ pub(crate) async fn dispatch_event(
         owner,
         event.routine_id,
         DispatchKind::Event {
-            payload,
+            payload: Box::new(payload),
             execution_run_id,
             definition_fingerprint: event.definition_fingerprint,
         },
@@ -619,7 +619,7 @@ async fn dispatch_routine(
         }
     };
 
-    let repository = mutation_repository(&git_state, &owner).await?;
+    let repository = mutation_repository(git_state, &owner).await?;
     let lock = git_state.get_lock(&repository).await;
     let _guard = lock.lock().await;
     let pool = index_state.get_or_create(&owner.index_key).await?;
@@ -635,7 +635,7 @@ async fn dispatch_routine(
             "queued event definition is stale",
         ));
     }
-    let live_pty_ids = live_agent_pty_ids(&terminal_manager)?;
+    let live_pty_ids = live_agent_pty_ids(terminal_manager)?;
     if let Some(run) = cache::latest_run(&pool, &owner.descriptor.owner_path, &routine_id).await?
         && run.blocks_relaunch(&live_pty_ids)
     {

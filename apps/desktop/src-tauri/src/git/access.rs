@@ -261,7 +261,7 @@ impl RepositoryAccessState {
         let repository_id = opaque_id("access-repo", &repository.to_string_lossy());
         let remote = match inspect_remote(cli, &repository).await? {
             RemoteInspection::Local => {
-                return Ok(self.publish(
+                return self.publish(
                     &repository,
                     None,
                     RepositoryAccessSnapshot {
@@ -273,10 +273,10 @@ impl RepositoryAccessState {
                         expires_at: None,
                         last_known_status: None,
                     },
-                )?);
+                );
             }
             RemoteInspection::Unsupported => {
-                return Ok(self.publish(
+                return self.publish(
                     &repository,
                     None,
                     RepositoryAccessSnapshot {
@@ -288,7 +288,7 @@ impl RepositoryAccessState {
                         expires_at: None,
                         last_known_status: None,
                     },
-                )?);
+                );
             }
             RemoteInspection::Remote(remote) => remote,
         };
@@ -436,7 +436,7 @@ impl RepositoryAccessState {
         let repository_id = opaque_id("access-repo", &repository.to_string_lossy());
         let remote = match inspect_remote(cli, &repository).await? {
             RemoteInspection::Local => {
-                return Ok(self.publish(
+                return self.publish(
                     &repository,
                     None,
                     RepositoryAccessSnapshot {
@@ -448,10 +448,10 @@ impl RepositoryAccessState {
                         expires_at: None,
                         last_known_status: None,
                     },
-                )?);
+                );
             }
             RemoteInspection::Unsupported => {
-                return Ok(self.publish(
+                return self.publish(
                     &repository,
                     None,
                     RepositoryAccessSnapshot {
@@ -463,7 +463,7 @@ impl RepositoryAccessState {
                         expires_at: None,
                         last_known_status: None,
                     },
-                )?);
+                );
             }
             RemoteInspection::Remote(remote) => remote,
         };

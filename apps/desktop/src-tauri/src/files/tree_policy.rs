@@ -96,8 +96,7 @@ impl TreeIgnorePolicy {
             .git_rules
             .iter()
             .enumerate()
-            .filter(|(_, rule)| rule.pattern.matches(rel))
-            .last();
+            .rfind(|(_, rule)| rule.pattern.matches(rel));
         let Some((index, rule)) = last_match else {
             return false;
         };

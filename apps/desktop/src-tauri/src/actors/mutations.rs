@@ -87,7 +87,7 @@ pub struct ActorMutationReview {
 )]
 pub enum ActorMutationPreviewResult {
     Ready {
-        review: ActorMutationReview,
+        review: Box<ActorMutationReview>,
         commit_expectation: ActorCommitExpectation,
         #[serde(skip_serializing_if = "Option::is_none")]
         root_pointer_commit_expectation: Option<ActorCommitExpectation>,
@@ -278,7 +278,12 @@ pub async fn preview(
             None
         };
     Ok(ActorMutationPreviewResult::Ready {
-        review: review_for(&snapshot, &source, &plan, current_identity_fingerprint),
+        review: Box::new(review_for(
+            &snapshot,
+            &source,
+            &plan,
+            current_identity_fingerprint,
+        )),
         commit_expectation,
         root_pointer_commit_expectation,
     })

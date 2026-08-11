@@ -40,12 +40,12 @@ async fn nest_entry_shared(
     index_state: &IndexState,
     autocommit: &AutocommitService,
 ) -> Result<String, AppError> {
-    let backlink_index = backlinks_for_space(&index_state, &space).await;
-    ensure_backlinks_before_structural(&index_state, project_path).await;
+    let backlink_index = backlinks_for_space(index_state, space).await;
+    ensure_backlinks_before_structural(index_state, project_path).await;
     revalidate_entry_backlink_mutation_plan(index_state, space, project_path, path, false).await?;
     let new_path = entry::nest_entry(
         Path::new(&space),
-        &path,
+        path,
         if project_path.filter(|p| !p.is_empty()).is_some() {
             None
         } else {
@@ -54,12 +54,12 @@ async fn nest_entry_shared(
     )?;
     if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
-        let target_space_id = space_id_for_dir(&index_state, &space).await;
+        let target_space_id = space_id_for_dir(index_state, space).await;
         let mut modified_sources = index_state
             .update_links_on_rename_project(
                 project,
                 target_space_id.as_deref(),
-                &path,
+                path,
                 &new_path,
                 None,
             )
@@ -70,11 +70,11 @@ async fn nest_entry_shared(
             });
         modified_sources.extend(
             rebase_project_source_after_move(
-                &index_state,
+                index_state,
                 project_path,
-                &space,
+                space,
                 target_space_id.as_deref(),
-                &path,
+                path,
                 &new_path,
                 "nest_entry",
             )
@@ -82,21 +82,21 @@ async fn nest_entry_shared(
         );
         let modified_sources = crate::files::backlinks::dedupe_modified_sources(modified_sources);
         schedule_modified_source_spaces(
-            &index_state,
+            index_state,
             autocommit,
             project_path,
             &modified_sources,
-            StructuralOp::Move(entry_commit_name(&space, &new_path)),
+            StructuralOp::Move(entry_commit_name(space, &new_path)),
         )
         .await;
         let _ = index_state
-            .remove_file_backlinks(project, target_space_id.as_deref(), &path)
+            .remove_file_backlinks(project, target_space_id.as_deref(), path)
             .await;
         let _ = index_state
             .update_file_backlinks(project, target_space_id.as_deref(), &new_path)
             .await;
     } else {
-        let _ = rebase_legacy_source_after_move(&space, &backlink_index, &path, &new_path);
+        let _ = rebase_legacy_source_after_move(space, &backlink_index, path, &new_path);
     }
     maybe_autocommit_structural_paths(
         autocommit,
@@ -153,7 +153,7 @@ pub async fn unnest_entry_shared(
     index_state: &IndexState,
     autocommit: Option<&AutocommitService>,
 ) -> Result<String, AppError> {
-    let backlink_index = backlinks_for_space(&index_state, &space).await;
+    let backlink_index = backlinks_for_space(index_state, space).await;
     ensure_backlinks_before_structural(index_state, project_path).await;
     revalidate_entry_backlink_mutation_plan(index_state, space, project_path, path, false).await?;
     let new_path = entry::unnest_entry(
@@ -545,7 +545,7 @@ pub async fn convert_entry_to_leaf_shared(
     index_state: &IndexState,
     autocommit: Option<&AutocommitService>,
 ) -> Result<Entry, AppError> {
-    let backlink_index = backlinks_for_space(&index_state, &space).await;
+    let backlink_index = backlinks_for_space(index_state, space).await;
     ensure_backlinks_before_structural(index_state, project_path).await;
     revalidate_entry_backlink_mutation_plan(index_state, space, project_path, file_path, false)
         .await?;

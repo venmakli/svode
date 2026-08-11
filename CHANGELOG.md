@@ -1,14 +1,45 @@
 # Changelog
 
-## [Unreleased]
+## [0.0.7] - 2026-08-11
+
+### Added
+
+- **Scope Surfaces.** Added capability-driven Space and Collection tabs for Context, Description, Actors, Collection, and Routines, including stable defaults and compact/peek composition.
+- **Agent Sessions.** Added a dedicated surface for project- and Space-scoped Codex and Claude Code sessions with evidence-based statuses, Now/Past grouping, pinning, and terminal-first re-entry.
+- **System Collections.** Added a shared presentation layer for native system catalogs with Collection-style List/Gallery views, queries, actions, guarded creation, and one floating Detail Drawer.
+- **Human Actors and repository access.** Added Scope-local contributor catalogs backed by `.mailmap`, activity profiles, repository write-capability verification, and guarded identity mutations.
+- **Agent Context.** Added galleries for native Codex and Claude Code instructions and skills with owner, precedence, availability, discovery provenance, safe Markdown reading, and workspace-aware external openers.
+- **Agent Actors.** Added portable Space-owned agent identities in `.svode/agent-actors.json` with ordered Codex/Claude bindings, typed model and effort selection, and device-local approval modes.
+- **Routines.** Added `.routines/*.md` catalogs, typed `update_properties` and `run_agent` actions, manual execution, visible Session handoff, timezone-aware schedules, Collection events, local consent, and Git-backed cross-clone claims.
+- **Knowledge Graph.** Added project/Space discovery across documents, Collection entries, instructions, and skills through Search, a compact graph, an unlisted full-page Graph, related-context reads, local cache repair, and read-only MCP tools.
 
 ### Changed
 
-- Removed the legacy configurable collection document tab. Collection `README.md` is now exposed only through the stable scope-level Readme surface; legacy `schema.yaml` `document` data is ignored until the next explicit schema write removes it. MCP `documentLabel` is no longer accepted.
+- Stage 7 is now the accepted and frozen dogfood snapshot; Scope Home retains its Stage 6 native README/content-navigation contract.
+- Registered Spaces can also expose Collection capability without losing their Space identity; collection views now live under a stable Collection surface, while `README.md` remains the Description surface.
+- System Collections use the existing Collection presentation core without introducing user schemas, generic backend DTOs, or a hidden universal Svode database.
+- Search now unifies results, details, and graph discovery; Graph is a main surface without a persistent sidebar item.
+- Agent context, routines, actor catalogs, and knowledge indexes use native or Git-backed artifacts with bounded local rebuildable caches instead of a Svode-owned agent harness.
+- Removed the legacy configurable collection document tab. Collection `README.md` is exposed only through the stable scope-level Readme surface; legacy `schema.yaml` `document` data is ignored until the next explicit schema write removes it. MCP `documentLabel` is no longer accepted.
 
 ### Fixed
 
-- Fixed Windows VS Code project opener discovery for User/System installs, `code.cmd` PATH installs, hidden spawn, and actionable error details.
+- Fixed Windows external-editor discovery, project window isolation, and recent-project behavior.
+- Fixed Git LFS discovery from the desktop environment and corrected storage enrollment, inheritance, explicit Apply, remote diagnostics, S3 prefixes, sidebar status, and repository-wide media policy without rewriting history.
+- Fixed Git status markers for new, nested, duplicate-named, and externally cleaned paths; clarified save shortcut scope and restored saves from Space Home and Collection surfaces.
+- Fixed submodule scaffold commits, personal auto-commit/auto-sync policy, branch ahead/behind and Sync result reporting, plus actionable and fail-fast remote authentication.
+- Fixed MCP root-Space and caller-project resolution, semantic tree/Space ordering, managed collection conversion and structural operations, integrity checks, and managed asset imports.
+- Fixed custom Space folder naming and avoided traversing registered child Spaces from root Collection workloads.
+- Fixed Collection Board scrolling, external schema/entry refresh stability, cross-Space and two-way relations, entry icon/title consistency, Table relation interactions, and compact peek layout parity.
+- Fixed sidebar drag-and-drop ordering, Collection moves, watcher refresh, active-Space collapse, nested chevrons, Project Settings entry points, collapse-all behavior, resize persistence, and Git identity presentation.
+- Updated S3 and plist dependency chains to remove the high-severity `quick-xml` denial-of-service vulnerabilities reported by RustSec.
+
+### Compatibility
+
+- Auto-update remains disabled for dogfood snapshots; release artifacts must not include `latest.json` or updater signatures.
+- Stage 7 does not add a first-party agent harness, hidden background agent execution, or a durable workflow runtime. Native Codex and Claude Code artifacts remain the canonical agent-facing format.
+- Knowledge indexing is local and rebuildable: `.svode/index.db` is not canonical project content and is excluded from Git.
+- Existing collection `README.md` files keep working through the Description surface; existing legacy `document` schema data is preserved until a future schema save removes it.
 
 ## [0.0.6] - 2026-06-24
 
@@ -63,6 +94,6 @@
 - Established `CHANGELOG.md` as the source of truth for GitHub Release notes.
 - Kept Stage 5 on `0.0.x` dogfood snapshots; `0.1.0` remains deferred until the first internal baseline after manual dogfood.
 
-[Unreleased]: https://github.com/venmakli/svode/compare/v0.0.6...HEAD
+[0.0.7]: https://github.com/venmakli/svode/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/venmakli/svode/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/venmakli/svode/releases/tag/v0.0.5

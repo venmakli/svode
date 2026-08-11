@@ -401,7 +401,7 @@ fn derive_changes(
                 .filter_map(|key| {
                     let old_value = old.fields.get(&key).cloned().unwrap_or(Value::Null);
                     let new_value = new.fields.get(&key).cloned().unwrap_or(Value::Null);
-                    (old_value != new_value).then(|| EntryChange {
+                    (old_value != new_value).then_some(EntryChange {
                         event: CollectionEvent::FieldChanged,
                         property_key: Some(key),
                         old_value: Some(old_value),

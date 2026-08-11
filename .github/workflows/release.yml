@@ -68,10 +68,10 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.97.0
         if: matrix.platform != 'macos-latest'
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.97.0
         if: matrix.platform == 'macos-latest'
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
