@@ -276,19 +276,13 @@ test("stable field and action ids and unique descriptor keys are validated", () 
   ]);
 });
 
-test("presentation, refresh, and row actions share one stable id namespace", () => {
+test("create and row actions share one stable id namespace", () => {
   const presentation = testPresentation({
     descriptor: testDescriptor({
       create: {
         getState: () => ({ status: "idle" }),
         id: "mutate",
         label: "Create",
-        run: () => undefined,
-      },
-      refresh: {
-        getState: () => ({ status: "idle" }),
-        id: "mutate",
-        label: "Refresh",
         run: () => undefined,
       },
       rowActions: [
@@ -306,7 +300,7 @@ test("presentation, refresh, and row actions share one stable id namespace", () 
     readSystemCollectionPresentationRuntime(presentation).diagnostics.map(
       ({ code }) => code,
     ),
-  ).toEqual(["duplicate-action-id", "duplicate-action-id"]);
+  ).toEqual(["duplicate-action-id"]);
 });
 
 test("field getters must return a synchronous normalized value", () => {

@@ -62,11 +62,11 @@ test("instructions use the common coverless Gallery and safe reader detail", () 
         createDetailRequest(row: AgentContextInstructionRow): {
           content: React.ReactNode;
         };
-        refresh?: unknown;
       };
     };
   };
-  expect(descriptor.instance.descriptor.refresh).toBe(undefined);
+  expect("refresh" in descriptor.instance.descriptor).toBe(false);
+  expect(html.includes("data-system-collection-refresh")).toBe(false);
   const detail = descriptor.instance.descriptor.createDetailRequest(available);
   const detailHtml = renderToStaticMarkup(detail.content);
   expect(detailRowId as string | null).toBe(available.id);

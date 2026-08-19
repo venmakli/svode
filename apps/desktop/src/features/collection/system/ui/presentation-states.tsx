@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import {
   CircleAlert,
   Inbox,
-  LoaderCircle,
   SearchX,
   TriangleAlert,
 } from "lucide-react";
@@ -61,20 +60,6 @@ export function SystemCollectionReadySignals({
         </Alert>
       ) : null}
     </>
-  );
-}
-
-export function SystemCollectionRefreshingStatus() {
-  return (
-    <span
-      role="status"
-      aria-live="polite"
-      className="inline-flex min-h-7 items-center gap-1.5 text-xs text-muted-foreground"
-      data-system-collection-refreshing
-    >
-      <LoaderCircle className="size-3.5 animate-spin" aria-hidden />
-      {m.system_collection_refreshing()}
-    </span>
   );
 }
 

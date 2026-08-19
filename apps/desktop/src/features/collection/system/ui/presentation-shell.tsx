@@ -30,7 +30,6 @@ import {
   SystemCollectionBlockingError,
   SystemCollectionQueryEmpty,
   SystemCollectionReadySignals,
-  SystemCollectionRefreshingStatus,
   SystemCollectionSourceEmpty,
 } from "./presentation-states";
 
@@ -216,7 +215,6 @@ export function SystemCollectionPresentationShell({
       data-system-collection-surface
       tabIndex={-1}
     >
-      {state.refreshing ? <SystemCollectionRefreshingStatus /> : null}
       <SystemCollectionReadySignals
         attention={state.attention}
         diagnostics={state.diagnostics}

@@ -177,7 +177,6 @@ function validateDescriptor<Row>(
   const actions = [
     ...(descriptor.rowActions ?? []),
     ...(descriptor.create ? [descriptor.create] : []),
-    ...(descriptor.refresh ? [descriptor.refresh] : []),
   ];
   for (const action of actions) {
     if (!isStableId(action.id)) {

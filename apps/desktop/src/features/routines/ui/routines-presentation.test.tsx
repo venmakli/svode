@@ -112,7 +112,7 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
     "next-run",
   ]);
   expect(descriptor.create?.id).toBe("add-routine");
-  expect(descriptor.refresh).toBe(undefined);
+  expect("refresh" in descriptor).toBe(false);
   expect(descriptor.rowActions?.map((action) => action.id)).toEqual([
     "run-routine",
     "edit-routine",

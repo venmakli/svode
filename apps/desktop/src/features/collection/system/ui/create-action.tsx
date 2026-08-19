@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { LoaderCircle, Plus, RefreshCw } from "lucide-react";
+import { LoaderCircle, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -14,7 +14,6 @@ import { runSystemCollectionCallback } from "../lib/interaction";
 import type {
   SystemCollectionActionState,
   SystemCollectionCreateAction,
-  SystemCollectionRefreshAction,
 } from "../model/types";
 
 interface EffectiveCreateState {
@@ -24,12 +23,8 @@ interface EffectiveCreateState {
   status: SystemCollectionActionState["status"];
 }
 
-type SystemCollectionPresentationAction =
-  | SystemCollectionCreateAction
-  | SystemCollectionRefreshAction;
-
 function readActionState(
-  action: SystemCollectionPresentationAction,
+  action: SystemCollectionCreateAction,
 ): SystemCollectionActionState {
   try {
     return action.getState();
@@ -45,7 +40,7 @@ function readActionState(
 }
 
 function useSystemCollectionPresentationAction(
-  action: SystemCollectionPresentationAction,
+  action: SystemCollectionCreateAction,
   onRejected: (message: string) => void,
 ) {
   const [localPending, setLocalPending] = useState(false);
@@ -124,51 +119,6 @@ export function SystemCollectionCreateActionButton({
   if (!state.message) {
     return button;
   }
-
-  return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="inline-flex">{button}</span>
-        </TooltipTrigger>
-        <TooltipContent>{state.message}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  );
-}
-
-export function SystemCollectionRefreshActionButton({
-  action,
-  onRejected,
-}: {
-  action: SystemCollectionRefreshAction;
-  onRejected(message: string): void;
-}) {
-  const { run, state } = useSystemCollectionPresentationAction(
-    action,
-    onRejected,
-  );
-  const button = (
-    <Button
-      type="button"
-      size="icon-sm"
-      variant="ghost"
-      aria-label={action.label}
-      disabled={state.disabled}
-      data-system-collection-refresh={action.id}
-      data-system-collection-refresh-state={state.status}
-      title={state.message}
-      onClick={() => void run()}
-    >
-      {state.pending ? (
-        <LoaderCircle className="animate-spin" />
-      ) : (
-        <RefreshCw />
-      )}
-    </Button>
-  );
-
-  if (!state.message) return button;
 
   return (
     <TooltipProvider>

@@ -77,7 +77,7 @@ export function SystemCollectionPresentationItem({
     (
       kind: Exclude<
         SystemCollectionInteractionError["kind"],
-        "create" | "refresh"
+        "create"
       >,
       targetId: string | undefined,
       message: string,

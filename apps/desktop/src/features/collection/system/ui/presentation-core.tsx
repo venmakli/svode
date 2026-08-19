@@ -6,10 +6,7 @@ import type {
   SystemCollectionInstance,
   SystemCollectionInteractionError,
 } from "../model/types";
-import {
-  SystemCollectionCreateActionButton,
-  SystemCollectionRefreshActionButton,
-} from "./create-action";
+import { SystemCollectionCreateActionButton } from "./create-action";
 import { SystemCollectionFixedTabs } from "./fixed-presentation-tabs";
 import { SystemCollectionPresentationShell } from "./presentation-shell";
 import { SystemCollectionQueryEditor } from "./query-editor";
@@ -67,21 +64,6 @@ export function SystemCollectionPresentationCore({
                 state.dismissResetWarning(descriptor.id)
               }
             />
-            {descriptor.refresh ? (
-              <SystemCollectionRefreshActionButton
-                key={`${instance.instanceKey}:${descriptor.refresh.id}`}
-                action={descriptor.refresh}
-                onRejected={(message) =>
-                  onInteractionError?.({
-                    instanceKey: instance.instanceKey,
-                    kind: "refresh",
-                    message,
-                    presentationId: descriptor.id,
-                    targetId: descriptor.refresh?.id,
-                  })
-                }
-              />
-            ) : null}
             {descriptor.create ? (
               <SystemCollectionCreateActionButton
                 key={`${instance.instanceKey}:${descriptor.create.id}`}

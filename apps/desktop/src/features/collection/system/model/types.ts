@@ -54,7 +54,6 @@ export type SystemCollectionPresentationState<Row> =
   | {
       phase: "ready";
       rows: readonly Row[];
-      refreshing?: boolean;
       sourceEmpty?: ReactNode;
       diagnostics?: readonly ReactNode[];
       attention?: ReactNode;
@@ -76,7 +75,6 @@ export interface SystemCollectionPresentationDescriptor<Row> {
   fields: readonly SystemCollectionFieldDescriptor<Row>[];
   query: SystemCollectionQueryDescriptor<Row>;
   create?: SystemCollectionCreateAction;
-  refresh?: SystemCollectionRefreshAction;
   rowActions?: readonly SystemCollectionRowActionDescriptor<Row>[];
   createDetailRequest?(
     row: Row,
@@ -180,13 +178,6 @@ export interface SystemCollectionCreateAction {
   run(): void | Promise<void>;
 }
 
-export interface SystemCollectionRefreshAction {
-  id: string;
-  label: string;
-  getState(): SystemCollectionActionState;
-  run(): void | Promise<void>;
-}
-
 export interface SystemCollectionRowActionDescriptor<Row> {
   id: string;
   label: string;
@@ -241,7 +232,7 @@ interface SystemCollectionInteractionErrorBase {
 
 export type SystemCollectionInteractionError =
   | (SystemCollectionInteractionErrorBase & {
-      kind: "create" | "refresh";
+      kind: "create";
       rowId?: never;
     })
   | (SystemCollectionInteractionErrorBase & {

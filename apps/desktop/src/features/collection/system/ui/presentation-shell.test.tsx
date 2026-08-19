@@ -248,7 +248,7 @@ test("structured list layout fails closed for an unknown visible field", () => {
   expect(markup.includes("data-system-collection-blocking-error")).toBe(true);
 });
 
-test("ready presentation keeps stale rows visible with refresh, diagnostics, and attention", () => {
+test("ready presentation keeps stale rows visible with diagnostics and no refresh status", () => {
   const presentation = defineSystemCollectionPresentation<TestRow>({
     descriptor: descriptor({
       rowActions: [],
@@ -257,7 +257,6 @@ test("ready presentation keeps stale rows visible with refresh, diagnostics, and
       attention: <span>Review identity</span>,
       diagnostics: [<span key="source">Git history is incomplete</span>],
       phase: "ready",
-      refreshing: true,
       rows: [{ enabled: true, id: "person:one", name: "Ilya" }],
     },
   });
@@ -271,8 +270,8 @@ test("ready presentation keeps stale rows visible with refresh, diagnostics, and
   );
 
   expect(markup.includes("Ilya")).toBe(true);
-  expect(markup.includes("Updating")).toBe(true);
-  expect(markup.includes("data-system-collection-refreshing")).toBe(true);
+  expect(markup.includes("Updating")).toBe(false);
+  expect(markup.includes("data-system-collection-refreshing")).toBe(false);
   expect(markup.includes("data-system-collection-attention")).toBe(true);
   expect(markup.includes("Review identity")).toBe(true);
   expect(markup.includes("data-system-collection-diagnostics")).toBe(true);

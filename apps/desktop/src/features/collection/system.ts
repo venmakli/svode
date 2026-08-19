@@ -45,7 +45,6 @@ export type {
   SystemCollectionQueryValidationIssue,
   SystemCollectionQueryValidationIssueReason,
   SystemCollectionQueryValidationResult,
-  SystemCollectionRefreshAction,
   SystemCollectionRenderer,
   SystemCollectionRowActionDescriptor,
   SystemCollectionSortDescriptor,

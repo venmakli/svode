@@ -81,7 +81,8 @@ test("skills render as coverless Gallery cards with bounded Reader detail", () =
     true,
   );
   expect(html.includes("group/gallery-cover")).toBe(false);
-  expect(descriptor([reviewSkill]).refresh).toBe(undefined);
+  expect("refresh" in descriptor([reviewSkill])).toBe(false);
+  expect(html.includes("data-system-collection-refresh")).toBe(false);
 
   const request = descriptor([reviewSkill]).createDetailRequest?.(reviewSkill);
   const detailHtml = renderToStaticMarkup(request?.content);
