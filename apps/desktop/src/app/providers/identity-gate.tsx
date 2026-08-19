@@ -41,7 +41,7 @@ export function IdentityGate() {
   );
 }
 
-function AppBootstrapScreen() {
+export function AppBootstrapScreen() {
   return (
     <div className="flex h-screen flex-col bg-background">
       <div data-tauri-drag-region className="h-[44px] w-full shrink-0" />

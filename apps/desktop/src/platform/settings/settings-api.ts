@@ -25,3 +25,7 @@ export function getAppSettings(): Promise<AppSettingsDto> {
 export function saveAppSettings(settingsData: AppSettingsDto): Promise<void> {
   return invokeCommand<void>("save_app_settings", { settingsData });
 }
+
+export function setAppLocale(language: string): Promise<string> {
+  return invokeCommand<string>("set_app_locale", { locale: language });
+}

@@ -6,6 +6,12 @@ export type {
   SymlinkHealthReport,
 } from "./types";
 export {
+  APP_LOCALES,
+  isAppLocale,
+  normalizeAppLocale,
+  type AppLocale,
+} from "./app-locale";
+export {
   fanoutEntryHasOverride,
   fanoutEntrySummarySource,
   identityDraftFromRepoIdentity,

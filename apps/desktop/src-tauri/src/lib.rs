@@ -57,6 +57,7 @@ pub fn run() {
         .manage(index::IndexState::new())
         .manage(routines::RoutineSchedulerState::new())
         .manage(app_windows::AppWindowState::new())
+        .manage(space::settings::AppSettingsState::new())
         .manage(mcp::active::ActiveProjectState::new())
         .manage(properties::ActorCatalogState::new())
         .manage(terminal::TerminalManager::new())
@@ -192,6 +193,7 @@ pub fn run() {
             commands::files::suggest_link_fix,
             commands::space::get_app_settings,
             commands::space::save_app_settings,
+            commands::space::set_app_locale,
             commands::space::list_projects,
             commands::space::create_project,
             commands::space::open_project,

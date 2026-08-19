@@ -2,20 +2,21 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useTheme } from "@/components/ui/theme-provider";
 import * as m from "@/paraglide/messages.js";
-import { getLocale, setLocale } from "@/paraglide/runtime.js";
 import { getAppSettings, saveAppSettings } from "../api";
-import type { AppSettings } from "../model";
+import { isAppLocale, type AppSettings } from "../model";
+import { useAppLocale } from "./use-app-locale";
 import { invalidateAppSettings } from "./use-app-settings";
 
-type AppLocale = "en" | "ru";
 type AppTheme = "light" | "dark" | "system";
 
 export function useAppSettingsAppearance(open: boolean) {
   const { theme, setTheme } = useTheme();
+  const {
+    locale,
+    localePending,
+    setLocale: setConfirmedLocale,
+  } = useAppLocale();
   const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [locale, setLocaleState] = useState<AppLocale>(
-    getLocale() as AppLocale,
-  );
 
   const loadSettings = useCallback(async () => {
     try {
@@ -30,7 +31,6 @@ export function useAppSettingsAppearance(open: boolean) {
     if (!open) return;
     const preloadSettings = window.setTimeout(() => {
       loadSettings();
-      setLocaleState(getLocale() as AppLocale);
     }, 0);
     return () => window.clearTimeout(preloadSettings);
   }, [open, loadSettings]);
@@ -74,22 +74,32 @@ export function useAppSettingsAppearance(open: boolean) {
 
   const handleLanguageChange = useCallback(
     async (value: string) => {
-      const nextLocale = value as AppLocale;
-      setLocale(nextLocale);
-      setLocaleState(nextLocale);
-      await saveSettings({
-        appearance: {
-          theme: settings?.appearance.theme ?? "system",
-          language: value,
-        },
-      });
+      if (!isAppLocale(value)) return;
+      try {
+        const committedLocale = await setConfirmedLocale(value);
+        setSettings((current) =>
+          current
+            ? {
+                ...current,
+                appearance: {
+                  ...current.appearance,
+                  language: committedLocale,
+                },
+              }
+            : current,
+        );
+      } catch (err) {
+        console.error("Failed to save app locale:", err);
+        toast.error(m.toast_error());
+      }
     },
-    [saveSettings, settings?.appearance.theme],
+    [setConfirmedLocale],
   );
 
   return {
     theme,
     locale,
+    localePending,
     handleThemeChange,
     handleLanguageChange,
   };

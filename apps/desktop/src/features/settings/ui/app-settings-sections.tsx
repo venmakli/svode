@@ -113,12 +113,15 @@ export function AppAppearanceSection({ settings }: AppAppearanceSectionProps) {
         </RadioGroup>
       </div>
       <div className="flex flex-col gap-2">
-        <Label>{m.settings_language_label()}</Label>
+        <Label htmlFor="app-settings-language">
+          {m.settings_language_label()}
+        </Label>
         <Select
           value={settings.locale}
           onValueChange={settings.handleLanguageChange}
+          disabled={settings.localePending}
         >
-          <SelectTrigger className="w-[200px]">
+          <SelectTrigger id="app-settings-language" className="w-[200px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
