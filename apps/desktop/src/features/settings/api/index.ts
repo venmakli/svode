@@ -1,5 +1,6 @@
 export {
   getAppSettings,
+  listenAppLocaleChanged,
   saveAppSettings,
   setAppLocale,
 } from "./app-settings-api";

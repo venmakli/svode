@@ -1,4 +1,7 @@
+import { listen, type UnlistenFn } from "@/platform/native/events";
 import { invokeCommand } from "@/platform/native/invoke";
+
+const APP_LOCALE_CHANGED_EVENT = "app-settings:locale-changed";
 
 export interface DetectedCliDto {
   name: string;
@@ -28,4 +31,10 @@ export function saveAppSettings(settingsData: AppSettingsDto): Promise<void> {
 
 export function setAppLocale(language: string): Promise<string> {
   return invokeCommand<string>("set_app_locale", { locale: language });
+}
+
+export function listenAppLocaleChanged(
+  handler: () => void,
+): Promise<UnlistenFn> {
+  return listen<void>(APP_LOCALE_CHANGED_EVENT, () => handler());
 }

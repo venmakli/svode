@@ -12,7 +12,11 @@ import {
   setLocale as setParaglideLocale,
 } from "@/paraglide/runtime.js";
 
-import { getAppSettings, setAppLocale as persistAppLocale } from "../api";
+import {
+  getAppSettings,
+  listenAppLocaleChanged,
+  setAppLocale as persistAppLocale,
+} from "../api";
 import { normalizeAppLocale, type AppLocale } from "../model";
 import { invalidateAppSettings } from "./use-app-settings";
 
@@ -36,38 +40,92 @@ export function AppLocaleProvider({
   const [locale, setActiveLocale] = useState<AppLocale | null>(null);
   const [localePending, setLocalePending] = useState(false);
   const localeRef = useRef<AppLocale | null>(null);
+  const mountedRef = useRef(false);
   const pendingMutationRef = useRef<Promise<AppLocale> | null>(null);
+  const requestGenerationRef = useRef(0);
 
   const applyLocale = useCallback(async (nextLocale: AppLocale) => {
+    if (localeRef.current === nextLocale) return nextLocale;
+
     await setParaglideLocale(nextLocale, { reload: false });
     document.documentElement.lang = nextLocale;
     document.documentElement.dir = getTextDirection(nextLocale);
     localeRef.current = nextLocale;
     setActiveLocale(nextLocale);
+    return nextLocale;
   }, []);
 
-  useEffect(() => {
-    let current = true;
+  const reconcileLocale = useCallback(
+    async (fallbackLocale?: AppLocale): Promise<AppLocale> => {
+      const generation = ++requestGenerationRef.current;
+      let nextLocale: AppLocale;
 
-    void getAppSettings()
-      .then((settings) => normalizeAppLocale(settings.appearance.language))
-      .catch((error) => {
-        console.error("Failed to bootstrap app locale:", error);
-        return "en" as const;
+      try {
+        const settings = await getAppSettings();
+        nextLocale = normalizeAppLocale(settings.appearance.language);
+      } catch (error) {
+        if (!fallbackLocale) throw error;
+        nextLocale = fallbackLocale;
+      }
+
+      if (!mountedRef.current) return localeRef.current ?? nextLocale;
+
+      if (
+        generation !== requestGenerationRef.current &&
+        localeRef.current !== null
+      ) {
+        return localeRef.current;
+      }
+
+      return applyLocale(nextLocale);
+    },
+    [applyLocale],
+  );
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    mountedRef.current = true;
+
+    const reconcileConfirmedLocale = () => {
+      void reconcileLocale()
+        .then(() => invalidateAppSettings())
+        .catch((error) => {
+          console.error("Failed to reconcile app locale:", error);
+        });
+    };
+
+    const handleFocus = () => reconcileConfirmedLocale();
+    window.addEventListener("focus", handleFocus);
+
+    void listenAppLocaleChanged(() => {
+      if (!disposed) reconcileConfirmedLocale();
+    })
+      .then((nextUnlisten) => {
+        if (disposed) {
+          void nextUnlisten();
+          return;
+        }
+        unlisten = nextUnlisten;
       })
-      .then(async (initialLocale) => {
-        await setParaglideLocale(initialLocale, { reload: false });
-        if (!current) return;
-        document.documentElement.lang = initialLocale;
-        document.documentElement.dir = getTextDirection(initialLocale);
-        localeRef.current = initialLocale;
-        setActiveLocale(initialLocale);
+      .catch((error) => {
+        console.error("Failed to subscribe to app settings changes:", error);
+      })
+      .finally(() => {
+        if (disposed) return;
+        void reconcileLocale("en").catch((error) => {
+          console.error("Failed to bootstrap app locale:", error);
+        });
       });
 
     return () => {
-      current = false;
+      disposed = true;
+      mountedRef.current = false;
+      requestGenerationRef.current += 1;
+      window.removeEventListener("focus", handleFocus);
+      if (unlisten) void unlisten();
     };
-  }, []);
+  }, [reconcileLocale]);
 
   const setLocale = useCallback(
     (nextLocale: AppLocale): Promise<AppLocale> => {
@@ -79,11 +137,24 @@ export function AppLocaleProvider({
       }
 
       setLocalePending(true);
+      const mutationStartGeneration = requestGenerationRef.current;
       const mutation = persistAppLocale(nextLocale)
         .then(async (committedLocale) => {
-          await applyLocale(committedLocale);
+          const reconciliationStarted =
+            requestGenerationRef.current !== mutationStartGeneration;
+          let confirmedLocale: AppLocale;
+
+          try {
+            confirmedLocale = await reconcileLocale();
+          } catch (error) {
+            console.error("Failed to re-read committed app locale:", error);
+            confirmedLocale = reconciliationStarted
+              ? (localeRef.current ?? committedLocale)
+              : await applyLocale(committedLocale);
+          }
+
           invalidateAppSettings();
-          return committedLocale;
+          return confirmedLocale;
         })
         .finally(() => {
           if (pendingMutationRef.current === mutation) {
@@ -94,7 +165,7 @@ export function AppLocaleProvider({
       pendingMutationRef.current = mutation;
       return mutation;
     },
-    [applyLocale],
+    [applyLocale, reconcileLocale],
   );
 
   if (!locale) return fallback;

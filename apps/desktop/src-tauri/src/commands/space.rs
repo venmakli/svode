@@ -147,6 +147,8 @@ fn root_project_info(
 
 // --- App Settings ---
 
+const APP_LOCALE_CHANGED_EVENT: &str = "app-settings:locale-changed";
+
 #[tauri::command]
 pub fn get_app_settings(
     app: AppHandle,
@@ -185,7 +187,9 @@ pub fn set_app_locale(
         .path()
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
-    settings::set_app_locale(&config_dir, &locale)
+    let committed_locale = settings::set_app_locale(&config_dir, &locale)?;
+    let _ = app.emit(APP_LOCALE_CHANGED_EVENT, ());
+    Ok(committed_locale)
 }
 
 // --- Projects ---

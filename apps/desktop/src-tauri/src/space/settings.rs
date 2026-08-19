@@ -99,6 +99,7 @@ pub fn set_app_locale(config_dir: &Path, locale: &str) -> Result<String, AppErro
 mod tests {
     use super::*;
     use crate::space::types::{AppAgentSettings, DetectedCli};
+    use std::sync::{Arc, Barrier};
 
     fn settings_with_siblings(locale: &str) -> AppSettings {
         let mut settings = AppSettings::default();
@@ -239,5 +240,51 @@ mod tests {
         assert_eq!(saved.appearance.language, "ru");
         assert_eq!(saved.appearance.theme, "light");
         assert_eq!(saved.window.width, 1280);
+    }
+
+    #[test]
+    fn operation_lock_serializes_concurrent_locale_mutations() {
+        let config_dir = tempfile::tempdir().expect("config dir");
+        write_app_settings(config_dir.path(), &settings_with_siblings("en"))
+            .expect("write settings");
+
+        let locales = ["ru", "en", "ru", "en"];
+        let state = Arc::new(AppSettingsState::new());
+        let start = Arc::new(Barrier::new(locales.len()));
+        let commit_order = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let handles = locales.map(|locale| {
+            let config_dir = config_dir.path().to_path_buf();
+            let state = Arc::clone(&state);
+            let start = Arc::clone(&start);
+            let commit_order = Arc::clone(&commit_order);
+            std::thread::spawn(move || {
+                start.wait();
+                let _guard = state.lock().expect("lock settings mutation");
+                let committed = set_app_locale(&config_dir, locale).expect("set locale");
+                commit_order
+                    .lock()
+                    .expect("lock commit order")
+                    .push(committed);
+            })
+        });
+
+        for handle in handles {
+            handle.join().expect("join locale mutation");
+        }
+
+        let last_committed = commit_order
+            .lock()
+            .expect("lock final commit order")
+            .last()
+            .cloned()
+            .expect("at least one commit");
+        assert_eq!(
+            read_app_settings(config_dir.path())
+                .expect("read final settings")
+                .appearance
+                .language,
+            last_committed
+        );
     }
 }

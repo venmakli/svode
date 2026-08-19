@@ -1,5 +1,6 @@
 import {
   getAppSettings as getAppSettingsDto,
+  listenAppLocaleChanged as listenAppLocaleChangedDto,
   saveAppSettings as saveAppSettingsDto,
   setAppLocale as setAppLocaleDto,
 } from "@/platform/settings/settings-api";
@@ -20,4 +21,8 @@ export async function setAppLocale(language: AppLocale): Promise<AppLocale> {
     throw new Error(`Backend returned unsupported locale: ${committedLocale}`);
   }
   return committedLocale;
+}
+
+export function listenAppLocaleChanged(handler: () => void) {
+  return listenAppLocaleChangedDto(handler);
 }

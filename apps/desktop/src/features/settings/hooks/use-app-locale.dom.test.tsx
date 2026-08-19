@@ -7,6 +7,7 @@ import {
   getLocale as getParaglideLocale,
   setLocale as setParaglideLocale,
 } from "@/paraglide/runtime.js";
+import { emit as emitNativeEvent } from "@/platform/native/events";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
 import { AppLocaleProvider, useAppLocale } from "./use-app-locale";
@@ -17,15 +18,26 @@ test("bootstraps before localized UI and switches both directions without remoun
   const originalLocale = getParaglideLocale();
   const bootstrap = deferred<AppSettingsResponse>();
   const localeMutations: string[] = [];
-  mockNativeIpc((command, args) => {
-    if (command === "get_app_settings") return bootstrap.promise;
-    if (command === "set_app_locale") {
-      const language = (args as { locale: string }).locale;
-      localeMutations.push(language);
-      return language;
-    }
-    throw new Error(`Unexpected command: ${command}`);
-  });
+  let settingsReadCount = 0;
+  let committedLanguage = "ru";
+  mockNativeIpc(
+    (command, args) => {
+      if (command === "get_app_settings") {
+        settingsReadCount += 1;
+        return settingsReadCount === 1
+          ? bootstrap.promise
+          : appSettings(committedLanguage);
+      }
+      if (command === "set_app_locale") {
+        const language = (args as { locale: string }).locale;
+        committedLanguage = language;
+        localeMutations.push(language);
+        return language;
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    },
+    { shouldMockEvents: true },
+  );
   const root = createRoot(dom.window.document.getElementById("app")!);
   let mountCount = 0;
 
@@ -70,7 +82,10 @@ test("bootstraps before localized UI and switches both directions without remoun
     expect(localeMutations).toEqual(["en", "ru"]);
     expect(mountCount).toBe(1);
   } finally {
-    await act(async () => root.unmount());
+    await act(async () => {
+      root.unmount();
+      await nextTurn();
+    });
     await setParaglideLocale(originalLocale, { reload: false });
     clearNativeMocks();
     restoreGlobals();
@@ -83,11 +98,14 @@ test("keeps the confirmed locale when persistence fails", async () => {
   const restoreGlobals = installDomGlobals(dom);
   const originalLocale = getParaglideLocale();
   const mutation = deferred<string>();
-  mockNativeIpc((command) => {
-    if (command === "get_app_settings") return appSettings("en");
-    if (command === "set_app_locale") return mutation.promise;
-    throw new Error(`Unexpected command: ${command}`);
-  });
+  mockNativeIpc(
+    (command) => {
+      if (command === "get_app_settings") return appSettings("en");
+      if (command === "set_app_locale") return mutation.promise;
+      throw new Error(`Unexpected command: ${command}`);
+    },
+    { shouldMockEvents: true },
+  );
   const root = createRoot(dom.window.document.getElementById("app")!);
 
   try {
@@ -128,7 +146,199 @@ test("keeps the confirmed locale when persistence fails", async () => {
   }
 });
 
-function LocaleHarness({ onMount }: { onMount: () => void }) {
+test("applies the latest invalidation read and deduplicates repeated delivery", async () => {
+  const dom = createDom();
+  const restoreGlobals = installDomGlobals(dom);
+  const originalLocale = getParaglideLocale();
+  const staleRead = deferred<AppSettingsResponse>();
+  let readCount = 0;
+  let renderCount = 0;
+  mockNativeIpc(
+    (command) => {
+      if (command === "get_app_settings") {
+        readCount += 1;
+        if (readCount === 1) return appSettings("en");
+        if (readCount === 2) return staleRead.promise;
+        return appSettings("ru");
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    },
+    { shouldMockEvents: true },
+  );
+  const root = createRoot(dom.window.document.getElementById("app")!);
+
+  try {
+    await act(async () => {
+      root.render(
+        <AppLocaleProvider fallback={<span>Loading</span>}>
+          <LocaleHarness
+            onMount={() => undefined}
+            onRender={() => (renderCount += 1)}
+          />
+        </AppLocaleProvider>,
+      );
+      await nextTurn();
+      await nextTurn();
+    });
+    expect(textOf(dom, "[data-locale]")).toBe("en");
+
+    await act(async () => {
+      await emitNativeEvent("app-settings:locale-changed");
+      await nextTurn();
+    });
+    expect(readCount).toBe(2);
+
+    await act(async () => {
+      await emitNativeEvent("app-settings:locale-changed");
+      await nextTurn();
+      await nextTurn();
+    });
+    expect(textOf(dom, "[data-locale]")).toBe("ru");
+    const renderCountAfterFreshRead = renderCount;
+
+    await act(async () => {
+      staleRead.resolve(appSettings("en"));
+      await nextTurn();
+      await nextTurn();
+    });
+    expect(textOf(dom, "[data-locale]")).toBe("ru");
+    expect(renderCount).toBe(renderCountAfterFreshRead);
+
+    await act(async () => {
+      await emitNativeEvent("app-settings:locale-changed");
+      await nextTurn();
+      await nextTurn();
+    });
+    expect(textOf(dom, "[data-locale]")).toBe("ru");
+    expect(renderCount).toBe(renderCountAfterFreshRead);
+  } finally {
+    await act(async () => root.unmount());
+    await setParaglideLocale(originalLocale, { reload: false });
+    clearNativeMocks();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("reconciles a missed change on foreground and cleans up the focus listener", async () => {
+  const dom = createDom();
+  const restoreGlobals = installDomGlobals(dom);
+  const originalLocale = getParaglideLocale();
+  let backendLocale = "en";
+  let readCount = 0;
+  mockNativeIpc(
+    (command) => {
+      if (command === "get_app_settings") {
+        readCount += 1;
+        return appSettings(backendLocale);
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    },
+    { shouldMockEvents: true },
+  );
+  const root = createRoot(dom.window.document.getElementById("app")!);
+
+  try {
+    await act(async () => {
+      root.render(
+        <AppLocaleProvider fallback={<span>Loading</span>}>
+          <LocaleHarness onMount={() => undefined} />
+        </AppLocaleProvider>,
+      );
+      await nextTurn();
+      await nextTurn();
+    });
+    expect(textOf(dom, "[data-locale]")).toBe("en");
+
+    backendLocale = "ru";
+    await act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event("focus"));
+      await nextTurn();
+      await nextTurn();
+    });
+    expect(textOf(dom, "[data-locale]")).toBe("ru");
+
+    await act(async () => {
+      root.unmount();
+      await nextTurn();
+    });
+    const readsBeforeCleanupCheck = readCount;
+    backendLocale = "en";
+    dom.window.dispatchEvent(new dom.window.Event("focus"));
+    await nextTurn();
+    expect(readCount).toBe(readsBeforeCleanupCheck);
+  } finally {
+    await setParaglideLocale(originalLocale, { reload: false });
+    clearNativeMocks();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("does not apply a late mutation result over a newer committed locale", async () => {
+  const dom = createDom();
+  const restoreGlobals = installDomGlobals(dom);
+  const originalLocale = getParaglideLocale();
+  const mutation = deferred<string>();
+  let backendLocale = "en";
+  mockNativeIpc(
+    (command) => {
+      if (command === "get_app_settings") return appSettings(backendLocale);
+      if (command === "set_app_locale") return mutation.promise;
+      throw new Error(`Unexpected command: ${command}`);
+    },
+    { shouldMockEvents: true },
+  );
+  const root = createRoot(dom.window.document.getElementById("app")!);
+
+  try {
+    await act(async () => {
+      root.render(
+        <AppLocaleProvider fallback={<span>Loading</span>}>
+          <LocaleHarness onMount={() => undefined} />
+        </AppLocaleProvider>,
+      );
+      await nextTurn();
+      await nextTurn();
+    });
+
+    await act(async () => {
+      dom.window.document
+        .querySelector<HTMLButtonElement>("[data-change-locale]")!
+        .click();
+      await nextTurn();
+    });
+    expect(textOf(dom, "[data-pending]")).toBe("pending");
+
+    backendLocale = "en";
+    await act(async () => {
+      await emitNativeEvent("app-settings:locale-changed");
+      await nextTurn();
+      mutation.resolve("ru");
+      await nextTurn();
+      await nextTurn();
+    });
+
+    expect(textOf(dom, "[data-locale]")).toBe("en");
+    expect(textOf(dom, "[data-pending]")).toBe("ready");
+    expect(dom.window.document.documentElement.lang).toBe("en");
+  } finally {
+    await act(async () => root.unmount());
+    await setParaglideLocale(originalLocale, { reload: false });
+    clearNativeMocks();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+function LocaleHarness({
+  onMount,
+  onRender,
+}: {
+  onMount: () => void;
+  onRender?: () => void;
+}) {
+  onRender?.();
   const { locale, localePending, setLocale } = useAppLocale();
   const [instance] = useState(() => {
     onMount();
