@@ -35,8 +35,6 @@ test("instructions use the common coverless Gallery and safe reader detail", () 
     onDetailRequested: (rowId) => {
       detailRowId = rowId;
     },
-    onRefresh: () => undefined,
-    refreshing: false,
     state: { phase: "ready", rows: [available] },
   });
   const html = renderToStaticMarkup(
@@ -64,9 +62,11 @@ test("instructions use the common coverless Gallery and safe reader detail", () 
         createDetailRequest(row: AgentContextInstructionRow): {
           content: React.ReactNode;
         };
+        refresh?: unknown;
       };
     };
   };
+  expect(descriptor.instance.descriptor.refresh).toBe(undefined);
   const detail = descriptor.instance.descriptor.createDetailRequest(available);
   const detailHtml = renderToStaticMarkup(detail.content);
   expect(detailRowId as string | null).toBe(available.id);
@@ -76,8 +76,6 @@ test("instructions use the common coverless Gallery and safe reader detail", () 
 
 test("shadowed aliases expose link and warning overlays without a subtitle", () => {
   const presentation = createAgentContextInstructionsPresentation({
-    onRefresh: () => undefined,
-    refreshing: false,
     state: {
       phase: "ready",
       rows: [
@@ -122,8 +120,6 @@ test("instruction external action keeps the canonical artifact and owner togethe
     onOpenArtifact: (input) => {
       opened.push(input);
     },
-    onRefresh: () => undefined,
-    refreshing: false,
     state: { phase: "ready", rows: [available] },
   }) as unknown as {
     instance: {

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import {
-  beginAgentContextRefresh,
+  beginAgentContextRetry,
   completeAgentContextRefresh,
   failAgentContextRefresh,
   type AgentContextCatalogState,
@@ -21,23 +21,28 @@ const snapshot: AgentContextInstructionsSnapshot = {
 
 test("refresh keeps the last usable snapshot stale until replacement", () => {
   const ready = completeAgentContextRefresh(
+    {
+      ownerKey: "space:one",
+      phase: "initial",
+      targetPath: snapshot.targetPath,
+    },
     "space:one",
     snapshot.targetPath,
     snapshot,
   );
-  const refreshing = beginAgentContextRefresh(
+  const retrying = beginAgentContextRetry(
     ready,
     "space:one",
     snapshot.targetPath,
   );
 
-  expect(refreshing.phase).toBe("ready");
-  if (refreshing.phase !== "ready") throw new Error("Expected ready state");
-  expect(refreshing.refreshing).toBe(true);
-  expect(refreshing.snapshot).toBe(snapshot);
+  expect(retrying.phase).toBe("ready");
+  if (retrying.phase !== "ready") throw new Error("Expected ready state");
+  expect(retrying.retrying).toBe(true);
+  expect(retrying.snapshot).toBe(snapshot);
 
   const failed = failAgentContextRefresh(
-    refreshing,
+    retrying,
     "space:one",
     snapshot.targetPath,
     "source changed during scan",
@@ -45,7 +50,7 @@ test("refresh keeps the last usable snapshot stale until replacement", () => {
   expect(failed.phase).toBe("ready");
   if (failed.phase !== "ready") throw new Error("Expected stale ready state");
   expect(failed.refreshError).toBe("source changed during scan");
-  expect(failed.refreshing).toBe(false);
+  expect(failed.retrying).toBe(false);
   expect(failed.snapshot).toBe(snapshot);
 });
 
@@ -67,22 +72,68 @@ test("a failure blocks only when no usable snapshot exists", () => {
     error: "unavailable",
     ownerKey: "space:one",
     phase: "blocking_error",
+    retrying: false,
     targetPath: snapshot.targetPath,
   });
 });
 
 test("a different owner never inherits the previous snapshot", () => {
   const ready = completeAgentContextRefresh(
+    {
+      ownerKey: "space:one",
+      phase: "initial",
+      targetPath: snapshot.targetPath,
+    },
     "space:one",
     snapshot.targetPath,
     snapshot,
   );
 
   expect(
-    beginAgentContextRefresh(ready, "space:two", "/workspace/other"),
+    beginAgentContextRetry(ready, "space:two", "/workspace/other"),
   ).toEqual({
     ownerKey: "space:two",
     phase: "initial",
     targetPath: "/workspace/other",
   });
+});
+
+test("an equivalent generation keeps the published snapshot identity", () => {
+  const initial: AgentContextCatalogState = {
+    ownerKey: "space:one",
+    phase: "initial",
+    targetPath: snapshot.targetPath,
+  };
+  const ready = completeAgentContextRefresh(
+    initial,
+    "space:one",
+    snapshot.targetPath,
+    snapshot,
+  );
+  const equivalentSnapshot = { ...snapshot };
+
+  expect(
+    completeAgentContextRefresh(
+      ready,
+      "space:one",
+      snapshot.targetPath,
+      equivalentSnapshot,
+    ),
+  ).toBe(ready);
+
+  const retrying = beginAgentContextRetry(
+    ready,
+    "space:one",
+    snapshot.targetPath,
+  );
+  const completed = completeAgentContextRefresh(
+    retrying,
+    "space:one",
+    snapshot.targetPath,
+    equivalentSnapshot,
+  );
+  expect(completed.phase).toBe("ready");
+  if (completed.phase !== "ready") throw new Error("Expected ready state");
+  expect(completed.snapshot).toBe(snapshot);
+  expect(completed.retrying).toBe(false);
 });

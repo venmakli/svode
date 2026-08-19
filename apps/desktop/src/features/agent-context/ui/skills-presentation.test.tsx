@@ -47,8 +47,6 @@ const reviewSkill: AgentContextSkillRow = {
 
 function presentation(rows: readonly AgentContextSkillRow[]) {
   return createAgentContextSkillsPresentation({
-    onRefresh: () => undefined,
-    refreshing: false,
     state: { phase: "ready", rows },
   });
 }
@@ -83,6 +81,7 @@ test("skills render as coverless Gallery cards with bounded Reader detail", () =
     true,
   );
   expect(html.includes("group/gallery-cover")).toBe(false);
+  expect(descriptor([reviewSkill]).refresh).toBe(undefined);
 
   const request = descriptor([reviewSkill]).createDetailRequest?.(reviewSkill);
   const detailHtml = renderToStaticMarkup(request?.content);
@@ -232,8 +231,6 @@ test("skill external action opens its canonical manifest in the owning root", as
     onOpenArtifact: (input) => {
       opened.push(input);
     },
-    onRefresh: () => undefined,
-    refreshing: false,
     state: { phase: "ready", rows: [reviewSkill] },
   }) as unknown as {
     instance: {
@@ -284,8 +281,6 @@ test("skill external action uses canonical owner instead of discovery alias owne
     onOpenArtifact: (input) => {
       opened.push(input);
     },
-    onRefresh: () => undefined,
-    refreshing: false,
     state: { phase: "ready", rows: [linkedPersonalSkill] },
   }) as unknown as {
     instance: {

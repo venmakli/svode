@@ -6,13 +6,16 @@ import {
   refreshAgentContextInstructionsSnapshot,
 } from "../api/agent-context-api";
 import {
-  beginAgentContextRefresh,
+  beginAgentContextRetry,
   completeAgentContextRefresh,
   failAgentContextRefresh,
   type AgentContextCatalogState,
 } from "../model/catalog-state";
+import type { AgentContextInstructionsSnapshot } from "../model/types";
+import { AgentContextRefreshCoordinator } from "./agent-context-refresh-coordinator";
 
 const personalSourceRefreshIntervalMs = 30_000;
+const projectSourceRefreshDebounceMs = 120;
 
 export function useAgentContextInstructions({
   ownerKey,
@@ -28,25 +31,23 @@ export function useAgentContextInstructions({
     phase: "initial",
     targetPath: spacePath,
   });
-  const requestIdRef = useRef(0);
+  const coordinatorRef =
+    useRef<AgentContextRefreshCoordinator<AgentContextInstructionsSnapshot> | null>(
+      null,
+    );
   const currentState =
     state.ownerKey === ownerKey && state.targetPath === spacePath
       ? state
       : ({ ownerKey, phase: "initial", targetPath: spacePath } as const);
 
   useEffect(() => {
-    const requestId = ++requestIdRef.current;
-    let cancelled = false;
-
-    void loadAgentContextInstructions(projectPath, spacePath).then(
-      (snapshot) => {
-        if (cancelled || requestId !== requestIdRef.current) return;
-        setState(
-          completeAgentContextRefresh(ownerKey, spacePath, snapshot),
-        );
-      },
-      (error: unknown) => {
-        if (cancelled || requestId !== requestIdRef.current) return;
+    const coordinator = new AgentContextRefreshCoordinator({
+      debounceMs: projectSourceRefreshDebounceMs,
+      load: (request) =>
+        request === "initial"
+          ? loadAgentContextInstructions(projectPath, spacePath)
+          : refreshAgentContextInstructionsSnapshot(projectPath, spacePath),
+      onFailure: (error) => {
         setState((current) =>
           failAgentContextRefresh(
             current,
@@ -56,50 +57,36 @@ export function useAgentContextInstructions({
           ),
         );
       },
-    );
+      onSuccess: (snapshot) => {
+        setState((current) =>
+          completeAgentContextRefresh(current, ownerKey, spacePath, snapshot),
+        );
+      },
+    });
+    coordinatorRef.current = coordinator;
+    coordinator.loadInitial();
 
     return () => {
-      cancelled = true;
+      coordinator.dispose();
+      if (coordinatorRef.current === coordinator) coordinatorRef.current = null;
     };
   }, [ownerKey, projectPath, spacePath]);
 
-  const refresh = useCallback(
-    async () => {
-      const requestId = ++requestIdRef.current;
-      setState((current) =>
-        beginAgentContextRefresh(current, ownerKey, spacePath),
-      );
-
-      try {
-        const snapshot = await refreshAgentContextInstructionsSnapshot(
-          projectPath,
-          spacePath,
-        );
-        if (requestId !== requestIdRef.current) return;
-        setState(
-          completeAgentContextRefresh(ownerKey, spacePath, snapshot),
-        );
-      } catch (error) {
-        if (requestId !== requestIdRef.current) return;
-        setState((current) =>
-          failAgentContextRefresh(
-            current,
-            ownerKey,
-            spacePath,
-            errorMessage(error),
-          ),
-        );
-      }
-    },
-    [ownerKey, projectPath, spacePath],
-  );
+  const retry = useCallback(() => {
+    setState((current) => beginAgentContextRetry(current, ownerKey, spacePath));
+    coordinatorRef.current?.retry();
+  }, [ownerKey, spacePath]);
 
   useEffect(() => {
+    const coordinator = coordinatorRef.current;
+    if (!coordinator) return;
     let disposed = false;
     let unlisten: (() => void) | undefined;
 
     void listenAgentContextInvalidation((payload) => {
-      if (payload.spacePath === spacePath) void refresh();
+      if (payload.spacePath === spacePath) {
+        coordinator.invalidate();
+      }
     })
       .then((nextUnlisten) => {
         if (disposed) nextUnlisten();
@@ -111,20 +98,21 @@ export function useAgentContextInstructions({
       disposed = true;
       unlisten?.();
     };
-  }, [refresh, spacePath]);
+  }, [spacePath]);
 
   const hasPersonalSources =
-    currentState.phase === "ready" &&
-    currentState.snapshot.hasPersonalSources;
+    currentState.phase === "ready" && currentState.snapshot.hasPersonalSources;
   useEffect(() => {
     if (!hasPersonalSources) return;
+    const coordinator = coordinatorRef.current;
+    if (!coordinator) return;
     const interval = window.setInterval(() => {
-      void refresh();
+      coordinator.invalidate();
     }, personalSourceRefreshIntervalMs);
     return () => window.clearInterval(interval);
-  }, [hasPersonalSources, refresh]);
+  }, [hasPersonalSources]);
 
-  return { refresh, state: currentState };
+  return { retry, state: currentState };
 }
 
 function errorMessage(error: unknown) {

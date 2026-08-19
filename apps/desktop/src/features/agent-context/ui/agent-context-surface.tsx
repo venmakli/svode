@@ -7,15 +7,13 @@ import {
   useOptionalSystemCollectionDetailController,
   useSystemCollectionState,
   type SystemCollectionInstance,
-  type SystemCollectionPresentationState,
 } from "@/features/collection/system";
 import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
-import * as m from "@/paraglide/messages.js";
 
 import { openAgentContextArtifact } from "../api/agent-context-api";
 import { useAgentContextArtifactOpeners } from "../hooks/use-agent-context-artifact-openers";
 import { useAgentContextInstructions } from "../hooks/use-agent-context-instructions";
-import type { AgentContextCatalogState } from "../model/catalog-state";
+import { toAgentContextPresentationState } from "./agent-context-presentation-state";
 import {
   AgentContextInstructionsEmpty,
   createAgentContextInstructionsPresentation,
@@ -31,7 +29,7 @@ interface OpenedAgentContextRow {
 }
 
 export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
-  const { refresh, state } = useAgentContextInstructions({
+  const { retry, state } = useAgentContextInstructions({
     ownerKey: owner.ownerKey,
     projectPath: owner.projectPath,
     spacePath: owner.spacePath,
@@ -42,18 +40,19 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
   );
   const artifactOpeners = useAgentContextArtifactOpeners();
   const instanceKey = `agent-context:${owner.ownerKey}`;
-  const refreshing = state.phase === "ready" && state.refreshing;
-  const instructionsState = toPresentationState(
+  const instructionsState = toAgentContextPresentationState(
     state,
     (snapshot) => snapshot.rows,
     (snapshot) => snapshot.instructionDiagnostics,
     <AgentContextInstructionsEmpty />,
+    retry,
   );
-  const skillsState = toPresentationState(
+  const skillsState = toAgentContextPresentationState(
     state,
     (snapshot) => snapshot.skills,
     (snapshot) => snapshot.skillDiagnostics,
     <AgentContextSkillsEmpty />,
+    retry,
   );
   const instructionsPresentation = useMemo(
     () =>
@@ -63,11 +62,9 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
           openAgentContextArtifact({ canonicalArtifactPath, ownerRoot }, tool),
         onDetailRequested: (rowId) =>
           setOpenedRow({ presentationId: "instructions", rowId }),
-        onRefresh: refresh,
-        refreshing,
         state: instructionsState,
       }),
-    [artifactOpeners, instructionsState, refresh, refreshing],
+    [artifactOpeners, instructionsState],
   );
   const skillsPresentation = useMemo(
     () =>
@@ -77,11 +74,9 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
           openAgentContextArtifact({ canonicalArtifactPath, ownerRoot }, tool),
         onDetailRequested: (rowId) =>
           setOpenedRow({ presentationId: "skills", rowId }),
-        onRefresh: refresh,
-        refreshing,
         state: skillsState,
       }),
-    [artifactOpeners, refresh, refreshing, skillsState],
+    [artifactOpeners, skillsState],
   );
   const instance = useMemo<SystemCollectionInstance>(
     () => ({
@@ -136,50 +131,4 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
       />
     </div>
   );
-}
-
-function toPresentationState<Row>(
-  state: AgentContextCatalogState,
-  selectRows: (
-    snapshot: Extract<AgentContextCatalogState, { phase: "ready" }>["snapshot"],
-  ) => readonly Row[],
-  selectDiagnostics: (
-    snapshot: Extract<AgentContextCatalogState, { phase: "ready" }>["snapshot"],
-  ) => readonly string[],
-  sourceEmpty: React.ReactNode,
-): SystemCollectionPresentationState<Row> {
-  if (state.phase === "initial") return { phase: "initial" };
-  if (state.phase === "blocking_error") {
-    return {
-      error: (
-        <span className="flex flex-col gap-1">
-          <strong>{m.agent_context_blocking_title()}</strong>
-          <span>{state.error}</span>
-        </span>
-      ),
-      phase: "blocking_error",
-    };
-  }
-
-  const diagnostics = selectDiagnostics(state.snapshot).map(
-    (diagnostic, index) => (
-      <span key={`${diagnostic}:${index}`}>{diagnostic}</span>
-    ),
-  );
-  if (state.refreshError) {
-    diagnostics.push(
-      <span key="refresh" title={state.refreshError}>
-        {m.agent_context_refresh_error()}
-      </span>,
-    );
-  }
-
-  return {
-    attention: <span>{m.agent_context_projection_attention()}</span>,
-    diagnostics,
-    phase: "ready",
-    refreshing: state.refreshing,
-    rows: selectRows(state.snapshot),
-    sourceEmpty,
-  };
 }

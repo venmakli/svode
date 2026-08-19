@@ -34,8 +34,6 @@ export function createAgentContextInstructionsPresentation({
   artifactOpeners = [],
   onOpenArtifact,
   onDetailRequested,
-  onRefresh,
-  refreshing,
   state,
 }: {
   artifactOpeners?: readonly ArtifactOpener[];
@@ -45,8 +43,6 @@ export function createAgentContextInstructionsPresentation({
     tool: ArtifactOpener["id"];
   }): void | Promise<void>;
   onDetailRequested?(rowId: string): void;
-  onRefresh(): void | Promise<void>;
-  refreshing: boolean;
   state: SystemCollectionPresentationState<AgentContextInstructionRow>;
 }) {
   const fields: readonly SystemCollectionFieldDescriptor<AgentContextInstructionRow>[] =
@@ -122,13 +118,6 @@ export function createAgentContextInstructionsPresentation({
             tool: opener.id,
           }),
       })),
-      refresh: {
-        getState: () =>
-          refreshing ? { status: "pending" } : { status: "idle" },
-        id: "refresh-instructions",
-        label: m.agent_context_refresh(),
-        run: onRefresh,
-      },
     },
     state,
   });
