@@ -31,7 +31,7 @@ export function beginAgentContextRetry(
     return { ...state, retrying: true };
   }
   if (state.phase === "ready") {
-    return { ...state, refreshError: null, retrying: true };
+    return { ...state, retrying: true };
   }
   return state;
 }

@@ -181,10 +181,7 @@ test("transport provenance is normalized without recomputing precedence", () => 
   expect(snapshot.skills[0]?.diagnostics).toEqual([
     "Skill name does not match its canonical directory name",
   ]);
-  expect(snapshot.instructionDiagnostics).toEqual([
-    "Import requires client approval",
-  ]);
-  expect(snapshot.skillDiagnostics).toEqual([
-    "Skill directory /home/user/.codex/skills/legacy has no SKILL.md",
-  ]);
+  expect(snapshot.diagnostics).toEqual(dto.diagnostics);
+  expect(Object.isFrozen(snapshot.diagnostics)).toBe(true);
+  expect(Object.isFrozen(snapshot.diagnostics[0])).toBe(true);
 });

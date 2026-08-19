@@ -7,11 +7,10 @@ import { toAgentContextPresentationState } from "./agent-context-presentation-st
 
 const snapshot: AgentContextInstructionsSnapshot = {
   adapters: [],
+  diagnostics: [],
   generation: 4,
   hasPersonalSources: true,
-  instructionDiagnostics: [],
   rows: [],
-  skillDiagnostics: [],
   skills: [],
   targetPath: "/workspace",
 };
@@ -27,7 +26,6 @@ test("blocking discovery failure exposes contextual retry", () => {
   const presentation = toAgentContextPresentationState(
     state,
     (value) => value.rows,
-    (value) => value.instructionDiagnostics,
     null,
     () => undefined,
   );
@@ -40,7 +38,7 @@ test("blocking discovery failure exposes contextual retry", () => {
   expect(html.includes("Retry")).toBe(true);
 });
 
-test("background failure keeps rows and adds retry without busy chrome", () => {
+test("ready state keeps rows without product attention or full-width diagnostics", () => {
   const state: AgentContextCatalogState = {
     ownerKey: "space:root",
     phase: "ready",
@@ -52,7 +50,6 @@ test("background failure keeps rows and adds retry without busy chrome", () => {
   const presentation = toAgentContextPresentationState(
     state,
     (value) => value.rows,
-    (value) => value.instructionDiagnostics,
     null,
     () => undefined,
   );
@@ -60,9 +57,8 @@ test("background failure keeps rows and adds retry without busy chrome", () => {
     throw new Error("Expected ready state");
   }
 
-  const html = renderToStaticMarkup(<>{presentation.diagnostics}</>);
   expect(presentation.rows).toBe(snapshot.rows);
-  expect(html.includes("Retry")).toBe(true);
-  expect(html.includes("Updating")).toBe(false);
+  expect("attention" in presentation).toBe(false);
+  expect("diagnostics" in presentation).toBe(false);
   expect("refreshing" in presentation).toBe(false);
 });

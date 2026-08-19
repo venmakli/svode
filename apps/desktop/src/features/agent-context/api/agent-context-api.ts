@@ -81,10 +81,16 @@ export function toAgentContextInstructionsSnapshot(
         }),
       ),
     ),
-    instructionDiagnostics: Object.freeze(
-      dto.diagnostics
-        .filter((diagnostic) => !diagnostic.code.startsWith("skill_"))
-        .map((diagnostic) => diagnostic.message),
+    diagnostics: Object.freeze(
+      dto.diagnostics.map((diagnostic) =>
+        Object.freeze({
+          adapterId: diagnostic.adapterId,
+          code: diagnostic.code,
+          message: diagnostic.message,
+          path: diagnostic.path,
+          severity: diagnostic.severity,
+        }),
+      ),
     ),
     generation: dto.generation,
     hasPersonalSources: dto.observedPersonalPaths.length > 0,
@@ -127,15 +133,6 @@ export function toAgentContextInstructionsSnapshot(
           truncated: row.preview?.truncated ?? false,
         });
       }),
-    ),
-    skillDiagnostics: Object.freeze(
-      dto.diagnostics
-        .filter(
-          (diagnostic) =>
-            diagnostic.code.startsWith("skill_") &&
-            diagnostic.code !== "skill_manifest_warning",
-        )
-        .map((diagnostic) => diagnostic.message),
     ),
     skills: Object.freeze(dto.skills.map((row) => normalizeSkillRow(dto, row))),
     targetPath: dto.targetRoot,

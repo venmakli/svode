@@ -1,5 +1,13 @@
 export type SupportedAdapterId = "claude-code" | "codex";
 
+export interface AgentContextDiagnostic {
+  adapterId: SupportedAdapterId | null;
+  code: string;
+  message: string;
+  path: string | null;
+  severity: "warning" | "error";
+}
+
 export type AgentContextAvailability =
   | "available"
   | "shadowed"
@@ -105,9 +113,8 @@ export interface AgentContextInstructionsSnapshot {
   targetPath: string;
   generation: number;
   adapters: readonly AgentContextAdapterSnapshot[];
-  instructionDiagnostics: readonly string[];
+  diagnostics: readonly AgentContextDiagnostic[];
   rows: readonly AgentContextInstructionRow[];
-  skillDiagnostics: readonly string[];
   skills: readonly AgentContextSkillRow[];
   hasPersonalSources: boolean;
 }

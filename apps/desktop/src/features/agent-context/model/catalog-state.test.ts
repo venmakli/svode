@@ -10,11 +10,10 @@ import type { AgentContextInstructionsSnapshot } from "./types";
 
 const snapshot: AgentContextInstructionsSnapshot = {
   adapters: [],
+  diagnostics: [],
   generation: 4,
   hasPersonalSources: true,
-  instructionDiagnostics: [],
   rows: [],
-  skillDiagnostics: [],
   skills: [],
   targetPath: "/workspace/space",
 };
@@ -52,6 +51,18 @@ test("refresh keeps the last usable snapshot stale until replacement", () => {
   expect(failed.refreshError).toBe("source changed during scan");
   expect(failed.retrying).toBe(false);
   expect(failed.snapshot).toBe(snapshot);
+
+  const retryAfterFailure = beginAgentContextRetry(
+    failed,
+    "space:one",
+    snapshot.targetPath,
+  );
+  expect(retryAfterFailure.phase).toBe("ready");
+  if (retryAfterFailure.phase !== "ready") {
+    throw new Error("Expected ready retry state");
+  }
+  expect(retryAfterFailure.refreshError).toBe("source changed during scan");
+  expect(retryAfterFailure.retrying).toBe(true);
 });
 
 test("a failure blocks only when no usable snapshot exists", () => {

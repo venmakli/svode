@@ -84,7 +84,7 @@ export function CollectionPresentationTabTrigger({
   return <TabsTrigger {...props}>{children}</TabsTrigger>;
 }
 
-export function CollectionQueryToolbarButton({
+export function CollectionToolbarButton({
   active = false,
   count = 0,
   icon: Icon,
@@ -97,27 +97,35 @@ export function CollectionQueryToolbarButton({
   label: string;
 }) {
   return (
+    <Button
+      type="button"
+      variant="ghost"
+      size={count > 0 ? "sm" : "icon-sm"}
+      className={cn(
+        toolbarIconButtonClass,
+        count > 0 && toolbarBadgeButtonClass,
+        (count > 0 || active) && toolbarActiveButtonClass,
+      )}
+      {...props}
+    >
+      <Icon />
+      <span className="sr-only">{label}</span>
+      {count > 0 ? (
+        <Badge className={toolbarCountBadgeClass}>{count}</Badge>
+      ) : null}
+    </Button>
+  );
+}
+
+export function CollectionQueryToolbarButton(
+  props: Parameters<typeof CollectionToolbarButton>[0],
+) {
+  return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size={count > 0 ? "sm" : "icon-sm"}
-          className={cn(
-            toolbarIconButtonClass,
-            count > 0 && toolbarBadgeButtonClass,
-            (count > 0 || active) && toolbarActiveButtonClass,
-          )}
-          {...props}
-        >
-          <Icon />
-          <span className="sr-only">{label}</span>
-          {count > 0 ? (
-            <Badge className={toolbarCountBadgeClass}>{count}</Badge>
-          ) : null}
-        </Button>
+        <CollectionToolbarButton {...props} />
       </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
+      <TooltipContent>{props.label}</TooltipContent>
     </Tooltip>
   );
 }

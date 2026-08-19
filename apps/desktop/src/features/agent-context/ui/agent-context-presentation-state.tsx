@@ -9,9 +9,6 @@ export function toAgentContextPresentationState<Row>(
   selectRows: (
     snapshot: Extract<AgentContextCatalogState, { phase: "ready" }>["snapshot"],
   ) => readonly Row[],
-  selectDiagnostics: (
-    snapshot: Extract<AgentContextCatalogState, { phase: "ready" }>["snapshot"],
-  ) => readonly string[],
   sourceEmpty: React.ReactNode,
   onRetry: () => void,
 ): SystemCollectionPresentationState<Row> {
@@ -34,25 +31,7 @@ export function toAgentContextPresentationState<Row>(
     };
   }
 
-  const diagnostics = selectDiagnostics(state.snapshot).map(
-    (diagnostic, index) => (
-      <span key={`${diagnostic}:${index}`}>{diagnostic}</span>
-    ),
-  );
-  if (state.refreshError) {
-    diagnostics.push(
-      <div key="refresh" className="flex flex-col items-start gap-2">
-        <span title={state.refreshError}>
-          {m.agent_context_refresh_error()}
-        </span>
-        <AgentContextRetryButton disabled={state.retrying} onRetry={onRetry} />
-      </div>,
-    );
-  }
-
   return {
-    attention: <span>{m.agent_context_projection_attention()}</span>,
-    diagnostics,
     phase: "ready",
     rows: selectRows(state.snapshot),
     sourceEmpty,

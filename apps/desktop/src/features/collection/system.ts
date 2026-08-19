@@ -21,6 +21,7 @@ export { SystemCollectionPresentationShell } from "./system/ui/presentation-shel
 export type { SystemCollectionPresentationShellProps } from "./system/ui/presentation-shell";
 export { SystemCollectionPresentationCore } from "./system/ui/presentation-core";
 export type { SystemCollectionPresentationCoreProps } from "./system/ui/presentation-core";
+export { CollectionToolbarButton as SystemCollectionToolbarActionButton } from "./ui/presentation-core";
 export type {
   SystemCollectionActionState,
   SystemCollectionCreateAction,

@@ -13,6 +13,8 @@ import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import { openAgentContextArtifact } from "../api/agent-context-api";
 import { useAgentContextArtifactOpeners } from "../hooks/use-agent-context-artifact-openers";
 import { useAgentContextInstructions } from "../hooks/use-agent-context-instructions";
+import { buildAgentContextDiagnosticReadModel } from "../model/diagnostics";
+import { AgentContextDiagnosticsDialog } from "./agent-context-diagnostics-dialog";
 import { toAgentContextPresentationState } from "./agent-context-presentation-state";
 import {
   AgentContextInstructionsEmpty,
@@ -43,16 +45,24 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
   const instructionsState = toAgentContextPresentationState(
     state,
     (snapshot) => snapshot.rows,
-    (snapshot) => snapshot.instructionDiagnostics,
     <AgentContextInstructionsEmpty />,
     retry,
   );
   const skillsState = toAgentContextPresentationState(
     state,
     (snapshot) => snapshot.skills,
-    (snapshot) => snapshot.skillDiagnostics,
     <AgentContextSkillsEmpty />,
     retry,
+  );
+  const diagnosticGroups = useMemo(
+    () =>
+      state.phase === "ready"
+        ? buildAgentContextDiagnosticReadModel({
+            diagnostics: state.snapshot.diagnostics,
+            refreshError: state.refreshError,
+          })
+        : [],
+    [state],
   );
   const instructionsPresentation = useMemo(
     () =>
@@ -125,6 +135,13 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
       data-agent-context-surface={owner.ownerKey}
     >
       <SystemCollectionPresentationCore
+        contextualActions={
+          <AgentContextDiagnosticsDialog
+            groups={diagnosticGroups}
+            onRetry={retry}
+            retrying={state.phase === "ready" && state.retrying}
+          />
+        }
         detailController={detailController ?? undefined}
         instance={instance}
         state={collectionState}

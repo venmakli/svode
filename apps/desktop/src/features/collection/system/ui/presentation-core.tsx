@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import { CollectionPresentationToolbar } from "../../ui/presentation-core";
 import type { SystemCollectionStateController } from "../hooks/use-system-collection-state";
 import { readSystemCollectionPresentationRuntime } from "../model/runtime";
@@ -17,6 +19,7 @@ type ReadySystemCollectionState = Extract<
 >;
 
 export interface SystemCollectionPresentationCoreProps {
+  contextualActions?: ReactNode;
   detailController?: SystemCollectionDetailController;
   instance: SystemCollectionInstance;
   onInteractionError?(error: SystemCollectionInteractionError): void;
@@ -24,6 +27,7 @@ export interface SystemCollectionPresentationCoreProps {
 }
 
 export function SystemCollectionPresentationCore({
+  contextualActions,
   detailController,
   instance,
   onInteractionError,
@@ -64,6 +68,7 @@ export function SystemCollectionPresentationCore({
                 state.dismissResetWarning(descriptor.id)
               }
             />
+            {contextualActions}
             {descriptor.create ? (
               <SystemCollectionCreateActionButton
                 key={`${instance.instanceKey}:${descriptor.create.id}`}
