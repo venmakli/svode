@@ -7,7 +7,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { flushSync } from "react-dom";
 import {
   getTextDirection,
   setLocale as setParaglideLocale,
@@ -45,29 +44,19 @@ export function AppLocaleProvider({
   const pendingMutationRef = useRef<Promise<AppLocale> | null>(null);
   const requestGenerationRef = useRef(0);
 
-  const applyLocale = useCallback(
-    async (nextLocale: AppLocale, renderSynchronously = false) => {
-      if (localeRef.current === nextLocale) return nextLocale;
+  const applyLocale = useCallback(async (nextLocale: AppLocale) => {
+    if (localeRef.current === nextLocale) return nextLocale;
 
-      await setParaglideLocale(nextLocale, { reload: false });
-      document.documentElement.lang = nextLocale;
-      document.documentElement.dir = getTextDirection(nextLocale);
-      localeRef.current = nextLocale;
-      if (renderSynchronously) {
-        flushSync(() => setActiveLocale(nextLocale));
-      } else {
-        setActiveLocale(nextLocale);
-      }
-      return nextLocale;
-    },
-    [],
-  );
+    await setParaglideLocale(nextLocale, { reload: false });
+    document.documentElement.lang = nextLocale;
+    document.documentElement.dir = getTextDirection(nextLocale);
+    localeRef.current = nextLocale;
+    setActiveLocale(nextLocale);
+    return nextLocale;
+  }, []);
 
   const reconcileLocale = useCallback(
-    async (
-      fallbackLocale?: AppLocale,
-      renderSynchronously = false,
-    ): Promise<AppLocale> => {
+    async (fallbackLocale?: AppLocale): Promise<AppLocale> => {
       const generation = ++requestGenerationRef.current;
       let nextLocale: AppLocale;
 
@@ -88,7 +77,7 @@ export function AppLocaleProvider({
         return localeRef.current;
       }
 
-      return applyLocale(nextLocale, renderSynchronously);
+      return applyLocale(nextLocale);
     },
     [applyLocale],
   );
@@ -99,7 +88,7 @@ export function AppLocaleProvider({
     mountedRef.current = true;
 
     const reconcileConfirmedLocale = () => {
-      void reconcileLocale(undefined, true)
+      void reconcileLocale()
         .then(() => invalidateAppSettings())
         .catch((error) => {
           console.error("Failed to reconcile app locale:", error);
