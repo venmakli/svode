@@ -14,6 +14,7 @@ import {
 
 import type { ActorCatalogRow } from "../model/types";
 import {
+  actorCatalogBlockingError,
   createActorsPresentation,
   createActorsPresentationDescriptor,
 } from "./actors-presentation";
@@ -207,9 +208,7 @@ test("singleton and query-empty actors reuse list keyboard, menu, and detail sea
   expect(singleton.includes('data-system-collection-create="add-actor"')).toBe(
     true,
   );
-  expect(
-    singleton.includes('data-system-collection-refresh="refresh-actors"'),
-  ).toBe(true);
+  expect(singleton.includes("data-system-collection-refresh")).toBe(false);
   expect(singleton.includes('aria-label="Search..."')).toBe(true);
   expect(singleton.includes("Filter")).toBe(true);
   expect(singleton.includes("Sort")).toBe(true);
@@ -226,4 +225,22 @@ test("singleton and query-empty actors reuse list keyboard, menu, and detail sea
   expect(detailMarkup.includes("Has commits")).toBe(false);
   expect(detailMarkup.includes("Commits: 4")).toBe(false);
   expect(detailMarkup.includes('data-slot="separator"')).toBe(false);
+});
+
+test("actors exposes retry only when an error provides recovery", () => {
+  const withoutRetry = renderToStaticMarkup(
+    <>{actorCatalogBlockingError("Unavailable", "offline")}</>,
+  );
+  const withRetry = renderToStaticMarkup(
+    <>
+      {actorCatalogBlockingError("Unavailable", "offline", {
+        disabled: false,
+        label: "Retry",
+        onRetry: () => undefined,
+      })}
+    </>,
+  );
+
+  expect(withoutRetry.includes("Retry")).toBe(false);
+  expect(withRetry.includes("Retry")).toBe(true);
 });

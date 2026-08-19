@@ -120,6 +120,28 @@ test("retry uses the same coordinator after a failed load", async () => {
   expect(published).toEqual(["recovered"]);
 });
 
+test("an authoritative mutation snapshot supersedes a scheduled watcher echo", async () => {
+  const scheduler = createManualScheduler();
+  const loads: string[] = [];
+  const coordinator = new AgentContextRefreshCoordinator({
+    debounceMs: 120,
+    load: async (kind) => {
+      loads.push(kind);
+      return "unexpected";
+    },
+    onFailure: () => undefined,
+    onSuccess: () => undefined,
+    scheduler,
+  });
+
+  const pending = coordinator.invalidate();
+  coordinator.supersede();
+  scheduler.flush();
+
+  expect(await pending).toBe(null);
+  expect(loads).toEqual([]);
+});
+
 function createManualScheduler(): AgentContextRefreshScheduler & {
   flush(): void;
 } {

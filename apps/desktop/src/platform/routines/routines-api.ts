@@ -1,4 +1,9 @@
 import { invokeCommand } from "@/platform/native/invoke";
+import {
+  listen,
+  type EventCallback,
+  type UnlistenFn,
+} from "@/platform/native/events";
 
 export type RoutineOwnerKindDto = "registered_space" | "collection_directory";
 export type RoutineResolvedOwnerKindDto = "project" | "space" | "collection";
@@ -97,6 +102,13 @@ export interface RoutineAutomaticConsentDto {
   enabled: boolean;
 }
 
+export interface RoutineInvalidatedEventDto {
+  ownerKind: RoutineResolvedOwnerKindDto;
+  ownerPath: string;
+  projectPath: string;
+  spacePath: string;
+}
+
 export type RoutineMutationResultDto =
   | {
       status: "applied";
@@ -159,6 +171,12 @@ export function refreshRoutines(input: RoutineOwnerCommandInput) {
   return invokeCommand<RoutineCatalogSnapshotDto>("routines_refresh", {
     ...input,
   });
+}
+
+export function listenRoutinesInvalidated(
+  handler: EventCallback<RoutineInvalidatedEventDto>,
+): Promise<UnlistenFn> {
+  return listen<RoutineInvalidatedEventDto>("routines:invalidated", handler);
 }
 
 export function createRoutine(

@@ -1,4 +1,9 @@
 import { invokeCommand } from "@/platform/native/invoke";
+import {
+  listen,
+  type EventCallback,
+  type UnlistenFn,
+} from "@/platform/native/events";
 
 export type AgentAdapterIdDto = "claude-code" | "codex";
 export type AgentActorApprovalModeDto = "ask" | "auto" | "full";
@@ -70,6 +75,10 @@ export interface AgentActorsReadResultDto {
   ownerFingerprints: Record<string, string>;
   adapterDescriptors: AgentActorAdapterDescriptorDto[];
   bindings: AgentActorBindingRuntimeDto[];
+}
+
+export interface AgentActorCatalogInvalidatedEventDto {
+  ownerPath: string;
 }
 
 export interface AgentActorAdapterDiagnosticDto {
@@ -169,6 +178,15 @@ export function getAgentActors(projectPath: string, spacePath: string) {
     spacePath,
     standalone: false,
   });
+}
+
+export function listenAgentActorCatalogInvalidated(
+  handler: EventCallback<AgentActorCatalogInvalidatedEventDto>,
+): Promise<UnlistenFn> {
+  return listen<AgentActorCatalogInvalidatedEventDto>(
+    "agent-actors:invalidated",
+    handler,
+  );
 }
 
 export function diagnoseAgentActorAdapter(

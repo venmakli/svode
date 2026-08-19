@@ -35,6 +35,7 @@ import {
   createActorsPresentation,
 } from "./actors-presentation";
 import { createAgentActorsPresentation } from "./agent-actors-presentation";
+import { CatalogRetryButton } from "./catalog-retry-button";
 
 export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
   const { refresh, replaceSnapshot, state } = useActorCatalog(owner.spacePath);
@@ -132,7 +133,7 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
     return () => cancelAnimationFrame(frame);
   }, [focusRowId, state]);
 
-  const presentationState = toPresentationState(state);
+  const presentationState = toPresentationState(state, () => void refresh());
   const mutationState = mutationActionState(
     state,
     mutation.pendingPhase !== null,
@@ -153,16 +154,12 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
       onEdit: (source) => accessPreflight.request({ kind: "edit", source }),
       onMerge: (source) => accessPreflight.request({ kind: "merge", source }),
     },
-    onRefresh: refresh,
-    refreshing: state.phase === "ready" && state.refreshing,
     spacePath: owner.spacePath,
     state: presentationState,
   });
   const agentActorsPresentation = createAgentActorsPresentation({
     actions: agentActors.actions,
     inheritedVisible: agentActors.inheritedVisible,
-    onRefresh: agentActors.onRefresh,
-    refreshing: agentActors.refreshing,
     renderDetail: agentActors.renderDetail,
     state: agentActors.presentationState,
   });
@@ -266,6 +263,7 @@ function mutationActionState(
 
 function toPresentationState(
   state: ReturnType<typeof useActorCatalog>["state"],
+  onRetry: () => void,
 ): SystemCollectionPresentationState<ActorCatalogRow> {
   if (state.phase === "initial") return { phase: "initial" };
   if (state.phase === "blocking_error") {
@@ -273,6 +271,11 @@ function toPresentationState(
       error: actorCatalogBlockingError(
         m.actors_catalog_error_title(),
         state.error,
+        {
+          disabled: state.retrying,
+          label: m.actors_retry(),
+          onRetry,
+        },
       ),
       phase: "blocking_error",
     };
@@ -290,8 +293,13 @@ function toPresentationState(
   }
   if (state.refreshError) {
     diagnostics.push(
-      <span key="refresh" title={state.refreshError}>
-        {m.actors_refresh_error()}
+      <span key="refresh" className="flex flex-col items-start gap-2">
+        <span title={state.refreshError}>{m.actors_refresh_error()}</span>
+        <CatalogRetryButton
+          disabled={state.refreshing}
+          label={m.actors_retry()}
+          onRetry={onRetry}
+        />
       </span>,
     );
   }
@@ -299,7 +307,6 @@ function toPresentationState(
   return {
     diagnostics,
     phase: "ready",
-    refreshing: state.refreshing,
     rows: state.snapshot.rows,
   };
 }

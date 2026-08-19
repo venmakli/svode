@@ -1,4 +1,9 @@
 import { invokeCommand } from "@/platform/native/invoke";
+import {
+  listen,
+  type EventCallback,
+  type UnlistenFn,
+} from "@/platform/native/events";
 
 export type ActorContributionDto = "contributor" | "no_commits";
 export type ActorSourceKindDto = "history" | "current_git_identity" | "mailmap";
@@ -45,6 +50,11 @@ export interface ActorCatalogDto {
   rows: ActorCatalogRowDto[];
   diagnostics: ActorDiagnosticDto[];
   shallow: boolean;
+}
+
+export interface ActorCatalogInvalidatedEventDto {
+  generation?: number;
+  repositoryId: string;
 }
 
 export interface ActorActivityDayDto {
@@ -222,6 +232,12 @@ export function refreshActorsCatalog(spacePath: string) {
   return invokeCommand<ActorCatalogDto>("actors_refresh_catalog", {
     spacePath,
   });
+}
+
+export function listenActorCatalogInvalidated(
+  handler: EventCallback<ActorCatalogInvalidatedEventDto>,
+): Promise<UnlistenFn> {
+  return listen<ActorCatalogInvalidatedEventDto>("actors:invalidated", handler);
 }
 
 export function getActorActivity(

@@ -3,6 +3,7 @@ import {
   deleteRoutine as deleteRoutineCommand,
   dispatchManualRoutine as dispatchManualRoutineCommand,
   getRoutineAutomaticConsent as getRoutineAutomaticConsentCommand,
+  listenRoutinesInvalidated as listenRoutinesInvalidatedCommand,
   listRoutines as listRoutinesCommand,
   refreshRoutines as refreshRoutinesCommand,
   setRoutineAutomaticConsent as setRoutineAutomaticConsentCommand,
@@ -11,6 +12,7 @@ import {
   type RoutineDefinitionDto,
   type RoutineDiagnosticDto,
   type RoutineMutationResultDto,
+  type RoutineInvalidatedEventDto,
 } from "@/platform/routines/routines-api";
 
 import type {
@@ -42,6 +44,12 @@ export async function refreshRoutineCatalog(
   owner: RoutineOwnerInput,
 ): Promise<RoutineCatalogSnapshot> {
   return normalizeSnapshot(await refreshRoutinesCommand(owner));
+}
+
+export function listenRoutineCatalogInvalidated(
+  handler: (event: RoutineInvalidatedEventDto) => void,
+) {
+  return listenRoutinesInvalidatedCommand((event) => handler(event.payload));
 }
 
 export async function createRoutine(

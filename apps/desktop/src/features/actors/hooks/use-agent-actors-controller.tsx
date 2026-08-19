@@ -26,6 +26,7 @@ import { ActorAccessPreflightDialog } from "../ui/actor-access-preflight-dialog"
 import { AgentActorDeleteDialog } from "../ui/agent-actor-delete-dialog";
 import { AgentActorEditorDialog } from "../ui/agent-actor-editor-dialog";
 import { AgentActorSaveDialog } from "../ui/agent-actor-save-dialog";
+import { CatalogRetryButton } from "../ui/catalog-retry-button";
 
 export function useAgentActorsController({
   detailController,
@@ -162,16 +163,39 @@ export function useAgentActorsController({
     catalog.state.phase === "initial"
       ? { phase: "initial" }
       : catalog.state.phase === "blocking_error"
-        ? { phase: "blocking_error", error: catalog.state.error }
+        ? {
+            phase: "blocking_error",
+            error: (
+              <span className="flex flex-col items-start gap-2">
+                <span>{catalog.state.error}</span>
+                <CatalogRetryButton
+                  disabled={catalog.state.retrying}
+                  label={m.agent_actors_retry()}
+                  onRetry={() => void catalog.refresh()}
+                />
+              </span>
+            ),
+          }
         : {
             diagnostics: [
               ...catalog.state.snapshot.diagnostics.map((item) => item.message),
               ...(catalog.state.refreshError
-                ? [catalog.state.refreshError]
+                ? [
+                    <span
+                      key="refresh"
+                      className="flex flex-col items-start gap-2"
+                    >
+                      <span>{catalog.state.refreshError}</span>
+                      <CatalogRetryButton
+                        disabled={catalog.state.refreshing}
+                        label={m.agent_actors_retry()}
+                        onRetry={() => void catalog.refresh()}
+                      />
+                    </span>,
+                  ]
                 : []),
             ],
             phase: "ready",
-            refreshing: catalog.state.refreshing,
             rows: catalog.state.snapshot.rows,
           };
 
@@ -246,10 +270,8 @@ export function useAgentActorsController({
         requestAccess({ kind: "edit-agent", ownerPath: row.ownerPath, row }),
     },
     inheritedVisible: snapshot?.rows.some((row) => row.inherited) ?? false,
-    onRefresh: catalog.refresh,
     overlays,
     presentationState,
-    refreshing: catalog.state.phase === "ready" && catalog.state.refreshing,
     renderDetail: createReadOnlyDetail,
   };
 }

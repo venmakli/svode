@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { SingleFlightRefreshCoordinator } from "@/shared/lib/single-flight-refresh-coordinator";
+
 import {
   diagnoseAgentActorAdapter,
+  listenAgentActorCatalogInvalidated,
   loadAgentActors,
   runtimeKey,
 } from "../api/agent-actors-api";
+import {
+  beginAgentActorCatalogRefresh,
+  failAgentActorCatalogRefresh,
+  publishAgentActorCatalogSnapshot,
+  type AgentActorCatalogState,
+} from "../model/agent-actor-catalog-state";
 import { resolveAgentActorRuntimeStatus } from "../model/agent-actor-draft";
 import type {
   AgentActorAdapterDiagnostic,
@@ -12,68 +21,110 @@ import type {
   AgentActorCatalogSnapshot,
 } from "../model/agent-actor-types";
 
-type AgentActorCatalogState =
-  | { phase: "initial" }
-  | { phase: "blocking_error"; error: string }
-  | {
-      phase: "ready";
-      snapshot: AgentActorCatalogSnapshot;
-      refreshing: boolean;
-      refreshError: string | null;
-    };
+const agentActorRefreshDebounceMs = 120;
+
+interface ScopedAgentActorCatalogState {
+  sourceKey: string;
+  value: AgentActorCatalogState;
+}
+
+interface ScopedAgentActorDiagnostics {
+  sourceKey: string;
+  value: Partial<Record<"claude-code" | "codex", AgentActorAdapterDiagnostic>>;
+}
 
 export function useAgentActorCatalog(
   projectPath: string,
   launchSpacePath: string,
 ) {
-  const [state, setState] = useState<AgentActorCatalogState>({
-    phase: "initial",
+  const sourceKey = useMemo(
+    () => JSON.stringify({ launchSpacePath, projectPath }),
+    [launchSpacePath, projectPath],
+  );
+  const [scopedState, setScopedState] = useState<ScopedAgentActorCatalogState>({
+    sourceKey,
+    value: { phase: "initial" },
   });
-  const [diagnostics, setDiagnostics] = useState<
-    Partial<Record<"claude-code" | "codex", AgentActorAdapterDiagnostic>>
-  >({});
+  const state = useMemo<AgentActorCatalogState>(
+    () =>
+      scopedState.sourceKey === sourceKey
+        ? scopedState.value
+        : { phase: "initial" },
+    [scopedState, sourceKey],
+  );
+  const [scopedDiagnostics, setScopedDiagnostics] =
+    useState<ScopedAgentActorDiagnostics>({
+      sourceKey,
+      value: {},
+    });
+  const diagnostics = useMemo(
+    () =>
+      scopedDiagnostics.sourceKey === sourceKey ? scopedDiagnostics.value : {},
+    [scopedDiagnostics, sourceKey],
+  );
   const [pendingAdapter, setPendingAdapter] = useState<
     "claude-code" | "codex" | null
   >(null);
-  const requestIdRef = useRef(0);
-
-  const load = useCallback(
-    async (refreshing: boolean) => {
-      const requestId = ++requestIdRef.current;
-      if (refreshing) {
-        setState((current) =>
-          current.phase === "ready"
-            ? { ...current, refreshing: true, refreshError: null }
-            : current,
-        );
-      }
-      try {
-        const snapshot = await loadAgentActors(projectPath, launchSpacePath);
-        if (requestId !== requestIdRef.current) return;
-        setState({
-          phase: "ready",
-          refreshError: null,
-          refreshing: false,
-          snapshot,
-        });
-      } catch (error) {
-        if (requestId !== requestIdRef.current) return;
-        const message = errorMessage(error);
-        setState((current) =>
-          refreshing && current.phase === "ready"
-            ? { ...current, refreshing: false, refreshError: message }
-            : { phase: "blocking_error", error: message },
-        );
-      }
-    },
-    [launchSpacePath, projectPath],
-  );
+  const coordinatorRef =
+    useRef<SingleFlightRefreshCoordinator<AgentActorCatalogSnapshot> | null>(
+      null,
+    );
 
   useEffect(() => {
-    setState({ phase: "initial" });
-    setDiagnostics({});
-    void load(false);
-  }, [load]);
+    const coordinator = new SingleFlightRefreshCoordinator({
+      debounceMs: agentActorRefreshDebounceMs,
+      load: () => loadAgentActors(projectPath, launchSpacePath),
+      onFailure: (error) => {
+        setScopedState((current) => ({
+          sourceKey,
+          value: failAgentActorCatalogRefresh(
+            current.sourceKey === sourceKey
+              ? current.value
+              : { phase: "initial" },
+            errorMessage(error),
+          ),
+        }));
+      },
+      onSuccess: (snapshot) => {
+        setScopedState((current) => ({
+          sourceKey,
+          value: publishAgentActorCatalogSnapshot(
+            current.sourceKey === sourceKey
+              ? current.value
+              : { phase: "initial" },
+            snapshot,
+          ),
+        }));
+      },
+    });
+    coordinatorRef.current = coordinator;
+    void coordinator.loadInitial();
+
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void listenAgentActorCatalogInvalidated((event) => {
+      if (
+        event.ownerPath !== launchSpacePath &&
+        event.ownerPath !== projectPath
+      ) {
+        return;
+      }
+      void coordinator.invalidate();
+    }).then(
+      (registeredUnlisten) => {
+        if (disposed) registeredUnlisten();
+        else unlisten = registeredUnlisten;
+      },
+      () => undefined,
+    );
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+      coordinator.dispose();
+      if (coordinatorRef.current === coordinator) coordinatorRef.current = null;
+    };
+  }, [launchSpacePath, projectPath, sourceKey]);
 
   const diagnose = useCallback(
     async (adapter: "claude-code" | "codex") => {
@@ -84,13 +135,19 @@ export function useAgentActorCatalog(
           launchSpacePath,
           adapter,
         );
-        setDiagnostics((current) => ({ ...current, [adapter]: diagnostic }));
+        setScopedDiagnostics((current) => ({
+          sourceKey,
+          value: {
+            ...(current.sourceKey === sourceKey ? current.value : {}),
+            [adapter]: diagnostic,
+          },
+        }));
         return diagnostic;
       } finally {
         setPendingAdapter(null);
       }
     },
-    [launchSpacePath, pendingAdapter],
+    [launchSpacePath, pendingAdapter, sourceKey],
   );
 
   const projectedState = useMemo<AgentActorCatalogState>(() => {
@@ -122,7 +179,16 @@ export function useAgentActorCatalog(
       }),
     };
   }, [diagnostics, state]);
-  const refresh = useCallback(() => load(true), [load]);
+
+  const refresh = useCallback(async () => {
+    setScopedState((current) => ({
+      sourceKey,
+      value: beginAgentActorCatalogRefresh(
+        current.sourceKey === sourceKey ? current.value : { phase: "initial" },
+      ),
+    }));
+    await coordinatorRef.current?.retry();
+  }, [sourceKey]);
 
   return {
     diagnose,

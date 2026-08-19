@@ -133,6 +133,7 @@ export type RoutineCatalogState =
   | {
       phase: "blocking_error";
       error: string;
+      retrying: boolean;
     }
   | {
       phase: "ready";

@@ -4,6 +4,7 @@ import {
   beginActorCatalogRefresh,
   completeActorCatalogRefresh,
   failActorCatalogRefresh,
+  publishActorCatalogSnapshot,
   type ActorCatalogState,
 } from "./catalog-state";
 import type { ActorCatalogSnapshot } from "./types";
@@ -30,11 +31,26 @@ test("refresh keeps the last ready snapshot through pending and failure", () => 
 
 test("a first load failure is blocking and a new scope resets to initial", () => {
   const initial: ActorCatalogState = { phase: "initial", spacePath: "/one" };
-  expect(failActorCatalogRefresh(initial, "/one", "failed").phase).toBe(
-    "blocking_error",
-  );
+  const failed = failActorCatalogRefresh(initial, "/one", "failed");
+  expect(failed).toEqual({
+    error: "failed",
+    phase: "blocking_error",
+    retrying: false,
+    spacePath: "/one",
+  });
+  expect(beginActorCatalogRefresh(failed, "/one")).toEqual({
+    ...failed,
+    retrying: true,
+  });
   expect(beginActorCatalogRefresh(initial, "/two")).toEqual({
     phase: "initial",
     spacePath: "/two",
   });
+});
+
+test("publishing the same generation is a content no-op", () => {
+  const ready = completeActorCatalogRefresh("/repo", snapshot);
+  expect(publishActorCatalogSnapshot(ready, "/repo", { ...snapshot })).toBe(
+    ready,
+  );
 });

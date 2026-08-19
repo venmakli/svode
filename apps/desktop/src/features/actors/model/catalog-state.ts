@@ -8,6 +8,7 @@ export type ActorCatalogState =
   | {
       error: string;
       phase: "blocking_error";
+      retrying: boolean;
       spacePath: string;
     }
   | {
@@ -24,7 +25,9 @@ export function beginActorCatalogRefresh(
 ): ActorCatalogState {
   return state.spacePath === spacePath && state.phase === "ready"
     ? { ...state, refreshError: null, refreshing: true }
-    : { phase: "initial", spacePath };
+    : state.spacePath === spacePath && state.phase === "blocking_error"
+      ? { ...state, retrying: true }
+      : { phase: "initial", spacePath };
 }
 
 export function completeActorCatalogRefresh(
@@ -40,6 +43,24 @@ export function completeActorCatalogRefresh(
   };
 }
 
+export function publishActorCatalogSnapshot(
+  state: ActorCatalogState,
+  spacePath: string,
+  snapshot: ActorCatalogSnapshot,
+): ActorCatalogState {
+  if (
+    state.phase === "ready" &&
+    state.spacePath === spacePath &&
+    state.snapshot.repositoryId === snapshot.repositoryId &&
+    state.snapshot.generation === snapshot.generation
+  ) {
+    return state.refreshError === null && !state.refreshing
+      ? state
+      : { ...state, refreshError: null, refreshing: false };
+  }
+  return completeActorCatalogRefresh(spacePath, snapshot);
+}
+
 export function failActorCatalogRefresh(
   state: ActorCatalogState,
   spacePath: string,
@@ -47,5 +68,5 @@ export function failActorCatalogRefresh(
 ): ActorCatalogState {
   return state.spacePath === spacePath && state.phase === "ready"
     ? { ...state, refreshError: error, refreshing: false }
-    : { error, phase: "blocking_error", spacePath };
+    : { error, phase: "blocking_error", retrying: false, spacePath };
 }

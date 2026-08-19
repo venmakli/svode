@@ -47,10 +47,6 @@ test("Agent Actors uses the fixed schema and one shared edit/delete descriptor s
       onEdit: (row) => calls.push(`edit:${row.ownerPath}`),
     },
     inheritedVisible: true,
-    onRefresh: () => {
-      calls.push("refresh");
-    },
-    refreshing: false,
     renderDetail: () => ({ content: null, description: null, title: null }),
     rows: [own, inherited],
   });
@@ -76,16 +72,12 @@ test("Agent Actors default order and search preserve owner provenance", () => {
   const presentation = createAgentActorsPresentation({
     actions: disabledActions(),
     inheritedVisible: true,
-    onRefresh: () => undefined,
-    refreshing: false,
     renderDetail: () => ({ content: null, description: null, title: null }),
     state: { phase: "ready", rows: [inherited, own] },
   });
   const descriptor = createAgentActorsPresentationDescriptor({
     actions: disabledActions(),
     inheritedVisible: true,
-    onRefresh: () => undefined,
-    refreshing: false,
     renderDetail: () => ({ content: null, description: null, title: null }),
     rows: [inherited, own],
   });

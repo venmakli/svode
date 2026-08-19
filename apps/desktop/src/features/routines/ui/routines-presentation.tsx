@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { Button } from "@/components/ui/button";
 import {
   defineSystemCollectionPresentation,
   type SystemCollectionActionState,
@@ -35,8 +36,6 @@ export function createRoutinesPresentation({
   actions,
   createDetailRequest,
   getExecutorLabel,
-  onRefresh,
-  refreshing,
   state,
 }: {
   actions: RoutinePresentationActions;
@@ -44,8 +43,6 @@ export function createRoutinesPresentation({
     row: RoutineRow,
   ): Omit<SystemCollectionDetailRequest, "selection">;
   getExecutorLabel?(row: RoutineRow): string | null;
-  onRefresh(): void | Promise<void>;
-  refreshing: boolean;
   state: SystemCollectionPresentationState<RoutineRow>;
 }) {
   return defineSystemCollectionPresentation({
@@ -53,8 +50,6 @@ export function createRoutinesPresentation({
       actions,
       createDetailRequest,
       getExecutorLabel,
-      onRefresh,
-      refreshing,
     }),
     state,
   });
@@ -67,16 +62,12 @@ export function createRoutinesPresentationDescriptor({
     row.definition?.action.type === "run_agent"
       ? row.definition.action.executor
       : null,
-  onRefresh,
-  refreshing,
 }: {
   actions: RoutinePresentationActions;
   createDetailRequest(
     row: RoutineRow,
   ): Omit<SystemCollectionDetailRequest, "selection">;
-  onRefresh(): void | Promise<void>;
   getExecutorLabel?(row: RoutineRow): string | null;
-  refreshing: boolean;
 }): SystemCollectionPresentationDescriptor<RoutineRow> {
   const fields: readonly SystemCollectionFieldDescriptor<RoutineRow>[] = [
     propertyField(
@@ -181,12 +172,6 @@ export function createRoutinesPresentationDescriptor({
       getSearchText: (row) =>
         `${routineSearchText(row)} ${getExecutorLabel(row) ?? ""}`,
     },
-    refresh: {
-      getState: () => (refreshing ? { status: "pending" } : { status: "idle" }),
-      id: "refresh-routines",
-      label: m.routines_refresh(),
-      run: onRefresh,
-    },
     rowActions: [
       {
         getLabel: (row) =>
@@ -253,15 +238,19 @@ function routineActionTypeLabel(row: RoutineRow) {
 
 export function toRoutinePresentationState(
   state: RoutineCatalogState,
+  onRetry: () => void,
 ): SystemCollectionPresentationState<RoutineRow> {
   if (state.phase === "initial") return { phase: "initial" };
   if (state.phase === "blocking_error") {
     return {
       error: (
-        <span className="flex flex-col gap-1">
-          <strong>{m.routines_load_error_title()}</strong>
-          <span>{state.error}</span>
-        </span>
+        <div className="flex flex-col items-start gap-2">
+          <span className="flex flex-col gap-1">
+            <strong>{m.routines_load_error_title()}</strong>
+            <span>{state.error}</span>
+          </span>
+          <RoutineRetryButton disabled={state.retrying} onRetry={onRetry} />
+        </div>
       ),
       phase: "blocking_error",
     };
@@ -274,14 +263,38 @@ export function toRoutinePresentationState(
     ),
   );
   if (state.refreshError) {
-    diagnostics.push(<span key="refresh">{state.refreshError}</span>);
+    diagnostics.push(
+      <div key="refresh" className="flex flex-col items-start gap-2">
+        <span>{state.refreshError}</span>
+        <RoutineRetryButton disabled={state.refreshing} onRetry={onRetry} />
+      </div>,
+    );
   }
   return {
     diagnostics,
     phase: "ready",
-    refreshing: state.refreshing,
     rows: state.snapshot.rows,
   };
+}
+
+function RoutineRetryButton({
+  disabled,
+  onRetry,
+}: {
+  disabled: boolean;
+  onRetry(): void;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      disabled={disabled}
+      onClick={onRetry}
+    >
+      {m.routines_retry()}
+    </Button>
+  );
 }
 
 export function routineDetailTitle(row: RoutineRow) {

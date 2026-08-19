@@ -26,15 +26,11 @@ export interface AgentActorsPresentationActions {
 export function createAgentActorsPresentation({
   actions,
   inheritedVisible,
-  onRefresh,
-  refreshing,
   renderDetail,
   state,
 }: {
   actions: AgentActorsPresentationActions;
   inheritedVisible: boolean;
-  onRefresh(): void | Promise<void>;
-  refreshing: boolean;
   renderDetail(
     row: AgentActorRow,
   ): Omit<SystemCollectionDetailRequest, "selection">;
@@ -45,8 +41,6 @@ export function createAgentActorsPresentation({
     descriptor: createAgentActorsPresentationDescriptor({
       actions,
       inheritedVisible,
-      onRefresh,
-      refreshing,
       renderDetail,
       rows,
     }),
@@ -57,15 +51,11 @@ export function createAgentActorsPresentation({
 export function createAgentActorsPresentationDescriptor({
   actions,
   inheritedVisible,
-  onRefresh,
-  refreshing,
   renderDetail,
   rows,
 }: {
   actions: AgentActorsPresentationActions;
   inheritedVisible: boolean;
-  onRefresh(): void | Promise<void>;
-  refreshing: boolean;
   renderDetail(
     row: AgentActorRow,
   ): Omit<SystemCollectionDetailRequest, "selection">;
@@ -169,12 +159,6 @@ export function createAgentActorsPresentationDescriptor({
         `${row.name} ${row.description ?? ""} ${row.ownerLabel} ${row.adapters
           .map((binding) => adapterLabel(binding.adapter))
           .join(" ")}`,
-    },
-    refresh: {
-      getState: () => (refreshing ? { status: "pending" } : { status: "idle" }),
-      id: "refresh-agent-actors",
-      label: m.agent_actors_refresh(),
-      run: onRefresh,
     },
     rowActions: [
       {

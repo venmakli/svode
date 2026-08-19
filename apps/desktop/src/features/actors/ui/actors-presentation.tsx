@@ -15,19 +15,16 @@ import { compareActorsByDefault } from "../model/actor-values";
 import type { ActorCatalogRow } from "../model/types";
 import { ActorAvatar } from "./actor-avatar";
 import { ActorDetail } from "./actor-detail";
+import { CatalogRetryButton } from "./catalog-retry-button";
 
 export function createActorsPresentation({
   catalogGeneration,
   mutations,
-  onRefresh = () => undefined,
-  refreshing = false,
   spacePath,
   state,
 }: {
   catalogGeneration?: number;
   mutations?: ActorPresentationMutationActions;
-  onRefresh?: () => void | Promise<void>;
-  refreshing?: boolean;
   spacePath: string;
   state: SystemCollectionPresentationState<ActorCatalogRow>;
 }) {
@@ -35,8 +32,6 @@ export function createActorsPresentation({
     descriptor: createActorsPresentationDescriptor(spacePath, {
       catalogGeneration,
       mutations,
-      onRefresh,
-      refreshing,
     }),
     state,
   });
@@ -47,13 +42,9 @@ export function createActorsPresentationDescriptor(
   {
     catalogGeneration,
     mutations,
-    onRefresh = () => undefined,
-    refreshing = false,
   }: {
     catalogGeneration?: number;
     mutations?: ActorPresentationMutationActions;
-    onRefresh?: () => void | Promise<void>;
-    refreshing?: boolean;
   } = {},
 ): SystemCollectionPresentationDescriptor<ActorCatalogRow> {
   const disabledReason = m.actors_mutations_unavailable();
@@ -118,12 +109,6 @@ export function createActorsPresentationDescriptor(
     query: {
       defaultCompare: compareActorsByDefault,
       getSearchText: (row) => `${row.displayName} ${row.canonicalEmail}`,
-    },
-    refresh: {
-      getState: () => (refreshing ? { status: "pending" } : { status: "idle" }),
-      id: "refresh-actors",
-      label: m.actors_refresh(),
-      run: onRefresh,
     },
     rowActions: [
       {
@@ -200,11 +185,19 @@ function propertyField(
 export function actorCatalogBlockingError(
   title: string,
   detail: string,
+  retry?: {
+    disabled: boolean;
+    label: string;
+    onRetry(): void;
+  },
 ): ReactNode {
   return (
-    <span className="flex flex-col gap-1">
-      <strong>{title}</strong>
-      <span>{detail}</span>
+    <span className="flex flex-col items-start gap-2">
+      <span className="flex flex-col gap-1">
+        <strong>{title}</strong>
+        <span>{detail}</span>
+      </span>
+      {retry ? <CatalogRetryButton {...retry} /> : null}
     </span>
   );
 }

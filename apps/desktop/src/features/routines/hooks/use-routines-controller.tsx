@@ -119,11 +119,7 @@ export function useRoutinesController(
     actions,
     createDetailRequest: createReadOnlyDetail,
     getExecutorLabel: (row) => executorLabel(row, executors.options),
-    onRefresh: async () => {
-      await refresh();
-    },
-    refreshing: state.phase === "ready" && state.refreshing,
-    state: toRoutinePresentationState(state),
+    state: toRoutinePresentationState(state, () => void refresh()),
   });
   const instance: SystemCollectionInstance = {
     defaultPresentationId: "all",

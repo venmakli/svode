@@ -3,121 +3,75 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { createRegisteredSpaceOwner } from "@/features/scope-surfaces";
 import { emit as emitNativeEvent } from "@/platform/native/events";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
-import type { ActorCatalogRow } from "../model/types";
-import { ActorsSurface } from "./actors-surface";
+import { useRoutineCatalog } from "./use-routine-catalog";
 
-const actor: ActorCatalogRow = {
-  aliases: [],
-  availableYears: [2026],
-  canonicalEmail: "ada@example.test",
-  commitCount: 4,
-  contribution: "contributor",
-  displayName: "Ada Lovelace",
-  lastActivityDate: "2026-07-31",
-  lastCommitAt: 20,
-  sources: [],
+const owner = {
+  ownerKind: "registered_space" as const,
+  ownerPath: "/repo",
+  projectPath: "/project",
+  spaceId: "root",
+  spacePath: "/repo",
 };
 
-test("Actors refreshes both catalogs from owner events without access probes", async () => {
+test("routine invalidation matches the resolved owner before refreshing", async () => {
   const dom = createDom();
   const restoreGlobals = installDomGlobals(dom);
   const calls: string[] = [];
   mockNativeIpc(
     (command) => {
       calls.push(command);
-      if (command === "repository_access_get") {
-        return {
-          checkedAt: null,
-          expiresAt: null,
-          generation: 1,
-          lastKnownStatus: null,
-          reason: "expired",
-          repositoryId: "access-repo-test",
-          status: "unknown",
-        };
-      }
-      if (command === "agent_actors_get") {
-        return {
-          adapterDescriptors: [],
-          bindings: [],
-          ownerFingerprints: { "/repo": "agent-catalog-fingerprint" },
-          resolution: { actors: [], diagnostics: [] },
-        };
-      }
-      if (command === "actors_get_catalog") return catalogSnapshot(1);
-      if (command === "actors_refresh_catalog") return catalogSnapshot(2);
+      if (command === "routines_list") return snapshot("one");
+      if (command === "routines_refresh") return snapshot("two");
       throw new Error(`Unexpected command: ${command}`);
     },
     { shouldMockEvents: true },
   );
   const root = createRoot(dom.window.document.getElementById("app")!);
-  const owner = createRegisteredSpaceOwner({
-    hasSchema: false,
-    projectPath: "/project",
-    spaceId: "root",
-    spacePath: "/repo",
-    status: "ready",
-  });
 
   try {
     await act(async () => {
-      root.render(
-        <TooltipProvider>
-          <ActorsSurface owner={owner} presentation="full" />
-        </TooltipProvider>,
-      );
+      root.render(<Harness />);
       await nextTurn();
       await nextTurn();
     });
-
     expect(
-      dom.window.document.querySelector("[data-repository-access-header]"),
-    ).toBeNull();
-    expect(calls.includes("repository_access_verify")).toBe(false);
-    expect(
-      dom.window.document.querySelector<HTMLButtonElement>(
-        '[data-system-collection-create="add-actor"]',
-      )?.disabled,
-    ).toBe(false);
-
-    expect(
-      dom.window.document.querySelector("[data-system-collection-refresh]"),
-    ).toBeNull();
-    await act(async () => {
-      await emitNativeEvent("actors:invalidated", {
-        generation: 2,
-        repositoryId: "sibling-repo",
-      });
-      await emitNativeEvent("agent-actors:invalidated", {
-        ownerPath: "/sibling",
-      });
-      await waitForDebounce();
-    });
-    expect(calls.includes("actors_refresh_catalog")).toBe(false);
-    expect(
-      calls.filter((command) => command === "agent_actors_get").length,
-    ).toBe(1);
+      dom.window.document.querySelector("[data-fingerprint]")?.textContent,
+    ).toBe("one");
 
     await act(async () => {
-      await emitNativeEvent("actors:invalidated", {
-        generation: 2,
-        repositoryId: "actor-repo-test",
+      await emitNativeEvent("routines:invalidated", {
+        ownerKind: "project",
+        ownerPath: "/other",
+        projectPath: "/project",
+        spacePath: "/repo",
       });
       await emitNativeEvent("agent-actors:invalidated", {
         ownerPath: "/project",
       });
       await waitForDebounce();
     });
-    expect(calls.includes("actors_refresh_catalog")).toBe(true);
     expect(
-      calls.filter((command) => command === "agent_actors_get").length,
-    ).toBe(2);
-    expect(calls.includes("repository_access_verify")).toBe(false);
+      calls.filter((command) => command === "routines_refresh").length,
+    ).toBe(0);
+
+    await act(async () => {
+      await emitNativeEvent("routines:invalidated", {
+        ownerKind: "project",
+        ownerPath: "/project",
+        projectPath: "/project",
+        spacePath: "/repo",
+      });
+      await waitForDebounce();
+    });
+    expect(
+      calls.filter((command) => command === "routines_refresh").length,
+    ).toBe(1);
+    expect(
+      dom.window.document.querySelector("[data-fingerprint]")?.textContent,
+    ).toBe("two");
   } finally {
     await act(async () => root.unmount());
     clearNativeMocks();
@@ -126,13 +80,24 @@ test("Actors refreshes both catalogs from owner events without access probes", a
   }
 });
 
-function catalogSnapshot(generation: number) {
+function Harness() {
+  const { state } = useRoutineCatalog(owner);
+  return (
+    <span data-fingerprint>
+      {state.phase === "ready"
+        ? state.snapshot.catalogFingerprint
+        : state.phase}
+    </span>
+  );
+}
+
+function snapshot(catalogFingerprint: string) {
   return {
+    catalogFingerprint,
     diagnostics: [],
-    generation,
-    repositoryId: "actor-repo-test",
-    rows: [actor],
-    shallow: false,
+    owner: { kind: "project", ownerPath: "/project", spaceId: "root" },
+    refreshedAt: "2026-08-19T00:00:00.000Z",
+    routines: [],
   };
 }
 

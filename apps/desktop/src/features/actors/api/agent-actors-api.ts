@@ -4,6 +4,7 @@ import {
   getAgentActorCatalogSaveReview,
   getAgentActors,
   inspectAgentActorBinding as inspectAgentActorBindingCommand,
+  listenAgentActorCatalogInvalidated as listenAgentActorCatalogInvalidatedCommand,
   mutateAgentActor as mutateAgentActorCommand,
   previewAgentActorDeleteReferences as previewAgentActorDeleteReferencesCommand,
   saveAgentActorCatalog,
@@ -99,6 +100,14 @@ export async function loadAgentActors(
       ),
     ),
   });
+}
+
+export function listenAgentActorCatalogInvalidated(
+  handler: (event: { ownerPath: string }) => void,
+) {
+  return listenAgentActorCatalogInvalidatedCommand((event) =>
+    handler(event.payload),
+  );
 }
 
 export async function listAgentActorOptions(

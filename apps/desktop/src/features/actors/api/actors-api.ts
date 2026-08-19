@@ -3,6 +3,7 @@ import {
   getActorActivity,
   getActorMailmapSaveReview as getActorMailmapSaveReviewCommand,
   getActorsCatalog,
+  listenActorCatalogInvalidated as listenActorCatalogInvalidatedCommand,
   previewActorMutation as previewActorMutationCommand,
   refreshActorsCatalog,
   saveActorMailmap as saveActorMailmapCommand,
@@ -37,6 +38,14 @@ export async function refreshActorCatalog(
   spacePath: string,
 ): Promise<ActorCatalogSnapshot> {
   return toActorCatalog(await refreshActorsCatalog(spacePath));
+}
+
+export function listenActorCatalogInvalidated(
+  handler: (event: { generation?: number; repositoryId: string }) => void,
+) {
+  return listenActorCatalogInvalidatedCommand((event) =>
+    handler(event.payload),
+  );
 }
 
 export async function loadActorActivity(

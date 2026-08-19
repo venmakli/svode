@@ -14,6 +14,7 @@ import type { RoutineRow } from "../model/types";
 import {
   createRoutinesPresentation,
   createRoutinesPresentationDescriptor,
+  toRoutinePresentationState,
   type RoutinePresentationActions,
 } from "./routines-presentation";
 
@@ -90,8 +91,6 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
       description: null,
       title: null,
     }),
-    onRefresh: () => undefined,
-    refreshing: false,
   });
 
   expect(descriptor.id).toBe("all");
@@ -113,7 +112,7 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
     "next-run",
   ]);
   expect(descriptor.create?.id).toBe("add-routine");
-  expect(descriptor.refresh?.id).toBe("refresh-routines");
+  expect(descriptor.refresh).toBe(undefined);
   expect(descriptor.rowActions?.map((action) => action.id)).toEqual([
     "run-routine",
     "edit-routine",
@@ -146,8 +145,6 @@ test("routines query searches definitions and defaults to title ordering", () =>
       description: null,
       title: null,
     }),
-    onRefresh: () => undefined,
-    refreshing: false,
   });
   const ordered = applySystemCollectionQuery({
     descriptor,
@@ -176,14 +173,9 @@ test("routines delegate create, row actions, and inline enabled edits", async ()
       description: null,
       title: null,
     }),
-    onRefresh: () => {
-      calls.push("refresh");
-    },
-    refreshing: false,
   });
 
   await descriptor.create?.run();
-  await descriptor.refresh?.run();
   for (const action of descriptor.rowActions ?? []) {
     if (action.isVisible?.(review) === false) continue;
     await action.run(review);
@@ -194,7 +186,6 @@ test("routines delegate create, row actions, and inline enabled edits", async ()
 
   expect(calls).toEqual([
     "add",
-    "refresh",
     "run:routine:review",
     "edit:routine:review",
     "delete:routine:review",
@@ -210,8 +201,6 @@ test("routines render the common toolbar and a single fixed All list", () => {
       description: null,
       title: null,
     }),
-    onRefresh: () => undefined,
-    refreshing: false,
     state: { phase: "ready", rows: [scheduled] },
   });
   const instance: SystemCollectionInstance = {
@@ -244,9 +233,7 @@ test("routines render the common toolbar and a single fixed All list", () => {
   expect(markup.includes('data-system-collection-create="add-routine"')).toBe(
     true,
   );
-  expect(
-    markup.includes('data-system-collection-refresh="refresh-routines"'),
-  ).toBe(true);
+  expect(markup.includes("data-system-collection-refresh")).toBe(false);
   expect(markup.includes("Daily summary")).toBe(true);
   expect(markup.includes("Active")).toBe(false);
   expect(markup.includes("Runs")).toBe(false);
@@ -265,8 +252,6 @@ test("manual enabled controls keep their disabled reason tooltip-only", () => {
       description: null,
       title: null,
     }),
-    onRefresh: () => undefined,
-    refreshing: false,
     state: { phase: "ready", rows: [review] },
   });
   const instance: SystemCollectionInstance = {
@@ -294,3 +279,71 @@ test("manual enabled controls keep their disabled reason tooltip-only", () => {
   expect(markup.includes('title="tooltip-only-manual-reason"')).toBe(true);
   expect(markup.includes(">tooltip-only-manual-reason<")).toBe(false);
 });
+
+test("retry is contextual to blocking and background catalog failures", () => {
+  const blocking = toRoutinePresentationState(
+    {
+      error: "load failed",
+      phase: "blocking_error",
+      retrying: false,
+    },
+    () => undefined,
+  );
+  const ready = toRoutinePresentationState(
+    {
+      phase: "ready",
+      refreshError: null,
+      refreshing: false,
+      snapshot: {
+        catalogFingerprint: "catalog:one",
+        diagnostics: [],
+        ownerPath: ".",
+        refreshedAt: "2026-08-19T00:00:00.000Z",
+        resolvedOwnerKind: "project",
+        rows: [review],
+        spaceId: "root",
+      },
+    },
+    () => undefined,
+  );
+  const failedReady = toRoutinePresentationState(
+    {
+      ...readySnapshotState(),
+      refreshError: "refresh failed",
+    },
+    () => undefined,
+  );
+
+  expect(
+    renderToStaticMarkup(
+      <>{blocking.phase === "blocking_error" ? blocking.error : null}</>,
+    ).includes("Retry"),
+  ).toBe(true);
+  expect(
+    renderToStaticMarkup(
+      <>{ready.phase === "ready" ? ready.diagnostics : null}</>,
+    ).includes("Retry"),
+  ).toBe(false);
+  expect(
+    renderToStaticMarkup(
+      <>{failedReady.phase === "ready" ? failedReady.diagnostics : null}</>,
+    ).includes("Retry"),
+  ).toBe(true);
+});
+
+function readySnapshotState() {
+  return {
+    phase: "ready" as const,
+    refreshError: null,
+    refreshing: false,
+    snapshot: {
+      catalogFingerprint: "catalog:one",
+      diagnostics: [],
+      ownerPath: ".",
+      refreshedAt: "2026-08-19T00:00:00.000Z",
+      resolvedOwnerKind: "project" as const,
+      rows: [review],
+      spaceId: "root",
+    },
+  };
+}
