@@ -96,8 +96,8 @@ export function createAgentContextInstructionsPresentation({
       id: "instructions",
       label: m.agent_context_instructions(),
       layout: {
-        cardSize: "large",
-        density: "comfortable",
+        cardSize: "medium",
+        density: "compact",
         getTitle: (row) => row.filename,
         kind: "gallery",
         renderLeading: () => (

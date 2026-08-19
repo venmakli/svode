@@ -54,6 +54,9 @@ test("instructions use the common coverless Gallery and safe reader detail", () 
     ),
   ).toBe(true);
   expect(html.includes("AGENTS.md")).toBe(true);
+  expect(html.includes("repeat(auto-fill, minmax(240px, 1fr))")).toBe(true);
+  expect(html.includes("max-width")).toBe(false);
+  expect(html.includes('data-size="sm"')).toBe(true);
   expect(html.includes("group/gallery-cover")).toBe(false);
 
   const descriptor = presentation as unknown as {
@@ -62,9 +65,15 @@ test("instructions use the common coverless Gallery and safe reader detail", () 
         createDetailRequest(row: AgentContextInstructionRow): {
           content: React.ReactNode;
         };
+        layout: {
+          cardSize: string;
+          density: string;
+        };
       };
     };
   };
+  expect(descriptor.instance.descriptor.layout.cardSize).toBe("medium");
+  expect(descriptor.instance.descriptor.layout.density).toBe("compact");
   expect("refresh" in descriptor.instance.descriptor).toBe(false);
   expect(html.includes("data-system-collection-refresh")).toBe(false);
   const detail = descriptor.instance.descriptor.createDetailRequest(available);

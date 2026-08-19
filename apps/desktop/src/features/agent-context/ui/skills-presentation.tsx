@@ -101,8 +101,8 @@ export function createAgentContextSkillsPresentation({
       id: "skills",
       label: m.agent_context_skills(),
       layout: {
-        cardSize: "large",
-        density: "comfortable",
+        cardSize: "medium",
+        density: "compact",
         getDescription: (row) => (
           <span className="line-clamp-3 leading-relaxed">
             {row.description}

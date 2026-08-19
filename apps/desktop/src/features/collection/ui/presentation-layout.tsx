@@ -5,8 +5,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/shared/lib/utils";
 import type { CollectionGalleryCardDensity } from "../model/presentation-layout";
 
-const collectionCardGap = 14;
-
 export function CollectionListShell({
   className,
   ...props
@@ -47,18 +45,13 @@ export function CollectionListRowShell({
 export function CollectionCardsShell({
   cardWidth,
   className,
-  maxColumns,
   style,
   ...props
 }: ComponentProps<"div"> & {
   cardWidth: number;
-  maxColumns?: number;
 }) {
   const gridStyle: CSSProperties = {
     gridTemplateColumns: `repeat(auto-fill, minmax(${cardWidth}px, 1fr))`,
-    maxWidth: maxColumns
-      ? cardWidth * maxColumns + collectionCardGap * (maxColumns - 1)
-      : undefined,
     ...style,
   };
 
@@ -124,19 +117,13 @@ export function CollectionCardsSkeleton({
   cardWidth,
   density = "compact",
   hasCover = true,
-  maxColumns,
 }: {
   cardWidth: number;
   density?: CollectionGalleryCardDensity;
   hasCover?: boolean;
-  maxColumns?: number;
 }) {
   return (
-    <CollectionCardsShell
-      cardWidth={cardWidth}
-      maxColumns={maxColumns}
-      aria-hidden="true"
-    >
+    <CollectionCardsShell cardWidth={cardWidth} aria-hidden="true">
       {Array.from({ length: 8 }).map((_, index) => (
         <Card
           key={index}

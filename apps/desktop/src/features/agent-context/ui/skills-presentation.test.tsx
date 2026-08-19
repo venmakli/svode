@@ -80,11 +80,21 @@ test("skills render as coverless Gallery cards with bounded Reader detail", () =
   expect(html.includes("Review changes against project conventions.")).toBe(
     true,
   );
+  expect(html.includes("repeat(auto-fill, minmax(240px, 1fr))")).toBe(true);
+  expect(html.includes("max-width")).toBe(false);
+  expect(html.includes('data-size="sm"')).toBe(true);
   expect(html.includes("group/gallery-cover")).toBe(false);
-  expect("refresh" in descriptor([reviewSkill])).toBe(false);
+  const skillDescriptor = descriptor([reviewSkill]);
+  expect("refresh" in skillDescriptor).toBe(false);
+  expect(skillDescriptor.layout.kind).toBe("gallery");
+  if (skillDescriptor.layout.kind !== "gallery") {
+    throw new Error("Expected the skills presentation to use Gallery");
+  }
+  expect(skillDescriptor.layout.cardSize).toBe("medium");
+  expect(skillDescriptor.layout.density).toBe("compact");
   expect(html.includes("data-system-collection-refresh")).toBe(false);
 
-  const request = descriptor([reviewSkill]).createDetailRequest?.(reviewSkill);
+  const request = skillDescriptor.createDetailRequest?.(reviewSkill);
   const detailHtml = renderToStaticMarkup(request?.content);
   expect(detailHtml.includes("data-agent-context-skill-detail")).toBe(true);
   expect(detailHtml.includes("data-markdown-reader-blocked-link")).toBe(true);

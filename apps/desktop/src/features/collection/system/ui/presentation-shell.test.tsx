@@ -127,13 +127,13 @@ test("list shell renders structured identity, property flow, context menu, and d
   expect(markup.includes('role="option"')).toBe(false);
 });
 
-test("structured Gallery uses fixed geometry and fields without Entry", () => {
+test("structured Gallery uses the full responsive geometry and fields without Entry", () => {
   const presentation = defineSystemCollectionPresentation<TestRow>({
     descriptor: descriptor({
       createDetailRequest: undefined,
       layout: {
         cardSize: "medium",
-        density: "comfortable",
+        density: "compact",
         getDescription: () => "Static artifact",
         getTitle: (row) => row.name,
         kind: "gallery",
@@ -156,8 +156,9 @@ test("structured Gallery uses fixed geometry and fields without Entry", () => {
   );
 
   expect(markup.includes("repeat(auto-fill, minmax(240px, 1fr))")).toBe(true);
-  expect(markup.includes("max-width:494px")).toBe(true);
+  expect(markup.includes("max-width")).toBe(false);
   expect(markup.includes('data-slot="card"')).toBe(true);
+  expect(markup.includes('data-size="sm"')).toBe(true);
   expect(markup.includes("Review")).toBe(true);
   expect(markup.includes("Static artifact")).toBe(true);
   expect(markup.includes("data-field-value")).toBe(true);
@@ -196,8 +197,8 @@ test("initial presentation uses renderer-specific extracted skeleton", () => {
   const presentation = defineSystemCollectionPresentation<TestRow>({
     descriptor: descriptor({
       layout: {
-        cardSize: "large",
-        density: "comfortable",
+        cardSize: "medium",
+        density: "compact",
         getTitle: (row) => row.name,
         kind: "gallery",
         visibleFields: [],
@@ -216,7 +217,10 @@ test("initial presentation uses renderer-specific extracted skeleton", () => {
 
   expect(markup.match(/data-slot="skeleton"/g)?.length).toBe(32);
   expect(markup.includes('aria-hidden="true"')).toBe(true);
+  expect(markup.includes("repeat(auto-fill, minmax(240px, 1fr))")).toBe(true);
+  expect(markup.includes("max-width")).toBe(false);
   expect(markup.includes("aspect-video")).toBe(false);
+  expect(markup.includes('data-size="sm"')).toBe(true);
 });
 
 test("structured list layout fails closed for an unknown visible field", () => {

@@ -159,7 +159,6 @@ export function SystemCollectionPresentationShell({
               cardWidth={cardWidth}
               density={descriptor.layout.density}
               hasCover={Boolean(descriptor.layout.renderCover)}
-              maxColumns={2}
             />
           ) : (
             <CollectionListSkeleton
@@ -230,7 +229,6 @@ export function SystemCollectionPresentationShell({
           key={presentationScope}
           ref={cardsRef}
           cardWidth={cardWidth}
-          maxColumns={2}
           role="list"
           aria-label={descriptor.label}
         >

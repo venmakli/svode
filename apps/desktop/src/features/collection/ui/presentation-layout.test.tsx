@@ -39,9 +39,7 @@ test("list skeleton keeps extracted density geometry", () => {
 
 test("card shells preserve responsive grid and selected card geometry", () => {
   const grid = renderToStaticMarkup(
-    <CollectionCardsShell cardWidth={224} maxColumns={2}>
-      Cards
-    </CollectionCardsShell>,
+    <CollectionCardsShell cardWidth={240}>Cards</CollectionCardsShell>,
   );
   const card = renderToStaticMarkup(
     <CollectionCardShell selected>Card</CollectionCardShell>,
@@ -51,18 +49,21 @@ test("card shells preserve responsive grid and selected card geometry", () => {
   );
   const coverlessSkeleton = renderToStaticMarkup(
     <CollectionCardsSkeleton
-      cardWidth={320}
-      density="comfortable"
+      cardWidth={240}
+      density="compact"
       hasCover={false}
-      maxColumns={2}
     />,
   );
 
-  expect(grid.includes("repeat(auto-fill, minmax(224px, 1fr))")).toBe(true);
-  expect(grid.includes("max-width:462px")).toBe(true);
+  expect(grid.includes("repeat(auto-fill, minmax(240px, 1fr))")).toBe(true);
+  expect(grid.includes("max-width")).toBe(false);
   expect(card.includes("ring-2 ring-ring/50")).toBe(true);
   expect(skeleton.match(/data-slot="skeleton"/g)?.length).toBe(40);
   expect(coverlessSkeleton.match(/data-slot="skeleton"/g)?.length).toBe(32);
   expect(coverlessSkeleton.includes("aspect-video")).toBe(false);
-  expect(coverlessSkeleton.includes("max-width:654px")).toBe(true);
+  expect(
+    coverlessSkeleton.includes("repeat(auto-fill, minmax(240px, 1fr))"),
+  ).toBe(true);
+  expect(coverlessSkeleton.includes("max-width")).toBe(false);
+  expect(coverlessSkeleton.includes('data-size="sm"')).toBe(true);
 });
