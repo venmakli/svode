@@ -28,6 +28,26 @@ pub struct RoutineOwnerDescriptor {
     pub owner_path: String,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RoutineInvalidationPayload {
+    pub project_path: String,
+    pub space_path: String,
+    pub owner_kind: RoutineOwnerKind,
+    pub owner_path: String,
+}
+
+impl RoutineInvalidationPayload {
+    pub(crate) fn from_owner(owner: &ResolvedRoutineOwner) -> Self {
+        Self {
+            project_path: owner.project_path.to_string_lossy().into_owned(),
+            space_path: owner.space_path.to_string_lossy().into_owned(),
+            owner_kind: owner.descriptor.kind,
+            owner_path: owner.descriptor.owner_path.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedRoutineOwner {
     pub descriptor: RoutineOwnerDescriptor,

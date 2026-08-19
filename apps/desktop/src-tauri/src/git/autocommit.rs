@@ -890,6 +890,12 @@ async fn do_commit_scaffold(
 }
 
 fn emit_committed(app: &AppHandle, space_path: &Path, repo_path: &Path) {
+    if let Err(error) = crate::actors::invalidate_repository(app, repo_path) {
+        tracing::warn!(
+            repository = %repo_path.display(),
+            "failed to invalidate actor catalog after commit: {error}"
+        );
+    }
     let payload = CommittedPayload {
         space_path: space_path.to_string_lossy().to_string(),
         repo_path: repo_path.to_string_lossy().to_string(),

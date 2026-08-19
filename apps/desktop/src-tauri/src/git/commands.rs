@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::autocommit::{AutocommitService, SystemCommitKind};
 use super::cli::{GitAvailability, GitCli};
@@ -33,6 +33,24 @@ fn emit_space_synced(app: &AppHandle, key: &IndexKey) {
             "spaceId": space_id,
         }),
     );
+}
+
+fn invalidate_actor_repository(app: &AppHandle, repository: &Path) {
+    if let Err(error) = crate::actors::invalidate_repository(app, repository) {
+        tracing::warn!(
+            repository = %repository.display(),
+            "failed to invalidate actor catalog after successful Git operation: {error}"
+        );
+    }
+}
+
+async fn invalidate_actor_space(app: &AppHandle, space: &Path) {
+    if let Err(error) = crate::actors::invalidate_space(app, space).await {
+        tracing::warn!(
+            space = %space.display(),
+            "failed to invalidate actor catalog after successful Git operation: {error}"
+        );
+    }
 }
 
 /// Helper: read the GitCli reference (clone is cheap — PathBuf only) outside the
@@ -354,6 +372,7 @@ pub async fn git_status(
 
 #[tauri::command]
 pub async fn git_fetch_status(
+    app: AppHandle,
     state: State<'_, GitState>,
     space_path: String,
 ) -> Result<GitStatus, AppError> {
@@ -362,11 +381,13 @@ pub async fn git_fetch_status(
     let _guard = lock.lock().await;
     let cli = state.cli()?;
     super::ops::fetch_remote(cli, &path).await?;
+    invalidate_actor_space(&app, &path).await;
     super::ops::status_with_remote_counts(cli, &path).await
 }
 
 #[tauri::command]
 pub async fn git_commit_file(
+    app: AppHandle,
     state: State<'_, GitState>,
     autocommit: State<'_, Arc<AutocommitService>>,
     project_path: Option<String>,
@@ -400,18 +421,21 @@ pub async fn git_commit_file(
         let _guard = lock.lock().await;
         stage_pending_paths(cli, &target_repo, &pending_paths).await;
         super::ops::commit_file_routed(cli, &project, &path, &file_path).await?;
+        invalidate_actor_repository(&app, &target_repo);
         // Return status of the space itself
         super::ops::status(cli, &path).await
     } else {
         let lock = state.get_lock(&path).await;
         let _guard = lock.lock().await;
         super::ops::commit_file(cli, &path, &file_path).await?;
+        invalidate_actor_space(&app, &path).await;
         super::ops::status(cli, &path).await
     }
 }
 
 #[tauri::command]
 pub async fn git_commit_all(
+    app: AppHandle,
     state: State<'_, GitState>,
     autocommit: State<'_, Arc<AutocommitService>>,
     project_path: Option<String>,
@@ -427,17 +451,20 @@ pub async fn git_commit_all(
         let lock = state.get_lock(&target_repo).await;
         let _guard = lock.lock().await;
         super::ops::commit_all_routed(cli, &project, &path).await?;
+        invalidate_actor_repository(&app, &target_repo);
         super::ops::status(cli, &path).await
     } else {
         let lock = state.get_lock(&path).await;
         let _guard = lock.lock().await;
         super::ops::commit_all(cli, &path).await?;
+        invalidate_actor_space(&app, &path).await;
         super::ops::status(cli, &path).await
     }
 }
 
 #[tauri::command]
 pub async fn git_commit_paths(
+    app: AppHandle,
     state: State<'_, GitState>,
     autocommit: State<'_, Arc<AutocommitService>>,
     project_path: Option<String>,
@@ -465,11 +492,13 @@ pub async fn git_commit_paths(
         let _guard = lock.lock().await;
         stage_pending_paths(cli, &target_repo, &pending_paths).await;
         super::ops::commit_paths_routed(cli, &project, &path, &file_paths).await?;
+        invalidate_actor_repository(&app, &target_repo);
         super::ops::status(cli, &path).await
     } else {
         let lock = state.get_lock(&path).await;
         let _guard = lock.lock().await;
         super::ops::commit_paths(cli, &path, &file_paths).await?;
+        invalidate_actor_space(&app, &path).await;
         super::ops::status(cli, &path).await
     }
 }
@@ -536,6 +565,10 @@ pub async fn git_sync(
         index_state
             .invalidate_project_backlinks(key.project())
             .await;
+        invalidate_actor_space(&app, &path).await;
+        if let Some(changed) = &changed {
+            emit_sync_domain_invalidations(&app, &index_state, &key, &path, changed).await;
+        }
         emit_space_synced(&app, &key);
         // Explicit-trigger LFS auto-pull: if the merge brought in pointer
         // files under `.assets/` and credentials are present, fetch the
@@ -621,6 +654,10 @@ pub async fn git_resolve_continue(
         index_state
             .invalidate_project_backlinks(key.project())
             .await;
+        invalidate_actor_space(&app, &path).await;
+        if let Some(changed) = &changed {
+            emit_sync_domain_invalidations(&app, &index_state, &key, &path, changed).await;
+        }
         emit_space_synced(&app, &key);
         if let Some(changed) = changed {
             crate::storage::lfs::maybe_auto_pull_after_sync(&app, &key, &path, &changed);
@@ -628,6 +665,93 @@ pub async fn git_resolve_continue(
     }
 
     Ok(result)
+}
+
+async fn emit_sync_domain_invalidations(
+    app: &AppHandle,
+    index_state: &IndexState,
+    key: &IndexKey,
+    synced_space: &Path,
+    changed: &[String],
+) {
+    let repository = match require_cli(&app.state::<GitState>()) {
+        Ok(cli) => super::ops::resolve_target_repo(&cli, key.project(), synced_space)
+            .await
+            .map(|(_, repository)| repository)
+            .unwrap_or_else(|_| synced_space.to_path_buf()),
+        Err(_) => synced_space.to_path_buf(),
+    };
+    for relative in changed {
+        let normalized = relative.replace('\\', "/");
+        for suffix in ["/.svode/agent-actors.json", "/.svode/local.json"] {
+            if let Some(owner) = normalized.strip_suffix(suffix) {
+                crate::agent_actors::commands::emit_catalog_invalidation(
+                    app,
+                    &repository.join(owner),
+                );
+            }
+        }
+        if matches!(
+            normalized.as_str(),
+            ".svode/agent-actors.json" | ".svode/local.json"
+        ) {
+            crate::agent_actors::commands::emit_catalog_invalidation(app, &repository);
+        }
+    }
+
+    let project = key.project().to_path_buf();
+    for owner_key in index_state.keys_for_project(&project).await {
+        let Ok(space_path) = index_state.dir_for_key(&owner_key).await else {
+            continue;
+        };
+        let Ok(relative_space) = space_path.strip_prefix(&repository) else {
+            continue;
+        };
+        let prefix = relative_space.to_string_lossy().replace('\\', "/");
+        for relative in changed {
+            let relative = relative.replace('\\', "/");
+            let within_space = if prefix.is_empty() {
+                relative.as_str()
+            } else if let Some(within) = relative.strip_prefix(&format!("{prefix}/")) {
+                within
+            } else {
+                continue;
+            };
+            let parts = within_space.split('/').collect::<Vec<_>>();
+            let Some(routines_index) = parts.iter().position(|part| *part == ".routines") else {
+                continue;
+            };
+            if parts.len() != routines_index + 2
+                || Path::new(parts.last().unwrap_or(&""))
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    != Some("md")
+            {
+                continue;
+            }
+            let owner_path = if routines_index == 0 {
+                ".".to_string()
+            } else {
+                parts[..routines_index].join("/")
+            };
+            let owner_kind = if owner_path != "." {
+                crate::routines::RoutineOwnerKind::Collection
+            } else if matches!(owner_key, IndexKey::Root(_)) {
+                crate::routines::RoutineOwnerKind::Project
+            } else {
+                crate::routines::RoutineOwnerKind::Space
+            };
+            crate::routines::emit_invalidation(
+                app,
+                crate::routines::RoutineInvalidationPayload {
+                    project_path: key.project().to_string_lossy().into_owned(),
+                    space_path: space_path.to_string_lossy().into_owned(),
+                    owner_kind,
+                    owner_path,
+                },
+            );
+        }
+    }
 }
 
 #[tauri::command]

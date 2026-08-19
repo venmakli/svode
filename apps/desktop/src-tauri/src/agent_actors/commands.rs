@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 use super::{
     AgentActorMutationInput, AgentActorResolution, AgentAdapter, ApprovalMode, CatalogError,
@@ -26,6 +26,23 @@ use crate::space::types::SpaceGitType;
 
 const COMMIT_MESSAGE: &str = "Update agent actors";
 const SUBMODULE_POINTER_COMMIT_MESSAGE: &str = "Update space pointer";
+const INVALIDATED_EVENT: &str = "agent-actors:invalidated";
+
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentActorInvalidationPayload {
+    pub owner_path: String,
+}
+
+pub(crate) fn emit_catalog_invalidation(app: &AppHandle, owner: &Path) {
+    let owner = std::fs::canonicalize(owner).unwrap_or_else(|_| owner.to_path_buf());
+    let payload = AgentActorInvalidationPayload {
+        owner_path: owner.to_string_lossy().into_owned(),
+    };
+    if let Err(error) = app.emit(INVALIDATED_EVENT, payload) {
+        tracing::warn!("failed to emit {INVALIDATED_EVENT}: {error}");
+    }
+}
 
 enum RootPointerPlan {
     Guarded(GuardedExactPathPlan),
@@ -712,6 +729,7 @@ pub async fn agent_actors_mutate(
                         });
                     }
                 };
+            emit_catalog_invalidation(&app, &owner);
             return Ok(AgentActorMutationResult::Applied {
                 fingerprint,
                 persistence: ExactPathPersistenceOutcome::Clean,
@@ -772,6 +790,7 @@ pub async fn agent_actors_mutate(
     let fingerprint = read_catalog(&owner)
         .map(|(_, fingerprint)| fingerprint)
         .unwrap_or_default();
+    emit_catalog_invalidation(&app, &owner);
     let root_pointer = if persistence == ExactPathPersistenceOutcome::Committed {
         if let Some((target, root_plan)) = root_pointer_plan {
             let root_lock = git_state.get_lock(&project).await;

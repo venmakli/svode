@@ -14,7 +14,9 @@ use crate::files::tree::{child_folder_names, has_direct_schema};
 use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
 use crate::index::{IndexKey, IndexState};
 use crate::repo_path::{RootMode, repo_relative_from_base, repo_relative_from_path};
-use crate::routines::{CollectionEventOrigin, CollectionEventSourceKind};
+use crate::routines::{
+    CollectionEventOrigin, CollectionEventSourceKind, RoutineInvalidationPayload, RoutineOwnerKind,
+};
 
 struct WatcherHandle {
     _watcher: RecommendedWatcher,
@@ -175,12 +177,29 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle, root_schema_pr
     let mut any_tree_changed = false;
     let mut agent_context_paths = BTreeSet::new();
     let mut agent_context_targets = BTreeSet::new();
+    let mut routine_owner_paths = BTreeSet::new();
+    let mut agent_actor_owners = BTreeSet::new();
+    let mut actor_repository_spaces = BTreeSet::new();
     let space_root = Path::new(space);
     let policy = TreeIgnorePolicy::from_space_root(space_root);
     let skip_dirs = child_folder_names(space_root);
     for event in events {
         for (path_index, path) in event.paths.iter().enumerate() {
             let event_kind = event_kind_for_path(event, path_index);
+            if actor_repository_source_path(space_root, path) {
+                actor_repository_spaces.insert(space_root.to_path_buf());
+            }
+            if let Some(owner_path) = routine_owner_for_path(space_root, path)
+                && !is_under_child_space(&owner_path, &skip_dirs)
+            {
+                routine_owner_paths.insert(owner_path);
+            }
+            if let Some(owner) = agent_actor_owner_for_path(space_root, path)
+                && relative_watched_path(space_root, &owner)
+                    .is_none_or(|relative| !is_under_child_space(&relative, &skip_dirs))
+            {
+                agent_actor_owners.insert(owner);
+            }
             let standard_agent_context_path = agent_context_observed_path(space_root, path);
             let observing_targets = app
                 .state::<AgentContextState>()
@@ -232,6 +251,23 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle, root_schema_pr
     if root_schema_changed {
         any_dirty = true;
         any_tree_changed = true;
+    }
+
+    for owner_path in routine_owner_paths {
+        emit_routine_invalidation(space_root, &owner_path, app);
+    }
+    for owner in agent_actor_owners {
+        crate::agent_actors::commands::emit_catalog_invalidation(app, &owner);
+    }
+    for space in actor_repository_spaces {
+        tauri::async_runtime::block_on(async {
+            if let Err(error) = crate::actors::invalidate_space(app, &space).await {
+                tracing::warn!(
+                    space = %space.display(),
+                    "failed to invalidate actor repository from watcher: {error}"
+                );
+            }
+        });
     }
 
     if any_dirty {
@@ -320,6 +356,83 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle, root_schema_pr
 
         let _ = app.emit(event_name, payload);
     }
+}
+
+fn emit_routine_invalidation(space_root: &Path, owner_path: &str, app: &AppHandle) {
+    tauri::async_runtime::block_on(async {
+        let canonical_space_root =
+            std::fs::canonicalize(space_root).unwrap_or_else(|_| space_root.to_path_buf());
+        let index_state = app.state::<IndexState>();
+        let key = index_state
+            .key_for_space_dir(&canonical_space_root)
+            .await
+            .unwrap_or_else(|| IndexKey::Root(canonical_space_root.clone()));
+        let owner_kind = if owner_path != "." {
+            RoutineOwnerKind::Collection
+        } else if matches!(key, IndexKey::Root(_)) {
+            RoutineOwnerKind::Project
+        } else {
+            RoutineOwnerKind::Space
+        };
+        crate::routines::emit_invalidation(
+            app,
+            RoutineInvalidationPayload {
+                project_path: key.project().to_string_lossy().into_owned(),
+                space_path: canonical_space_root.to_string_lossy().into_owned(),
+                owner_kind,
+                owner_path: owner_path.to_string(),
+            },
+        );
+    });
+}
+
+fn routine_owner_for_path(space_root: &Path, path: &Path) -> Option<String> {
+    let relative = relative_watched_path(space_root, path)?;
+    let parts = relative.split('/').collect::<Vec<_>>();
+    let routines_index = parts.iter().position(|part| *part == ".routines")?;
+    if parts.len() != routines_index + 2
+        || Path::new(parts.last()?)
+            .extension()
+            .and_then(|value| value.to_str())
+            != Some("md")
+    {
+        return None;
+    }
+    Some(if routines_index == 0 {
+        ".".to_string()
+    } else {
+        parts[..routines_index].join("/")
+    })
+}
+
+fn agent_actor_owner_for_path(space_root: &Path, path: &Path) -> Option<PathBuf> {
+    let relative = relative_watched_path(space_root, path)?;
+    let normalized = relative.replace('\\', "/");
+    let suffix = if normalized.ends_with("/.svode/agent-actors.json") {
+        "/.svode/agent-actors.json"
+    } else if normalized.ends_with("/.svode/local.json") {
+        "/.svode/local.json"
+    } else if matches!(
+        normalized.as_str(),
+        ".svode/agent-actors.json" | ".svode/local.json"
+    ) {
+        return Some(space_root.to_path_buf());
+    } else {
+        return None;
+    };
+    Some(space_root.join(normalized.strip_suffix(suffix)?))
+}
+
+fn actor_repository_source_path(space_root: &Path, path: &Path) -> bool {
+    let Some(relative) = relative_watched_path(space_root, path) else {
+        return false;
+    };
+    relative == ".mailmap"
+        || matches!(
+            relative.as_str(),
+            ".git/config" | ".git/HEAD" | ".git/packed-refs"
+        )
+        || relative.starts_with(".git/refs/")
 }
 
 fn sync_index_for_watched_path(
@@ -652,6 +765,39 @@ mod tests {
     use crate::space::config::write_space_config;
     use crate::space::types::{SpaceConfig, TreeSpaceConfig};
     use tempfile::TempDir;
+
+    #[test]
+    fn system_collection_paths_are_classified_by_exact_owner() {
+        let root = Path::new("/project");
+        assert_eq!(
+            routine_owner_for_path(root, Path::new("/project/.routines/daily.md")),
+            Some(".".into())
+        );
+        assert_eq!(
+            routine_owner_for_path(root, Path::new("/project/tasks/.routines/daily.md")),
+            Some("tasks".into())
+        );
+        assert_eq!(
+            routine_owner_for_path(root, Path::new("/project/tasks/.routines/nested/daily.md")),
+            None
+        );
+        assert_eq!(
+            agent_actor_owner_for_path(root, Path::new("/project/.svode/agent-actors.json")),
+            Some(PathBuf::from("/project"))
+        );
+        assert_eq!(
+            agent_actor_owner_for_path(root, Path::new("/project/docs/.svode/agent-actors.json")),
+            Some(PathBuf::from("/project/docs"))
+        );
+        assert!(actor_repository_source_path(
+            root,
+            Path::new("/project/.git/refs/heads/main")
+        ));
+        assert!(!actor_repository_source_path(
+            root,
+            Path::new("/project/docs/.git/HEAD")
+        ));
+    }
 
     fn write_tree_config(tmp: &TempDir, exclude: Vec<&str>, include: Vec<&str>) {
         write_space_config(

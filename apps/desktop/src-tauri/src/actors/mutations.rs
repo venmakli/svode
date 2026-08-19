@@ -400,7 +400,7 @@ pub async fn apply(
     }
 
     match actor_catalog.load_and_publish(cli, &repository).await {
-        Ok(snapshot) => {
+        Ok(_) => {
             let expected_fingerprint = mailmap_fingerprint(true, patched.as_bytes());
             let target_matches_expected = matches!(
                 read_mailmap_source(&repository)?,
@@ -440,6 +440,9 @@ pub async fn apply(
             } else {
                 None
             };
+            actor_catalog.mark_repository_dirty(&repository)?;
+            let snapshot = actor_catalog.load_and_publish(cli, &repository).await?;
+            crate::actors::emit_published(app, &repository, snapshot.generation());
             Ok(ActorMutationApplyResult::Applied {
                 canonical_email: plan.canonical_email,
                 catalog: snapshot.catalog(),

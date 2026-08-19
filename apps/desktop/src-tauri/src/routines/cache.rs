@@ -457,14 +457,41 @@ pub(crate) struct RoutineRunLifecycleSink {
     pool: Mutex<SqlitePool>,
     db_path: PathBuf,
     routine_run_id: String,
+    invalidation: Option<(tauri::AppHandle, super::model::RoutineInvalidationPayload)>,
 }
 
 impl RoutineRunLifecycleSink {
+    #[cfg(test)]
     pub(crate) fn new(pool: SqlitePool, db_path: PathBuf, routine_run_id: String) -> Self {
         Self {
             pool: Mutex::new(pool),
             db_path,
             routine_run_id,
+            invalidation: None,
+        }
+    }
+
+    pub(crate) fn with_invalidation(
+        pool: SqlitePool,
+        db_path: PathBuf,
+        routine_run_id: String,
+        app: tauri::AppHandle,
+        owner: &super::model::ResolvedRoutineOwner,
+    ) -> Self {
+        Self {
+            pool: Mutex::new(pool),
+            db_path,
+            routine_run_id,
+            invalidation: Some((
+                app,
+                super::model::RoutineInvalidationPayload::from_owner(owner),
+            )),
+        }
+    }
+
+    fn emit_invalidation(&self) {
+        if let Some((app, payload)) = &self.invalidation {
+            super::emit_invalidation(app, payload.clone());
         }
     }
 
@@ -504,7 +531,9 @@ impl AgentTerminalLifecycleSink for RoutineRunLifecycleSink {
             evidence.exit_code,
             &evidence.reason,
             &evidence.observed_at,
-        ))
+        ))?;
+        self.emit_invalidation();
+        Ok(())
     }
 
     fn reconcile_agent_session(
@@ -529,7 +558,9 @@ impl AgentTerminalLifecycleSink for RoutineRunLifecycleSink {
             agent_session_id,
             session_status,
             observed_at,
-        ))
+        ))?;
+        self.emit_invalidation();
+        Ok(())
     }
 }
 

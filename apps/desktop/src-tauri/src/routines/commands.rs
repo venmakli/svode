@@ -835,10 +835,12 @@ async fn dispatch_routine(
         mcp_project_path: Some(owner.project_path.to_string_lossy().into_owned()),
         launch_id: Some(launch_id.clone()),
         routine_run_id: Some(routine_run_id.clone()),
-        lifecycle_sink: Some(Arc::new(cache::RoutineRunLifecycleSink::new(
+        lifecycle_sink: Some(Arc::new(cache::RoutineRunLifecycleSink::with_invalidation(
             pool.clone(),
             owner.space_path.join(".svode").join("index.db"),
             routine_run_id.clone(),
+            app.clone(),
+            &owner,
         ))),
     };
     let terminal = match terminal_manager.spawn_agent_shell_session(app.clone(), spawn) {
@@ -854,6 +856,7 @@ async fn dispatch_routine(
                 &Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
             )
             .await?;
+            super::emit_owner_invalidation(app, &owner);
             return Ok(RoutineManualDispatchResult::Failed {
                 routine_id,
                 routine_run_id,
@@ -880,6 +883,7 @@ async fn dispatch_routine(
             message: format!("failed to persist managed PTY mapping: {error}"),
         });
     }
+    super::emit_owner_invalidation(app, &owner);
 
     Ok(RoutineManualDispatchResult::Started {
         routine_id,
@@ -1096,7 +1100,52 @@ async fn refresh_owner(
             ));
         }
     }
+    snapshot.catalog_fingerprint = publication_fingerprint(&snapshot);
     Ok(snapshot)
+}
+
+fn publication_fingerprint(snapshot: &RoutineCatalogSnapshot) -> String {
+    let mut value = String::new();
+    for row in &snapshot.routines {
+        for field in [
+            row.routine_id.as_str(),
+            row.fingerprint.as_str(),
+            row.last_run_at.as_deref().unwrap_or_default(),
+            row.next_run_at.as_deref().unwrap_or_default(),
+        ] {
+            value.push_str(field);
+            value.push('\0');
+        }
+        value.push_str(match row.last_run_origin {
+            Some(RoutineRunOrigin::Local) => "local",
+            Some(RoutineRunOrigin::Remote) => "remote",
+            None => "",
+        });
+        value.push('\0');
+        if let Some(last_run) = &row.last_run {
+            value.push_str(&serde_json::to_string(last_run).unwrap_or_default());
+        }
+        value.push('\0');
+        for diagnostic in &row.diagnostics {
+            value.push_str(&diagnostic.code);
+            value.push('\0');
+            value.push_str(&diagnostic.message);
+            value.push('\0');
+            value.push_str(diagnostic.field.as_deref().unwrap_or_default());
+            value.push('\0');
+            value.push_str(diagnostic.path.as_deref().unwrap_or_default());
+            value.push('\0');
+        }
+    }
+    for diagnostic in &snapshot.diagnostics {
+        value.push_str(&diagnostic.code);
+        value.push('\0');
+        value.push_str(&diagnostic.message);
+        value.push('\0');
+        value.push_str(diagnostic.path.as_deref().unwrap_or_default());
+        value.push('\0');
+    }
+    parser::fingerprint(value.as_bytes())
 }
 
 pub(crate) fn live_agent_pty_ids(
@@ -1550,6 +1599,49 @@ mod tests {
             }
         ));
         assert_eq!(definition.action.executor(), Some(""));
+    }
+
+    #[test]
+    fn publication_fingerprint_tracks_observable_runtime_overlay() {
+        let row = super::super::model::RoutineRow {
+            routine_id: "routine:one".into(),
+            filename: "one.md".into(),
+            path: ".routines/one.md".into(),
+            title: "One".into(),
+            description: None,
+            enabled: Some(true),
+            trigger_type: Some(RoutineTriggerType::Manual),
+            trigger_summary: None,
+            action_type: None,
+            action_summary: None,
+            executor: None,
+            last_run_at: Some("2026-08-19T10:00:00Z".into()),
+            last_run_origin: Some(RoutineRunOrigin::Local),
+            next_run_at: None,
+            last_run: None,
+            fingerprint: "definition".into(),
+            definition: None,
+            diagnostics: Vec::new(),
+        };
+        let snapshot = RoutineCatalogSnapshot {
+            owner: RoutineOwnerDescriptor {
+                kind: RoutineOwnerKind::Project,
+                space_id: "root".into(),
+                owner_path: ".".into(),
+            },
+            routines: vec![row],
+            diagnostics: Vec::new(),
+            catalog_fingerprint: String::new(),
+            refreshed_at: "2026-08-19T10:00:00Z".into(),
+        };
+        let initial = publication_fingerprint(&snapshot);
+        let mut changed = snapshot.clone();
+        changed.routines[0].last_run_origin = Some(RoutineRunOrigin::Remote);
+        assert_ne!(publication_fingerprint(&changed), initial);
+        changed.routines[0].last_run_origin = Some(RoutineRunOrigin::Local);
+        assert_eq!(publication_fingerprint(&changed), initial);
+        changed.routines[0].next_run_at = Some("2026-08-20T10:00:00Z".into());
+        assert_ne!(publication_fingerprint(&changed), initial);
     }
 
     #[test]

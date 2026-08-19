@@ -125,6 +125,7 @@ async fn tick_owner(
         let Some(state) = state.filter(|state| state.definition_fingerprint == row.fingerprint)
         else {
             write_baseline(
+                app,
                 &pool,
                 owner,
                 &row.routine_id,
@@ -140,6 +141,7 @@ async fn tick_owner(
             .map(|value| value.with_timezone(&Utc))
         else {
             write_baseline(
+                app,
                 &pool,
                 owner,
                 &row.routine_id,
@@ -165,6 +167,7 @@ async fn tick_owner(
             && run.blocks_relaunch(&live_pty_ids)
         {
             advance_checkpoint(
+                app,
                 &pool,
                 owner,
                 &row.routine_id,
@@ -201,6 +204,7 @@ async fn tick_owner(
 
         let Some(due_at) = evaluation.due_at else {
             advance_checkpoint(
+                app,
                 &pool,
                 owner,
                 &row.routine_id,
@@ -244,6 +248,7 @@ async fn tick_owner(
                 claimed_at,
             } => {
                 record_claim(
+                    app,
                     &pool,
                     owner,
                     &row.routine_id,
@@ -260,6 +265,7 @@ async fn tick_owner(
                 claimed_at,
             } => {
                 record_claim(
+                    app,
                     &pool,
                     owner,
                     &row.routine_id,
@@ -277,6 +283,7 @@ async fn tick_owner(
             }
         };
         advance_checkpoint(
+            app,
             &pool,
             owner,
             &row.routine_id,
@@ -390,6 +397,7 @@ async fn dispatch_next_event(
             claimed_at,
         } => {
             record_claim(
+                app,
                 pool,
                 owner,
                 &event.routine_id,
@@ -406,6 +414,7 @@ async fn dispatch_next_event(
             claimed_at,
         } => {
             record_claim(
+                app,
                 pool,
                 owner,
                 &event.routine_id,
@@ -457,6 +466,7 @@ fn event_run_key(repository_id: &str, routine_id: &str, event_key: &str) -> Stri
 }
 
 async fn write_baseline(
+    app: &AppHandle,
     pool: &sqlx::SqlitePool,
     owner: &ResolvedRoutineOwner,
     routine_id: &str,
@@ -466,10 +476,11 @@ async fn write_baseline(
     now: DateTime<Utc>,
 ) -> Result<(), AppError> {
     let next = super::schedule::next_after(cron, timezone, now).map_err(AppError::General)?;
-    advance_checkpoint(pool, owner, routine_id, fingerprint, now, next).await
+    advance_checkpoint(app, pool, owner, routine_id, fingerprint, now, next).await
 }
 
 async fn advance_checkpoint(
+    app: &AppHandle,
     pool: &sqlx::SqlitePool,
     owner: &ResolvedRoutineOwner,
     routine_id: &str,
@@ -485,10 +496,13 @@ async fn advance_checkpoint(
         &checkpoint.to_rfc3339_opts(SecondsFormat::Secs, true),
         &next.to_rfc3339_opts(SecondsFormat::Secs, true),
     )
-    .await
+    .await?;
+    super::emit_owner_invalidation(app, owner);
+    Ok(())
 }
 
 async fn record_claim(
+    app: &AppHandle,
     pool: &sqlx::SqlitePool,
     owner: &ResolvedRoutineOwner,
     routine_id: &str,
@@ -500,6 +514,8 @@ async fn record_claim(
     let claimed_at = DateTime::<Utc>::from_timestamp(claimed_at, 0)
         .unwrap_or_else(Utc::now)
         .to_rfc3339_opts(SecondsFormat::Secs, true);
+    let previous =
+        cache::latest_remote_claim(pool, &owner.descriptor.owner_path, routine_id).await?;
     cache::record_remote_claim(
         pool,
         &owner.descriptor.owner_path,
@@ -509,7 +525,15 @@ async fn record_claim(
         claimed_by,
         &claimed_at,
     )
-    .await
+    .await?;
+    if previous.as_ref().is_none_or(|previous| {
+        previous.run_key != run_key
+            || previous.claimed_by != claimed_by
+            || previous.claimed_at != claimed_at
+    }) {
+        super::emit_owner_invalidation(app, owner);
+    }
+    Ok(())
 }
 
 fn scheduled_run_key(repository_id: &str, routine_id: &str, due_at: DateTime<Utc>) -> String {

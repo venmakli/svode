@@ -101,6 +101,14 @@ pub struct ActorCatalog {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct ActorInvalidationPayload {
+    pub repository_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generation: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ActorActivityDay {
     pub date: String,
     pub commit_count: u64,
@@ -154,7 +162,7 @@ enum ActorSourceKind {
     Mailmap,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 struct ActorSource {
     kind: ActorSourceKind,
@@ -163,7 +171,7 @@ struct ActorSource {
     line: Option<usize>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 struct ActorAlias {
     name: Option<String>,
@@ -171,7 +179,7 @@ struct ActorAlias {
     line: Option<usize>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 struct ActorRow {
     candidate: ActorCandidate,
@@ -193,6 +201,13 @@ pub struct ActorSnapshot {
 }
 
 impl ActorSnapshot {
+    fn content_equivalent(&self, other: &Self) -> bool {
+        self.rows == other.rows
+            && self.mailmap.rules == other.mailmap.rules
+            && self.diagnostics == other.diagnostics
+            && self.shallow == other.shallow
+    }
+
     pub fn candidates(&self) -> Vec<ActorCandidate> {
         self.rows.iter().map(|row| row.candidate.clone()).collect()
     }
@@ -326,8 +341,7 @@ impl ActorSnapshot {
         &self.repository_id
     }
 
-    #[cfg(test)]
-    fn generation(&self) -> u64 {
+    pub(super) fn generation(&self) -> u64 {
         self.generation
     }
 
@@ -406,9 +420,16 @@ impl ActorActivityCache {
 #[derive(Default)]
 pub struct ActorCatalogState {
     snapshots: Mutex<HashMap<PathBuf, Arc<ActorSnapshot>>>,
+    revisions: Mutex<HashMap<PathBuf, RepositoryRevision>>,
     repository_locks: Mutex<HashMap<PathBuf, Arc<AsyncMutex<()>>>>,
     activities: Mutex<ActorActivityCache>,
     activity_locks: Mutex<HashMap<ActivityCacheKey, Arc<AsyncMutex<()>>>>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct RepositoryRevision {
+    invalidated: u64,
+    published: u64,
 }
 
 impl ActorCatalogState {
@@ -430,12 +451,12 @@ impl ActorCatalogState {
         cli: &GitCli,
         repository: &Path,
     ) -> Result<Arc<ActorSnapshot>, AppError> {
-        if let Some(snapshot) = self.cached(repository)? {
+        if let Some(snapshot) = self.cached_current(repository)? {
             return Ok(snapshot);
         }
         let repository_lock = self.repository_lock(repository)?;
         let _load_guard = repository_lock.lock().await;
-        if let Some(snapshot) = self.cached(repository)? {
+        if let Some(snapshot) = self.cached_current(repository)? {
             return Ok(snapshot);
         }
         self.load_and_publish(cli, repository).await
@@ -447,6 +468,7 @@ impl ActorCatalogState {
         space_path: &Path,
     ) -> Result<Arc<ActorSnapshot>, AppError> {
         let repository = resolve_repository(cli, space_path).await?;
+        self.mark_repository_dirty(&repository)?;
         let repository_lock = self.repository_lock(&repository)?;
         let _load_guard = repository_lock.lock().await;
         self.load_and_publish(cli, &repository).await
@@ -520,7 +542,7 @@ impl ActorCatalogState {
                     Ok(activity) => {
                         let activity = Arc::new(activity);
                         if self
-                            .cached(&repository)?
+                            .cached_current(&repository)?
                             .is_some_and(|current| current.generation == snapshot.generation)
                         {
                             self.activities
@@ -549,6 +571,60 @@ impl ActorCatalogState {
             .lock()
             .map(|snapshots| snapshots.get(repository).cloned())
             .map_err(|_| AppError::General("actor snapshot cache lock poisoned".into()))
+    }
+
+    fn cached_current(&self, repository: &Path) -> Result<Option<Arc<ActorSnapshot>>, AppError> {
+        let revision = self.repository_revision(repository)?;
+        if revision.published < revision.invalidated {
+            return Ok(None);
+        }
+        self.cached(repository)
+    }
+
+    fn repository_revision(&self, repository: &Path) -> Result<RepositoryRevision, AppError> {
+        self.revisions
+            .lock()
+            .map(|revisions| revisions.get(repository).copied().unwrap_or_default())
+            .map_err(|_| AppError::General("actor repository revision cache poisoned".into()))
+    }
+
+    pub(crate) fn mark_repository_dirty(
+        &self,
+        repository: &Path,
+    ) -> Result<ActorInvalidationPayload, AppError> {
+        let repository = fs::canonicalize(repository).map_err(|error| {
+            AppError::GitCommandFailed(format!(
+                "failed to canonicalize actor repository {}: {error}",
+                repository.display()
+            ))
+        })?;
+        let mut revisions = self
+            .revisions
+            .lock()
+            .map_err(|_| AppError::General("actor repository revision cache poisoned".into()))?;
+        let revision = revisions.entry(repository.clone()).or_default();
+        revision.invalidated = revision.invalidated.saturating_add(1);
+        Ok(ActorInvalidationPayload {
+            repository_id: opaque_repository_id(&repository),
+            generation: None,
+        })
+    }
+
+    pub(crate) fn published_invalidation(
+        &self,
+        repository: &Path,
+        generation: u64,
+    ) -> Result<ActorInvalidationPayload, AppError> {
+        let repository = fs::canonicalize(repository).map_err(|error| {
+            AppError::GitCommandFailed(format!(
+                "failed to canonicalize actor repository {}: {error}",
+                repository.display()
+            ))
+        })?;
+        Ok(ActorInvalidationPayload {
+            repository_id: opaque_repository_id(&repository),
+            generation: Some(generation),
+        })
     }
 
     pub(super) fn repository_lock(
@@ -608,19 +684,38 @@ impl ActorCatalogState {
         cli: &GitCli,
         repository: &Path,
     ) -> Result<Arc<ActorSnapshot>, AppError> {
-        let generation = self
-            .cached(repository)?
-            .map_or(1, |snapshot| snapshot.generation.saturating_add(1));
-        let snapshot = Arc::new(load_snapshot(cli, repository, generation).await?);
-        self.snapshots
-            .lock()
-            .map_err(|_| AppError::General("actor snapshot cache lock poisoned".into()))?
-            .insert(repository.to_path_buf(), snapshot.clone());
-        self.activities
-            .lock()
-            .map_err(|_| AppError::General("actor activity cache lock poisoned".into()))?
-            .remove_repository(repository);
-        Ok(snapshot)
+        loop {
+            let captured_revision = self.repository_revision(repository)?.invalidated;
+            let current = self.cached(repository)?;
+            let generation = current
+                .as_ref()
+                .map_or(1, |snapshot| snapshot.generation.saturating_add(1));
+            let snapshot = Arc::new(load_snapshot(cli, repository, generation).await?);
+            let mut revisions = self.revisions.lock().map_err(|_| {
+                AppError::General("actor repository revision cache poisoned".into())
+            })?;
+            let revision = revisions.entry(repository.to_path_buf()).or_default();
+            if revision.invalidated != captured_revision {
+                continue;
+            }
+            if let Some(current) = current
+                && current.content_equivalent(&snapshot)
+            {
+                revision.published = captured_revision;
+                return Ok(current);
+            }
+            self.snapshots
+                .lock()
+                .map_err(|_| AppError::General("actor snapshot cache lock poisoned".into()))?
+                .insert(repository.to_path_buf(), snapshot.clone());
+            revision.published = captured_revision;
+            drop(revisions);
+            self.activities
+                .lock()
+                .map_err(|_| AppError::General("actor activity cache lock poisoned".into()))?
+                .remove_repository(repository);
+            return Ok(snapshot);
+        }
     }
 }
 
@@ -1557,7 +1652,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn root_and_inline_share_generation_and_refresh_replaces_snapshot() {
+    async fn root_and_inline_share_generation_and_equivalent_refresh_reuses_snapshot() {
         let repo = init_repo("Root", "root@example.test");
         commit(repo.path(), "one.txt", "one", "one");
         let inline = repo.path().join("inline");
@@ -1579,8 +1674,35 @@ mod tests {
             .refresh(&cli, &inline)
             .await
             .expect("refresh snapshot");
-        assert_eq!(refreshed.generation(), 2);
-        assert!(!Arc::ptr_eq(&root, &refreshed));
+        assert_eq!(refreshed.generation(), 1);
+        assert!(Arc::ptr_eq(&root, &refreshed));
+    }
+
+    #[tokio::test]
+    async fn dirty_marker_survives_unmounted_and_equivalent_reload_keeps_generation() {
+        let repo = init_repo("Root", "root@example.test");
+        commit(repo.path(), "one.txt", "one", "one");
+        let cli = GitCli::detect().expect("git CLI");
+        let state = ActorCatalogState::new();
+
+        let initial = state.snapshot(&cli, repo.path()).await.expect("initial");
+        commit(repo.path(), "two.txt", "two", "two");
+        let dirty = state
+            .mark_repository_dirty(repo.path())
+            .expect("mark dirty");
+        assert_eq!(dirty.repository_id, initial.repository_id());
+        assert!(dirty.generation.is_none());
+
+        let changed = state.snapshot(&cli, repo.path()).await.expect("changed");
+        assert_eq!(changed.generation(), initial.generation() + 1);
+        assert_eq!(changed.candidates()[0].commit_count, 2);
+
+        state
+            .mark_repository_dirty(repo.path())
+            .expect("mark equivalent dirty");
+        let equivalent = state.snapshot(&cli, repo.path()).await.expect("equivalent");
+        assert!(Arc::ptr_eq(&changed, &equivalent));
+        assert_eq!(equivalent.generation(), changed.generation());
     }
 
     #[tokio::test]
@@ -2018,6 +2140,12 @@ mod tests {
             .expect_err("day cursor must not continue the full-year timeline");
         assert!(matches!(cross_mode, AppError::General(_)));
 
+        commit(
+            repo.path(),
+            "generation.txt",
+            "changed",
+            "change generation",
+        );
         state.refresh(&cli, repo.path()).await.expect("refresh");
         let stale = state
             .activity(
@@ -2118,6 +2246,17 @@ mod tests {
             .refresh(&cli, &inline)
             .await
             .expect("refresh snapshot");
+        let equivalent = state
+            .activity(&cli, repo.path(), "current@example.test", None, None, None)
+            .await
+            .expect("equivalent activity");
+        assert_eq!(equivalent.generation, 1);
+
+        commit(repo.path(), "two.txt", "two", "two");
+        state
+            .refresh(&cli, &inline)
+            .await
+            .expect("changed refresh snapshot");
         let refreshed = state
             .activity(&cli, repo.path(), "current@example.test", None, None, None)
             .await

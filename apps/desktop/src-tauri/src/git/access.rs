@@ -667,9 +667,21 @@ pub async fn repository_access_verify(
 ) -> Result<RepositoryAccessSnapshot, AppError> {
     let cli = require_cli(&git_state)?;
     let store_path = access_store_path(&app)?;
-    access_state
+    let snapshot = access_state
         .verify(&cli, Path::new(&space_path), &store_path)
-        .await
+        .await?;
+    if matches!(
+        snapshot.status,
+        RepositoryAccessStatus::Local | RepositoryAccessStatus::Writable
+    ) {
+        if let Err(error) = crate::actors::invalidate_space(&app, Path::new(&space_path)).await {
+            tracing::warn!(
+                space = %space_path,
+                "failed to invalidate actor catalog after repository access recovery: {error}"
+            );
+        }
+    }
+    Ok(snapshot)
 }
 
 pub async fn require_repository_mutation(
