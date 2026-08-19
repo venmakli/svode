@@ -406,8 +406,7 @@ fn build_window(app: &AppHandle, label: &str, title: &str) -> Result<WebviewWind
         .title(title)
         .inner_size(1200.0, 800.0)
         .min_inner_size(800.0, 600.0)
-        .decorations(true)
-        .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled);
+        .decorations(true);
 
     #[cfg(target_os = "macos")]
     let builder = builder
