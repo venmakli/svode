@@ -267,6 +267,53 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
+            "create_routine",
+            "Create one valid owner-local Routine through Svode's managed allocator. Pass a complete definition; an enabled schedule/event additionally requires confirmAutomaticExecution=true. Returns the canonical path, fingerprints, detail, and changedPaths. Does not change device authority and does not autocommit.",
+            schema(
+                &[
+                    routine_space_id(),
+                    routine_collection_path_opt(),
+                    routine_definition_req(),
+                    confirm_automatic_execution_opt(),
+                ],
+                &["spaceId", "definition"],
+            ),
+            write_ann(false, Some(false)),
+            None,
+        ),
+        def(
+            "update_routine",
+            "Atomically replace one owner-local Routine through Svode's managed validation and fingerprint CAS. Read it first and pass its routineId and fingerprint. An enabled schedule/event additionally requires confirmAutomaticExecution=true. Keeps filename/identity, does not change device authority, and does not autocommit.",
+            schema(
+                &[
+                    routine_space_id(),
+                    routine_collection_path_opt(),
+                    str_req("routineId"),
+                    expected_routine_fingerprint_req(),
+                    routine_definition_req(),
+                    confirm_automatic_execution_opt(),
+                ],
+                &["spaceId", "routineId", "expectedFingerprint", "definition"],
+            ),
+            write_ann(false, Some(false)),
+            None,
+        ),
+        def(
+            "delete_routine",
+            "Delete one exact owner-local Routine definition through fingerprint CAS. Read it first and pass its routineId and fingerprint. Does not delete run/session history, cancel an active run, or autocommit.",
+            schema(
+                &[
+                    routine_space_id(),
+                    routine_collection_path_opt(),
+                    str_req("routineId"),
+                    expected_routine_fingerprint_req(),
+                ],
+                &["spaceId", "routineId", "expectedFingerprint"],
+            ),
+            write_ann(true, Some(false)),
+            None,
+        ),
+        def(
             "list_collections",
             "List collections in a space.",
             schema(&[space_id()], &[]),
@@ -614,10 +661,11 @@ Space targeting:
 - Use a child space id from list_spaces to target a child space.
 - Omit spaceId or pass null only when you intentionally want the active/default space; null is not a stable alias for root when a child space is active.
 
-Routine discovery:
-- Call list_spaces, then list_collections when needed, before reading Routines. list_routines and get_routine always require a non-null explicit spaceId: use "root" for the project owner or a child id from list_spaces; add collectionPath only for an existing Collection owner.
-- Use list_routines for bounded body-less discovery and get_routine for the normalized definition and Markdown body. Invalid definitions remain visible with diagnostics. Device-local automatic authority and last/next run fields are evidence, not a promise that a Routine can run now.
-- Never address or edit raw .routines paths through MCP. Routine definitions belong to the Routine domain tools and owner resolver.
+Routine workflow:
+- Call list_spaces, then list_collections when needed, before working with Routines. Every Routine tool requires a non-null explicit spaceId: use "root" for the project owner or a child id from list_spaces; add collectionPath only for an existing Collection owner.
+- Use list_routines for bounded body-less discovery and get_routine for the normalized definition, Markdown body, and fingerprint. Invalid definitions remain visible with diagnostics and can be repaired by a full valid update using their current fingerprint. Device-local automatic authority and last/next run fields are evidence, not a promise that a Routine can run now.
+- Use create_routine, update_routine, and delete_routine for managed source changes. Update/delete require the last-read fingerprint; a conflict returns the current fingerprint without writing. Create/update validate the complete candidate and return canonical changedPaths. These tools never autocommit.
+- Saving an enabled schedule/event requires confirmAutomaticExecution=true, but that acknowledgement never enables owner-local device authority. Never address or edit raw .routines paths through MCP; Routine definitions belong to the Routine domain tools and owner resolver.
 
 Metadata and fields:
 - System metadata is title, icon, description, cover, created, and updated. Do not create custom columns for these and do not write them through update_entry_fields.
@@ -731,6 +779,130 @@ fn routine_collection_path_opt() -> (&'static str, Value) {
             "type": ["string", "null"],
             "minLength": 1,
             "description": "Optional repo-relative directory of an existing Collection in the selected Space. Omit/null for the project or Space owner. No absolute paths, '..', .git/**, .svode/**, or raw .routines/** addresses."
+        }),
+    )
+}
+
+fn routine_definition_req() -> (&'static str, Value) {
+    (
+        "definition",
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Complete portable Routine definition. Server-side owner-aware validation remains authoritative.",
+            "properties": {
+                "title": { "type": ["string", "null"], "minLength": 1, "maxLength": 240 },
+                "description": { "type": ["string", "null"], "maxLength": 2000 },
+                "enabled": {
+                    "type": ["boolean", "null"],
+                    "description": "Only schedule/event triggers may set enabled. enabled=true requires confirmAutomaticExecution=true."
+                },
+                "trigger": {
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": { "type": { "const": "manual" } },
+                            "required": ["type"]
+                        },
+                        {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "type": { "const": "schedule" },
+                                "cron": { "type": "string" },
+                                "timezone": { "type": "string" },
+                                "missedRuns": { "type": "string", "enum": ["skip", "run_once"] }
+                            },
+                            "required": ["type", "cron", "timezone", "missedRuns"]
+                        },
+                        {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "type": { "const": "event" },
+                                "event": {
+                                    "type": "string",
+                                    "enum": [
+                                        "collection.entry_created",
+                                        "collection.field_changed",
+                                        "collection.entry_deleted"
+                                    ]
+                                },
+                                "match": {
+                                    "anyOf": [
+                                        {
+                                            "type": "object",
+                                            "additionalProperties": false,
+                                            "properties": {
+                                                "field": { "type": "string", "minLength": 1 },
+                                                "from": {},
+                                                "to": {}
+                                            },
+                                            "required": ["field"]
+                                        },
+                                        { "type": "null" }
+                                    ]
+                                }
+                            },
+                            "required": ["type", "event"]
+                        }
+                    ]
+                },
+                "action": {
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "type": { "const": "run_agent" },
+                                "executor": {
+                                    "type": "string",
+                                    "pattern": "^agent:[0-9a-hjkmnp-tv-z]{26}$"
+                                }
+                            },
+                            "required": ["type", "executor"]
+                        },
+                        {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "type": { "const": "update_properties" },
+                                "target": { "const": "trigger.entry" },
+                                "set": {
+                                    "type": "object",
+                                    "minProperties": 1,
+                                    "additionalProperties": true
+                                }
+                            },
+                            "required": ["type", "target", "set"]
+                        }
+                    ]
+                },
+                "body": { "type": "string" }
+            },
+            "required": ["trigger", "action", "body"]
+        }),
+    )
+}
+
+fn expected_routine_fingerprint_req() -> (&'static str, Value) {
+    (
+        "expectedFingerprint",
+        json!({
+            "type": "string",
+            "minLength": 1,
+            "description": "Exact fingerprint returned by get_routine/list_routines. A mismatch returns the current fingerprint without writing."
+        }),
+    )
+}
+
+fn confirm_automatic_execution_opt() -> (&'static str, Value) {
+    (
+        "confirmAutomaticExecution",
+        json!({
+            "type": ["boolean", "null"],
+            "description": "Required as true whenever the resulting schedule/event definition has enabled=true. This acknowledges saved automatic behavior but never changes owner-local device authority."
         }),
     )
 }
@@ -1222,7 +1394,7 @@ mod tests {
     }
 
     #[test]
-    fn routine_reads_have_strict_explicit_owner_schemas_and_exact_annotations() {
+    fn routine_tools_have_strict_explicit_owner_schemas_and_exact_annotations() {
         let definitions = definitions();
         let routine_definitions = definitions
             .iter()
@@ -1233,9 +1405,15 @@ mod tests {
                 .iter()
                 .map(|definition| definition.name)
                 .collect::<Vec<_>>(),
-            vec!["list_routines", "get_routine"]
+            vec![
+                "list_routines",
+                "get_routine",
+                "create_routine",
+                "update_routine",
+                "delete_routine"
+            ]
         );
-        for definition in routine_definitions {
+        for definition in &routine_definitions {
             assert_eq!(definition.input_schema["type"], "object");
             assert_eq!(definition.input_schema["additionalProperties"], false);
             assert_eq!(
@@ -1243,11 +1421,6 @@ mod tests {
                 "string"
             );
             assert!(definition.output_schema.is_none());
-            let annotations = definition.annotations.as_ref().unwrap();
-            assert_eq!(annotations.read_only_hint, Some(true));
-            assert_eq!(annotations.destructive_hint, Some(false));
-            assert_eq!(annotations.idempotent_hint, Some(true));
-            assert_eq!(annotations.open_world_hint, Some(false));
         }
         let list = definitions
             .iter()
@@ -1263,7 +1436,64 @@ mod tests {
             get.input_schema["required"],
             json!(["spaceId", "routineId"])
         );
+        for name in ["list_routines", "get_routine"] {
+            let annotations = definitions
+                .iter()
+                .find(|definition| definition.name == name)
+                .unwrap()
+                .annotations
+                .as_ref()
+                .unwrap();
+            assert_eq!(annotations.read_only_hint, Some(true));
+            assert_eq!(annotations.destructive_hint, Some(false));
+            assert_eq!(annotations.idempotent_hint, Some(true));
+            assert_eq!(annotations.open_world_hint, Some(false));
+        }
+        for name in ["create_routine", "update_routine", "delete_routine"] {
+            let definition = definitions
+                .iter()
+                .find(|definition| definition.name == name)
+                .unwrap();
+            let annotations = definition.annotations.as_ref().unwrap();
+            assert_eq!(annotations.read_only_hint, Some(false));
+            assert_eq!(annotations.destructive_hint, Some(name == "delete_routine"));
+            assert_eq!(annotations.idempotent_hint, Some(false));
+            assert_eq!(annotations.open_world_hint, Some(false));
+        }
+        let create = definitions
+            .iter()
+            .find(|definition| definition.name == "create_routine")
+            .unwrap();
+        assert_eq!(
+            create.input_schema["required"],
+            json!(["spaceId", "definition"])
+        );
+        assert_eq!(
+            create.input_schema["properties"]["definition"]["additionalProperties"],
+            false
+        );
+        assert_eq!(
+            create.input_schema["properties"]["definition"]["required"],
+            json!(["trigger", "action", "body"])
+        );
+        let update = definitions
+            .iter()
+            .find(|definition| definition.name == "update_routine")
+            .unwrap();
+        assert_eq!(
+            update.input_schema["required"],
+            json!(["spaceId", "routineId", "expectedFingerprint", "definition"])
+        );
+        let delete = definitions
+            .iter()
+            .find(|definition| definition.name == "delete_routine")
+            .unwrap();
+        assert_eq!(
+            delete.input_schema["required"],
+            json!(["spaceId", "routineId", "expectedFingerprint"])
+        );
         assert!(guide_text().contains("Never address or edit raw .routines"));
+        assert!(guide_text().contains("confirmAutomaticExecution=true"));
     }
 
     #[test]
@@ -1410,6 +1640,9 @@ mod tests {
                 "import_asset",
                 "create_collection",
                 "convert_to_collection",
+                "create_routine",
+                "update_routine",
+                "delete_routine",
                 "create_entry",
                 "update_entry_fields",
                 "update_entry_body",

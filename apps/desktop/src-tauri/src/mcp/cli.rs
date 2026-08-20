@@ -116,7 +116,7 @@ async fn handle_jsonrpc_line(line: &str) -> Option<Value> {
                 "protocolVersion": "2025-06-18",
                 "serverInfo": { "name": "svode", "version": MCP_VERSION },
                 "capabilities": { "tools": {} },
-                "instructions": "Use Svode MCP as a product API, not as raw filesystem access. Discover explicit Routine owners with list_spaces/list_collections, then use list_routines/get_routine instead of raw .routines edits. Create collections for structured repeated data; create documents for narrative pages. Call get_svode_guide when unsure."
+                "instructions": "Use Svode MCP as a product API, not as raw filesystem access. Discover explicit Routine owners with list_spaces/list_collections, read fingerprints with list_routines/get_routine, and use managed create_routine/update_routine/delete_routine instead of raw .routines edits. Routine writes do not autocommit; enabled schedule/event writes require confirmAutomaticExecution=true without changing device authority. Create collections for structured repeated data; create documents for narrative pages. Call get_svode_guide when unsure."
             }),
         )),
         "ping" => Some(ok_response(id, json!({}))),
@@ -204,7 +204,9 @@ mod tests {
         assert!(tools.iter().any(|tool| tool["name"] == "list_actors"));
         assert!(tools.iter().any(|tool| tool["name"] == "list_routines"));
         assert!(tools.iter().any(|tool| tool["name"] == "get_routine"));
-        assert!(!tools.iter().any(|tool| tool["name"] == "create_routine"));
+        assert!(tools.iter().any(|tool| tool["name"] == "create_routine"));
+        assert!(tools.iter().any(|tool| tool["name"] == "update_routine"));
+        assert!(tools.iter().any(|tool| tool["name"] == "delete_routine"));
         assert!(!tools.iter().any(|tool| tool["name"] == "run_routine"));
         assert!(!tools.iter().any(|tool| tool["name"] == "get_entry"));
     }
@@ -226,7 +228,7 @@ mod tests {
         assert_eq!(hidden["error"]["code"], -32602);
 
         let future_routine_action = handle_jsonrpc_line(
-            r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"create_routine","arguments":{"spaceId":"root"}}}"#,
+            r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"run_routine","arguments":{"spaceId":"root"}}}"#,
         )
         .await
         .expect("response");

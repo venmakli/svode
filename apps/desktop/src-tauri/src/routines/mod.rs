@@ -14,12 +14,12 @@ pub(crate) use model::ResolvedRoutineOwner;
 pub(crate) use model::{CollectionEventOrigin, CollectionEventSourceKind};
 #[cfg(test)]
 pub(crate) use model::{
-    RoutineAction, RoutineDefinition, RoutineDiagnostic, RoutineOwnerDescriptor, RoutineRunOrigin,
-    RoutineTrigger, RoutineTriggerType,
+    RoutineAction, RoutineDiagnostic, RoutineOwnerDescriptor, RoutineRunOrigin, RoutineTrigger,
+    RoutineTriggerType,
 };
 pub(crate) use model::{
-    RoutineCatalogSnapshot, RoutineInvalidationPayload, RoutineOwnerInputKind, RoutineOwnerKind,
-    RoutineRow,
+    RoutineCatalogSnapshot, RoutineDefinition, RoutineInvalidationPayload, RoutineOwnerInputKind,
+    RoutineOwnerKind, RoutineRow,
 };
 
 pub(crate) const INVALIDATED_EVENT: &str = "routines:invalidated";

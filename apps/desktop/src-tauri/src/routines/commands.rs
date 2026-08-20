@@ -1,6 +1,4 @@
 use std::collections::BTreeMap;
-use std::fs::{self, File, OpenOptions};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -13,6 +11,7 @@ use super::model::{
     RoutineManualDispatchResult, RoutineMutationResult, RoutineOwnerInputKind, RoutineOwnerKind,
     RoutineTrigger, RoutineTriggerType,
 };
+#[cfg(test)]
 use super::parser;
 use super::{authority, cache, service};
 use crate::AppError;
@@ -24,22 +23,14 @@ use crate::agent_adapters::runtime::{
 use crate::agent_adapters::{AgentAdapterKind, AgentAdapterRegistry};
 use crate::agent_sessions::types::{AgentSessionResumeCommand, AgentSessionSource};
 use crate::files::WriteNonceRegistry;
-use crate::git;
 use crate::git::access::{
-    RepositoryAccessState, access_store_path, require_repository_mutation_paths,
-    scope_authorized_mutation_paths,
+    RepositoryAccessState, require_repository_mutation_paths, scope_authorized_mutation_paths,
 };
-use crate::git::commands::{GitState, require_cli};
+use crate::git::commands::GitState;
 use crate::index::{IndexKey, IndexState};
 use crate::terminal::{AgentTerminalSpawn, TerminalManager, quote_agent_shell_command};
 
 const DEFAULT_SCHEDULE_CRON: &str = "0 9 * * 1-5";
-
-#[derive(Debug, PartialEq, Eq)]
-enum FileCasOutcome {
-    Applied,
-    Stale(String),
-}
 
 #[derive(Debug)]
 struct RoutineOwnerInput {
@@ -190,32 +181,19 @@ pub async fn routines_create(
         Ok(definition) => definition,
         Err(message) => return Ok(RoutineMutationResult::Blocked { message }),
     };
-    let repository = mutation_repository(&git_state, &owner).await?;
-    let lock = git_state.get_lock(&repository).await;
-    let _guard = lock.lock().await;
-    authorize_mutation(&app, &git_state, &access_state, &repository).await?;
-
-    let write_owner = owner.clone();
-    let write_definition = definition.clone();
-    let filename = tauri::async_runtime::spawn_blocking(move || {
-        create_definition_file(&write_owner, &write_definition)
-    })
-    .await
-    .map_err(blocking_task_error)??;
-    let snapshot = service::read_catalog(&index_state, &terminal_manager, &owner).await?;
-    let Some(row) = snapshot
-        .routines
-        .iter()
-        .find(|row| row.filename == filename)
-    else {
-        return Err(AppError::General(
-            "created routine was not discoverable after its atomic write".into(),
-        ));
-    };
-    Ok(RoutineMutationResult::Applied {
-        routine_id: row.routine_id.clone(),
-        snapshot,
-    })
+    Ok(desktop_mutation_result(
+        service::create_managed(
+            &app,
+            owner,
+            definition,
+            service::RoutineMutationPolicy::desktop(),
+            &git_state,
+            &access_state,
+            &index_state,
+            &terminal_manager,
+        )
+        .await?,
+    ))
 }
 
 #[tauri::command]
@@ -243,53 +221,21 @@ pub async fn routines_update(
         owner_kind,
     }
     .resolve()?;
-    let repository = mutation_repository(&git_state, &owner).await?;
-    let lock = git_state.get_lock(&repository).await;
-    let _guard = lock.lock().await;
-    authorize_mutation(&app, &git_state, &access_state, &repository).await?;
-
-    let current = service::discover_owner(&owner).await?;
-    let Some(row) = current
-        .routines
-        .iter()
-        .find(|row| row.routine_id == routine_id)
-    else {
-        return Ok(RoutineMutationResult::Stale {
-            current_fingerprint: None,
-        });
-    };
-    if row.fingerprint != expected_fingerprint {
-        return Ok(RoutineMutationResult::Stale {
-            current_fingerprint: Some(row.fingerprint.clone()),
-        });
-    }
-    let content = match parser::serialize_definition(&definition) {
-        Ok(content) if content.len() as u64 <= parser::MAX_ROUTINE_BYTES => content,
-        Ok(_) => {
-            return Ok(RoutineMutationResult::Blocked {
-                message: "routine definition exceeds the 1 MiB limit".into(),
-            });
-        }
-        Err(message) => return Ok(RoutineMutationResult::Blocked { message }),
-    };
-    let path = owner.routines_dir().join(&row.filename);
-    let write_fingerprint = expected_fingerprint.clone();
-    let write_content = content.into_bytes();
-    let outcome = tauri::async_runtime::spawn_blocking(move || {
-        atomic_replace_cas(&path, &write_fingerprint, &write_content)
-    })
-    .await
-    .map_err(blocking_task_error)??;
-    if let FileCasOutcome::Stale(current_fingerprint) = outcome {
-        return Ok(RoutineMutationResult::Stale {
-            current_fingerprint: Some(current_fingerprint),
-        });
-    }
-    let snapshot = service::read_catalog(&index_state, &terminal_manager, &owner).await?;
-    Ok(RoutineMutationResult::Applied {
-        routine_id,
-        snapshot,
-    })
+    Ok(desktop_mutation_result(
+        service::update_managed(
+            &app,
+            owner,
+            routine_id,
+            expected_fingerprint,
+            definition,
+            service::RoutineMutationPolicy::desktop(),
+            &git_state,
+            &access_state,
+            &index_state,
+            &terminal_manager,
+        )
+        .await?,
+    ))
 }
 
 #[tauri::command]
@@ -316,44 +262,40 @@ pub async fn routines_delete(
         owner_kind,
     }
     .resolve()?;
-    let repository = mutation_repository(&git_state, &owner).await?;
-    let lock = git_state.get_lock(&repository).await;
-    let _guard = lock.lock().await;
-    authorize_mutation(&app, &git_state, &access_state, &repository).await?;
+    Ok(desktop_mutation_result(
+        service::delete_managed(
+            &app,
+            owner,
+            routine_id,
+            expected_fingerprint,
+            &git_state,
+            &access_state,
+            &index_state,
+            &terminal_manager,
+        )
+        .await?,
+    ))
+}
 
-    let current = service::discover_owner(&owner).await?;
-    let Some(row) = current
-        .routines
-        .iter()
-        .find(|row| row.routine_id == routine_id)
-    else {
-        return Ok(RoutineMutationResult::Stale {
-            current_fingerprint: None,
-        });
-    };
-    if row.fingerprint != expected_fingerprint {
-        return Ok(RoutineMutationResult::Stale {
-            current_fingerprint: Some(row.fingerprint.clone()),
-        });
+fn desktop_mutation_result(result: service::ManagedRoutineMutationResult) -> RoutineMutationResult {
+    match result {
+        service::ManagedRoutineMutationResult::Applied {
+            routine_id,
+            snapshot,
+            ..
+        } => RoutineMutationResult::Applied {
+            routine_id,
+            snapshot,
+        },
+        service::ManagedRoutineMutationResult::Conflict {
+            current_fingerprint,
+        } => RoutineMutationResult::Stale {
+            current_fingerprint,
+        },
+        service::ManagedRoutineMutationResult::Blocked { message, .. } => {
+            RoutineMutationResult::Blocked { message }
+        }
     }
-    let path = owner.routines_dir().join(&row.filename);
-    let directory = owner.routines_dir();
-    let delete_fingerprint = expected_fingerprint.clone();
-    let outcome = tauri::async_runtime::spawn_blocking(move || {
-        delete_definition_file_cas(&directory, &path, &delete_fingerprint)
-    })
-    .await
-    .map_err(blocking_task_error)??;
-    if let FileCasOutcome::Stale(current_fingerprint) = outcome {
-        return Ok(RoutineMutationResult::Stale {
-            current_fingerprint: Some(current_fingerprint),
-        });
-    }
-    let snapshot = service::read_catalog(&index_state, &terminal_manager, &owner).await?;
-    Ok(RoutineMutationResult::Applied {
-        routine_id,
-        snapshot,
-    })
 }
 
 #[tauri::command]
@@ -630,7 +572,7 @@ async fn dispatch_routine(
         }
     };
 
-    let repository = mutation_repository(git_state, &owner).await?;
+    let repository = service::mutation_repository(git_state, &owner).await?;
     let lock = git_state.get_lock(&repository).await;
     let _guard = lock.lock().await;
     let pool = index_state.get_or_create(&owner.index_key).await?;
@@ -660,7 +602,8 @@ async fn dispatch_routine(
         });
     }
 
-    if let Err(error) = authorize_mutation(app, git_state, access_state, &repository).await {
+    if let Err(error) = service::authorize_mutation(app, git_state, access_state, &repository).await
+    {
         return Ok(dispatch_blocked(
             routine_id,
             RoutineDispatchBlockedCode::RepositoryAccessDenied,
@@ -985,33 +928,6 @@ fn new_runtime_id() -> String {
     ulid::Ulid::new().to_string().to_ascii_lowercase()
 }
 
-pub(crate) async fn mutation_repository(
-    git_state: &GitState,
-    owner: &ResolvedRoutineOwner,
-) -> Result<PathBuf, AppError> {
-    let cli = require_cli(git_state)?;
-    let (_, repository) =
-        git::ops::resolve_target_repo(&cli, &owner.project_path, &owner.space_path).await?;
-    Ok(repository)
-}
-
-async fn authorize_mutation(
-    app: &AppHandle,
-    git_state: &GitState,
-    access_state: &RepositoryAccessState,
-    repository: &Path,
-) -> Result<(), AppError> {
-    let cli = require_cli(git_state)?;
-    access_state
-        .require_mutation(&cli, repository, &access_store_path(app)?)
-        .await?;
-    Ok(())
-}
-
-fn blocking_task_error(error: impl std::fmt::Display) -> AppError {
-    AppError::General(format!("routine filesystem task failed: {error}"))
-}
-
 fn create_definition(
     title: &str,
     description: Option<&str>,
@@ -1066,200 +982,11 @@ fn create_definition(
     })
 }
 
-fn create_definition_file(
-    owner: &ResolvedRoutineOwner,
-    definition: &RoutineDefinition,
-) -> Result<String, AppError> {
-    let directory = owner.routines_dir();
-    ensure_routines_directory(&directory)?;
-    let slug = slugify(definition.title.as_deref().unwrap_or("routine"));
-    let content = parser::serialize_definition(definition).map_err(AppError::General)?;
-    if content.len() as u64 > parser::MAX_ROUTINE_BYTES {
-        return Err(AppError::General(
-            "routine definition exceeds the 1 MiB limit".into(),
-        ));
-    }
-    for _ in 0..8 {
-        let filename = format!(
-            "{slug}-{}.md",
-            ulid::Ulid::new().to_string().to_ascii_lowercase()
-        );
-        let path = directory.join(&filename);
-        match write_new_file(&path, content.as_bytes()) {
-            Ok(()) => {
-                sync_directory(&directory)?;
-                return Ok(filename);
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(AppError::Io(error)),
-        }
-    }
-    Err(AppError::FileAlreadyExists(
-        "failed to allocate a unique routine filename".into(),
-    ))
-}
-
-fn ensure_routines_directory(directory: &Path) -> Result<(), AppError> {
-    match fs::symlink_metadata(directory) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-            Err(AppError::PathNotAccessible(directory.display().to_string()))
-        }
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            fs::create_dir(directory)?;
-            let parent = directory
-                .parent()
-                .ok_or_else(|| AppError::PathNotAccessible(directory.display().to_string()))?;
-            sync_directory(parent)
-        }
-        Err(error) => Err(AppError::Io(error)),
-    }
-}
-
-fn write_new_file(path: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
-    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
-}
-
-fn atomic_replace_cas(
-    path: &Path,
-    expected_fingerprint: &str,
-    bytes: &[u8],
-) -> Result<FileCasOutcome, AppError> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| AppError::PathNotAccessible(path.display().to_string()))?;
-    ensure_routines_directory(parent)?;
-    let current_fingerprint = definition_file_fingerprint(path)?;
-    if current_fingerprint != expected_fingerprint {
-        return Ok(FileCasOutcome::Stale(current_fingerprint));
-    }
-    let temp = parent.join(format!(".routine-{}.tmp", ulid::Ulid::new()));
-    write_new_file(&temp, bytes)?;
-    let current_fingerprint = definition_file_fingerprint(path)?;
-    if current_fingerprint != expected_fingerprint {
-        let _ = fs::remove_file(&temp);
-        return Ok(FileCasOutcome::Stale(current_fingerprint));
-    }
-    if let Err(error) = fs::rename(&temp, path) {
-        let _ = fs::remove_file(&temp);
-        return Err(AppError::Io(error));
-    }
-    sync_directory(parent)?;
-    Ok(FileCasOutcome::Applied)
-}
-
-fn delete_definition_file_cas(
-    directory: &Path,
-    path: &Path,
-    expected_fingerprint: &str,
-) -> Result<FileCasOutcome, AppError> {
-    ensure_routines_directory(directory)?;
-    let current_fingerprint = definition_file_fingerprint(path)?;
-    if current_fingerprint != expected_fingerprint {
-        return Ok(FileCasOutcome::Stale(current_fingerprint));
-    }
-    fs::remove_file(path)?;
-    sync_directory(directory)?;
-    Ok(FileCasOutcome::Applied)
-}
-
-fn ensure_regular_definition_file(path: &Path) -> Result<(), AppError> {
-    let metadata = fs::symlink_metadata(path)?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(AppError::PathNotAccessible(path.display().to_string()));
-    }
-    Ok(())
-}
-
-fn definition_file_fingerprint(path: &Path) -> Result<String, AppError> {
-    ensure_regular_definition_file(path)?;
-    let bytes = fs::read(path)?;
-    if bytes.len() as u64 > parser::MAX_ROUTINE_BYTES {
-        return Err(AppError::PathNotAccessible(format!(
-            "routine definition exceeds the 1 MiB limit: {}",
-            path.display()
-        )));
-    }
-    Ok(parser::fingerprint(&bytes))
-}
-
-fn sync_directory(path: &Path) -> Result<(), AppError> {
-    File::open(path)?.sync_all()?;
-    Ok(())
-}
-
-fn slugify(title: &str) -> String {
-    let mut slug = String::new();
-    let mut separator = false;
-    for character in title.chars() {
-        if character.is_ascii_alphanumeric() {
-            slug.push(character.to_ascii_lowercase());
-            separator = false;
-        } else if let Some(transliterated) = transliterate_cyrillic(character) {
-            slug.push_str(transliterated);
-            separator = false;
-        } else if !slug.is_empty() && !separator {
-            slug.push('-');
-            separator = true;
-        }
-        if slug.len() >= 48 {
-            break;
-        }
-    }
-    slug.truncate(48);
-    let slug = slug.trim_matches('-');
-    if slug.is_empty() {
-        "routine".into()
-    } else {
-        slug.into()
-    }
-}
-
-fn transliterate_cyrillic(character: char) -> Option<&'static str> {
-    Some(match character.to_lowercase().next()? {
-        'а' => "a",
-        'б' => "b",
-        'в' => "v",
-        'г' | 'ґ' => "g",
-        'д' => "d",
-        'е' | 'э' => "e",
-        'ё' => "yo",
-        'ж' => "zh",
-        'з' => "z",
-        'и' | 'і' => "i",
-        'й' => "y",
-        'к' => "k",
-        'л' => "l",
-        'м' => "m",
-        'н' => "n",
-        'о' => "o",
-        'п' => "p",
-        'р' => "r",
-        'с' => "s",
-        'т' => "t",
-        'у' | 'ў' => "u",
-        'ф' => "f",
-        'х' => "kh",
-        'ц' => "ts",
-        'ч' => "ch",
-        'ш' => "sh",
-        'щ' => "shch",
-        'ъ' | 'ь' => "",
-        'ы' => "y",
-        'ю' => "yu",
-        'я' => "ya",
-        'є' => "ye",
-        'ї' => "yi",
-        _ => return None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use super::super::model::RoutineOwnerDescriptor;
     use super::*;
+    use std::fs;
+
     use crate::space::config::write_space_config;
     use crate::space::types::{SpaceConfig, SpaceRef};
 
@@ -1316,83 +1043,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn slug_transliterates_cyrillic_and_keeps_a_portable_fallback() {
-        assert_eq!(slugify("  Привет, мир!  "), "privet-mir");
-        assert_eq!(slugify("Ёжик и щука"), "yozhik-i-shchuka");
-        assert_eq!(slugify("日本語"), "routine");
-        assert_eq!(slugify("Quarterly Review!"), "quarterly-review");
-    }
-
-    #[test]
-    fn definition_file_create_replace_delete_is_owner_local_and_keeps_identity() {
-        let temp = tempfile::tempdir().unwrap();
-        let owner = ResolvedRoutineOwner {
-            descriptor: RoutineOwnerDescriptor {
-                kind: RoutineOwnerKind::Project,
-                space_id: "root-id".into(),
-                owner_path: ".".into(),
-            },
-            project_path: temp.path().into(),
-            space_path: temp.path().into(),
-            owner_root: temp.path().into(),
-            index_key: IndexKey::Root(temp.path().into()),
-        };
-        let mut definition = create_definition(
-            "Initial title",
-            None,
-            RoutineTriggerType::Manual,
-            None,
-            RoutineOwnerKind::Project,
-        )
-        .unwrap();
-        let filename = create_definition_file(&owner, &definition).unwrap();
-        assert!(!owner.routines_dir().join("schema.yaml").exists());
-        let first = parser::discover_owner(&owner);
-        let first_row = first
-            .routines
-            .iter()
-            .find(|row| row.filename == filename)
-            .unwrap();
-        let routine_id = first_row.routine_id.clone();
-        let fingerprint = first_row.fingerprint.clone();
-
-        definition.title = Some("Changed title".into());
-        let content = parser::serialize_definition(&definition).unwrap();
-        assert_eq!(
-            atomic_replace_cas(
-                &owner.routines_dir().join(&filename),
-                &fingerprint,
-                content.as_bytes(),
-            )
-            .unwrap(),
-            FileCasOutcome::Applied
-        );
-        let second = parser::discover_owner(&owner);
-        let second_row = second
-            .routines
-            .iter()
-            .find(|row| row.filename == filename)
-            .unwrap();
-        assert_eq!(second_row.routine_id, routine_id);
-        assert_ne!(second_row.fingerprint, fingerprint);
-        assert_eq!(second_row.title, "Changed title");
-
-        assert_eq!(
-            atomic_replace_cas(
-                &owner.routines_dir().join(&filename),
-                &fingerprint,
-                b"must not replace the current definition",
-            )
-            .unwrap(),
-            FileCasOutcome::Stale(second_row.fingerprint.clone())
-        );
-
-        fs::remove_file(owner.routines_dir().join(&filename)).unwrap();
-        sync_directory(&owner.routines_dir()).unwrap();
-        assert!(parser::discover_owner(&owner).routines.is_empty());
-    }
-
     #[tokio::test]
     async fn event_property_preflight_carries_the_exact_mutation_plan() {
         let temp = tempfile::tempdir().unwrap();
@@ -1436,7 +1086,12 @@ mod tests {
             },
             body: String::new(),
         };
-        create_definition_file(&owner, &definition).unwrap();
+        fs::create_dir_all(owner.routines_dir()).unwrap();
+        fs::write(
+            owner.routines_dir().join("review-item.md"),
+            parser::serialize_definition(&definition).unwrap(),
+        )
+        .unwrap();
         let row = parser::discover_owner(&owner).routines.remove(0);
         let snapshot = super::super::events::IndexedEntrySnapshot {
             repository_path: project.to_string_lossy().into_owned(),

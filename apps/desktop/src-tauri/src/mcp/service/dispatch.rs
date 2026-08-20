@@ -77,6 +77,9 @@ async fn call_tool_inner(
             "get_knowledge_status" => knowledge::get_knowledge_status(&app, decode(args)?).await,
             "list_routines" => routines::list_routines(&app, decode(args)?).await,
             "get_routine" => routines::get_routine(&app, decode(args)?).await,
+            "create_routine" => routines::create_routine(&app, decode(args)?).await,
+            "update_routine" => routines::update_routine(&app, decode(args)?).await,
+            "delete_routine" => routines::delete_routine(&app, decode(args)?).await,
             "list_collections" => collections::list_collections(&app, decode(args)?).await,
             "get_collection_schema" => {
                 collections::get_collection_schema(&app, decode(args)?).await

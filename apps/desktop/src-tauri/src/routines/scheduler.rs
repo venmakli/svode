@@ -206,7 +206,7 @@ async fn tick_owner(
             continue;
         }
 
-        let repository = commands::mutation_repository(&app.state::<GitState>(), owner).await?;
+        let repository = service::mutation_repository(&app.state::<GitState>(), owner).await?;
         let git_state = app.state::<GitState>();
         let cli = require_cli(&git_state)?;
         let access_state = app.state::<RepositoryAccessState>();
@@ -366,7 +366,7 @@ async fn dispatch_next_event(
         return Ok(());
     }
 
-    let repository = commands::mutation_repository(&app.state::<GitState>(), owner).await?;
+    let repository = service::mutation_repository(&app.state::<GitState>(), owner).await?;
     let git_state = app.state::<GitState>();
     let cli = require_cli(&git_state)?;
     let access_state = app.state::<RepositoryAccessState>();

@@ -1,7 +1,8 @@
 use super::*;
 use crate::AppError;
 use crate::routines::{
-    ResolvedRoutineOwner, RoutineCatalogSnapshot, RoutineOwnerInputKind, RoutineRow,
+    ResolvedRoutineOwner, RoutineCatalogSnapshot, RoutineDefinition, RoutineOwnerInputKind,
+    RoutineRow,
 };
 use crate::terminal::TerminalManager;
 
@@ -30,10 +31,122 @@ pub(super) struct GetRoutineArgs {
     routine_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct CreateRoutineArgs {
+    space_id: String,
+    #[serde(default)]
+    collection_path: Option<String>,
+    #[serde(deserialize_with = "deserialize_routine_definition")]
+    definition: RoutineDefinition,
+    #[serde(default)]
+    confirm_automatic_execution: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct UpdateRoutineArgs {
+    space_id: String,
+    #[serde(default)]
+    collection_path: Option<String>,
+    routine_id: String,
+    expected_fingerprint: String,
+    #[serde(deserialize_with = "deserialize_routine_definition")]
+    definition: RoutineDefinition,
+    #[serde(default)]
+    confirm_automatic_execution: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct DeleteRoutineArgs {
+    space_id: String,
+    #[serde(default)]
+    collection_path: Option<String>,
+    routine_id: String,
+    expected_fingerprint: String,
+}
+
 #[derive(Debug)]
 struct AuthorityProjection {
     enabled: Option<bool>,
     diagnostics: Vec<Value>,
+}
+
+fn deserialize_routine_definition<'de, D>(deserializer: D) -> Result<RoutineDefinition, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    validate_definition_shape(&value).map_err(serde::de::Error::custom)?;
+    serde_json::from_value(value).map_err(serde::de::Error::custom)
+}
+
+fn validate_definition_shape(value: &Value) -> Result<(), String> {
+    let Some(definition) = value.as_object() else {
+        return Ok(());
+    };
+    reject_unknown_keys(
+        definition,
+        &[
+            "title",
+            "description",
+            "enabled",
+            "trigger",
+            "action",
+            "body",
+        ],
+        "definition",
+    )?;
+    for required in ["trigger", "action", "body"] {
+        if !definition.contains_key(required) {
+            return Err(format!("missing field definition.{required}"));
+        }
+    }
+    if let Some(trigger) = definition.get("trigger").and_then(Value::as_object) {
+        match trigger.get("type").and_then(Value::as_str) {
+            Some("manual") => reject_unknown_keys(trigger, &["type"], "definition.trigger")?,
+            Some("schedule") => reject_unknown_keys(
+                trigger,
+                &["type", "cron", "timezone", "missedRuns"],
+                "definition.trigger",
+            )?,
+            Some("event") => {
+                reject_unknown_keys(trigger, &["type", "event", "match"], "definition.trigger")?;
+                if let Some(matcher) = trigger.get("match").and_then(Value::as_object) {
+                    reject_unknown_keys(
+                        matcher,
+                        &["field", "from", "to"],
+                        "definition.trigger.match",
+                    )?;
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(action) = definition.get("action").and_then(Value::as_object) {
+        match action.get("type").and_then(Value::as_str) {
+            Some("run_agent") => {
+                reject_unknown_keys(action, &["type", "executor"], "definition.action")?
+            }
+            Some("update_properties") => {
+                reject_unknown_keys(action, &["type", "target", "set"], "definition.action")?
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn reject_unknown_keys(
+    object: &serde_json::Map<String, Value>,
+    allowed: &[&str],
+    field: &str,
+) -> Result<(), String> {
+    if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
+        return Err(format!("unknown field {field}.{key}"));
+    }
+    Ok(())
 }
 
 pub(super) async fn list_routines(
@@ -78,6 +191,214 @@ pub(super) async fn get_routine(
         format!("Read routine {} for the explicit owner.", row.routine_id),
         detail_payload(&snapshot, row, authority),
     ))
+}
+
+pub(super) async fn create_routine(
+    app: &AppHandle,
+    args: CreateRoutineArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let owner = resolve_routine_owner(app, &args.space_id, args.collection_path.as_deref()).await?;
+    let index_state = app.state::<IndexState>();
+    let terminal_manager = app.state::<TerminalManager>();
+    let git_state = app.state::<GitState>();
+    let access_state = app.state::<crate::git::access::RepositoryAccessState>();
+    let result = crate::routines::service::create_managed(
+        app,
+        owner.clone(),
+        args.definition,
+        crate::routines::service::RoutineMutationPolicy::external_mcp(
+            args.confirm_automatic_execution.unwrap_or(false),
+        ),
+        &git_state,
+        &access_state,
+        &index_state,
+        &terminal_manager,
+    )
+    .await?;
+    mutation_result(app, &owner, result, MutationKind::Create).await
+}
+
+pub(super) async fn update_routine(
+    app: &AppHandle,
+    args: UpdateRoutineArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    validate_mutation_identity(&args.routine_id, &args.expected_fingerprint)?;
+    let owner = resolve_routine_owner(app, &args.space_id, args.collection_path.as_deref()).await?;
+    let index_state = app.state::<IndexState>();
+    let terminal_manager = app.state::<TerminalManager>();
+    let git_state = app.state::<GitState>();
+    let access_state = app.state::<crate::git::access::RepositoryAccessState>();
+    let result = crate::routines::service::update_managed(
+        app,
+        owner.clone(),
+        args.routine_id,
+        args.expected_fingerprint,
+        args.definition,
+        crate::routines::service::RoutineMutationPolicy::external_mcp(
+            args.confirm_automatic_execution.unwrap_or(false),
+        ),
+        &git_state,
+        &access_state,
+        &index_state,
+        &terminal_manager,
+    )
+    .await?;
+    mutation_result(app, &owner, result, MutationKind::Update).await
+}
+
+pub(super) async fn delete_routine(
+    app: &AppHandle,
+    args: DeleteRoutineArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    validate_mutation_identity(&args.routine_id, &args.expected_fingerprint)?;
+    let owner = resolve_routine_owner(app, &args.space_id, args.collection_path.as_deref()).await?;
+    let index_state = app.state::<IndexState>();
+    let terminal_manager = app.state::<TerminalManager>();
+    let git_state = app.state::<GitState>();
+    let access_state = app.state::<crate::git::access::RepositoryAccessState>();
+    let result = crate::routines::service::delete_managed(
+        app,
+        owner.clone(),
+        args.routine_id,
+        args.expected_fingerprint,
+        &git_state,
+        &access_state,
+        &index_state,
+        &terminal_manager,
+    )
+    .await?;
+    mutation_result(app, &owner, result, MutationKind::Delete).await
+}
+
+#[derive(Debug, Clone, Copy)]
+enum MutationKind {
+    Create,
+    Update,
+    Delete,
+}
+
+impl MutationKind {
+    fn past_tense(self) -> &'static str {
+        match self {
+            Self::Create => "Created",
+            Self::Update => "Updated",
+            Self::Delete => "Deleted",
+        }
+    }
+}
+
+async fn mutation_result(
+    app: &AppHandle,
+    owner: &ResolvedRoutineOwner,
+    result: crate::routines::service::ManagedRoutineMutationResult,
+    kind: MutationKind,
+) -> Result<ToolCallResult, McpBusinessError> {
+    match result {
+        crate::routines::service::ManagedRoutineMutationResult::Applied {
+            routine_id,
+            snapshot,
+            changed_paths,
+            warnings,
+        } => {
+            let authority = authority_projection(
+                crate::routines::service::read_automatic_authority(
+                    &app.state::<IndexState>(),
+                    owner,
+                )
+                .await,
+            );
+            let structured = match kind {
+                MutationKind::Delete => json!({
+                    "owner": snapshot.owner,
+                    "routineId": routine_id,
+                    "path": changed_paths.first(),
+                    "catalogFingerprint": snapshot.catalog_fingerprint,
+                    "changedPaths": changed_paths,
+                    "warnings": warnings,
+                    "automaticAuthorityEnabled": authority.enabled,
+                    "authorityDiagnostics": authority.diagnostics,
+                }),
+                MutationKind::Create | MutationKind::Update => {
+                    let row = find_routine(&snapshot, &routine_id)?;
+                    json!({
+                        "owner": snapshot.owner,
+                        "routineId": routine_id,
+                        "path": row.path,
+                        "fingerprint": row.fingerprint,
+                        "catalogFingerprint": snapshot.catalog_fingerprint,
+                        "changedPaths": changed_paths,
+                        "detail": detail_payload(&snapshot, row, authority),
+                        "warnings": warnings,
+                    })
+                }
+            };
+            Ok(ToolCallResult::ok(
+                format!(
+                    "{} routine {routine_id} without autocommit.",
+                    kind.past_tense()
+                ),
+                structured,
+            ))
+        }
+        crate::routines::service::ManagedRoutineMutationResult::Conflict {
+            current_fingerprint,
+        } => Ok(mutation_error(
+            if current_fingerprint.is_some() {
+                "ROUTINE_FINGERPRINT_CONFLICT"
+            } else {
+                "ROUTINE_NOT_FOUND"
+            },
+            if current_fingerprint.is_some() {
+                "routine definition changed after it was read"
+            } else {
+                "routine was not found for the explicit owner"
+            },
+            json!({ "currentFingerprint": current_fingerprint }),
+        )),
+        crate::routines::service::ManagedRoutineMutationResult::Blocked {
+            code,
+            message,
+            diagnostics,
+        } => Ok(mutation_error(
+            code.as_str(),
+            &message,
+            json!({ "diagnostics": diagnostics }),
+        )),
+    }
+}
+
+fn mutation_error(code: &str, message: &str, evidence: Value) -> ToolCallResult {
+    let mut error = serde_json::Map::from_iter([
+        ("code".into(), Value::String(code.into())),
+        ("message".into(), Value::String(message.into())),
+    ]);
+    if let Value::Object(evidence) = evidence {
+        error.extend(evidence);
+    }
+    ToolCallResult {
+        content: vec![crate::mcp::protocol::ContentBlock::text(message)],
+        structured_content: Some(json!({ "error": error })),
+        is_error: true,
+    }
+}
+
+fn validate_mutation_identity(
+    routine_id: &str,
+    expected_fingerprint: &str,
+) -> Result<(), McpBusinessError> {
+    if routine_id.is_empty() || routine_id.trim() != routine_id {
+        return Err(McpBusinessError::new(
+            "INVALID_ROUTINE_ID",
+            "routineId must be a non-empty exact id from list_routines",
+        ));
+    }
+    if expected_fingerprint.is_empty() || expected_fingerprint.trim() != expected_fingerprint {
+        return Err(McpBusinessError::new(
+            "INVALID_ROUTINE_FINGERPRINT",
+            "expectedFingerprint must be a non-empty exact fingerprint from a Routine read",
+        ));
+    }
+    Ok(())
 }
 
 async fn resolve_routine_owner(
@@ -325,6 +646,110 @@ mod tests {
                 "unexpected": true
             }))
             .is_err()
+        );
+
+        let definition = json!({
+            "title": "Agent task",
+            "trigger": { "type": "manual" },
+            "action": {
+                "type": "run_agent",
+                "executor": "agent:01arz3ndektsv4rrffq69g5fav"
+            },
+            "body": "Do the task."
+        });
+        assert!(
+            decode::<CreateRoutineArgs>(json!({
+                "spaceId": "root",
+                "definition": definition.clone(),
+            }))
+            .is_ok()
+        );
+        assert!(
+            decode::<CreateRoutineArgs>(json!({
+                "spaceId": "root",
+                "definition": {
+                    "trigger": { "type": "manual", "unexpected": true },
+                    "action": {
+                        "type": "run_agent",
+                        "executor": "agent:01arz3ndektsv4rrffq69g5fav"
+                    },
+                    "body": ""
+                }
+            }))
+            .is_err()
+        );
+        assert!(
+            decode::<CreateRoutineArgs>(json!({
+                "spaceId": "root",
+                "definition": {
+                    "trigger": { "type": "manual" },
+                    "action": {
+                        "type": "run_agent",
+                        "executor": "agent:01arz3ndektsv4rrffq69g5fav"
+                    }
+                }
+            }))
+            .is_err()
+        );
+        assert!(
+            decode::<UpdateRoutineArgs>(json!({
+                "spaceId": "root",
+                "routineId": "routine:one",
+                "definition": definition,
+            }))
+            .is_err()
+        );
+        assert!(
+            decode::<DeleteRoutineArgs>(json!({
+                "spaceId": "root",
+                "routineId": "routine:one",
+                "expectedFingerprint": "fingerprint",
+                "unexpected": true,
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn mutation_errors_keep_stable_code_and_recovery_evidence() {
+        let conflict = mutation_error(
+            "ROUTINE_FINGERPRINT_CONFLICT",
+            "changed",
+            json!({ "currentFingerprint": "current" }),
+        );
+        assert!(conflict.is_error);
+        assert_eq!(
+            conflict.structured_content.as_ref().unwrap()["error"]["code"],
+            "ROUTINE_FINGERPRINT_CONFLICT"
+        );
+        assert_eq!(
+            conflict.structured_content.as_ref().unwrap()["error"]["currentFingerprint"],
+            "current"
+        );
+
+        let blocked = mutation_error(
+            "ROUTINE_AUTOMATIC_CONFIRMATION_REQUIRED",
+            "confirm",
+            json!({ "diagnostics": [] }),
+        );
+        assert_eq!(
+            blocked.structured_content.as_ref().unwrap()["error"]["code"],
+            "ROUTINE_AUTOMATIC_CONFIRMATION_REQUIRED"
+        );
+        assert_eq!(blocked.content[0].text, "confirm");
+
+        assert!(validate_mutation_identity("routine:one", "fingerprint").is_ok());
+        assert_eq!(
+            validate_mutation_identity(" ", "fingerprint")
+                .unwrap_err()
+                .code,
+            "INVALID_ROUTINE_ID"
+        );
+        assert_eq!(
+            validate_mutation_identity("routine:one", "")
+                .unwrap_err()
+                .code,
+            "INVALID_ROUTINE_FINGERPRINT"
         );
     }
 
