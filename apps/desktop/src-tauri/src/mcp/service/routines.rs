@@ -1,0 +1,434 @@
+use super::*;
+use crate::AppError;
+use crate::routines::{
+    ResolvedRoutineOwner, RoutineCatalogSnapshot, RoutineOwnerInputKind, RoutineRow,
+};
+use crate::terminal::TerminalManager;
+
+const DEFAULT_ROUTINE_LIMIT: i64 = 50;
+const MAX_ROUTINE_LIMIT: i64 = 200;
+const AUTHORITY_UNAVAILABLE_CODE: &str = "routine_authority_unavailable";
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct ListRoutinesArgs {
+    space_id: String,
+    #[serde(default)]
+    collection_path: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct GetRoutineArgs {
+    space_id: String,
+    #[serde(default)]
+    collection_path: Option<String>,
+    routine_id: String,
+}
+
+#[derive(Debug)]
+struct AuthorityProjection {
+    enabled: Option<bool>,
+    diagnostics: Vec<Value>,
+}
+
+pub(super) async fn list_routines(
+    app: &AppHandle,
+    args: ListRoutinesArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let owner = resolve_routine_owner(app, &args.space_id, args.collection_path.as_deref()).await?;
+    let index_state = app.state::<IndexState>();
+    let terminal_manager = app.state::<TerminalManager>();
+    let snapshot =
+        crate::routines::service::read_catalog(&index_state, &terminal_manager, &owner).await?;
+    let authority = authority_projection(
+        crate::routines::service::read_automatic_authority(&index_state, &owner).await,
+    );
+    let structured = list_payload(&snapshot, authority, args.limit, args.offset);
+    let returned = structured["routines"]
+        .as_array()
+        .map_or(0, std::vec::Vec::len);
+    Ok(ToolCallResult::ok(
+        format!(
+            "Found {returned} of {} routines for the explicit owner.",
+            snapshot.routines.len()
+        ),
+        structured,
+    ))
+}
+
+pub(super) async fn get_routine(
+    app: &AppHandle,
+    args: GetRoutineArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let owner = resolve_routine_owner(app, &args.space_id, args.collection_path.as_deref()).await?;
+    let index_state = app.state::<IndexState>();
+    let terminal_manager = app.state::<TerminalManager>();
+    let snapshot =
+        crate::routines::service::read_catalog(&index_state, &terminal_manager, &owner).await?;
+    let row = find_routine(&snapshot, &args.routine_id)?;
+    let authority = authority_projection(
+        crate::routines::service::read_automatic_authority(&index_state, &owner).await,
+    );
+    Ok(ToolCallResult::ok(
+        format!("Read routine {} for the explicit owner.", row.routine_id),
+        detail_payload(&snapshot, row, authority),
+    ))
+}
+
+async fn resolve_routine_owner(
+    app: &AppHandle,
+    space_id: &str,
+    collection_path: Option<&str>,
+) -> Result<ResolvedRoutineOwner, McpBusinessError> {
+    if space_id.is_empty() || space_id.trim() != space_id {
+        return Err(McpBusinessError::new(
+            "INVALID_SPACE_ID",
+            "spaceId must be a non-empty explicit id from list_spaces",
+        ));
+    }
+    let collection_path = collection_path
+        .map(validate_routine_collection_path)
+        .transpose()?;
+    let (context, space) = resolve_space(app, Some(space_id.to_string())).await?;
+    let (owner_kind, owner_path) = match collection_path {
+        Some(path) => (RoutineOwnerInputKind::CollectionDirectory, path),
+        None => (RoutineOwnerInputKind::RegisteredSpace, ".".to_string()),
+    };
+    crate::routines::service::resolve_owner(
+        Path::new(&context.project_path),
+        Path::new(&space),
+        space_id,
+        &owner_path,
+        owner_kind,
+    )
+    .map_err(Into::into)
+}
+
+fn validate_routine_collection_path(path: &str) -> Result<String, McpBusinessError> {
+    let path = validate_public_rel_path(path, false)?;
+    if path
+        .split('/')
+        .any(|segment| segment.eq_ignore_ascii_case(".routines"))
+    {
+        return Err(McpBusinessError::new(
+            "PATH_FORBIDDEN",
+            ".routines is not a public Routine owner address",
+        ));
+    }
+    Ok(path)
+}
+
+fn authority_projection(result: Result<bool, AppError>) -> AuthorityProjection {
+    match result {
+        Ok(enabled) => AuthorityProjection {
+            enabled: Some(enabled),
+            diagnostics: Vec::new(),
+        },
+        Err(error) => {
+            tracing::warn!("routine automatic authority read failed for MCP: {error}");
+            AuthorityProjection {
+                enabled: None,
+                diagnostics: vec![json!({
+                    "code": AUTHORITY_UNAVAILABLE_CODE,
+                    "message": "Routine definitions were read, but exact-owner automatic authority is unavailable on this device."
+                })],
+            }
+        }
+    }
+}
+
+fn list_payload(
+    snapshot: &RoutineCatalogSnapshot,
+    authority: AuthorityProjection,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Value {
+    let (limit, offset) = bounded_page(limit, offset);
+    let total = snapshot.routines.len();
+    let routines = snapshot
+        .routines
+        .iter()
+        .skip(offset)
+        .take(limit)
+        .map(summary_payload)
+        .collect::<Vec<_>>();
+    let has_more = offset.saturating_add(routines.len()) < total;
+    json!({
+        "owner": snapshot.owner,
+        "catalogFingerprint": snapshot.catalog_fingerprint,
+        "refreshedAt": snapshot.refreshed_at,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "hasMore": has_more,
+        "automaticAuthorityEnabled": authority.enabled,
+        "authorityDiagnostics": authority.diagnostics,
+        "diagnostics": snapshot.diagnostics,
+        "routines": routines,
+    })
+}
+
+fn summary_payload(row: &RoutineRow) -> Value {
+    json!({
+        "routineId": row.routine_id,
+        "filename": row.filename,
+        "path": row.path,
+        "title": row.title,
+        "description": row.description,
+        "triggerType": row.trigger_type,
+        "triggerSummary": row.trigger_summary,
+        "actionType": row.action_type,
+        "actionSummary": row.action_summary,
+        "executor": row.executor,
+        "enabled": row.enabled,
+        "valid": row.definition.is_some() && row.diagnostics.is_empty(),
+        "fingerprint": row.fingerprint,
+        "diagnostics": row.diagnostics,
+        "lastRunAt": row.last_run_at,
+        "lastRunOrigin": row.last_run_origin,
+        "nextRunAt": row.next_run_at,
+    })
+}
+
+fn detail_payload(
+    snapshot: &RoutineCatalogSnapshot,
+    row: &RoutineRow,
+    authority: AuthorityProjection,
+) -> Value {
+    json!({
+        "owner": snapshot.owner,
+        "catalogFingerprint": snapshot.catalog_fingerprint,
+        "refreshedAt": snapshot.refreshed_at,
+        "routineId": row.routine_id,
+        "filename": row.filename,
+        "path": row.path,
+        "title": row.title,
+        "description": row.description,
+        "definition": row.definition,
+        "fingerprint": row.fingerprint,
+        "valid": row.definition.is_some() && row.diagnostics.is_empty(),
+        "diagnostics": row.diagnostics,
+        "automaticAuthorityEnabled": authority.enabled,
+        "authorityDiagnostics": authority.diagnostics,
+        "lastRunAt": row.last_run_at,
+        "lastRunOrigin": row.last_run_origin,
+        "nextRunAt": row.next_run_at,
+    })
+}
+
+fn find_routine<'a>(
+    snapshot: &'a RoutineCatalogSnapshot,
+    routine_id: &str,
+) -> Result<&'a RoutineRow, McpBusinessError> {
+    snapshot
+        .routines
+        .iter()
+        .find(|row| row.routine_id == routine_id)
+        .ok_or_else(|| {
+            McpBusinessError::new(
+                "ROUTINE_NOT_FOUND",
+                format!("routine {routine_id} was not found for the explicit owner"),
+            )
+        })
+}
+
+fn bounded_page(limit: Option<i64>, offset: Option<i64>) -> (usize, usize) {
+    (
+        limit
+            .unwrap_or(DEFAULT_ROUTINE_LIMIT)
+            .clamp(1, MAX_ROUTINE_LIMIT) as usize,
+        offset.unwrap_or(0).max(0) as usize,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::routines::{
+        RoutineAction, RoutineDefinition, RoutineDiagnostic, RoutineOwnerDescriptor,
+        RoutineOwnerKind, RoutineRunOrigin, RoutineTrigger, RoutineTriggerType,
+    };
+
+    fn row(id: &str, body: Option<&str>) -> RoutineRow {
+        let definition = body.map(|body| RoutineDefinition {
+            title: Some(id.into()),
+            description: Some("description".into()),
+            enabled: None,
+            trigger: RoutineTrigger::Manual,
+            action: RoutineAction::RunAgent {
+                executor: "agent:01arz3ndektsv4rrffq69g5fav".into(),
+            },
+            body: body.into(),
+        });
+        RoutineRow {
+            routine_id: id.into(),
+            filename: format!("{id}.md"),
+            path: format!(".routines/{id}.md"),
+            title: id.into(),
+            description: Some("description".into()),
+            enabled: None,
+            trigger_type: definition.as_ref().map(|_| RoutineTriggerType::Manual),
+            trigger_summary: definition.as_ref().map(|_| "manual".into()),
+            action_type: definition
+                .as_ref()
+                .map(|definition| definition.action.kind()),
+            action_summary: definition.as_ref().map(|_| "run_agent".into()),
+            executor: definition
+                .as_ref()
+                .and_then(|definition| definition.action.executor().map(ToOwned::to_owned)),
+            last_run_at: Some("2026-08-20T00:00:00Z".into()),
+            last_run_origin: Some(RoutineRunOrigin::Local),
+            next_run_at: None,
+            last_run: None,
+            fingerprint: format!("fingerprint-{id}"),
+            diagnostics: definition
+                .is_none()
+                .then(|| RoutineDiagnostic {
+                    code: "routine_frontmatter_invalid".into(),
+                    message: "invalid frontmatter".into(),
+                    field: None,
+                    path: Some(format!(".routines/{id}.md")),
+                })
+                .into_iter()
+                .collect(),
+            definition,
+        }
+    }
+
+    fn snapshot(rows: Vec<RoutineRow>) -> RoutineCatalogSnapshot {
+        RoutineCatalogSnapshot {
+            owner: RoutineOwnerDescriptor {
+                kind: RoutineOwnerKind::Project,
+                space_id: "root".into(),
+                owner_path: ".".into(),
+            },
+            routines: rows,
+            diagnostics: Vec::new(),
+            catalog_fingerprint: "catalog".into(),
+            refreshed_at: "2026-08-20T00:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn explicit_space_id_is_required_and_unknown_fields_are_rejected() {
+        assert!(decode::<ListRoutinesArgs>(json!({})).is_err());
+        assert!(decode::<ListRoutinesArgs>(json!({ "spaceId": null })).is_err());
+        assert!(decode::<GetRoutineArgs>(json!({ "spaceId": "root" })).is_err());
+        assert!(
+            decode::<ListRoutinesArgs>(json!({
+                "spaceId": "root",
+                "unexpected": true
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn collection_address_rejects_absolute_traversal_and_raw_routines_paths() {
+        for path in [
+            "/tasks",
+            "../tasks",
+            "tasks/../other",
+            ".routines",
+            ".ROUTINES/x",
+            "tasks/.routines",
+            "tasks/.ROUTINES/nested",
+        ] {
+            assert!(validate_routine_collection_path(path).is_err(), "{path}");
+        }
+        assert_eq!(validate_routine_collection_path("tasks").unwrap(), "tasks");
+    }
+
+    #[test]
+    fn pagination_defaults_and_clamps_to_the_public_bound() {
+        assert_eq!(bounded_page(None, None), (50, 0));
+        assert_eq!(bounded_page(Some(500), Some(-1)), (200, 0));
+        assert_eq!(bounded_page(Some(0), Some(4)), (1, 4));
+
+        let rows = (0..205)
+            .map(|index| row(&format!("routine-{index}"), Some("body")))
+            .collect();
+        let payload = list_payload(
+            &snapshot(rows),
+            authority_projection(Ok(false)),
+            Some(500),
+            Some(5),
+        );
+        assert_eq!(payload["limit"], 200);
+        assert_eq!(payload["offset"], 5);
+        assert_eq!(payload["routines"].as_array().unwrap().len(), 200);
+        assert_eq!(payload["hasMore"], false);
+    }
+
+    #[test]
+    fn list_is_bodyless_and_keeps_valid_and_malformed_siblings_visible() {
+        let payload = list_payload(
+            &snapshot(vec![
+                row("valid", Some("secret body")),
+                row("invalid", None),
+            ]),
+            authority_projection(Ok(true)),
+            None,
+            None,
+        );
+        let rows = payload["routines"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].get("definition").is_none());
+        assert!(!rows[0].to_string().contains("secret body"));
+        assert_eq!(rows[0]["valid"], true);
+        assert_eq!(rows[1]["valid"], false);
+        assert_eq!(payload["automaticAuthorityEnabled"], true);
+    }
+
+    #[test]
+    fn detail_preserves_normalized_body_and_unknown_id_has_stable_error() {
+        let snapshot = snapshot(vec![row("valid", Some("# Normalized body\n"))]);
+        let row = find_routine(&snapshot, "valid").unwrap();
+        let payload = detail_payload(&snapshot, row, authority_projection(Ok(false)));
+        assert_eq!(payload["definition"]["body"], "# Normalized body\n");
+        assert_eq!(payload["automaticAuthorityEnabled"], false);
+
+        let error = find_routine(&snapshot, "missing").unwrap_err();
+        assert_eq!(error.code, "ROUTINE_NOT_FOUND");
+    }
+
+    #[test]
+    fn authority_on_off_and_unavailable_remain_distinct() {
+        let on = authority_projection(Ok(true));
+        assert_eq!(on.enabled, Some(true));
+        assert!(on.diagnostics.is_empty());
+        let off = authority_projection(Ok(false));
+        assert_eq!(off.enabled, Some(false));
+        assert!(off.diagnostics.is_empty());
+        let unavailable = authority_projection(Err(AppError::General("private detail".into())));
+        assert_eq!(unavailable.enabled, None);
+        assert_eq!(unavailable.diagnostics.len(), 1);
+        assert_eq!(
+            unavailable.diagnostics[0]["code"],
+            AUTHORITY_UNAVAILABLE_CODE
+        );
+        assert!(
+            !unavailable.diagnostics[0]
+                .to_string()
+                .contains("private detail")
+        );
+    }
+
+    #[test]
+    fn empty_owner_is_a_successful_empty_page() {
+        let payload = list_payload(
+            &snapshot(Vec::new()),
+            authority_projection(Ok(false)),
+            None,
+            None,
+        );
+        assert_eq!(payload["total"], 0);
+        assert_eq!(payload["routines"], json!([]));
+        assert_eq!(payload["hasMore"], false);
+    }
+}

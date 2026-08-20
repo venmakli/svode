@@ -3,8 +3,8 @@ use std::path::Path;
 use chrono::{SecondsFormat, Utc};
 use sqlx::{SqlitePool, Transaction};
 
-use super::commands;
 use super::model::{ResolvedRoutineOwner, RoutineOwnerInputKind};
+use super::service;
 use crate::AppError;
 use crate::index::{IndexKey, IndexState};
 
@@ -159,7 +159,7 @@ pub(crate) async fn discover_project_owners(
             IndexKey::Root(_) => "root",
             IndexKey::Space { space_id, .. } => space_id,
         };
-        owners.push(commands::resolve_owner(
+        owners.push(service::resolve_owner(
             &project_path,
             &space_path,
             space_id,
@@ -167,7 +167,7 @@ pub(crate) async fn discover_project_owners(
             RoutineOwnerInputKind::RegisteredSpace,
         )?);
         for owner_path in index_state.routine_owner_paths(&key).await? {
-            owners.push(commands::resolve_owner(
+            owners.push(service::resolve_owner(
                 &project_path,
                 &space_path,
                 space_id,

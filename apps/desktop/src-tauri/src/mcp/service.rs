@@ -37,6 +37,7 @@ mod documents;
 mod knowledge;
 #[path = "service/project.rs"]
 mod project_tools;
+mod routines;
 
 #[cfg(test)]
 use context::resolve_project_root_for_cwd;

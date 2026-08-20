@@ -238,6 +238,35 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
+            "list_routines",
+            "List bounded Routine summaries for one explicit project, Space, or Collection owner. Call list_spaces first and list_collections before targeting a Collection. The result includes invalid definitions and exact-owner device authority evidence but never the Markdown body.",
+            schema(
+                &[
+                    routine_space_id(),
+                    routine_collection_path_opt(),
+                    bounded_int_opt("limit", 1, 200),
+                    int_opt("offset"),
+                ],
+                &["spaceId"],
+            ),
+            read_only_ann(),
+            None,
+        ),
+        def(
+            "get_routine",
+            "Read one normalized Routine definition and diagnostics inside an explicit project, Space, or Collection owner. Discover the owner with list_spaces/list_collections and the routineId with list_routines.",
+            schema(
+                &[
+                    routine_space_id(),
+                    routine_collection_path_opt(),
+                    str_req("routineId"),
+                ],
+                &["spaceId", "routineId"],
+            ),
+            read_only_ann(),
+            None,
+        ),
+        def(
             "list_collections",
             "List collections in a space.",
             schema(&[space_id()], &[]),
@@ -585,6 +614,11 @@ Space targeting:
 - Use a child space id from list_spaces to target a child space.
 - Omit spaceId or pass null only when you intentionally want the active/default space; null is not a stable alias for root when a child space is active.
 
+Routine discovery:
+- Call list_spaces, then list_collections when needed, before reading Routines. list_routines and get_routine always require a non-null explicit spaceId: use "root" for the project owner or a child id from list_spaces; add collectionPath only for an existing Collection owner.
+- Use list_routines for bounded body-less discovery and get_routine for the normalized definition and Markdown body. Invalid definitions remain visible with diagnostics. Device-local automatic authority and last/next run fields are evidence, not a promise that a Routine can run now.
+- Never address or edit raw .routines paths through MCP. Routine definitions belong to the Routine domain tools and owner resolver.
+
 Metadata and fields:
 - System metadata is title, icon, description, cover, created, and updated. Do not create custom columns for these and do not write them through update_entry_fields.
 - Collection identity lives in README.md metadata. Schema.yaml stores columns, views, system field labels, and template settings. README content is exposed through the separate Readme scope surface.
@@ -676,6 +710,28 @@ fn space_id() -> (&'static str, Value) {
     (
         "spaceId",
         json!({"type": ["string", "null"], "description": "Svode MCP space id. Use \"root\" for the project root, a child id from list_spaces for a child space, or null/omit for the active/default space."}),
+    )
+}
+
+fn routine_space_id() -> (&'static str, Value) {
+    (
+        "spaceId",
+        json!({
+            "type": "string",
+            "minLength": 1,
+            "description": "Required explicit Routine owner Space id. Use \"root\" for the project owner or a registered ready child id from list_spaces. Null and omission are rejected."
+        }),
+    )
+}
+
+fn routine_collection_path_opt() -> (&'static str, Value) {
+    (
+        "collectionPath",
+        json!({
+            "type": ["string", "null"],
+            "minLength": 1,
+            "description": "Optional repo-relative directory of an existing Collection in the selected Space. Omit/null for the project or Space owner. No absolute paths, '..', .git/**, .svode/**, or raw .routines/** addresses."
+        }),
     )
 }
 
@@ -1163,6 +1219,51 @@ mod tests {
         assert!(names.contains(&"delete_entry"));
         assert!(names.contains(&"list_actors"));
         assert!(!names.contains(&"get_entry"));
+    }
+
+    #[test]
+    fn routine_reads_have_strict_explicit_owner_schemas_and_exact_annotations() {
+        let definitions = definitions();
+        let routine_definitions = definitions
+            .iter()
+            .filter(|definition| definition.name.contains("routine"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            routine_definitions
+                .iter()
+                .map(|definition| definition.name)
+                .collect::<Vec<_>>(),
+            vec!["list_routines", "get_routine"]
+        );
+        for definition in routine_definitions {
+            assert_eq!(definition.input_schema["type"], "object");
+            assert_eq!(definition.input_schema["additionalProperties"], false);
+            assert_eq!(
+                definition.input_schema["properties"]["spaceId"]["type"],
+                "string"
+            );
+            assert!(definition.output_schema.is_none());
+            let annotations = definition.annotations.as_ref().unwrap();
+            assert_eq!(annotations.read_only_hint, Some(true));
+            assert_eq!(annotations.destructive_hint, Some(false));
+            assert_eq!(annotations.idempotent_hint, Some(true));
+            assert_eq!(annotations.open_world_hint, Some(false));
+        }
+        let list = definitions
+            .iter()
+            .find(|definition| definition.name == "list_routines")
+            .unwrap();
+        assert_eq!(list.input_schema["required"], json!(["spaceId"]));
+        assert_eq!(list.input_schema["properties"]["limit"]["maximum"], 200);
+        let get = definitions
+            .iter()
+            .find(|definition| definition.name == "get_routine")
+            .unwrap();
+        assert_eq!(
+            get.input_schema["required"],
+            json!(["spaceId", "routineId"])
+        );
+        assert!(guide_text().contains("Never address or edit raw .routines"));
     }
 
     #[test]

@@ -75,6 +75,8 @@ async fn call_tool_inner(
             }
             "get_related_context" => knowledge::get_related_context(&app, decode(args)?).await,
             "get_knowledge_status" => knowledge::get_knowledge_status(&app, decode(args)?).await,
+            "list_routines" => routines::list_routines(&app, decode(args)?).await,
+            "get_routine" => routines::get_routine(&app, decode(args)?).await,
             "list_collections" => collections::list_collections(&app, decode(args)?).await,
             "get_collection_schema" => {
                 collections::get_collection_schema(&app, decode(args)?).await

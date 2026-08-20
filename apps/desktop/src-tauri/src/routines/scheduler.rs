@@ -13,6 +13,7 @@ use super::model::{
     ResolvedRoutineOwner, RoutineDefinition, RoutineDispatchBlockedCode,
     RoutineManualDispatchResult, RoutineTrigger,
 };
+use super::service;
 use crate::AppError;
 use crate::git::access::{
     RepositoryAccessState, RepositoryAccessStatus, RoutineClaimResult, access_store_path,
@@ -112,8 +113,8 @@ async fn tick_owner(
         }
     };
     dispatch_next_event(app, owner, automatic_authority, &pool).await?;
-    let snapshot = commands::discover_owner(owner).await?;
-    let live_pty_ids = commands::live_agent_pty_ids(&terminal_manager)?;
+    let snapshot = service::discover_owner(owner).await?;
+    let live_pty_ids = service::live_agent_pty_ids(&terminal_manager)?;
     let now = Utc::now();
 
     for row in snapshot.routines {
@@ -345,7 +346,7 @@ async fn dispatch_next_event(
         return Ok(());
     };
     let terminal_manager = app.state::<TerminalManager>();
-    let live_pty_ids = commands::live_agent_pty_ids(&terminal_manager)?;
+    let live_pty_ids = service::live_agent_pty_ids(&terminal_manager)?;
     if let Some(run) = cache::latest_run(pool, &event.owner_path, &event.routine_id).await?
         && run.blocks_relaunch(&live_pty_ids)
     {

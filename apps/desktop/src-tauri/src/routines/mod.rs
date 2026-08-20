@@ -6,12 +6,21 @@ mod model;
 mod parser;
 mod schedule;
 mod scheduler;
+pub(crate) mod service;
 
 pub(crate) use scheduler::RoutineSchedulerState;
 
 pub(crate) use model::ResolvedRoutineOwner;
 pub(crate) use model::{CollectionEventOrigin, CollectionEventSourceKind};
-pub(crate) use model::{RoutineInvalidationPayload, RoutineOwnerKind};
+#[cfg(test)]
+pub(crate) use model::{
+    RoutineAction, RoutineDefinition, RoutineDiagnostic, RoutineOwnerDescriptor, RoutineRunOrigin,
+    RoutineTrigger, RoutineTriggerType,
+};
+pub(crate) use model::{
+    RoutineCatalogSnapshot, RoutineInvalidationPayload, RoutineOwnerInputKind, RoutineOwnerKind,
+    RoutineRow,
+};
 
 pub(crate) const INVALIDATED_EVENT: &str = "routines:invalidated";
 
