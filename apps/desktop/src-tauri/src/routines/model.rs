@@ -73,6 +73,19 @@ impl ResolvedRoutineOwner {
             portable_space_id, self.descriptor.kind, self.descriptor.owner_path
         )
     }
+
+    pub(crate) fn indexed_collection_identity(index_key: &IndexKey, owner_path: &str) -> String {
+        let portable_space_id = match index_key {
+            IndexKey::Root(_) => "root",
+            IndexKey::Space { space_id, .. } => space_id,
+        };
+        format!(
+            "{}\0{:?}\0{}",
+            portable_space_id,
+            RoutineOwnerKind::Collection,
+            owner_path
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -532,6 +545,29 @@ mod tests {
         assert_eq!(
             owner("/clone-one", "local-one").identity(),
             owner("/clone-two", "local-two").identity()
+        );
+    }
+
+    #[test]
+    fn indexed_collection_identity_matches_resolved_owner_identity() {
+        let project = PathBuf::from("/project");
+        let owner = ResolvedRoutineOwner {
+            descriptor: RoutineOwnerDescriptor {
+                kind: RoutineOwnerKind::Collection,
+                space_id: "space-a".into(),
+                owner_path: "tasks".into(),
+            },
+            project_path: project.clone(),
+            space_path: project.join("space-a"),
+            owner_root: project.join("space-a/tasks"),
+            index_key: IndexKey::Space {
+                project,
+                space_id: "space-a".into(),
+            },
+        };
+        assert_eq!(
+            ResolvedRoutineOwner::indexed_collection_identity(&owner.index_key, "tasks"),
+            owner.identity()
         );
     }
 }

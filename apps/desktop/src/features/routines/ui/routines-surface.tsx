@@ -44,6 +44,7 @@ export function RoutinesSurface({
         enabled={controller.automaticConsent.enabled}
         error={controller.automaticConsent.error}
         loading={controller.automaticConsent.loading}
+        ownerKind={controller.automaticConsent.ownerKind}
         pending={controller.automaticConsent.pending}
         onChange={(enabled) =>
           void controller.automaticConsent.setEnabled(enabled)

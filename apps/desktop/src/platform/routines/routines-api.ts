@@ -224,19 +224,18 @@ export function dispatchManualRoutine(
   );
 }
 
-export function getRoutineAutomaticConsent(projectPath: string) {
+export function getRoutineAutomaticConsent(input: RoutineOwnerCommandInput) {
   return invokeCommand<RoutineAutomaticConsentDto>(
     "routines_get_automatic_consent",
-    { projectPath },
+    { ...input },
   );
 }
 
 export function setRoutineAutomaticConsent(
-  projectPath: string,
-  enabled: boolean,
+  input: RoutineOwnerCommandInput & { enabled: boolean },
 ) {
   return invokeCommand<RoutineAutomaticConsentDto>(
     "routines_set_automatic_consent",
-    { enabled, projectPath },
+    { ...input },
   );
 }

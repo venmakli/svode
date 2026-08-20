@@ -111,15 +111,15 @@ export async function dispatchManualRoutine(
   };
 }
 
-export async function loadRoutineAutomaticConsent(projectPath: string) {
-  return getRoutineAutomaticConsentCommand(projectPath);
+export async function loadRoutineAutomaticConsent(owner: RoutineOwnerInput) {
+  return getRoutineAutomaticConsentCommand(owner);
 }
 
 export async function updateRoutineAutomaticConsent(
-  projectPath: string,
+  owner: RoutineOwnerInput,
   enabled: boolean,
 ) {
-  return setRoutineAutomaticConsentCommand(projectPath, enabled);
+  return setRoutineAutomaticConsentCommand({ ...owner, enabled });
 }
 
 function normalizeMutationResult(

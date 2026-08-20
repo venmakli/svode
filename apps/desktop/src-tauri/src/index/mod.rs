@@ -1380,6 +1380,29 @@ impl IndexState {
         keys
     }
 
+    pub(crate) async fn routine_inventory_keys(
+        &self,
+        project: &Path,
+    ) -> Result<Vec<IndexKey>, AppError> {
+        let cache = self.spaces_cache.lock().await;
+        let project_cache = cache.get(project).ok_or_else(|| {
+            AppError::Index(format!(
+                "routine owner inventory is unavailable for {}",
+                project.display()
+            ))
+        })?;
+        let mut keys = vec![IndexKey::Root(project.to_path_buf())];
+        for (space_id, status) in &project_cache.status_by_id {
+            if matches!(status, SpaceStatus::Ready) {
+                keys.push(IndexKey::Space {
+                    project: project.to_path_buf(),
+                    space_id: space_id.clone(),
+                });
+            }
+        }
+        Ok(keys)
+    }
+
     pub async fn routine_owner_paths(&self, key: &IndexKey) -> Result<Vec<String>, AppError> {
         let pool = self.get_or_create(key).await?;
         Ok(sqlx::query_scalar::<_, String>(

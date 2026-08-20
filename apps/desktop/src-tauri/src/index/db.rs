@@ -47,6 +47,10 @@ use crate::error::AppError;
 ///
 /// Bumped to 13 in Stage 7 Phase 8.4: adds the per-source reconciliation
 /// manifest plus independent content revision and source generation counters.
+///
+/// Stage 8 DF-070A adds `routine_automatic_authority` additively below rather
+/// than rebuilding this cache, because routine queue/checkpoint/run evidence
+/// must survive the compatibility migration.
 const SCHEMA_VERSION: i64 = 13;
 
 /// Create a connection pool for a space's index database.
@@ -120,6 +124,18 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")
         .execute(pool)
         .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS routine_automatic_authority (
+            owner_key TEXT PRIMARY KEY,
+            enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+            updated_at TEXT NOT NULL
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
 
     let current: Option<i64> = sqlx::query_scalar("SELECT version FROM schema_version LIMIT 1")
         .fetch_optional(pool)

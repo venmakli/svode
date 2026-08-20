@@ -43,7 +43,7 @@ export function useRoutinesController(
     [owner],
   );
   const { refresh, replaceSnapshot, state } = useRoutineCatalog(routineOwner);
-  const automaticConsent = useRoutineAutomaticConsent(owner.projectPath);
+  const automaticConsent = useRoutineAutomaticConsent(routineOwner);
   const executors = useRoutineExecutors(owner.projectPath, owner.spacePath);
   const detailController = useOptionalSystemCollectionDetailController();
   const instanceKey = `routines:${owner.ownerKey}`;

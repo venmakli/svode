@@ -7,7 +7,6 @@ use std::sync::Arc;
 use chrono::{SecondsFormat, Utc};
 use tauri::{AppHandle, Manager, State};
 
-use super::cache;
 use super::model::{
     CollectionEvent, MissedRuns, ResolvedRoutineOwner, RoutineAction, RoutineAutomaticConsent,
     RoutineCatalogSnapshot, RoutineDefinition, RoutineDiagnostic, RoutineDispatchBlockedCode,
@@ -15,6 +14,7 @@ use super::model::{
     RoutineOwnerInputKind, RoutineOwnerKind, RoutineRunOrigin, RoutineTrigger, RoutineTriggerType,
 };
 use super::parser;
+use super::{authority, cache};
 use crate::AppError;
 use crate::agent_actors;
 use crate::agent_actors::launch::{AgentLaunchResolution, AgentLaunchValidationCode};
@@ -110,37 +110,54 @@ pub async fn routines_refresh(
 #[tauri::command]
 pub async fn routines_get_automatic_consent(
     project_path: String,
+    space_path: String,
+    space_id: String,
+    owner_path: String,
+    owner_kind: RoutineOwnerInputKind,
     index_state: State<'_, IndexState>,
 ) -> Result<RoutineAutomaticConsent, AppError> {
-    let project = canonical_space_path(Path::new(&project_path))?;
-    config::read_space_config(&project)?;
+    let owner = RoutineOwnerInput {
+        project_path,
+        space_path,
+        space_id,
+        owner_path,
+        owner_kind,
+    }
+    .resolve()?;
     let pool = index_state
-        .get_or_create(&IndexKey::Root(project.clone()))
+        .get_or_create(&IndexKey::Root(owner.project_path.clone()))
         .await?;
+    authority::migrate_legacy_for_project(&pool, &index_state, &owner.project_path).await?;
     Ok(RoutineAutomaticConsent {
-        enabled: cache::automatic_consent(&pool, &project.to_string_lossy()).await?,
+        enabled: authority::read(&pool, &owner).await?,
     })
 }
 
 #[tauri::command]
 pub async fn routines_set_automatic_consent(
     project_path: String,
+    space_path: String,
+    space_id: String,
+    owner_path: String,
+    owner_kind: RoutineOwnerInputKind,
     enabled: bool,
     index_state: State<'_, IndexState>,
 ) -> Result<RoutineAutomaticConsent, AppError> {
-    let project = canonical_space_path(Path::new(&project_path))?;
-    config::read_space_config(&project)?;
+    let owner = RoutineOwnerInput {
+        project_path,
+        space_path,
+        space_id,
+        owner_path,
+        owner_kind,
+    }
+    .resolve()?;
     let pool = index_state
-        .get_or_create(&IndexKey::Root(project.clone()))
+        .get_or_create(&IndexKey::Root(owner.project_path.clone()))
         .await?;
-    cache::set_automatic_consent(
-        &pool,
-        &project.to_string_lossy(),
-        enabled,
-        &Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-    )
-    .await?;
-    Ok(RoutineAutomaticConsent { enabled })
+    authority::migrate_legacy_for_project(&pool, &index_state, &owner.project_path).await?;
+    Ok(RoutineAutomaticConsent {
+        enabled: authority::set(&pool, &owner, enabled).await?,
+    })
 }
 
 #[tauri::command]
@@ -1235,8 +1252,9 @@ pub(crate) fn resolve_owner(
             .unwrap_or_default()
             .into_iter()
             .any(|candidate| {
-                fs::canonicalize(project.join(candidate.path))
-                    .is_ok_and(|candidate| candidate == space)
+                candidate.id == space_id
+                    && fs::canonicalize(project.join(candidate.path))
+                        .is_ok_and(|candidate| candidate == space)
             });
         if !registered {
             return Err(AppError::PathNotAccessible(space.display().to_string()));
@@ -1718,6 +1736,17 @@ mod tests {
         .unwrap();
         assert_eq!(collection.descriptor.kind, RoutineOwnerKind::Collection);
         assert_eq!(collection.descriptor.owner_path, "tasks");
+
+        assert!(
+            resolve_owner(
+                project,
+                &child,
+                "wrong-child-id",
+                "tasks",
+                RoutineOwnerInputKind::CollectionDirectory,
+            )
+            .is_err()
+        );
 
         assert!(
             resolve_owner(

@@ -1,3 +1,4 @@
+pub(crate) mod authority;
 mod cache;
 pub mod commands;
 pub(crate) mod events;
@@ -8,7 +9,6 @@ mod scheduler;
 
 pub(crate) use scheduler::RoutineSchedulerState;
 
-pub(crate) use cache::automatic_consent;
 pub(crate) use model::ResolvedRoutineOwner;
 pub(crate) use model::{CollectionEventOrigin, CollectionEventSourceKind};
 pub(crate) use model::{RoutineInvalidationPayload, RoutineOwnerKind};

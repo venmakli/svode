@@ -151,42 +151,6 @@ pub(crate) async fn write_schedule_state(
     Ok(())
 }
 
-pub(crate) async fn automatic_consent(
-    pool: &SqlitePool,
-    project_path: &str,
-) -> Result<bool, AppError> {
-    Ok(sqlx::query_scalar::<_, i64>(
-        "SELECT enabled FROM routine_automatic_consent WHERE project_path = ?",
-    )
-    .bind(project_path)
-    .fetch_optional(pool)
-    .await?
-    .is_some_and(|enabled| enabled != 0))
-}
-
-pub(crate) async fn set_automatic_consent(
-    pool: &SqlitePool,
-    project_path: &str,
-    enabled: bool,
-    updated_at: &str,
-) -> Result<(), AppError> {
-    sqlx::query(
-        r#"
-        INSERT INTO routine_automatic_consent (project_path, enabled, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(project_path) DO UPDATE SET
-            enabled = excluded.enabled,
-            updated_at = excluded.updated_at
-        "#,
-    )
-    .bind(project_path)
-    .bind(enabled)
-    .bind(updated_at)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
 pub(crate) async fn claim_local_run(
     pool: &SqlitePool,
     run_key: &str,
@@ -822,16 +786,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn schedule_checkpoint_consent_and_claim_evidence_are_durable() {
+    async fn schedule_checkpoint_and_claim_evidence_are_durable() {
         let temp = tempdir().unwrap();
         let db_path = temp.path().join("index.db");
         let pool = db::create_pool(&db_path).await.unwrap();
         db::ensure_schema(&pool).await.unwrap();
 
-        assert!(!automatic_consent(&pool, "/project").await.unwrap());
-        set_automatic_consent(&pool, "/project", true, "2026-08-07T09:00:00Z")
-            .await
-            .unwrap();
         write_schedule_state(
             &pool,
             ".",
@@ -879,7 +839,6 @@ mod tests {
         pool.close().await;
         let reopened = db::create_pool(&db_path).await.unwrap();
         db::ensure_schema(&reopened).await.unwrap();
-        assert!(automatic_consent(&reopened, "/project").await.unwrap());
         assert_eq!(
             schedule_state(&reopened, ".", "routine-one")
                 .await

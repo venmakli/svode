@@ -6,11 +6,12 @@ use std::time::Duration;
 use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
 use tauri::{AppHandle, Manager};
 
+use super::authority;
 use super::cache;
 use super::commands;
 use super::model::{
     ResolvedRoutineOwner, RoutineDefinition, RoutineDispatchBlockedCode,
-    RoutineManualDispatchResult, RoutineOwnerInputKind, RoutineTrigger,
+    RoutineManualDispatchResult, RoutineTrigger,
 };
 use crate::AppError;
 use crate::git::access::{
@@ -72,10 +73,17 @@ async fn tick_project(
     let root_pool = index_state
         .get_or_create(&IndexKey::Root(project_path.to_path_buf()))
         .await?;
-    let consent = cache::automatic_consent(&root_pool, &project_path.to_string_lossy()).await?;
-    let owners = discover_project_owners(&index_state, project_path, project_id).await?;
+    if let Err(error) =
+        authority::migrate_legacy_for_project(&root_pool, &index_state, project_path).await
+    {
+        tracing::warn!(
+            project_id = %project_id,
+            "routine automatic authority migration failed closed: {error}"
+        );
+    }
+    let owners = authority::discover_project_owners(&index_state, project_path).await?;
     for owner in owners {
-        if let Err(error) = tick_owner(app, &owner, consent).await {
+        if let Err(error) = tick_owner(app, &owner, &root_pool).await {
             tracing::warn!(
                 owner = %owner.descriptor.owner_path,
                 "routine schedule owner tick failed: {error}"
@@ -88,12 +96,22 @@ async fn tick_project(
 async fn tick_owner(
     app: &AppHandle,
     owner: &ResolvedRoutineOwner,
-    consent: bool,
+    authority_pool: &sqlx::SqlitePool,
 ) -> Result<(), AppError> {
     let index_state = app.state::<IndexState>();
     let terminal_manager = app.state::<TerminalManager>();
     let pool = index_state.get_or_create(&owner.index_key).await?;
-    dispatch_next_event(app, owner, consent, &pool).await?;
+    let automatic_authority = match authority::read(authority_pool, owner).await {
+        Ok(enabled) => enabled,
+        Err(error) => {
+            tracing::warn!(
+                owner = %owner.descriptor.owner_path,
+                "routine automatic authority read failed closed: {error}"
+            );
+            false
+        }
+    };
+    dispatch_next_event(app, owner, automatic_authority, &pool).await?;
     let snapshot = commands::discover_owner(owner).await?;
     let live_pty_ids = commands::live_agent_pty_ids(&terminal_manager)?;
     let now = Utc::now();
@@ -159,7 +177,7 @@ async fn tick_owner(
             continue;
         }
 
-        if !consent {
+        if !automatic_authority {
             continue;
         }
         if let Some(run) =
@@ -547,39 +565,6 @@ fn scheduled_run_key(repository_id: &str, routine_id: &str, due_at: DateTime<Utc
         hash = hash.wrapping_mul(0x100000001b3);
     }
     format!("schedule-{hash:016x}")
-}
-
-async fn discover_project_owners(
-    index_state: &IndexState,
-    project_path: &Path,
-    project_id: &str,
-) -> Result<Vec<ResolvedRoutineOwner>, AppError> {
-    let project_path = project_path.to_path_buf();
-    let mut owners = Vec::new();
-    for key in index_state.keys_for_project(&project_path).await {
-        let space_path = index_state.dir_for_key(&key).await?;
-        let space_id = match &key {
-            IndexKey::Root(_) => project_id,
-            IndexKey::Space { space_id, .. } => space_id,
-        };
-        owners.push(commands::resolve_owner(
-            &project_path,
-            &space_path,
-            space_id,
-            ".",
-            RoutineOwnerInputKind::RegisteredSpace,
-        )?);
-        for owner_path in index_state.routine_owner_paths(&key).await? {
-            owners.push(commands::resolve_owner(
-                &project_path,
-                &space_path,
-                space_id,
-                &owner_path,
-                RoutineOwnerInputKind::CollectionDirectory,
-            )?);
-        }
-    }
-    Ok(owners)
 }
 
 #[cfg(test)]
