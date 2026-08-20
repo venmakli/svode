@@ -19,6 +19,10 @@ import type {
   AgentContextReference,
   AgentContextSkillRow,
 } from "../model/types";
+import {
+  sourceFamilyFromSkillDiscovery,
+  sourceLocationFromScope,
+} from "../model/provenance";
 
 export async function loadAgentContextInstructions(
   projectPath: string,
@@ -83,6 +87,7 @@ export function toAgentContextInstructionsSnapshot(
           health: row.health,
           healthReasons: Object.freeze([...row.healthReasons]),
           id: row.id,
+          linkKind: row.linkKind,
           linkTargetPath:
             row.canonicalPath && row.canonicalPath !== row.path
               ? row.canonicalPath
@@ -99,7 +104,9 @@ export function toAgentContextInstructionsSnapshot(
           ),
           role: row.discovery.policy,
           resolution: row.resolution,
-          scope: row.sourceKind === "personal" ? "personal" : "project",
+          location: sourceLocationFromScope(
+            row.sourceKind === "personal" ? "personal" : "project",
+          ),
           support: row.support,
           truncated: row.preview?.truncated ?? false,
         }),
@@ -116,14 +123,11 @@ function normalizeSkillRow(
   const aliases = Object.freeze(
     row.aliases.map((alias) =>
       Object.freeze({
-        adapterId: alias.adapterId,
-        discoveryKind: alias.discoveryKind,
         discoveryPath: alias.path,
         linkKind: alias.linkKind,
-        ownerPath: alias.owner.root,
+        location: sourceLocationFromScope(alias.scope),
         resolution: alias.resolution,
-        rootPath: alias.root,
-        scope: alias.scope,
+        sourceFamily: sourceFamilyFromSkillDiscovery(alias.discoveryKind),
         support: alias.support,
       }),
     ),
@@ -132,10 +136,6 @@ function normalizeSkillRow(
     aliases,
     body: row.preview.markdown,
     canonicalPath: row.canonicalPath,
-    clients: orderedUnique(
-      row.aliases.map((alias) => alias.adapterId),
-      ["codex", "claude-code"],
-    ),
     compatibility: row.compatibility,
     description: row.description,
     health: row.health,
@@ -145,19 +145,7 @@ function normalizeSkillRow(
     manifestPath: row.path,
     name: row.name,
     ownerPath: row.owner.root,
-    scopes: orderedUnique(
-      row.aliases.map((alias) => alias.scope),
-      ["project", "personal"],
-    ),
   });
-}
-
-function orderedUnique<Value extends string>(
-  values: readonly Value[],
-  order: readonly Value[],
-): readonly Value[] {
-  const unique = new Set(values);
-  return Object.freeze(order.filter((value) => unique.has(value)));
 }
 
 function referenceStatus(

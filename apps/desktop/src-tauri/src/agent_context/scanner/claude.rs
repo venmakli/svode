@@ -112,6 +112,7 @@ fn discover_group(
                 .unwrap_or_else(|| "CLAUDE.md".to_string()),
             path: path_string(path),
             canonical_path: source.canonical_path.as_deref().map(path_string),
+            link_kind: source.link_kind,
             owner: owner.clone(),
             source_kind,
             support: SourceSupport::ClientNative,

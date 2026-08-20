@@ -18,20 +18,16 @@ import {
 const reviewSkill: AgentContextSkillRow = {
   aliases: [
     {
-      adapterId: "codex",
-      discoveryKind: "codex_project",
       discoveryPath: "/workspace/.agents/skills/review",
       linkKind: "direct",
-      ownerPath: "/workspace",
+      location: "space",
       resolution: "selected",
-      rootPath: "/workspace/.agents/skills",
-      scope: "project",
+      sourceFamily: "agents",
       support: "client_native",
     },
   ],
   body: "# Review\n\n[Blocked link](https://example.com)",
   canonicalPath: "/workspace/.agents/skills/review",
-  clients: ["codex"],
   compatibility: null,
   description: "Review changes against project conventions.",
   health: "normal",
@@ -41,7 +37,6 @@ const reviewSkill: AgentContextSkillRow = {
   manifestPath: "/workspace/.agents/skills/review/SKILL.md",
   name: "review",
   ownerPath: "/workspace",
-  scopes: ["project"],
 };
 
 function presentation(rows: readonly AgentContextSkillRow[]) {
@@ -83,6 +78,11 @@ test("skills render as coverless Gallery cards with bounded Reader detail", () =
   expect(html.includes("max-width")).toBe(false);
   expect(html.includes('data-size="sm"')).toBe(true);
   expect(html.includes("group/gallery-cover")).toBe(false);
+  expect(html.includes(".agents")).toBe(true);
+  expect(html.includes("Codex")).toBe(false);
+  expect(html.includes("Project")).toBe(false);
+  expect(html.includes("Personal")).toBe(false);
+  expect(html.includes("Linked sources")).toBe(false);
   const skillDescriptor = descriptor([reviewSkill]);
   expect("refresh" in skillDescriptor).toBe(false);
   expect(skillDescriptor.layout.kind).toBe("gallery");
@@ -98,32 +98,39 @@ test("skills render as coverless Gallery cards with bounded Reader detail", () =
   expect(detailHtml.includes("data-agent-context-skill-detail")).toBe(true);
   expect(detailHtml.includes("data-markdown-reader-blocked-link")).toBe(true);
   expect(detailHtml.includes('href="https://example.com"')).toBe(false);
+  expect(detailHtml.includes("Canonical source")).toBe(true);
+  expect(detailHtml.includes("Discovery sources")).toBe(true);
+  expect(detailHtml.includes(".agents")).toBe(true);
+  expect(detailHtml.includes("Space")).toBe(true);
+  expect(detailHtml.includes("Direct")).toBe(true);
 });
 
-test("search and multivalue Client/Scope filters use feature-owned semantics", () => {
-  const claudePersonal: AgentContextSkillRow = {
+test("search and multivalue Source/Location filters use factual alias unions", () => {
+  const multiSourceGlobal: AgentContextSkillRow = {
     ...reviewSkill,
     aliases: [
+      reviewSkill.aliases[0]!,
       {
         ...reviewSkill.aliases[0]!,
-        adapterId: "claude-code",
-        discoveryKind: "claude_personal",
         discoveryPath: "/home/user/.claude/skills/release",
-        ownerPath: "/home/user/.claude/skills",
-        rootPath: "/home/user/.claude/skills",
-        scope: "personal",
+        location: "global",
+        sourceFamily: "claude",
       },
     ],
     canonicalPath: "/home/user/.claude/skills/release",
-    clients: ["claude-code"],
     description: "Prepare a verified release snapshot.",
     id: "skill:/home/user/.claude/skills/release",
     manifestPath: "/home/user/.claude/skills/release/SKILL.md",
     name: "release",
-    scopes: ["personal"],
   };
-  const rows = [reviewSkill, claudePersonal];
+  const rows = [reviewSkill, multiSourceGlobal];
   const queryDescriptor = descriptor(rows);
+  expect(
+    queryDescriptor.fields.map(({ key, label }) => ({ key, label })),
+  ).toEqual([
+    { key: "source", label: "Source" },
+    { key: "location", label: "Location" },
+  ]);
 
   expect(
     applySystemCollectionQuery({
@@ -131,29 +138,66 @@ test("search and multivalue Client/Scope filters use feature-owned semantics", (
       query: { filters: [], search: "verified release", sort: [] },
       rows,
     }).rows.map((row) => row.id),
-  ).toEqual([claudePersonal.id]);
+  ).toEqual([multiSourceGlobal.id]);
   expect(
     applySystemCollectionQuery({
       descriptor: queryDescriptor,
       query: {
-        filters: [{ fieldKey: "client", operator: "=", value: "codex" }],
+        filters: [{ fieldKey: "source", operator: "=", value: "agents" }],
         search: "",
         sort: [],
       },
       rows,
     }).rows.map((row) => row.id),
-  ).toEqual([reviewSkill.id]);
+  ).toEqual([multiSourceGlobal.id, reviewSkill.id]);
   expect(
     applySystemCollectionQuery({
       descriptor: queryDescriptor,
       query: {
-        filters: [{ fieldKey: "scope", operator: "=", value: "personal" }],
+        filters: [{ fieldKey: "source", operator: "=", value: "claude" }],
         search: "",
         sort: [],
       },
       rows,
     }).rows.map((row) => row.id),
-  ).toEqual([claudePersonal.id]);
+  ).toEqual([multiSourceGlobal.id]);
+  expect(
+    applySystemCollectionQuery({
+      descriptor: queryDescriptor,
+      query: {
+        filters: [{ fieldKey: "location", operator: "=", value: "space" }],
+        search: "",
+        sort: [],
+      },
+      rows,
+    }).rows.map((row) => row.id),
+  ).toEqual([multiSourceGlobal.id, reviewSkill.id]);
+  expect(
+    applySystemCollectionQuery({
+      descriptor: queryDescriptor,
+      query: {
+        filters: [{ fieldKey: "location", operator: "=", value: "global" }],
+        search: "",
+        sort: [],
+      },
+      rows,
+    }).rows.map((row) => row.id),
+  ).toEqual([multiSourceGlobal.id]);
+
+  const html = renderToStaticMarkup(
+    <TooltipProvider>
+      <SystemCollectionPresentationShell
+        instanceKey="agent-context:space:filters"
+        presentation={presentation(rows)}
+        query={EMPTY_SYSTEM_COLLECTION_QUERY}
+        onQueryChange={() => undefined}
+      />
+    </TooltipProvider>,
+  );
+  expect(html.includes(".agents")).toBe(true);
+  expect(html.includes(".claude")).toBe(true);
+  expect(html.includes("Global")).toBe(true);
+  expect(html.includes(">Space<")).toBe(false);
 });
 
 test("default order keeps same-name canonical sources and invalid query resets", () => {
@@ -175,7 +219,7 @@ test("default order keeps same-name canonical sources and invalid query resets",
   const result = applySystemCollectionQuery({
     descriptor: queryDescriptor,
     query: {
-      filters: [{ fieldKey: "client", operator: "=", value: "unknown" }],
+      filters: [{ fieldKey: "client", operator: "=", value: "codex" }],
       search: "",
       sort: [],
     },
@@ -220,10 +264,62 @@ test("safe aliases stay neutral while degraded manifest health warns", () => {
     </TooltipProvider>,
   );
 
-  expect(html.includes("Filesystem alias")).toBe(true);
-  expect(html.includes("Superseded")).toBe(true);
+  expect(html.includes("Symbolic link")).toBe(true);
+  expect(html.includes("Superseded")).toBe(false);
   expect(html.includes("Claude link support is not proven")).toBe(false);
   expect(html.includes("Name does not match its directory")).toBe(true);
+});
+
+test("Detail keeps discovery location independent from canonical ownership", () => {
+  const spaceAliasToGlobal: AgentContextSkillRow = {
+    ...reviewSkill,
+    aliases: [
+      {
+        ...reviewSkill.aliases[0]!,
+        discoveryPath: "/workspace/.agents/skills/global-link",
+        linkKind: "symbolic_link",
+        location: "space",
+      },
+    ],
+    canonicalPath: "/home/user/.agents/skills/global-source",
+    id: "skill:/home/user/.agents/skills/global-source",
+    manifestPath: "/home/user/.agents/skills/global-source/SKILL.md",
+    ownerPath: "/home/user/.agents/skills",
+  };
+  const globalAliasToSpace: AgentContextSkillRow = {
+    ...reviewSkill,
+    aliases: [
+      {
+        ...reviewSkill.aliases[0]!,
+        discoveryPath: "/home/user/.claude/skills/space-link",
+        linkKind: "directory_alias",
+        location: "global",
+        sourceFamily: "claude",
+      },
+    ],
+  };
+
+  const spaceAliasDetail = renderToStaticMarkup(
+    descriptor([spaceAliasToGlobal]).createDetailRequest?.(spaceAliasToGlobal)
+      .content,
+  );
+  expect(spaceAliasDetail.includes("/home/user/.agents/skills")).toBe(true);
+  expect(spaceAliasDetail.includes("Space")).toBe(true);
+  expect(spaceAliasDetail.includes("Symbolic link")).toBe(true);
+  expect(
+    spaceAliasDetail.includes("/workspace/.agents/skills/global-link"),
+  ).toBe(true);
+
+  const globalAliasDetail = renderToStaticMarkup(
+    descriptor([globalAliasToSpace]).createDetailRequest?.(globalAliasToSpace)
+      .content,
+  );
+  expect(globalAliasDetail.includes("/workspace")).toBe(true);
+  expect(globalAliasDetail.includes("Global")).toBe(true);
+  expect(globalAliasDetail.includes("Directory alias")).toBe(true);
+  expect(
+    globalAliasDetail.includes("/home/user/.claude/skills/space-link"),
+  ).toBe(true);
 });
 
 test("skill external action opens its canonical manifest in the owning root", async () => {
@@ -270,7 +366,7 @@ test("skill external action uses canonical owner instead of discovery alias owne
         ...reviewSkill.aliases[0]!,
         discoveryPath: "/workspace/.agents/skills/personal-link",
         linkKind: "symbolic_link",
-        ownerPath: "/workspace",
+        location: "space",
       },
     ],
     canonicalPath: "/home/user/.agents/skills/personal",

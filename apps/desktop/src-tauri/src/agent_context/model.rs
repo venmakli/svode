@@ -101,6 +101,8 @@ pub struct InstructionRow {
     pub name: String,
     pub path: String,
     pub canonical_path: Option<String>,
+    #[serde(default)]
+    pub link_kind: SourceLinkKind,
     pub owner: InstructionOwner,
     pub source_kind: InstructionSourceKind,
     pub support: SourceSupport,
@@ -130,11 +132,15 @@ pub enum SkillDiscoveryKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SkillLinkKind {
+#[derive(Default)]
+pub enum SourceLinkKind {
+    #[default]
     Direct,
     SymbolicLink,
     DirectoryAlias,
 }
+
+pub type SkillLinkKind = SourceLinkKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

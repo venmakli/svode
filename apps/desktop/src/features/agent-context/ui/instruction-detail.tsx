@@ -3,19 +3,22 @@ import { AlertTriangle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import * as m from "@/paraglide/messages.js";
-import { MarkdownReader, type MarkdownReaderPolicy } from "@/shared/ui/markdown-reader";
+import {
+  MarkdownReader,
+  type MarkdownReaderPolicy,
+} from "@/shared/ui/markdown-reader";
 
 import type {
   AgentContextInstructionRow,
   AgentContextReference,
 } from "../model/types";
 import {
-  instructionAdapterLabel,
   instructionRoleLabel,
-  instructionScopeLabel,
+  sourceLinkKindLabel,
+  sourceLocationLabel,
   sourceResolutionLabel,
   sourceSupportLabel,
-} from "./instruction-labels";
+} from "./provenance-labels";
 
 const instructionReaderPolicy: MarkdownReaderPolicy = {
   openLink: () => undefined,
@@ -40,15 +43,7 @@ export function AgentContextInstructionDetail({
       className="flex min-w-0 flex-col gap-5"
       data-agent-context-instruction-detail={row.id}
     >
-      <dl className="grid min-w-0 grid-cols-[minmax(7rem,auto)_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
-        <DetailTerm>{m.agent_context_adapter()}</DetailTerm>
-        <DetailValue>{instructionAdapterLabel(row.adapterId)}</DetailValue>
-        <DetailTerm>{m.agent_context_detail_role()}</DetailTerm>
-        <DetailValue>{instructionRoleLabel(row.role)}</DetailValue>
-        <DetailTerm>{m.agent_context_scope()}</DetailTerm>
-        <DetailValue>
-          <Badge variant="outline">{instructionScopeLabel(row.scope)}</Badge>
-        </DetailValue>
+      <DetailSection title={m.agent_context_detail_canonical_source()}>
         <DetailTerm>{m.agent_context_source_support()}</DetailTerm>
         <DetailValue>
           <Badge variant="outline">{sourceSupportLabel(row.support)}</Badge>
@@ -59,16 +54,29 @@ export function AgentContextInstructionDetail({
             {sourceResolutionLabel(row.resolution)}
           </Badge>
         </DetailValue>
-        <DetailTerm>{m.agent_context_detail_owner()}</DetailTerm>
+        <DetailTerm>{m.agent_context_detail_canonical_owner()}</DetailTerm>
         <DetailPath>{row.ownerPath}</DetailPath>
         <DetailTerm>{m.agent_context_detail_canonical_path()}</DetailTerm>
         <DetailPath>{row.canonicalPath}</DetailPath>
+      </DetailSection>
+
+      <DetailSection title={m.agent_context_detail_discovery_source()}>
+        <DetailTerm>{m.agent_context_detail_role()}</DetailTerm>
+        <DetailValue>{instructionRoleLabel(row.role)}</DetailValue>
+        <DetailTerm>{m.agent_context_location()}</DetailTerm>
+        <DetailValue>
+          <Badge variant="outline">{sourceLocationLabel(row.location)}</Badge>
+        </DetailValue>
+        <DetailTerm>{m.agent_context_detail_link_kind()}</DetailTerm>
+        <DetailValue>
+          <Badge variant="outline">{sourceLinkKindLabel(row.linkKind)}</Badge>
+        </DetailValue>
         <DetailTerm>{m.agent_context_detail_discovery_path()}</DetailTerm>
         <DetailPath>{row.discoveryPath}</DetailPath>
-        {row.linkTargetPath ? (
+        {row.linkKind !== "direct" ? (
           <>
             <DetailTerm>{m.agent_context_detail_link_target()}</DetailTerm>
-            <DetailPath>{row.linkTargetPath}</DetailPath>
+            <DetailPath>{row.linkTargetPath ?? row.canonicalPath}</DetailPath>
           </>
         ) : null}
         {row.precedence !== null ? (
@@ -77,7 +85,7 @@ export function AgentContextInstructionDetail({
             <DetailValue>{row.precedence}</DetailValue>
           </>
         ) : null}
-      </dl>
+      </DetailSection>
 
       {row.references.length > 0 ? (
         <section className="flex min-w-0 flex-col gap-2">
@@ -118,6 +126,20 @@ export function AgentContextInstructionDetail({
 
 function DetailTerm({ children }: React.PropsWithChildren) {
   return <dt className="text-muted-foreground">{children}</dt>;
+}
+
+function DetailSection({
+  children,
+  title,
+}: React.PropsWithChildren<{ title: string }>) {
+  return (
+    <section className="flex min-w-0 flex-col gap-2">
+      <h3 className="text-sm font-medium">{title}</h3>
+      <dl className="grid min-w-0 grid-cols-[minmax(7rem,auto)_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
+        {children}
+      </dl>
+    </section>
+  );
 }
 
 function DetailValue({

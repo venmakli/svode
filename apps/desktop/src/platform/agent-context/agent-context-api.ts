@@ -6,9 +6,7 @@ import {
 import { invokeCommand } from "@/platform/native/invoke";
 
 export type SupportedAdapterIdDto = "claude-code" | "codex";
-export type AgentContextSourceSupportDto =
-  | "client_native"
-  | "svode_recognized";
+export type AgentContextSourceSupportDto = "client_native" | "svode_recognized";
 export type AgentContextSourceResolutionDto =
   | "included"
   | "selected"
@@ -69,6 +67,7 @@ export interface AgentContextInstructionRowDto {
   resolution: AgentContextSourceResolutionDto;
   health: AgentContextSourceHealthDto;
   healthReasons: string[];
+  linkKind: "direct" | "symbolic_link" | "directory_alias";
   discovery: {
     policy:
       | "codex_user_precedence"

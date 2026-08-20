@@ -167,6 +167,7 @@ fn discover_recognized(target_root: &Path) -> DiscoveryResult {
                 name: (*filename).to_string(),
                 path: path_string(&path),
                 canonical_path: source.canonical_path.as_deref().map(path_string),
+                link_kind: source.link_kind,
                 owner: InstructionOwner {
                     kind: InstructionOwnerKind::TargetSpace,
                     root: path_string(target_root),
@@ -195,6 +196,7 @@ fn discover_recognized(target_root: &Path) -> DiscoveryResult {
             name: (*filename).to_string(),
             path: path_string(&path),
             canonical_path: source.canonical_path.as_deref().map(path_string),
+            link_kind: source.link_kind,
             owner: InstructionOwner {
                 kind: InstructionOwnerKind::TargetSpace,
                 root: path_string(target_root),
@@ -292,6 +294,7 @@ mod tests {
         assert_eq!(transport["adapters"][1]["id"], "claude-code");
         assert!(transport["targetRoot"].is_string());
         assert!(transport["instructions"].is_array());
+        assert_eq!(transport["instructions"][0]["linkKind"], "direct");
         assert!(transport["skills"].is_array());
         assert!(transport["adapters"][0].get("executable").is_none());
         assert!(

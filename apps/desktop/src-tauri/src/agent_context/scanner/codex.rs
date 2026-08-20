@@ -167,6 +167,7 @@ fn instruction_row(
             .unwrap_or_else(|| "AGENTS.md".to_string()),
         path: path_string(path),
         canonical_path: source.canonical_path.as_deref().map(path_string),
+        link_kind: source.link_kind,
         owner,
         source_kind,
         support: SourceSupport::ClientNative,

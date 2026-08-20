@@ -4,11 +4,14 @@ use std::path::{Path, PathBuf};
 
 use crate::agent_adapters::AgentAdapterKind;
 
-use super::super::model::{AgentContextDiagnostic, DiagnosticSeverity, MarkdownPreview};
+use super::super::model::{
+    AgentContextDiagnostic, DiagnosticSeverity, MarkdownPreview, SourceLinkKind,
+};
 
 #[derive(Debug)]
 pub(super) struct InspectedSource {
     pub canonical_path: Option<PathBuf>,
+    pub link_kind: SourceLinkKind,
     pub preview: Option<MarkdownPreview>,
     pub diagnostic: Option<AgentContextDiagnostic>,
 }
@@ -54,6 +57,13 @@ pub(super) fn inspect(
             ));
         }
     };
+    let link_kind = if metadata.file_type().is_symlink() {
+        SourceLinkKind::SymbolicLink
+    } else if canonical_path != path {
+        SourceLinkKind::DirectoryAlias
+    } else {
+        SourceLinkKind::Direct
+    };
     let canonical_allowed_root = match fs::canonicalize(allowed_root) {
         Ok(root) => root,
         Err(error) => {
@@ -71,6 +81,7 @@ pub(super) fn inspect(
     if !canonical_path.starts_with(&canonical_allowed_root) {
         return Some(InspectedSource {
             canonical_path: Some(canonical_path.clone()),
+            link_kind,
             preview: None,
             diagnostic: Some(diagnostic(
                 path,
@@ -122,6 +133,7 @@ pub(super) fn inspect(
     bytes.truncate(max_bytes);
     Some(InspectedSource {
         canonical_path: Some(canonical_path),
+        link_kind,
         preview: Some(MarkdownPreview {
             markdown: String::from_utf8_lossy(&bytes).into_owned(),
             truncated,
@@ -150,6 +162,7 @@ fn failed_inspection(
 ) -> InspectedSource {
     InspectedSource {
         canonical_path: None,
+        link_kind: SourceLinkKind::Direct,
         preview: None,
         diagnostic: Some(diagnostic(path, adapter_id, code, message)),
     }
@@ -172,4 +185,69 @@ pub(super) fn diagnostic(
 
 pub(super) fn path_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn direct_instruction_keeps_direct_link_kind() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let instruction = root.join("AGENTS.md");
+        fs::write(&instruction, "direct").unwrap();
+
+        let inspected = inspect(&instruction, &root, 1024, None).unwrap();
+
+        assert_eq!(inspected.link_kind, SourceLinkKind::Direct);
+        assert!(inspected.diagnostic.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_symlink_is_reported_as_symbolic_link_without_degrading_health() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let target = root.join("shared.md");
+        let instruction = root.join("AGENTS.md");
+        fs::write(&target, "linked").unwrap();
+        symlink(&target, &instruction).unwrap();
+
+        let inspected = inspect(&instruction, &root, 1024, None).unwrap();
+
+        assert_eq!(inspected.link_kind, SourceLinkKind::SymbolicLink);
+        assert_eq!(
+            serde_json::to_value(inspected.link_kind).unwrap(),
+            "symbolic_link"
+        );
+        assert_eq!(inspected.canonical_path.as_deref(), Some(target.as_path()));
+        assert!(inspected.diagnostic.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn instruction_under_directory_root_alias_is_reported_as_directory_alias() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let real_root = root.join("real");
+        let alias_root = root.join("alias");
+        fs::create_dir(&real_root).unwrap();
+        fs::write(real_root.join("AGENTS.md"), "aliased root").unwrap();
+        symlink(&real_root, &alias_root).unwrap();
+
+        let inspected = inspect(&alias_root.join("AGENTS.md"), &alias_root, 1024, None).unwrap();
+
+        assert_eq!(inspected.link_kind, SourceLinkKind::DirectoryAlias);
+        assert_eq!(
+            serde_json::to_value(inspected.link_kind).unwrap(),
+            "directory_alias"
+        );
+        assert!(inspected.diagnostic.is_none());
+    }
 }

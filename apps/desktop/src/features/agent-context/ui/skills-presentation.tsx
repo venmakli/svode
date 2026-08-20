@@ -30,17 +30,18 @@ import {
 } from "@/features/collection/system";
 import * as m from "@/paraglide/messages.js";
 
+import { skillSourceFamilies, skillSourceLocations } from "../model/provenance";
 import type {
-  AgentContextScope,
   AgentContextSkillRow,
-  SupportedAdapterId,
+  AgentContextSourceFamily,
+  AgentContextSourceLocation,
 } from "../model/types";
 import type { ArtifactOpener } from "../api/agent-context-api";
 import {
-  instructionAdapterLabel,
-  instructionScopeLabel,
-  sourceResolutionLabel,
-} from "./instruction-labels";
+  sourceFamilyLabel,
+  sourceLinkKindLabel,
+  sourceLocationLabel,
+} from "./provenance-labels";
 import { AgentContextSkillDetail, skillWarnings } from "./skill-detail";
 
 export function createAgentContextSkillsPresentation({
@@ -61,22 +62,22 @@ export function createAgentContextSkillsPresentation({
   const fields: readonly SystemCollectionFieldDescriptor<AgentContextSkillRow>[] =
     [
       multiValueField(
-        "client",
-        m.agent_context_adapter(),
-        (row) => row.clients,
-        ["codex", "claude-code"],
-        instructionAdapterLabel,
-        m.agent_context_filter_client_placeholder(),
+        "source",
+        m.agent_context_source(),
+        skillSourceFamilies,
+        ["agents", "claude"] satisfies readonly AgentContextSourceFamily[],
+        sourceFamilyLabel,
+        m.agent_context_filter_source_placeholder(),
       ),
       multiValueField(
-        "scope",
-        m.agent_context_scope(),
-        (row) => row.scopes,
-        ["project", "personal"],
-        instructionScopeLabel,
-        m.agent_context_filter_scope_placeholder(),
+        "location",
+        m.agent_context_location(),
+        skillSourceLocations,
+        ["space", "global"] satisfies readonly AgentContextSourceLocation[],
+        sourceLocationLabel,
+        m.agent_context_filter_location_placeholder(),
+        (values) => values.filter((value) => value === "global"),
       ),
-      skillResolutionField(),
     ];
 
   return defineSystemCollectionPresentation<AgentContextSkillRow>({
@@ -116,7 +117,7 @@ export function createAgentContextSkillsPresentation({
           <Sparkles className="size-4 text-muted-foreground" aria-hidden />
         ),
         renderOverlays: (row) => <SkillCardOverlays row={row} />,
-        visibleFields: ["client", "scope", "resolution"],
+        visibleFields: ["source", "location"],
       },
       query: {
         defaultCompare: compareSkillsByDefault,
@@ -136,38 +137,6 @@ export function createAgentContextSkillsPresentation({
     },
     state,
   });
-}
-
-function skillResolutionField(): SystemCollectionFieldDescriptor<AgentContextSkillRow> {
-  return {
-    getValue: (row) =>
-      row.aliases
-        .map((alias) => alias.resolution)
-        .filter((resolution) => resolution !== "included"),
-    key: "resolution",
-    label: m.agent_context_resolution(),
-    valueSemantics: {
-      kind: "custom",
-      render: (_value, row) => {
-        const resolutions = Array.from(
-          new Set(
-            row.aliases
-              .map((alias) => alias.resolution)
-              .filter((resolution) => resolution !== "included"),
-          ),
-        );
-        return resolutions.length > 0 ? (
-          <div className="flex flex-wrap gap-1">
-            {resolutions.map((resolution) => (
-              <Badge key={resolution} variant="outline">
-                {sourceResolutionLabel(resolution)}
-              </Badge>
-            ))}
-          </div>
-        ) : null;
-      },
-    },
-  };
 }
 
 function skillOwnerRoot(row: AgentContextSkillRow): string {
@@ -202,13 +171,15 @@ export function compareSkillsByDefault(
   );
 }
 
-function multiValueField<Value extends SupportedAdapterId | AgentContextScope>(
+function multiValueField<Value extends string>(
   key: string,
   label: string,
   getValues: (row: AgentContextSkillRow) => readonly Value[],
   options: readonly Value[],
   getLabel: (value: Value) => string,
   placeholder: string,
+  getVisibleValues: (values: readonly Value[]) => readonly Value[] = (values) =>
+    values,
 ): SystemCollectionFieldDescriptor<AgentContextSkillRow> {
   return {
     filter: {
@@ -235,15 +206,18 @@ function multiValueField<Value extends SupportedAdapterId | AgentContextScope>(
     label,
     valueSemantics: {
       kind: "custom",
-      render: (_value, row) => (
-        <div className="flex flex-wrap gap-1">
-          {getValues(row).map((value) => (
-            <Badge key={value} variant="outline">
-              {getLabel(value)}
-            </Badge>
-          ))}
-        </div>
-      ),
+      render: (_value, row) => {
+        const values = getVisibleValues(getValues(row));
+        return values.length > 0 ? (
+          <div className="flex flex-wrap gap-1">
+            {values.map((value) => (
+              <Badge key={value} variant="outline">
+                {getLabel(value)}
+              </Badge>
+            ))}
+          </div>
+        ) : null;
+      },
     },
   };
 }
@@ -281,31 +255,37 @@ function SkillFilterEditor<Value extends string>({
 }
 
 function SkillCardOverlays({ row }: { row: AgentContextSkillRow }) {
-  const linkedPaths = row.aliases
-    .filter((alias) => alias.linkKind !== "direct")
-    .map((alias) => alias.discoveryPath);
+  const linkedAliases = row.aliases.filter(
+    (alias) => alias.linkKind !== "direct",
+  );
   const warnings = skillWarnings(row);
-  if (linkedPaths.length === 0 && warnings.length === 0) return null;
+  if (linkedAliases.length === 0 && warnings.length === 0) return null;
 
   return (
     <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
-      {linkedPaths.length > 0 ? (
+      {linkedAliases.length > 0 ? (
         <Tooltip>
           <TooltipTrigger asChild>
             <span
               className="inline-flex size-6 items-center justify-center rounded-md border bg-background/95 text-muted-foreground shadow-sm"
-              aria-label={m.agent_context_link_tooltip({
-                path: linkedPaths.join(", "),
-              })}
+              aria-label={skillLinkTooltipText(row)}
               tabIndex={0}
             >
               <Link2 className="size-3.5" aria-hidden />
             </span>
           </TooltipTrigger>
-          <TooltipContent>
-            {m.agent_context_link_tooltip({
-              path: linkedPaths.join(", "),
-            })}
+          <TooltipContent className="flex max-w-sm flex-col items-start gap-1">
+            <span className="font-medium">
+              {m.agent_context_linked_sources()}
+            </span>
+            {linkedAliases.map((alias) => (
+              <span
+                key={`${alias.sourceFamily}:${alias.location}:${alias.linkKind}:${alias.discoveryPath}`}
+                className="break-all"
+              >
+                {skillAliasLinkLabel(alias)}
+              </span>
+            ))}
           </TooltipContent>
         </Tooltip>
       ) : null}
@@ -327,6 +307,17 @@ function SkillCardOverlays({ row }: { row: AgentContextSkillRow }) {
       ) : null}
     </div>
   );
+}
+
+function skillLinkTooltipText(row: AgentContextSkillRow) {
+  return row.aliases
+    .filter((alias) => alias.linkKind !== "direct")
+    .map(skillAliasLinkLabel)
+    .join("; ");
+}
+
+function skillAliasLinkLabel(alias: AgentContextSkillRow["aliases"][number]) {
+  return `${sourceFamilyLabel(alias.sourceFamily)} · ${sourceLocationLabel(alias.location)} · ${sourceLinkKindLabel(alias.linkKind)}: ${alias.discoveryPath}`;
 }
 
 function compareText(left: string, right: string) {

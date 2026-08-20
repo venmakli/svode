@@ -23,11 +23,7 @@ import * as m from "@/paraglide/messages.js";
 import type { AgentContextInstructionRow } from "../model/types";
 import type { ArtifactOpener } from "../api/agent-context-api";
 import { AgentContextInstructionDetail } from "./instruction-detail";
-import {
-  instructionAdapterLabel,
-  instructionScopeLabel,
-  sourceResolutionLabel,
-} from "./instruction-labels";
+import { sourceLinkKindLabel } from "./provenance-labels";
 
 export function createAgentContextInstructionsPresentation({
   artifactOpeners = [],
@@ -45,37 +41,7 @@ export function createAgentContextInstructionsPresentation({
   state: SystemCollectionPresentationState<AgentContextInstructionRow>;
 }) {
   const fields: readonly SystemCollectionFieldDescriptor<AgentContextInstructionRow>[] =
-    [
-      customBadgeField(
-        "adapter",
-        m.agent_context_adapter(),
-        (row) => instructionAdapterLabel(row.adapterId),
-        (row) => (
-          <Badge variant="outline">
-            {instructionAdapterLabel(row.adapterId)}
-          </Badge>
-        ),
-      ),
-      customBadgeField(
-        "scope",
-        m.agent_context_scope(),
-        (row) => instructionScopeLabel(row.scope),
-        (row) => (
-          <Badge variant="outline">{instructionScopeLabel(row.scope)}</Badge>
-        ),
-      ),
-      customBadgeField(
-        "resolution",
-        m.agent_context_resolution(),
-        (row) => sourceResolutionLabel(row.resolution),
-        (row) =>
-          row.resolution === "included" ? null : (
-            <Badge variant="outline">
-              {sourceResolutionLabel(row.resolution)}
-            </Badge>
-          ),
-      ),
-    ];
+    [instructionSourceField()];
 
   return defineSystemCollectionPresentation<AgentContextInstructionRow>({
     descriptor: {
@@ -104,7 +70,7 @@ export function createAgentContextInstructionsPresentation({
           <FileText className="size-4 text-muted-foreground" aria-hidden />
         ),
         renderOverlays: (row) => <InstructionCardOverlays row={row} />,
-        visibleFields: ["adapter", "scope", "resolution"],
+        visibleFields: ["source"],
       },
       query: {},
       rowActions: artifactOpeners.map((opener) => ({
@@ -145,26 +111,22 @@ function InstructionCardOverlays({ row }: { row: AgentContextInstructionRow }) {
       ? row.healthReasons.join(" · ") || m.agent_context_health_degraded()
       : null;
 
-  if (!row.linkTargetPath && !warning) return null;
+  if (row.linkKind === "direct" && !warning) return null;
 
   return (
     <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
-      {row.linkTargetPath ? (
+      {row.linkKind !== "direct" ? (
         <Tooltip>
           <TooltipTrigger asChild>
             <span
               className="inline-flex size-6 items-center justify-center rounded-md border bg-background/95 text-muted-foreground shadow-sm"
-              aria-label={m.agent_context_link_tooltip({
-                path: row.linkTargetPath,
-              })}
+              aria-label={instructionLinkTooltip(row)}
               tabIndex={0}
             >
               <Link2 className="size-3.5" aria-hidden />
             </span>
           </TooltipTrigger>
-          <TooltipContent>
-            {m.agent_context_link_tooltip({ path: row.linkTargetPath })}
-          </TooltipContent>
+          <TooltipContent>{instructionLinkTooltip(row)}</TooltipContent>
         </Tooltip>
       ) : null}
       {warning ? (
@@ -185,19 +147,40 @@ function InstructionCardOverlays({ row }: { row: AgentContextInstructionRow }) {
   );
 }
 
-function customBadgeField(
-  key: string,
-  label: string,
-  getValue: (row: AgentContextInstructionRow) => string,
-  render: (row: AgentContextInstructionRow) => React.ReactNode,
-): SystemCollectionFieldDescriptor<AgentContextInstructionRow> {
+function instructionSourceField(): SystemCollectionFieldDescriptor<AgentContextInstructionRow> {
   return {
-    getValue,
-    key,
-    label,
+    getValue: (row) => [row.location, row.support],
+    key: "source",
+    label: m.agent_context_source(),
     valueSemantics: {
       kind: "custom",
-      render: (_value, row) => render(row),
+      render: (_value, row) => {
+        const showGlobal = row.location === "global";
+        const showRecognized = row.support === "svode_recognized";
+        if (!showGlobal && !showRecognized) return null;
+        return (
+          <div className="flex flex-wrap gap-1">
+            {showGlobal ? (
+              <Badge variant="outline">
+                {m.agent_context_location_global()}
+              </Badge>
+            ) : null}
+            {showRecognized ? (
+              <Badge variant="outline">
+                {m.agent_context_source_recognized()}
+              </Badge>
+            ) : null}
+          </div>
+        );
+      },
     },
   };
+}
+
+function instructionLinkTooltip(row: AgentContextInstructionRow) {
+  return m.agent_context_instruction_link_tooltip({
+    kind: sourceLinkKindLabel(row.linkKind),
+    path: row.discoveryPath,
+    target: row.linkTargetPath ?? row.canonicalPath,
+  });
 }

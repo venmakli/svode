@@ -61,6 +61,7 @@ const dto: Parameters<typeof toAgentContextInstructionsSnapshot>[0] = {
       health: "normal",
       healthReasons: [],
       id: "claude:/workspace/CLAUDE.md",
+      linkKind: "symbolic_link",
       name: "CLAUDE.md",
       owner: { kind: "target_space", root: "/workspace" },
       path: "/workspace/CLAUDE.md",
@@ -149,12 +150,15 @@ test("transport keeps source semantics independent without message parsing", () 
   expect(row?.resolution).toBe("included");
   expect(row?.health).toBe("normal");
   expect(row?.healthReasons).toEqual([]);
+  expect(row?.location).toBe("space");
+  expect(row?.linkKind).toBe("symbolic_link");
   expect(row?.precedence).toBe(2);
   expect(row?.linkTargetPath).toBe("/workspace/shared/CLAUDE.md");
   expect(row?.references[0]?.status).toBe("requires_client_approval");
-  expect(snapshot.skills[0]?.clients).toEqual(["codex", "claude-code"]);
   expect(snapshot.skills[0]?.ownerPath).toBe("/workspace");
-  expect(snapshot.skills[0]?.scopes).toEqual(["project"]);
+  expect(snapshot.skills[0]?.aliases[0]?.sourceFamily).toBe("agents");
+  expect(snapshot.skills[0]?.aliases[1]?.sourceFamily).toBe("claude");
+  expect(snapshot.skills[0]?.aliases[1]?.location).toBe("space");
   expect(snapshot.skills[0]?.aliases[1]?.linkKind).toBe("symbolic_link");
   expect(snapshot.skills[0]?.health).toBe("degraded");
   expect(snapshot.skills[0]?.healthReasons).toEqual([

@@ -17,7 +17,14 @@ export type AgentContextSourceResolution =
 
 export type AgentContextSourceHealth = "degraded" | "normal";
 
-export type AgentContextScope = "personal" | "project";
+export type AgentContextSourceFamily = "agents" | "claude";
+
+export type AgentContextSourceLocation = "global" | "space";
+
+export type AgentContextLinkKind =
+  | "direct"
+  | "symbolic_link"
+  | "directory_alias";
 
 export type AgentContextInstructionRole =
   | "codex_user_precedence"
@@ -40,7 +47,8 @@ export interface AgentContextInstructionRow {
   adapterId: SupportedAdapterId | null;
   role: AgentContextInstructionRole;
   filename: string;
-  scope: AgentContextScope;
+  location: AgentContextSourceLocation;
+  linkKind: AgentContextLinkKind;
   support: AgentContextSourceSupport;
   resolution: AgentContextSourceResolution;
   health: AgentContextSourceHealth;
@@ -62,22 +70,18 @@ export type AgentContextSkillDiscoveryKind =
   | "claude_personal";
 
 export interface AgentContextSkillAlias {
-  adapterId: SupportedAdapterId;
+  sourceFamily: AgentContextSourceFamily;
+  location: AgentContextSourceLocation;
   support: AgentContextSourceSupport;
   resolution: AgentContextSourceResolution;
-  discoveryKind: AgentContextSkillDiscoveryKind;
   discoveryPath: string;
-  linkKind: "direct" | "symbolic_link" | "directory_alias";
-  ownerPath: string;
-  rootPath: string;
-  scope: AgentContextScope;
+  linkKind: AgentContextLinkKind;
 }
 
 export interface AgentContextSkillRow {
   aliases: readonly AgentContextSkillAlias[];
   body: string;
   canonicalPath: string;
-  clients: readonly SupportedAdapterId[];
   compatibility: string | null;
   description: string;
   health: AgentContextSourceHealth;
@@ -87,7 +91,6 @@ export interface AgentContextSkillRow {
   manifestPath: string;
   name: string;
   ownerPath: string;
-  scopes: readonly AgentContextScope[];
 }
 
 export interface AgentContextInstructionsSnapshot {

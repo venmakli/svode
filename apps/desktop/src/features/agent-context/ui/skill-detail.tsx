@@ -1,4 +1,4 @@
-import { AlertTriangle, Link2 } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -10,10 +10,11 @@ import {
 
 import type { AgentContextSkillRow } from "../model/types";
 import {
-  instructionAdapterLabel,
-  instructionScopeLabel,
+  sourceFamilyLabel,
+  sourceLinkKindLabel,
+  sourceLocationLabel,
   sourceResolutionLabel,
-} from "./instruction-labels";
+} from "./provenance-labels";
 
 const skillReaderPolicy: MarkdownReaderPolicy = {
   openLink: () => undefined,
@@ -36,43 +37,43 @@ export function AgentContextSkillDetail({
         {row.description}
       </p>
 
-      <dl className="grid min-w-0 grid-cols-[minmax(7rem,auto)_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
-        <DetailTerm>{m.agent_context_detail_owner()}</DetailTerm>
-        <DetailPath>{row.ownerPath}</DetailPath>
-        <DetailTerm>{m.agent_context_detail_canonical_path()}</DetailTerm>
-        <DetailPath>{row.manifestPath}</DetailPath>
-      </dl>
+      <section className="flex min-w-0 flex-col gap-2">
+        <h3 className="text-sm font-medium">
+          {m.agent_context_detail_canonical_source()}
+        </h3>
+        <dl className="grid min-w-0 grid-cols-[minmax(7rem,auto)_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
+          <DetailTerm>{m.agent_context_detail_canonical_owner()}</DetailTerm>
+          <DetailPath>{row.ownerPath}</DetailPath>
+          <DetailTerm>{m.agent_context_detail_canonical_path()}</DetailTerm>
+          <DetailPath>{row.manifestPath}</DetailPath>
+        </dl>
+      </section>
 
       <section className="flex min-w-0 flex-col gap-2">
         <h3 className="text-sm font-medium">
-          {m.agent_context_skill_provenance()}
+          {m.agent_context_detail_discovery_sources()}
         </h3>
         <ul className="flex min-w-0 flex-col gap-2">
           {row.aliases.map((alias) => (
             <li
-              key={`${alias.adapterId}:${alias.scope}:${alias.discoveryKind}:${alias.discoveryPath}`}
+              key={`${alias.sourceFamily}:${alias.location}:${alias.linkKind}:${alias.discoveryPath}`}
               className="flex min-w-0 flex-col gap-2 rounded-lg border p-3 text-sm"
             >
               <div className="flex flex-wrap items-center gap-1.5">
                 <Badge variant="outline">
-                  {instructionAdapterLabel(alias.adapterId)}
+                  {sourceFamilyLabel(alias.sourceFamily)}
                 </Badge>
                 <Badge variant="outline">
-                  {instructionScopeLabel(alias.scope)}
+                  {sourceLocationLabel(alias.location)}
+                </Badge>
+                <Badge variant="outline">
+                  {sourceLinkKindLabel(alias.linkKind)}
                 </Badge>
                 <Badge variant="outline">
                   {sourceResolutionLabel(alias.resolution)}
                 </Badge>
-                {alias.linkKind !== "direct" ? (
-                  <Badge variant="outline">
-                    <Link2 aria-hidden />
-                    {m.agent_context_skill_alias()}
-                  </Badge>
-                ) : null}
               </div>
               <dl className="grid min-w-0 grid-cols-[minmax(6rem,auto)_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
-                <DetailTerm>{m.agent_context_detail_owner()}</DetailTerm>
-                <DetailPath>{alias.ownerPath}</DetailPath>
                 <DetailTerm>
                   {m.agent_context_detail_discovery_path()}
                 </DetailTerm>

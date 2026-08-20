@@ -358,7 +358,7 @@ mod tests {
     use crate::agent_adapters::AgentAdapterKind;
     use crate::agent_context::model::{
         InstructionDiscovery, InstructionDiscoveryPolicy, InstructionOwner, InstructionRow,
-        MarkdownPreview, SourceHealth, SourceResolution, SourceSupport,
+        MarkdownPreview, SourceHealth, SourceLinkKind, SourceResolution, SourceSupport,
     };
     use tempfile::TempDir;
 
@@ -382,6 +382,7 @@ mod tests {
             name: "AGENTS.md".to_string(),
             path: canonical.to_string_lossy().to_string(),
             canonical_path: Some(canonical.to_string_lossy().to_string()),
+            link_kind: SourceLinkKind::Direct,
             owner: InstructionOwner {
                 kind: if source_kind == InstructionSourceKind::Personal {
                     InstructionOwnerKind::ClientConfiguration

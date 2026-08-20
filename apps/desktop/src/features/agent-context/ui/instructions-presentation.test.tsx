@@ -19,12 +19,13 @@ const selected: AgentContextInstructionRow = {
   health: "normal",
   healthReasons: [],
   id: "codex:project:/workspace/AGENTS.md",
+  linkKind: "direct",
   linkTargetPath: null,
+  location: "space",
   ownerPath: "/workspace",
   precedence: 1,
   references: [],
   role: "codex_directory_precedence",
-  scope: "project",
   support: "client_native",
   resolution: "selected",
   truncated: false,
@@ -59,7 +60,10 @@ test("instructions use the common coverless Gallery and safe reader detail", () 
   expect(html.includes("max-width")).toBe(false);
   expect(html.includes('data-size="sm"')).toBe(true);
   expect(html.includes("group/gallery-cover")).toBe(false);
-  expect(html.includes("Selected")).toBe(true);
+  expect(html.includes("Selected")).toBe(false);
+  expect(html.includes("Codex")).toBe(false);
+  expect(html.includes("Project")).toBe(false);
+  expect(html.includes("Personal")).toBe(false);
 
   const descriptor = presentation as unknown as {
     instance: {
@@ -84,21 +88,25 @@ test("instructions use the common coverless Gallery and safe reader detail", () 
   expect(detailHtml.includes("data-markdown-reader-blocked-link")).toBe(true);
   expect(detailHtml.includes('href="https://example.com"')).toBe(false);
   expect(detailHtml.includes("Selected")).toBe(true);
+  expect(detailHtml.includes("Canonical source")).toBe(true);
+  expect(detailHtml.includes("Discovery source")).toBe(true);
+  expect(detailHtml.includes("Space")).toBe(true);
+  expect(detailHtml.includes("Direct")).toBe(true);
 });
 
 test("superseded aliases keep neutral link provenance without a warning", () => {
+  const linkedRow: AgentContextInstructionRow = {
+    ...selected,
+    discoveryPath: "/workspace/AGENTS.md",
+    id: "codex:superseded:/workspace/AGENTS.md",
+    linkKind: "directory_alias",
+    linkTargetPath: "/workspace/shared/AGENTS.md",
+    resolution: "superseded",
+  };
   const presentation = createAgentContextInstructionsPresentation({
     state: {
       phase: "ready",
-      rows: [
-        {
-          ...selected,
-          discoveryPath: "/workspace/AGENTS.md",
-          id: "codex:superseded:/workspace/AGENTS.md",
-          linkTargetPath: "/workspace/shared/AGENTS.md",
-          resolution: "superseded",
-        },
-      ],
+      rows: [linkedRow],
     },
   });
   const html = renderToStaticMarkup(
@@ -112,11 +120,67 @@ test("superseded aliases keep neutral link provenance without a warning", () => 
     </TooltipProvider>,
   );
 
-  expect(html.includes("Filesystem alias")).toBe(true);
-  expect(html.includes("Superseded")).toBe(true);
+  expect(html.includes("Directory alias")).toBe(true);
+  expect(html.includes("Superseded")).toBe(false);
   expect(html.includes("AGENTS.override.md wins")).toBe(false);
   expect(html.includes("The source preview is degraded")).toBe(false);
   expect(html.includes("Codex project guidance")).toBe(false);
+
+  const descriptor = presentation as unknown as {
+    instance: {
+      descriptor: {
+        createDetailRequest(row: AgentContextInstructionRow): {
+          content: React.ReactNode;
+        };
+      };
+    };
+  };
+  const detailHtml = renderToStaticMarkup(
+    descriptor.instance.descriptor.createDetailRequest(linkedRow).content,
+  );
+  expect(detailHtml.includes("Superseded")).toBe(true);
+  expect(detailHtml.includes("Directory alias")).toBe(true);
+  expect(detailHtml.includes("/workspace/shared/AGENTS.md")).toBe(true);
+});
+
+test("instruction cards show only exceptional factual source metadata", () => {
+  const global = {
+    ...selected,
+    canonicalPath: "/home/user/.codex/AGENTS.md",
+    discoveryPath: "/home/user/.codex/AGENTS.md",
+    id: "codex:global:/home/user/.codex/AGENTS.md",
+    location: "global" as const,
+    ownerPath: "/home/user/.codex",
+    role: "codex_user_precedence" as const,
+  };
+  const recognized = {
+    ...selected,
+    adapterId: null,
+    canonicalPath: "/workspace/SOUL.md",
+    discoveryPath: "/workspace/SOUL.md",
+    filename: "SOUL.md",
+    id: "recognized:/workspace/SOUL.md",
+    role: "target_root_recognition" as const,
+    support: "svode_recognized" as const,
+  };
+  const html = renderToStaticMarkup(
+    <TooltipProvider>
+      <SystemCollectionPresentationShell
+        instanceKey="agent-context:space:source-metadata"
+        presentation={createAgentContextInstructionsPresentation({
+          state: { phase: "ready", rows: [selected, global, recognized] },
+        })}
+        query={EMPTY_SYSTEM_COLLECTION_QUERY}
+        onQueryChange={() => undefined}
+      />
+    </TooltipProvider>,
+  );
+
+  expect(html.includes("Global")).toBe(true);
+  expect(html.includes("Recognized by Svode")).toBe(true);
+  expect(html.includes("Codex")).toBe(false);
+  expect(html.includes("Project")).toBe(false);
+  expect(html.includes("Personal")).toBe(false);
 });
 
 test("only row-local degraded health renders a warning overlay", () => {
