@@ -22,20 +22,54 @@ pub async fn call_tool_with_context(
     let request_context =
         freeze_request_context(resolved_context, &app.state::<ActiveProjectState>());
 
-    if let Some(context) = request_context {
-        return match MCP_CONTEXT_OVERRIDE
-            .scope(Some(context), call_tool_inner(app, name, args))
-            .await
-        {
-            Ok(result) => result,
-            Err(error) => ToolCallResult::business_error(error),
+    let routine_caller =
+        match resolve_routine_caller(&app, context_override.as_ref(), request_context.as_ref()) {
+            Ok(provenance) => provenance,
+            Err(error) => return ToolCallResult::business_error(error),
         };
-    }
+    let execute = async move {
+        if let Some(context) = request_context {
+            MCP_CONTEXT_OVERRIDE
+                .scope(Some(context), call_tool_inner(app, name, args))
+                .await
+        } else {
+            call_tool_inner(app, name, args).await
+        }
+    };
 
-    match call_tool_inner(app, name, args).await {
+    match MCP_ROUTINE_CALLER.scope(routine_caller, execute).await {
         Ok(result) => result,
         Err(error) => ToolCallResult::business_error(error),
     }
+}
+
+fn resolve_routine_caller(
+    app: &AppHandle,
+    context_override: Option<&IpcContextOverride>,
+    request_context: Option<&ActiveProjectContext>,
+) -> Result<Option<crate::terminal::RoutineMcpCallerProvenance>, McpBusinessError> {
+    let Some(token) = context_override
+        .and_then(|context| context.routine_caller_token.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let context = request_context.ok_or_else(|| {
+        McpBusinessError::new(
+            "ROUTINE_CALLER_PROVENANCE_INVALID",
+            "routine caller provenance has no frozen Svode project context",
+        )
+    })?;
+    app.state::<crate::terminal::TerminalManager>()
+        .resolve_routine_mcp_caller(token, Path::new(&context.project_path))?
+        .ok_or_else(|| {
+            McpBusinessError::new(
+                "ROUTINE_CALLER_PROVENANCE_INVALID",
+                "routine caller provenance is not attached to a live managed Routine launch in this project",
+            )
+        })
+        .map(Some)
 }
 
 fn freeze_request_context(
@@ -80,6 +114,7 @@ async fn call_tool_inner(
             "create_routine" => routines::create_routine(&app, decode(args)?).await,
             "update_routine" => routines::update_routine(&app, decode(args)?).await,
             "delete_routine" => routines::delete_routine(&app, decode(args)?).await,
+            "run_routine" => routines::run_routine(&app, decode(args)?).await,
             "list_collections" => collections::list_collections(&app, decode(args)?).await,
             "get_collection_schema" => {
                 collections::get_collection_schema(&app, decode(args)?).await
@@ -136,6 +171,11 @@ async fn authorize_mutating_tool(
     args: &Value,
 ) -> Result<Option<Vec<PathBuf>>, McpBusinessError> {
     if crate::mcp::tools::is_mutating_tool(name) != Some(true) {
+        return Ok(None);
+    }
+    if matches!(name, "create_routine" | "update_routine" | "run_routine")
+        && crate::mcp::service::routine_caller_provenance().is_some()
+    {
         return Ok(None);
     }
 

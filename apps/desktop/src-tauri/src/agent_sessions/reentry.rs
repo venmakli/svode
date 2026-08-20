@@ -400,6 +400,8 @@ mod tests {
             agent_session_id: format!("codex:{source_session_id}"),
             launch_id: None,
             routine_run_id: None,
+            mcp_project_path: None,
+            mcp_routine_caller_token: None,
             title: Some(format!("Session {source_session_id}")),
             source: AgentSessionSource::Codex,
             source_session_id: source_session_id.to_string(),

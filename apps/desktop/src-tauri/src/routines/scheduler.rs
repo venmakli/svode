@@ -8,10 +8,10 @@ use tauri::{AppHandle, Manager};
 
 use super::authority;
 use super::cache;
-use super::commands;
+use super::dispatch;
 use super::model::{
-    ResolvedRoutineOwner, RoutineDefinition, RoutineDispatchBlockedCode,
-    RoutineManualDispatchResult, RoutineTrigger,
+    ResolvedRoutineOwner, RoutineDefinition, RoutineDispatchBlockedCode, RoutineDispatchResult,
+    RoutineTrigger,
 };
 use super::service;
 use crate::AppError;
@@ -197,7 +197,7 @@ async fn tick_owner(
             .await?;
             continue;
         }
-        if !commands::scheduled_dispatch_ready(
+        if !dispatch::scheduled_dispatch_ready(
             owner,
             row.definition.as_ref().expect("validated definition"),
         )
@@ -314,20 +314,21 @@ async fn tick_owner(
         if !should_dispatch {
             continue;
         }
-        match commands::dispatch_scheduled(app, owner.clone(), row.routine_id.clone()).await? {
-            RoutineManualDispatchResult::Blocked {
+        match dispatch::dispatch_scheduled(app, owner.clone(), row.routine_id.clone()).await? {
+            RoutineDispatchResult::Blocked {
                 code: RoutineDispatchBlockedCode::RepositoryAccessDenied,
                 message,
                 ..
             } => {
                 tracing::warn!(routine_id = %row.routine_id, "scheduled routine lost eligibility after claim: {message}")
             }
-            RoutineManualDispatchResult::Blocked { message, .. }
-            | RoutineManualDispatchResult::Failed { message, .. } => {
+            RoutineDispatchResult::Blocked { message, .. }
+            | RoutineDispatchResult::Failed { message, .. } => {
                 tracing::warn!(routine_id = %row.routine_id, "scheduled routine dispatch did not start: {message}")
             }
-            RoutineManualDispatchResult::Started { .. }
-            | RoutineManualDispatchResult::Focused { .. } => {}
+            RoutineDispatchResult::Started { .. }
+            | RoutineDispatchResult::AlreadyRunning { .. }
+            | RoutineDispatchResult::Completed => {}
         }
     }
     Ok(())
@@ -352,11 +353,11 @@ async fn dispatch_next_event(
     {
         return Ok(());
     }
-    let Some(preflight) = commands::event_dispatch_preflight(owner, &event).await else {
+    let Some(preflight) = dispatch::event_dispatch_preflight(owner, &event).await else {
         cache::finish_event(pool, &event.queue_key, "failed").await?;
         return Ok(());
     };
-    if let commands::EventDispatchPreflight::UpdateProperties { mutation_paths } = &preflight
+    if let dispatch::EventDispatchPreflight::UpdateProperties { mutation_paths } = &preflight
         && let Err(error) = require_repository_mutation_paths(app, mutation_paths.clone()).await
     {
         tracing::debug!(
@@ -456,12 +457,13 @@ async fn dispatch_next_event(
         return Ok(());
     }
     let result =
-        commands::dispatch_event(app, owner.clone(), event.clone(), execution_run_id).await;
+        dispatch::dispatch_event(app, owner.clone(), event.clone(), execution_run_id).await;
     let state = match &result {
-        Ok(RoutineManualDispatchResult::Started { .. })
-        | Ok(RoutineManualDispatchResult::Focused { .. }) => "completed",
-        Ok(RoutineManualDispatchResult::Blocked { message, .. })
-        | Ok(RoutineManualDispatchResult::Failed { message, .. }) => {
+        Ok(RoutineDispatchResult::Started { .. })
+        | Ok(RoutineDispatchResult::AlreadyRunning { .. })
+        | Ok(RoutineDispatchResult::Completed) => "completed",
+        Ok(RoutineDispatchResult::Blocked { message, .. })
+        | Ok(RoutineDispatchResult::Failed { message, .. }) => {
             tracing::warn!(routine_id = %event.routine_id, "event routine failed: {message}");
             "failed"
         }

@@ -326,7 +326,7 @@ pub(crate) async fn create_managed(
     let repository = mutation_repository(git_state, &owner).await?;
     let lock = git_state.get_lock(&repository).await;
     let _guard = lock.lock().await;
-    let owner = revalidate_mutation_owner(git_state, &owner, &repository).await?;
+    let owner = revalidate_owner(git_state, &owner, &repository).await?;
     authorize_mutation(app, git_state, access_state, &repository).await?;
 
     let write_owner = owner.clone();
@@ -377,7 +377,7 @@ pub(crate) async fn update_managed(
     let repository = mutation_repository(git_state, &owner).await?;
     let lock = git_state.get_lock(&repository).await;
     let _guard = lock.lock().await;
-    let owner = revalidate_mutation_owner(git_state, &owner, &repository).await?;
+    let owner = revalidate_owner(git_state, &owner, &repository).await?;
     authorize_mutation(app, git_state, access_state, &repository).await?;
 
     let current = discover_owner(&owner).await?;
@@ -434,7 +434,7 @@ pub(crate) async fn delete_managed(
     let repository = mutation_repository(git_state, &owner).await?;
     let lock = git_state.get_lock(&repository).await;
     let _guard = lock.lock().await;
-    let owner = revalidate_mutation_owner(git_state, &owner, &repository).await?;
+    let owner = revalidate_owner(git_state, &owner, &repository).await?;
     authorize_mutation(app, git_state, access_state, &repository).await?;
 
     let current = discover_owner(&owner).await?;
@@ -574,7 +574,7 @@ fn automatic_execution_enabled(definition: &RoutineDefinition) -> bool {
         )
 }
 
-async fn revalidate_mutation_owner(
+pub(crate) async fn revalidate_owner(
     git_state: &GitState,
     owner: &ResolvedRoutineOwner,
     expected_repository: &Path,

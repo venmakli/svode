@@ -134,6 +134,10 @@ pub(crate) struct AgentTerminalSurface {
     pub launch_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routine_run_id: Option<String>,
+    #[serde(skip)]
+    pub(crate) mcp_project_path: Option<String>,
+    #[serde(skip)]
+    pub(crate) mcp_routine_caller_token: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     pub source: AgentSessionSource,
@@ -158,6 +162,13 @@ pub(crate) struct AgentTerminalSurface {
     pub status_evidence: Option<AgentTerminalStatusEvidence>,
     #[serde(skip)]
     pub(crate) exit_marker_buffer: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RoutineMcpCallerProvenance {
+    pub routine_run_id: String,
+    pub launch_id: String,
+    pub pty_id: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -200,6 +211,18 @@ impl TerminalManager {
         cols: u16,
         rows: u16,
     ) -> Result<TerminalSession, AppError> {
+        self.spawn_with_mcp_context(app, cwd, mcp_project_path, None, cols, rows)
+    }
+
+    fn spawn_with_mcp_context(
+        &self,
+        app: AppHandle,
+        cwd: String,
+        mcp_project_path: Option<String>,
+        routine_caller_token: Option<String>,
+        cols: u16,
+        rows: u16,
+    ) -> Result<TerminalSession, AppError> {
         let cwd_path = canonical_cwd(&cwd)?;
         let cwd_display = system_path::user_facing_path(&cwd_path);
         let mcp_project_path = mcp_project_path
@@ -233,6 +256,9 @@ impl TerminalManager {
                 crate::mcp::MCP_PROJECT_PATH_ENV,
                 system_path::user_facing_path(&path),
             );
+        }
+        if let Some(token) = routine_caller_token {
+            cmd.env(crate::mcp::MCP_ROUTINE_CALLER_TOKEN_ENV, token);
         }
 
         let child = pair
@@ -297,10 +323,16 @@ impl TerminalManager {
         app: AppHandle,
         spawn: AgentTerminalSpawn,
     ) -> Result<TerminalSession, AppError> {
-        let session = self.spawn(
+        let routine_caller_token = spawn
+            .routine_run_id
+            .as_ref()
+            .zip(spawn.launch_id.as_ref())
+            .map(|_| ulid::Ulid::new().to_string().to_ascii_lowercase());
+        let session = self.spawn_with_mcp_context(
             app,
             spawn.cwd.clone(),
             spawn.mcp_project_path.clone(),
+            routine_caller_token.clone(),
             DEFAULT_AGENT_TERMINAL_COLS,
             DEFAULT_AGENT_TERMINAL_ROWS,
         )?;
@@ -308,6 +340,7 @@ impl TerminalManager {
             session.pty_id.clone(),
             session.cwd.clone(),
             spawn.clone(),
+            routine_caller_token,
             now_rfc3339(),
         );
 
@@ -550,6 +583,47 @@ impl TerminalManager {
             .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?;
 
         Ok(surfaces.values().cloned().collect())
+    }
+
+    pub(crate) fn resolve_routine_mcp_caller(
+        &self,
+        token: &str,
+        frozen_project_path: &Path,
+    ) -> Result<Option<RoutineMcpCallerProvenance>, AppError> {
+        let token = token.trim();
+        if token.is_empty() {
+            return Ok(None);
+        }
+        let frozen_project_path = canonical_cwd(&frozen_project_path.to_string_lossy())?;
+        let surfaces = self
+            .agent_surfaces
+            .lock()
+            .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?;
+        let Some(surface) = surfaces.values().find(|surface| {
+            surface.live
+                && surface.mcp_routine_caller_token.as_deref() == Some(token)
+                && surface.routine_run_id.is_some()
+                && surface.launch_id.is_some()
+        }) else {
+            return Ok(None);
+        };
+        let Some(project_path) = surface.mcp_project_path.as_deref() else {
+            return Ok(None);
+        };
+        if canonical_cwd(project_path)? != frozen_project_path {
+            return Ok(None);
+        }
+        Ok(Some(RoutineMcpCallerProvenance {
+            routine_run_id: surface
+                .routine_run_id
+                .clone()
+                .expect("matched routine surface has a run id"),
+            launch_id: surface
+                .launch_id
+                .clone()
+                .expect("matched routine surface has a launch id"),
+            pty_id: surface.pty_id.clone(),
+        }))
     }
 
     pub(crate) fn reconcile_agent_sessions(
@@ -963,6 +1037,7 @@ fn agent_surface_from_spawn(
     pty_id: String,
     shell_cwd: String,
     spawn: AgentTerminalSpawn,
+    mcp_routine_caller_token: Option<String>,
     created_at: String,
 ) -> AgentTerminalSurface {
     let mut initial_agent_argv = vec![spawn.command.program.clone()];
@@ -973,6 +1048,8 @@ fn agent_surface_from_spawn(
         agent_session_id: spawn.agent_session_id,
         launch_id: spawn.launch_id,
         routine_run_id: spawn.routine_run_id,
+        mcp_project_path: spawn.mcp_project_path,
+        mcp_routine_caller_token,
         title: spawn.title,
         source: spawn.source,
         source_session_id: spawn.source_session_id,
@@ -1005,6 +1082,8 @@ fn agent_surface_from_existing_session(
         agent_session_id,
         launch_id: None,
         routine_run_id: None,
+        mcp_project_path: None,
+        mcp_routine_caller_token: None,
         title,
         source,
         source_session_id: source_session_id.clone(),
@@ -1473,6 +1552,8 @@ mod tests {
             agent_session_id: "codex:session".to_string(),
             launch_id: None,
             routine_run_id: None,
+            mcp_project_path: None,
+            mcp_routine_caller_token: None,
             title: Some("Test session".to_string()),
             source: AgentSessionSource::Codex,
             source_session_id: "session".to_string(),
@@ -1913,6 +1994,7 @@ mod tests {
             "pty-spawn".to_string(),
             "/tmp/project".to_string(),
             test_spawn(),
+            Some("routine-caller-token".to_string()),
             "2026-07-04T10:00:00Z".to_string(),
         );
 
@@ -1924,7 +2006,60 @@ mod tests {
         );
         assert_eq!(surface.initial_agent_cwd.as_deref(), Some("/tmp/project"));
         assert_eq!(surface.shell_cwd, "/tmp/project");
+        assert_eq!(
+            surface.mcp_routine_caller_token.as_deref(),
+            Some("routine-caller-token")
+        );
         assert!(surface.finished_at.is_none());
+    }
+
+    #[test]
+    fn routine_mcp_token_resolves_only_for_live_surface_in_frozen_project() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let other = temp.path().join("other");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        let manager = TerminalManager::new();
+        let mut surface = test_surface();
+        surface.routine_run_id = Some("run-one".to_string());
+        surface.launch_id = Some("launch-one".to_string());
+        surface.mcp_project_path = Some(project.to_string_lossy().into_owned());
+        surface.mcp_routine_caller_token = Some("opaque-token".to_string());
+        manager.insert_agent_surface_for_test(surface);
+
+        let provenance = manager
+            .resolve_routine_mcp_caller("opaque-token", &project)
+            .unwrap()
+            .expect("live Routine provenance");
+        assert_eq!(provenance.routine_run_id, "run-one");
+        assert_eq!(provenance.launch_id, "launch-one");
+        assert_eq!(provenance.pty_id, "pty-agent");
+        assert!(
+            manager
+                .resolve_routine_mcp_caller("opaque-token", &other)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            manager
+                .resolve_routine_mcp_caller("wrong-token", &project)
+                .unwrap()
+                .is_none()
+        );
+
+        manager.finish_surface(
+            "pty-agent",
+            AgentTerminalOutcomeStatus::Done,
+            Some(0),
+            "initial agent command exited successfully",
+        );
+        assert!(
+            manager
+                .resolve_routine_mcp_caller("opaque-token", &project)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

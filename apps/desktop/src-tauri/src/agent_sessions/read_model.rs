@@ -620,6 +620,8 @@ mod tests {
             agent_session_id: format!("{}:{source_session_id}", source.as_str()),
             launch_id: None,
             routine_run_id: None,
+            mcp_project_path: None,
+            mcp_routine_caller_token: None,
             title: Some(format!("Session {source_session_id}")),
             source,
             source_session_id: source_session_id.to_string(),

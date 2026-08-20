@@ -1,6 +1,7 @@
 pub(crate) mod authority;
 mod cache;
 pub mod commands;
+pub(crate) mod dispatch;
 pub(crate) mod events;
 mod model;
 mod parser;
@@ -18,8 +19,8 @@ pub(crate) use model::{
     RoutineTriggerType,
 };
 pub(crate) use model::{
-    RoutineCatalogSnapshot, RoutineDefinition, RoutineInvalidationPayload, RoutineOwnerInputKind,
-    RoutineOwnerKind, RoutineRow,
+    RoutineCatalogSnapshot, RoutineDefinition, RoutineDispatchBlockedCode, RoutineDispatchResult,
+    RoutineInvalidationPayload, RoutineOwnerInputKind, RoutineOwnerKind, RoutineRow,
 };
 
 pub(crate) const INVALIDATED_EVENT: &str = "routines:invalidated";

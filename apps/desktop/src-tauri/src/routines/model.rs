@@ -373,6 +373,9 @@ pub struct RoutineRunRef {
 #[serde(rename_all = "snake_case")]
 pub enum RoutineDispatchBlockedCode {
     InvalidRoutine,
+    RoutineNotFound,
+    FingerprintConflict,
+    RecursionGuard,
     NonManualTrigger,
     UnsupportedAction,
     MissingExecutor,
@@ -380,6 +383,60 @@ pub enum RoutineDispatchBlockedCode {
     AmbiguousActorId,
     UnavailableExecutor,
     RepositoryAccessDenied,
+}
+
+impl RoutineDispatchBlockedCode {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidRoutine => "invalid_routine",
+            Self::RoutineNotFound => "ROUTINE_NOT_FOUND",
+            Self::FingerprintConflict => "ROUTINE_FINGERPRINT_CONFLICT",
+            Self::RecursionGuard => "ROUTINE_RECURSION_GUARD",
+            Self::NonManualTrigger => "non_manual_trigger",
+            Self::UnsupportedAction => "unsupported_action",
+            Self::MissingExecutor => "missing_executor",
+            Self::MissingActorId => "missing_actor_id",
+            Self::AmbiguousActorId => "ambiguous_actor_id",
+            Self::UnavailableExecutor => "unavailable_executor",
+            Self::RepositoryAccessDenied => "repository_access_denied",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum RoutineDispatchResult {
+    Started {
+        routine_id: String,
+        routine_run_id: String,
+        launch_id: String,
+        agent_session_id: String,
+        source_session_id: Option<String>,
+        pty_id: String,
+    },
+    AlreadyRunning {
+        routine_id: String,
+        routine_run_id: String,
+        launch_id: String,
+        agent_session_id: String,
+        source_session_id: Option<String>,
+        pty_id: Option<String>,
+    },
+    Completed,
+    Blocked {
+        routine_id: String,
+        code: RoutineDispatchBlockedCode,
+        message: String,
+        current_fingerprint: Option<String>,
+    },
+    Failed {
+        routine_id: String,
+        routine_run_id: String,
+        launch_id: String,
+        agent_session_id: String,
+        source_session_id: Option<String>,
+        pty_id: Option<String>,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -417,6 +474,70 @@ pub enum RoutineManualDispatchResult {
         agent_session_id: String,
         message: String,
     },
+}
+
+impl RoutineManualDispatchResult {
+    pub(crate) fn from_dispatch(result: RoutineDispatchResult) -> Self {
+        match result {
+            RoutineDispatchResult::Started {
+                routine_id,
+                routine_run_id,
+                launch_id,
+                agent_session_id,
+                source_session_id,
+                pty_id,
+            } => Self::Started {
+                routine_id,
+                routine_run_id,
+                launch_id,
+                agent_session_id,
+                source_session_id,
+                pty_id,
+            },
+            RoutineDispatchResult::AlreadyRunning {
+                routine_id,
+                routine_run_id,
+                launch_id,
+                agent_session_id,
+                source_session_id,
+                pty_id,
+            } => Self::Focused {
+                routine_id,
+                routine_run_id,
+                launch_id,
+                agent_session_id,
+                source_session_id,
+                pty_id,
+            },
+            RoutineDispatchResult::Blocked {
+                routine_id,
+                code,
+                message,
+                ..
+            } => Self::Blocked {
+                routine_id,
+                code,
+                message,
+            },
+            RoutineDispatchResult::Failed {
+                routine_id,
+                routine_run_id,
+                launch_id,
+                agent_session_id,
+                message,
+                ..
+            } => Self::Failed {
+                routine_id,
+                routine_run_id,
+                launch_id,
+                agent_session_id,
+                message,
+            },
+            RoutineDispatchResult::Completed => {
+                unreachable!("manual Routine dispatch cannot complete without an Agent Session")
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

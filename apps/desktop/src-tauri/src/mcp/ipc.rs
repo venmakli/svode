@@ -242,14 +242,27 @@ fn process_context_override() -> Option<IpcContextOverride> {
         .ok()
         .map(|path| path.to_string_lossy().to_string())
         .filter(|value| !value.is_empty());
+    let routine_caller_token = std::env::var(super::MCP_ROUTINE_CALLER_TOKEN_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
 
-    if project_path.is_none() && caller_cwd.is_none() {
+    context_override(project_path, caller_cwd, routine_caller_token)
+}
+
+fn context_override(
+    project_path: Option<String>,
+    caller_cwd: Option<String>,
+    routine_caller_token: Option<String>,
+) -> Option<IpcContextOverride> {
+    if project_path.is_none() && caller_cwd.is_none() && routine_caller_token.is_none() {
         return None;
     }
 
     Some(IpcContextOverride {
         project_path,
         caller_cwd,
+        routine_caller_token,
     })
 }
 
@@ -304,5 +317,22 @@ mod tests {
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
         assert_eq!(fs::read(&path).unwrap(), br#"{"ok":true}"#);
+    }
+
+    #[test]
+    fn private_context_carries_routine_token_without_public_tool_arguments() {
+        let context = context_override(
+            Some("/project".to_string()),
+            Some("/project/space".to_string()),
+            Some("opaque-token".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(context.project_path.as_deref(), Some("/project"));
+        assert_eq!(context.caller_cwd.as_deref(), Some("/project/space"));
+        assert_eq!(
+            context.routine_caller_token.as_deref(),
+            Some("opaque-token")
+        );
     }
 }

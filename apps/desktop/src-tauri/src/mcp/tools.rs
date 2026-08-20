@@ -314,6 +314,21 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
+            "run_routine",
+            "Explicitly launch one exact manual or schedule Routine after rechecking its fingerprint, owner repository, Agent Actor, approval readiness, and one-active-run policy. Event Routines are blocked. Returns launch/session identity immediately, never waits for completion, never changes automatic authority or schedule checkpoints, and never autocommits.",
+            schema(
+                &[
+                    routine_space_id(),
+                    routine_collection_path_opt(),
+                    str_req("routineId"),
+                    expected_routine_fingerprint_req(),
+                ],
+                &["spaceId", "routineId", "expectedFingerprint"],
+            ),
+            routine_run_ann(),
+            None,
+        ),
+        def(
             "list_collections",
             "List collections in a space.",
             schema(&[space_id()], &[]),
@@ -665,6 +680,7 @@ Routine workflow:
 - Call list_spaces, then list_collections when needed, before working with Routines. Every Routine tool requires a non-null explicit spaceId: use "root" for the project owner or a child id from list_spaces; add collectionPath only for an existing Collection owner.
 - Use list_routines for bounded body-less discovery and get_routine for the normalized definition, Markdown body, and fingerprint. Invalid definitions remain visible with diagnostics and can be repaired by a full valid update using their current fingerprint. Device-local automatic authority and last/next run fields are evidence, not a promise that a Routine can run now.
 - Use create_routine, update_routine, and delete_routine for managed source changes. Update/delete require the last-read fingerprint; a conflict returns the current fingerprint without writing. Create/update validate the complete candidate and return canonical changedPaths. These tools never autocommit.
+- Use run_routine only for an explicit one-time launch of a manual or schedule Routine, with the last-read fingerprint. It returns started or already_running launch/session identity immediately; blocked and failed outcomes keep stable recovery evidence. It never runs event Routines, waits for completion, changes automatic authority/checkpoints, or autocommits. A Routine-launched agent cannot use run_routine or save enabled automation, preventing hidden recursive agent execution.
 - Saving an enabled schedule/event requires confirmAutomaticExecution=true, but that acknowledgement never enables owner-local device authority. Never address or edit raw .routines paths through MCP; Routine definitions belong to the Routine domain tools and owner resolver.
 
 Metadata and fields:
@@ -730,6 +746,15 @@ fn write_ann(destructive: bool, idempotent: Option<bool>) -> ToolAnnotations {
         destructive_hint: Some(destructive),
         idempotent_hint: idempotent,
         open_world_hint: Some(false),
+    }
+}
+
+fn routine_run_ann() -> ToolAnnotations {
+    ToolAnnotations {
+        read_only_hint: Some(false),
+        destructive_hint: Some(true),
+        idempotent_hint: Some(false),
+        open_world_hint: Some(true),
     }
 }
 
@@ -1410,7 +1435,8 @@ mod tests {
                 "get_routine",
                 "create_routine",
                 "update_routine",
-                "delete_routine"
+                "delete_routine",
+                "run_routine"
             ]
         );
         for definition in &routine_definitions {
@@ -1460,6 +1486,19 @@ mod tests {
             assert_eq!(annotations.idempotent_hint, Some(false));
             assert_eq!(annotations.open_world_hint, Some(false));
         }
+        let run = definitions
+            .iter()
+            .find(|definition| definition.name == "run_routine")
+            .unwrap();
+        let annotations = run.annotations.as_ref().unwrap();
+        assert_eq!(annotations.read_only_hint, Some(false));
+        assert_eq!(annotations.destructive_hint, Some(true));
+        assert_eq!(annotations.idempotent_hint, Some(false));
+        assert_eq!(annotations.open_world_hint, Some(true));
+        assert_eq!(
+            run.input_schema["required"],
+            json!(["spaceId", "routineId", "expectedFingerprint"])
+        );
         let create = definitions
             .iter()
             .find(|definition| definition.name == "create_routine")
@@ -1494,6 +1533,7 @@ mod tests {
         );
         assert!(guide_text().contains("Never address or edit raw .routines"));
         assert!(guide_text().contains("confirmAutomaticExecution=true"));
+        assert!(guide_text().contains("Use run_routine only"));
     }
 
     #[test]
@@ -1643,6 +1683,7 @@ mod tests {
                 "create_routine",
                 "update_routine",
                 "delete_routine",
+                "run_routine",
                 "create_entry",
                 "update_entry_fields",
                 "update_entry_body",

@@ -12,3 +12,4 @@ pub mod tools;
 pub const MCP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MCP_DISCOVERY_ENV: &str = "SVODE_MCP_DISCOVERY";
 pub const MCP_PROJECT_PATH_ENV: &str = "SVODE_MCP_PROJECT_PATH";
+pub const MCP_ROUTINE_CALLER_TOKEN_ENV: &str = "SVODE_MCP_ROUTINE_CALLER_TOKEN";

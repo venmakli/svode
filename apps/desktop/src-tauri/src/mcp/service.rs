@@ -30,6 +30,10 @@ tokio::task_local! {
     static MCP_CONTEXT_OVERRIDE: Option<ActiveProjectContext>;
 }
 
+tokio::task_local! {
+    static MCP_ROUTINE_CALLER: Option<crate::terminal::RoutineMcpCallerProvenance>;
+}
+
 mod collections;
 mod context;
 mod dispatch;
@@ -45,6 +49,10 @@ use context::{active_context, resolve_space};
 #[cfg(test)]
 use dispatch::decode;
 pub use dispatch::{call_tool, call_tool_with_context};
+
+pub(crate) fn routine_caller_provenance() -> Option<crate::terminal::RoutineMcpCallerProvenance> {
+    MCP_ROUTINE_CALLER.try_with(Clone::clone).ok().flatten()
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum MutationOrigin {

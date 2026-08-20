@@ -85,6 +85,8 @@ pub struct IpcContextOverride {
     pub project_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caller_cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routine_caller_token: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

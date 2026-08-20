@@ -1,8 +1,8 @@
 use super::*;
 use crate::AppError;
 use crate::routines::{
-    ResolvedRoutineOwner, RoutineCatalogSnapshot, RoutineDefinition, RoutineOwnerInputKind,
-    RoutineRow,
+    ResolvedRoutineOwner, RoutineCatalogSnapshot, RoutineDefinition, RoutineDispatchBlockedCode,
+    RoutineDispatchResult, RoutineOwnerInputKind, RoutineRow,
 };
 use crate::terminal::TerminalManager;
 
@@ -60,6 +60,16 @@ pub(super) struct UpdateRoutineArgs {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct DeleteRoutineArgs {
+    space_id: String,
+    #[serde(default)]
+    collection_path: Option<String>,
+    routine_id: String,
+    expected_fingerprint: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct RunRoutineArgs {
     space_id: String,
     #[serde(default)]
     collection_path: Option<String>,
@@ -206,9 +216,7 @@ pub(super) async fn create_routine(
         app,
         owner.clone(),
         args.definition,
-        crate::routines::service::RoutineMutationPolicy::external_mcp(
-            args.confirm_automatic_execution.unwrap_or(false),
-        ),
+        mutation_policy(args.confirm_automatic_execution.unwrap_or(false)),
         &git_state,
         &access_state,
         &index_state,
@@ -234,9 +242,7 @@ pub(super) async fn update_routine(
         args.routine_id,
         args.expected_fingerprint,
         args.definition,
-        crate::routines::service::RoutineMutationPolicy::external_mcp(
-            args.confirm_automatic_execution.unwrap_or(false),
-        ),
+        mutation_policy(args.confirm_automatic_execution.unwrap_or(false)),
         &git_state,
         &access_state,
         &index_state,
@@ -268,6 +274,127 @@ pub(super) async fn delete_routine(
     )
     .await?;
     mutation_result(app, &owner, result, MutationKind::Delete).await
+}
+
+pub(super) async fn run_routine(
+    app: &AppHandle,
+    args: RunRoutineArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    validate_mutation_identity(&args.routine_id, &args.expected_fingerprint)?;
+    if crate::mcp::service::routine_caller_provenance().is_some() {
+        return Ok(dispatch_result(RoutineDispatchResult::Blocked {
+            routine_id: args.routine_id,
+            code: RoutineDispatchBlockedCode::RecursionGuard,
+            message: "a routine-launched MCP caller cannot run a Routine".to_string(),
+            current_fingerprint: None,
+        }));
+    }
+    let owner = resolve_routine_owner(app, &args.space_id, args.collection_path.as_deref()).await?;
+    let result = crate::routines::dispatch::dispatch_explicit(
+        app,
+        owner,
+        args.routine_id,
+        Some(args.expected_fingerprint),
+        &app.state::<GitState>(),
+        &app.state::<crate::git::access::RepositoryAccessState>(),
+        &app.state::<IndexState>(),
+        &app.state::<TerminalManager>(),
+    )
+    .await?;
+    Ok(dispatch_result(result))
+}
+
+fn mutation_policy(
+    confirm_automatic_execution: bool,
+) -> crate::routines::service::RoutineMutationPolicy {
+    if crate::mcp::service::routine_caller_provenance().is_some() {
+        crate::routines::service::RoutineMutationPolicy::routine_mcp(confirm_automatic_execution)
+    } else {
+        crate::routines::service::RoutineMutationPolicy::external_mcp(confirm_automatic_execution)
+    }
+}
+
+fn dispatch_result(result: RoutineDispatchResult) -> ToolCallResult {
+    let (text, structured) = match result {
+        RoutineDispatchResult::Started {
+            routine_id,
+            routine_run_id,
+            launch_id,
+            agent_session_id,
+            source_session_id,
+            pty_id,
+        } => (
+            format!("Started routine {routine_id} without waiting for completion."),
+            json!({
+                "status": "started",
+                "routineId": routine_id,
+                "routineRunId": routine_run_id,
+                "launchId": launch_id,
+                "agentSessionId": agent_session_id,
+                "sourceSessionId": source_session_id,
+                "ptyId": pty_id,
+            }),
+        ),
+        RoutineDispatchResult::AlreadyRunning {
+            routine_id,
+            routine_run_id,
+            launch_id,
+            agent_session_id,
+            source_session_id,
+            pty_id,
+        } => (
+            format!("Routine {routine_id} is already running; no second process was started."),
+            json!({
+                "status": "already_running",
+                "routineId": routine_id,
+                "routineRunId": routine_run_id,
+                "launchId": launch_id,
+                "agentSessionId": agent_session_id,
+                "sourceSessionId": source_session_id,
+                "ptyId": pty_id,
+            }),
+        ),
+        RoutineDispatchResult::Blocked {
+            routine_id,
+            code,
+            message,
+            current_fingerprint,
+        } => (
+            message.clone(),
+            json!({
+                "status": "blocked",
+                "routineId": routine_id,
+                "code": code.as_str(),
+                "message": message,
+                "currentFingerprint": current_fingerprint,
+            }),
+        ),
+        RoutineDispatchResult::Failed {
+            routine_id,
+            routine_run_id,
+            launch_id,
+            agent_session_id,
+            source_session_id,
+            pty_id,
+            message,
+        } => (
+            message.clone(),
+            json!({
+                "status": "failed",
+                "routineId": routine_id,
+                "routineRunId": routine_run_id,
+                "launchId": launch_id,
+                "agentSessionId": agent_session_id,
+                "sourceSessionId": source_session_id,
+                "ptyId": pty_id,
+                "message": message,
+            }),
+        ),
+        RoutineDispatchResult::Completed => {
+            unreachable!("explicit Routine run cannot complete without an Agent Session")
+        }
+    };
+    ToolCallResult::ok(text, structured)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -707,6 +834,83 @@ mod tests {
                 "unexpected": true,
             }))
             .is_err()
+        );
+        assert!(
+            decode::<RunRoutineArgs>(json!({
+                "spaceId": "root",
+                "routineId": "routine:one",
+                "expectedFingerprint": "fingerprint",
+            }))
+            .is_ok()
+        );
+        assert!(
+            decode::<RunRoutineArgs>(json!({
+                "spaceId": "root",
+                "routineId": "routine:one",
+            }))
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn verified_routine_provenance_selects_recursive_mutation_policy() {
+        assert_eq!(
+            mutation_policy(true),
+            crate::routines::service::RoutineMutationPolicy::external_mcp(true)
+        );
+
+        super::super::MCP_ROUTINE_CALLER
+            .scope(
+                Some(crate::terminal::RoutineMcpCallerProvenance {
+                    routine_run_id: "run-one".into(),
+                    launch_id: "launch-one".into(),
+                    pty_id: "pty-one".into(),
+                }),
+                async {
+                    assert_eq!(
+                        mutation_policy(true),
+                        crate::routines::service::RoutineMutationPolicy::routine_mcp(true)
+                    );
+                },
+            )
+            .await;
+    }
+
+    #[test]
+    fn explicit_dispatch_result_preserves_identity_and_stable_blocks() {
+        let already_running = dispatch_result(RoutineDispatchResult::AlreadyRunning {
+            routine_id: "routine:one".into(),
+            routine_run_id: "run-one".into(),
+            launch_id: "launch-one".into(),
+            agent_session_id: "codex:session-one".into(),
+            source_session_id: Some("session-one".into()),
+            pty_id: Some("pty-one".into()),
+        });
+        let structured = already_running.structured_content.unwrap();
+        assert_eq!(structured["status"], "already_running");
+        assert_eq!(structured["routineRunId"], "run-one");
+        assert_eq!(structured["agentSessionId"], "codex:session-one");
+
+        let conflict = dispatch_result(RoutineDispatchResult::Blocked {
+            routine_id: "routine:one".into(),
+            code: RoutineDispatchBlockedCode::FingerprintConflict,
+            message: "changed".into(),
+            current_fingerprint: Some("current".into()),
+        });
+        let structured = conflict.structured_content.unwrap();
+        assert_eq!(structured["status"], "blocked");
+        assert_eq!(structured["code"], "ROUTINE_FINGERPRINT_CONFLICT");
+        assert_eq!(structured["currentFingerprint"], "current");
+
+        let recursive = dispatch_result(RoutineDispatchResult::Blocked {
+            routine_id: "routine:one".into(),
+            code: RoutineDispatchBlockedCode::RecursionGuard,
+            message: "recursive".into(),
+            current_fingerprint: None,
+        });
+        assert_eq!(
+            recursive.structured_content.unwrap()["code"],
+            "ROUTINE_RECURSION_GUARD"
         );
     }
 
