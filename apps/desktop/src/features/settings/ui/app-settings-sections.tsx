@@ -91,11 +91,18 @@ interface AppAppearanceSectionProps {
 export function AppAppearanceSection({ settings }: AppAppearanceSectionProps) {
   return (
     <div className="flex max-w-sm flex-col gap-4">
+      <p className="text-sm text-muted-foreground">
+        {m.settings_appearance_device_scope()}
+      </p>
       <div className="flex flex-col gap-2">
-        <Label>{m.settings_theme_label()}</Label>
+        <Label id="app-settings-theme-label">
+          {m.settings_theme_label()}
+        </Label>
         <RadioGroup
           value={settings.theme}
           onValueChange={settings.handleThemeChange}
+          disabled={settings.themePending}
+          aria-labelledby="app-settings-theme-label"
           className="flex gap-4"
         >
           <label className="flex cursor-pointer items-center gap-2">

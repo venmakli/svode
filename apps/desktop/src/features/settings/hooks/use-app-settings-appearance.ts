@@ -1,95 +1,41 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
 import { toast } from "sonner";
-import { useTheme } from "@/components/ui/theme-provider";
 import * as m from "@/paraglide/messages.js";
-import { getAppSettings, saveAppSettings } from "../api";
-import { isAppLocale, type AppSettings } from "../model";
-import { useAppLocale } from "./use-app-locale";
-import { invalidateAppSettings } from "./use-app-settings";
+import { isAppLocale, isAppTheme } from "../model";
+import { useAppLocale, useAppTheme } from "./use-app-preferences";
 
-type AppTheme = "light" | "dark" | "system";
-
-export function useAppSettingsAppearance(open: boolean) {
-  const { theme, setTheme } = useTheme();
+export function useAppSettingsAppearance() {
   const {
     locale,
     localePending,
     setLocale: setConfirmedLocale,
   } = useAppLocale();
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-
-  const loadSettings = useCallback(async () => {
-    try {
-      const nextSettings = await getAppSettings();
-      setSettings(nextSettings);
-    } catch (err) {
-      console.error("Failed to load settings:", err);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    const preloadSettings = window.setTimeout(() => {
-      loadSettings();
-    }, 0);
-    return () => window.clearTimeout(preloadSettings);
-  }, [open, loadSettings]);
-
-  const saveSettings = useCallback(
-    async (updated: Partial<AppSettings>) => {
-      if (!settings) return false;
-
-      const merged: AppSettings = {
-        ...settings,
-        appearance: { ...settings.appearance, ...updated.appearance },
-        window: { ...settings.window, ...updated.window },
-      };
-
-      try {
-        await saveAppSettings(merged);
-        setSettings(merged);
-        invalidateAppSettings();
-        return true;
-      } catch (err) {
-        console.error("Failed to save settings:", err);
-        toast.error(m.toast_error());
-        return false;
-      }
-    },
-    [settings],
-  );
+  const {
+    theme,
+    themePending,
+    setTheme: setConfirmedTheme,
+  } = useAppTheme();
 
   const handleThemeChange = useCallback(
     async (value: string) => {
-      setTheme(value as AppTheme);
-      await saveSettings({
-        appearance: {
-          theme: value,
-          language: settings?.appearance.language ?? locale,
-        },
-      });
+      if (!isAppTheme(value)) return;
+      try {
+        await setConfirmedTheme(value);
+      } catch (error) {
+        console.error("Failed to save app theme:", error);
+        toast.error(m.toast_error());
+      }
     },
-    [locale, saveSettings, setTheme, settings?.appearance.language],
+    [setConfirmedTheme],
   );
 
   const handleLanguageChange = useCallback(
     async (value: string) => {
       if (!isAppLocale(value)) return;
       try {
-        const committedLocale = await setConfirmedLocale(value);
-        setSettings((current) =>
-          current
-            ? {
-                ...current,
-                appearance: {
-                  ...current.appearance,
-                  language: committedLocale,
-                },
-              }
-            : current,
-        );
-      } catch (err) {
-        console.error("Failed to save app locale:", err);
+        await setConfirmedLocale(value);
+      } catch (error) {
+        console.error("Failed to save app locale:", error);
         toast.error(m.toast_error());
       }
     },
@@ -98,6 +44,7 @@ export function useAppSettingsAppearance(open: boolean) {
 
   return {
     theme,
+    themePending,
     locale,
     localePending,
     handleThemeChange,

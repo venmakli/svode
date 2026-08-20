@@ -1,8 +1,7 @@
 import { Toaster } from "@/components/ui/sonner";
-import { ThemeProvider } from "@/components/ui/theme-provider";
 import { RootProjectMenuBridge } from "@/features/home";
 import {
-  AppLocaleProvider,
+  AppPreferencesProvider,
   useAppLocale,
   useAppVersion,
 } from "@/features/settings";
@@ -12,11 +11,9 @@ import { AppBootstrapScreen, IdentityGate } from "./identity-gate";
 
 export function AppProviders() {
   return (
-    <ThemeProvider defaultTheme="system" storageKey="svode-theme">
-      <AppLocaleProvider fallback={<AppBootstrapScreen />}>
-        <LocalizedAppProviders />
-      </AppLocaleProvider>
-    </ThemeProvider>
+    <AppPreferencesProvider fallback={<AppBootstrapScreen />}>
+      <LocalizedAppProviders />
+    </AppPreferencesProvider>
   );
 }
 

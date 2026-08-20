@@ -1,6 +1,7 @@
 export * from "./hooks";
 export type {
   AppAgentSettings,
+  AppPreferences,
   AppSettings,
   AvailableAgent,
   DetectedCli,

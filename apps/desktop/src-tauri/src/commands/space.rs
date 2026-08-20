@@ -147,7 +147,20 @@ fn root_project_info(
 
 // --- App Settings ---
 
-const APP_LOCALE_CHANGED_EVENT: &str = "app-settings:locale-changed";
+const APP_PREFERENCES_CHANGED_EVENT: &str = "app-settings:preferences-changed";
+
+#[tauri::command]
+pub fn get_app_preferences(
+    app: AppHandle,
+    settings_state: State<'_, settings::AppSettingsState>,
+) -> Result<AppPreferences, AppError> {
+    let _guard = settings_state.lock()?;
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| AppError::General(e.to_string()))?;
+    settings::read_app_preferences(&config_dir)
+}
 
 #[tauri::command]
 pub fn get_app_settings(
@@ -187,9 +200,29 @@ pub fn set_app_locale(
         .path()
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
-    let committed_locale = settings::set_app_locale(&config_dir, &locale)?;
-    let _ = app.emit(APP_LOCALE_CHANGED_EVENT, ());
-    Ok(committed_locale)
+    let mutation = settings::set_app_locale(&config_dir, &locale)?;
+    if mutation.changed {
+        let _ = app.emit(APP_PREFERENCES_CHANGED_EVENT, ());
+    }
+    Ok(mutation.value)
+}
+
+#[tauri::command]
+pub fn set_app_theme(
+    app: AppHandle,
+    settings_state: State<'_, settings::AppSettingsState>,
+    theme: String,
+) -> Result<String, AppError> {
+    let _guard = settings_state.lock()?;
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| AppError::General(e.to_string()))?;
+    let mutation = settings::set_app_theme(&config_dir, &theme)?;
+    if mutation.changed {
+        let _ = app.emit(APP_PREFERENCES_CHANGED_EVENT, ());
+    }
+    Ok(mutation.value)
 }
 
 // --- Projects ---

@@ -1,11 +1,24 @@
 import {
+  getAppPreferences as getAppPreferencesDto,
   getAppSettings as getAppSettingsDto,
-  listenAppLocaleChanged as listenAppLocaleChangedDto,
+  listenAppPreferencesChanged as listenAppPreferencesChangedDto,
   saveAppSettings as saveAppSettingsDto,
   setAppLocale as setAppLocaleDto,
+  setAppTheme as setAppThemeDto,
 } from "@/platform/settings/settings-api";
 
-import { isAppLocale, type AppLocale, type AppSettings } from "../model";
+import {
+  isAppLocale,
+  isAppTheme,
+  type AppLocale,
+  type AppPreferences,
+  type AppSettings,
+  type AppTheme,
+} from "../model";
+
+export function getAppPreferences(): Promise<AppPreferences> {
+  return getAppPreferencesDto();
+}
 
 export function getAppSettings(): Promise<AppSettings> {
   return getAppSettingsDto();
@@ -23,6 +36,14 @@ export async function setAppLocale(language: AppLocale): Promise<AppLocale> {
   return committedLocale;
 }
 
-export function listenAppLocaleChanged(handler: () => void) {
-  return listenAppLocaleChangedDto(handler);
+export async function setAppTheme(theme: AppTheme): Promise<AppTheme> {
+  const committedTheme = await setAppThemeDto(theme);
+  if (!isAppTheme(committedTheme)) {
+    throw new Error(`Backend returned unsupported theme: ${committedTheme}`);
+  }
+  return committedTheme;
+}
+
+export function listenAppPreferencesChanged(handler: () => void) {
+  return listenAppPreferencesChangedDto(handler);
 }

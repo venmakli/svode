@@ -1,8 +1,10 @@
 export {
+  getAppPreferences,
   getAppSettings,
-  listenAppLocaleChanged,
+  listenAppPreferencesChanged,
   saveAppSettings,
   setAppLocale,
+  setAppTheme,
 } from "./app-settings-api";
 export { getAppVersion } from "./app-version-api";
 export { checkSymlinkHealth, listAvailableAgents } from "./agent-api";

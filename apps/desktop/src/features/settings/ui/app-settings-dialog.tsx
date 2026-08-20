@@ -108,7 +108,7 @@ export function AppSettingsDialog({
   enableLegacyAgentIntegration,
   onOpenChange,
 }: AppSettingsDialogProps) {
-  const appearanceSettings = useAppSettingsAppearance(open);
+  const appearanceSettings = useAppSettingsAppearance();
   const aboutSettings = useAppSettingsAbout();
   const [section, setSection] = useState<Section>("profile");
   const identitySettings = useGlobalIdentitySettings(open);

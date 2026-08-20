@@ -3,7 +3,16 @@ use std::sync::{Mutex, MutexGuard};
 
 use crate::error::AppError;
 
-use super::types::AppSettings;
+use super::types::{AppPreferences, AppSettings};
+
+const SUPPORTED_THEMES: [&str; 3] = ["system", "light", "dark"];
+const SUPPORTED_LOCALES: [&str; 2] = ["en", "ru"];
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct PreferenceMutation {
+    pub value: String,
+    pub changed: bool,
+}
 
 #[derive(Default)]
 pub struct AppSettingsState {
@@ -22,42 +31,107 @@ impl AppSettingsState {
     }
 }
 
-fn read_app_settings_with_stored_locale(
-    config_dir: &Path,
-) -> Result<(AppSettings, Option<String>), AppError> {
+fn read_app_settings_value(config_dir: &Path) -> Result<Option<serde_json::Value>, AppError> {
     let path = config_dir.join("settings.json");
     if !path.exists() {
-        let settings = AppSettings::default();
-        write_app_settings(config_dir, &settings)?;
-        return Ok((settings, Some("en".to_string())));
+        return Ok(None);
     }
 
     let data = std::fs::read_to_string(&path)?;
-    let mut value: serde_json::Value = serde_json::from_str(&data)?;
-    let stored_locale = value
-        .get("appearance")
-        .and_then(|appearance| appearance.get("language"))
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string);
+    Ok(Some(serde_json::from_str(&data)?))
+}
 
-    if !matches!(stored_locale.as_deref(), Some("en" | "ru")) {
-        if let Some(appearance) = value
-            .get_mut("appearance")
-            .and_then(serde_json::Value::as_object_mut)
-        {
-            appearance.insert(
-                "language".to_string(),
-                serde_json::Value::String("en".to_string()),
-            );
-        }
+fn default_app_settings_value() -> Result<serde_json::Value, AppError> {
+    Ok(serde_json::to_value(AppSettings::default())?)
+}
+
+fn stored_appearance_field<'a>(value: &'a serde_json::Value, field: &str) -> Option<&'a str> {
+    value
+        .get("appearance")
+        .and_then(|appearance| appearance.get(field))
+        .and_then(serde_json::Value::as_str)
+}
+
+fn appearance_object_mut(
+    value: &mut serde_json::Value,
+) -> Result<&mut serde_json::Map<String, serde_json::Value>, AppError> {
+    let root = value
+        .as_object_mut()
+        .ok_or_else(|| AppError::General("app settings root must be an object".to_string()))?;
+    let appearance = root
+        .entry("appearance".to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    appearance
+        .as_object_mut()
+        .ok_or_else(|| AppError::General("app settings appearance must be an object".to_string()))
+}
+
+fn normalize_app_settings_value(
+    mut value: serde_json::Value,
+) -> Result<serde_json::Value, AppError> {
+    let appearance = appearance_object_mut(&mut value)?;
+    let stored_theme = appearance.get("theme").and_then(serde_json::Value::as_str);
+    if !matches!(stored_theme, Some("system" | "light" | "dark")) {
+        appearance.insert(
+            "theme".to_string(),
+            serde_json::Value::String("system".to_string()),
+        );
     }
 
-    Ok((serde_json::from_value(value)?, stored_locale))
+    let stored_locale = appearance
+        .get("language")
+        .and_then(serde_json::Value::as_str);
+    if !matches!(stored_locale, Some("en" | "ru")) {
+        appearance.insert(
+            "language".to_string(),
+            serde_json::Value::String("en".to_string()),
+        );
+    }
+
+    Ok(value)
+}
+
+fn write_app_settings_value(config_dir: &Path, value: &serde_json::Value) -> Result<(), AppError> {
+    std::fs::create_dir_all(config_dir)?;
+    let data = serde_json::to_string_pretty(value)?;
+    std::fs::write(config_dir.join("settings.json"), data)?;
+    Ok(())
 }
 
 /// Read app settings from config_dir/settings.json, creating defaults if missing.
 pub fn read_app_settings(config_dir: &Path) -> Result<AppSettings, AppError> {
-    read_app_settings_with_stored_locale(config_dir).map(|(settings, _)| settings)
+    let Some(value) = read_app_settings_value(config_dir)? else {
+        let settings = AppSettings::default();
+        write_app_settings(config_dir, &settings)?;
+        return Ok(settings);
+    };
+    Ok(serde_json::from_value(normalize_app_settings_value(
+        value,
+    )?)?)
+}
+
+pub fn read_app_preferences(config_dir: &Path) -> Result<AppPreferences, AppError> {
+    let Some(value) = read_app_settings_value(config_dir)? else {
+        return Ok(AppPreferences {
+            theme: "system".to_string(),
+            language: "en".to_string(),
+            theme_needs_recovery: true,
+        });
+    };
+    let stored_theme = stored_appearance_field(&value, "theme");
+    let stored_locale = stored_appearance_field(&value, "language");
+
+    Ok(AppPreferences {
+        theme: stored_theme
+            .filter(|theme| SUPPORTED_THEMES.contains(theme))
+            .unwrap_or("system")
+            .to_string(),
+        language: stored_locale
+            .filter(|locale| SUPPORTED_LOCALES.contains(locale))
+            .unwrap_or("en")
+            .to_string(),
+        theme_needs_recovery: !matches!(stored_theme, Some(theme) if SUPPORTED_THEMES.contains(&theme)),
+    })
 }
 
 /// Write app settings to config_dir/settings.json.
@@ -78,21 +152,50 @@ pub fn write_app_settings_preserving_locale(
     write_app_settings(config_dir, &updated)
 }
 
-pub fn set_app_locale(config_dir: &Path, locale: &str) -> Result<String, AppError> {
-    if !matches!(locale, "en" | "ru") {
+fn set_app_preference(
+    config_dir: &Path,
+    field: &str,
+    value: &str,
+    supported_values: &[&str],
+) -> Result<PreferenceMutation, AppError> {
+    if !supported_values.contains(&value) {
+        return Err(AppError::General(format!(
+            "unsupported app {field}: {value}"
+        )));
+    }
+
+    let mut settings = read_app_settings_value(config_dir)?
+        .map(Ok)
+        .unwrap_or_else(default_app_settings_value)?;
+    if stored_appearance_field(&settings, field) == Some(value) {
+        return Ok(PreferenceMutation {
+            value: value.to_string(),
+            changed: false,
+        });
+    }
+
+    appearance_object_mut(&mut settings)?.insert(
+        field.to_string(),
+        serde_json::Value::String(value.to_string()),
+    );
+    write_app_settings_value(config_dir, &settings)?;
+    Ok(PreferenceMutation {
+        value: value.to_string(),
+        changed: true,
+    })
+}
+
+pub fn set_app_locale(config_dir: &Path, locale: &str) -> Result<PreferenceMutation, AppError> {
+    if !SUPPORTED_LOCALES.contains(&locale) {
         return Err(AppError::General(format!(
             "unsupported app locale: {locale}"
         )));
     }
+    set_app_preference(config_dir, "language", locale, &SUPPORTED_LOCALES)
+}
 
-    let (mut settings, stored_locale) = read_app_settings_with_stored_locale(config_dir)?;
-    if stored_locale.as_deref() == Some(locale) {
-        return Ok(locale.to_string());
-    }
-
-    settings.appearance.language = locale.to_string();
-    write_app_settings(config_dir, &settings)?;
-    Ok(locale.to_string())
+pub fn set_app_theme(config_dir: &Path, theme: &str) -> Result<PreferenceMutation, AppError> {
+    set_app_preference(config_dir, "theme", theme, &SUPPORTED_THEMES)
 }
 
 #[cfg(test)]
@@ -126,7 +229,9 @@ mod tests {
         write_app_settings(config_dir.path(), &original).expect("write settings");
 
         assert_eq!(
-            set_app_locale(config_dir.path(), "ru").expect("set ru locale"),
+            set_app_locale(config_dir.path(), "ru")
+                .expect("set ru locale")
+                .value,
             "ru"
         );
         let updated = read_app_settings(config_dir.path()).expect("read updated settings");
@@ -140,7 +245,9 @@ mod tests {
         assert_eq!(agents.last_scan.as_deref(), Some("2026-08-19T00:00:00Z"));
 
         assert_eq!(
-            set_app_locale(config_dir.path(), "en").expect("set en locale"),
+            set_app_locale(config_dir.path(), "en")
+                .expect("set en locale")
+                .value,
             "en"
         );
         assert_eq!(
@@ -153,6 +260,128 @@ mod tests {
     }
 
     #[test]
+    fn field_updates_preserve_raw_legacy_and_unknown_siblings() {
+        let config_dir = tempfile::tempdir().expect("config dir");
+        let raw = serde_json::json!({
+            "appearance": {
+                "theme": "system",
+                "language": "en",
+                "futureAppearance": {"contrast": "high"}
+            },
+            "window": {"width": 1440, "height": 900, "futureWindow": true},
+            "agents": {"detected": [], "lastScan": null},
+            "futureTopLevel": ["preserve", 42]
+        });
+        std::fs::write(
+            config_dir.path().join("settings.json"),
+            serde_json::to_vec(&raw).expect("serialize raw settings"),
+        )
+        .expect("write raw settings");
+
+        assert_eq!(
+            set_app_theme(config_dir.path(), "dark").expect("set theme"),
+            PreferenceMutation {
+                value: "dark".to_string(),
+                changed: true,
+            }
+        );
+        assert_eq!(
+            set_app_locale(config_dir.path(), "ru").expect("set locale"),
+            PreferenceMutation {
+                value: "ru".to_string(),
+                changed: true,
+            }
+        );
+
+        let saved: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(config_dir.path().join("settings.json")).expect("read updated settings"),
+        )
+        .expect("parse updated settings");
+        assert_eq!(saved["appearance"]["theme"], "dark");
+        assert_eq!(saved["appearance"]["language"], "ru");
+        assert_eq!(
+            saved["appearance"]["futureAppearance"],
+            raw["appearance"]["futureAppearance"]
+        );
+        assert_eq!(saved["window"], raw["window"]);
+        assert_eq!(saved["agents"], raw["agents"]);
+        assert_eq!(saved["futureTopLevel"], raw["futureTopLevel"]);
+    }
+
+    #[test]
+    fn app_preferences_normalize_invalid_fields_without_writing_them() {
+        for appearance in [
+            serde_json::json!({"theme": "sepia", "language": "de"}),
+            serde_json::json!({}),
+        ] {
+            let config_dir = tempfile::tempdir().expect("config dir");
+            let raw = serde_json::json!({
+                "appearance": appearance,
+                "window": {"width": 1200, "height": 800},
+                "futureTopLevel": true
+            });
+            let path = config_dir.path().join("settings.json");
+            let before = serde_json::to_vec(&raw).expect("serialize raw settings");
+            std::fs::write(&path, &before).expect("write raw settings");
+
+            assert_eq!(
+                read_app_preferences(config_dir.path()).expect("read preferences"),
+                AppPreferences {
+                    theme: "system".to_string(),
+                    language: "en".to_string(),
+                    theme_needs_recovery: true,
+                }
+            );
+            assert_eq!(
+                std::fs::read(path).expect("read unchanged settings"),
+                before
+            );
+        }
+    }
+
+    #[test]
+    fn missing_settings_return_recoverable_defaults_without_materializing_a_file() {
+        let config_dir = tempfile::tempdir().expect("config dir");
+
+        assert_eq!(
+            read_app_preferences(config_dir.path()).expect("read preferences"),
+            AppPreferences {
+                theme: "system".to_string(),
+                language: "en".to_string(),
+                theme_needs_recovery: true,
+            }
+        );
+        assert!(!config_dir.path().join("settings.json").exists());
+    }
+
+    #[test]
+    fn same_theme_is_a_write_free_no_op_and_invalid_theme_is_rejected() {
+        let config_dir = tempfile::tempdir().expect("config dir");
+        let path = config_dir.path().join("settings.json");
+        let compact = serde_json::to_string(&settings_with_siblings("en")).expect("serialize");
+        std::fs::write(&path, &compact).expect("write compact settings");
+
+        assert_eq!(
+            set_app_theme(config_dir.path(), "dark").expect("set same theme"),
+            PreferenceMutation {
+                value: "dark".to_string(),
+                changed: false,
+            }
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read unchanged settings"),
+            compact
+        );
+
+        let error = set_app_theme(config_dir.path(), "sepia").expect_err("reject theme");
+        assert_eq!(error.kind(), "general");
+        assert_eq!(
+            std::fs::read_to_string(path).expect("read settings after rejection"),
+            compact
+        );
+    }
+
+    #[test]
     fn same_locale_is_a_write_free_no_op() {
         let config_dir = tempfile::tempdir().expect("config dir");
         let path = config_dir.path().join("settings.json");
@@ -161,7 +390,10 @@ mod tests {
 
         assert_eq!(
             set_app_locale(config_dir.path(), "en").expect("set same locale"),
-            "en"
+            PreferenceMutation {
+                value: "en".to_string(),
+                changed: false,
+            }
         );
         assert_eq!(
             std::fs::read_to_string(path).expect("read unchanged settings"),
@@ -211,7 +443,9 @@ mod tests {
                 "en"
             );
             assert_eq!(
-                set_app_locale(config_dir.path(), "en").expect("repair locale"),
+                set_app_locale(config_dir.path(), "en")
+                    .expect("repair locale")
+                    .value,
                 "en"
             );
             assert_eq!(
@@ -261,7 +495,9 @@ mod tests {
             std::thread::spawn(move || {
                 start.wait();
                 let _guard = state.lock().expect("lock settings mutation");
-                let committed = set_app_locale(&config_dir, locale).expect("set locale");
+                let committed = set_app_locale(&config_dir, locale)
+                    .expect("set locale")
+                    .value;
                 commit_order
                     .lock()
                     .expect("lock commit order")
@@ -285,6 +521,48 @@ mod tests {
                 .appearance
                 .language,
             last_committed
+        );
+    }
+
+    #[test]
+    fn operation_lock_prevents_concurrent_theme_and_locale_field_loss() {
+        let config_dir = tempfile::tempdir().expect("config dir");
+        write_app_settings(config_dir.path(), &settings_with_siblings("en"))
+            .expect("write settings");
+
+        let state = Arc::new(AppSettingsState::new());
+        let start = Arc::new(Barrier::new(2));
+        let theme_handle = {
+            let config_dir = config_dir.path().to_path_buf();
+            let state = Arc::clone(&state);
+            let start = Arc::clone(&start);
+            std::thread::spawn(move || {
+                start.wait();
+                let _guard = state.lock().expect("lock theme mutation");
+                set_app_theme(&config_dir, "light").expect("set theme");
+            })
+        };
+        let locale_handle = {
+            let config_dir = config_dir.path().to_path_buf();
+            let state = Arc::clone(&state);
+            let start = Arc::clone(&start);
+            std::thread::spawn(move || {
+                start.wait();
+                let _guard = state.lock().expect("lock locale mutation");
+                set_app_locale(&config_dir, "ru").expect("set locale");
+            })
+        };
+
+        theme_handle.join().expect("join theme mutation");
+        locale_handle.join().expect("join locale mutation");
+
+        assert_eq!(
+            read_app_preferences(config_dir.path()).expect("read final preferences"),
+            AppPreferences {
+                theme: "light".to_string(),
+                language: "ru".to_string(),
+                theme_needs_recovery: false,
+            }
         );
     }
 }

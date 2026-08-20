@@ -13,6 +13,14 @@ pub struct AppSettings {
     pub agents: Option<AppAgentSettings>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AppPreferences {
+    pub theme: String,
+    pub language: String,
+    pub theme_needs_recovery: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppAgentSettings {

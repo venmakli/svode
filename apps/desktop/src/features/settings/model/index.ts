@@ -1,5 +1,6 @@
 export type {
   AppAgentSettings,
+  AppPreferences,
   AppSettings,
   AvailableAgent,
   DetectedCli,
@@ -11,6 +12,12 @@ export {
   normalizeAppLocale,
   type AppLocale,
 } from "./app-locale";
+export {
+  APP_THEMES,
+  isAppTheme,
+  normalizeAppTheme,
+  type AppTheme,
+} from "./app-theme";
 export {
   fanoutEntryHasOverride,
   fanoutEntrySummarySource,

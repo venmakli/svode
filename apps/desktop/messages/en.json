@@ -353,6 +353,7 @@
   "settings_mcp_doctor_ok": "ready",
   "settings_mcp_doctor_failed": "needs attention",
   "settings_mcp_run_doctor": "Run doctor",
+  "settings_appearance_device_scope": "Theme and language apply to all Svode windows on this device.",
   "settings_theme_label": "Theme",
   "settings_language_label": "Language",
   "settings_language_en": "English",

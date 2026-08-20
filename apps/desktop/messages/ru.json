@@ -353,6 +353,7 @@
   "settings_mcp_doctor_ok": "готов",
   "settings_mcp_doctor_failed": "нужно внимание",
   "settings_mcp_run_doctor": "Запустить doctor",
+  "settings_appearance_device_scope": "Тема и язык применяются ко всем окнам Svode на этом устройстве.",
   "settings_theme_label": "Тема",
   "settings_language_label": "Язык",
   "settings_language_en": "English",

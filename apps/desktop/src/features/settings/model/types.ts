@@ -12,6 +12,12 @@ export interface AppSettings {
   agents?: AppAgentSettings;
 }
 
+export interface AppPreferences {
+  theme: string;
+  language: string;
+  themeNeedsRecovery: boolean;
+}
+
 export interface AppAgentSettings {
   detected: DetectedCli[];
   lastScan?: string;
