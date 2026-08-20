@@ -86,13 +86,12 @@ export function createAgentContextSkillsPresentation({
         onDetailRequested?.(row.id);
         return {
           content: <AgentContextSkillDetail row={row} />,
-          description: row.description,
-          title: (
-            <span className="flex min-w-0 items-center gap-2">
-              <span className="truncate">{row.name}</span>
-              <Badge variant="outline">{m.agent_context_skill_label()}</Badge>
+          description: (
+            <span className="sr-only">
+              {m.agent_context_skill_detail_description()}
             </span>
           ),
+          title: skillDetailTitle(row),
         };
       },
       fields,
@@ -133,6 +132,23 @@ export function createAgentContextSkillsPresentation({
     },
     state,
   });
+}
+
+export function skillDetailTitle(row: AgentContextSkillRow) {
+  return (
+    <span className="flex min-w-0 items-start gap-3 text-left">
+      <Sparkles
+        className="mt-0.5 size-6 shrink-0 text-muted-foreground"
+        aria-hidden
+      />
+      <span className="flex min-w-0 flex-col">
+        <span className="break-words [overflow-wrap:anywhere]">{row.name}</span>
+        <span className="whitespace-normal break-words text-sm font-normal text-muted-foreground [overflow-wrap:anywhere]">
+          {row.description}
+        </span>
+      </span>
+    </span>
+  );
 }
 
 function skillOwnerRoot(row: AgentContextSkillRow): string {

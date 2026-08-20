@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::agent_adapters::{AgentAdapterKind, AgentSourcePolicy};
@@ -174,7 +176,8 @@ pub struct SkillRow {
     pub owner: InstructionOwner,
     pub license: Option<String>,
     pub compatibility: Option<String>,
-    pub metadata: Option<serde_json::Value>,
+    pub metadata: Option<BTreeMap<String, String>>,
+    pub allowed_tools: Option<String>,
     pub validation: SkillValidationStatus,
     pub health: SourceHealth,
     pub health_reasons: Vec<String>,

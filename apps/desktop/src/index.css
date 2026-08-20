@@ -16,6 +16,40 @@
   white-space: pre;
 }
 
+[data-markdown-reader],
+[data-markdown-reader] > *,
+[data-markdown-reader] [data-streamdown="code-block"],
+[data-markdown-reader] [data-streamdown="code-block-body"],
+[data-markdown-reader] [data-streamdown="table-wrapper"],
+[data-markdown-reader] [data-streamdown="table-wrapper"] > div {
+  min-width: 0;
+  max-width: 100%;
+}
+
+[data-markdown-reader] {
+  overflow-wrap: anywhere;
+}
+
+[data-markdown-reader] [data-streamdown="inline-code"] {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+[data-markdown-reader] [data-streamdown="ordered-list"],
+[data-markdown-reader] [data-streamdown="unordered-list"] {
+  padding-inline-start: 1.25rem;
+}
+
+[data-markdown-reader-wide-block] {
+  outline: none;
+}
+
+[data-markdown-reader-wide-block]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
 [data-markdown-reader] [data-streamdown="code-block-body"] code > span {
   display: block;
 }

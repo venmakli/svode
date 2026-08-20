@@ -87,6 +87,56 @@ test("Reader stays readable for malformed bounded content and plaintext fallback
   expect(
     fallback.includes("&lt;img src=x onerror=&quot;write()&quot;&gt;"),
   ).toBe(true);
+  expect(fallback.includes("[overflow-wrap:anywhere]")).toBe(true);
+});
+
+test("Reader contains inline content and makes code and table overflow regions keyboard reachable", async () => {
+  const dom = new JSDOM(
+    "<!doctype html><html><body><div id=app></div></body></html>",
+    { pretendToBeVisual: true, url: "http://localhost/" },
+  );
+  const restoreGlobals = installDomGlobals(dom);
+  const root = createRoot(dom.window.document.getElementById("app")!);
+  const longInline = `command-${"segment".repeat(80)}`;
+
+  try {
+    await act(async () => {
+      root.render(
+        <MarkdownReader
+          content={`Inline \`${longInline}\`\n\n\`\`\`ts\nconst value = "${longInline}";\n\`\`\`\n\n\`\`\`unknown-language\n${longInline}\n\`\`\`\n\n| Key | Value |\n| --- | --- |\n| command | ${longInline} |`}
+          policy={blockedPolicy}
+        />,
+      );
+    });
+
+    const reader = dom.window.document.querySelector<HTMLElement>(
+      "[data-markdown-reader]",
+    )!;
+    expect(reader.className.includes("max-w-full")).toBe(true);
+    expect(
+      reader.querySelector('[data-streamdown="inline-code"]')?.textContent,
+    ).toBe(longInline);
+
+    const wideRegions = Array.from(
+      reader.querySelectorAll<HTMLElement>("[data-markdown-reader-wide-block]"),
+    );
+    expect(wideRegions.length).toBe(3);
+    expect(wideRegions.every((region) => region.tabIndex === 0)).toBe(true);
+    expect(
+      wideRegions.filter(
+        (region) => region.dataset.streamdown === "code-block-body",
+      ).length,
+    ).toBe(2);
+    expect(
+      wideRegions.some(
+        (region) => region.querySelector('[data-streamdown="table"]') !== null,
+      ),
+    ).toBe(true);
+  } finally {
+    await act(async () => root.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
 });
 
 test("Reader link activation uses the supplied callback without navigation or network reads", async () => {

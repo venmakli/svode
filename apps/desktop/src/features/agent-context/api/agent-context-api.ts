@@ -133,6 +133,7 @@ function normalizeSkillRow(
     ),
   );
   return Object.freeze({
+    allowedTools: row.allowedTools,
     aliases,
     body: row.preview.markdown,
     canonicalPath: row.canonicalPath,
@@ -143,6 +144,7 @@ function normalizeSkillRow(
     id: row.id,
     license: row.license,
     manifestPath: row.path,
+    metadata: row.metadata ? Object.freeze({ ...row.metadata }) : null,
     name: row.name,
     ownerPath: row.owner.root,
     truncated: row.preview.truncated,

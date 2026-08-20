@@ -54,7 +54,7 @@ export function createAgentContextInstructionsPresentation({
               {m.agent_context_detail_description()}
             </span>
           ),
-          title: row.filename,
+          title: instructionDetailTitle(row),
         };
       },
       fields,
@@ -87,6 +87,17 @@ export function createAgentContextInstructionsPresentation({
     },
     state,
   });
+}
+
+export function instructionDetailTitle(row: AgentContextInstructionRow) {
+  return (
+    <span className="flex min-w-0 items-center gap-3 text-left">
+      <FileText className="size-6 shrink-0 text-muted-foreground" aria-hidden />
+      <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+        {row.filename}
+      </span>
+    </span>
+  );
 }
 
 export function AgentContextInstructionsEmpty() {

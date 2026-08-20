@@ -28,6 +28,7 @@ const instruction: AgentContextInstructionRow = {
 };
 
 const skill: AgentContextSkillRow = {
+  allowedTools: null,
   aliases: [
     {
       discoveryPath: "/workspace/.agents/skills/review",
@@ -47,6 +48,7 @@ const skill: AgentContextSkillRow = {
   id: "skill:/workspace/.agents/skills/review",
   license: null,
   manifestPath: "/workspace/.agents/skills/review/SKILL.md",
+  metadata: null,
   name: "review",
   ownerPath: "/workspace",
   truncated: false,

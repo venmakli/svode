@@ -70,6 +70,8 @@ test("instructions use the common coverless Gallery and safe reader detail", () 
       descriptor: {
         createDetailRequest(row: AgentContextInstructionRow): {
           content: React.ReactNode;
+          description: React.ReactNode;
+          title: React.ReactNode;
         };
         layout: {
           cardSize: string;
@@ -84,7 +86,13 @@ test("instructions use the common coverless Gallery and safe reader detail", () 
   expect(html.includes("data-system-collection-refresh")).toBe(false);
   const detail = descriptor.instance.descriptor.createDetailRequest(selected);
   const detailHtml = renderToStaticMarkup(detail.content);
+  const detailTitleHtml = renderToStaticMarkup(detail.title);
   expect(detailRowId as string | null).toBe(selected.id);
+  expect(detailTitleHtml.includes("lucide-file-text")).toBe(true);
+  expect(detailTitleHtml.includes("AGENTS.md")).toBe(true);
+  expect(renderToStaticMarkup(detail.description).includes("sr-only")).toBe(
+    true,
+  );
   expect(detailHtml.includes("data-markdown-reader-blocked-link")).toBe(true);
   expect(detailHtml.includes('href="https://example.com"')).toBe(false);
   expect(detailHtml.includes("Source and location")).toBe(true);

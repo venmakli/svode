@@ -110,6 +110,7 @@ export interface AgentContextSkillAliasDto {
 }
 
 export interface AgentContextSkillRowDto {
+  allowedTools: string | null;
   id: string;
   name: string;
   description: string;
@@ -121,7 +122,7 @@ export interface AgentContextSkillRowDto {
   };
   license: string | null;
   compatibility: string | null;
-  metadata: unknown | null;
+  metadata: Record<string, string> | null;
   validation: "valid" | "warning";
   health: AgentContextSourceHealthDto;
   healthReasons: string[];

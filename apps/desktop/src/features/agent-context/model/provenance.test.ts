@@ -9,6 +9,7 @@ import {
 import type { AgentContextSkillRow } from "./types";
 
 const multiAliasSkill: AgentContextSkillRow = {
+  allowedTools: null,
   aliases: [
     {
       discoveryPath: "/workspace/.claude/skills/review",
@@ -44,6 +45,7 @@ const multiAliasSkill: AgentContextSkillRow = {
   id: "skill:/workspace/shared/review",
   license: null,
   manifestPath: "/workspace/shared/review/SKILL.md",
+  metadata: null,
   name: "review",
   ownerPath: "/workspace",
   truncated: false,

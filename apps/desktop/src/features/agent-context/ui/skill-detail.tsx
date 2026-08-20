@@ -10,6 +10,7 @@ import {
   AgentContextContentHealthNotice,
   AgentContextSourceDisclosure,
 } from "./source-disclosure";
+import { AgentContextSkillFrontmatterDisclosure } from "./skill-frontmatter-disclosure";
 
 const skillReaderPolicy: MarkdownReaderPolicy = {
   openLink: () => undefined,
@@ -29,6 +30,7 @@ export function AgentContextSkillDetail({
       data-agent-context-skill-detail={row.id}
     >
       <AgentContextSourceDisclosure provenance={provenance} />
+      <AgentContextSkillFrontmatterDisclosure row={row} />
       <AgentContextContentHealthNotice provenance={provenance} />
       <MarkdownReader content={row.body} policy={skillReaderPolicy} />
     </div>

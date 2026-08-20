@@ -79,6 +79,7 @@ export interface AgentContextSkillAlias {
 }
 
 export interface AgentContextSkillRow {
+  allowedTools: string | null;
   aliases: readonly AgentContextSkillAlias[];
   body: string;
   canonicalPath: string;
@@ -89,6 +90,7 @@ export interface AgentContextSkillRow {
   id: string;
   license: string | null;
   manifestPath: string;
+  metadata: Readonly<Record<string, string>> | null;
   name: string;
   ownerPath: string;
   truncated: boolean;

@@ -17,6 +17,7 @@ import {
 } from "./skills-presentation";
 
 const reviewSkill: AgentContextSkillRow = {
+  allowedTools: null,
   aliases: [
     {
       discoveryPath: "/workspace/.agents/skills/review",
@@ -36,6 +37,7 @@ const reviewSkill: AgentContextSkillRow = {
   id: "skill:/workspace/.agents/skills/review",
   license: null,
   manifestPath: "/workspace/.agents/skills/review/SKILL.md",
+  metadata: null,
   name: "review",
   ownerPath: "/workspace",
   truncated: false,
@@ -97,6 +99,8 @@ test("skills render as coverless Gallery cards with bounded Reader detail", () =
 
   const request = skillDescriptor.createDetailRequest?.(reviewSkill);
   const detailHtml = renderToStaticMarkup(request?.content);
+  const detailTitleHtml = renderToStaticMarkup(request?.title);
+  const detailDescriptionHtml = renderToStaticMarkup(request?.description);
   expect(detailHtml.includes("data-agent-context-skill-detail")).toBe(true);
   expect(detailHtml.includes("data-markdown-reader-blocked-link")).toBe(true);
   expect(detailHtml.includes('href="https://example.com"')).toBe(false);
@@ -108,13 +112,50 @@ test("skills render as coverless Gallery cards with bounded Reader detail", () =
   expect(detailHtml.includes("Space")).toBe(true);
   expect(detailHtml.includes("Sources: 1")).toBe(true);
   expect(detailHtml.includes("Direct")).toBe(false);
-  expect(renderToStaticMarkup(request?.description)).toBe(
-    "Review changes against project conventions.",
-  );
+  expect(detailTitleHtml.includes("lucide-sparkles")).toBe(true);
+  expect(detailTitleHtml.includes(">review<")).toBe(true);
+  expect(
+    (
+      detailTitleHtml.match(/Review changes against project conventions\./g) ??
+      []
+    ).length,
+  ).toBe(1);
+  expect(detailTitleHtml.includes(">Skill<")).toBe(false);
+  expect(detailDescriptionHtml.includes("sr-only")).toBe(true);
+  expect(detailDescriptionHtml.includes("Read-only skill source")).toBe(true);
   expect(
     (detailHtml.match(/Review changes against project conventions\./g) ?? [])
       .length,
   ).toBe(0);
+});
+
+test("skill Detail keeps source and optional parameters collapsed before the Reader", () => {
+  const withFrontmatter: AgentContextSkillRow = {
+    ...reviewSkill,
+    allowedTools: "Read",
+    compatibility: "Requires git",
+    license: "MIT",
+    metadata: { author: "Svode" },
+  };
+  const request = descriptor([withFrontmatter]).createDetailRequest?.(
+    withFrontmatter,
+  );
+  const detailHtml = renderToStaticMarkup(request?.content);
+  const sourceIndex = detailHtml.indexOf(
+    "data-agent-context-source-disclosure",
+  );
+  const parametersIndex = detailHtml.indexOf(
+    "data-agent-context-skill-frontmatter",
+  );
+  const readerIndex = detailHtml.indexOf("data-markdown-reader");
+
+  expect(sourceIndex >= 0).toBe(true);
+  expect(parametersIndex > sourceIndex).toBe(true);
+  expect(readerIndex > parametersIndex).toBe(true);
+  expect((detailHtml.match(/aria-expanded="false"/g) ?? []).length).toBe(2);
+  expect(detailHtml.includes("Requires git")).toBe(false);
+  expect(detailHtml.includes("# Review")).toBe(false);
+  expect(detailHtml.includes(">Review<")).toBe(true);
 });
 
 test("search and multivalue Source/Location filters use factual alias unions", () => {

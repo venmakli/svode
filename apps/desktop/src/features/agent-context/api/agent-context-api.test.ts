@@ -91,6 +91,7 @@ const dto: Parameters<typeof toAgentContextInstructionsSnapshot>[0] = {
   repositoryRoot: "/workspace",
   skills: [
     {
+      allowedTools: "Read Bash(git:*)",
       aliases: [
         {
           adapterId: "codex",
@@ -156,6 +157,9 @@ test("transport keeps source semantics independent without message parsing", () 
   expect(row?.linkTargetPath).toBe("/workspace/shared/CLAUDE.md");
   expect(row?.references[0]?.status).toBe("requires_client_approval");
   expect(snapshot.skills[0]?.ownerPath).toBe("/workspace");
+  expect(snapshot.skills[0]?.allowedTools).toBe("Read Bash(git:*)");
+  expect(snapshot.skills[0]?.metadata).toEqual({ author: "Svode" });
+  expect(Object.isFrozen(snapshot.skills[0]?.metadata)).toBe(true);
   expect(snapshot.skills[0]?.aliases[0]?.sourceFamily).toBe("agents");
   expect(snapshot.skills[0]?.aliases[1]?.sourceFamily).toBe("claude");
   expect(snapshot.skills[0]?.aliases[1]?.location).toBe("space");

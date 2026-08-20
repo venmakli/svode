@@ -22,7 +22,8 @@ struct ParsedSkill {
     description: String,
     license: Option<String>,
     compatibility: Option<String>,
-    metadata: Option<serde_json::Value>,
+    metadata: Option<BTreeMap<String, String>>,
+    allowed_tools: Option<String>,
     warnings: Vec<String>,
     preview: MarkdownPreview,
     manifest_path: PathBuf,
@@ -517,6 +518,7 @@ fn scan_entry(
             license: parsed.license,
             compatibility: parsed.compatibility,
             metadata: parsed.metadata,
+            allowed_tools: parsed.allowed_tools,
             validation,
             health: if parsed.warnings.is_empty() {
                 SourceHealth::Normal
@@ -647,26 +649,15 @@ fn parse_skill(canonical_entry: &Path) -> Result<ParsedSkill, SkillFailure> {
         warnings
             .push("Skill compatibility exceeds the 500-character compatibility limit".to_string());
     }
-    let metadata = match mapping.get("metadata") {
-        Some(value) if value.as_mapping().is_some() => match serde_json::to_value(value) {
-            Ok(value) => Some(value),
-            Err(error) => {
-                warnings.push(format!("Skill metadata could not be normalized: {error}"));
-                None
-            }
-        },
-        Some(_) => {
-            warnings.push("Skill metadata is not a mapping".to_string());
-            None
-        }
-        None => None,
-    };
+    let metadata = optional_string_map(mapping, "metadata", &mut warnings);
+    let allowed_tools = optional_string(mapping, "allowed-tools", &mut warnings);
     Ok(ParsedSkill {
         name: trimmed_name,
         description: trimmed_description,
         license,
         compatibility,
         metadata,
+        allowed_tools,
         warnings,
         preview: MarkdownPreview {
             markdown: body.to_string(),
@@ -822,6 +813,10 @@ fn optional_string(
 ) -> Option<String> {
     match mapping.get(key) {
         Some(value) => match value.as_str() {
+            Some(value) if value.trim().is_empty() => {
+                warnings.push(format!("Skill {key} is empty"));
+                None
+            }
             Some(value) => Some(value.to_string()),
             None => {
                 warnings.push(format!("Skill {key} is not a string"));
@@ -830,6 +825,31 @@ fn optional_string(
         },
         None => None,
     }
+}
+
+fn optional_string_map(
+    mapping: &serde_yml::Mapping,
+    key: &str,
+    warnings: &mut Vec<String>,
+) -> Option<BTreeMap<String, String>> {
+    let value = mapping.get(key)?;
+    let Some(entries) = value.as_mapping() else {
+        warnings.push(format!("Skill {key} is not a mapping"));
+        return None;
+    };
+    let mut normalized = BTreeMap::new();
+    for (entry_key, entry_value) in entries {
+        let Some(entry_key) = entry_key.as_str() else {
+            warnings.push(format!("Skill {key} contains a non-string key"));
+            continue;
+        };
+        let Some(entry_value) = entry_value.as_str() else {
+            warnings.push(format!("Skill {key} value for {entry_key} is not a string"));
+            continue;
+        };
+        normalized.insert(entry_key.to_string(), entry_value.to_string());
+    }
+    Some(normalized)
 }
 
 fn valid_skill_name(name: &str) -> bool {
@@ -964,7 +984,16 @@ mod tests {
             .unwrap();
         assert_eq!(valid.license.as_deref(), Some("MIT"));
         assert_eq!(valid.compatibility.as_deref(), Some("Cross-client"));
-        assert_eq!(valid.metadata.as_ref().unwrap()["author"], "Svode");
+        assert_eq!(
+            valid
+                .metadata
+                .as_ref()
+                .unwrap()
+                .get("author")
+                .map(String::as_str),
+            Some("Svode")
+        );
+        assert_eq!(valid.allowed_tools.as_deref(), Some("Read"));
         assert_eq!(valid.preview.markdown, "# Valid\nbody\n");
         assert!(snapshot.skills.iter().any(|row| {
             row.name == "Warning" && row.validation == SkillValidationStatus::Warning
@@ -987,6 +1016,66 @@ mod tests {
                 .diagnostics
                 .iter()
                 .any(|diagnostic| diagnostic.code == "skill_frontmatter_missing")
+        );
+    }
+
+    #[test]
+    fn invalid_optional_frontmatter_isolated_without_losing_safe_values_or_body() {
+        let (project, _home, environment) = setup();
+        let root = project.path().join(".agents/skills");
+        let mixed = write_skill(&root, "mixed", "mixed", Some("Mixed skill"));
+        fs::write(
+            mixed.join("SKILL.md"),
+            "---\nname: mixed\ndescription: Mixed skill\nlicense: MIT\ncompatibility:\n  - desktop\nmetadata:\n  author: Svode\n  retries: 3\n  7: ignored\nallowed-tools:\n  - Read\n---\n# Mixed\nbody remains readable\n",
+        )
+        .unwrap();
+
+        let snapshot = scan(project.path(), project.path(), &environment).unwrap();
+        let mixed = snapshot
+            .skills
+            .iter()
+            .find(|row| row.name == "mixed")
+            .unwrap();
+
+        assert_eq!(mixed.license.as_deref(), Some("MIT"));
+        assert_eq!(mixed.compatibility, None);
+        assert_eq!(mixed.allowed_tools, None);
+        assert_eq!(
+            mixed
+                .metadata
+                .as_ref()
+                .unwrap()
+                .get("author")
+                .map(String::as_str),
+            Some("Svode")
+        );
+        assert_eq!(mixed.metadata.as_ref().unwrap().len(), 1);
+        assert_eq!(mixed.preview.markdown, "# Mixed\nbody remains readable\n");
+        assert_eq!(mixed.validation, SkillValidationStatus::Warning);
+        assert_eq!(mixed.health, SourceHealth::Degraded);
+        assert!(
+            mixed
+                .warnings
+                .iter()
+                .any(|warning| warning == "Skill compatibility is not a string")
+        );
+        assert!(
+            mixed
+                .warnings
+                .iter()
+                .any(|warning| warning == "Skill metadata value for retries is not a string")
+        );
+        assert!(
+            mixed
+                .warnings
+                .iter()
+                .any(|warning| warning == "Skill metadata contains a non-string key")
+        );
+        assert!(
+            mixed
+                .warnings
+                .iter()
+                .any(|warning| warning == "Skill allowed-tools is not a string")
         );
     }
 

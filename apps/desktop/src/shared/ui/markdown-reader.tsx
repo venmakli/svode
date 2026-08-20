@@ -1,4 +1,4 @@
-import { Component, useMemo, type ReactNode } from "react";
+import { Component, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { code } from "@streamdown/code";
 import { harden } from "rehype-harden";
 import {
@@ -42,6 +42,7 @@ export function MarkdownReader({
   content,
   policy,
 }: MarkdownReaderProps) {
+  const readerRef = useRef<HTMLDivElement>(null);
   const components = useMemo<StreamdownProps["components"]>(
     () => ({
       a: ({ children, href }) => {
@@ -84,10 +85,42 @@ export function MarkdownReader({
     [policy],
   );
 
+  useEffect(() => {
+    const reader = readerRef.current;
+    if (!reader) return;
+
+    const markWideRegions = () => {
+      const regions = new Set<HTMLElement>(
+        reader.querySelectorAll<HTMLElement>(
+          '[data-streamdown="code-block-body"]',
+        ),
+      );
+      for (const table of reader.querySelectorAll<HTMLElement>(
+        '[data-streamdown="table"]',
+      )) {
+        if (table.parentElement) regions.add(table.parentElement);
+      }
+      for (const region of regions) {
+        region.dataset.markdownReaderWideBlock = "";
+        region.tabIndex = 0;
+      }
+    };
+
+    markWideRegions();
+    const observer = new MutationObserver(markWideRegions);
+    observer.observe(reader, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [content]);
+
   return (
     <MarkdownReaderBoundary content={content}>
-      <div className={cn("min-w-0 text-sm", className)} data-markdown-reader>
+      <div
+        ref={readerRef}
+        className={cn("w-full min-w-0 max-w-full text-sm", className)}
+        data-markdown-reader
+      >
         <Streamdown
+          className="w-full min-w-0 max-w-full"
           mode="static"
           animated={false}
           components={components}
@@ -146,7 +179,7 @@ export function MarkdownReaderPlaintextFallback({
   return (
     <pre
       className={cn(
-        "min-w-0 whitespace-pre-wrap break-words font-mono text-sm",
+        "w-full min-w-0 max-w-full whitespace-pre-wrap break-words font-mono text-sm [overflow-wrap:anywhere]",
         className,
       )}
       data-markdown-reader-plaintext
