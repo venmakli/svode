@@ -35,6 +35,7 @@ export function useRoutineAutomaticConsent(owner: RoutineOwnerInput) {
   );
   const ownerKey = automaticConsentOwnerKey(commandOwner);
   const requestIdRef = useRef(0);
+  const [reloadToken, setReloadToken] = useState(0);
   const stateRef = useRef<RoutineAutomaticConsentState>(initialState(ownerKey));
   const [state, setStateValue] = useState<RoutineAutomaticConsentState>(() =>
     initialState(ownerKey),
@@ -72,7 +73,7 @@ export function useRoutineAutomaticConsent(owner: RoutineOwnerInput) {
     return () => {
       cancelled = true;
     };
-  }, [commandOwner, commitState, ownerKey]);
+  }, [commandOwner, commitState, ownerKey, reloadToken]);
 
   const setEnabled = useCallback(
     async (enabled: boolean) => {
@@ -128,11 +129,28 @@ export function useRoutineAutomaticConsent(owner: RoutineOwnerInput) {
     [commandOwner, commitState, ownerKey],
   );
 
+  const retry = useCallback(() => {
+    const current = stateRef.current;
+    if (
+      current.ownerKey !== ownerKey ||
+      current.enabled !== null ||
+      current.loading ||
+      current.pending
+    ) {
+      return;
+    }
+
+    requestIdRef.current += 1;
+    commitState(initialState(ownerKey));
+    setReloadToken((token) => token + 1);
+  }, [commitState, ownerKey, setReloadToken]);
+
   const visibleState =
     state.ownerKey === ownerKey ? state : initialState(ownerKey);
   return {
     ...visibleState,
     ownerKind: resolvedOwnerKind(commandOwner),
+    retry,
     setEnabled,
   };
 }

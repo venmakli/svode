@@ -24,6 +24,7 @@ export interface SystemCollectionPresentationCoreProps {
   instance: SystemCollectionInstance;
   onInteractionError?(error: SystemCollectionInteractionError): void;
   state: ReadySystemCollectionState;
+  trailingActions?: ReactNode;
 }
 
 export function SystemCollectionPresentationCore({
@@ -32,6 +33,7 @@ export function SystemCollectionPresentationCore({
   instance,
   onInteractionError,
   state,
+  trailingActions,
 }: SystemCollectionPresentationCoreProps) {
   const presentation = instance.presentations.find(
     (candidate) =>
@@ -84,6 +86,7 @@ export function SystemCollectionPresentationCore({
                 }
               />
             ) : null}
+            {trailingActions}
           </>
         }
       />

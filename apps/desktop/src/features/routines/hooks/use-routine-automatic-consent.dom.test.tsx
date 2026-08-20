@@ -190,6 +190,50 @@ test("a late owner mutation cannot publish into the next owner", async () => {
   }
 });
 
+test("initial read failure can retry without guessing an off value", async () => {
+  const dom = createDom();
+  const restoreGlobals = installDomGlobals(dom);
+  const retryRead = deferred<{ enabled: boolean }>();
+  let reads = 0;
+  mockNativeIpc((command) => {
+    if (command !== "routines_get_automatic_consent") {
+      throw new Error(`Unexpected command: ${command}`);
+    }
+    reads += 1;
+    if (reads === 1) throw new Error("read failed");
+    return retryRead.promise;
+  });
+  const root = createRoot(dom.window.document.getElementById("app")!);
+
+  try {
+    await act(async () => {
+      root.render(<Harness owner={spaceOwner} />);
+      await nextTurn();
+      await nextTurn();
+    });
+    expect(textOf(dom, "[data-enabled]")).toBe("unknown");
+    expect(textOf(dom, "[data-error]").includes("read failed")).toBe(true);
+
+    await clickAndFlush(dom, "[data-retry]");
+    expect(textOf(dom, "[data-phase]")).toBe("loading");
+
+    await act(async () => {
+      retryRead.resolve({ enabled: true });
+      await nextTurn();
+      await nextTurn();
+    });
+    expect(reads).toBe(2);
+    expect(textOf(dom, "[data-phase]")).toBe("ready");
+    expect(textOf(dom, "[data-enabled]")).toBe("on");
+    expect(textOf(dom, "[data-error]")).toBe("");
+  } finally {
+    await act(async () => root.unmount());
+    clearNativeMocks();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 function Harness({ owner }: { owner: RoutineOwnerInput }) {
   const state = useRoutineAutomaticConsent(owner);
   return (
@@ -212,6 +256,7 @@ function Harness({ owner }: { owner: RoutineOwnerInput }) {
         data-keep
         onClick={() => void state.setEnabled(state.enabled ?? false)}
       />
+      <button type="button" data-retry onClick={state.retry} />
     </>
   );
 }

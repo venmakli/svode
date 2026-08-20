@@ -11,7 +11,6 @@ import { RoutineAutomaticConsent } from "./routine-automatic-consent";
 
 export function RoutinesSurface({
   owner,
-  presentation,
   onOpenSession,
 }: ScopeSurfaceRenderContext & {
   onOpenSession(target: RoutineSessionTarget): void;
@@ -20,6 +19,19 @@ export function RoutinesSurface({
   const body =
     controller.collectionState.phase === "ready" ? (
       <SystemCollectionPresentationCore
+        trailingActions={
+          <RoutineAutomaticConsent
+            enabled={controller.automaticConsent.enabled}
+            error={controller.automaticConsent.error}
+            loading={controller.automaticConsent.loading}
+            ownerKind={controller.automaticConsent.ownerKind}
+            pending={controller.automaticConsent.pending}
+            onChange={(enabled) =>
+              void controller.automaticConsent.setEnabled(enabled)
+            }
+            onRetry={controller.automaticConsent.retry}
+          />
+        }
         detailController={controller.detailController ?? undefined}
         instance={controller.instance}
         state={controller.collectionState}
@@ -39,17 +51,6 @@ export function RoutinesSurface({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-routines-surface>
-      <RoutineAutomaticConsent
-        compact={presentation === "compact"}
-        enabled={controller.automaticConsent.enabled}
-        error={controller.automaticConsent.error}
-        loading={controller.automaticConsent.loading}
-        ownerKind={controller.automaticConsent.ownerKind}
-        pending={controller.automaticConsent.pending}
-        onChange={(enabled) =>
-          void controller.automaticConsent.setEnabled(enabled)
-        }
-      />
       {body}
       {controller.overlays}
     </div>

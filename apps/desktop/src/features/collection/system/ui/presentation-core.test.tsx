@@ -12,7 +12,7 @@ interface Row {
   name: string;
 }
 
-test("feature-owned contextual actions follow query controls and survive presentation switches", () => {
+test("feature-owned actions keep their positions and survive presentation switches", () => {
   const presentation = defineSystemCollectionPresentation<Row>({
     descriptor: {
       fields: [],
@@ -25,6 +25,12 @@ test("feature-owned contextual actions follow query controls and survive present
         visibleFields: [],
       },
       query: { getSearchText: (row) => row.name },
+      create: {
+        getState: () => ({ status: "idle" }),
+        id: "add-person",
+        label: "Add",
+        run: () => undefined,
+      },
     },
     state: { phase: "ready", rows: [{ id: "ada", name: "Ada" }] },
   });
@@ -71,14 +77,25 @@ test("feature-owned contextual actions follow query controls and survive present
         }
         instance={instance}
         state={state}
+        trailingActions={
+          <button type="button" data-trailing-action>
+            Authority
+          </button>
+        }
       />
     </TooltipProvider>,
   );
 
   const searchPosition = markup.indexOf('data-slot="input-group"');
   const contextualPosition = markup.indexOf("data-contextual-action");
+  const createPosition = markup.indexOf(
+    'data-system-collection-create="add-person"',
+  );
+  const trailingPosition = markup.indexOf("data-trailing-action");
   expect(searchPosition > -1).toBe(true);
   expect(contextualPosition > searchPosition).toBe(true);
+  expect(createPosition > contextualPosition).toBe(true);
+  expect(trailingPosition > createPosition).toBe(true);
   expect(markup.match(/data-collection-presentation-toolbar/g)?.length).toBe(1);
 
   const switchedMarkup = renderToStaticMarkup(
@@ -91,9 +108,16 @@ test("feature-owned contextual actions follow query controls and survive present
         }
         instance={instance}
         state={{ ...state, activePresentationId: "teams" }}
+        trailingActions={
+          <button type="button" data-trailing-action>
+            Authority
+          </button>
+        }
       />
     </TooltipProvider>,
   );
   expect(switchedMarkup.includes("data-contextual-action")).toBe(true);
   expect(switchedMarkup.includes("Diagnostics")).toBe(true);
+  expect(switchedMarkup.includes("data-trailing-action")).toBe(true);
+  expect(switchedMarkup.includes("Authority")).toBe(true);
 });

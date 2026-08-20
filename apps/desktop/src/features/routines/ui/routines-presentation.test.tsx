@@ -11,6 +11,7 @@ import {
 } from "@/features/collection/system";
 
 import type { RoutineRow } from "../model/types";
+import { RoutineAutomaticConsent } from "./routine-automatic-consent";
 import {
   createRoutinesPresentation,
   createRoutinesPresentationDescriptor,
@@ -221,8 +222,30 @@ test("routines render the common toolbar and a single fixed All list", () => {
   };
   const markup = renderToStaticMarkup(
     <TooltipProvider>
-      <SystemCollectionPresentationCore instance={instance} state={state} />
+      <SystemCollectionPresentationCore
+        trailingActions={
+          <RoutineAutomaticConsent
+            enabled={false}
+            error={null}
+            loading={false}
+            ownerKind="project"
+            pending={false}
+            onChange={() => undefined}
+            onRetry={() => undefined}
+          />
+        }
+        instance={instance}
+        state={state}
+      />
     </TooltipProvider>,
+  );
+
+  const queryPosition = markup.indexOf('data-slot="input-group"');
+  const authorityPosition = markup.indexOf(
+    'data-routine-automatic-authority="project"',
+  );
+  const createPosition = markup.indexOf(
+    'data-system-collection-create="add-routine"',
   );
 
   expect(markup.includes('role="list"')).toBe(true);
@@ -237,6 +260,13 @@ test("routines render the common toolbar and a single fixed All list", () => {
   expect(markup.includes("Daily summary")).toBe(true);
   expect(markup.includes("Active")).toBe(false);
   expect(markup.includes("Runs")).toBe(false);
+  expect(queryPosition > -1).toBe(true);
+  expect(createPosition > queryPosition).toBe(true);
+  expect(authorityPosition > createPosition).toBe(true);
+  expect(markup.includes('data-orientation="vertical"')).toBe(false);
+  expect(markup.includes("Add routine")).toBe(false);
+  expect(markup.includes(">Add<")).toBe(true);
+  expect(markup.includes('data-system-collection-field="enabled"')).toBe(true);
 });
 
 test("manual enabled controls keep their disabled reason tooltip-only", () => {

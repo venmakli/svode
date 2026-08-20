@@ -1,14 +1,16 @@
-import {
-  Field,
-  FieldContent,
-  FieldDescription,
-  FieldError,
-  FieldLabel,
-} from "@/components/ui/field";
-import { Separator } from "@/components/ui/separator";
+import { useId } from "react";
+import { Power, RotateCcw } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import * as m from "@/paraglide/messages.js";
-import { cn } from "@/shared/lib/utils";
 
 import type { RoutineResolvedOwnerKind } from "../model/types";
 
@@ -18,50 +20,91 @@ export function RoutineAutomaticConsent({
   loading,
   ownerKind,
   pending,
-  compact = false,
   onChange,
+  onRetry,
 }: {
-  compact?: boolean;
   enabled: boolean | null;
   error: string | null;
   loading: boolean;
   ownerKind: RoutineResolvedOwnerKind;
   pending: boolean;
   onChange(enabled: boolean): void;
+  onRetry(): void;
 }) {
-  const disabled = enabled === null || loading || pending;
+  const controlId = useId();
+  const descriptionId = `${controlId}-description`;
+  const label = automaticAuthorityLabel(ownerKind);
+  const description = m.routines_automatic_authority_description();
+  const retryLabel = `${m.routines_retry()}: ${label}`;
+
   return (
-    <>
-      <Field
-        orientation="horizontal"
-        data-disabled={disabled}
-        data-invalid={Boolean(error)}
-        className={cn("px-6 py-3", compact && "px-4 py-2")}
-      >
-        <Switch
-          id="routine-automatic-consent"
-          checked={enabled === true}
-          disabled={disabled}
-          aria-busy={disabled}
-          aria-invalid={Boolean(error)}
-          onCheckedChange={(checked) => onChange(checked === true)}
-        />
-        <FieldContent>
-          <FieldLabel htmlFor="routine-automatic-consent">
-            {automaticAuthorityLabel(ownerKind)}
-          </FieldLabel>
-          {!compact || loading ? (
-            <FieldDescription>
-              {loading
-                ? m.routines_automatic_authority_loading()
-                : m.routines_automatic_authority_description()}
-            </FieldDescription>
-          ) : null}
-          {error ? <FieldError>{error}</FieldError> : null}
-        </FieldContent>
-      </Field>
-      <Separator />
-    </>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Label
+          htmlFor={controlId}
+          data-disabled={loading || pending}
+          data-invalid={Boolean(error)}
+          aria-disabled={loading || pending}
+          className="h-7 w-auto shrink-0 gap-1.5 rounded-md border bg-background px-2 data-[disabled=true]:opacity-50 data-[invalid=true]:border-destructive data-[invalid=true]:text-destructive"
+          data-routine-automatic-authority={ownerKind}
+        >
+          <Power
+            aria-hidden="true"
+            className={
+              enabled === true
+                ? "size-3.5 text-foreground"
+                : "size-3.5 text-muted-foreground"
+            }
+          />
+          {loading ? (
+            <Skeleton className="h-3.5 w-6 rounded-full" aria-hidden="true" />
+          ) : enabled === null ? (
+            <Button
+              id={controlId}
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="-mx-1"
+              aria-describedby={descriptionId}
+              aria-invalid="true"
+              aria-label={retryLabel}
+              data-routine-automatic-authority-retry
+              onClick={onRetry}
+            >
+              <RotateCcw data-icon="inline-start" />
+            </Button>
+          ) : (
+            <Switch
+              id={controlId}
+              size="sm"
+              checked={enabled}
+              disabled={pending}
+              aria-busy={pending}
+              aria-describedby={descriptionId}
+              aria-invalid={Boolean(error)}
+              aria-label={label}
+              onCheckedChange={(checked) => onChange(checked === true)}
+            />
+          )}
+          <span
+            id={descriptionId}
+            className="sr-only"
+            role="status"
+            aria-live="polite"
+          >
+            {loading
+              ? m.routines_automatic_authority_loading()
+              : `${description}${error ? ` ${error}` : ""}`}
+            {pending ? ` ${m.routines_saving()}` : ""}
+          </span>
+        </Label>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-72 flex-col items-start">
+        <span className="font-medium">{label}</span>
+        <span>{description}</span>
+        {error ? <span>{error}</span> : null}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
