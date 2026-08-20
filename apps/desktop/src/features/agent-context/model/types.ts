@@ -91,6 +91,7 @@ export interface AgentContextSkillRow {
   manifestPath: string;
   name: string;
   ownerPath: string;
+  truncated: boolean;
 }
 
 export interface AgentContextInstructionsSnapshot {

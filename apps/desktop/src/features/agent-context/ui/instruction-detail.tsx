@@ -1,24 +1,14 @@
-import { AlertTriangle } from "lucide-react";
-
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
-import * as m from "@/paraglide/messages.js";
 import {
   MarkdownReader,
   type MarkdownReaderPolicy,
 } from "@/shared/ui/markdown-reader";
 
-import type {
-  AgentContextInstructionRow,
-  AgentContextReference,
-} from "../model/types";
+import { instructionDetailProvenance } from "../model/detail-provenance";
+import type { AgentContextInstructionRow } from "../model/types";
 import {
-  instructionRoleLabel,
-  sourceLinkKindLabel,
-  sourceLocationLabel,
-  sourceResolutionLabel,
-  sourceSupportLabel,
-} from "./provenance-labels";
+  AgentContextContentHealthNotice,
+  AgentContextSourceDisclosure,
+} from "./source-disclosure";
 
 const instructionReaderPolicy: MarkdownReaderPolicy = {
   openLink: () => undefined,
@@ -31,137 +21,16 @@ export function AgentContextInstructionDetail({
 }: {
   row: AgentContextInstructionRow;
 }) {
-  const healthReasons =
-    row.health === "degraded"
-      ? row.healthReasons.length > 0
-        ? row.healthReasons
-        : [m.agent_context_health_degraded()]
-      : [];
+  const provenance = instructionDetailProvenance(row);
 
   return (
     <div
-      className="flex min-w-0 flex-col gap-5"
+      className="flex min-w-0 flex-col gap-4"
       data-agent-context-instruction-detail={row.id}
     >
-      <DetailSection title={m.agent_context_detail_canonical_source()}>
-        <DetailTerm>{m.agent_context_source_support()}</DetailTerm>
-        <DetailValue>
-          <Badge variant="outline">{sourceSupportLabel(row.support)}</Badge>
-        </DetailValue>
-        <DetailTerm>{m.agent_context_resolution()}</DetailTerm>
-        <DetailValue>
-          <Badge variant="outline">
-            {sourceResolutionLabel(row.resolution)}
-          </Badge>
-        </DetailValue>
-        <DetailTerm>{m.agent_context_detail_canonical_owner()}</DetailTerm>
-        <DetailPath>{row.ownerPath}</DetailPath>
-        <DetailTerm>{m.agent_context_detail_canonical_path()}</DetailTerm>
-        <DetailPath>{row.canonicalPath}</DetailPath>
-      </DetailSection>
-
-      <DetailSection title={m.agent_context_detail_discovery_source()}>
-        <DetailTerm>{m.agent_context_detail_role()}</DetailTerm>
-        <DetailValue>{instructionRoleLabel(row.role)}</DetailValue>
-        <DetailTerm>{m.agent_context_location()}</DetailTerm>
-        <DetailValue>
-          <Badge variant="outline">{sourceLocationLabel(row.location)}</Badge>
-        </DetailValue>
-        <DetailTerm>{m.agent_context_detail_link_kind()}</DetailTerm>
-        <DetailValue>
-          <Badge variant="outline">{sourceLinkKindLabel(row.linkKind)}</Badge>
-        </DetailValue>
-        <DetailTerm>{m.agent_context_detail_discovery_path()}</DetailTerm>
-        <DetailPath>{row.discoveryPath}</DetailPath>
-        {row.linkKind !== "direct" ? (
-          <>
-            <DetailTerm>{m.agent_context_detail_link_target()}</DetailTerm>
-            <DetailPath>{row.linkTargetPath ?? row.canonicalPath}</DetailPath>
-          </>
-        ) : null}
-        {row.precedence !== null ? (
-          <>
-            <DetailTerm>{m.agent_context_detail_precedence()}</DetailTerm>
-            <DetailValue>{row.precedence}</DetailValue>
-          </>
-        ) : null}
-      </DetailSection>
-
-      {row.references.length > 0 ? (
-        <section className="flex min-w-0 flex-col gap-2">
-          <h3 className="text-sm font-medium">
-            {m.agent_context_detail_references()}
-          </h3>
-          <ul className="flex min-w-0 flex-col gap-2 text-xs">
-            {row.references.map((reference, index) => (
-              <li
-                key={`${reference.path}:${index}`}
-                className="flex min-w-0 flex-col gap-0.5 rounded-md border p-2"
-              >
-                <code className="break-all">{reference.path}</code>
-                <span className="text-muted-foreground">
-                  {referenceStatusLabel(reference.status)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      {healthReasons.length > 0 ? (
-        <Alert>
-          <AlertTriangle />
-          <AlertDescription className="flex flex-col gap-1">
-            {healthReasons.map((reason, index) => (
-              <span key={`${reason}:${index}`}>{reason}</span>
-            ))}
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
+      <AgentContextSourceDisclosure provenance={provenance} />
+      <AgentContextContentHealthNotice provenance={provenance} />
       <MarkdownReader content={row.body} policy={instructionReaderPolicy} />
     </div>
   );
-}
-
-function DetailTerm({ children }: React.PropsWithChildren) {
-  return <dt className="text-muted-foreground">{children}</dt>;
-}
-
-function DetailSection({
-  children,
-  title,
-}: React.PropsWithChildren<{ title: string }>) {
-  return (
-    <section className="flex min-w-0 flex-col gap-2">
-      <h3 className="text-sm font-medium">{title}</h3>
-      <dl className="grid min-w-0 grid-cols-[minmax(7rem,auto)_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
-        {children}
-      </dl>
-    </section>
-  );
-}
-
-function DetailValue({
-  children,
-  className,
-}: React.PropsWithChildren<{ className?: string }>) {
-  return <dd className={className}>{children}</dd>;
-}
-
-function DetailPath({ children }: React.PropsWithChildren) {
-  return <dd className="min-w-0 break-all font-mono text-xs">{children}</dd>;
-}
-
-function referenceStatusLabel(status: AgentContextReference["status"]) {
-  if (status === "available") {
-    return m.agent_context_detail_reference_status_available();
-  }
-  if (status === "outside_boundary") {
-    return m.agent_context_detail_reference_status_outside_boundary();
-  }
-  if (status === "requires_client_approval") {
-    return m.agent_context_detail_reference_status_requires_client_approval();
-  }
-  return m.agent_context_detail_reference_status_unreadable();
 }

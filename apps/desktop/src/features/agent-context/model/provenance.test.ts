@@ -46,6 +46,7 @@ const multiAliasSkill: AgentContextSkillRow = {
   manifestPath: "/workspace/shared/review/SKILL.md",
   name: "review",
   ownerPath: "/workspace",
+  truncated: false,
 };
 
 test("source facts come from declarative discovery enums, not adapter ids or paths", () => {

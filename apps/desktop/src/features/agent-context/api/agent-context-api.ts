@@ -145,6 +145,7 @@ function normalizeSkillRow(
     manifestPath: row.path,
     name: row.name,
     ownerPath: row.owner.root,
+    truncated: row.preview.truncated,
   });
 }
 

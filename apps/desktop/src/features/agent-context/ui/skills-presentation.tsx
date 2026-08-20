@@ -86,11 +86,7 @@ export function createAgentContextSkillsPresentation({
         onDetailRequested?.(row.id);
         return {
           content: <AgentContextSkillDetail row={row} />,
-          description: (
-            <span className="sr-only">
-              {m.agent_context_skill_detail_description()}
-            </span>
-          ),
+          description: row.description,
           title: (
             <span className="flex min-w-0 items-center gap-2">
               <span className="truncate">{row.name}</span>

@@ -164,6 +164,7 @@ test("transport keeps source semantics independent without message parsing", () 
   expect(snapshot.skills[0]?.healthReasons).toEqual([
     "Skill name does not match its canonical directory name",
   ]);
+  expect(snapshot.skills[0]?.truncated).toBe(false);
   expect(snapshot.diagnostics).toEqual(dto.diagnostics);
   expect(Object.isFrozen(snapshot.diagnostics)).toBe(true);
   expect(Object.isFrozen(snapshot.diagnostics[0])).toBe(true);

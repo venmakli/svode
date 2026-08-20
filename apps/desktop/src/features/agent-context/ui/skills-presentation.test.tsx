@@ -9,6 +9,7 @@ import {
   type SystemCollectionPresentationDescriptor,
 } from "@/features/collection/system";
 
+import { skillDetailProvenance } from "../model/detail-provenance";
 import type { AgentContextSkillRow } from "../model/types";
 import {
   compareSkillsByDefault,
@@ -37,6 +38,7 @@ const reviewSkill: AgentContextSkillRow = {
   manifestPath: "/workspace/.agents/skills/review/SKILL.md",
   name: "review",
   ownerPath: "/workspace",
+  truncated: false,
 };
 
 function presentation(rows: readonly AgentContextSkillRow[]) {
@@ -98,11 +100,21 @@ test("skills render as coverless Gallery cards with bounded Reader detail", () =
   expect(detailHtml.includes("data-agent-context-skill-detail")).toBe(true);
   expect(detailHtml.includes("data-markdown-reader-blocked-link")).toBe(true);
   expect(detailHtml.includes('href="https://example.com"')).toBe(false);
-  expect(detailHtml.includes("Canonical source")).toBe(true);
-  expect(detailHtml.includes("Discovery sources")).toBe(true);
+  expect(detailHtml.includes("Source and location")).toBe(true);
+  expect(detailHtml.includes('aria-expanded="false"')).toBe(true);
+  expect(detailHtml.includes("Canonical source")).toBe(false);
+  expect(detailHtml.includes("Discovery sources")).toBe(false);
   expect(detailHtml.includes(".agents")).toBe(true);
   expect(detailHtml.includes("Space")).toBe(true);
-  expect(detailHtml.includes("Direct")).toBe(true);
+  expect(detailHtml.includes("Sources: 1")).toBe(true);
+  expect(detailHtml.includes("Direct")).toBe(false);
+  expect(renderToStaticMarkup(request?.description)).toBe(
+    "Review changes against project conventions.",
+  );
+  expect(
+    (detailHtml.match(/Review changes against project conventions\./g) ?? [])
+      .length,
+  ).toBe(0);
 });
 
 test("search and multivalue Source/Location filters use factual alias unions", () => {
@@ -268,9 +280,34 @@ test("safe aliases stay neutral while degraded manifest health warns", () => {
   expect(html.includes("Superseded")).toBe(false);
   expect(html.includes("Claude link support is not proven")).toBe(false);
   expect(html.includes("Name does not match its directory")).toBe(true);
+
+  const provenanceOnlyDetail = renderToStaticMarkup(
+    descriptor([warning]).createDetailRequest?.(warning).content,
+  );
+  expect(
+    provenanceOnlyDetail.includes("data-agent-context-content-health"),
+  ).toBe(false);
+  expect(
+    provenanceOnlyDetail.includes("Name does not match its directory"),
+  ).toBe(false);
+
+  const truncatedDetail = renderToStaticMarkup(
+    descriptor([{ ...warning, truncated: true }]).createDetailRequest?.({
+      ...warning,
+      truncated: true,
+    }).content,
+  );
+  expect(truncatedDetail.includes("data-agent-context-content-health")).toBe(
+    true,
+  );
+  expect(
+    truncatedDetail.includes(
+      "Preview is bounded and was truncated by the scanner.",
+    ),
+  ).toBe(true);
 });
 
-test("Detail keeps discovery location independent from canonical ownership", () => {
+test("Detail projection keeps discovery location independent from canonical ownership", () => {
   const spaceAliasToGlobal: AgentContextSkillRow = {
     ...reviewSkill,
     aliases: [
@@ -299,27 +336,21 @@ test("Detail keeps discovery location independent from canonical ownership", () 
     ],
   };
 
-  const spaceAliasDetail = renderToStaticMarkup(
-    descriptor([spaceAliasToGlobal]).createDetailRequest?.(spaceAliasToGlobal)
-      .content,
+  const spaceAliasDetail = skillDetailProvenance(spaceAliasToGlobal);
+  expect(spaceAliasDetail.canonicalOwnerPath).toBe("/home/user/.agents/skills");
+  expect(spaceAliasDetail.sources[0]?.linkKind).toBe("symbolic_link");
+  expect(spaceAliasDetail.sources[0]?.location).toBe("space");
+  expect(spaceAliasDetail.sources[0]?.path).toBe(
+    "/workspace/.agents/skills/global-link",
   );
-  expect(spaceAliasDetail.includes("/home/user/.agents/skills")).toBe(true);
-  expect(spaceAliasDetail.includes("Space")).toBe(true);
-  expect(spaceAliasDetail.includes("Symbolic link")).toBe(true);
-  expect(
-    spaceAliasDetail.includes("/workspace/.agents/skills/global-link"),
-  ).toBe(true);
 
-  const globalAliasDetail = renderToStaticMarkup(
-    descriptor([globalAliasToSpace]).createDetailRequest?.(globalAliasToSpace)
-      .content,
+  const globalAliasDetail = skillDetailProvenance(globalAliasToSpace);
+  expect(globalAliasDetail.canonicalOwnerPath).toBe("/workspace");
+  expect(globalAliasDetail.sources[0]?.linkKind).toBe("directory_alias");
+  expect(globalAliasDetail.sources[0]?.location).toBe("global");
+  expect(globalAliasDetail.sources[0]?.path).toBe(
+    "/home/user/.claude/skills/space-link",
   );
-  expect(globalAliasDetail.includes("/workspace")).toBe(true);
-  expect(globalAliasDetail.includes("Global")).toBe(true);
-  expect(globalAliasDetail.includes("Directory alias")).toBe(true);
-  expect(
-    globalAliasDetail.includes("/home/user/.claude/skills/space-link"),
-  ).toBe(true);
 });
 
 test("skill external action opens its canonical manifest in the owning root", async () => {

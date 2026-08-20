@@ -87,11 +87,12 @@ test("instructions use the common coverless Gallery and safe reader detail", () 
   expect(detailRowId as string | null).toBe(selected.id);
   expect(detailHtml.includes("data-markdown-reader-blocked-link")).toBe(true);
   expect(detailHtml.includes('href="https://example.com"')).toBe(false);
-  expect(detailHtml.includes("Selected")).toBe(true);
-  expect(detailHtml.includes("Canonical source")).toBe(true);
-  expect(detailHtml.includes("Discovery source")).toBe(true);
+  expect(detailHtml.includes("Source and location")).toBe(true);
+  expect(detailHtml.includes('aria-expanded="false"')).toBe(true);
+  expect(detailHtml.includes("Canonical source")).toBe(false);
+  expect(detailHtml.includes("Discovery sources")).toBe(false);
   expect(detailHtml.includes("Space")).toBe(true);
-  expect(detailHtml.includes("Direct")).toBe(true);
+  expect(detailHtml.includes("Direct")).toBe(false);
 });
 
 test("superseded aliases keep neutral link provenance without a warning", () => {
@@ -138,9 +139,9 @@ test("superseded aliases keep neutral link provenance without a warning", () => 
   const detailHtml = renderToStaticMarkup(
     descriptor.instance.descriptor.createDetailRequest(linkedRow).content,
   );
-  expect(detailHtml.includes("Superseded")).toBe(true);
+  expect(detailHtml.includes("Superseded")).toBe(false);
   expect(detailHtml.includes("Directory alias")).toBe(true);
-  expect(detailHtml.includes("/workspace/shared/AGENTS.md")).toBe(true);
+  expect(detailHtml.includes("Canonical source")).toBe(false);
 });
 
 test("instruction cards show only exceptional factual source metadata", () => {
