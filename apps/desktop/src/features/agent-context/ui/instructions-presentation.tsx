@@ -24,10 +24,9 @@ import type { AgentContextInstructionRow } from "../model/types";
 import type { ArtifactOpener } from "../api/agent-context-api";
 import { AgentContextInstructionDetail } from "./instruction-detail";
 import {
-  availabilityLabel,
-  availabilityVariant,
   instructionAdapterLabel,
   instructionScopeLabel,
+  sourceResolutionLabel,
 } from "./instruction-labels";
 
 export function createAgentContextInstructionsPresentation({
@@ -66,14 +65,15 @@ export function createAgentContextInstructionsPresentation({
         ),
       ),
       customBadgeField(
-        "availability",
-        m.agent_context_availability(),
-        (row) => availabilityLabel(row.availability),
-        (row) => (
-          <Badge variant={availabilityVariant(row.availability)}>
-            {availabilityLabel(row.availability)}
-          </Badge>
-        ),
+        "resolution",
+        m.agent_context_resolution(),
+        (row) => sourceResolutionLabel(row.resolution),
+        (row) =>
+          row.resolution === "included" ? null : (
+            <Badge variant="outline">
+              {sourceResolutionLabel(row.resolution)}
+            </Badge>
+          ),
       ),
     ];
 
@@ -104,7 +104,7 @@ export function createAgentContextInstructionsPresentation({
           <FileText className="size-4 text-muted-foreground" aria-hidden />
         ),
         renderOverlays: (row) => <InstructionCardOverlays row={row} />,
-        visibleFields: ["adapter", "scope", "availability"],
+        visibleFields: ["adapter", "scope", "resolution"],
       },
       query: {},
       rowActions: artifactOpeners.map((opener) => ({
@@ -141,12 +141,8 @@ export function AgentContextInstructionsEmpty() {
 
 function InstructionCardOverlays({ row }: { row: AgentContextInstructionRow }) {
   const warning =
-    row.availability === "shadowed" ||
-    row.availability === "compatibility_unknown" ||
-    row.diagnostics.length > 0
-      ? [row.availabilityReason, ...row.diagnostics]
-          .filter(Boolean)
-          .join(" · ") || availabilityLabel(row.availability)
+    row.health === "degraded"
+      ? row.healthReasons.join(" · ") || m.agent_context_health_degraded()
       : null;
 
   if (!row.linkTargetPath && !warning) return null;

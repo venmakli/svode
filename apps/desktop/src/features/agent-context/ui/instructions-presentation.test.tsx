@@ -10,15 +10,14 @@ import {
 import type { AgentContextInstructionRow } from "../model/types";
 import { createAgentContextInstructionsPresentation } from "./instructions-presentation";
 
-const available: AgentContextInstructionRow = {
+const selected: AgentContextInstructionRow = {
   adapterId: "codex",
-  availability: "available",
-  availabilityReason: "Selected by Codex precedence",
   body: "# Project instructions\n\n[Blocked link](https://example.com)",
   canonicalPath: "/workspace/AGENTS.md",
-  diagnostics: [],
   discoveryPath: "/workspace/AGENTS.md",
   filename: "AGENTS.md",
+  health: "normal",
+  healthReasons: [],
   id: "codex:project:/workspace/AGENTS.md",
   linkTargetPath: null,
   ownerPath: "/workspace",
@@ -26,6 +25,8 @@ const available: AgentContextInstructionRow = {
   references: [],
   role: "codex_directory_precedence",
   scope: "project",
+  support: "client_native",
+  resolution: "selected",
   truncated: false,
 };
 
@@ -35,7 +36,7 @@ test("instructions use the common coverless Gallery and safe reader detail", () 
     onDetailRequested: (rowId) => {
       detailRowId = rowId;
     },
-    state: { phase: "ready", rows: [available] },
+    state: { phase: "ready", rows: [selected] },
   });
   const html = renderToStaticMarkup(
     <TooltipProvider>
@@ -58,6 +59,7 @@ test("instructions use the common coverless Gallery and safe reader detail", () 
   expect(html.includes("max-width")).toBe(false);
   expect(html.includes('data-size="sm"')).toBe(true);
   expect(html.includes("group/gallery-cover")).toBe(false);
+  expect(html.includes("Selected")).toBe(true);
 
   const descriptor = presentation as unknown as {
     instance: {
@@ -76,25 +78,25 @@ test("instructions use the common coverless Gallery and safe reader detail", () 
   expect(descriptor.instance.descriptor.layout.density).toBe("compact");
   expect("refresh" in descriptor.instance.descriptor).toBe(false);
   expect(html.includes("data-system-collection-refresh")).toBe(false);
-  const detail = descriptor.instance.descriptor.createDetailRequest(available);
+  const detail = descriptor.instance.descriptor.createDetailRequest(selected);
   const detailHtml = renderToStaticMarkup(detail.content);
-  expect(detailRowId as string | null).toBe(available.id);
+  expect(detailRowId as string | null).toBe(selected.id);
   expect(detailHtml.includes("data-markdown-reader-blocked-link")).toBe(true);
   expect(detailHtml.includes('href="https://example.com"')).toBe(false);
+  expect(detailHtml.includes("Selected")).toBe(true);
 });
 
-test("shadowed aliases expose link and warning overlays without a subtitle", () => {
+test("superseded aliases keep neutral link provenance without a warning", () => {
   const presentation = createAgentContextInstructionsPresentation({
     state: {
       phase: "ready",
       rows: [
         {
-          ...available,
-          availability: "shadowed",
-          availabilityReason: "AGENTS.override.md wins in this directory",
+          ...selected,
           discoveryPath: "/workspace/AGENTS.md",
-          id: "codex:shadowed:/workspace/AGENTS.md",
+          id: "codex:superseded:/workspace/AGENTS.md",
           linkTargetPath: "/workspace/shared/AGENTS.md",
+          resolution: "superseded",
         },
       ],
     },
@@ -111,8 +113,33 @@ test("shadowed aliases expose link and warning overlays without a subtitle", () 
   );
 
   expect(html.includes("Filesystem alias")).toBe(true);
-  expect(html.includes("AGENTS.override.md wins")).toBe(true);
+  expect(html.includes("Superseded")).toBe(true);
+  expect(html.includes("AGENTS.override.md wins")).toBe(false);
+  expect(html.includes("The source preview is degraded")).toBe(false);
   expect(html.includes("Codex project guidance")).toBe(false);
+});
+
+test("only row-local degraded health renders a warning overlay", () => {
+  const degraded: AgentContextInstructionRow = {
+    ...selected,
+    health: "degraded",
+    healthReasons: ["Preview was limited to 32 KiB"],
+    truncated: true,
+  };
+  const html = renderToStaticMarkup(
+    <TooltipProvider>
+      <SystemCollectionPresentationShell
+        instanceKey="agent-context:space:degraded"
+        presentation={createAgentContextInstructionsPresentation({
+          state: { phase: "ready", rows: [degraded] },
+        })}
+        query={EMPTY_SYSTEM_COLLECTION_QUERY}
+        onQueryChange={() => undefined}
+      />
+    </TooltipProvider>,
+  );
+
+  expect(html.includes("Preview was limited to 32 KiB")).toBe(true);
 });
 
 test("instruction external action keeps the canonical artifact and owner together", async () => {
@@ -129,7 +156,7 @@ test("instruction external action keeps the canonical artifact and owner togethe
     onOpenArtifact: (input) => {
       opened.push(input);
     },
-    state: { phase: "ready", rows: [available] },
+    state: { phase: "ready", rows: [selected] },
   }) as unknown as {
     instance: {
       descriptor: {
@@ -142,7 +169,7 @@ test("instruction external action keeps the canonical artifact and owner togethe
   };
 
   const action = presentation.instance.descriptor.rowActions[0]!;
-  await action.run(available);
+  await action.run(selected);
   expect(action.id).toBe("open-in-vscode");
   expect(opened).toEqual([
     {

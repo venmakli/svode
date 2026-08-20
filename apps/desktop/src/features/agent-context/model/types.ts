@@ -8,11 +8,14 @@ export interface AgentContextDiagnostic {
   severity: "warning" | "error";
 }
 
-export type AgentContextAvailability =
-  | "available"
-  | "shadowed"
-  | "recognized_only"
-  | "compatibility_unknown";
+export type AgentContextSourceSupport = "client_native" | "svode_recognized";
+
+export type AgentContextSourceResolution =
+  | "included"
+  | "selected"
+  | "superseded";
+
+export type AgentContextSourceHealth = "degraded" | "normal";
 
 export type AgentContextScope = "personal" | "project";
 
@@ -22,22 +25,6 @@ export type AgentContextInstructionRole =
   | "claude_hierarchy"
   | "claude_import"
   | "target_root_recognition";
-
-export interface AgentContextAdapterSnapshot {
-  id: SupportedAdapterId;
-  displayName: string;
-  executable: string;
-  version: string | null;
-  installed: boolean;
-  nativeDefaultTarget: string;
-  capabilities: {
-    contextDiscovery: boolean;
-    skillsDiscovery: boolean;
-    launch: false;
-    modelSelection: false;
-    permissions: false;
-  };
-}
 
 export interface AgentContextReference {
   path: string;
@@ -54,8 +41,10 @@ export interface AgentContextInstructionRow {
   role: AgentContextInstructionRole;
   filename: string;
   scope: AgentContextScope;
-  availability: AgentContextAvailability;
-  availabilityReason: string | null;
+  support: AgentContextSourceSupport;
+  resolution: AgentContextSourceResolution;
+  health: AgentContextSourceHealth;
+  healthReasons: readonly string[];
   ownerPath: string;
   canonicalPath: string;
   discoveryPath: string;
@@ -64,25 +53,18 @@ export interface AgentContextInstructionRow {
   body: string;
   truncated: boolean;
   references: readonly AgentContextReference[];
-  diagnostics: readonly string[];
 }
-
-export type AgentContextSkillAvailability = Exclude<
-  AgentContextAvailability,
-  "recognized_only"
->;
 
 export type AgentContextSkillDiscoveryKind =
   | "codex_project"
   | "codex_standard_personal"
-  | "codex_compatibility_personal"
   | "claude_project"
   | "claude_personal";
 
 export interface AgentContextSkillAlias {
   adapterId: SupportedAdapterId;
-  availability: AgentContextSkillAvailability;
-  availabilityReason: string | null;
+  support: AgentContextSourceSupport;
+  resolution: AgentContextSourceResolution;
   discoveryKind: AgentContextSkillDiscoveryKind;
   discoveryPath: string;
   linkKind: "direct" | "symbolic_link" | "directory_alias";
@@ -98,21 +80,19 @@ export interface AgentContextSkillRow {
   clients: readonly SupportedAdapterId[];
   compatibility: string | null;
   description: string;
-  diagnostics: readonly string[];
+  health: AgentContextSourceHealth;
+  healthReasons: readonly string[];
   id: string;
   license: string | null;
   manifestPath: string;
   name: string;
   ownerPath: string;
   scopes: readonly AgentContextScope[];
-  validation: "valid" | "warning";
-  warnings: readonly string[];
 }
 
 export interface AgentContextInstructionsSnapshot {
   targetPath: string;
   generation: number;
-  adapters: readonly AgentContextAdapterSnapshot[];
   diagnostics: readonly AgentContextDiagnostic[];
   rows: readonly AgentContextInstructionRow[];
   skills: readonly AgentContextSkillRow[];

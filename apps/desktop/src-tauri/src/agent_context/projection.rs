@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Serialize;
 
-use crate::agent_adapters::system_registry_environment;
+use crate::agent_adapters::system_source_registry_environment;
 use crate::error::AppError;
 use crate::repo_path::{RootMode, repo_relative_from_base};
 
@@ -18,7 +18,7 @@ use super::model::{
 #[serde(rename_all = "camelCase")]
 pub struct ProjectKnowledgeReference {
     pub path: String,
-    pub availability: String,
+    pub status: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -32,7 +32,11 @@ pub struct ProjectKnowledgeArtifact {
     pub text: String,
     pub source_updated_at: String,
     pub aliases: Vec<String>,
-    pub availability: Vec<String>,
+    pub support: Vec<String>,
+    pub resolution: Vec<String>,
+    pub health: Vec<String>,
+    pub health_reasons: Vec<String>,
+    pub effective_applicability: bool,
     pub discovery: Vec<String>,
     pub references: Vec<ProjectKnowledgeReference>,
     pub truncated: bool,
@@ -40,11 +44,10 @@ pub struct ProjectKnowledgeArtifact {
 
 impl ProjectKnowledgeArtifact {
     /// A canonical source is effective for the target when at least one
-    /// supported native adapter proves it available. Shadowed, recognized-only
-    /// and compatibility-unknown candidates remain project-wide inventory but
-    /// are not part of the target's effective MCP scope.
+    /// client-native discovery path is selected or included by deterministic
+    /// source policy. Health is retained independently as fidelity metadata.
     pub fn is_effectively_applicable(&self) -> bool {
-        self.availability.iter().any(|value| value == "available")
+        self.effective_applicability
     }
 }
 
@@ -54,7 +57,7 @@ pub async fn target_knowledge_projection(
     project_root: &Path,
     target_root: &Path,
 ) -> Result<Vec<ProjectKnowledgeArtifact>, AppError> {
-    let environment = system_registry_environment().await?;
+    let environment = system_source_registry_environment()?;
     let project = project_root.to_path_buf();
     let target = target_root.to_path_buf();
     let scan_project = project.clone();
@@ -124,7 +127,11 @@ fn normalize_project_snapshot(
             text: preview.markdown.clone(),
             source_updated_at: modified_at(Path::new(canonical_path)),
             aliases: BTreeSet::new(),
-            availability: BTreeSet::new(),
+            support: BTreeSet::new(),
+            resolution: BTreeSet::new(),
+            health: BTreeSet::new(),
+            health_reasons: BTreeSet::new(),
+            effective_applicability: false,
             discovery: BTreeSet::new(),
             references: BTreeSet::new(),
             truncated: preview.truncated,
@@ -132,8 +139,17 @@ fn normalize_project_snapshot(
         if let Some(alias) = safe_alias_file(owner_root, &instruction.path) {
             row.aliases.insert(alias);
         }
-        row.availability
-            .insert(enum_value(&instruction.availability));
+        row.support.insert(enum_value(&instruction.support));
+        row.resolution.insert(enum_value(&instruction.resolution));
+        row.health.insert(enum_value(&instruction.health));
+        row.health_reasons
+            .extend(instruction.health_reasons.iter().cloned());
+        row.effective_applicability |= instruction.support
+            == super::model::SourceSupport::ClientNative
+            && matches!(
+                instruction.resolution,
+                super::model::SourceResolution::Selected | super::model::SourceResolution::Included
+            );
         row.discovery.insert(format!(
             "{}:{}:{}:{}",
             instruction
@@ -152,8 +168,7 @@ fn normalize_project_snapshot(
             let Some(path) = safe_relative_file(owner_root, canonical_reference) else {
                 continue;
             };
-            row.references
-                .insert((path, enum_value(&reference.availability)));
+            row.references.insert((path, enum_value(&reference.status)));
         }
     }
 
@@ -192,7 +207,11 @@ fn normalize_project_snapshot(
             text: skill.preview.markdown.clone(),
             source_updated_at: modified_at(&canonical_manifest),
             aliases: BTreeSet::new(),
-            availability: BTreeSet::new(),
+            support: BTreeSet::new(),
+            resolution: BTreeSet::new(),
+            health: BTreeSet::new(),
+            health_reasons: BTreeSet::new(),
+            effective_applicability: false,
             discovery: BTreeSet::new(),
             references: BTreeSet::new(),
             truncated: skill.preview.truncated,
@@ -207,7 +226,15 @@ fn normalize_project_snapshot(
             {
                 row.aliases.insert(path);
             }
-            row.availability.insert(enum_value(&alias.availability));
+            row.support.insert(enum_value(&alias.support));
+            row.resolution.insert(enum_value(&alias.resolution));
+            row.effective_applicability |= alias.support
+                == super::model::SourceSupport::ClientNative
+                && matches!(
+                    alias.resolution,
+                    super::model::SourceResolution::Selected
+                        | super::model::SourceResolution::Included
+                );
             row.discovery.insert(format!(
                 "{}:{}:{}",
                 alias.adapter_id.as_str(),
@@ -215,6 +242,9 @@ fn normalize_project_snapshot(
                 enum_value(&alias.link_kind)
             ));
         }
+        row.health.insert(enum_value(&skill.health));
+        row.health_reasons
+            .extend(skill.health_reasons.iter().cloned());
     }
 
     Ok(rows.into_values().map(Accumulator::finish).collect())
@@ -229,7 +259,11 @@ struct Accumulator {
     text: String,
     source_updated_at: String,
     aliases: BTreeSet<String>,
-    availability: BTreeSet<String>,
+    support: BTreeSet<String>,
+    resolution: BTreeSet<String>,
+    health: BTreeSet<String>,
+    health_reasons: BTreeSet<String>,
+    effective_applicability: bool,
     discovery: BTreeSet<String>,
     references: BTreeSet<(String, String)>,
     truncated: bool,
@@ -246,12 +280,16 @@ impl Accumulator {
             text: self.text,
             source_updated_at: self.source_updated_at,
             aliases: self.aliases.into_iter().collect(),
-            availability: self.availability.into_iter().collect(),
+            support: self.support.into_iter().collect(),
+            resolution: self.resolution.into_iter().collect(),
+            health: self.health.into_iter().collect(),
+            health_reasons: self.health_reasons.into_iter().collect(),
+            effective_applicability: self.effective_applicability,
             discovery: self.discovery.into_iter().collect(),
             references: self
                 .references
                 .into_iter()
-                .map(|(path, availability)| ProjectKnowledgeReference { path, availability })
+                .map(|(path, status)| ProjectKnowledgeReference { path, status })
                 .collect(),
             truncated: self.truncated,
         }
@@ -319,8 +357,8 @@ mod tests {
     use super::*;
     use crate::agent_adapters::AgentAdapterKind;
     use crate::agent_context::model::{
-        InstructionAvailability, InstructionDiscovery, InstructionDiscoveryPolicy,
-        InstructionOwner, InstructionRow, MarkdownPreview,
+        InstructionDiscovery, InstructionDiscoveryPolicy, InstructionOwner, InstructionRow,
+        MarkdownPreview, SourceHealth, SourceResolution, SourceSupport,
     };
     use tempfile::TempDir;
 
@@ -353,13 +391,14 @@ mod tests {
                 root: temp.path().to_string_lossy().to_string(),
             },
             source_kind,
-            availability: InstructionAvailability::Available,
-            reason: None,
+            support: SourceSupport::ClientNative,
+            resolution: SourceResolution::Selected,
+            health: SourceHealth::Normal,
+            health_reasons: Vec::new(),
             discovery: InstructionDiscovery {
                 policy: InstructionDiscoveryPolicy::CodexDirectoryPrecedence,
                 directory_depth: 0,
                 precedence: 0,
-                effective: true,
             },
             preview: Some(preview("project")),
             references: Vec::new(),
@@ -395,8 +434,36 @@ mod tests {
         assert_eq!(projected[0].source_path, "AGENTS.md");
         assert_eq!(projected[0].discovery.len(), 2);
         assert!(projected[0].is_effectively_applicable());
-        let mut shadowed = projected[0].clone();
-        shadowed.availability = vec!["shadowed".to_string()];
-        assert!(!shadowed.is_effectively_applicable());
+        let mut superseded = projected[0].clone();
+        superseded.effective_applicability = false;
+        assert!(!superseded.is_effectively_applicable());
+
+        let mut native_superseded = row(
+            Some(AgentAdapterKind::Codex),
+            InstructionSourceKind::Project,
+        );
+        native_superseded.resolution = SourceResolution::Superseded;
+        let mut recognized = row(None, InstructionSourceKind::Recognized);
+        recognized.support = SourceSupport::SvodeRecognized;
+        recognized.resolution = SourceResolution::Included;
+        let mixed = AgentContextSnapshotContent {
+            project_root: temp.path().to_string_lossy().to_string(),
+            target_root: temp.path().to_string_lossy().to_string(),
+            repository_root: temp.path().to_string_lossy().to_string(),
+            adapters: Vec::new(),
+            instructions: vec![native_superseded, recognized],
+            skills: Vec::new(),
+            diagnostics: Vec::new(),
+            observed_project_paths: Vec::new(),
+            observed_personal_paths: Vec::new(),
+        };
+        let projected = normalize_project_snapshot(temp.path(), temp.path(), &mixed).unwrap();
+        assert_eq!(projected.len(), 1);
+        assert_eq!(
+            projected[0].support,
+            vec!["client_native", "svode_recognized"]
+        );
+        assert_eq!(projected[0].resolution, vec!["included", "superseded"]);
+        assert!(!projected[0].is_effectively_applicable());
     }
 }

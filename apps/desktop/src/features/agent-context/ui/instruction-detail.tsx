@@ -10,11 +10,11 @@ import type {
   AgentContextReference,
 } from "../model/types";
 import {
-  availabilityLabel,
-  availabilityVariant,
   instructionAdapterLabel,
   instructionRoleLabel,
   instructionScopeLabel,
+  sourceResolutionLabel,
+  sourceSupportLabel,
 } from "./instruction-labels";
 
 const instructionReaderPolicy: MarkdownReaderPolicy = {
@@ -28,6 +28,13 @@ export function AgentContextInstructionDetail({
 }: {
   row: AgentContextInstructionRow;
 }) {
+  const healthReasons =
+    row.health === "degraded"
+      ? row.healthReasons.length > 0
+        ? row.healthReasons
+        : [m.agent_context_health_degraded()]
+      : [];
+
   return (
     <div
       className="flex min-w-0 flex-col gap-5"
@@ -42,16 +49,15 @@ export function AgentContextInstructionDetail({
         <DetailValue>
           <Badge variant="outline">{instructionScopeLabel(row.scope)}</Badge>
         </DetailValue>
-        <DetailTerm>{m.agent_context_availability()}</DetailTerm>
-        <DetailValue className="flex flex-col items-start gap-1">
-          <Badge variant={availabilityVariant(row.availability)}>
-            {availabilityLabel(row.availability)}
+        <DetailTerm>{m.agent_context_source_support()}</DetailTerm>
+        <DetailValue>
+          <Badge variant="outline">{sourceSupportLabel(row.support)}</Badge>
+        </DetailValue>
+        <DetailTerm>{m.agent_context_resolution()}</DetailTerm>
+        <DetailValue>
+          <Badge variant="outline">
+            {sourceResolutionLabel(row.resolution)}
           </Badge>
-          {row.availabilityReason ? (
-            <span className="text-xs text-muted-foreground">
-              {row.availabilityReason}
-            </span>
-          ) : null}
         </DetailValue>
         <DetailTerm>{m.agent_context_detail_owner()}</DetailTerm>
         <DetailPath>{row.ownerPath}</DetailPath>
@@ -94,15 +100,12 @@ export function AgentContextInstructionDetail({
         </section>
       ) : null}
 
-      {row.truncated || row.diagnostics.length > 0 ? (
+      {healthReasons.length > 0 ? (
         <Alert>
           <AlertTriangle />
           <AlertDescription className="flex flex-col gap-1">
-            {row.truncated ? (
-              <span>{m.agent_context_detail_truncated()}</span>
-            ) : null}
-            {row.diagnostics.map((diagnostic, index) => (
-              <span key={`${diagnostic}:${index}`}>{diagnostic}</span>
+            {healthReasons.map((reason, index) => (
+              <span key={`${reason}:${index}`}>{reason}</span>
             ))}
           </AlertDescription>
         </Alert>

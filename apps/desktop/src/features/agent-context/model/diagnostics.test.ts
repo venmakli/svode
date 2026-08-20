@@ -6,28 +6,28 @@ import {
 } from "./diagnostics";
 
 const missingManifest =
-  "Skill directory /Users/kamin/.codex/skills/codex-primary-runtime has no SKILL.md";
-const failedProbe =
-  "codex --version exited with Some(127): env: node: No such file or directory";
+  "Skill directory /workspace/.agents/skills/missing has no SKILL.md";
+const outsideBoundary =
+  "Instruction alias /workspace/AGENTS.md resolves outside allowed root /workspace";
 
 test("preserves raw messages and deduplicates only the exact diagnostic identity", () => {
   const duplicate = {
     adapterId: "codex" as const,
     code: "skill_manifest_missing",
     message: missingManifest,
-    path: "/Users/kamin/.codex/skills/codex-primary-runtime/SKILL.md",
+    path: "/workspace/.agents/skills/missing/SKILL.md",
     severity: "warning" as const,
   };
   const groups = buildAgentContextDiagnosticReadModel({
     diagnostics: [
       duplicate,
       { ...duplicate },
-      { ...duplicate, path: "/workspace/.agents/skills/missing/SKILL.md" },
+      { ...duplicate, path: "/workspace/.agents/skills/other/SKILL.md" },
       {
         adapterId: "codex",
-        code: "adapter_executable",
-        message: failedProbe,
-        path: null,
+        code: "instruction_outside_boundary",
+        message: outsideBoundary,
+        path: "/workspace/AGENTS.md",
         severity: "warning",
       },
     ],
@@ -37,7 +37,7 @@ test("preserves raw messages and deduplicates only the exact diagnostic identity
   expect(countAgentContextDiagnostics(groups)).toBe(3);
   expect(
     groups.flatMap((group) => group.diagnostics.map(({ message }) => message)),
-  ).toEqual([failedProbe, missingManifest, missingManifest]);
+  ).toEqual([outsideBoundary, missingManifest, missingManifest]);
 });
 
 test("groups from stable metadata, keeps unknown codes, and appends the raw refresh error", () => {

@@ -1,12 +1,10 @@
-import type { VariantProps } from "class-variance-authority";
-
-import { badgeVariants } from "@/components/ui/badge";
 import * as m from "@/paraglide/messages.js";
 
 import type {
-  AgentContextAvailability,
   AgentContextInstructionRole,
   AgentContextScope,
+  AgentContextSourceResolution,
+  AgentContextSourceSupport,
   SupportedAdapterId,
 } from "../model/types";
 
@@ -38,23 +36,20 @@ export function instructionRoleLabel(role: AgentContextInstructionRole) {
   return m.agent_context_role_recognized();
 }
 
-export function availabilityLabel(availability: AgentContextAvailability) {
-  if (availability === "available") {
-    return m.agent_context_availability_available();
-  }
-  if (availability === "shadowed") {
-    return m.agent_context_availability_shadowed();
-  }
-  if (availability === "recognized_only") {
-    return m.agent_context_availability_recognized_only();
-  }
-  return m.agent_context_availability_compatibility_unknown();
+export function sourceSupportLabel(support: AgentContextSourceSupport) {
+  return support === "client_native"
+    ? m.agent_context_support_client_native()
+    : m.agent_context_support_recognized();
 }
 
-export function availabilityVariant(
-  availability: AgentContextAvailability,
-): VariantProps<typeof badgeVariants>["variant"] {
-  if (availability === "available") return "secondary";
-  if (availability === "compatibility_unknown") return "destructive";
-  return "outline";
+export function sourceResolutionLabel(
+  resolution: AgentContextSourceResolution,
+) {
+  if (resolution === "selected") {
+    return m.agent_context_resolution_selected();
+  }
+  if (resolution === "superseded") {
+    return m.agent_context_resolution_superseded();
+  }
+  return m.agent_context_resolution_included();
 }

@@ -226,7 +226,11 @@ fn agent_provenance(projection: &ProjectKnowledgeArtifact) -> serde_json::Value 
     serde_json::json!({
         "canonicalSourcePath": projection.canonical_source_path,
         "aliases": projection.aliases,
-        "availability": projection.availability,
+        "support": projection.support,
+        "resolution": projection.resolution,
+        "health": projection.health,
+        "healthReasons": projection.health_reasons,
+        "effectiveApplicability": projection.effective_applicability,
         "discovery": projection.discovery,
         "truncated": projection.truncated,
         "scopeApplicability": if projection.owner_scope == "root" { "inherited" } else { "local" },

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::agent_adapters::{AgentAdapterKind, AgentAdapterSnapshot};
+use crate::agent_adapters::{AgentAdapterKind, AgentSourcePolicy};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -18,11 +18,24 @@ pub struct InstructionOwner {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum InstructionAvailability {
-    Available,
-    Shadowed,
-    RecognizedOnly,
-    CompatibilityUnknown,
+pub enum SourceSupport {
+    ClientNative,
+    SvodeRecognized,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceResolution {
+    Selected,
+    Included,
+    Superseded,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceHealth {
+    Normal,
+    Degraded,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,7 +62,6 @@ pub struct InstructionDiscovery {
     pub policy: InstructionDiscoveryPolicy,
     pub directory_depth: usize,
     pub precedence: usize,
-    pub effective: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,9 +79,18 @@ pub struct InstructionReference {
     pub path: String,
     pub canonical_path: Option<String>,
     pub depth: usize,
-    pub availability: InstructionAvailability,
-    pub reason: Option<String>,
+    pub status: InstructionReferenceStatus,
     pub preview: Option<MarkdownPreview>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InstructionReferenceStatus {
+    Included,
+    OutsideBoundary,
+    RequiresClientApproval,
+    Unreadable,
+    Cyclic,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,8 +103,10 @@ pub struct InstructionRow {
     pub canonical_path: Option<String>,
     pub owner: InstructionOwner,
     pub source_kind: InstructionSourceKind,
-    pub availability: InstructionAvailability,
-    pub reason: Option<String>,
+    pub support: SourceSupport,
+    pub resolution: SourceResolution,
+    pub health: SourceHealth,
+    pub health_reasons: Vec<String>,
     pub discovery: InstructionDiscovery,
     pub preview: Option<MarkdownPreview>,
     pub references: Vec<InstructionReference>,
@@ -98,18 +121,9 @@ pub enum SkillScope {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SkillAvailability {
-    Available,
-    Shadowed,
-    CompatibilityUnknown,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum SkillDiscoveryKind {
     CodexProject,
     CodexStandardPersonal,
-    CodexCompatibilityPersonal,
     ClaudeProject,
     ClaudePersonal,
 }
@@ -138,8 +152,8 @@ pub struct SkillDiscoveryAlias {
     pub path: String,
     pub root: String,
     pub owner: InstructionOwner,
-    pub availability: SkillAvailability,
-    pub reason: Option<String>,
+    pub support: SourceSupport,
+    pub resolution: SourceResolution,
     pub link_kind: SkillLinkKind,
 }
 
@@ -156,6 +170,8 @@ pub struct SkillRow {
     pub compatibility: Option<String>,
     pub metadata: Option<serde_json::Value>,
     pub validation: SkillValidationStatus,
+    pub health: SourceHealth,
+    pub health_reasons: Vec<String>,
     pub warnings: Vec<String>,
     pub preview: MarkdownPreview,
     pub aliases: Vec<SkillDiscoveryAlias>,
@@ -184,7 +200,7 @@ pub struct AgentContextSnapshotContent {
     pub project_root: String,
     pub target_root: String,
     pub repository_root: String,
-    pub adapters: Vec<AgentAdapterSnapshot>,
+    pub adapters: Vec<AgentSourcePolicy>,
     pub instructions: Vec<InstructionRow>,
     pub skills: Vec<SkillRow>,
     pub diagnostics: Vec<AgentContextDiagnostic>,

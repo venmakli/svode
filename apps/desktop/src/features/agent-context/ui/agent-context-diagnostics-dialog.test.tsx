@@ -8,14 +8,14 @@ import {
 } from "./agent-context-diagnostics-dialog";
 
 const rawMessage =
-  "codex --version exited with Some(127): env: node: No such file or directory";
+  "Instruction alias /workspace/AGENTS.md resolves outside allowed root /workspace";
 const groups = buildAgentContextDiagnosticReadModel({
   diagnostics: [
     {
       adapterId: "codex",
-      code: "adapter_executable",
+      code: "instruction_outside_boundary",
       message: rawMessage,
-      path: null,
+      path: "/workspace/AGENTS.md",
       severity: "warning",
     },
   ],
@@ -51,12 +51,12 @@ test("dialog list displays the exact grouped messages and structured metadata", 
 
   expect(markup.includes(rawMessage)).toBe(true);
   expect(markup.includes("source changed during scan")).toBe(true);
-  expect(markup.includes('data-agent-context-diagnostic-group="clients"')).toBe(
-    true,
-  );
+  expect(
+    markup.includes('data-agent-context-diagnostic-group="instructions"'),
+  ).toBe(true);
   expect(markup.includes('data-agent-context-diagnostic-group="runtime"')).toBe(
     true,
   );
-  expect(markup.includes("adapter_executable")).toBe(true);
+  expect(markup.includes("instruction_outside_boundary")).toBe(true);
   expect(markup.includes("codex")).toBe(true);
 });

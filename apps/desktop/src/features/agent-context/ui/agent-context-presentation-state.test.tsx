@@ -6,7 +6,6 @@ import type { AgentContextInstructionsSnapshot } from "../model/types";
 import { toAgentContextPresentationState } from "./agent-context-presentation-state";
 
 const snapshot: AgentContextInstructionsSnapshot = {
-  adapters: [],
   diagnostics: [],
   generation: 4,
   hasPersonalSources: true,

@@ -10,8 +10,6 @@ use super::super::model::{AgentContextDiagnostic, DiagnosticSeverity, MarkdownPr
 pub(super) struct InspectedSource {
     pub canonical_path: Option<PathBuf>,
     pub preview: Option<MarkdownPreview>,
-    pub is_alias: bool,
-    pub compatibility_unknown: bool,
     pub diagnostic: Option<AgentContextDiagnostic>,
 }
 
@@ -30,7 +28,6 @@ pub(super) fn inspect(
                 adapter_id,
                 "instruction_metadata",
                 format!("Could not inspect {}: {error}", path.display()),
-                false,
             ));
         }
     };
@@ -40,7 +37,6 @@ pub(super) fn inspect(
             adapter_id,
             "instruction_not_file",
             format!("Instruction entrypoint is not a file: {}", path.display()),
-            false,
         ));
     }
 
@@ -55,7 +51,6 @@ pub(super) fn inspect(
                     "Could not resolve instruction source {}: {error}",
                     path.display()
                 ),
-                true,
             ));
         }
     };
@@ -70,17 +65,13 @@ pub(super) fn inspect(
                     "Could not resolve allowed instruction root {}: {error}",
                     allowed_root.display()
                 ),
-                true,
             ));
         }
     };
-    let is_alias = metadata.file_type().is_symlink();
     if !canonical_path.starts_with(&canonical_allowed_root) {
         return Some(InspectedSource {
             canonical_path: Some(canonical_path.clone()),
             preview: None,
-            is_alias: true,
-            compatibility_unknown: true,
             diagnostic: Some(diagnostic(
                 path,
                 adapter_id,
@@ -102,7 +93,6 @@ pub(super) fn inspect(
                 adapter_id,
                 "instruction_read_metadata",
                 format!("Could not read metadata for {}: {error}", path.display()),
-                false,
             ));
         }
     };
@@ -115,7 +105,6 @@ pub(super) fn inspect(
                 adapter_id,
                 "instruction_read",
                 format!("Could not read {}: {error}", path.display()),
-                false,
             ));
         }
     };
@@ -127,7 +116,6 @@ pub(super) fn inspect(
             adapter_id,
             "instruction_read",
             format!("Could not read {}: {error}", path.display()),
-            false,
         ));
     }
     let truncated = bytes.len() > max_bytes;
@@ -140,8 +128,6 @@ pub(super) fn inspect(
             bytes_read: bytes.len(),
             total_bytes,
         }),
-        is_alias,
-        compatibility_unknown: false,
         diagnostic: truncated.then(|| {
             diagnostic(
                 path,
@@ -161,13 +147,10 @@ fn failed_inspection(
     adapter_id: Option<AgentAdapterKind>,
     code: &str,
     message: String,
-    compatibility_unknown: bool,
 ) -> InspectedSource {
     InspectedSource {
         canonical_path: None,
         preview: None,
-        is_alias: true,
-        compatibility_unknown,
         diagnostic: Some(diagnostic(path, adapter_id, code, message)),
     }
 }

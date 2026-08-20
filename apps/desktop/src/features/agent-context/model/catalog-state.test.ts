@@ -9,7 +9,6 @@ import {
 import type { AgentContextInstructionsSnapshot } from "./types";
 
 const snapshot: AgentContextInstructionsSnapshot = {
-  adapters: [],
   diagnostics: [],
   generation: 4,
   hasPersonalSources: true,

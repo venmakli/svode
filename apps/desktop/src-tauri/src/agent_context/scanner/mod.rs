@@ -6,12 +6,12 @@ mod skills;
 use std::path::{Path, PathBuf};
 
 use crate::AppError;
-use crate::agent_adapters::{AgentAdapterKind, AgentAdapterRegistry, RegistryEnvironment};
+use crate::agent_adapters::{AgentAdapterKind, AgentAdapterRegistry, SourceRegistryEnvironment};
 
 use super::model::{
-    AgentContextDiagnostic, AgentContextSnapshotContent, DiagnosticSeverity,
-    InstructionAvailability, InstructionDiscovery, InstructionDiscoveryPolicy, InstructionOwner,
-    InstructionOwnerKind, InstructionRow, InstructionSourceKind, SkillRow,
+    AgentContextDiagnostic, AgentContextSnapshotContent, InstructionDiscovery,
+    InstructionDiscoveryPolicy, InstructionOwner, InstructionOwnerKind, InstructionRow,
+    InstructionSourceKind, SkillRow, SourceHealth, SourceResolution, SourceSupport,
 };
 use io::{inspect, path_string};
 
@@ -42,39 +42,25 @@ impl DiscoveryResult {
 pub fn scan(
     project_path: &Path,
     space_path: &Path,
-    environment: &RegistryEnvironment,
+    environment: &SourceRegistryEnvironment,
 ) -> Result<AgentContextSnapshotContent, AppError> {
     let project_root = canonical_directory(project_path, "project")?;
     let target_root = canonical_directory(space_path, "target space")?;
     let repository_root = nearest_repository_root(&target_root, &project_root);
     let directory_chain = root_to_target_chain(&repository_root, &target_root);
-    let adapters = AgentAdapterRegistry.snapshots(environment);
+    let adapters = AgentAdapterRegistry.source_policies(environment);
     let mut result = DiscoveryResult::default();
-
-    for adapter in &adapters {
-        if let Some(message) = &adapter.executable.diagnostic {
-            result.diagnostics.push(AgentContextDiagnostic {
-                code: "adapter_executable".to_string(),
-                severity: DiagnosticSeverity::Warning,
-                message: message.clone(),
-                path: adapter.executable.path.clone(),
-                adapter_id: Some(adapter.id),
-            });
-        }
-    }
     result.append(codex::discover(
         &repository_root,
         &target_root,
         &directory_chain,
         environment,
-        &adapters[0],
     ));
     result.append(claude::discover(
         &repository_root,
         &target_root,
         &directory_chain,
         environment,
-        &adapters[1],
     ));
     result.append(discover_recognized(&target_root));
     result.append(skills::discover(
@@ -170,8 +156,39 @@ fn discover_recognized(target_root: &Path) -> DiscoveryResult {
             continue;
         };
         if let Some(diagnostic) = source.diagnostic.take() {
+            let reason = diagnostic.message.clone();
             result.diagnostics.push(diagnostic);
+            if source.preview.is_none() {
+                continue;
+            }
+            result.rows.push(InstructionRow {
+                id: format!("recognized:{}", path_string(&path)),
+                adapter_id: None,
+                name: (*filename).to_string(),
+                path: path_string(&path),
+                canonical_path: source.canonical_path.as_deref().map(path_string),
+                owner: InstructionOwner {
+                    kind: InstructionOwnerKind::TargetSpace,
+                    root: path_string(target_root),
+                },
+                source_kind: InstructionSourceKind::Recognized,
+                support: SourceSupport::SvodeRecognized,
+                resolution: SourceResolution::Included,
+                health: SourceHealth::Degraded,
+                health_reasons: vec![reason],
+                discovery: InstructionDiscovery {
+                    policy: InstructionDiscoveryPolicy::TargetRootRecognition,
+                    directory_depth: 0,
+                    precedence,
+                },
+                preview: source.preview,
+                references: Vec::new(),
+            });
+            continue;
         }
+        let Some(preview) = source.preview else {
+            continue;
+        };
         result.rows.push(InstructionRow {
             id: format!("recognized:{}", path_string(&path)),
             adapter_id: None,
@@ -183,18 +200,16 @@ fn discover_recognized(target_root: &Path) -> DiscoveryResult {
                 root: path_string(target_root),
             },
             source_kind: InstructionSourceKind::Recognized,
-            availability: InstructionAvailability::RecognizedOnly,
-            reason: Some(
-                "Svode recognizes this target-root file but does not promise runtime injection"
-                    .to_string(),
-            ),
+            support: SourceSupport::SvodeRecognized,
+            resolution: SourceResolution::Included,
+            health: SourceHealth::Normal,
+            health_reasons: Vec::new(),
             discovery: InstructionDiscovery {
                 policy: InstructionDiscoveryPolicy::TargetRootRecognition,
                 directory_depth: 0,
                 precedence,
-                effective: false,
             },
-            preview: source.preview,
+            preview: Some(preview),
             references: Vec::new(),
         });
     }
@@ -254,7 +269,7 @@ mod tests {
         std::fs::create_dir(independent.join(".git")).unwrap();
         std::fs::write(independent.join("AGENTS.md"), "independent").unwrap();
         let home = TempDir::new().unwrap();
-        let environment = RegistryEnvironment::for_tests(home.path().to_path_buf());
+        let environment = SourceRegistryEnvironment::for_tests(home.path().to_path_buf());
 
         let root = scan(project.path(), project.path(), &environment).unwrap();
         let inline_snapshot = scan(project.path(), &inline, &environment).unwrap();
@@ -278,6 +293,12 @@ mod tests {
         assert!(transport["targetRoot"].is_string());
         assert!(transport["instructions"].is_array());
         assert!(transport["skills"].is_array());
+        assert!(transport["adapters"][0].get("executable").is_none());
+        assert!(
+            root.diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "adapter_executable")
+        );
         assert_eq!(codex_project_paths(&inline_snapshot).len(), 2);
         let independent_paths = codex_project_paths(&independent_snapshot);
         assert_eq!(independent_paths.len(), 1);
@@ -297,7 +318,7 @@ mod tests {
         std::fs::create_dir(&child).unwrap();
         std::fs::write(child.join("MEMORY.md"), "child memory").unwrap();
         let home = TempDir::new().unwrap();
-        let environment = RegistryEnvironment::for_tests(home.path().to_path_buf());
+        let environment = SourceRegistryEnvironment::for_tests(home.path().to_path_buf());
 
         let snapshot = scan(project.path(), &child, &environment).unwrap();
         let recognized = snapshot
@@ -308,10 +329,7 @@ mod tests {
 
         assert_eq!(recognized.len(), 1);
         assert_eq!(recognized[0].name, "MEMORY.md");
-        assert_eq!(
-            recognized[0].availability,
-            InstructionAvailability::RecognizedOnly
-        );
+        assert_eq!(recognized[0].support, SourceSupport::SvodeRecognized);
         assert!(recognized[0].path.ends_with("/child/MEMORY.md"));
     }
 
@@ -328,26 +346,22 @@ mod tests {
         std::fs::write(&secret, "must not be previewed").unwrap();
         symlink(&secret, project.path().join("AGENTS.md")).unwrap();
         let home = TempDir::new().unwrap();
-        let environment = RegistryEnvironment::for_tests(home.path().to_path_buf());
+        let environment = SourceRegistryEnvironment::for_tests(home.path().to_path_buf());
 
         let snapshot = scan(project.path(), project.path(), &environment).unwrap();
-        let codex = snapshot
-            .instructions
-            .iter()
-            .find(|row| row.adapter_id == Some(AgentAdapterKind::Codex))
-            .unwrap();
         let claude = snapshot
             .instructions
             .iter()
             .find(|row| row.adapter_id == Some(AgentAdapterKind::ClaudeCode))
             .unwrap();
 
-        assert_eq!(
-            codex.availability,
-            InstructionAvailability::CompatibilityUnknown
+        assert_eq!(claude.health, SourceHealth::Normal);
+        assert!(
+            snapshot
+                .instructions
+                .iter()
+                .all(|row| row.path != path_string(&project.path().join("AGENTS.md")))
         );
-        assert!(codex.preview.is_none());
-        assert_eq!(claude.availability, InstructionAvailability::Available);
         assert!(
             snapshot
                 .diagnostics

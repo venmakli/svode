@@ -3,12 +3,12 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::agent_adapters::{AgentAdapterKind, AgentAdapterSnapshot, RegistryEnvironment};
+use crate::agent_adapters::{AgentAdapterKind, SourceRegistryEnvironment};
 
 use super::super::model::{
-    AgentContextDiagnostic, InstructionAvailability, InstructionDiscovery,
-    InstructionDiscoveryPolicy, InstructionOwner, InstructionOwnerKind, InstructionRow,
-    InstructionSourceKind,
+    AgentContextDiagnostic, InstructionDiscovery, InstructionDiscoveryPolicy, InstructionOwner,
+    InstructionOwnerKind, InstructionRow, InstructionSourceKind, SourceHealth, SourceResolution,
+    SourceSupport,
 };
 use super::DiscoveryResult;
 use super::io::{InspectedSource, diagnostic, inspect, path_string};
@@ -28,8 +28,7 @@ pub(super) fn discover(
     repository_root: &Path,
     _target_root: &Path,
     directory_chain: &[PathBuf],
-    environment: &RegistryEnvironment,
-    adapter: &AgentAdapterSnapshot,
+    environment: &SourceRegistryEnvironment,
 ) -> DiscoveryResult {
     let adapter_id = AgentAdapterKind::Codex;
     let (config, mut result) = read_config(environment, adapter_id);
@@ -61,7 +60,6 @@ pub(super) fn discover(
         InstructionDiscoveryPolicy::CodexUserPrecedence,
         0,
         max_bytes,
-        adapter,
         &mut result,
     );
 
@@ -87,11 +85,10 @@ pub(super) fn discover(
             InstructionDiscoveryPolicy::CodexDirectoryPrecedence,
             directory_depth,
             max_bytes,
-            adapter,
             &mut result,
         );
         for row in &mut result.rows[before..] {
-            if row.discovery.effective {
+            if row.resolution == SourceResolution::Selected {
                 apply_active_budget(row, &mut active_budget, &mut result.diagnostics);
             }
         }
@@ -108,7 +105,6 @@ fn discover_group(
     policy: InstructionDiscoveryPolicy,
     directory_depth: usize,
     max_bytes: usize,
-    adapter: &AgentAdapterSnapshot,
     result: &mut DiscoveryResult,
 ) {
     let adapter_id = AgentAdapterKind::Codex;
@@ -118,52 +114,20 @@ fn discover_group(
             inspect(path, allowed_root, max_bytes, Some(adapter_id)).map(|source| (path, source))
         })
         .collect::<Vec<_>>();
-    let selected = inspected.iter().position(|(_, source)| {
-        source
-            .preview
-            .as_ref()
-            .is_some_and(|preview| !preview.markdown.trim().is_empty())
-    });
+    let selected = inspected
+        .iter()
+        .position(|(_, source)| source.preview.is_some());
 
     for (precedence, (path, mut source)) in inspected.drain(..).enumerate() {
+        let mut health_reasons = Vec::new();
         if let Some(diagnostic) = source.diagnostic.take() {
+            health_reasons.push(diagnostic.message.clone());
             result.diagnostics.push(diagnostic);
         }
-        let effective = selected == Some(precedence)
-            && !source.compatibility_unknown
-            && adapter.executable.path.is_some()
-            && adapter.executable.version.is_some();
-        let (availability, reason) = if source.compatibility_unknown {
-            (
-                InstructionAvailability::CompatibilityUnknown,
-                "Source could not be proven safe inside the supported discovery boundary"
-                    .to_string(),
-            )
-        } else if selected == Some(precedence) && !effective {
-            (
-                InstructionAvailability::CompatibilityUnknown,
-                "Codex executable or version evidence is unavailable".to_string(),
-            )
-        } else if effective {
-            (
-                InstructionAvailability::Available,
-                "Selected by Codex native instruction precedence".to_string(),
-            )
-        } else if source
-            .preview
-            .as_ref()
-            .is_some_and(|preview| preview.markdown.trim().is_empty())
-        {
-            (
-                InstructionAvailability::Shadowed,
-                "Empty instruction file is not effective".to_string(),
-            )
-        } else {
-            (
-                InstructionAvailability::Shadowed,
-                "A higher-precedence Codex entrypoint is effective in this directory".to_string(),
-            )
-        };
+        if source.preview.is_none() {
+            continue;
+        }
+        let effective = selected == Some(precedence);
         result.rows.push(instruction_row(
             path,
             source,
@@ -172,9 +136,12 @@ fn discover_group(
             policy,
             directory_depth,
             precedence,
-            effective,
-            availability,
-            reason,
+            if effective {
+                SourceResolution::Selected
+            } else {
+                SourceResolution::Superseded
+            },
+            health_reasons,
         ));
     }
 }
@@ -188,9 +155,8 @@ fn instruction_row(
     policy: InstructionDiscoveryPolicy,
     directory_depth: usize,
     precedence: usize,
-    effective: bool,
-    availability: InstructionAvailability,
-    reason: String,
+    resolution: SourceResolution,
+    health_reasons: Vec<String>,
 ) -> InstructionRow {
     InstructionRow {
         id: format!("codex:{}", path_string(path)),
@@ -203,13 +169,18 @@ fn instruction_row(
         canonical_path: source.canonical_path.as_deref().map(path_string),
         owner,
         source_kind,
-        availability,
-        reason: Some(reason),
+        support: SourceSupport::ClientNative,
+        resolution,
+        health: if health_reasons.is_empty() {
+            SourceHealth::Normal
+        } else {
+            SourceHealth::Degraded
+        },
+        health_reasons,
         discovery: InstructionDiscovery {
             policy,
             directory_depth,
             precedence,
-            effective,
         },
         preview: source.preview,
         references: Vec::new(),
@@ -233,12 +204,15 @@ fn apply_active_budget(
     preview.bytes_read = boundary;
     preview.truncated = true;
     *remaining = 0;
+    let message = "Codex active project instruction chain exceeded project_doc_max_bytes";
     diagnostics.push(diagnostic(
         Path::new(&row.path),
         row.adapter_id,
         "codex_project_doc_limit",
-        "Codex active project instruction chain exceeded project_doc_max_bytes".to_string(),
+        message.to_string(),
     ));
+    row.health = SourceHealth::Degraded;
+    row.health_reasons.push(message.to_string());
 }
 
 fn floor_char_boundary(value: &str, requested: usize) -> usize {
@@ -250,7 +224,7 @@ fn floor_char_boundary(value: &str, requested: usize) -> usize {
 }
 
 fn read_config(
-    environment: &RegistryEnvironment,
+    environment: &SourceRegistryEnvironment,
     adapter_id: AgentAdapterKind,
 ) -> (CodexConfig, DiscoveryResult) {
     let config_path = environment.codex_home.join("config.toml");
@@ -351,15 +325,13 @@ mod tests {
         )
         .unwrap();
         std::fs::write(project.path().join("GUIDE.md"), "fallback").unwrap();
-        let environment = RegistryEnvironment::for_tests(home.path().to_path_buf());
-        let adapter = &crate::agent_adapters::AgentAdapterRegistry.snapshots(&environment)[0];
+        let environment = SourceRegistryEnvironment::for_tests(home.path().to_path_buf());
 
         let result = discover(
             project.path(),
             project.path(),
             &[project.path().to_path_buf()],
             &environment,
-            adapter,
         );
         let project_rows = result
             .rows
@@ -368,15 +340,39 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(project_rows.len(), 3);
-        assert_eq!(
-            project_rows[0].availability,
-            InstructionAvailability::Available
-        );
-        assert!(project_rows[0].discovery.effective);
+        assert_eq!(project_rows[0].resolution, SourceResolution::Selected);
         assert!(
             project_rows[1..]
                 .iter()
-                .all(|row| row.availability == InstructionAvailability::Shadowed)
+                .all(|row| row.resolution == SourceResolution::Superseded)
         );
+    }
+
+    #[test]
+    fn empty_readable_override_remains_the_selected_source() {
+        let project = TempDir::new().unwrap();
+        std::fs::create_dir(project.path().join(".git")).unwrap();
+        std::fs::write(project.path().join("AGENTS.override.md"), "").unwrap();
+        std::fs::write(project.path().join("AGENTS.md"), "agents").unwrap();
+        let home = TempDir::new().unwrap();
+        let environment = SourceRegistryEnvironment::for_tests(home.path().to_path_buf());
+
+        let result = discover(
+            project.path(),
+            project.path(),
+            &[project.path().to_path_buf()],
+            &environment,
+        );
+        let project_rows = result
+            .rows
+            .iter()
+            .filter(|row| row.source_kind == InstructionSourceKind::Project)
+            .collect::<Vec<_>>();
+
+        assert_eq!(project_rows.len(), 2);
+        assert_eq!(project_rows[0].resolution, SourceResolution::Selected);
+        assert_eq!(project_rows[0].preview.as_ref().unwrap().markdown, "");
+        assert_eq!(project_rows[0].health, SourceHealth::Normal);
+        assert_eq!(project_rows[1].resolution, SourceResolution::Superseded);
     }
 }

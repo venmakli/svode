@@ -10,10 +10,9 @@ import {
 
 import type { AgentContextSkillRow } from "../model/types";
 import {
-  availabilityLabel,
-  availabilityVariant,
   instructionAdapterLabel,
   instructionScopeLabel,
+  sourceResolutionLabel,
 } from "./instruction-labels";
 
 const skillReaderPolicy: MarkdownReaderPolicy = {
@@ -61,8 +60,8 @@ export function AgentContextSkillDetail({
                 <Badge variant="outline">
                   {instructionScopeLabel(alias.scope)}
                 </Badge>
-                <Badge variant={availabilityVariant(alias.availability)}>
-                  {availabilityLabel(alias.availability)}
+                <Badge variant="outline">
+                  {sourceResolutionLabel(alias.resolution)}
                 </Badge>
                 {alias.linkKind !== "direct" ? (
                   <Badge variant="outline">
@@ -71,11 +70,6 @@ export function AgentContextSkillDetail({
                   </Badge>
                 ) : null}
               </div>
-              {alias.availabilityReason ? (
-                <p className="text-xs text-muted-foreground">
-                  {alias.availabilityReason}
-                </p>
-              ) : null}
               <dl className="grid min-w-0 grid-cols-[minmax(6rem,auto)_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
                 <DetailTerm>{m.agent_context_detail_owner()}</DetailTerm>
                 <DetailPath>{alias.ownerPath}</DetailPath>
@@ -106,17 +100,10 @@ export function AgentContextSkillDetail({
 }
 
 export function skillWarnings(row: AgentContextSkillRow): readonly string[] {
-  return Array.from(
-    new Set([
-      ...row.warnings,
-      ...row.diagnostics,
-      ...row.aliases.flatMap((alias) =>
-        alias.availability !== "available" && alias.availabilityReason
-          ? [alias.availabilityReason]
-          : [],
-      ),
-    ]),
-  );
+  if (row.health !== "degraded") return [];
+  return row.healthReasons.length > 0
+    ? Array.from(new Set(row.healthReasons))
+    : [m.agent_context_health_degraded()];
 }
 
 function DetailTerm({ children }: React.PropsWithChildren) {

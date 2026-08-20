@@ -6,62 +6,44 @@ import {
 import { invokeCommand } from "@/platform/native/invoke";
 
 export type SupportedAdapterIdDto = "claude-code" | "codex";
-export type AgentContextAvailabilityDto =
-  | "available"
-  | "shadowed"
-  | "recognized_only"
-  | "compatibility_unknown";
-export type AgentContextSkillAvailabilityDto = Exclude<
-  AgentContextAvailabilityDto,
-  "recognized_only"
->;
-export interface AgentContextAdapterSnapshotDto {
+export type AgentContextSourceSupportDto =
+  | "client_native"
+  | "svode_recognized";
+export type AgentContextSourceResolutionDto =
+  | "included"
+  | "selected"
+  | "superseded";
+export type AgentContextSourceHealthDto = "degraded" | "normal";
+
+export interface AgentContextSourcePolicyDto {
   id: SupportedAdapterIdDto;
   displayName: string;
-  executable: {
-    executable: string;
-    path: string | null;
-    version: string | null;
-    diagnostic: string | null;
-  };
   personalRoot: string;
-  nativeDefault: {
-    cwd: string;
-    projectedContext: boolean;
-    additionalRoots: boolean;
-    hiddenLauncherConfig: boolean;
-  };
   capabilities: {
     instructions: {
-      availability: "available" | "unavailable";
       policy: "codex_agents" | "claude_memory";
     };
     skills: {
-      availability: "available" | "unavailable";
       policy: "codex_directory_chain" | "claude_personal_shadows_project";
       projectRelativeRoot: string;
       personalRoots: {
-        kind: "compatibility_personal" | "standard_personal";
+        kind: "standard_personal";
         path: string;
       }[];
     };
-    launch: AgentContextUnavailableCapabilityDto;
-    modelSelection: AgentContextUnavailableCapabilityDto;
-    permissionModes: AgentContextUnavailableCapabilityDto;
   };
-}
-
-interface AgentContextUnavailableCapabilityDto {
-  availability: "unavailable";
-  reason: string;
 }
 
 export interface AgentContextReferenceDto {
   path: string;
   canonicalPath: string | null;
   depth: number;
-  availability: AgentContextAvailabilityDto;
-  reason: string | null;
+  status:
+    | "cyclic"
+    | "included"
+    | "outside_boundary"
+    | "requires_client_approval"
+    | "unreadable";
   preview: AgentContextMarkdownPreviewDto | null;
 }
 
@@ -83,8 +65,10 @@ export interface AgentContextInstructionRowDto {
     root: string;
   };
   sourceKind: "personal" | "project" | "recognized";
-  availability: AgentContextAvailabilityDto;
-  reason: string | null;
+  support: AgentContextSourceSupportDto;
+  resolution: AgentContextSourceResolutionDto;
+  health: AgentContextSourceHealthDto;
+  healthReasons: string[];
   discovery: {
     policy:
       | "codex_user_precedence"
@@ -94,7 +78,6 @@ export interface AgentContextInstructionRowDto {
       | "target_root_recognition";
     directoryDepth: number;
     precedence: number;
-    effective: boolean;
   };
   preview: AgentContextMarkdownPreviewDto | null;
   references: AgentContextReferenceDto[];
@@ -114,7 +97,6 @@ export interface AgentContextSkillAliasDto {
   discoveryKind:
     | "codex_project"
     | "codex_standard_personal"
-    | "codex_compatibility_personal"
     | "claude_project"
     | "claude_personal";
   path: string;
@@ -123,8 +105,8 @@ export interface AgentContextSkillAliasDto {
     kind: "target_space" | "client_configuration";
     root: string;
   };
-  availability: AgentContextSkillAvailabilityDto;
-  reason: string | null;
+  support: AgentContextSourceSupportDto;
+  resolution: AgentContextSourceResolutionDto;
   linkKind: "direct" | "symbolic_link" | "directory_alias";
 }
 
@@ -142,6 +124,8 @@ export interface AgentContextSkillRowDto {
   compatibility: string | null;
   metadata: unknown | null;
   validation: "valid" | "warning";
+  health: AgentContextSourceHealthDto;
+  healthReasons: string[];
   warnings: string[];
   preview: AgentContextMarkdownPreviewDto;
   aliases: AgentContextSkillAliasDto[];
@@ -152,7 +136,7 @@ export interface AgentContextInstructionsSnapshotDto {
   projectRoot: string;
   targetRoot: string;
   repositoryRoot: string;
-  adapters: AgentContextAdapterSnapshotDto[];
+  adapters: AgentContextSourcePolicyDto[];
   instructions: AgentContextInstructionRowDto[];
   skills: AgentContextSkillRowDto[];
   diagnostics: AgentContextDiagnosticDto[];

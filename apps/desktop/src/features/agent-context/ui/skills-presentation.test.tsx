@@ -19,14 +19,14 @@ const reviewSkill: AgentContextSkillRow = {
   aliases: [
     {
       adapterId: "codex",
-      availability: "available",
-      availabilityReason: null,
       discoveryKind: "codex_project",
       discoveryPath: "/workspace/.agents/skills/review",
       linkKind: "direct",
       ownerPath: "/workspace",
+      resolution: "selected",
       rootPath: "/workspace/.agents/skills",
       scope: "project",
+      support: "client_native",
     },
   ],
   body: "# Review\n\n[Blocked link](https://example.com)",
@@ -34,15 +34,14 @@ const reviewSkill: AgentContextSkillRow = {
   clients: ["codex"],
   compatibility: null,
   description: "Review changes against project conventions.",
-  diagnostics: [],
+  health: "normal",
+  healthReasons: [],
   id: "skill:/workspace/.agents/skills/review",
   license: null,
   manifestPath: "/workspace/.agents/skills/review/SKILL.md",
   name: "review",
   ownerPath: "/workspace",
   scopes: ["project"],
-  validation: "valid",
-  warnings: [],
 };
 
 function presentation(rows: readonly AgentContextSkillRow[]) {
@@ -197,20 +196,18 @@ test("default order keeps same-name canonical sources and invalid query resets",
   ]);
 });
 
-test("link, compatibility and manifest warnings share compact overlays", () => {
+test("safe aliases stay neutral while degraded manifest health warns", () => {
   const warning: AgentContextSkillRow = {
     ...reviewSkill,
     aliases: [
       {
         ...reviewSkill.aliases[0]!,
-        availability: "compatibility_unknown",
-        availabilityReason: "Claude link support is not proven",
         linkKind: "symbolic_link",
+        resolution: "superseded",
       },
     ],
-    diagnostics: ["Manifest changed while scanning"],
-    validation: "warning",
-    warnings: ["Name does not match its directory"],
+    health: "degraded",
+    healthReasons: ["Name does not match its directory"],
   };
   const html = renderToStaticMarkup(
     <TooltipProvider>
@@ -224,7 +221,8 @@ test("link, compatibility and manifest warnings share compact overlays", () => {
   );
 
   expect(html.includes("Filesystem alias")).toBe(true);
-  expect(html.includes("Claude link support is not proven")).toBe(true);
+  expect(html.includes("Superseded")).toBe(true);
+  expect(html.includes("Claude link support is not proven")).toBe(false);
   expect(html.includes("Name does not match its directory")).toBe(true);
 });
 

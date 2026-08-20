@@ -1,7 +1,6 @@
 import {
   getAgentContextInstructions,
   refreshAgentContextInstructions,
-  type AgentContextAvailabilityDto,
   type AgentContextInstructionsSnapshotDto,
   type AgentContextReferenceDto,
   listenAgentContextChanged,
@@ -60,27 +59,6 @@ export function toAgentContextInstructionsSnapshot(
   dto: AgentContextInstructionsSnapshotDto,
 ): AgentContextInstructionsSnapshot {
   return Object.freeze({
-    adapters: Object.freeze(
-      dto.adapters.map((adapter) =>
-        Object.freeze({
-          capabilities: Object.freeze({
-            contextDiscovery:
-              adapter.capabilities.instructions.availability === "available",
-            skillsDiscovery:
-              adapter.capabilities.skills.availability === "available",
-            launch: false as const,
-            modelSelection: false as const,
-            permissions: false as const,
-          }),
-          displayName: adapter.displayName,
-          executable: adapter.executable.executable,
-          id: adapter.id,
-          installed: adapter.executable.path !== null,
-          nativeDefaultTarget: dto.targetRoot,
-          version: adapter.executable.version,
-        }),
-      ),
-    ),
     diagnostics: Object.freeze(
       dto.diagnostics.map((diagnostic) =>
         Object.freeze({
@@ -95,24 +73,15 @@ export function toAgentContextInstructionsSnapshot(
     generation: dto.generation,
     hasPersonalSources: dto.observedPersonalPaths.length > 0,
     rows: Object.freeze(
-      dto.instructions.map((row) => {
-        const rowDiagnostics = dto.diagnostics
-          .filter(
-            (diagnostic) =>
-              diagnostic.path === row.path ||
-              (row.canonicalPath !== null &&
-                diagnostic.path === row.canonicalPath),
-          )
-          .map((diagnostic) => diagnostic.message);
-        return Object.freeze({
+      dto.instructions.map((row) =>
+        Object.freeze({
           adapterId: row.adapterId,
-          availability: row.availability,
-          availabilityReason: row.reason,
           body: row.preview?.markdown ?? "",
           canonicalPath: row.canonicalPath ?? row.path,
-          diagnostics: Object.freeze(rowDiagnostics),
           discoveryPath: row.path,
           filename: row.name,
+          health: row.health,
+          healthReasons: Object.freeze([...row.healthReasons]),
           id: row.id,
           linkTargetPath:
             row.canonicalPath && row.canonicalPath !== row.path
@@ -129,40 +98,36 @@ export function toAgentContextInstructionsSnapshot(
             ),
           ),
           role: row.discovery.policy,
+          resolution: row.resolution,
           scope: row.sourceKind === "personal" ? "personal" : "project",
+          support: row.support,
           truncated: row.preview?.truncated ?? false,
-        });
-      }),
+        }),
+      ),
     ),
-    skills: Object.freeze(dto.skills.map((row) => normalizeSkillRow(dto, row))),
+    skills: Object.freeze(dto.skills.map(normalizeSkillRow)),
     targetPath: dto.targetRoot,
   });
 }
 
 function normalizeSkillRow(
-  dto: AgentContextInstructionsSnapshotDto,
   row: AgentContextInstructionsSnapshotDto["skills"][number],
 ): AgentContextSkillRow {
   const aliases = Object.freeze(
     row.aliases.map((alias) =>
       Object.freeze({
         adapterId: alias.adapterId,
-        availability: alias.availability,
-        availabilityReason: alias.reason,
         discoveryKind: alias.discoveryKind,
         discoveryPath: alias.path,
         linkKind: alias.linkKind,
         ownerPath: alias.owner.root,
+        resolution: alias.resolution,
         rootPath: alias.root,
         scope: alias.scope,
+        support: alias.support,
       }),
     ),
   );
-  const relatedPaths = new Set([
-    row.path,
-    row.canonicalPath,
-    ...row.aliases.map((alias) => alias.path),
-  ]);
   return Object.freeze({
     aliases,
     body: row.preview.markdown,
@@ -173,14 +138,8 @@ function normalizeSkillRow(
     ),
     compatibility: row.compatibility,
     description: row.description,
-    diagnostics: Object.freeze(
-      dto.diagnostics
-        .filter(
-          (diagnostic) =>
-            diagnostic.path !== null && relatedPaths.has(diagnostic.path),
-        )
-        .map((diagnostic) => diagnostic.message),
-    ),
+    health: row.health,
+    healthReasons: Object.freeze([...row.healthReasons]),
     id: row.id,
     license: row.license,
     manifestPath: row.path,
@@ -190,8 +149,6 @@ function normalizeSkillRow(
       row.aliases.map((alias) => alias.scope),
       ["project", "personal"],
     ),
-    validation: row.validation,
-    warnings: Object.freeze([...row.warnings]),
   });
 }
 
@@ -206,17 +163,10 @@ function orderedUnique<Value extends string>(
 function referenceStatus(
   reference: AgentContextReferenceDto,
 ): AgentContextReference["status"] {
-  if (reference.availability === "available") return "available";
-  const reason = reference.reason?.toLocaleLowerCase() ?? "";
-  if (reason.includes("approval")) return "requires_client_approval";
-  if (reason.includes("outside") || reason.includes("boundary")) {
-    return "outside_boundary";
+  if (reference.status === "included") return "available";
+  if (reference.status === "outside_boundary") return "outside_boundary";
+  if (reference.status === "requires_client_approval") {
+    return "requires_client_approval";
   }
-  return unavailableReferenceStatus(reference.availability);
-}
-
-function unavailableReferenceStatus(
-  availability: AgentContextAvailabilityDto,
-): AgentContextReference["status"] {
-  return availability === "recognized_only" ? "outside_boundary" : "unreadable";
+  return "unreadable";
 }

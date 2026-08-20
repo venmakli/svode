@@ -3,11 +3,12 @@ use std::path::{Component, Path, PathBuf};
 
 use regex::Regex;
 
-use crate::agent_adapters::{AgentAdapterKind, AgentAdapterSnapshot, RegistryEnvironment};
+use crate::agent_adapters::{AgentAdapterKind, SourceRegistryEnvironment};
 
 use super::super::model::{
-    InstructionAvailability, InstructionDiscovery, InstructionDiscoveryPolicy, InstructionOwner,
-    InstructionOwnerKind, InstructionReference, InstructionRow, InstructionSourceKind,
+    InstructionDiscovery, InstructionDiscoveryPolicy, InstructionOwner, InstructionOwnerKind,
+    InstructionReference, InstructionReferenceStatus, InstructionRow, InstructionSourceKind,
+    SourceHealth, SourceResolution, SourceSupport,
 };
 use super::DiscoveryResult;
 use super::io::{diagnostic, inspect, path_string};
@@ -20,8 +21,7 @@ pub(super) fn discover(
     repository_root: &Path,
     _target_root: &Path,
     directory_chain: &[PathBuf],
-    environment: &RegistryEnvironment,
-    adapter: &AgentAdapterSnapshot,
+    environment: &SourceRegistryEnvironment,
 ) -> DiscoveryResult {
     let mut result = DiscoveryResult::default();
     let personal = environment.claude_config_dir.join("CLAUDE.md");
@@ -35,35 +35,15 @@ pub(super) fn discover(
             root: path_string(&environment.claude_config_dir),
         },
         0,
-        adapter,
-        &mut result,
-    );
-
-    let root_candidates = [
-        repository_root.join("CLAUDE.md"),
-        repository_root.join(".claude/CLAUDE.md"),
-    ];
-    result
-        .observed_project_paths
-        .extend(root_candidates.iter().map(|path| path_string(path)));
-    discover_group(
-        &root_candidates,
-        repository_root,
-        InstructionSourceKind::Project,
-        InstructionOwner {
-            kind: InstructionOwnerKind::TargetSpace,
-            root: path_string(repository_root),
-        },
-        0,
-        adapter,
         &mut result,
     );
 
     for (directory_depth, directory) in directory_chain.iter().enumerate() {
-        let mut candidates = vec![directory.join("CLAUDE.local.md")];
-        if directory != repository_root {
-            candidates.insert(0, directory.join("CLAUDE.md"));
-        }
+        let candidates = [
+            directory.join("CLAUDE.md"),
+            directory.join(".claude/CLAUDE.md"),
+            directory.join("CLAUDE.local.md"),
+        ];
         for candidate in candidates {
             result.observed_project_paths.push(path_string(&candidate));
             discover_group(
@@ -75,7 +55,6 @@ pub(super) fn discover(
                     root: path_string(directory),
                 },
                 directory_depth,
-                adapter,
                 &mut result,
             );
         }
@@ -89,7 +68,6 @@ fn discover_group(
     source_kind: InstructionSourceKind,
     owner: InstructionOwner,
     directory_depth: usize,
-    adapter: &AgentAdapterSnapshot,
     result: &mut DiscoveryResult,
 ) {
     let adapter_id = AgentAdapterKind::ClaudeCode;
@@ -100,60 +78,15 @@ fn discover_group(
                 .map(|source| (path, source))
         })
         .collect::<Vec<_>>();
-    let selected = inspected.iter().position(|(_, source)| {
-        source
-            .preview
-            .as_ref()
-            .is_some_and(|preview| !preview.markdown.trim().is_empty())
-    });
-
     for (precedence, (path, mut source)) in inspected.drain(..).enumerate() {
+        let mut health_reasons = Vec::new();
         if let Some(diagnostic) = source.diagnostic.take() {
+            health_reasons.push(diagnostic.message.clone());
             result.diagnostics.push(diagnostic);
         }
-        let executable_known =
-            adapter.executable.path.is_some() && adapter.executable.version.is_some();
-        let selected_candidate = selected == Some(precedence);
-        let effective = selected_candidate
-            && executable_known
-            && !source.compatibility_unknown
-            && !source.is_alias;
-        let (availability, reason) = if source.compatibility_unknown {
-            (
-                InstructionAvailability::CompatibilityUnknown,
-                "Source resolves outside the supported Claude discovery boundary".to_string(),
-            )
-        } else if source.is_alias {
-            (
-                InstructionAvailability::CompatibilityUnknown,
-                "Claude instruction alias support is not proven by the supported public contract"
-                    .to_string(),
-            )
-        } else if selected_candidate && !executable_known {
-            (
-                InstructionAvailability::CompatibilityUnknown,
-                "Claude Code executable or version evidence is unavailable".to_string(),
-            )
-        } else if effective {
-            (
-                InstructionAvailability::Available,
-                "Selected by Claude Code native instruction hierarchy".to_string(),
-            )
-        } else if source
-            .preview
-            .as_ref()
-            .is_some_and(|preview| preview.markdown.trim().is_empty())
-        {
-            (
-                InstructionAvailability::Shadowed,
-                "Empty instruction file is not effective".to_string(),
-            )
-        } else {
-            (
-                InstructionAvailability::Shadowed,
-                "A higher-precedence Claude instruction entrypoint is effective".to_string(),
-            )
-        };
+        if source.preview.is_none() {
+            continue;
+        }
         let mut references = Vec::new();
         if let Some(preview) = &source.preview {
             let mut visited = HashSet::from([source
@@ -181,13 +114,18 @@ fn discover_group(
             canonical_path: source.canonical_path.as_deref().map(path_string),
             owner: owner.clone(),
             source_kind,
-            availability,
-            reason: Some(reason),
+            support: SourceSupport::ClientNative,
+            resolution: SourceResolution::Included,
+            health: if health_reasons.is_empty() {
+                SourceHealth::Normal
+            } else {
+                SourceHealth::Degraded
+            },
+            health_reasons,
             discovery: InstructionDiscovery {
                 policy: InstructionDiscoveryPolicy::ClaudeHierarchy,
                 directory_depth,
                 precedence,
-                effective,
             },
             preview: source.preview,
             references,
@@ -237,10 +175,7 @@ fn collect_references(
                 path: path_string(&candidate),
                 canonical_path: None,
                 depth,
-                availability: InstructionAvailability::CompatibilityUnknown,
-                reason: Some(
-                    "External Claude import requires client approval and was not read".to_string(),
-                ),
+                status: InstructionReferenceStatus::RequiresClientApproval,
                 preview: None,
             });
             result.diagnostics.push(diagnostic(
@@ -264,8 +199,7 @@ fn collect_references(
                 path: path_string(&candidate),
                 canonical_path: None,
                 depth,
-                availability: InstructionAvailability::CompatibilityUnknown,
-                reason: Some("Claude import target does not exist or is unreadable".to_string()),
+                status: InstructionReferenceStatus::Unreadable,
                 preview: None,
             });
             continue;
@@ -282,8 +216,7 @@ fn collect_references(
                 path: path_string(&candidate),
                 canonical_path: Some(path_string(&canonical)),
                 depth,
-                availability: InstructionAvailability::CompatibilityUnknown,
-                reason: Some("Claude import cycle was stopped".to_string()),
+                status: InstructionReferenceStatus::Cyclic,
                 preview: None,
             });
             result.diagnostics.push(diagnostic(
@@ -294,19 +227,16 @@ fn collect_references(
             ));
             continue;
         }
-        let availability = if inspected.compatibility_unknown || inspected.is_alias {
-            InstructionAvailability::CompatibilityUnknown
-        } else {
-            InstructionAvailability::Available
-        };
         let preview = inspected.preview.clone();
         references.push(InstructionReference {
             path: path_string(&candidate),
             canonical_path: inspected.canonical_path.as_deref().map(path_string),
             depth,
-            availability,
-            reason: (availability == InstructionAvailability::CompatibilityUnknown)
-                .then(|| "Claude import alias compatibility could not be proven".to_string()),
+            status: if preview.is_some() {
+                InstructionReferenceStatus::Included
+            } else {
+                InstructionReferenceStatus::OutsideBoundary
+            },
             preview,
         });
         if depth < MAX_IMPORT_DEPTH {
@@ -380,15 +310,13 @@ mod tests {
         std::fs::write(project.path().join("CLAUDE.md"), "root\n@../outside.md").unwrap();
         std::fs::write(project.path().join(".claude/CLAUDE.md"), "shadowed").unwrap();
         let home = TempDir::new().unwrap();
-        let environment = RegistryEnvironment::for_tests(home.path().to_path_buf());
-        let adapter = &crate::agent_adapters::AgentAdapterRegistry.snapshots(&environment)[1];
+        let environment = SourceRegistryEnvironment::for_tests(home.path().to_path_buf());
 
         let result = discover(
             project.path(),
             project.path(),
             &[project.path().to_path_buf()],
             &environment,
-            adapter,
         );
         let root = result
             .rows
@@ -401,11 +329,11 @@ mod tests {
             .find(|row| row.path.contains("/.claude/CLAUDE.md"))
             .unwrap();
 
-        assert_eq!(root.availability, InstructionAvailability::Available);
-        assert_eq!(shadowed.availability, InstructionAvailability::Shadowed);
+        assert_eq!(root.resolution, SourceResolution::Included);
+        assert_eq!(shadowed.resolution, SourceResolution::Included);
         assert_eq!(
-            root.references[0].availability,
-            InstructionAvailability::CompatibilityUnknown
+            root.references[0].status,
+            InstructionReferenceStatus::RequiresClientApproval
         );
         assert!(root.references[0].preview.is_none());
     }

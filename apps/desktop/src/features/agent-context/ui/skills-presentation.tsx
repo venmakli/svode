@@ -39,6 +39,7 @@ import type { ArtifactOpener } from "../api/agent-context-api";
 import {
   instructionAdapterLabel,
   instructionScopeLabel,
+  sourceResolutionLabel,
 } from "./instruction-labels";
 import { AgentContextSkillDetail, skillWarnings } from "./skill-detail";
 
@@ -75,6 +76,7 @@ export function createAgentContextSkillsPresentation({
         instructionScopeLabel,
         m.agent_context_filter_scope_placeholder(),
       ),
+      skillResolutionField(),
     ];
 
   return defineSystemCollectionPresentation<AgentContextSkillRow>({
@@ -114,7 +116,7 @@ export function createAgentContextSkillsPresentation({
           <Sparkles className="size-4 text-muted-foreground" aria-hidden />
         ),
         renderOverlays: (row) => <SkillCardOverlays row={row} />,
-        visibleFields: ["client", "scope"],
+        visibleFields: ["client", "scope", "resolution"],
       },
       query: {
         defaultCompare: compareSkillsByDefault,
@@ -134,6 +136,38 @@ export function createAgentContextSkillsPresentation({
     },
     state,
   });
+}
+
+function skillResolutionField(): SystemCollectionFieldDescriptor<AgentContextSkillRow> {
+  return {
+    getValue: (row) =>
+      row.aliases
+        .map((alias) => alias.resolution)
+        .filter((resolution) => resolution !== "included"),
+    key: "resolution",
+    label: m.agent_context_resolution(),
+    valueSemantics: {
+      kind: "custom",
+      render: (_value, row) => {
+        const resolutions = Array.from(
+          new Set(
+            row.aliases
+              .map((alias) => alias.resolution)
+              .filter((resolution) => resolution !== "included"),
+          ),
+        );
+        return resolutions.length > 0 ? (
+          <div className="flex flex-wrap gap-1">
+            {resolutions.map((resolution) => (
+              <Badge key={resolution} variant="outline">
+                {sourceResolutionLabel(resolution)}
+              </Badge>
+            ))}
+          </div>
+        ) : null;
+      },
+    },
+  };
 }
 
 function skillOwnerRoot(row: AgentContextSkillRow): string {

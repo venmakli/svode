@@ -3,12 +3,12 @@ use std::fs::{self, File};
 use std::io::{Read, Take};
 use std::path::{Path, PathBuf};
 
-use crate::agent_adapters::{AgentAdapterKind, AgentAdapterSnapshot, SkillRootKind};
+use crate::agent_adapters::{AgentAdapterKind, AgentSourcePolicy, SkillRootKind};
 
 use super::super::model::{
-    DiagnosticSeverity, InstructionOwner, InstructionOwnerKind, MarkdownPreview, SkillAvailability,
+    DiagnosticSeverity, InstructionOwner, InstructionOwnerKind, MarkdownPreview,
     SkillDiscoveryAlias, SkillDiscoveryKind, SkillLinkKind, SkillRow, SkillScope,
-    SkillValidationStatus,
+    SkillValidationStatus, SourceHealth, SourceResolution, SourceSupport,
 };
 use super::DiscoveryResult;
 use super::io::{diagnostic, path_string};
@@ -36,7 +36,7 @@ struct SkillFailure {
 
 #[derive(Debug)]
 struct RootSpec<'a> {
-    adapter: &'a AgentAdapterSnapshot,
+    adapter: &'a AgentSourcePolicy,
     scope: SkillScope,
     discovery_kind: SkillDiscoveryKind,
     root: PathBuf,
@@ -52,7 +52,7 @@ struct CanonicalOwnerBoundary {
 pub(super) fn discover(
     repository_root: &Path,
     directory_chain: &[PathBuf],
-    adapters: &[AgentAdapterSnapshot],
+    adapters: &[AgentSourcePolicy],
 ) -> DiscoveryResult {
     let mut result = DiscoveryResult::default();
     let roots = roots(directory_chain, adapters);
@@ -135,10 +135,7 @@ pub(super) fn discover(
     result
 }
 
-fn roots<'a>(
-    directory_chain: &[PathBuf],
-    adapters: &'a [AgentAdapterSnapshot],
-) -> Vec<RootSpec<'a>> {
+fn roots<'a>(directory_chain: &[PathBuf], adapters: &'a [AgentSourcePolicy]) -> Vec<RootSpec<'a>> {
     let mut roots = Vec::new();
     for adapter in adapters {
         let project_relative_root = Path::new(&adapter.capabilities.skills.project_relative_root);
@@ -164,9 +161,6 @@ fn roots<'a>(
                 discovery_kind: match (adapter.id, personal_root.kind) {
                     (AgentAdapterKind::Codex, SkillRootKind::StandardPersonal) => {
                         SkillDiscoveryKind::CodexStandardPersonal
-                    }
-                    (AgentAdapterKind::Codex, SkillRootKind::CompatibilityPersonal) => {
-                        SkillDiscoveryKind::CodexCompatibilityPersonal
                     }
                     (AgentAdapterKind::ClaudeCode, _) => SkillDiscoveryKind::ClaudePersonal,
                 },
@@ -473,7 +467,6 @@ fn scan_entry(
             return;
         }
     };
-    let (availability, reason) = native_availability(root.adapter, link_kind);
     let Some(owner) = canonical_skill_owner(
         &canonical_entry,
         repository_root,
@@ -499,8 +492,8 @@ fn scan_entry(
         path: path_string(entry),
         root: path_string(&root.root),
         owner: root.owner.clone(),
-        availability,
-        reason,
+        support: SourceSupport::ClientNative,
+        resolution: SourceResolution::Included,
         link_kind,
     };
     if let Some(row) = rows.get_mut(&canonical_entry) {
@@ -525,6 +518,12 @@ fn scan_entry(
             compatibility: parsed.compatibility,
             metadata: parsed.metadata,
             validation,
+            health: if parsed.warnings.is_empty() {
+                SourceHealth::Normal
+            } else {
+                SourceHealth::Degraded
+            },
+            health_reasons: parsed.warnings.clone(),
             warnings: parsed.warnings,
             preview: parsed.preview,
             aliases: vec![alias],
@@ -850,54 +849,6 @@ fn valid_skill_name(name: &str) -> bool {
         && !name.contains("--")
 }
 
-fn native_availability(
-    adapter: &AgentAdapterSnapshot,
-    link_kind: SkillLinkKind,
-) -> (SkillAvailability, Option<String>) {
-    let executable_known =
-        adapter.executable.path.is_some() && adapter.executable.version.is_some();
-    if !executable_known {
-        return (
-            SkillAvailability::CompatibilityUnknown,
-            Some(format!(
-                "{} executable or version evidence is unavailable",
-                adapter.display_name
-            )),
-        );
-    }
-    if adapter.id == AgentAdapterKind::ClaudeCode && link_kind != SkillLinkKind::Direct {
-        let version_supported = adapter
-            .executable
-            .version
-            .as_deref()
-            .is_some_and(|version| version_at_least(version, [2, 1, 203]));
-        if !version_supported || cfg!(windows) {
-            return (
-                SkillAvailability::CompatibilityUnknown,
-                Some(
-                    "Claude Code skill alias support is not proven for this version/platform"
-                        .to_string(),
-                ),
-            );
-        }
-    }
-    (SkillAvailability::Available, None)
-}
-
-fn version_at_least(raw: &str, required: [u64; 3]) -> bool {
-    raw.split(|character: char| !character.is_ascii_digit() && character != '.')
-        .find_map(|candidate| {
-            let mut parts = candidate.split('.');
-            let parsed = [
-                parts.next()?.parse().ok()?,
-                parts.next()?.parse().ok()?,
-                parts.next()?.parse().ok()?,
-            ];
-            Some(parsed >= required)
-        })
-        .unwrap_or(false)
-}
-
 fn apply_personal_shadowing(
     rows: &mut BTreeMap<PathBuf, SkillRow>,
     adapters: &BTreeSet<AgentAdapterKind>,
@@ -918,10 +869,7 @@ fn apply_personal_shadowing(
             if alias.scope == SkillScope::Project
                 && personal_names.contains(&(alias.adapter_id, row.name.clone()))
             {
-                alias.availability = SkillAvailability::Shadowed;
-                alias.reason = Some(
-                    "A Claude Code personal skill shadows this project invocation name".to_string(),
-                );
+                alias.resolution = SourceResolution::Superseded;
             }
         }
     }
@@ -949,17 +897,16 @@ fn skill_scope_order(scope: SkillScope) -> u8 {
 fn discovery_kind_order(kind: SkillDiscoveryKind) -> u8 {
     match kind {
         SkillDiscoveryKind::CodexStandardPersonal => 0,
-        SkillDiscoveryKind::CodexCompatibilityPersonal => 1,
-        SkillDiscoveryKind::CodexProject => 2,
-        SkillDiscoveryKind::ClaudePersonal => 3,
-        SkillDiscoveryKind::ClaudeProject => 4,
+        SkillDiscoveryKind::CodexProject => 1,
+        SkillDiscoveryKind::ClaudePersonal => 2,
+        SkillDiscoveryKind::ClaudeProject => 3,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_adapters::RegistryEnvironment;
+    use crate::agent_adapters::SourceRegistryEnvironment;
     use crate::agent_context::scanner::scan;
     use std::collections::HashSet;
     use tempfile::TempDir;
@@ -978,11 +925,11 @@ mod tests {
         skill
     }
 
-    fn setup() -> (TempDir, TempDir, RegistryEnvironment) {
+    fn setup() -> (TempDir, TempDir, SourceRegistryEnvironment) {
         let project = TempDir::new().unwrap();
         fs::create_dir(project.path().join(".git")).unwrap();
         let home = TempDir::new().unwrap();
-        let environment = RegistryEnvironment::for_tests(home.path().to_path_buf());
+        let environment = SourceRegistryEnvironment::for_tests(home.path().to_path_buf());
         (project, home, environment)
     }
 
@@ -1022,6 +969,13 @@ mod tests {
         assert!(snapshot.skills.iter().any(|row| {
             row.name == "Warning" && row.validation == SkillValidationStatus::Warning
         }));
+        let warning = snapshot
+            .skills
+            .iter()
+            .find(|row| row.name == "Warning")
+            .unwrap();
+        assert_eq!(warning.health, SourceHealth::Degraded);
+        assert_eq!(warning.health_reasons, warning.warnings);
         assert!(
             snapshot
                 .diagnostics
@@ -1053,11 +1007,14 @@ mod tests {
         symlink(&shared, claude_root.join("shared-claude")).unwrap();
         symlink(&duplicate_name, codex_root.join("other")).unwrap();
         let standard = home.path().join(".agents/skills");
-        let compatibility = home.path().join(".codex/skills");
         fs::create_dir_all(&standard).unwrap();
-        fs::create_dir_all(&compatibility).unwrap();
-        let personal = write_skill(&standard, "personal", "personal", Some("Personal"));
-        symlink(&personal, compatibility.join("personal-compat")).unwrap();
+        let personal_source = write_skill(&standard, "personal", "personal", Some("Personal"));
+        write_skill(
+            &home.path().join(".codex/skills"),
+            "excluded",
+            "excluded",
+            Some("Excluded compatibility root"),
+        );
 
         let snapshot = scan(project.path(), project.path(), &environment).unwrap();
         let shared_rows = snapshot
@@ -1081,16 +1038,18 @@ mod tests {
             .iter()
             .find(|row| row.name == "personal")
             .unwrap();
-        assert_eq!(personal.aliases.len(), 2);
+        assert_eq!(personal.aliases.len(), 1);
         assert!(
             personal
                 .aliases
                 .iter()
                 .any(|alias| { alias.discovery_kind == SkillDiscoveryKind::CodexStandardPersonal })
         );
-        assert!(personal.aliases.iter().any(|alias| {
-            alias.discovery_kind == SkillDiscoveryKind::CodexCompatibilityPersonal
-        }));
+        assert_eq!(
+            personal.canonical_path,
+            path_string(&personal_source.canonicalize().unwrap())
+        );
+        assert!(snapshot.skills.iter().all(|row| row.name != "excluded"));
     }
 
     #[cfg(unix)]
@@ -1161,7 +1120,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn skill_root_alias_keeps_link_provenance_and_client_compatibility() {
+    fn skill_root_alias_keeps_link_provenance_without_degrading_health() {
         use std::os::unix::fs::symlink;
 
         let (project, _home, environment) = setup();
@@ -1181,8 +1140,9 @@ mod tests {
         assert!(row.aliases.iter().any(|alias| {
             alias.scope == SkillScope::Project
                 && alias.link_kind == SkillLinkKind::DirectoryAlias
-                && alias.availability == SkillAvailability::CompatibilityUnknown
+                && alias.resolution == SourceResolution::Included
         }));
+        assert_eq!(row.health, SourceHealth::Normal);
     }
 
     #[test]
@@ -1210,11 +1170,10 @@ mod tests {
 
         assert_eq!(review.len(), 2);
         assert!(review.iter().any(|row| row.aliases.iter().any(|alias| {
-            alias.scope == SkillScope::Project && alias.availability == SkillAvailability::Shadowed
+            alias.scope == SkillScope::Project && alias.resolution == SourceResolution::Superseded
         })));
         assert!(review.iter().any(|row| row.aliases.iter().any(|alias| {
-            alias.scope == SkillScope::Personal
-                && alias.availability == SkillAvailability::Available
+            alias.scope == SkillScope::Personal && alias.resolution == SourceResolution::Included
         })));
     }
 
