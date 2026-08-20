@@ -50,6 +50,11 @@ test("detail frame keeps accessible semantics, diagnostic, actions, and its own 
   expect(markup.includes("Actor actions")).toBe(true);
   expect(markup.includes("Save the actor before leaving")).toBe(true);
   expect(markup.includes("data-system-collection-detail-scroll")).toBe(true);
+  expect(
+    markup.includes(
+      "[&amp;_[data-slot=scroll-area-viewport]&gt;div]:!block",
+    ),
+  ).toBe(true);
   expect(markup.includes('role="alert"')).toBe(true);
 });
 

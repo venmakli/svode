@@ -135,10 +135,10 @@ export function SystemCollectionDetailDrawerFrame({
       </div>
       <Separator />
       <ScrollArea
-        className="min-h-0 flex-1"
+        className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block"
         data-system-collection-detail-scroll
       >
-        <div className="flex flex-col gap-4 p-4">
+        <div className="flex min-w-0 flex-col gap-4 p-4">
           {diagnostic ? (
             <Alert variant="destructive">
               <AlertCircle />
