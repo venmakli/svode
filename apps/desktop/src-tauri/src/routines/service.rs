@@ -1355,6 +1355,40 @@ mod tests {
     }
 
     #[test]
+    fn invalid_source_can_be_repaired_with_its_current_fingerprint() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner = project_owner(temp.path());
+        fs::create_dir_all(owner.routines_dir()).unwrap();
+        let path = owner.routines_dir().join("repair.md");
+        fs::write(&path, "---\ntrigger: [\n---\nBroken\n").unwrap();
+        let invalid = parser::discover_owner(&owner).routines.remove(0);
+        assert!(invalid.definition.is_none());
+        let routine_id = invalid.routine_id;
+
+        let definition = RoutineDefinition {
+            title: Some("Repaired".into()),
+            description: None,
+            enabled: None,
+            trigger: RoutineTrigger::Manual,
+            action: RoutineAction::RunAgent {
+                executor: "agent:01arz3ndektsv4rrffq69g5fav".into(),
+            },
+            body: "Valid replacement.".into(),
+        };
+        let content = parser::serialize_definition(&definition).unwrap();
+        assert_eq!(
+            atomic_replace_cas(&path, &invalid.fingerprint, content.as_bytes()).unwrap(),
+            FileCasOutcome::Applied
+        );
+
+        let repaired = parser::discover_owner(&owner).routines.remove(0);
+        assert_eq!(repaired.routine_id, routine_id);
+        assert_eq!(repaired.title, "Repaired");
+        assert!(repaired.definition.is_some());
+        assert!(repaired.diagnostics.is_empty());
+    }
+
+    #[test]
     fn slug_transliterates_cyrillic_and_keeps_a_portable_fallback() {
         assert_eq!(slugify("  Привет, мир!  "), "privet-mir");
         assert_eq!(slugify("Ёжик и щука"), "yozhik-i-shchuka");
