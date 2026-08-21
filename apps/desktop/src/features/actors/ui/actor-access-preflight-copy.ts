@@ -10,6 +10,29 @@ export type ActorAccessPreflightKind =
   | "read_only"
   | "unknown";
 
+export function actorAccessPreflightStatus(
+  snapshot: RepositoryAccessSnapshot | null,
+  verifying: boolean,
+) {
+  return verifying ? "checking" : (snapshot?.status ?? "unknown");
+}
+
+export function actorAccessPreflightActionLabel({
+  error,
+  snapshot,
+  verifying,
+}: {
+  error: string | null;
+  snapshot: RepositoryAccessSnapshot | null;
+  verifying: boolean;
+}) {
+  const status = actorAccessPreflightStatus(snapshot, verifying);
+  if (status === "checking") return m.actors_access_preflight_checking();
+  return status === "unknown" && !error
+    ? m.actors_access_check()
+    : m.actors_access_retry();
+}
+
 export function actorAccessPreflightCopy({
   error,
   reason,

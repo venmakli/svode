@@ -83,6 +83,7 @@ export function useAgentActorAccessCoordinator({
     close,
     intent: preflight.intent,
     request,
+    requesting: pending !== null,
     verify: preflight.verify,
   };
 }

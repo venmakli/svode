@@ -19,7 +19,9 @@ import type { RepositoryAccessSnapshot } from "@/features/git";
 import * as m from "@/paraglide/messages.js";
 
 import {
+  actorAccessPreflightActionLabel,
   actorAccessPreflightCopy,
+  actorAccessPreflightStatus,
   type ActorAccessPreflightKind,
 } from "./actor-access-preflight-copy";
 
@@ -40,15 +42,8 @@ export function ActorAccessPreflightDialog({
 }) {
   if (!intent) return null;
 
-  const status = verifying ? "checking" : (snapshot?.status ?? "unknown");
+  const status = actorAccessPreflightStatus(snapshot, verifying);
   const checking = status === "checking";
-  const copy = actorAccessPreflightCopy({
-    error,
-    reason: snapshot?.reason ?? null,
-    status,
-  });
-  const presentation = accessPresentation(copy.kind);
-  const Icon = presentation.icon;
 
   return (
     <Dialog
@@ -71,11 +66,11 @@ export function ActorAccessPreflightDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <Alert variant={presentation.destructive ? "destructive" : "default"}>
-          <Icon className={checking ? "animate-spin" : undefined} />
-          <AlertTitle>{copy.title}</AlertTitle>
-          <AlertDescription>{copy.description}</AlertDescription>
-        </Alert>
+        <ActorAccessPreflightAlert
+          error={error}
+          snapshot={snapshot}
+          verifying={verifying}
+        />
 
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose}>
@@ -85,15 +80,40 @@ export function ActorAccessPreflightDialog({
             {checking ? (
               <LoaderCircle data-icon="inline-start" className="animate-spin" />
             ) : null}
-            {checking
-              ? m.actors_access_preflight_checking()
-              : status === "unknown" && !error
-                ? m.actors_access_check()
-                : m.actors_access_retry()}
+            {actorAccessPreflightActionLabel({ error, snapshot, verifying })}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+export function ActorAccessPreflightAlert({
+  error,
+  snapshot,
+  verifying,
+}: {
+  error: string | null;
+  snapshot: RepositoryAccessSnapshot | null;
+  verifying: boolean;
+}) {
+  const status = actorAccessPreflightStatus(snapshot, verifying);
+  const copy = actorAccessPreflightCopy({
+    error,
+    reason: snapshot?.reason ?? null,
+    status,
+  });
+  const presentation = accessPresentation(copy.kind);
+  const Icon = presentation.icon;
+  return (
+    <Alert
+      data-actor-access-inline-status={status}
+      variant={presentation.destructive ? "destructive" : "default"}
+    >
+      <Icon className={status === "checking" ? "animate-spin" : undefined} />
+      <AlertTitle>{copy.title}</AlertTitle>
+      <AlertDescription>{copy.description}</AlertDescription>
+    </Alert>
   );
 }
 

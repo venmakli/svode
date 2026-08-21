@@ -1,9 +1,12 @@
 import { expect, test } from "bun:test";
 
 import {
+  areAgentActorDraftsEqual,
   compareAgentActorsByDefault,
   createAgentActorDraft,
+  firstInvalidAgentActorCreateStep,
   resolveAgentActorRuntimeStatus,
+  validateAgentActorCreateDraft,
   validateAgentActorDraft,
 } from "./agent-actor-draft";
 import type { AgentActorRow } from "./agent-actor-types";
@@ -30,6 +33,49 @@ test("agent actor draft requires a name and one unique binding", () => {
   draft.name = "Docs";
   draft.adapters = [];
   expect(validateAgentActorDraft(draft).adapters).toBe("binding_required");
+});
+
+test("create validation waits for binding inspection and fails closed on invalid selectors", () => {
+  const draft = createAgentActorDraft("/repo");
+  draft.name = "Docs";
+  expect(
+    validateAgentActorCreateDraft({
+      draft,
+      runtimePhase: "loading",
+      validations: {},
+    }).adapters,
+  ).toBe("binding_inspection_pending");
+
+  const invalid = validateAgentActorCreateDraft({
+    draft,
+    runtimePhase: "ready",
+    validations: {
+      codex: {
+        issues: [{ code: "unknown_model", field: "model", message: "Bad" }],
+        status: "unavailable",
+      },
+    },
+  });
+  expect(invalid.adapters).toBe("binding_invalid");
+  expect(firstInvalidAgentActorCreateStep(invalid)).toBe("adapters");
+
+  expect(
+    validateAgentActorCreateDraft({
+      draft,
+      runtimePhase: "ready",
+      validations: { codex: { issues: [], status: "valid" } },
+    }),
+  ).toEqual({ adapters: null, name: null });
+});
+
+test("dirty create comparison includes ordered adapter configuration", () => {
+  const initial = createAgentActorDraft("/repo");
+  const same = createAgentActorDraft("/repo");
+  expect(areAgentActorDraftsEqual(initial, same)).toBe(true);
+  same.adapters.push({ adapter: "claude-code", effort: null, model: null });
+  expect(areAgentActorDraftsEqual(initial, same)).toBe(false);
+  same.adapters = [...same.adapters].reverse();
+  expect(areAgentActorDraftsEqual(initial, same)).toBe(false);
 });
 
 test("runtime status stays unchecked until valid bindings have evidence", () => {

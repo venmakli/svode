@@ -23,6 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import * as m from "@/paraglide/messages.js";
 
 import { validateAgentActorDraft } from "../model/agent-actor-draft";
+import type { AgentActorDraftValidation } from "../model/agent-actor-draft";
 import type {
   AgentActorAdapterDescriptor,
   AgentActorAdapterDiagnostic,
@@ -35,19 +36,33 @@ import type {
 
 import { AgentAdapterCard } from "./agent-adapter-card";
 
+export type AgentActorFormSection = "identity" | "adapters" | "permissions";
+
+const ALL_SECTIONS: readonly AgentActorFormSection[] = [
+  "identity",
+  "adapters",
+  "permissions",
+];
+
 export function AgentActorForm({
   approvalMappings,
   descriptors,
   diagnostics,
   draft,
   effortOptions,
+  expandedAdapter,
   formId,
   pendingAdapter,
   readOnly = false,
+  sections = ALL_SECTIONS,
+  showValidation = true,
+  validation,
   validations,
   onChange,
   onCheck,
+  onExpandedAdapterChange,
   onSubmit,
+  validateOnSubmit = true,
 }: {
   approvalMappings: Readonly<
     Partial<Record<AgentActorBinding["adapter"], AgentActorApprovalMapping>>
@@ -62,17 +77,23 @@ export function AgentActorForm({
       Record<AgentActorBinding["adapter"], readonly AgentActorSelectOption[]>
     >
   >;
+  expandedAdapter?: AgentActorBinding["adapter"] | null;
   formId: string;
   pendingAdapter: AgentActorBinding["adapter"] | null;
   readOnly?: boolean;
+  sections?: readonly AgentActorFormSection[];
+  showValidation?: boolean;
+  validation?: AgentActorDraftValidation;
   validations: Readonly<
     Partial<Record<AgentActorBinding["adapter"], AgentActorBindingValidation>>
   >;
   onChange(draft: AgentActorDraft): void;
   onCheck(adapter: AgentActorBinding["adapter"]): void;
+  onExpandedAdapterChange?(adapter: AgentActorBinding["adapter"] | null): void;
   onSubmit(): void;
+  validateOnSubmit?: boolean;
 }) {
-  const errors = validateAgentActorDraft(draft);
+  const errors = validation ?? validateAgentActorDraft(draft);
   const configured = new Set(draft.adapters.map((binding) => binding.adapter));
   const available = descriptors.filter(
     (descriptor) => !configured.has(descriptor.id),
@@ -84,25 +105,26 @@ export function AgentActorForm({
       className="flex min-h-0 flex-col gap-5"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!errors.name && !errors.adapters) onSubmit();
+        if (!validateOnSubmit || (!errors.name && !errors.adapters)) onSubmit();
       }}
     >
-      {!readOnly ? (
+      {!readOnly && sections.includes("identity") ? (
         <FieldGroup>
-          <Field data-invalid={Boolean(errors.name)}>
+          <Field data-invalid={showValidation && Boolean(errors.name)}>
             <FieldLabel htmlFor={`${formId}-name`}>
               {m.agent_actors_name_label()}
             </FieldLabel>
             <Input
               id={`${formId}-name`}
+              data-agent-actor-focus="identity"
               value={draft.name}
-              aria-invalid={Boolean(errors.name)}
+              aria-invalid={showValidation && Boolean(errors.name)}
               autoFocus
               onChange={(event) =>
                 onChange({ ...draft, name: event.target.value })
               }
             />
-            {errors.name ? (
+            {showValidation && errors.name ? (
               <FieldError>{m.agent_actors_name_required()}</FieldError>
             ) : null}
           </Field>
@@ -124,139 +146,218 @@ export function AgentActorForm({
         </FieldGroup>
       ) : null}
 
-      <Field>
-        <FieldLabel>{m.agent_actors_approval_label()}</FieldLabel>
-        {readOnly ? (
-          <span className="text-sm">{approvalLabel(draft.approvalMode)}</span>
-        ) : (
-          <Select
-            value={draft.approvalMode}
-            onValueChange={(value) =>
-              onChange({
-                ...draft,
-                approvalMode: value as AgentActorDraft["approvalMode"],
-              })
+      {sections.includes("permissions") ? (
+        <>
+          <Field
+            data-invalid={
+              showValidation &&
+              !sections.includes("adapters") &&
+              Boolean(errors.adapters)
             }
           >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectItem value="ask">
-                  {m.agent_actors_approval_ask()}
-                </SelectItem>
-                <SelectItem value="auto">
-                  {m.agent_actors_approval_auto()}
-                </SelectItem>
-                <SelectItem value="full">
-                  {m.agent_actors_approval_full()}
-                </SelectItem>
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        )}
-        <FieldDescription>
-          {approvalDescription(draft.approvalMode)}
-        </FieldDescription>
-      </Field>
+            <FieldLabel>{m.agent_actors_approval_label()}</FieldLabel>
+            {readOnly ? (
+              <span className="text-sm">
+                {approvalLabel(draft.approvalMode)}
+              </span>
+            ) : (
+              <Select
+                value={draft.approvalMode}
+                onValueChange={(value) =>
+                  onChange({
+                    ...draft,
+                    approvalMode: value as AgentActorDraft["approvalMode"],
+                  })
+                }
+              >
+                <SelectTrigger
+                  className="w-full"
+                  data-agent-actor-focus="permissions"
+                  aria-invalid={
+                    showValidation &&
+                    !sections.includes("adapters") &&
+                    Boolean(errors.adapters)
+                  }
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="ask">
+                      {m.agent_actors_approval_ask()}
+                    </SelectItem>
+                    <SelectItem value="auto">
+                      {m.agent_actors_approval_auto()}
+                    </SelectItem>
+                    <SelectItem value="full">
+                      {m.agent_actors_approval_full()}
+                    </SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            )}
+            <FieldDescription>
+              {approvalDescription(draft.approvalMode)}
+            </FieldDescription>
+            {showValidation &&
+            !sections.includes("adapters") &&
+            errors.adapters ? (
+              <FieldError>{adapterErrorMessage(errors.adapters)}</FieldError>
+            ) : null}
+          </Field>
 
-      {draft.approvalMode === "full" ? (
-        <Alert variant="destructive">
-          <ShieldAlert />
-          <AlertTitle>{m.agent_actors_full_warning_title()}</AlertTitle>
-          <AlertDescription>{m.agent_actors_full_warning()}</AlertDescription>
-        </Alert>
+          <div className="grid gap-2" aria-live="polite">
+            <p className="text-sm font-medium">
+              {m.agent_actors_permissions_boundaries_title()}
+            </p>
+            <dl className="grid gap-2">
+              {draft.adapters.map((binding) => {
+                const descriptor = descriptors.find(
+                  (candidate) => candidate.id === binding.adapter,
+                );
+                const mapping = approvalMappings[binding.adapter];
+                return (
+                  <div
+                    key={binding.adapter}
+                    className="bg-muted/40 rounded-md border px-3 py-2"
+                  >
+                    <dt className="text-sm font-medium">
+                      {descriptor?.label ?? binding.adapter}
+                    </dt>
+                    <dd className="text-muted-foreground text-sm">
+                      {mapping
+                        ? `${mapping.label}: ${mapping.effectiveBoundary}`
+                        : m.agent_actors_binding_checking()}
+                    </dd>
+                  </div>
+                );
+              })}
+            </dl>
+          </div>
+
+          {draft.approvalMode === "full" ? (
+            <Alert variant="destructive">
+              <ShieldAlert />
+              <AlertTitle>{m.agent_actors_full_warning_title()}</AlertTitle>
+              <AlertDescription>
+                {m.agent_actors_full_warning()}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+        </>
       ) : null}
 
-      <FieldSet data-invalid={Boolean(errors.adapters)}>
-        <FieldLegend>{m.agent_actors_adapters_title()}</FieldLegend>
-        <FieldDescription>{m.agent_actors_adapters_hint()}</FieldDescription>
-        <div className="flex flex-col gap-3">
-          {draft.adapters.map((binding, index) => {
-            const descriptor = descriptors.find(
-              (candidate) => candidate.id === binding.adapter,
-            );
-            return (
-              <AgentAdapterCard
-                key={binding.adapter}
-                approvalMapping={approvalMappings[binding.adapter]}
-                binding={binding}
-                descriptor={descriptor}
-                diagnostic={diagnostics[binding.adapter]}
-                effortOptions={effortOptions[binding.adapter] ?? []}
-                canRemove={draft.adapters.length > 1}
-                pending={pendingAdapter === binding.adapter}
-                primary={index === 0}
-                readOnly={readOnly}
-                validation={validations[binding.adapter]}
-                onChange={(next) =>
-                  onChange({
-                    ...draft,
-                    adapters: draft.adapters.map((candidate, candidateIndex) =>
-                      candidateIndex === index ? next : candidate,
-                    ),
-                  })
-                }
-                onCheck={() => onCheck(binding.adapter)}
-                onMakePrimary={() =>
-                  onChange({
-                    ...draft,
-                    adapters: [
-                      binding,
-                      ...draft.adapters.filter(
-                        (_, candidateIndex) => candidateIndex !== index,
+      {sections.includes("adapters") ? (
+        <FieldSet
+          data-agent-actor-focus="adapters"
+          data-invalid={showValidation && Boolean(errors.adapters)}
+          tabIndex={-1}
+        >
+          {sections.length > 1 ? (
+            <FieldLegend>{m.agent_actors_adapters_title()}</FieldLegend>
+          ) : null}
+          <FieldDescription>{m.agent_actors_adapters_hint()}</FieldDescription>
+          <div className="flex flex-col gap-3">
+            {draft.adapters.map((binding, index) => {
+              const descriptor = descriptors.find(
+                (candidate) => candidate.id === binding.adapter,
+              );
+              return (
+                <AgentAdapterCard
+                  key={binding.adapter}
+                  approvalMapping={approvalMappings[binding.adapter]}
+                  binding={binding}
+                  descriptor={descriptor}
+                  diagnostic={diagnostics[binding.adapter]}
+                  effortOptions={effortOptions[binding.adapter] ?? []}
+                  open={
+                    expandedAdapter === undefined
+                      ? undefined
+                      : expandedAdapter === binding.adapter
+                  }
+                  canRemove={draft.adapters.length > 1}
+                  pending={pendingAdapter === binding.adapter}
+                  primary={index === 0}
+                  readOnly={readOnly}
+                  validation={validations[binding.adapter]}
+                  onChange={(next) =>
+                    onChange({
+                      ...draft,
+                      adapters: draft.adapters.map(
+                        (candidate, candidateIndex) =>
+                          candidateIndex === index ? next : candidate,
                       ),
-                    ],
-                  })
-                }
-                onRemove={() =>
-                  onChange({
-                    ...draft,
-                    adapters: draft.adapters.filter(
+                    })
+                  }
+                  onCheck={() => onCheck(binding.adapter)}
+                  onOpenChange={(open) =>
+                    onExpandedAdapterChange?.(open ? binding.adapter : null)
+                  }
+                  onMakePrimary={() =>
+                    onChange({
+                      ...draft,
+                      adapters: [
+                        binding,
+                        ...draft.adapters.filter(
+                          (_, candidateIndex) => candidateIndex !== index,
+                        ),
+                      ],
+                    })
+                  }
+                  onRemove={() => {
+                    const adapters = draft.adapters.filter(
                       (_, candidateIndex) => candidateIndex !== index,
-                    ),
-                  })
-                }
-              />
-            );
-          })}
-        </div>
-        {errors.adapters ? (
-          <FieldError>{m.agent_actors_binding_required()}</FieldError>
-        ) : null}
-        {!readOnly && available.length > 0 ? (
-          <Select
-            value=""
-            onValueChange={(value) =>
-              onChange({
-                ...draft,
-                adapters: [
-                  ...draft.adapters,
-                  {
-                    adapter: value as AgentActorBinding["adapter"],
-                    effort: null,
-                    model: null,
-                  },
-                ],
-              })
-            }
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder={m.agent_actors_add_adapter()} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {available.map((descriptor) => (
-                  <SelectItem key={descriptor.id} value={descriptor.id}>
-                    {descriptor.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        ) : null}
-      </FieldSet>
+                    );
+                    onChange({
+                      ...draft,
+                      adapters,
+                    });
+                    if (expandedAdapter === binding.adapter) {
+                      onExpandedAdapterChange?.(adapters[0]?.adapter ?? null);
+                    }
+                  }}
+                />
+              );
+            })}
+          </div>
+          {showValidation && errors.adapters ? (
+            <FieldError>{adapterErrorMessage(errors.adapters)}</FieldError>
+          ) : null}
+          {!readOnly && available.length > 0 ? (
+            <Select
+              value=""
+              onValueChange={(value) => {
+                const adapter = value as AgentActorBinding["adapter"];
+                onChange({
+                  ...draft,
+                  adapters: [
+                    ...draft.adapters,
+                    {
+                      adapter,
+                      effort: null,
+                      model: null,
+                    },
+                  ],
+                });
+                onExpandedAdapterChange?.(adapter);
+              }}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder={m.agent_actors_add_adapter()} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {available.map((descriptor) => (
+                    <SelectItem key={descriptor.id} value={descriptor.id}>
+                      {descriptor.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          ) : null}
+        </FieldSet>
+      ) : null}
     </form>
   );
 }
@@ -271,4 +372,19 @@ function approvalDescription(mode: AgentActorDraft["approvalMode"]) {
   if (mode === "auto") return m.agent_actors_approval_auto_hint();
   if (mode === "full") return m.agent_actors_approval_full_hint();
   return m.agent_actors_approval_ask_hint();
+}
+
+function adapterErrorMessage(
+  error: NonNullable<AgentActorDraftValidation["adapters"]>,
+) {
+  if (error === "binding_inspection_pending") {
+    return m.agent_actors_binding_checking();
+  }
+  if (error === "binding_inspection_failed") {
+    return m.agent_actors_binding_check_failed();
+  }
+  if (error === "binding_invalid") {
+    return m.agent_actors_binding_invalid();
+  }
+  return m.agent_actors_binding_required();
 }

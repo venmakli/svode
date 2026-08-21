@@ -50,12 +50,14 @@ export function AgentAdapterCard({
   descriptor,
   diagnostic,
   effortOptions,
+  open,
   pending,
   primary,
   readOnly,
   validation,
   onChange,
   onCheck,
+  onOpenChange,
   onMakePrimary,
   onRemove,
 }: {
@@ -65,17 +67,23 @@ export function AgentAdapterCard({
   descriptor?: AgentActorAdapterDescriptor;
   diagnostic?: AgentActorAdapterDiagnostic;
   effortOptions: readonly AgentActorSelectOption[];
+  open?: boolean;
   pending: boolean;
   primary: boolean;
   readOnly: boolean;
   validation?: AgentActorBindingValidation;
   onChange(binding: AgentActorBinding): void;
   onCheck(): void;
+  onOpenChange?(open: boolean): void;
   onMakePrimary(): void;
   onRemove(): void;
 }) {
   return (
-    <Collapsible defaultOpen={!readOnly}>
+    <Collapsible
+      defaultOpen={open === undefined ? !readOnly : undefined}
+      open={open}
+      onOpenChange={onOpenChange}
+    >
       <Card size="sm" data-agent-adapter={binding.adapter}>
         <CardHeader>
           <CardTitle className="flex min-w-0 items-center gap-2">

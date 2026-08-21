@@ -136,7 +136,7 @@ export function useAgentActorsController({
     detailController,
     diagnose: catalog.diagnose,
     diagnostics: catalog.diagnostics,
-    editRuntime,
+    editRuntime: editRuntime.runtime,
     editSession,
     instanceKey,
     mutationPending,
@@ -203,23 +203,43 @@ export function useAgentActorsController({
     <>
       <ActorAccessPreflightDialog
         error={accessCoordinator.access.error}
-        intent={accessCoordinator.intent}
+        intent={
+          accessCoordinator.intent?.kind === "add-agent"
+            ? null
+            : accessCoordinator.intent
+        }
         snapshot={accessCoordinator.access.snapshot}
         verifying={accessCoordinator.access.verifying}
         onClose={accessCoordinator.close}
         onVerify={accessCoordinator.verify}
       />
       <AgentActorEditorDialog
+        accessRecovery={
+          accessCoordinator.intent?.kind === "add-agent"
+            ? {
+                error: accessCoordinator.access.error,
+                snapshot: accessCoordinator.access.snapshot,
+                verifying: accessCoordinator.access.verifying,
+                onCancel: accessCoordinator.close,
+                onVerify: accessCoordinator.verify,
+              }
+            : null
+        }
         descriptors={snapshot?.adapterDescriptors ?? []}
         diagnostics={catalog.diagnostics}
         draft={createDraft}
         failure={mutationFailure}
         pending={mutationPending}
+        requesting={accessCoordinator.requesting}
         pendingAdapter={catalog.pendingAdapter}
         runtime={createRuntime}
         onChange={setCreateDraft}
         onCheck={(adapter) => void catalog.diagnose(adapter)}
-        onClose={() => !mutationPending && setCreateDraft(null)}
+        onClose={() => {
+          if (mutationPending) return;
+          accessCoordinator.close();
+          setCreateDraft(null);
+        }}
         onSave={() =>
           createDraft &&
           requestAccess({ kind: "add-agent", ownerPath: createDraft.ownerPath })
