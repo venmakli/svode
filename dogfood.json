@@ -4,16 +4,16 @@
   "items": [
     {
       "kind": "ci-build",
-      "version": "0.0.6",
-      "commit": "8b900b34a9396cc07cf654269751f63ef90891eb",
+      "version": "0.0.7",
+      "commit": "889dac2df7fcc8042431eda4ee3710460545feb7",
       "sourceRef": "main",
-      "runId": 30230610755,
-      "publishedAt": "2026-07-27T02:02:51.743Z",
-      "expiresAt": "2026-07-30T02:02:51.743Z",
+      "runId": 32477306206,
+      "publishedAt": "2026-08-21T11:55:55.078Z",
+      "expiresAt": "2026-08-24T11:55:55.078Z",
       "platforms": {
         "darwin": {
-          "url": "https://github.com/venmakli/svode/actions/runs/30230610755/artifacts/8640151919",
-          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/30230610755",
+          "url": "https://github.com/venmakli/svode/actions/runs/32477306206/artifacts/9445500320",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/32477306206",
           "artifactName": "Svode-macos-dmg"
         }
       }
