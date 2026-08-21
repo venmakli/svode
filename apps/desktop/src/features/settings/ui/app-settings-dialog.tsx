@@ -61,7 +61,7 @@ const NAV_ITEMS: {
 }[] = [
   {
     key: "git-identity",
-    label: () => m.settings_git_identity(),
+    label: () => m.settings_profile(),
     icon: User,
     show: () => true,
   },
