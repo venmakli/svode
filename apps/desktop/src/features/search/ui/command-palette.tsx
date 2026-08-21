@@ -1,24 +1,18 @@
 import { useMemo, useState } from "react";
-import {
-  CommandDialog,
-  CommandInput,
-  CommandList,
-} from "@/components/ui/command";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
+import { CommandInput, CommandList } from "@/components/ui/command";
 import {
   createDefaultKnowledgeFilters,
   getDirectNeighborDetails,
   getMatchedNodeIds,
   getNodeById,
   KnowledgeGraphView,
+  KnowledgeGraphResetButton,
   KnowledgeCommandResults,
+  KnowledgeOpenGraphButton,
   knowledgeOpenPath,
   KnowledgeNodeDetail,
-  KnowledgeToolbar,
+  KnowledgeScopeControls,
+  KnowledgeStatus,
   useKnowledgeNeighbors,
   useKnowledgeSnapshot,
   withSearchResultNodes,
@@ -30,6 +24,9 @@ import {
 import { useSpace } from "@/features/space";
 import { useCommandPaletteStore } from "../model";
 import { useSelectResult } from "../hooks/use-select-result";
+import { SearchBreadcrumb } from "./search-breadcrumb";
+import { SearchDialog } from "./search-dialog";
+import { SearchDialogShell } from "./search-dialog-shell";
 import * as m from "@/paraglide/messages.js";
 
 export function CommandPalette({
@@ -103,6 +100,8 @@ function CommandPaletteDialog({
     onAfterNavigation,
   });
   const selectedNode = getNodeById(visibleSnapshot, selectedNodeId);
+  const breadcrumbNode =
+    selectedNode ?? getNodeById(visibleSnapshot, focusedNodeId);
   const neighborState = useKnowledgeNeighbors(
     activeRootPath,
     scope,
@@ -125,22 +124,31 @@ function CommandPaletteDialog({
       path: knowledgeOpenPath(node),
       kind: node.source.kind,
     });
+  const openGraph = async () => {
+    if (onBeforeNavigation && !(await onBeforeNavigation())) return;
+    setOpen(false);
+    onOpenGraph({
+      query,
+      scope,
+      filters,
+      selectedNodeId: selectedNodeId ?? focusedNodeId,
+    });
+  };
 
   return (
-    <CommandDialog
+    <SearchDialog
       open={open}
       onOpenChange={setOpen}
       title={m.search_dialog_title()}
       description={m.search_dialog_description()}
-      shouldFilter={false}
-      commandValue={focusedNodeId ?? ""}
-      onCommandValueChange={(value) => setFocusedNodeId(value || null)}
-      loop
-      className="top-1/2 size-[min(82vh,calc(100vw-2rem),860px)] max-w-none -translate-y-1/2 sm:max-w-none"
     >
-      <div className="flex items-center gap-2 border-b pr-2">
-        <div className="min-w-0 flex-1">
+      <SearchDialogShell
+        sidebarLabel={m.search_results_sidebar()}
+        commandValue={focusedNodeId ?? ""}
+        onCommandValueChange={(value) => setFocusedNodeId(value || null)}
+        searchInput={
           <CommandInput
+            autoFocus
             placeholder={m.search_placeholder()}
             value={query}
             onValueChange={(value) => {
@@ -149,31 +157,66 @@ function CommandPaletteDialog({
               setFocusedNodeId(null);
             }}
           />
-        </div>
-        <KnowledgeToolbar
-          scope={scope}
-          filters={filters}
-          spaces={spaces}
-          onScopeChange={(nextScope) => {
-            setScope(nextScope);
-            setSelectedNodeId(null);
-            setFocusedNodeId(null);
-          }}
-          onFiltersChange={(nextFilters) => {
-            setFilters(nextFilters);
-            setSelectedNodeId(null);
-            setFocusedNodeId(null);
-          }}
-          onReset={() => setResetKey((value) => value + 1)}
-          onExpand={async () => {
-            if (onBeforeNavigation && !(await onBeforeNavigation())) return;
-            setOpen(false);
-            onOpenGraph({ query, scope, filters, selectedNodeId });
-          }}
-        />
-      </div>
-      <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
-        <ResizablePanel defaultSize="62%" minSize="40%">
+        }
+        scopeControls={
+          <KnowledgeScopeControls
+            scope={scope}
+            filters={filters}
+            spaces={spaces}
+            onScopeChange={(nextScope) => {
+              setScope(nextScope);
+              setSelectedNodeId(null);
+              setFocusedNodeId(null);
+            }}
+            onFiltersChange={(nextFilters) => {
+              setFilters(nextFilters);
+              setSelectedNodeId(null);
+              setFocusedNodeId(null);
+            }}
+          />
+        }
+        readingContent={
+          selectedNode ? (
+            <KnowledgeNodeDetail
+              node={selectedNode}
+              neighbors={neighbors}
+              neighborsLoading={neighborState.loading}
+              neighborsError={neighborState.error}
+              onBack={() => setSelectedNodeId(null)}
+              onSelectNode={setSelectedNodeId}
+              onOpenSource={openKnowledgeSource}
+            />
+          ) : (
+            <CommandList className="max-h-none min-h-0 flex-1">
+              <KnowledgeCommandResults
+                items={knowledge.snapshot?.searchItems ?? []}
+                loading={knowledge.loading}
+                emptyMessage={
+                  query.trim() === ""
+                    ? m.search_empty_prompt()
+                    : m.search_no_results()
+                }
+                heading={
+                  query.trim() === "" ? m.search_group_recent() : undefined
+                }
+                onActiveChange={setFocusedNodeId}
+                onOpen={openKnowledgeSource}
+              />
+            </CommandList>
+          )
+        }
+        status={<KnowledgeStatus state={visibleKnowledge} placement="inline" />}
+        breadcrumb={
+          <SearchBreadcrumb
+            node={breadcrumbNode}
+            scope={scope}
+            spaces={spaces}
+          />
+        }
+        openGraphAction={
+          <KnowledgeOpenGraphButton onOpen={() => void openGraph()} />
+        }
+        graph={
           <KnowledgeGraphView
             state={visibleKnowledge}
             selectedNodeId={selectedNodeId}
@@ -181,40 +224,16 @@ function CommandPaletteDialog({
             matchedNodeIds={matchedNodeIds}
             resetKey={resetKey}
             onNodeSelect={setSelectedNodeId}
+            showStatus={false}
           />
-        </ResizablePanel>
-        <ResizableHandle />
-        <ResizablePanel defaultSize="38%" minSize="280px" maxSize="55%">
-          {selectedNode ? (
-            <KnowledgeNodeDetail
-              node={selectedNode}
-              neighbors={neighbors}
-              neighborsLoading={neighborState.loading}
-              neighborsError={neighborState.error}
-              onSelectNode={setSelectedNodeId}
-              onOpenSource={openKnowledgeSource}
-            />
-          ) : (
-            <div className="flex size-full min-h-0 flex-col">
-              <CommandList className="max-h-none min-h-0 flex-1">
-                <KnowledgeCommandResults
-                  items={knowledge.snapshot?.searchItems ?? []}
-                  loading={knowledge.loading}
-                  emptyMessage={
-                    query.trim() === ""
-                      ? m.search_empty_prompt()
-                      : m.search_no_results()
-                  }
-                  heading={
-                    query.trim() === "" ? m.search_group_recent() : undefined
-                  }
-                  onOpen={openKnowledgeSource}
-                />
-              </CommandList>
-            </div>
-          )}
-        </ResizablePanel>
-      </ResizablePanelGroup>
-    </CommandDialog>
+        }
+        resetAction={
+          <KnowledgeGraphResetButton
+            variant="outline"
+            onReset={() => setResetKey((value) => value + 1)}
+          />
+        }
+      />
+    </SearchDialog>
   );
 }

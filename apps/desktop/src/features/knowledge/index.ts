@@ -35,4 +35,10 @@ export {
   KnowledgeResultList,
 } from "./ui/knowledge-search-results";
 export { KnowledgeNodeDetail } from "./ui/knowledge-node-detail";
-export { KnowledgeToolbar } from "./ui/knowledge-toolbar";
+export { KnowledgeStatus } from "./ui/knowledge-status";
+export {
+  KnowledgeGraphResetButton,
+  KnowledgeOpenGraphButton,
+  KnowledgeScopeControls,
+  KnowledgeToolbar,
+} from "./ui/knowledge-toolbar";

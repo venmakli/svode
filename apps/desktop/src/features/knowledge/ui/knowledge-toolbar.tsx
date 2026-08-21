@@ -36,9 +36,37 @@ export function KnowledgeToolbar({
   onReset: () => void;
   onExpand?: () => void;
 }) {
-  const value = scopeValue(scope);
   return (
     <div className="flex items-center gap-1.5">
+      <KnowledgeScopeControls
+        scope={scope}
+        filters={filters}
+        spaces={spaces}
+        onScopeChange={onScopeChange}
+        onFiltersChange={onFiltersChange}
+      />
+      <KnowledgeGraphResetButton onReset={onReset} />
+      {onExpand && <KnowledgeOpenGraphButton onOpen={onExpand} />}
+    </div>
+  );
+}
+
+export function KnowledgeScopeControls({
+  scope,
+  filters,
+  spaces,
+  onScopeChange,
+  onFiltersChange,
+}: {
+  scope: KnowledgeScope;
+  filters: KnowledgeGraphFilters;
+  spaces: KnowledgeSpaceOption[];
+  onScopeChange: (scope: KnowledgeScope) => void;
+  onFiltersChange: (filters: KnowledgeGraphFilters) => void;
+}) {
+  const value = scopeValue(scope);
+  return (
+    <div className="flex min-w-0 items-center gap-1.5">
       <Select
         value={value}
         onValueChange={(nextValue) => onScopeChange(parseScope(nextValue))}
@@ -67,23 +95,37 @@ export function KnowledgeToolbar({
         </SelectContent>
       </Select>
       <KnowledgeFilters filters={filters} onChange={onFiltersChange} />
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        aria-label={m.knowledge_graph_reset()}
-        title={m.knowledge_graph_reset()}
-        onClick={onReset}
-      >
-        <RotateCcw />
-      </Button>
-      {onExpand && (
-        <Button type="button" variant="outline" size="sm" onClick={onExpand}>
-          <Expand data-icon="inline-start" />
-          {m.knowledge_graph_open()}
-        </Button>
-      )}
     </div>
+  );
+}
+
+export function KnowledgeGraphResetButton({
+  onReset,
+  variant = "ghost",
+}: {
+  onReset: () => void;
+  variant?: "ghost" | "outline";
+}) {
+  return (
+    <Button
+      type="button"
+      variant={variant}
+      size="icon-sm"
+      aria-label={m.knowledge_graph_reset()}
+      title={m.knowledge_graph_reset()}
+      onClick={onReset}
+    >
+      <RotateCcw />
+    </Button>
+  );
+}
+
+export function KnowledgeOpenGraphButton({ onOpen }: { onOpen: () => void }) {
+  return (
+    <Button type="button" variant="outline" size="sm" onClick={onOpen}>
+      <Expand data-icon="inline-start" />
+      {m.knowledge_graph_open()}
+    </Button>
   );
 }
 

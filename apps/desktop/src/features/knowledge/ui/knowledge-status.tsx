@@ -17,12 +17,19 @@ import {
   PopoverTitle,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { cn } from "@/shared/lib/utils";
 import type { KnowledgeSnapshotState } from "../hooks/use-knowledge-snapshot";
 import * as m from "@/paraglide/messages.js";
 
 type ReadStatus = "fresh" | "checking" | "partial" | "stale";
 
-export function KnowledgeStatus({ state }: { state: KnowledgeSnapshotState }) {
+export function KnowledgeStatus({
+  state,
+  placement = "overlay",
+}: {
+  state: KnowledgeSnapshotState;
+  placement?: "overlay" | "inline";
+}) {
   const snapshot = state.snapshot;
   if (!snapshot) return null;
 
@@ -30,7 +37,14 @@ export function KnowledgeStatus({ state }: { state: KnowledgeSnapshotState }) {
   const label = statusLabel(status);
 
   return (
-    <div className="absolute bottom-3 left-3 flex max-w-[calc(100%-1.5rem)] items-center gap-1.5">
+    <div
+      className={cn(
+        "flex items-center gap-1.5",
+        placement === "overlay"
+          ? "absolute bottom-3 left-3 max-w-[calc(100%-1.5rem)]"
+          : "min-w-0 flex-wrap",
+      )}
+    >
       <Popover>
         <PopoverTrigger asChild>
           <Button type="button" variant="outline" size="sm">
@@ -136,6 +150,14 @@ export function KnowledgeStatus({ state }: { state: KnowledgeSnapshotState }) {
           )}
         </PopoverContent>
       </Popover>
+      {placement === "inline" && (
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+          {m.knowledge_graph_status_counts({
+            nodes: snapshot.totalNodeCount,
+            edges: snapshot.totalEdgeCount,
+          })}
+        </span>
+      )}
       {snapshot.truncated && (
         <Badge variant="outline">
           {m.knowledge_graph_truncated({

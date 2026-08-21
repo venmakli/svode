@@ -15,12 +15,14 @@ export function KnowledgeCommandResults({
   loading,
   emptyMessage,
   heading,
+  onActiveChange,
   onOpen,
 }: {
   items: KnowledgeSearchItem[];
   loading: boolean;
   emptyMessage?: string;
   heading?: string;
+  onActiveChange?: (nodeId: string) => void;
   onOpen: (item: KnowledgeSearchItem) => void | Promise<void>;
 }) {
   if (items.length === 0) {
@@ -35,6 +37,8 @@ export function KnowledgeCommandResults({
           key={item.nodeId}
           value={item.nodeId}
           className="items-start py-2.5"
+          onFocus={() => onActiveChange?.(item.nodeId)}
+          onPointerMove={() => onActiveChange?.(item.nodeId)}
           onSelect={() => onOpen(item)}
         >
           <KnowledgeKindIcon kind={item.source.kind} />

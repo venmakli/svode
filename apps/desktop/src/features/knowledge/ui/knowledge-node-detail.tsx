@@ -1,4 +1,4 @@
-import { ArrowUpRight, Unlink } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Unlink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -17,6 +17,7 @@ export function KnowledgeNodeDetail({
   neighbors,
   neighborsLoading = false,
   neighborsError = null,
+  onBack,
   onSelectNode,
   onOpenSource,
 }: {
@@ -24,6 +25,7 @@ export function KnowledgeNodeDetail({
   neighbors: KnowledgeNeighbor[];
   neighborsLoading?: boolean;
   neighborsError?: string | null;
+  onBack?: () => void;
   onSelectNode: (nodeId: string) => void;
   onOpenSource: (node: KnowledgeNode) => void | Promise<void>;
 }) {
@@ -37,6 +39,18 @@ export function KnowledgeNodeDetail({
   return (
     <ScrollArea className="size-full">
       <div className="flex flex-col gap-4 p-4">
+        {onBack && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="self-start"
+            onClick={onBack}
+          >
+            <ArrowLeft data-icon="inline-start" />
+            {m.knowledge_graph_back_to_results()}
+          </Button>
+        )}
         <div className="flex items-start gap-3">
           <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
             <KnowledgeKindIcon kind={node.source.kind} />

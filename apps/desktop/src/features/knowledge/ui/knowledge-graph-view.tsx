@@ -23,6 +23,7 @@ export function KnowledgeGraphView({
   matchedNodeIds,
   resetKey,
   onNodeSelect,
+  showStatus = true,
 }: {
   state: KnowledgeSnapshotState;
   selectedNodeId: string | null;
@@ -30,6 +31,7 @@ export function KnowledgeGraphView({
   matchedNodeIds: Set<string>;
   resetKey: number;
   onNodeSelect: (nodeId: string | null) => void;
+  showStatus?: boolean;
 }) {
   const snapshot = state.snapshot;
   if (!snapshot && state.loading) {
@@ -68,7 +70,7 @@ export function KnowledgeGraphView({
         onNodeSelect={onNodeSelect}
       />
       <GraphLegend snapshot={snapshot} />
-      <KnowledgeStatus state={state} />
+      {showStatus && <KnowledgeStatus state={state} />}
     </div>
   );
 }
