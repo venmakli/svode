@@ -17,7 +17,6 @@ import {
 
 import type {
   RoutineCatalogSnapshot,
-  RoutineCreateInput,
   RoutineDefinition,
   RoutineDiagnostic,
   RoutineMutationResult,
@@ -54,15 +53,12 @@ export function listenRoutineCatalogInvalidated(
 
 export async function createRoutine(
   owner: RoutineOwnerInput,
-  input: RoutineCreateInput,
+  definition: RoutineDefinition,
 ): Promise<RoutineMutationResult> {
   return normalizeMutationResult(
     await createRoutineCommand({
       ...owner,
-      description: input.description.trim() || null,
-      timezone: input.timezone,
-      title: input.title,
-      triggerType: input.triggerType,
+      definition: toDefinitionDto(definition),
     }),
   );
 }
@@ -136,6 +132,7 @@ function normalizeMutationResult(
     routineId: result.routineId,
     snapshot: normalizeSnapshot(result.snapshot),
     status: "applied",
+    warnings: Object.freeze(result.warnings.map(normalizeDiagnostic)),
   };
 }
 

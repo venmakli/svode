@@ -27,13 +27,17 @@ export function RoutineActionFields({
   definition,
   executorError,
   executors,
+  idPrefix,
   issues,
+  loading = false,
   onChange,
 }: {
   definition: RoutineDefinition;
   executorError: string | null;
   executors: readonly AgentActorOption[];
+  idPrefix: string;
   issues: ReadonlySet<RoutineDraftIssue>;
+  loading?: boolean;
   onChange(definition: RoutineDefinition): void;
 }) {
   const allowUpdateProperties =
@@ -47,43 +51,47 @@ export function RoutineActionFields({
 
   return (
     <FieldGroup>
-      <Field>
-        <FieldLabel>{m.routines_action_type_label()}</FieldLabel>
-        <Select
-          value={definition.action.type}
-          onValueChange={(value) => {
-            if (value === definition.action.type) return;
-            if (!window.confirm(m.routines_change_type_confirm())) return;
-            onChange(
-              changeRoutineAction(
-                definition,
-                value as RoutineDefinition["action"]["type"],
-              ),
-            );
-          }}
-        >
-          <SelectTrigger className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              <SelectItem value="run_agent">
-                {m.routines_action_run_agent()}
-              </SelectItem>
-              {allowUpdateProperties ? (
+      {allowUpdateProperties ? (
+        <Field>
+          <FieldLabel>{m.routines_action_type_label()}</FieldLabel>
+          <Select
+            value={definition.action.type}
+            onValueChange={(value) => {
+              if (value === definition.action.type) return;
+              if (!window.confirm(m.routines_change_type_confirm())) return;
+              onChange(
+                changeRoutineAction(
+                  definition,
+                  value as RoutineDefinition["action"]["type"],
+                ),
+              );
+            }}
+          >
+            <SelectTrigger
+              className="w-full"
+              data-routine-create-focus="action"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="run_agent">
+                  {m.routines_action_run_agent()}
+                </SelectItem>
                 <SelectItem value="update_properties">
                   {m.routines_action_update_properties()}
                 </SelectItem>
-              ) : null}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-      </Field>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </Field>
+      ) : null}
 
       {definition.action.type === "run_agent" ? (
         <Field data-invalid={issues.has("executor") || missingExecutor}>
           <FieldLabel>{m.routines_executor_label()}</FieldLabel>
           <Select
+            disabled={loading || Boolean(executorError)}
             value={definition.action.executor}
             onValueChange={(executor) =>
               onChange({
@@ -94,6 +102,7 @@ export function RoutineActionFields({
           >
             <SelectTrigger
               className="w-full"
+              data-routine-create-focus="action"
               aria-invalid={issues.has("executor") || missingExecutor}
             >
               <SelectValue placeholder={m.routines_executor_placeholder()} />
@@ -125,6 +134,7 @@ export function RoutineActionFields({
         </Field>
       ) : (
         <RoutinePropertySetEditor
+          idPrefix={idPrefix}
           invalid={issues.has("set")}
           value={definition.action.set}
           onChange={(set) =>

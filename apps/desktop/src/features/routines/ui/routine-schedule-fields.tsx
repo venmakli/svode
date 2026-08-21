@@ -40,10 +40,12 @@ const WEEKDAYS = [
 ] as const;
 
 export function RoutineScheduleFields({
+  idPrefix,
   issues,
   onChange,
   trigger,
 }: {
+  idPrefix: string;
   issues: ReadonlySet<RoutineDraftIssue>;
   onChange(trigger: Extract<RoutineTrigger, { type: "schedule" }>): void;
   trigger: Extract<RoutineTrigger, { type: "schedule" }>;
@@ -87,11 +89,12 @@ export function RoutineScheduleFields({
 
       {visibleEditor.preset === "advanced" ? (
         <Field data-invalid={issues.has("cron")}>
-          <FieldLabel htmlFor="routine-cron">
+          <FieldLabel htmlFor={`${idPrefix}-cron`}>
             {m.routines_cron_label()}
           </FieldLabel>
           <Input
-            id="routine-cron"
+            id={`${idPrefix}-cron`}
+            data-routine-create-focus="trigger"
             value={trigger.cron}
             aria-invalid={issues.has("cron")}
             onChange={(event) =>
@@ -107,11 +110,11 @@ export function RoutineScheduleFields({
       ) : (
         <FieldGroup className="grid gap-4 sm:grid-cols-2">
           <Field>
-            <FieldLabel htmlFor="routine-schedule-time">
+            <FieldLabel htmlFor={`${idPrefix}-schedule-time`}>
               {m.routines_schedule_time_label()}
             </FieldLabel>
             <Input
-              id="routine-schedule-time"
+              id={`${idPrefix}-schedule-time`}
               type="time"
               value={editor.time}
               onChange={(event) =>
@@ -147,11 +150,12 @@ export function RoutineScheduleFields({
       )}
 
       <Field data-invalid={issues.has("timezone")}>
-        <FieldLabel htmlFor="routine-timezone">
+        <FieldLabel htmlFor={`${idPrefix}-timezone`}>
           {m.routines_timezone_label()}
         </FieldLabel>
         <Input
-          id="routine-timezone"
+          id={`${idPrefix}-timezone`}
+          data-routine-create-focus="trigger"
           value={trigger.timezone}
           aria-invalid={issues.has("timezone")}
           onChange={(event) =>

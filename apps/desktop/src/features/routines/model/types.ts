@@ -142,18 +142,12 @@ export type RoutineCatalogState =
       refreshError: string | null;
     };
 
-export interface RoutineCreateInput {
-  title: string;
-  description: string;
-  triggerType: RoutineTriggerType;
-  timezone: string | null;
-}
-
 export type RoutineMutationResult =
   | {
       status: "applied";
       snapshot: RoutineCatalogSnapshot;
       routineId: string;
+      warnings: readonly RoutineDiagnostic[];
     }
   | { status: "stale"; currentFingerprint: string | null }
   | { status: "blocked"; message: string };

@@ -8,20 +8,32 @@ import {
 export function useRoutineExecutors(
   projectPath: string,
   launchSpacePath: string,
+  enabled = true,
 ) {
-  const sourceKey = JSON.stringify([projectPath, launchSpacePath]);
+  const [request, setRequest] = useState(0);
+  const ownerKey = JSON.stringify([projectPath, launchSpacePath]);
+  const requestKey = JSON.stringify([projectPath, launchSpacePath, request]);
   const [snapshot, setSnapshot] = useState<{
     error: string | null;
+    loading: boolean;
+    ownerKey: string;
     options: readonly AgentActorOption[];
-    sourceKey: string;
-  }>({ error: null, options: [], sourceKey: "" });
+    requestKey: string;
+  }>({ error: null, loading: true, ownerKey: "", options: [], requestKey: "" });
 
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     void listAgentActorOptions(projectPath, launchSpacePath).then(
       (nextOptions) => {
         if (!cancelled) {
-          setSnapshot({ error: null, options: nextOptions, sourceKey });
+          setSnapshot({
+            error: null,
+            loading: false,
+            ownerKey,
+            options: nextOptions,
+            requestKey,
+          });
         }
       },
       (reason: unknown) => {
@@ -31,17 +43,38 @@ export function useRoutineExecutors(
             reason instanceof Error && reason.message
               ? reason.message
               : String(reason),
+          loading: false,
+          ownerKey,
           options: [],
-          sourceKey,
+          requestKey,
         });
       },
     );
     return () => {
       cancelled = true;
     };
-  }, [launchSpacePath, projectPath, sourceKey]);
+  }, [enabled, launchSpacePath, ownerKey, projectPath, requestKey]);
 
-  return snapshot.sourceKey === sourceKey
-    ? { error: snapshot.error, options: snapshot.options }
-    : { error: null, options: [] };
+  if (!enabled) {
+    return {
+      error: null,
+      loading: false,
+      options: [] as readonly AgentActorOption[],
+      retry: () => setRequest((current) => current + 1),
+    };
+  }
+
+  return snapshot.requestKey === requestKey
+    ? {
+        error: snapshot.error,
+        loading: snapshot.loading,
+        options: snapshot.options,
+        retry: () => setRequest((current) => current + 1),
+      }
+    : {
+        error: null,
+        loading: true,
+        options: snapshot.ownerKey === ownerKey ? snapshot.options : [],
+        retry: () => setRequest((current) => current + 1),
+      };
 }

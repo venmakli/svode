@@ -32,11 +32,13 @@ import { RoutineScheduleFields } from "./routine-schedule-fields";
 export function RoutineTriggerFields({
   collectionOwner,
   definition,
+  idPrefix,
   issues,
   onChange,
 }: {
   collectionOwner: boolean;
   definition: RoutineDefinition;
+  idPrefix: string;
   issues: ReadonlySet<RoutineDraftIssue>;
   onChange(definition: RoutineDefinition): void;
 }) {
@@ -59,7 +61,7 @@ export function RoutineTriggerFields({
             );
           }}
         >
-          <SelectTrigger className="w-full">
+          <SelectTrigger className="w-full" data-routine-create-focus="trigger">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -84,6 +86,7 @@ export function RoutineTriggerFields({
         <RoutineScheduleFields
           trigger={trigger}
           issues={issues}
+          idPrefix={idPrefix}
           onChange={(nextTrigger) =>
             onChange({ ...definition, trigger: nextTrigger })
           }
@@ -125,11 +128,12 @@ export function RoutineTriggerFields({
           {trigger.event === "collection.field_changed" ? (
             <FieldGroup>
               <Field data-invalid={issues.has("event_field")}>
-                <FieldLabel htmlFor="routine-event-field">
+                <FieldLabel htmlFor={`${idPrefix}-event-field`}>
                   {m.routines_event_field_label()}
                 </FieldLabel>
                 <Input
-                  id="routine-event-field"
+                  id={`${idPrefix}-event-field`}
+                  data-routine-create-focus="trigger"
                   value={trigger.match?.field ?? ""}
                   aria-invalid={issues.has("event_field")}
                   onChange={(event) =>
@@ -151,11 +155,11 @@ export function RoutineTriggerFields({
               </Field>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field>
-                  <FieldLabel htmlFor="routine-event-from">
+                  <FieldLabel htmlFor={`${idPrefix}-event-from`}>
                     {m.routines_event_from_label()}
                   </FieldLabel>
                   <Input
-                    id="routine-event-from"
+                    id={`${idPrefix}-event-from`}
                     value={routineValueInput(trigger.match?.from ?? "")}
                     onChange={(event) =>
                       onChange({
@@ -173,11 +177,11 @@ export function RoutineTriggerFields({
                   />
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="routine-event-to">
+                  <FieldLabel htmlFor={`${idPrefix}-event-to`}>
                     {m.routines_event_to_label()}
                   </FieldLabel>
                   <Input
-                    id="routine-event-to"
+                    id={`${idPrefix}-event-to`}
                     value={routineValueInput(trigger.match?.to ?? "")}
                     onChange={(event) =>
                       onChange({

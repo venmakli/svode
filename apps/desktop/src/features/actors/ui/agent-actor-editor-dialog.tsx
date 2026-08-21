@@ -232,7 +232,7 @@ function AgentActorCreateJourney({
       <Dialog open onOpenChange={(open) => !open && requestClose()}>
         <DialogContent
           ref={contentRef}
-          className="flex max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-lg flex-col overflow-hidden sm:max-h-[calc(100dvh-2rem)] sm:max-w-lg"
+          className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden"
           data-agent-actor-create-journey
           data-agent-actor-create-step={step}
           showCloseButton={!busy}

@@ -39,6 +39,14 @@ pub(crate) struct RoutineMutationPolicy {
 }
 
 impl RoutineMutationPolicy {
+    pub(crate) fn desktop_create() -> Self {
+        Self {
+            caller: RoutineMutationCaller::Desktop,
+            confirm_automatic_execution: true,
+            require_valid_definition: true,
+        }
+    }
+
     pub(crate) fn desktop() -> Self {
         Self {
             caller: RoutineMutationCaller::Desktop,

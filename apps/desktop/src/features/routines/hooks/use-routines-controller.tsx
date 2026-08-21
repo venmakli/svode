@@ -20,6 +20,7 @@ import {
 } from "../ui/routines-presentation";
 import { useRoutineCatalog } from "./use-routine-catalog";
 import { useRoutineAutomaticConsent } from "./use-routine-automatic-consent";
+import { useRoutineCreateJourney } from "./use-routine-create-journey";
 import { useRoutineDetail } from "./use-routine-detail";
 import { useRoutineDispatch } from "./use-routine-dispatch";
 import { useRoutineExecutors } from "./use-routine-executors";
@@ -72,8 +73,50 @@ export function useRoutinesController(
     pending: mutations.pending,
     setEditSession: mutations.setEditSession,
   });
+  const onRoutineCreated = useCallback(
+    async ({
+      owner: createdOwner,
+      row,
+      snapshot,
+    }: {
+      owner: RoutineOwnerInput;
+      row: RoutineRow;
+      snapshot: Parameters<typeof replaceSnapshot>[0];
+    }) => {
+      if (!sameRoutineOwner(createdOwner, routineOwner)) return;
+      replaceSnapshot(snapshot);
+      await detailController?.open({
+        ...createReadOnlyDetail(row),
+        selection: {
+          instanceKey,
+          presentationId: "all",
+          rowId: row.id,
+        },
+      });
+    },
+    [
+      createReadOnlyDetail,
+      detailController,
+      instanceKey,
+      replaceSnapshot,
+      routineOwner,
+    ],
+  );
+  const create = useRoutineCreateJourney({ onApplied: onRoutineCreated });
+  const createExecutorOwner = create.session?.owner ?? routineOwner;
+  const useDetachedCreateExecutors = Boolean(
+    create.session && !sameRoutineOwner(create.session.owner, routineOwner),
+  );
+  const detachedCreateExecutors = useRoutineExecutors(
+    createExecutorOwner.projectPath,
+    createExecutorOwner.spacePath,
+    useDetachedCreateExecutors,
+  );
+  const createExecutors = useDetachedCreateExecutors
+    ? detachedCreateExecutors
+    : executors;
   const actionState = useMemo<SystemCollectionActionState>(() => {
-    if (mutations.pending) return { status: "pending" };
+    if (mutations.pending || create.pending) return { status: "pending" };
     if (state.phase !== "ready") {
       return {
         reason: m.routines_catalog_unavailable(),
@@ -81,7 +124,7 @@ export function useRoutinesController(
       };
     }
     return { status: "idle" };
-  }, [mutations.pending, state.phase]);
+  }, [create.pending, mutations.pending, state.phase]);
   const actions: RoutinePresentationActions = {
     createState: actionState,
     getDeleteState: () => actionState,
@@ -102,7 +145,18 @@ export function useRoutinesController(
             status: "disabled",
           },
     getRunState: dispatch.getRunState,
-    onAdd: mutations.openCreate,
+    onAdd: () => {
+      if (state.phase !== "ready") return;
+      create.open({
+        automaticAuthority:
+          automaticConsent.loading || automaticConsent.error
+            ? null
+            : automaticConsent.enabled,
+        baselineRoutineIds: state.snapshot.rows.map((row) => row.id),
+        owner: routineOwner,
+        ownerLabel: routineOwnerLabel(owner),
+      });
+    },
     onDelete: mutations.openDelete,
     onEdit: mutations.openEdit,
     onEnabledChange: async (row, enabled) => {
@@ -128,19 +182,29 @@ export function useRoutinesController(
     stateScope: "session",
   };
   const collectionState = useSystemCollectionState(instance);
-  const createPending = mutations.pending && mutations.createOpen;
   const overlays = (
     <>
-      <RoutineCreateDialog
-        collectionOwner={routineOwner.ownerKind === "collection_directory"}
-        error={mutations.createOpen ? mutations.error : null}
-        input={mutations.createInput}
-        open={mutations.createOpen}
-        pending={createPending}
-        onChange={mutations.setCreateInput}
-        onClose={mutations.closeCreate}
-        onSubmit={() => void mutations.submitCreate()}
-      />
+      {create.session ? (
+        <RoutineCreateDialog
+          automaticAuthority={create.session.automaticAuthority}
+          collectionOwner={
+            create.session.owner.ownerKind === "collection_directory"
+          }
+          definition={create.session.draft}
+          error={create.error}
+          executorError={createExecutors.error}
+          executorLoading={createExecutors.loading}
+          executors={createExecutors.options}
+          initialDefinition={create.session.initialDraft}
+          ownerLabel={create.session.ownerLabel}
+          pending={create.pending}
+          retryBlocked={create.retryBlocked}
+          onChange={create.change}
+          onClose={create.close}
+          onRetryExecutors={createExecutors.retry}
+          onSubmit={() => void create.submit()}
+        />
+      ) : null}
       <RoutineDeleteDialog
         error={mutations.deleteTarget ? mutations.error : null}
         pending={mutations.pending && mutations.deleteTarget !== null}
@@ -158,6 +222,26 @@ export function useRoutinesController(
     instance,
     overlays,
   };
+}
+
+function sameRoutineOwner(left: RoutineOwnerInput, right: RoutineOwnerInput) {
+  return (
+    left.ownerKind === right.ownerKind &&
+    left.ownerPath === right.ownerPath &&
+    left.projectPath === right.projectPath &&
+    left.spaceId === right.spaceId &&
+    left.spacePath === right.spacePath
+  );
+}
+
+function routineOwnerLabel(owner: ScopeOwnerRef) {
+  if (owner.identityKind === "collection-directory") {
+    return m.routines_create_owner_collection({ path: owner.ownerPath });
+  }
+  if (owner.projectPath === owner.spacePath) {
+    return m.routines_create_owner_project();
+  }
+  return m.routines_create_owner_space();
 }
 
 function executorLabel(

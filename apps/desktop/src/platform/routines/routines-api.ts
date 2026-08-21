@@ -114,6 +114,7 @@ export type RoutineMutationResultDto =
       status: "applied";
       routineId: string;
       snapshot: RoutineCatalogSnapshotDto;
+      warnings: RoutineDiagnosticDto[];
     }
   | { status: "stale"; currentFingerprint?: string | null }
   | { status: "blocked"; message: string };
@@ -181,10 +182,7 @@ export function listenRoutinesInvalidated(
 
 export function createRoutine(
   input: RoutineOwnerCommandInput & {
-    title: string;
-    description?: string | null;
-    triggerType: RoutineTriggerTypeDto;
-    timezone?: string | null;
+    definition: RoutineDefinitionDto;
   },
 ) {
   return invokeCommand<RoutineMutationResultDto>("routines_create", {

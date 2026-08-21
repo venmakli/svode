@@ -630,6 +630,7 @@ pub enum RoutineMutationResult {
     Applied {
         routine_id: String,
         snapshot: RoutineCatalogSnapshot,
+        warnings: Vec<RoutineDiagnostic>,
     },
     Stale {
         #[serde(skip_serializing_if = "Option::is_none")]

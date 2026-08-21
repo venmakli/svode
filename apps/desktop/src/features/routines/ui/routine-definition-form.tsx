@@ -1,22 +1,20 @@
 import type { AgentActorOption } from "@/features/actors";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Field,
   FieldDescription,
-  FieldError,
   FieldGroup,
   FieldLabel,
   FieldLegend,
   FieldSet,
 } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { ControlledMarkdownEditor } from "@/features/editor";
 import * as m from "@/paraglide/messages.js";
 
 import { validateRoutineDraft } from "../model/routine-draft";
 import type { RoutineDefinition } from "../model/types";
 import { RoutineActionFields } from "./routine-action-fields";
+import { RoutineContentField } from "./routine-content-field";
+import { RoutineIdentityFields } from "./routine-identity-fields";
 import { RoutineTriggerFields } from "./routine-trigger-fields";
 
 export function RoutineDefinitionForm({
@@ -59,36 +57,12 @@ export function RoutineDefinitionForm({
       }}
     >
       <FieldGroup>
-        <Field data-invalid={!definition.title.trim()}>
-          <FieldLabel htmlFor={`${formId}-title`}>
-            {m.routines_title_label()}
-          </FieldLabel>
-          <Input
-            id={`${formId}-title`}
-            autoFocus
-            aria-invalid={!definition.title.trim()}
-            value={definition.title}
-            onChange={(event) =>
-              onChange({ ...definition, title: event.target.value })
-            }
-          />
-          {!definition.title.trim() ? (
-            <FieldError>{m.routines_title_required()}</FieldError>
-          ) : null}
-        </Field>
-        <Field>
-          <FieldLabel htmlFor={`${formId}-description`}>
-            {m.routines_description_label()}
-          </FieldLabel>
-          <Textarea
-            id={`${formId}-description`}
-            value={definition.description}
-            onChange={(event) =>
-              onChange({ ...definition, description: event.target.value })
-            }
-          />
-          <FieldDescription>{m.routines_description_hint()}</FieldDescription>
-        </Field>
+        <RoutineIdentityFields
+          autoFocus
+          definition={definition}
+          idPrefix={formId}
+          onChange={onChange}
+        />
         {definition.trigger.type !== "manual" ? (
           <Field orientation="horizontal">
             <Switch
@@ -113,6 +87,7 @@ export function RoutineDefinitionForm({
         <RoutineTriggerFields
           collectionOwner={collectionOwner}
           definition={definition}
+          idPrefix={formId}
           issues={issues}
           onChange={onChange}
         />
@@ -124,28 +99,17 @@ export function RoutineDefinitionForm({
           definition={definition}
           executorError={executorError}
           executors={executors}
+          idPrefix={formId}
           issues={issues}
           onChange={onChange}
         />
       </FieldSet>
 
-      <Field>
-        <FieldLabel>
-          {definition.action.type === "run_agent"
-            ? m.routines_instruction_label()
-            : m.routines_rule_description_label()}
-        </FieldLabel>
-        <ControlledMarkdownEditor
-          key={formId}
-          value={definition.body}
-          placeholder={
-            definition.action.type === "run_agent"
-              ? m.routines_body_hint()
-              : m.routines_rule_body_hint()
-          }
-          onChange={(body) => onChange({ ...definition, body })}
-        />
-      </Field>
+      <RoutineContentField
+        definition={definition}
+        editorKey={formId}
+        onChange={onChange}
+      />
     </form>
   );
 }

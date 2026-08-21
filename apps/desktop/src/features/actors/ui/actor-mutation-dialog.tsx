@@ -83,7 +83,7 @@ export function ActorMutationDialog({
         if (!open) onClose();
       }}
     >
-      <DialogContent className="w-[calc(100vw-2rem)] max-w-[480px] overflow-hidden sm:max-w-[480px]">
+      <DialogContent className="overflow-hidden">
         <DialogHeader className="min-w-0">
           <DialogTitle>
             {dialogTitle(intent, review, duplicateEmail)}

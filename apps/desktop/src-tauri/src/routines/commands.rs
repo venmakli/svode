@@ -2,9 +2,8 @@ use std::path::Path;
 use tauri::{AppHandle, State};
 
 use super::model::{
-    CollectionEvent, MissedRuns, ResolvedRoutineOwner, RoutineAction, RoutineAutomaticConsent,
-    RoutineCatalogSnapshot, RoutineDefinition, RoutineManualDispatchResult, RoutineMutationResult,
-    RoutineOwnerInputKind, RoutineOwnerKind, RoutineTrigger, RoutineTriggerType,
+    ResolvedRoutineOwner, RoutineAutomaticConsent, RoutineCatalogSnapshot, RoutineDefinition,
+    RoutineManualDispatchResult, RoutineMutationResult, RoutineOwnerInputKind,
 };
 use super::{authority, dispatch, service};
 #[cfg(test)]
@@ -18,8 +17,6 @@ use crate::git::access::RepositoryAccessState;
 use crate::git::commands::GitState;
 use crate::index::{IndexKey, IndexState};
 use crate::terminal::TerminalManager;
-
-const DEFAULT_SCHEDULE_CRON: &str = "0 9 * * 1-5";
 
 #[derive(Debug)]
 struct RoutineOwnerInput {
@@ -143,10 +140,7 @@ pub async fn routines_create(
     space_id: String,
     owner_path: String,
     owner_kind: RoutineOwnerInputKind,
-    title: String,
-    description: Option<String>,
-    trigger_type: RoutineTriggerType,
-    timezone: Option<String>,
+    definition: RoutineDefinition,
     git_state: State<'_, GitState>,
     access_state: State<'_, RepositoryAccessState>,
     index_state: State<'_, IndexState>,
@@ -160,13 +154,7 @@ pub async fn routines_create(
         owner_kind,
     }
     .resolve()?;
-    let definition = match create_definition(
-        &title,
-        description.as_deref(),
-        trigger_type,
-        timezone.as_deref(),
-        owner.descriptor.kind,
-    ) {
+    let definition = match normalize_create_definition(definition) {
         Ok(definition) => definition,
         Err(message) => return Ok(RoutineMutationResult::Blocked { message }),
     };
@@ -175,7 +163,7 @@ pub async fn routines_create(
             &app,
             owner,
             definition,
-            service::RoutineMutationPolicy::desktop(),
+            service::RoutineMutationPolicy::desktop_create(),
             &git_state,
             &access_state,
             &index_state,
@@ -271,10 +259,12 @@ fn desktop_mutation_result(result: service::ManagedRoutineMutationResult) -> Rou
         service::ManagedRoutineMutationResult::Applied {
             routine_id,
             snapshot,
+            warnings,
             ..
         } => RoutineMutationResult::Applied {
             routine_id,
             snapshot,
+            warnings,
         },
         service::ManagedRoutineMutationResult::Conflict {
             current_fingerprint,
@@ -324,58 +314,35 @@ pub async fn routines_dispatch_manual(
     .map(RoutineManualDispatchResult::from_dispatch)
 }
 
-fn create_definition(
-    title: &str,
-    description: Option<&str>,
-    trigger_type: RoutineTriggerType,
-    timezone: Option<&str>,
-    owner_kind: RoutineOwnerKind,
+fn normalize_create_definition(
+    mut definition: RoutineDefinition,
 ) -> Result<RoutineDefinition, String> {
-    let title = title.trim();
-    if title.is_empty() || title.chars().count() > 240 {
+    let title = definition
+        .title
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "routine title must contain 1 to 240 characters".to_string())?;
+    if title.chars().count() > 240 {
         return Err("routine title must contain 1 to 240 characters".into());
     }
-    let description = description.map(str::trim).filter(|value| !value.is_empty());
-    if description.is_some_and(|value| value.chars().count() > 2_000) {
+    definition.title = Some(title);
+    definition.description = definition
+        .description
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    if definition
+        .description
+        .as_ref()
+        .is_some_and(|value| value.chars().count() > 2_000)
+    {
         return Err("routine description must contain at most 2000 characters".into());
     }
-    let (enabled, trigger) = match trigger_type {
-        RoutineTriggerType::Manual => (None, RoutineTrigger::Manual),
-        RoutineTriggerType::Schedule => {
-            let timezone = timezone
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| "schedule routines require an explicit IANA timezone".to_string())?;
-            (
-                Some(false),
-                RoutineTrigger::Schedule {
-                    cron: DEFAULT_SCHEDULE_CRON.into(),
-                    timezone: timezone.into(),
-                    missed_runs: MissedRuns::Skip,
-                },
-            )
-        }
-        RoutineTriggerType::Event if owner_kind == RoutineOwnerKind::Collection => (
-            Some(false),
-            RoutineTrigger::Event {
-                event: CollectionEvent::EntryCreated,
-                match_: None,
-            },
-        ),
-        RoutineTriggerType::Event => {
-            return Err("event routines require a Collection owner".into());
-        }
+    definition.enabled = if matches!(definition.trigger, super::model::RoutineTrigger::Manual) {
+        None
+    } else {
+        Some(false)
     };
-    Ok(RoutineDefinition {
-        title: Some(title.into()),
-        description: description.map(str::to_owned),
-        enabled,
-        trigger,
-        action: RoutineAction::RunAgent {
-            executor: String::new(),
-        },
-        body: String::new(),
-    })
+    Ok(definition)
 }
 
 #[cfg(test)]
@@ -401,17 +368,27 @@ mod tests {
         }
     }
 
+    use crate::routines::model::{CollectionEvent, MissedRuns, RoutineAction, RoutineTrigger};
+
     #[test]
-    fn create_defaults_are_disabled_until_an_executor_is_chosen() {
-        let definition = create_definition(
-            "Weekly review",
-            Some("  Summarizes weekly changes.  "),
-            RoutineTriggerType::Schedule,
-            Some("Europe/Paris"),
-            RoutineOwnerKind::Space,
-        )
+    fn full_create_candidate_is_preserved_and_automatic_routines_are_disabled() {
+        let definition = normalize_create_definition(RoutineDefinition {
+            title: Some("  Weekly review  ".into()),
+            description: Some("  Summarizes weekly changes.  ".into()),
+            enabled: Some(true),
+            trigger: RoutineTrigger::Schedule {
+                cron: "30 8 * * 1".into(),
+                timezone: "Europe/Paris".into(),
+                missed_runs: MissedRuns::RunOnce,
+            },
+            action: RoutineAction::RunAgent {
+                executor: "agent:01arz3ndektsv4rrffq69g5fav".into(),
+            },
+            body: "Review the week.".into(),
+        })
         .unwrap();
         assert_eq!(definition.enabled, Some(false));
+        assert_eq!(definition.title.as_deref(), Some("Weekly review"));
         assert_eq!(
             definition.description.as_deref(),
             Some("Summarizes weekly changes.")
@@ -419,25 +396,46 @@ mod tests {
         assert!(matches!(
             definition.trigger,
             RoutineTrigger::Schedule {
-                missed_runs: MissedRuns::Skip,
+                missed_runs: MissedRuns::RunOnce,
                 ..
             }
         ));
-        assert_eq!(definition.action.executor(), Some(""));
+        assert_eq!(
+            definition.action.executor(),
+            Some("agent:01arz3ndektsv4rrffq69g5fav")
+        );
+        assert_eq!(definition.body, "Review the week.");
     }
 
     #[test]
-    fn event_create_is_collection_only() {
-        assert!(
-            create_definition(
-                "Event",
-                None,
-                RoutineTriggerType::Event,
-                None,
-                RoutineOwnerKind::Project,
-            )
-            .is_err()
-        );
+    fn manual_create_candidate_drops_an_inapplicable_enabled_value() {
+        let definition = normalize_create_definition(RoutineDefinition {
+            title: Some("Manual".into()),
+            description: None,
+            enabled: Some(true),
+            trigger: RoutineTrigger::Manual,
+            action: RoutineAction::RunAgent {
+                executor: "agent:01arz3ndektsv4rrffq69g5fav".into(),
+            },
+            body: String::new(),
+        })
+        .unwrap();
+        assert_eq!(definition.enabled, None);
+    }
+
+    #[test]
+    fn full_create_candidate_requires_bounded_identity_before_service_write() {
+        let result = normalize_create_definition(RoutineDefinition {
+            title: Some("   ".into()),
+            description: None,
+            enabled: None,
+            trigger: RoutineTrigger::Manual,
+            action: RoutineAction::RunAgent {
+                executor: "agent:01arz3ndektsv4rrffq69g5fav".into(),
+            },
+            body: String::new(),
+        });
+        assert!(result.is_err());
     }
 
     #[tokio::test]

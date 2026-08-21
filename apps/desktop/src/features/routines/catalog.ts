@@ -11,7 +11,6 @@ export {
 export type { RoutineOwnerInput } from "./api/routines-api";
 export type {
   RoutineCatalogSnapshot,
-  RoutineCreateInput,
   RoutineDefinition,
   RoutineDiagnostic,
   RoutineDispatchBlockedCode,

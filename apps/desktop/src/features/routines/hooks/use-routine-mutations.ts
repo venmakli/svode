@@ -1,7 +1,6 @@
 import { useCallback, useState } from "react";
 
 import {
-  createRoutine,
   deleteRoutine,
   updateRoutine,
   type RoutineOwnerInput,
@@ -9,7 +8,6 @@ import {
 import { routineErrorMessage } from "./use-routine-catalog";
 import type {
   RoutineCatalogSnapshot,
-  RoutineCreateInput,
   RoutineDefinition,
   RoutineMutationResult,
   RoutineRow,
@@ -33,13 +31,6 @@ export function useRoutineMutations({
   replaceSnapshot(snapshot: RoutineCatalogSnapshot): void;
   onDetailInvalidated(): void | Promise<void>;
 }) {
-  const [createOpen, setCreateOpen] = useState(false);
-  const [createInput, setCreateInput] = useState<RoutineCreateInput>(() => ({
-    description: "",
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-    title: "",
-    triggerType: "manual",
-  }));
   const [editSession, setEditSession] = useState<RoutineEditSession | null>(
     null,
   );
@@ -106,40 +97,6 @@ export function useRoutineMutations({
     [handleFailure, onDetailInvalidated, owner, replaceSnapshot],
   );
 
-  const submitCreate = useCallback(async () => {
-    setPending(true);
-    setError(null);
-    try {
-      const result = await createRoutine(owner, createInput);
-      if (result.status !== "applied") {
-        await handleFailure(result);
-        return;
-      }
-      replaceSnapshot(result.snapshot);
-      setCreateOpen(false);
-      setCreateInput((current) => ({
-        ...current,
-        description: "",
-        title: "",
-        triggerType: "manual",
-      }));
-      const row = result.snapshot.rows.find(
-        (candidate) => candidate.id === result.routineId,
-      );
-      if (row?.definition) {
-        setEditSession({
-          draft: row.definition,
-          guard: { dirty: false },
-          row,
-        });
-      }
-    } catch (reason) {
-      setError(routineErrorMessage(reason));
-    } finally {
-      setPending(false);
-    }
-  }, [createInput, handleFailure, owner, replaceSnapshot]);
-
   const submitDelete = useCallback(async () => {
     if (!deleteTarget) return;
     setPending(true);
@@ -176,17 +133,10 @@ export function useRoutineMutations({
 
   return {
     applyUpdate,
-    closeCreate: () => !pending && setCreateOpen(false),
     closeDelete: () => !pending && setDeleteTarget(null),
-    createInput,
-    createOpen,
     deleteTarget,
     editSession,
     error,
-    openCreate: () => {
-      setError(null);
-      setCreateOpen(true);
-    },
     openDelete: (row: RoutineRow) => {
       setError(null);
       setDeleteTarget(row);
@@ -201,9 +151,7 @@ export function useRoutineMutations({
       });
     },
     pending,
-    setCreateInput,
     setEditSession,
-    submitCreate,
     submitDelete,
   };
 }
