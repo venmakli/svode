@@ -2,6 +2,7 @@ import {
   getGlobalIdentity as getPlatformGlobalIdentity,
   getProjectFanoutPreview as getPlatformProjectFanoutPreview,
   getRepoIdentity as getPlatformRepoIdentity,
+  listenGlobalIdentityChanged as listenPlatformGlobalIdentityChanged,
   saveGlobalIdentity as savePlatformGlobalIdentity,
   saveProjectIdentity as savePlatformProjectIdentity,
   saveRepoIdentity as savePlatformRepoIdentity,
@@ -9,6 +10,7 @@ import {
 
 import type {
   FanoutPreviewEntry,
+  GlobalIdentityMutationResult,
   GlobalIdentityResult,
   RepoIdentityResult,
 } from "../model";
@@ -30,8 +32,18 @@ export function getGlobalIdentity(): Promise<GlobalIdentityResult> {
   return getPlatformGlobalIdentity();
 }
 
-export function saveGlobalIdentity(name: string, email: string): Promise<void> {
-  return savePlatformGlobalIdentity({ name, email });
+export function saveGlobalIdentity(
+  name: string,
+  email: string,
+  expectedFingerprint: string,
+): Promise<GlobalIdentityMutationResult> {
+  return savePlatformGlobalIdentity({ name, email, expectedFingerprint });
+}
+
+export function listenGlobalIdentityChanged(
+  handler: () => void,
+): Promise<() => void> {
+  return listenPlatformGlobalIdentityChanged(handler);
 }
 
 export function getRepoIdentity(repoPath: string): Promise<RepoIdentityResult> {

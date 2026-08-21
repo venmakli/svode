@@ -53,6 +53,7 @@ pub fn run() {
         .manage(agent_sessions::AgentSessionsState::new())
         .manage(Arc::new(files::WriteNonceRegistry::new()))
         .manage(git::GitState::new())
+        .manage(identity::IdentityState::new())
         .manage(git::access::RepositoryAccessState::new())
         .manage(index::IndexState::new())
         .manage(routines::RoutineSchedulerState::new())

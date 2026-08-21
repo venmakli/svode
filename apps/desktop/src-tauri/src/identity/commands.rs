@@ -1,10 +1,12 @@
 use std::path::{Path, PathBuf};
 
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use super::{
-    FanoutPreviewEntry, GlobalIdentityResult, RepoIdentityResult, apply_identity_to_project,
-    get_effective_identity, get_global_identity, set_global_identity, set_local_identity,
+    FanoutPreviewEntry, GitIdentity, GlobalIdentityMutationPlan, GlobalIdentityMutationResult,
+    GlobalIdentityResult, IdentityState, RepoIdentityResult, apply_identity_to_project,
+    get_effective_identity, get_global_identity_result, plan_global_identity_mutation,
+    set_global_identity, set_local_identity, validate_email, validate_name,
 };
 use crate::AppError;
 use crate::git::commands::{GitState, require_cli};
@@ -12,28 +14,57 @@ use crate::git::ops;
 use crate::space::config;
 use crate::space::types::SpaceGitType;
 
+const GLOBAL_IDENTITY_CHANGED_EVENT: &str = "git-identity:global-changed";
+
 #[tauri::command]
 pub async fn get_git_identity(
     state: State<'_, GitState>,
 ) -> Result<GlobalIdentityResult, AppError> {
     let cli = require_cli(&state)?;
-    let global = get_global_identity(&cli).await?;
-    let source = if global.is_some() {
-        "global"
-    } else {
-        "missing"
-    };
-    Ok(GlobalIdentityResult { global, source })
+    get_global_identity_result(&cli).await
 }
 
 #[tauri::command]
 pub async fn set_git_identity(
-    state: State<'_, GitState>,
+    app: AppHandle,
+    git_state: State<'_, GitState>,
+    identity_state: State<'_, IdentityState>,
     name: String,
     email: String,
-) -> Result<(), AppError> {
-    let cli = require_cli(&state)?;
-    set_global_identity(&cli, &name, &email).await
+    expected_fingerprint: String,
+) -> Result<GlobalIdentityMutationResult, AppError> {
+    let cli = require_cli(&git_state)?;
+    let _guard = identity_state.lock().await;
+    let current = get_global_identity_result(&cli).await?;
+    let target = GitIdentity {
+        name: validate_name(&name)?,
+        email: validate_email(&email)?,
+    };
+
+    match plan_global_identity_mutation(&current, &expected_fingerprint, &target) {
+        GlobalIdentityMutationPlan::Conflict => Ok(GlobalIdentityMutationResult {
+            status: "conflict",
+            canonical: current,
+        }),
+        GlobalIdentityMutationPlan::Unchanged => Ok(GlobalIdentityMutationResult {
+            status: "unchanged",
+            canonical: current,
+        }),
+        GlobalIdentityMutationPlan::Update => {
+            set_global_identity(&cli, &target.name, &target.email).await?;
+            let canonical = get_global_identity_result(&cli).await?;
+            if canonical.global.as_ref() != Some(&target) {
+                return Err(AppError::General(
+                    "global Git identity did not match the requested value after save".to_string(),
+                ));
+            }
+            let _ = app.emit(GLOBAL_IDENTITY_CHANGED_EVENT, ());
+            Ok(GlobalIdentityMutationResult {
+                status: "updated",
+                canonical,
+            })
+        }
+    }
 }
 
 #[tauri::command]

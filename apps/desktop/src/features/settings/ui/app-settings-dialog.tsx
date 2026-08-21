@@ -40,13 +40,13 @@ import {
   AppAboutSection,
   AppAppearanceSection,
   AppCliAgentsSection,
-  AppProfileSection,
+  AppGitIdentitySection,
   AppShortcutsSection,
 } from "./app-settings-sections";
 import { McpIntegrationsSection } from "./mcp-section";
 
 type Section =
-  | "profile"
+  | "git-identity"
   | "appearance"
   | "mcp-integrations"
   | "cli-agents"
@@ -60,8 +60,8 @@ const NAV_ITEMS: {
   show: (options: { enableLegacyAgentIntegration: boolean }) => boolean;
 }[] = [
   {
-    key: "profile",
-    label: () => m.settings_profile(),
+    key: "git-identity",
+    label: () => m.settings_git_identity(),
     icon: User,
     show: () => true,
   },
@@ -110,7 +110,7 @@ export function AppSettingsDialog({
 }: AppSettingsDialogProps) {
   const appearanceSettings = useAppSettingsAppearance();
   const aboutSettings = useAppSettingsAbout();
-  const [section, setSection] = useState<Section>("profile");
+  const [section, setSection] = useState<Section>("git-identity");
   const identitySettings = useGlobalIdentitySettings(open);
   const cliAgents = useCliAgents({
     open,
@@ -120,7 +120,7 @@ export function AppSettingsDialog({
   useEffect(() => {
     if (!open) return;
     const resetSection = window.setTimeout(() => {
-      setSection("profile");
+      setSection("git-identity");
     }, 0);
     return () => window.clearTimeout(resetSection);
   }, [open]);
@@ -185,8 +185,8 @@ export function AppSettingsDialog({
               </div>
             </header>
             <div className="flex min-w-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto p-4">
-              {section === "profile" && (
-                <AppProfileSection settings={identitySettings} />
+              {section === "git-identity" && (
+                <AppGitIdentitySection settings={identitySettings} />
               )}
               {section === "appearance" && (
                 <AppAppearanceSection settings={appearanceSettings} />

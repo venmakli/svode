@@ -14,6 +14,10 @@ export function useGlobalIdentity() {
   return useIdentityStore((state) => state.global);
 }
 
+export function useGlobalIdentityFingerprint() {
+  return useIdentityStore((state) => state.fingerprint);
+}
+
 export function useSaveGlobalIdentity() {
   return useIdentityStore((state) => state.saveGlobal);
 }

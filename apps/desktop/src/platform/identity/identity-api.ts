@@ -1,4 +1,7 @@
 import { invokeCommand } from "@/platform/native/invoke";
+import { listen, type UnlistenFn } from "@/platform/native/events";
+
+const GLOBAL_IDENTITY_CHANGED_EVENT = "git-identity:global-changed";
 
 export interface GitIdentityDto {
   name: string;
@@ -16,6 +19,17 @@ export interface IdentityFieldSourcesDto {
 export interface GlobalIdentityResultDto {
   global: GitIdentityDto | null;
   source: "global" | "missing";
+  fingerprint: string;
+}
+
+export type GlobalIdentityMutationStatusDto =
+  | "updated"
+  | "unchanged"
+  | "conflict";
+
+export interface GlobalIdentityMutationResultDto {
+  status: GlobalIdentityMutationStatusDto;
+  canonical: GlobalIdentityResultDto;
 }
 
 export interface RepoIdentityResultDto {
@@ -53,6 +67,7 @@ export interface SaveProjectIdentityInputDto extends Record<string, unknown> {
 export interface SaveGlobalIdentityInputDto extends Record<string, unknown> {
   name: string;
   email: string;
+  expectedFingerprint: string;
 }
 
 export function getGlobalIdentity(): Promise<GlobalIdentityResultDto> {
@@ -61,8 +76,17 @@ export function getGlobalIdentity(): Promise<GlobalIdentityResultDto> {
 
 export function saveGlobalIdentity(
   input: SaveGlobalIdentityInputDto,
-): Promise<void> {
-  return invokeCommand<void>("set_git_identity", input);
+): Promise<GlobalIdentityMutationResultDto> {
+  return invokeCommand<GlobalIdentityMutationResultDto>(
+    "set_git_identity",
+    input,
+  );
+}
+
+export function listenGlobalIdentityChanged(
+  handler: () => void,
+): Promise<UnlistenFn> {
+  return listen<void>(GLOBAL_IDENTITY_CHANGED_EVENT, () => handler());
 }
 
 export function getRepoIdentity(

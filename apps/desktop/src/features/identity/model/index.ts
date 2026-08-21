@@ -3,6 +3,8 @@ export type {
   FanoutPreviewEntry,
   GitIdentity,
   GitIdentityFieldSource,
+  GlobalIdentityMutationResult,
+  GlobalIdentityMutationStatus,
   GlobalIdentityResult,
   IdentityFieldSources,
   RepoIdentityResult,

@@ -4,6 +4,8 @@ export type {
   FanoutPreviewEntry,
   GitIdentity,
   GitIdentityFieldSource,
+  GlobalIdentityMutationResult,
+  GlobalIdentityMutationStatus,
   GlobalIdentityResult,
   IdentityFieldSources,
   RepoIdentityResult,
@@ -13,6 +15,7 @@ export {
   getGlobalIdentity,
   getProjectFanoutPreview,
   getRepoIdentity,
+  listenGlobalIdentityChanged,
   saveGlobalIdentity,
   saveProjectIdentity,
   saveRepoIdentity,
@@ -21,6 +24,7 @@ export {
 } from "./api";
 export {
   useGlobalIdentity,
+  useGlobalIdentityFingerprint,
   useIdentityCheck,
   useIdentityGateState,
   useIdentityRefreshNotifier,

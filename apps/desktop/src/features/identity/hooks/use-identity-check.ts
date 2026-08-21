@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { listenGlobalIdentityChanged } from "../api";
 import { useIdentityStore } from "../model";
 
 /**
@@ -8,14 +9,40 @@ import { useIdentityStore } from "../model";
  */
 export function useIdentityCheck() {
   const load = useIdentityStore((s) => s.load);
-  const loaded = useIdentityStore((s) => s.loaded);
-  const loading = useIdentityStore((s) => s.loading);
-  const loadError = useIdentityStore((s) => s.loadError);
 
   useEffect(() => {
-    if (loaded || loading || loadError) return;
-    void load().catch((err) => {
-      console.error("load global identity failed:", err);
-    });
-  }, [load, loaded, loading, loadError]);
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    const reconcileIdentity = () => {
+      void load().catch((error) => {
+        console.error("load global identity failed:", error);
+      });
+    };
+    const handleFocus = () => reconcileIdentity();
+
+    window.addEventListener("focus", handleFocus);
+    void listenGlobalIdentityChanged(() => {
+      if (!disposed) reconcileIdentity();
+    })
+      .then((nextUnlisten) => {
+        if (disposed) {
+          void nextUnlisten();
+          return;
+        }
+        unlisten = nextUnlisten;
+      })
+      .catch((error) => {
+        console.error("Failed to subscribe to global identity changes:", error);
+      })
+      .finally(() => {
+        if (!disposed) reconcileIdentity();
+      });
+
+    return () => {
+      disposed = true;
+      window.removeEventListener("focus", handleFocus);
+      if (unlisten) void unlisten();
+    };
+  }, [load]);
 }

@@ -2,6 +2,7 @@ export {
   getGlobalIdentity,
   getProjectFanoutPreview,
   getRepoIdentity,
+  listenGlobalIdentityChanged,
   saveGlobalIdentity,
   saveProjectIdentity,
   saveRepoIdentity,

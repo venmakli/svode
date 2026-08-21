@@ -14,6 +14,17 @@ export interface IdentityFieldSources {
 export interface GlobalIdentityResult {
   global: GitIdentity | null;
   source: "global" | "missing";
+  fingerprint: string;
+}
+
+export type GlobalIdentityMutationStatus =
+  | "updated"
+  | "unchanged"
+  | "conflict";
+
+export interface GlobalIdentityMutationResult {
+  status: GlobalIdentityMutationStatus;
+  canonical: GlobalIdentityResult;
 }
 
 export interface RepoIdentityResult {

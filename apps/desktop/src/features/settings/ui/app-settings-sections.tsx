@@ -1,7 +1,18 @@
 import { ExternalLink, RefreshCw } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Field,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -28,52 +39,99 @@ type AppSettingsAbout = ReturnType<typeof useAppSettingsAbout>;
 type AppSettingsAppearance = ReturnType<typeof useAppSettingsAppearance>;
 type GlobalIdentitySettings = ReturnType<typeof useGlobalIdentitySettings>;
 
-interface AppProfileSectionProps {
+interface AppGitIdentitySectionProps {
   settings: GlobalIdentitySettings;
 }
 
-export function AppProfileSection({ settings }: AppProfileSectionProps) {
+export function AppGitIdentitySection({
+  settings,
+}: AppGitIdentitySectionProps) {
   return (
     <div className="flex max-w-sm flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <Label className="text-sm font-medium">
+        <h2 className="text-sm font-medium">
           {m.settings_profile_git_identity_title()}
-        </Label>
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          {m.settings_git_identity_scope()}
+        </p>
       </div>
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="settings-identity-name">
-          {m.identity_name_label()}
-        </Label>
-        <Input
-          id="settings-identity-name"
-          value={settings.identityName}
-          onChange={(event) => settings.setIdentityName(event.target.value)}
-        />
-        {settings.identityName && !settings.identityNameValid && (
-          <p className="text-xs text-destructive">{m.identity_name_empty()}</p>
-        )}
-      </div>
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="settings-identity-email">
-          {m.identity_email_label()}
-        </Label>
-        <Input
-          id="settings-identity-email"
-          type="email"
-          value={settings.identityEmail}
-          onChange={(event) => settings.setIdentityEmail(event.target.value)}
-        />
-        {settings.identityEmail && !settings.identityEmailValid && (
-          <p className="text-xs text-destructive">
-            {m.identity_email_invalid()}
-          </p>
-        )}
-      </div>
-      <p className="text-xs text-muted-foreground">
-        {m.settings_profile_git_identity_hint()}
-      </p>
+      <FieldGroup>
+        <Field
+          data-invalid={Boolean(
+            settings.identityName && !settings.identityNameValid,
+          )}
+        >
+          <FieldLabel htmlFor="settings-identity-name">
+            {m.identity_name_label()}
+          </FieldLabel>
+          <Input
+            id="settings-identity-name"
+            value={settings.identityName}
+            disabled={settings.savingIdentity}
+            aria-invalid={Boolean(
+              settings.identityName && !settings.identityNameValid,
+            )}
+            onChange={(event) => settings.setIdentityName(event.target.value)}
+          />
+          {settings.identityName && !settings.identityNameValid && (
+            <FieldError>{m.identity_name_empty()}</FieldError>
+          )}
+        </Field>
+        <Field
+          data-invalid={Boolean(
+            settings.identityEmail && !settings.identityEmailValid,
+          )}
+        >
+          <FieldLabel htmlFor="settings-identity-email">
+            {m.identity_email_label()}
+          </FieldLabel>
+          <Input
+            id="settings-identity-email"
+            type="email"
+            value={settings.identityEmail}
+            disabled={settings.savingIdentity}
+            aria-invalid={Boolean(
+              settings.identityEmail && !settings.identityEmailValid,
+            )}
+            onChange={(event) => settings.setIdentityEmail(event.target.value)}
+          />
+          {settings.identityEmail && !settings.identityEmailValid && (
+            <FieldError>{m.identity_email_invalid()}</FieldError>
+          )}
+        </Field>
+      </FieldGroup>
+      {settings.identityStale && (
+        <Alert>
+          <AlertTitle>{m.settings_git_identity_stale_title()}</AlertTitle>
+          <AlertDescription>
+            <p>{m.settings_git_identity_stale_description()}</p>
+            <div className="flex flex-wrap gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={settings.savingIdentity}
+                onClick={settings.handleUseLatestIdentity}
+              >
+                {m.settings_git_identity_use_latest()}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={settings.savingIdentity}
+                onClick={settings.handleKeepIdentityDraft}
+              >
+                {m.settings_git_identity_keep_draft()}
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
       <div className="pt-1">
         <Button
+          type="button"
           onClick={settings.handleSaveIdentity}
           disabled={!settings.canSaveIdentity}
         >
