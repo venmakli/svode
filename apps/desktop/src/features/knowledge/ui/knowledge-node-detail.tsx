@@ -37,7 +37,10 @@ export function KnowledgeNodeDetail({
     );
   }
   return (
-    <ScrollArea className="size-full min-w-0 overflow-hidden">
+    <ScrollArea
+      className="size-full min-w-0 overflow-hidden [&_[data-slot=scroll-area-viewport]>div]:!block"
+      data-knowledge-node-detail-scroll
+    >
       <div
         className="flex w-full min-w-0 max-w-full flex-col gap-4 overflow-hidden p-4"
         data-knowledge-node-detail

@@ -51,6 +51,11 @@ test("constrains document detail actions and relations to the Sidebar width", ()
   const dom = new JSDOM(html);
 
   expect(
+    hasClasses(dom, "[data-knowledge-node-detail-scroll]", [
+      "[&_[data-slot=scroll-area-viewport]>div]:!block",
+    ]),
+  ).toBe(true);
+  expect(
     hasClasses(dom, "[data-knowledge-node-detail]", [
       "w-full",
       "min-w-0",
