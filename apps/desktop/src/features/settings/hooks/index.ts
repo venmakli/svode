@@ -1,4 +1,3 @@
-export { invalidateAppSettings, useAppSettings } from "./use-app-settings";
 export {
   AppPreferencesProvider,
   useAppLocale,

@@ -66,6 +66,7 @@ fn appearance_object_mut(
         .ok_or_else(|| AppError::General("app settings appearance must be an object".to_string()))
 }
 
+#[cfg(test)]
 fn normalize_app_settings_value(
     mut value: serde_json::Value,
 ) -> Result<serde_json::Value, AppError> {
@@ -99,6 +100,7 @@ fn write_app_settings_value(config_dir: &Path, value: &serde_json::Value) -> Res
 }
 
 /// Read app settings from config_dir/settings.json, creating defaults if missing.
+#[cfg(test)]
 pub fn read_app_settings(config_dir: &Path) -> Result<AppSettings, AppError> {
     let Some(value) = read_app_settings_value(config_dir)? else {
         let settings = AppSettings::default();
@@ -135,21 +137,12 @@ pub fn read_app_preferences(config_dir: &Path) -> Result<AppPreferences, AppErro
 }
 
 /// Write app settings to config_dir/settings.json.
+#[cfg(test)]
 pub fn write_app_settings(config_dir: &Path, settings: &AppSettings) -> Result<(), AppError> {
     std::fs::create_dir_all(config_dir)?;
     let data = serde_json::to_string_pretty(settings)?;
     std::fs::write(config_dir.join("settings.json"), data)?;
     Ok(())
-}
-
-pub fn write_app_settings_preserving_locale(
-    config_dir: &Path,
-    settings: &AppSettings,
-) -> Result<(), AppError> {
-    let current = read_app_settings(config_dir)?;
-    let mut updated = settings.clone();
-    updated.appearance.language = current.appearance.language;
-    write_app_settings(config_dir, &updated)
 }
 
 fn set_app_preference(
@@ -355,6 +348,27 @@ mod tests {
     }
 
     #[test]
+    fn app_preference_projection_excludes_legacy_window_and_agent_state() {
+        let projection = serde_json::to_value(AppPreferences {
+            theme: "dark".to_string(),
+            language: "ru".to_string(),
+            theme_needs_recovery: false,
+        })
+        .expect("serialize app preferences");
+
+        assert_eq!(
+            projection,
+            serde_json::json!({
+                "theme": "dark",
+                "language": "ru",
+                "themeNeedsRecovery": false
+            })
+        );
+        assert!(projection.get("window").is_none());
+        assert!(projection.get("agents").is_none());
+    }
+
+    #[test]
     fn same_theme_is_a_write_free_no_op_and_invalid_theme_is_rejected() {
         let config_dir = tempfile::tempdir().expect("config dir");
         let path = config_dir.path().join("settings.json");
@@ -456,24 +470,6 @@ mod tests {
                 "en"
             );
         }
-    }
-
-    #[test]
-    fn full_settings_save_keeps_the_authoritative_locale() {
-        let config_dir = tempfile::tempdir().expect("config dir");
-        write_app_settings(config_dir.path(), &settings_with_siblings("ru"))
-            .expect("write current settings");
-        let mut stale = settings_with_siblings("en");
-        stale.appearance.theme = "light".to_string();
-        stale.window.width = 1280;
-
-        write_app_settings_preserving_locale(config_dir.path(), &stale)
-            .expect("save sibling settings");
-
-        let saved = read_app_settings(config_dir.path()).expect("read saved settings");
-        assert_eq!(saved.appearance.language, "ru");
-        assert_eq!(saved.appearance.theme, "light");
-        assert_eq!(saved.window.width, 1280);
     }
 
     #[test]

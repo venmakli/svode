@@ -1,8 +1,6 @@
 export {
   getAppPreferences,
-  getAppSettings,
   listenAppPreferencesChanged,
-  saveAppSettings,
   setAppLocale,
   setAppTheme,
 } from "./app-settings-api";

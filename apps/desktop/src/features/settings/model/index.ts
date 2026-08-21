@@ -1,11 +1,13 @@
 export type {
-  AppAgentSettings,
   AppPreferences,
-  AppSettings,
   AvailableAgent,
-  DetectedCli,
   SymlinkHealthReport,
 } from "./types";
+export {
+  APP_SETTINGS_SECTION_KINDS,
+  type AppSettingsSection,
+  type AppSettingsSectionKind,
+} from "./app-settings-sections";
 export {
   APP_LOCALES,
   isAppLocale,

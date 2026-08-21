@@ -6,28 +6,10 @@ export interface AvailableAgent {
   docsUrl: string;
 }
 
-export interface AppSettings {
-  appearance: { theme: string; language: string };
-  window: { width: number; height: number };
-  agents?: AppAgentSettings;
-}
-
 export interface AppPreferences {
   theme: string;
   language: string;
   themeNeedsRecovery: boolean;
-}
-
-export interface AppAgentSettings {
-  detected: DetectedCli[];
-  lastScan?: string;
-}
-
-export interface DetectedCli {
-  name: string;
-  path: string;
-  version?: string;
-  authStatus: string;
 }
 
 export interface SymlinkHealthReport {

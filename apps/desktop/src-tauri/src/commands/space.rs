@@ -163,33 +163,6 @@ pub fn get_app_preferences(
 }
 
 #[tauri::command]
-pub fn get_app_settings(
-    app: AppHandle,
-    settings_state: State<'_, settings::AppSettingsState>,
-) -> Result<AppSettings, AppError> {
-    let _guard = settings_state.lock()?;
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| AppError::General(e.to_string()))?;
-    settings::read_app_settings(&config_dir)
-}
-
-#[tauri::command]
-pub fn save_app_settings(
-    app: AppHandle,
-    settings_state: State<'_, settings::AppSettingsState>,
-    settings_data: AppSettings,
-) -> Result<(), AppError> {
-    let _guard = settings_state.lock()?;
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| AppError::General(e.to_string()))?;
-    settings::write_app_settings_preserving_locale(&config_dir, &settings_data)
-}
-
-#[tauri::command]
 pub fn set_app_locale(
     app: AppHandle,
     settings_state: State<'_, settings::AppSettingsState>,

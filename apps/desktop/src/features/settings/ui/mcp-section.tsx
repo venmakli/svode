@@ -65,7 +65,7 @@ function reportLines(report: McpDoctorReport | null) {
 function StatusPath({ value }: { value: string }) {
   return (
     <p
-      className="block w-full min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-xs text-muted-foreground"
+      className="block w-full min-w-0 max-w-full truncate text-xs text-muted-foreground"
       title={value}
     >
       {value}
@@ -77,8 +77,9 @@ export function McpIntegrationsSection() {
   const {
     status,
     doctor,
-    loading,
-    pendingClient,
+    refreshing,
+    doctorPending,
+    pendingClients,
     manualConfigText,
     loadStatus,
     handleToggle,
@@ -110,11 +111,11 @@ export function McpIntegrationsSection() {
             size="sm"
             className="shrink-0"
             onClick={loadStatus}
-            disabled={loading}
+            disabled={refreshing}
           >
             <RefreshCw
               data-icon="inline-start"
-              className={loading ? "animate-spin" : undefined}
+              className={refreshing ? "animate-spin" : undefined}
             />
             {m.settings_mcp_refresh()}
           </Button>
@@ -171,7 +172,7 @@ export function McpIntegrationsSection() {
                 checked={client.installed}
                 disabled={
                   !client.found ||
-                  pendingClient === client.id ||
+                  pendingClients.has(client.id) ||
                   status?.server.status !== "installed"
                 }
                 aria-label={m.settings_mcp_client_toggle({
@@ -220,7 +221,7 @@ export function McpIntegrationsSection() {
             size="sm"
             className="shrink-0"
             onClick={handleDoctor}
-            disabled={loading}
+            disabled={doctorPending}
           >
             <Stethoscope data-icon="inline-start" />
             {m.settings_mcp_run_doctor()}

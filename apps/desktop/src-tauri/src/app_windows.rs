@@ -16,6 +16,10 @@ const MENU_NEW_WINDOW: &str = "app:new-window";
 const MENU_OPEN_FOLDER: &str = "app:open-folder";
 const MENU_OPEN_RECENT_PREFIX: &str = "app:open-recent:";
 const EVENT_OPEN_FOLDER: &str = "app-menu:open-folder";
+const DEFAULT_WINDOW_WIDTH: f64 = 1200.0;
+const DEFAULT_WINDOW_HEIGHT: f64 = 800.0;
+const MIN_WINDOW_WIDTH: f64 = 800.0;
+const MIN_WINDOW_HEIGHT: f64 = 600.0;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -404,8 +408,8 @@ fn open_or_focus_project_window(
 fn build_window(app: &AppHandle, label: &str, title: &str) -> Result<WebviewWindow, AppError> {
     let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::default())
         .title(title)
-        .inner_size(1200.0, 800.0)
-        .min_inner_size(800.0, 600.0)
+        .inner_size(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
+        .min_inner_size(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
         .decorations(true);
 
     #[cfg(target_os = "macos")]
@@ -597,5 +601,17 @@ mod tests {
                 "projectId": "project-a"
             })
         );
+    }
+
+    #[test]
+    fn code_owned_window_defaults_match_tauri_config() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("parse Tauri config");
+        let window = &config["app"]["windows"][0];
+
+        assert_eq!(window["width"], DEFAULT_WINDOW_WIDTH);
+        assert_eq!(window["height"], DEFAULT_WINDOW_HEIGHT);
+        assert_eq!(window["minWidth"], MIN_WINDOW_WIDTH);
+        assert_eq!(window["minHeight"], MIN_WINDOW_HEIGHT);
     }
 }

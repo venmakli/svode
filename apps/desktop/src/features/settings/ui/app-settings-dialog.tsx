@@ -36,6 +36,7 @@ import { useAppSettingsAbout } from "../hooks/use-app-settings-about";
 import { useAppSettingsAppearance } from "../hooks/use-app-settings-appearance";
 import { useCliAgents } from "../hooks/use-cli-agents";
 import { useGlobalIdentitySettings } from "../hooks/use-global-identity-settings";
+import type { AppSettingsSection } from "../model";
 import {
   AppAboutSection,
   AppAppearanceSection,
@@ -45,16 +46,8 @@ import {
 } from "./app-settings-sections";
 import { McpIntegrationsSection } from "./mcp-section";
 
-type Section =
-  | "git-identity"
-  | "appearance"
-  | "mcp-integrations"
-  | "cli-agents"
-  | "shortcuts"
-  | "about";
-
 const NAV_ITEMS: {
-  key: Section;
+  key: AppSettingsSection;
   label: () => string;
   icon: ComponentType<{ className?: string }>;
   show: (options: { enableLegacyAgentIntegration: boolean }) => boolean;
@@ -110,7 +103,7 @@ export function AppSettingsDialog({
 }: AppSettingsDialogProps) {
   const appearanceSettings = useAppSettingsAppearance();
   const aboutSettings = useAppSettingsAbout();
-  const [section, setSection] = useState<Section>("git-identity");
+  const [section, setSection] = useState<AppSettingsSection>("git-identity");
   const identitySettings = useGlobalIdentitySettings(open);
   const cliAgents = useCliAgents({
     open,

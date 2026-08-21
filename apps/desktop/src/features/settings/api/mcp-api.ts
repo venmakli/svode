@@ -1,6 +1,7 @@
 export {
   getMcpStatus,
   installMcpClient,
+  listenMcpStatusChanged,
   printMcpConfig,
   removeMcpClient,
   runMcpDoctor,

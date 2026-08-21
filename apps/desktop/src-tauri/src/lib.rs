@@ -60,6 +60,7 @@ pub fn run() {
         .manage(app_windows::AppWindowState::new())
         .manage(space::settings::AppSettingsState::new())
         .manage(mcp::active::ActiveProjectState::new())
+        .manage(mcp::commands::McpConfigState::new())
         .manage(properties::ActorCatalogState::new())
         .manage(terminal::TerminalManager::new())
         .menu(app_windows::build_initial_app_menu)
@@ -193,8 +194,6 @@ pub fn run() {
             commands::files::make_relative_link,
             commands::files::suggest_link_fix,
             commands::space::get_app_preferences,
-            commands::space::get_app_settings,
-            commands::space::save_app_settings,
             commands::space::set_app_locale,
             commands::space::set_app_theme,
             commands::space::list_projects,

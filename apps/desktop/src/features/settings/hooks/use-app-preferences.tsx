@@ -26,7 +26,6 @@ import {
   type AppLocale,
   type AppTheme,
 } from "../model";
-import { invalidateAppSettings } from "./use-app-settings";
 
 const LEGACY_THEME_STORAGE_KEY = "svode-theme";
 const SYSTEM_THEME_QUERY = "(prefers-color-scheme: dark)";
@@ -47,8 +46,9 @@ interface AppPreferencesContextValue extends ConfirmedPreferences {
   themePending: boolean;
 }
 
-const AppPreferencesContext =
-  createContext<AppPreferencesContextValue | null>(null);
+const AppPreferencesContext = createContext<AppPreferencesContextValue | null>(
+  null,
+);
 
 interface AppPreferencesProviderProps {
   children: ReactNode;
@@ -59,8 +59,9 @@ export function AppPreferencesProvider({
   children,
   fallback,
 }: AppPreferencesProviderProps) {
-  const [preferences, setPreferences] =
-    useState<ConfirmedPreferences | null>(null);
+  const [preferences, setPreferences] = useState<ConfirmedPreferences | null>(
+    null,
+  );
   const [localePending, setLocalePending] = useState(false);
   const [themePending, setThemePending] = useState(false);
   const preferencesRef = useRef<ConfirmedPreferences | null>(null);
@@ -102,10 +103,7 @@ export function AppPreferencesProvider({
 
       if (!projection.themeNeedsRecovery) {
         clearLegacyTheme();
-      } else if (
-        allowLegacyRecovery &&
-        !legacyRecoveryAttemptedRef.current
-      ) {
+      } else if (allowLegacyRecovery && !legacyRecoveryAttemptedRef.current) {
         legacyRecoveryAttemptedRef.current = true;
         const legacyTheme = readLegacyTheme();
         if (legacyTheme) {
@@ -161,11 +159,9 @@ export function AppPreferencesProvider({
     mountedRef.current = true;
 
     const reconcileConfirmedPreferences = () => {
-      void reconcilePreferences()
-        .then(() => invalidateAppSettings())
-        .catch((error) => {
-          console.error("Failed to reconcile app preferences:", error);
-        });
+      void reconcilePreferences().catch((error) => {
+        console.error("Failed to reconcile app preferences:", error);
+      });
     };
 
     const handleFocus = () => reconcileConfirmedPreferences();

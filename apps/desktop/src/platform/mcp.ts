@@ -1,4 +1,7 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
+import { listen, type UnlistenFn } from "@/platform/native/events";
+
+const MCP_STATUS_CHANGED_EVENT = "mcp:status-changed";
 
 export type McpClientId = "claude-code" | "codex";
 
@@ -83,6 +86,12 @@ export function getMcpActiveContext(): Promise<McpActiveContext | null> {
 
 export function getMcpStatus(): Promise<McpStatus> {
   return invoke<McpStatus>("mcp_get_status");
+}
+
+export function listenMcpStatusChanged(
+  handler: () => void,
+): Promise<UnlistenFn> {
+  return listen<void>(MCP_STATUS_CHANGED_EVENT, () => handler());
 }
 
 export function installMcpClient(client: McpClientId): Promise<McpStatus> {

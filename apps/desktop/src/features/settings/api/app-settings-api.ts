@@ -1,8 +1,6 @@
 import {
   getAppPreferences as getAppPreferencesDto,
-  getAppSettings as getAppSettingsDto,
   listenAppPreferencesChanged as listenAppPreferencesChangedDto,
-  saveAppSettings as saveAppSettingsDto,
   setAppLocale as setAppLocaleDto,
   setAppTheme as setAppThemeDto,
 } from "@/platform/settings/settings-api";
@@ -12,20 +10,11 @@ import {
   isAppTheme,
   type AppLocale,
   type AppPreferences,
-  type AppSettings,
   type AppTheme,
 } from "../model";
 
 export function getAppPreferences(): Promise<AppPreferences> {
   return getAppPreferencesDto();
-}
-
-export function getAppSettings(): Promise<AppSettings> {
-  return getAppSettingsDto();
-}
-
-export function saveAppSettings(settingsData: AppSettings): Promise<void> {
-  return saveAppSettingsDto(settingsData);
 }
 
 export async function setAppLocale(language: AppLocale): Promise<AppLocale> {
