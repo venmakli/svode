@@ -37,21 +37,26 @@ export function KnowledgeNodeDetail({
     );
   }
   return (
-    <ScrollArea className="size-full">
-      <div className="flex flex-col gap-4 p-4">
+    <ScrollArea className="size-full min-w-0 overflow-hidden">
+      <div
+        className="flex w-full min-w-0 max-w-full flex-col gap-4 overflow-hidden p-4"
+        data-knowledge-node-detail
+      >
         {onBack && (
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            className="self-start"
+            className="min-w-0 max-w-full self-start"
             onClick={onBack}
           >
             <ArrowLeft data-icon="inline-start" />
-            {m.knowledge_graph_back_to_results()}
+            <span className="truncate">
+              {m.knowledge_graph_back_to_results()}
+            </span>
           </Button>
         )}
-        <div className="flex items-start gap-3">
+        <div className="flex min-w-0 max-w-full items-start gap-3">
           <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
             <KnowledgeKindIcon kind={node.source.kind} />
           </div>
@@ -70,12 +75,16 @@ export function KnowledgeNodeDetail({
         <Button
           type="button"
           variant="outline"
+          className="w-full min-w-0 max-w-full overflow-hidden"
+          data-knowledge-open-source
           onClick={() => onOpenSource(node)}
         >
-          {m.knowledge_graph_open_source()}
+          <span className="min-w-0 truncate">
+            {m.knowledge_graph_open_source()}
+          </span>
           <ArrowUpRight data-icon="inline-end" />
         </Button>
-        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+        <dl className="grid w-full min-w-0 max-w-full grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 overflow-hidden text-xs">
           <dt className="text-muted-foreground">
             {m.knowledge_graph_source()}
           </dt>
@@ -102,7 +111,7 @@ export function KnowledgeNodeDetail({
           )}
         </dl>
         <Separator />
-        <section className="flex flex-col gap-2">
+        <section className="flex min-w-0 max-w-full flex-col gap-2">
           <h3 className="text-xs font-medium text-muted-foreground">
             {m.knowledge_graph_connections()}
           </h3>
@@ -115,13 +124,14 @@ export function KnowledgeNodeDetail({
               {m.knowledge_graph_no_connections()}
             </p>
           ) : (
-            <div className="flex flex-col gap-1">
+            <div className="flex min-w-0 flex-col gap-1">
               {neighbors.map((neighbor) => (
                 <Button
                   key={neighbor.key}
                   type="button"
                   variant="ghost"
-                  className="h-auto justify-start px-2 py-2"
+                  className="h-auto w-full min-w-0 max-w-full justify-start overflow-hidden px-2 py-2"
+                  data-knowledge-neighbor
                   disabled={!neighbor.node}
                   onClick={() =>
                     neighbor.node && onSelectNode(neighbor.node.id)
@@ -135,7 +145,7 @@ export function KnowledgeNodeDetail({
                   ) : (
                     <Unlink data-icon="inline-start" />
                   )}
-                  <span className="min-w-0 flex-1 text-left">
+                  <span className="min-w-0 flex-1 overflow-hidden text-left">
                     <span className="block truncate">{neighbor.title}</span>
                     <span className="block truncate text-xs text-muted-foreground">
                       {neighbor.edgeKinds
