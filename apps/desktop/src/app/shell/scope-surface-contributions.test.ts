@@ -35,7 +35,7 @@ test("app registry exposes canonical Stage 7 surfaces for each owner", () => {
     resolveScopeSurfaceContributions(contributions, hybridSpace, "full").map(
       ({ id }) => id,
     ),
-  ).toEqual(["context", "readme", "actors", "collection", "routines"]);
+  ).toEqual(["context", "readme", "collection", "actors", "routines"]);
   expect(
     resolveScopeSurfaceContributions(contributions, plainSpace, "full").map(
       ({ id }) => id,
