@@ -24,29 +24,29 @@ export function RoutineIdentityFields({
   showValidation?: boolean;
   onChange(definition: RoutineDefinition): void;
 }) {
-  const titleInvalid =
+  const nameInvalid =
     showValidation &&
-    (!definition.title.trim() || definition.title.trim().length > 240);
+    (!definition.name.trim() || definition.name.trim().length > 240);
   const descriptionInvalid =
     showValidation && definition.description.length > 2_000;
   return (
     <FieldGroup>
-      <Field data-invalid={titleInvalid}>
-        <FieldLabel htmlFor={`${idPrefix}-title`}>
+      <Field data-invalid={nameInvalid}>
+        <FieldLabel htmlFor={`${idPrefix}-name`}>
           {m.routines_title_label()}
         </FieldLabel>
         <Input
-          id={`${idPrefix}-title`}
+          id={`${idPrefix}-name`}
           autoFocus={autoFocus}
           data-routine-create-focus="basics"
-          aria-invalid={titleInvalid}
+          aria-invalid={nameInvalid}
           maxLength={240}
-          value={definition.title}
+          value={definition.name}
           onChange={(event) =>
-            onChange({ ...definition, title: event.target.value })
+            onChange({ ...definition, name: event.target.value })
           }
         />
-        {titleInvalid ? (
+        {nameInvalid ? (
           <FieldError>{m.routines_title_required()}</FieldError>
         ) : null}
       </Field>

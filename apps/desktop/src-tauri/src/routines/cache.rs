@@ -238,6 +238,9 @@ pub(crate) async fn replace_owner_snapshot(
     }
     delete_owner_rows(&mut transaction, &snapshot.owner.owner_path).await?;
     for row in &snapshot.routines {
+        let Some(routine_id) = row.routine_id.as_deref() else {
+            continue;
+        };
         let row_json = serde_json::to_string(row)?;
         sqlx::query(
             r#"
@@ -251,8 +254,8 @@ pub(crate) async fn replace_owner_snapshot(
             "#,
         )
         .bind(&snapshot.owner.owner_path)
-        .bind(&row.routine_id)
-        .bind(&row.fingerprint)
+        .bind(routine_id)
+        .bind(&row.execution_fingerprint)
         .bind(row_json)
         .bind(&snapshot.refreshed_at)
         .execute(&mut *transaction)
@@ -583,10 +586,11 @@ mod tests {
 
     fn row(id: &str) -> RoutineRow {
         RoutineRow {
-            routine_id: id.into(),
+            routine_id: Some(id.into()),
+            portable_id: Some("01arz3ndektsv4rrffq69g5fav".into()),
             filename: format!("{id}.md"),
             path: format!("tasks/.routines/{id}.md"),
-            title: id.into(),
+            name: id.into(),
             description: None,
             enabled: None,
             trigger_type: None,
@@ -599,6 +603,7 @@ mod tests {
             next_run_at: None,
             last_run: None,
             fingerprint: format!("fingerprint:{id}"),
+            execution_fingerprint: format!("execution:{id}"),
             definition: None,
             diagnostics: Vec::new(),
         }
@@ -618,7 +623,10 @@ mod tests {
         replace_owner_snapshot(&pool, &snapshot("notes", vec![row("sibling")]))
             .await
             .unwrap();
-        replace_owner_snapshot(&pool, &snapshot("tasks", vec![row("current")]))
+        let mut invalid = row("invalid");
+        invalid.routine_id = None;
+        invalid.portable_id = None;
+        replace_owner_snapshot(&pool, &snapshot("tasks", vec![row("current"), invalid]))
             .await
             .unwrap();
 
@@ -629,7 +637,7 @@ mod tests {
                 .into_iter()
                 .map(|row| row.routine_id)
                 .collect::<Vec<_>>(),
-            vec!["current"]
+            vec![Some("current".into())]
         );
         assert_eq!(read_owner_rows(&pool, "notes").await.unwrap().len(), 1);
     }
@@ -690,7 +698,7 @@ mod tests {
         let pool = db::create_pool(&db_path).await.unwrap();
         db::ensure_schema(&pool).await.unwrap();
         let definition = RoutineDefinition {
-            title: Some("Review".into()),
+            name: Some("Review".into()),
             description: None,
             enabled: None,
             trigger: RoutineTrigger::Manual,

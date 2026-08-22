@@ -283,7 +283,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "update_routine",
-            "Atomically replace one owner-local Routine through Svode's managed validation and fingerprint CAS. Read it first and pass its routineId and fingerprint. An enabled schedule/event additionally requires confirmAutomaticExecution=true. Keeps filename/identity, does not change device authority, and does not autocommit.",
+            "Atomically replace one owner-local Routine through Svode's managed validation and fingerprint CAS. Read it first and pass its routineId and fingerprint. An enabled schedule/event additionally requires confirmAutomaticExecution=true. Preserves portable identity, materializes a readable filename from name when collision-free, does not change device authority, and does not autocommit.",
             schema(
                 &[
                     routine_space_id(),
@@ -678,7 +678,7 @@ Space targeting:
 
 Routine workflow:
 - Call list_spaces, then list_collections when needed, before working with Routines. Every Routine tool requires a non-null explicit spaceId: use "root" for the project owner or a child id from list_spaces; add collectionPath only for an existing Collection owner.
-- Use list_routines for bounded body-less discovery and get_routine for the normalized definition, Markdown body, and fingerprint. Invalid definitions remain visible with diagnostics and can be repaired by a full valid update using their current fingerprint. Device-local automatic authority and last/next run fields are evidence, not a promise that a Routine can run now.
+- Use list_routines for bounded body-less discovery and get_routine for the normalized definition, Markdown body, and fingerprint. Definitions with missing, malformed, or duplicate portable id remain visible with routineId null and an exact recovery path, but fail closed for addressed tools. Device-local automatic authority and last/next run fields are evidence, not a promise that a Routine can run now.
 - Use create_routine, update_routine, and delete_routine for managed source changes. Update/delete require the last-read fingerprint; a conflict returns the current fingerprint without writing. Create/update validate the complete candidate and return canonical changedPaths. These tools never autocommit.
 - Use run_routine only for an explicit one-time launch of a manual or schedule Routine, with the last-read fingerprint. It returns started or already_running launch/session identity immediately; blocked and failed outcomes keep stable recovery evidence. It never runs event Routines, waits for completion, changes automatic authority/checkpoints, or autocommits. A Routine-launched agent cannot use run_routine or save enabled automation, preventing hidden recursive agent execution.
 - Saving an enabled schedule/event requires confirmAutomaticExecution=true, but that acknowledgement never enables owner-local device authority. Never address or edit raw .routines paths through MCP; Routine definitions belong to the Routine domain tools and owner resolver.
@@ -816,7 +816,7 @@ fn routine_definition_req() -> (&'static str, Value) {
             "additionalProperties": false,
             "description": "Complete portable Routine definition. Server-side owner-aware validation remains authoritative.",
             "properties": {
-                "title": { "type": ["string", "null"], "minLength": 1, "maxLength": 240 },
+                "name": { "type": "string", "minLength": 1, "maxLength": 240 },
                 "description": { "type": ["string", "null"], "maxLength": 2000 },
                 "enabled": {
                     "type": ["boolean", "null"],
@@ -906,7 +906,7 @@ fn routine_definition_req() -> (&'static str, Value) {
                 },
                 "body": { "type": "string" }
             },
-            "required": ["trigger", "action", "body"]
+            "required": ["name", "trigger", "action", "body"]
         }),
     )
 }

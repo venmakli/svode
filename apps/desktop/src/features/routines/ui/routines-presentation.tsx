@@ -13,7 +13,7 @@ import type { Column } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
 import {
-  compareRoutinesByTitle,
+  compareRoutinesByName,
   routineSearchText,
 } from "../model/routine-values";
 import type { RoutineCatalogState, RoutineRow } from "../model/types";
@@ -146,7 +146,7 @@ export function createRoutinesPresentationDescriptor({
     layout: {
       density: "compact",
       getDescription: (row) => row.description || row.filename,
-      getTitle: (row) => row.title,
+      getTitle: (row) => row.name,
       kind: "list",
       renderLeading: (row) => (
         <RoutineTriggerIcon
@@ -168,7 +168,7 @@ export function createRoutinesPresentationDescriptor({
       ],
     },
     query: {
-      defaultCompare: compareRoutinesByTitle,
+      defaultCompare: compareRoutinesByName,
       getSearchText: (row) =>
         `${routineSearchText(row)} ${getExecutorLabel(row) ?? ""}`,
     },
@@ -307,7 +307,7 @@ export function routineDetailTitle(row: RoutineRow) {
         }
       />
       <span className="flex min-w-0 flex-col text-left">
-        <span className="truncate">{row.title}</span>
+        <span className="truncate">{row.name}</span>
         <span className="truncate text-sm font-normal text-muted-foreground">
           {row.description || row.filename}
         </span>

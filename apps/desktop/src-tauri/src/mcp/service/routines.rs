@@ -99,7 +99,7 @@ fn validate_definition_shape(value: &Value) -> Result<(), String> {
     reject_unknown_keys(
         definition,
         &[
-            "title",
+            "name",
             "description",
             "enabled",
             "trigger",
@@ -108,7 +108,7 @@ fn validate_definition_shape(value: &Value) -> Result<(), String> {
         ],
         "definition",
     )?;
-    for required in ["trigger", "action", "body"] {
+    for required in ["name", "trigger", "action", "body"] {
         if !definition.contains_key(required) {
             return Err(format!("missing field definition.{required}"));
         }
@@ -198,7 +198,7 @@ pub(super) async fn get_routine(
         crate::routines::service::read_automatic_authority(&index_state, &owner).await,
     );
     Ok(ToolCallResult::ok(
-        format!("Read routine {} for the explicit owner.", row.routine_id),
+        format!("Read routine {} for the explicit owner.", args.routine_id),
         detail_payload(&snapshot, row, authority),
     ))
 }
@@ -626,7 +626,7 @@ fn summary_payload(row: &RoutineRow) -> Value {
         "routineId": row.routine_id,
         "filename": row.filename,
         "path": row.path,
-        "title": row.title,
+        "name": row.name,
         "description": row.description,
         "triggerType": row.trigger_type,
         "triggerSummary": row.trigger_summary,
@@ -634,7 +634,7 @@ fn summary_payload(row: &RoutineRow) -> Value {
         "actionSummary": row.action_summary,
         "executor": row.executor,
         "enabled": row.enabled,
-        "valid": row.definition.is_some() && row.diagnostics.is_empty(),
+        "valid": row.routine_id.is_some() && row.definition.is_some() && row.diagnostics.is_empty(),
         "fingerprint": row.fingerprint,
         "diagnostics": row.diagnostics,
         "lastRunAt": row.last_run_at,
@@ -655,11 +655,11 @@ fn detail_payload(
         "routineId": row.routine_id,
         "filename": row.filename,
         "path": row.path,
-        "title": row.title,
+        "name": row.name,
         "description": row.description,
         "definition": row.definition,
         "fingerprint": row.fingerprint,
-        "valid": row.definition.is_some() && row.diagnostics.is_empty(),
+        "valid": row.routine_id.is_some() && row.definition.is_some() && row.diagnostics.is_empty(),
         "diagnostics": row.diagnostics,
         "automaticAuthorityEnabled": authority.enabled,
         "authorityDiagnostics": authority.diagnostics,
@@ -676,7 +676,7 @@ fn find_routine<'a>(
     snapshot
         .routines
         .iter()
-        .find(|row| row.routine_id == routine_id)
+        .find(|row| row.routine_id.as_deref() == Some(routine_id))
         .ok_or_else(|| {
             McpBusinessError::new(
                 "ROUTINE_NOT_FOUND",
@@ -704,7 +704,7 @@ mod tests {
 
     fn row(id: &str, body: Option<&str>) -> RoutineRow {
         let definition = body.map(|body| RoutineDefinition {
-            title: Some(id.into()),
+            name: Some(id.into()),
             description: Some("description".into()),
             enabled: None,
             trigger: RoutineTrigger::Manual,
@@ -714,10 +714,11 @@ mod tests {
             body: body.into(),
         });
         RoutineRow {
-            routine_id: id.into(),
+            routine_id: body.map(|_| id.into()),
+            portable_id: body.map(|_| "01arz3ndektsv4rrffq69g5fav".into()),
             filename: format!("{id}.md"),
             path: format!(".routines/{id}.md"),
-            title: id.into(),
+            name: id.into(),
             description: Some("description".into()),
             enabled: None,
             trigger_type: definition.as_ref().map(|_| RoutineTriggerType::Manual),
@@ -734,6 +735,7 @@ mod tests {
             next_run_at: None,
             last_run: None,
             fingerprint: format!("fingerprint-{id}"),
+            execution_fingerprint: format!("execution-{id}"),
             diagnostics: definition
                 .is_none()
                 .then(|| RoutineDiagnostic {
@@ -776,7 +778,7 @@ mod tests {
         );
 
         let definition = json!({
-            "title": "Agent task",
+            "name": "Agent task",
             "trigger": { "type": "manual" },
             "action": {
                 "type": "run_agent",
@@ -1011,6 +1013,7 @@ mod tests {
         assert!(!rows[0].to_string().contains("secret body"));
         assert_eq!(rows[0]["valid"], true);
         assert_eq!(rows[1]["valid"], false);
+        assert_eq!(rows[1]["routineId"], Value::Null);
         assert_eq!(payload["automaticAuthorityEnabled"], true);
     }
 

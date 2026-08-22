@@ -18,6 +18,7 @@ test("desktop create sends one full definition mutation and preserves applied wa
   mockNativeIpc((command, args) => {
     calls.push({ command, args: args as Record<string, unknown> });
     return {
+      changedPaths: [".routines/review.md"],
       routineId: "routine:created",
       snapshot: {
         catalogFingerprint: "catalog-1",
@@ -36,7 +37,7 @@ test("desktop create sends one full definition mutation and preserves applied wa
               body: "Review changes.",
               description: null,
               enabled: false,
-              title: "Review",
+              name: "Review",
               trigger: {
                 cron: "0 9 * * 1-5",
                 missedRuns: "skip",
@@ -48,13 +49,14 @@ test("desktop create sends one full definition mutation and preserves applied wa
             diagnostics: [],
             enabled: false,
             executor: "agent:01arz3ndektsv4rrffq69g5fav",
-            filename: "review-01arz3ndektsv4rrffq69g5fav.md",
+            executionFingerprint: "execution-1",
+            filename: "review.md",
             fingerprint: "row-1",
             lastRunAt: null,
             nextRunAt: null,
-            path: ".routines/review-01arz3ndektsv4rrffq69g5fav.md",
+            path: ".routines/review.md",
             routineId: "routine:created",
-            title: "Review",
+            name: "Review",
             triggerSummary: "schedule",
             triggerType: "schedule",
           },
@@ -87,7 +89,7 @@ test("desktop create sends one full definition mutation and preserves applied wa
         body: "Review changes.",
         description: "",
         enabled: false,
-        title: "Review",
+        name: "Review",
         trigger: {
           cron: "0 9 * * 1-5",
           missedRuns: "skip",
@@ -107,7 +109,7 @@ test("desktop create sends one full definition mutation and preserves applied wa
       body: "Review changes.",
       description: null,
       enabled: false,
-      title: "Review",
+      name: "Review",
       trigger: {
         cron: "0 9 * * 1-5",
         missedRuns: "skip",
@@ -117,6 +119,7 @@ test("desktop create sends one full definition mutation and preserves applied wa
     });
     expect(result.status).toBe("applied");
     if (result.status === "applied") {
+      expect(result.changedPaths).toEqual([".routines/review.md"]);
       expect(result.warnings[0]?.code).toBe(
         "routine_projection_refresh_failed",
       );

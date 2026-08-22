@@ -118,6 +118,9 @@ async fn tick_owner(
     let now = Utc::now();
 
     for row in snapshot.routines {
+        let Some(routine_id) = row.routine_id.as_deref() else {
+            continue;
+        };
         if !row.diagnostics.is_empty()
             || row
                 .definition
@@ -139,16 +142,16 @@ async fn tick_owner(
             continue;
         };
 
-        let state =
-            cache::schedule_state(&pool, &owner.descriptor.owner_path, &row.routine_id).await?;
-        let Some(state) = state.filter(|state| state.definition_fingerprint == row.fingerprint)
+        let state = cache::schedule_state(&pool, &owner.descriptor.owner_path, routine_id).await?;
+        let Some(state) =
+            state.filter(|state| state.definition_fingerprint == row.execution_fingerprint)
         else {
             write_baseline(
                 app,
                 &pool,
                 owner,
-                &row.routine_id,
-                &row.fingerprint,
+                routine_id,
+                &row.execution_fingerprint,
                 cron,
                 timezone,
                 now,
@@ -163,8 +166,8 @@ async fn tick_owner(
                 app,
                 &pool,
                 owner,
-                &row.routine_id,
-                &row.fingerprint,
+                routine_id,
+                &row.execution_fingerprint,
                 cron,
                 timezone,
                 now,
@@ -182,15 +185,15 @@ async fn tick_owner(
             continue;
         }
         if let Some(run) =
-            cache::latest_run(&pool, &owner.descriptor.owner_path, &row.routine_id).await?
+            cache::latest_run(&pool, &owner.descriptor.owner_path, routine_id).await?
             && run.blocks_relaunch(&live_pty_ids)
         {
             advance_checkpoint(
                 app,
                 &pool,
                 owner,
-                &row.routine_id,
-                &row.fingerprint,
+                routine_id,
+                &row.execution_fingerprint,
                 now,
                 evaluation.next_at,
             )
@@ -226,8 +229,8 @@ async fn tick_owner(
                 app,
                 &pool,
                 owner,
-                &row.routine_id,
-                &row.fingerprint,
+                routine_id,
+                &row.execution_fingerprint,
                 now,
                 evaluation.next_at,
             )
@@ -240,7 +243,7 @@ async fn tick_owner(
         else {
             continue;
         };
-        let run_key = scheduled_run_key(&repository_id, &row.routine_id, due_at);
+        let run_key = scheduled_run_key(&repository_id, routine_id, due_at);
         let claim_time = now.timestamp();
         let claim = access_state
             .claim_routine(
@@ -248,9 +251,9 @@ async fn tick_owner(
                 &repository,
                 &store_path,
                 &access,
-                &row.routine_id,
+                routine_id,
                 &run_key,
-                &row.fingerprint,
+                &row.execution_fingerprint,
                 claim_time,
             )
             .await?;
@@ -259,8 +262,7 @@ async fn tick_owner(
                 let leased_at = now.to_rfc3339_opts(SecondsFormat::Secs, true);
                 let expires_at =
                     (now + TimeDelta::minutes(5)).to_rfc3339_opts(SecondsFormat::Secs, true);
-                cache::claim_local_run(&pool, &run_key, &row.routine_id, &leased_at, &expires_at)
-                    .await?
+                cache::claim_local_run(&pool, &run_key, routine_id, &leased_at, &expires_at).await?
             }
             RoutineClaimResult::Claimed {
                 claimed_by,
@@ -270,9 +272,9 @@ async fn tick_owner(
                     app,
                     &pool,
                     owner,
-                    &row.routine_id,
+                    routine_id,
                     &run_key,
-                    &row.fingerprint,
+                    &row.execution_fingerprint,
                     &claimed_by,
                     claimed_at,
                 )
@@ -287,9 +289,9 @@ async fn tick_owner(
                     app,
                     &pool,
                     owner,
-                    &row.routine_id,
+                    routine_id,
                     &run_key,
-                    &row.fingerprint,
+                    &row.execution_fingerprint,
                     &claimed_by,
                     claimed_at,
                 )
@@ -297,7 +299,7 @@ async fn tick_owner(
                 false
             }
             RoutineClaimResult::Unavailable { reason } => {
-                tracing::debug!(?reason, routine_id = %row.routine_id, "routine claim unavailable");
+                tracing::debug!(?reason, routine_id, "routine claim unavailable");
                 continue;
             }
         };
@@ -305,8 +307,8 @@ async fn tick_owner(
             app,
             &pool,
             owner,
-            &row.routine_id,
-            &row.fingerprint,
+            routine_id,
+            &row.execution_fingerprint,
             now,
             evaluation.next_at,
         )
@@ -314,17 +316,23 @@ async fn tick_owner(
         if !should_dispatch {
             continue;
         }
-        match dispatch::dispatch_scheduled(app, owner.clone(), row.routine_id.clone()).await? {
+        match dispatch::dispatch_scheduled(app, owner.clone(), routine_id.to_string()).await? {
             RoutineDispatchResult::Blocked {
                 code: RoutineDispatchBlockedCode::RepositoryAccessDenied,
                 message,
                 ..
             } => {
-                tracing::warn!(routine_id = %row.routine_id, "scheduled routine lost eligibility after claim: {message}")
+                tracing::warn!(
+                    routine_id,
+                    "scheduled routine lost eligibility after claim: {message}"
+                )
             }
             RoutineDispatchResult::Blocked { message, .. }
             | RoutineDispatchResult::Failed { message, .. } => {
-                tracing::warn!(routine_id = %row.routine_id, "scheduled routine dispatch did not start: {message}")
+                tracing::warn!(
+                    routine_id,
+                    "scheduled routine dispatch did not start: {message}"
+                )
             }
             RoutineDispatchResult::Started { .. }
             | RoutineDispatchResult::AlreadyRunning { .. }

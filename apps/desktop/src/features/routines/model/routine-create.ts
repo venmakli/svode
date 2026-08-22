@@ -25,7 +25,7 @@ export function createRoutineDraft(): RoutineDefinition {
     body: "",
     description: "",
     enabled: null,
-    title: "",
+    name: "",
     trigger: { type: "manual" },
   };
 }
@@ -43,7 +43,7 @@ export function normalizeRoutineCreateCandidate(
     ...cloneRoutineDefinition(definition),
     description: definition.description.trim(),
     enabled: definition.trigger.type === "manual" ? null : false,
-    title: definition.title.trim(),
+    name: definition.name.trim(),
   };
 }
 
@@ -61,10 +61,10 @@ export function isRoutineCreateStepValid(
 ): boolean {
   const issues = validateRoutineDraft(definition);
   if (step === "basics") {
-    const titleLength = definition.title.trim().length;
+    const nameLength = definition.name.trim().length;
     return (
-      titleLength > 0 &&
-      titleLength <= 240 &&
+      nameLength > 0 &&
+      nameLength <= 240 &&
       definition.description.length <= 2_000
     );
   }

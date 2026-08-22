@@ -35,7 +35,7 @@ test("create draft remains runtime-only until all four step gates are valid", ()
   const valid = {
     ...draft,
     action: { executor: actor.value, type: "run_agent" as const },
-    title: "Review changes",
+    name: "Review changes",
   };
   expect(isRoutineCreateStepValid("basics", valid, ready)).toBe(true);
   expect(isRoutineCreateStepValid("trigger", valid, ready)).toBe(true);
@@ -47,7 +47,7 @@ test("manual, schedule and both Collection event actions use one definition mode
   const manual = {
     ...createRoutineDraft(),
     action: { executor: actor.value, type: "run_agent" as const },
-    title: "Review",
+    name: "Review",
   };
   const schedule = changeRoutineTrigger(manual, "schedule", "Asia/Novosibirsk");
   expect(firstInvalidRoutineCreateStep(schedule, ready)).toBeNull();
@@ -80,7 +80,7 @@ test("actor loading, failure and stale selection block the action gate", () => {
   const draft = {
     ...createRoutineDraft(),
     action: { executor: actor.value, type: "run_agent" as const },
-    title: "Review",
+    name: "Review",
   };
   expect(
     isRoutineCreateStepValid("action", draft, {
@@ -104,7 +104,7 @@ test("create normalization disables automation and supports exact reconciliation
     {
       ...createRoutineDraft(),
       action: { executor: actor.value, type: "run_agent" },
-      title: "  Weekly review  ",
+      name: "  Weekly review  ",
     },
     "schedule",
     "UTC",
@@ -114,7 +114,7 @@ test("create normalization disables automation and supports exact reconciliation
     description: "  Summary  ",
     enabled: true,
   });
-  expect(candidate.title).toBe("Weekly review");
+  expect(candidate.name).toBe("Weekly review");
   expect(candidate.description).toBe("Summary");
   expect(candidate.enabled).toBe(false);
   expect(routineDefinitionMatchesCandidate(candidate, schedule)).toBe(false);

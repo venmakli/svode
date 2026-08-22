@@ -174,7 +174,7 @@ function JourneyHarness({
       <button
         type="button"
         onClick={() =>
-          setDefinition((current) => ({ ...current, title: "Review changes" }))
+          setDefinition((current) => ({ ...current, name: "Review changes" }))
         }
       >
         Fill title
@@ -251,7 +251,7 @@ function validDefinition(): RoutineDefinition {
     body: "Review changes.",
     description: "",
     enabled: null,
-    title: "",
+    name: "",
     trigger: { type: "manual" },
   };
 }

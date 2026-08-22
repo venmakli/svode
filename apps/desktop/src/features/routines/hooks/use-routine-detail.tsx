@@ -168,7 +168,7 @@ export function useRoutineDetail({
         title: routineDetailTitle({
           ...session.row,
           description: session.draft.description,
-          title: session.draft.title,
+          name: session.draft.name,
         }),
       })
       .then((opened) => {

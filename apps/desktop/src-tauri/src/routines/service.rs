@@ -115,6 +115,19 @@ enum FileCasOutcome {
     Stale(Option<String>),
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum DefinitionUpdateOutcome {
+    Applied {
+        filename: String,
+        renamed: bool,
+    },
+    Collision {
+        filename: String,
+        target_filename: String,
+    },
+    Stale(Option<String>),
+}
+
 pub(crate) fn resolve_owner(
     project_path: &Path,
     space_path: &Path,
@@ -210,6 +223,9 @@ pub(crate) async fn read_catalog(
             let live_pty_ids = live_agent_pty_ids(terminal_manager)?;
             let now = Utc::now();
             for row in &mut snapshot.routines {
+                let Some(routine_id) = row.routine_id.as_deref() else {
+                    continue;
+                };
                 if row.diagnostics.is_empty()
                     && let Some(RoutineDefinition {
                         trigger: RoutineTrigger::Schedule { cron, timezone, .. },
@@ -217,10 +233,10 @@ pub(crate) async fn read_catalog(
                     }) = row.definition.as_ref()
                 {
                     let current =
-                        cache::schedule_state(&pool, &owner.descriptor.owner_path, &row.routine_id)
+                        cache::schedule_state(&pool, &owner.descriptor.owner_path, routine_id)
                             .await?;
-                    if let Some(current) =
-                        current.filter(|state| state.definition_fingerprint == row.fingerprint)
+                    if let Some(current) = current
+                        .filter(|state| state.definition_fingerprint == row.execution_fingerprint)
                     {
                         row.next_run_at = Some(current.next_run_at);
                     } else if let Ok(next) = super::schedule::next_after(cron, timezone, now) {
@@ -229,8 +245,8 @@ pub(crate) async fn read_catalog(
                         cache::write_schedule_state(
                             &pool,
                             &owner.descriptor.owner_path,
-                            &row.routine_id,
-                            &row.fingerprint,
+                            routine_id,
+                            &row.execution_fingerprint,
                             &checkpoint,
                             &next,
                         )
@@ -239,19 +255,12 @@ pub(crate) async fn read_catalog(
                     }
                 }
 
-                let local = match cache::latest_run(
-                    &pool,
-                    &owner.descriptor.owner_path,
-                    &row.routine_id,
-                )
-                .await
+                let local = match cache::latest_run(&pool, &owner.descriptor.owner_path, routine_id)
+                    .await
                 {
                     Ok(run) => run,
                     Err(error) => {
-                        tracing::warn!(
-                            routine_id = %row.routine_id,
-                            "failed to load latest routine run: {error}"
-                        );
+                        tracing::warn!(routine_id, "failed to load latest routine run: {error}");
                         snapshot.diagnostics.push(RoutineDiagnostic::new(
                             "routine_run_cache_unavailable",
                             "routine definitions were read, but latest local run references are unavailable",
@@ -259,12 +268,9 @@ pub(crate) async fn read_catalog(
                         break;
                     }
                 };
-                let remote = cache::latest_remote_claim(
-                    &pool,
-                    &owner.descriptor.owner_path,
-                    &row.routine_id,
-                )
-                .await?;
+                let remote =
+                    cache::latest_remote_claim(&pool, &owner.descriptor.owner_path, routine_id)
+                        .await?;
                 if remote.as_ref().is_some_and(|claim| {
                     local
                         .as_ref()
@@ -327,19 +333,26 @@ pub(crate) async fn create_managed(
     index_state: &IndexState,
     terminal_manager: &TerminalManager,
 ) -> Result<ManagedRoutineMutationResult, AppError> {
-    let content = match prepare_candidate(&owner, &definition, policy) {
-        Ok(content) => content,
-        Err(result) => return Ok(result),
-    };
+    if let Err(result) = validate_candidate(&owner, &definition, policy) {
+        return Ok(result);
+    }
+    let name = managed_name(&definition).expect("validated managed Routine name");
     let repository = mutation_repository(git_state, &owner).await?;
     let lock = git_state.get_lock(&repository).await;
     let _guard = lock.lock().await;
     let owner = revalidate_owner(git_state, &owner, &repository).await?;
     authorize_mutation(app, git_state, access_state, &repository).await?;
 
+    let portable_id = ulid::Ulid::new().to_string().to_ascii_lowercase();
+    let content = match serialize_candidate(&definition, &portable_id) {
+        Ok(content) => content,
+        Err(result) => return Ok(result),
+    };
+
     let write_owner = owner.clone();
+    let write_name = name.to_string();
     let filename = tauri::async_runtime::spawn_blocking(move || {
-        create_definition_file(&write_owner, &content)
+        create_definition_file(&write_owner, &write_name, &content)
     })
     .await
     .map_err(blocking_task_error)??;
@@ -355,7 +368,10 @@ pub(crate) async fn create_managed(
             "created routine was not discoverable after its atomic write".into(),
         ));
     };
-    let routine_id = row.routine_id.clone();
+    let routine_id = row
+        .routine_id
+        .clone()
+        .ok_or_else(|| AppError::General("created Routine has no portable identity".into()))?;
     super::emit_owner_invalidation(app, &owner);
     Ok(ManagedRoutineMutationResult::Applied {
         routine_id,
@@ -378,10 +394,12 @@ pub(crate) async fn update_managed(
     index_state: &IndexState,
     terminal_manager: &TerminalManager,
 ) -> Result<ManagedRoutineMutationResult, AppError> {
-    let content = match prepare_candidate(&owner, &definition, policy) {
-        Ok(content) => content,
-        Err(result) => return Ok(result),
-    };
+    if let Err(result) = validate_candidate(&owner, &definition, policy) {
+        return Ok(result);
+    }
+    let name = managed_name(&definition)
+        .expect("validated managed Routine name")
+        .to_string();
     let repository = mutation_repository(git_state, &owner).await?;
     let lock = git_state.get_lock(&repository).await;
     let _guard = lock.lock().await;
@@ -392,7 +410,7 @@ pub(crate) async fn update_managed(
     let Some(row) = current
         .routines
         .iter()
-        .find(|row| row.routine_id == routine_id)
+        .find(|row| row.routine_id.as_deref() == Some(routine_id.as_str()))
     else {
         return Ok(ManagedRoutineMutationResult::Conflict {
             current_fingerprint: None,
@@ -403,27 +421,83 @@ pub(crate) async fn update_managed(
             current_fingerprint: Some(row.fingerprint.clone()),
         });
     }
-    let filename = row.filename.clone();
-    let changed_path = row.path.clone();
-    let path = owner.routines_dir().join(&filename);
+    let Some(portable_id) = row.portable_id.clone() else {
+        return Ok(ManagedRoutineMutationResult::Conflict {
+            current_fingerprint: None,
+        });
+    };
+    let content = match serialize_candidate(&definition, &portable_id) {
+        Ok(content) => content,
+        Err(result) => return Ok(result),
+    };
+    let old_filename = row.filename.clone();
+    let old_path = row.path.clone();
+    let target_filename = format!("{}.md", crate::files::entry::slugify(&name));
+    let directory = owner.routines_dir();
     let write_fingerprint = expected_fingerprint.clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
-        atomic_replace_cas(&path, &write_fingerprint, &content)
+        update_definition_file_cas(
+            &directory,
+            &old_filename,
+            &target_filename,
+            &write_fingerprint,
+            &content,
+        )
     })
     .await
     .map_err(blocking_task_error)??;
-    if let FileCasOutcome::Stale(current_fingerprint) = outcome {
-        return Ok(ManagedRoutineMutationResult::Conflict {
-            current_fingerprint,
-        });
+    let (current_filename, mut changed_paths, collision_target) = match outcome {
+        DefinitionUpdateOutcome::Applied { filename, renamed } => {
+            let current_path = definition_path(&owner, &filename);
+            let changed_paths = if renamed {
+                vec![old_path.clone(), current_path]
+            } else {
+                vec![old_path.clone()]
+            };
+            (filename, changed_paths, None)
+        }
+        DefinitionUpdateOutcome::Collision {
+            filename,
+            target_filename,
+        } => (
+            filename,
+            vec![old_path.clone()],
+            Some(definition_path(&owner, &target_filename)),
+        ),
+        DefinitionUpdateOutcome::Stale(current_fingerprint) => {
+            return Ok(ManagedRoutineMutationResult::Conflict {
+                current_fingerprint,
+            });
+        }
+    };
+    let current_path = definition_path(&owner, &current_filename);
+    let (snapshot, mut warnings) =
+        projection_after_write(index_state, terminal_manager, &owner, &current_path).await?;
+    if let Some(target_path) = collision_target {
+        warnings.push(
+            RoutineDiagnostic::new(
+                "routine_rename_collision",
+                "the Routine was saved, but its desired filename is already used by another Routine",
+            )
+            .path(target_path),
+        );
     }
-    let (snapshot, warnings) =
-        projection_after_write(index_state, terminal_manager, &owner, &changed_path).await?;
+    changed_paths.dedup();
+    if !snapshot
+        .routines
+        .iter()
+        .any(|row| row.routine_id.as_deref() == Some(routine_id.as_str()))
+    {
+        warnings.push(RoutineDiagnostic::new(
+            "routine_projection_identity_missing",
+            "the Routine source was saved, but its stable identity is temporarily unavailable; automatic dispatch remains fail-closed until reconciliation",
+        ));
+    }
     super::emit_owner_invalidation(app, &owner);
     Ok(ManagedRoutineMutationResult::Applied {
         routine_id,
         snapshot,
-        changed_paths: vec![changed_path],
+        changed_paths,
         warnings,
     })
 }
@@ -449,7 +523,7 @@ pub(crate) async fn delete_managed(
     let Some(row) = current
         .routines
         .iter()
-        .find(|row| row.routine_id == routine_id)
+        .find(|row| row.routine_id.as_deref() == Some(routine_id.as_str()))
     else {
         return Ok(ManagedRoutineMutationResult::Conflict {
             current_fingerprint: None,
@@ -509,11 +583,24 @@ pub(crate) async fn authorize_mutation(
     Ok(())
 }
 
-fn prepare_candidate(
+fn validate_candidate(
     owner: &ResolvedRoutineOwner,
     definition: &RoutineDefinition,
     policy: RoutineMutationPolicy,
-) -> Result<Vec<u8>, ManagedRoutineMutationResult> {
+) -> Result<(), ManagedRoutineMutationResult> {
+    if managed_name(definition).is_none() {
+        return Err(ManagedRoutineMutationResult::Blocked {
+            code: RoutineMutationBlockedCode::Invalid,
+            message: "routine name must contain 1 to 240 characters".into(),
+            diagnostics: vec![
+                RoutineDiagnostic::new(
+                    "routine_name_required",
+                    "managed Routine mutations require a non-empty name",
+                )
+                .field("name"),
+            ],
+        });
+    }
     let diagnostics = candidate_diagnostics(owner, definition);
     if policy.require_valid_definition && !diagnostics.is_empty() {
         return Err(ManagedRoutineMutationResult::Blocked {
@@ -543,7 +630,14 @@ fn prepare_candidate(
             });
         }
     }
-    let content = parser::serialize_definition(definition).map_err(|message| {
+    Ok(())
+}
+
+fn serialize_candidate(
+    definition: &RoutineDefinition,
+    portable_id: &str,
+) -> Result<Vec<u8>, ManagedRoutineMutationResult> {
+    let content = parser::serialize_definition(definition, portable_id).map_err(|message| {
         ManagedRoutineMutationResult::Blocked {
             code: RoutineMutationBlockedCode::Invalid,
             message,
@@ -561,6 +655,14 @@ fn prepare_candidate(
         });
     }
     Ok(content.into_bytes())
+}
+
+fn managed_name(definition: &RoutineDefinition) -> Option<&str> {
+    definition
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && name.chars().count() <= 240)
 }
 
 fn candidate_diagnostics(
@@ -658,22 +760,18 @@ fn definition_path(owner: &ResolvedRoutineOwner, filename: &str) -> String {
 
 fn create_definition_file(
     owner: &ResolvedRoutineOwner,
+    name: &str,
     content: &[u8],
 ) -> Result<String, AppError> {
     let directory = owner.routines_dir();
     ensure_routines_directory(&directory)?;
-    let parsed = std::str::from_utf8(content)
-        .map_err(|error| AppError::General(format!("routine definition is not UTF-8: {error}")))?;
-    let title = parser::parse_routine(parsed, "routine.md", owner.descriptor.kind)
-        .definition
-        .and_then(|definition| definition.title)
-        .unwrap_or_else(|| "routine".into());
-    let slug = slugify(&title);
-    for _ in 0..8 {
-        let filename = format!(
-            "{slug}-{}.md",
-            ulid::Ulid::new().to_string().to_ascii_lowercase()
-        );
+    let slug = crate::files::entry::slugify(name);
+    for suffix in 0..=100 {
+        let filename = if suffix == 0 {
+            format!("{slug}.md")
+        } else {
+            format!("{slug}-{suffix}.md")
+        };
         let path = directory.join(&filename);
         match write_new_file(&path, content) {
             Ok(()) => {
@@ -742,6 +840,70 @@ fn atomic_replace_cas(
     Ok(FileCasOutcome::Applied)
 }
 
+fn update_definition_file_cas(
+    directory: &Path,
+    current_filename: &str,
+    target_filename: &str,
+    expected_fingerprint: &str,
+    bytes: &[u8],
+) -> Result<DefinitionUpdateOutcome, AppError> {
+    ensure_routines_directory(directory)?;
+    let current_path = directory.join(current_filename);
+    let Some(current_fingerprint) = definition_file_fingerprint(&current_path)? else {
+        return Ok(DefinitionUpdateOutcome::Stale(None));
+    };
+    if current_fingerprint != expected_fingerprint {
+        return Ok(DefinitionUpdateOutcome::Stale(Some(current_fingerprint)));
+    }
+    if current_filename == target_filename {
+        return match atomic_replace_cas(&current_path, expected_fingerprint, bytes)? {
+            FileCasOutcome::Applied => Ok(DefinitionUpdateOutcome::Applied {
+                filename: current_filename.to_string(),
+                renamed: false,
+            }),
+            FileCasOutcome::Stale(current) => Ok(DefinitionUpdateOutcome::Stale(current)),
+        };
+    }
+
+    let target_path = directory.join(target_filename);
+    if target_path.exists() {
+        return match atomic_replace_cas(&current_path, expected_fingerprint, bytes)? {
+            FileCasOutcome::Applied => Ok(DefinitionUpdateOutcome::Collision {
+                filename: current_filename.to_string(),
+                target_filename: target_filename.to_string(),
+            }),
+            FileCasOutcome::Stale(current) => Ok(DefinitionUpdateOutcome::Stale(current)),
+        };
+    }
+
+    let current_fingerprint = definition_file_fingerprint(&current_path)?;
+    if current_fingerprint.as_deref() != Some(expected_fingerprint) {
+        return Ok(DefinitionUpdateOutcome::Stale(current_fingerprint));
+    }
+    match write_new_file(&target_path, bytes) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return match atomic_replace_cas(&current_path, expected_fingerprint, bytes)? {
+                FileCasOutcome::Applied => Ok(DefinitionUpdateOutcome::Collision {
+                    filename: current_filename.to_string(),
+                    target_filename: target_filename.to_string(),
+                }),
+                FileCasOutcome::Stale(current) => Ok(DefinitionUpdateOutcome::Stale(current)),
+            };
+        }
+        Err(error) => return Err(AppError::Io(error)),
+    }
+    if let Err(error) = fs::remove_file(&current_path) {
+        let _ = fs::remove_file(&target_path);
+        return Err(AppError::Io(error));
+    }
+    sync_directory(directory)?;
+    Ok(DefinitionUpdateOutcome::Applied {
+        filename: target_filename.to_string(),
+        renamed: true,
+    })
+}
+
 fn delete_definition_file_cas(
     directory: &Path,
     path: &Path,
@@ -783,72 +945,6 @@ fn sync_directory(path: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-fn slugify(title: &str) -> String {
-    let mut slug = String::new();
-    let mut separator = false;
-    for character in title.chars() {
-        if character.is_ascii_alphanumeric() {
-            slug.push(character.to_ascii_lowercase());
-            separator = false;
-        } else if let Some(transliterated) = transliterate_cyrillic(character) {
-            slug.push_str(transliterated);
-            separator = false;
-        } else if !slug.is_empty() && !separator {
-            slug.push('-');
-            separator = true;
-        }
-        if slug.len() >= 48 {
-            break;
-        }
-    }
-    slug.truncate(48);
-    let slug = slug.trim_matches('-');
-    if slug.is_empty() {
-        "routine".into()
-    } else {
-        slug.into()
-    }
-}
-
-fn transliterate_cyrillic(character: char) -> Option<&'static str> {
-    Some(match character.to_lowercase().next()? {
-        'а' => "a",
-        'б' => "b",
-        'в' => "v",
-        'г' | 'ґ' => "g",
-        'д' => "d",
-        'е' | 'э' => "e",
-        'ё' => "yo",
-        'ж' => "zh",
-        'з' => "z",
-        'и' | 'і' => "i",
-        'й' => "y",
-        'к' => "k",
-        'л' => "l",
-        'м' => "m",
-        'н' => "n",
-        'о' => "o",
-        'п' => "p",
-        'р' => "r",
-        'с' => "s",
-        'т' => "t",
-        'у' | 'ў' => "u",
-        'ф' => "f",
-        'х' => "kh",
-        'ц' => "ts",
-        'ч' => "ch",
-        'ш' => "sh",
-        'щ' => "shch",
-        'ъ' | 'ь' => "",
-        'ы' => "y",
-        'ю' => "yu",
-        'я' => "ya",
-        'є' => "ye",
-        'ї' => "yi",
-        _ => return None,
-    })
-}
-
 pub(crate) fn live_agent_pty_ids(
     terminal_manager: &TerminalManager,
 ) -> Result<HashSet<String>, AppError> {
@@ -864,8 +960,9 @@ fn publication_fingerprint(snapshot: &RoutineCatalogSnapshot) -> String {
     let mut value = String::new();
     for row in &snapshot.routines {
         for field in [
-            row.routine_id.as_str(),
+            row.routine_id.as_deref().unwrap_or_default(),
             row.fingerprint.as_str(),
+            row.execution_fingerprint.as_str(),
             row.last_run_at.as_deref().unwrap_or_default(),
             row.next_run_at.as_deref().unwrap_or_default(),
         ] {
@@ -1028,7 +1125,7 @@ mod tests {
 
     fn event_definition(enabled: bool) -> RoutineDefinition {
         RoutineDefinition {
-            title: Some("Keep review state".into()),
+            name: Some("Keep review state".into()),
             description: None,
             enabled: Some(enabled),
             trigger: RoutineTrigger::Event {
@@ -1155,10 +1252,11 @@ mod tests {
     #[test]
     fn publication_fingerprint_tracks_runtime_but_not_authority() {
         let row = super::super::model::RoutineRow {
-            routine_id: "routine:one".into(),
+            routine_id: Some("routine:one".into()),
+            portable_id: Some("01arz3ndektsv4rrffq69g5fav".into()),
             filename: "one.md".into(),
             path: ".routines/one.md".into(),
-            title: "One".into(),
+            name: "One".into(),
             description: None,
             enabled: Some(true),
             trigger_type: Some(super::super::model::RoutineTriggerType::Manual),
@@ -1171,6 +1269,7 @@ mod tests {
             next_run_at: None,
             last_run: None,
             fingerprint: "definition".into(),
+            execution_fingerprint: "execution".into(),
             definition: None,
             diagnostics: Vec::new(),
         };
@@ -1200,7 +1299,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let owner = collection_owner(temp.path());
 
-        let blocked = prepare_candidate(
+        let blocked = validate_candidate(
             &owner,
             &event_definition(true),
             RoutineMutationPolicy::external_mcp(false),
@@ -1216,7 +1315,7 @@ mod tests {
         assert!(!owner.routines_dir().exists());
 
         assert!(
-            prepare_candidate(
+            validate_candidate(
                 &owner,
                 &event_definition(true),
                 RoutineMutationPolicy::external_mcp(true),
@@ -1224,7 +1323,7 @@ mod tests {
             .is_ok()
         );
         assert!(
-            prepare_candidate(
+            validate_candidate(
                 &owner,
                 &event_definition(false),
                 RoutineMutationPolicy::external_mcp(false),
@@ -1236,7 +1335,7 @@ mod tests {
     #[test]
     fn routine_mcp_cannot_save_enabled_automation() {
         let temp = tempfile::tempdir().unwrap();
-        let blocked = prepare_candidate(
+        let blocked = validate_candidate(
             &collection_owner(temp.path()),
             &event_definition(true),
             RoutineMutationPolicy::routine_mcp(true),
@@ -1255,7 +1354,7 @@ mod tests {
     fn invalid_owner_candidate_is_blocked_without_creating_source() {
         let temp = tempfile::tempdir().unwrap();
         let owner = project_owner(temp.path());
-        let blocked = prepare_candidate(
+        let blocked = validate_candidate(
             &owner,
             &event_definition(false),
             RoutineMutationPolicy::external_mcp(false),
@@ -1277,7 +1376,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let owner = project_owner(temp.path());
         let mut definition = RoutineDefinition {
-            title: Some("Initial title".into()),
+            name: Some("Initial title".into()),
             description: None,
             enabled: None,
             trigger: RoutineTrigger::Manual,
@@ -1286,9 +1385,10 @@ mod tests {
             },
             body: String::new(),
         };
-        let content = parser::serialize_definition(&definition).unwrap();
-        let filename = create_definition_file(&owner, content.as_bytes()).unwrap();
-        assert!(filename.starts_with("initial-title-"));
+        let portable_id = "01arz3ndektsv4rrffq69g5fav";
+        let content = parser::serialize_definition(&definition, portable_id).unwrap();
+        let filename = create_definition_file(&owner, "Initial title", content.as_bytes()).unwrap();
+        assert_eq!(filename, "initial-title.md");
         assert!(!owner.routines_dir().join("schema.yaml").exists());
         let first = parser::discover_owner(&owner);
         let first_row = first
@@ -1299,8 +1399,8 @@ mod tests {
         let routine_id = first_row.routine_id.clone();
         let fingerprint = first_row.fingerprint.clone();
 
-        definition.title = Some("Changed title".into());
-        let content = parser::serialize_definition(&definition).unwrap();
+        definition.name = Some("Changed title".into());
+        let content = parser::serialize_definition(&definition, portable_id).unwrap();
         assert_eq!(
             atomic_replace_cas(
                 &owner.routines_dir().join(&filename),
@@ -1318,7 +1418,7 @@ mod tests {
             .unwrap();
         assert_eq!(second_row.routine_id, routine_id);
         assert_ne!(second_row.fingerprint, fingerprint);
-        assert_eq!(second_row.title, "Changed title");
+        assert_eq!(second_row.name, "Changed title");
 
         assert_eq!(
             atomic_replace_cas(
@@ -1363,6 +1463,97 @@ mod tests {
     }
 
     #[test]
+    fn managed_filename_allocation_rename_and_collision_are_deterministic() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner = project_owner(temp.path());
+        let first_id = "01arz3ndektsv4rrffq69g5fav";
+        let second_id = "01arz3ndektsv4rrffq69g5faw";
+        let mut definition = RoutineDefinition {
+            name: Some("Same name".into()),
+            description: None,
+            enabled: None,
+            trigger: RoutineTrigger::Manual,
+            action: RoutineAction::RunAgent {
+                executor: "agent:01arz3ndektsv4rrffq69g5fav".into(),
+            },
+            body: String::new(),
+        };
+        let first = parser::serialize_definition(&definition, first_id).unwrap();
+        let second = parser::serialize_definition(&definition, second_id).unwrap();
+        assert_eq!(
+            create_definition_file(&owner, "Same name", first.as_bytes()).unwrap(),
+            "same-name.md"
+        );
+        assert_eq!(
+            create_definition_file(&owner, "Same name", second.as_bytes()).unwrap(),
+            "same-name-1.md"
+        );
+
+        let before = parser::discover_owner(&owner);
+        let row = before
+            .routines
+            .iter()
+            .find(|row| row.filename == "same-name.md")
+            .unwrap();
+        let stable_id = row.routine_id.clone();
+        definition.name = Some("Renamed".into());
+        let renamed = parser::serialize_definition(&definition, first_id).unwrap();
+        let outcome = update_definition_file_cas(
+            &owner.routines_dir(),
+            "same-name.md",
+            "renamed.md",
+            &row.fingerprint,
+            renamed.as_bytes(),
+        )
+        .unwrap();
+        assert!(matches!(
+            outcome,
+            DefinitionUpdateOutcome::Applied {
+                filename,
+                renamed: true,
+            } if filename == "renamed.md"
+        ));
+        let renamed_snapshot = parser::discover_owner(&owner);
+        let renamed_row = renamed_snapshot
+            .routines
+            .iter()
+            .find(|row| row.filename == "renamed.md")
+            .unwrap();
+        assert_eq!(renamed_row.routine_id, stable_id);
+
+        definition.name = Some("Same name".into());
+        let collision_content = parser::serialize_definition(&definition, first_id).unwrap();
+        let collision = update_definition_file_cas(
+            &owner.routines_dir(),
+            "renamed.md",
+            "same-name-1.md",
+            &renamed_row.fingerprint,
+            collision_content.as_bytes(),
+        )
+        .unwrap();
+        assert!(matches!(
+            collision,
+            DefinitionUpdateOutcome::Collision {
+                filename,
+                target_filename,
+            } if filename == "renamed.md" && target_filename == "same-name-1.md"
+        ));
+        assert!(owner.routines_dir().join("renamed.md").is_file());
+        assert!(owner.routines_dir().join("same-name-1.md").is_file());
+        let after_collision = parser::discover_owner(&owner);
+        assert_eq!(after_collision.routines.len(), 2);
+        assert_eq!(
+            after_collision
+                .routines
+                .iter()
+                .find(|row| row.filename == "renamed.md")
+                .unwrap()
+                .routine_id,
+            stable_id
+        );
+    }
+
+    #[test]
     fn invalid_source_can_be_repaired_with_its_current_fingerprint() {
         let temp = tempfile::tempdir().unwrap();
         let owner = project_owner(temp.path());
@@ -1374,7 +1565,7 @@ mod tests {
         let routine_id = invalid.routine_id;
 
         let definition = RoutineDefinition {
-            title: Some("Repaired".into()),
+            name: Some("Repaired".into()),
             description: None,
             enabled: None,
             trigger: RoutineTrigger::Manual,
@@ -1383,25 +1574,36 @@ mod tests {
             },
             body: "Valid replacement.".into(),
         };
-        let content = parser::serialize_definition(&definition).unwrap();
+        let content =
+            parser::serialize_definition(&definition, "01arz3ndektsv4rrffq69g5fav").unwrap();
         assert_eq!(
             atomic_replace_cas(&path, &invalid.fingerprint, content.as_bytes()).unwrap(),
             FileCasOutcome::Applied
         );
 
         let repaired = parser::discover_owner(&owner).routines.remove(0);
-        assert_eq!(repaired.routine_id, routine_id);
-        assert_eq!(repaired.title, "Repaired");
+        assert!(routine_id.is_none());
+        assert!(repaired.routine_id.is_some());
+        assert_eq!(repaired.name, "Repaired");
         assert!(repaired.definition.is_some());
         assert!(repaired.diagnostics.is_empty());
     }
 
     #[test]
     fn slug_transliterates_cyrillic_and_keeps_a_portable_fallback() {
-        assert_eq!(slugify("  Привет, мир!  "), "privet-mir");
-        assert_eq!(slugify("Ёжик и щука"), "yozhik-i-shchuka");
-        assert_eq!(slugify("日本語"), "routine");
-        assert_eq!(slugify("Quarterly Review!"), "quarterly-review");
+        assert_eq!(
+            crate::files::entry::slugify("  Привет, мир!  "),
+            "privet-mir"
+        );
+        assert_eq!(
+            crate::files::entry::slugify("Ёжик и щука"),
+            "yozhik-i-shchuka"
+        );
+        assert_eq!(crate::files::entry::slugify("日本語"), "untitled");
+        assert_eq!(
+            crate::files::entry::slugify("Quarterly Review!"),
+            "quarterly-review"
+        );
     }
 
     #[tokio::test]
@@ -1447,7 +1649,7 @@ mod tests {
         fs::write(collection.join("schema.yaml"), "name: Tasks\n").unwrap();
         fs::write(
             routines.join("valid.md"),
-            "---\ntitle: Valid\ntrigger:\n  type: event\n  event: collection.entry_created\naction:\n  type: update_properties\n  target: trigger.entry\n  set:\n    reviewed: true\n---\nBody\n",
+            "---\nid: 01arz3ndektsv4rrffq69g5fav\nname: Valid\ntrigger:\n  type: event\n  event: collection.entry_created\naction:\n  type: update_properties\n  target: trigger.entry\n  set:\n    reviewed: true\n---\nBody\n",
         )
         .unwrap();
         fs::write(routines.join("invalid.md"), "---\ntrigger: [\n---\n").unwrap();

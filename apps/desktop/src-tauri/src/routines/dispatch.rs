@@ -105,8 +105,8 @@ pub(crate) async fn event_dispatch_preflight(
         return None;
     };
     let Some(row) = snapshot.routines.iter().find(|row| {
-        row.routine_id == event.routine_id
-            && row.fingerprint == event.definition_fingerprint
+        row.routine_id.as_deref() == Some(event.routine_id.as_str())
+            && row.execution_fingerprint == event.definition_fingerprint
             && row.diagnostics.is_empty()
     }) else {
         return None;
@@ -233,7 +233,7 @@ pub(super) async fn dispatch_routine(
     let Some(row) = snapshot
         .routines
         .iter()
-        .find(|row| row.routine_id == routine_id)
+        .find(|row| row.routine_id.as_deref() == Some(routine_id.as_str()))
     else {
         return Ok(dispatch_blocked(
             routine_id,
@@ -259,7 +259,7 @@ pub(super) async fn dispatch_routine(
         definition_fingerprint,
         ..
     } = &dispatch_kind
-        && definition_fingerprint != &row.fingerprint
+        && definition_fingerprint != &row.execution_fingerprint
     {
         return Ok(dispatch_blocked(
             routine_id,
@@ -492,7 +492,7 @@ pub(super) async fn dispatch_routine(
                 DispatchKind::Scheduled => "schedule",
                 DispatchKind::Event { .. } => "event",
             },
-            definition_fingerprint: &row.fingerprint,
+            definition_fingerprint: &row.execution_fingerprint,
             definition: &definition,
             launch_id: &launch_id,
             source: source.as_str(),
@@ -506,7 +506,7 @@ pub(super) async fn dispatch_routine(
     let command_display = quote_agent_shell_command(&launch.program, &launch.argv);
     let spawn = AgentTerminalSpawn {
         agent_session_id: agent_session_id.clone(),
-        title: Some(row.title.clone()),
+        title: Some(row.name.clone()),
         source,
         source_session_id: source_session_id.clone(),
         command: AgentSessionResumeCommand {

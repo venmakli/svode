@@ -259,11 +259,12 @@ fn desktop_mutation_result(result: service::ManagedRoutineMutationResult) -> Rou
         service::ManagedRoutineMutationResult::Applied {
             routine_id,
             snapshot,
+            changed_paths,
             warnings,
-            ..
         } => RoutineMutationResult::Applied {
             routine_id,
             snapshot,
+            changed_paths,
             warnings,
         },
         service::ManagedRoutineMutationResult::Conflict {
@@ -317,15 +318,15 @@ pub async fn routines_dispatch_manual(
 fn normalize_create_definition(
     mut definition: RoutineDefinition,
 ) -> Result<RoutineDefinition, String> {
-    let title = definition
-        .title
+    let name = definition
+        .name
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "routine title must contain 1 to 240 characters".to_string())?;
-    if title.chars().count() > 240 {
-        return Err("routine title must contain 1 to 240 characters".into());
+        .ok_or_else(|| "routine name must contain 1 to 240 characters".to_string())?;
+    if name.chars().count() > 240 {
+        return Err("routine name must contain 1 to 240 characters".into());
     }
-    definition.title = Some(title);
+    definition.name = Some(name);
     definition.description = definition
         .description
         .map(|value| value.trim().to_owned())
@@ -373,7 +374,7 @@ mod tests {
     #[test]
     fn full_create_candidate_is_preserved_and_automatic_routines_are_disabled() {
         let definition = normalize_create_definition(RoutineDefinition {
-            title: Some("  Weekly review  ".into()),
+            name: Some("  Weekly review  ".into()),
             description: Some("  Summarizes weekly changes.  ".into()),
             enabled: Some(true),
             trigger: RoutineTrigger::Schedule {
@@ -388,7 +389,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(definition.enabled, Some(false));
-        assert_eq!(definition.title.as_deref(), Some("Weekly review"));
+        assert_eq!(definition.name.as_deref(), Some("Weekly review"));
         assert_eq!(
             definition.description.as_deref(),
             Some("Summarizes weekly changes.")
@@ -410,7 +411,7 @@ mod tests {
     #[test]
     fn manual_create_candidate_drops_an_inapplicable_enabled_value() {
         let definition = normalize_create_definition(RoutineDefinition {
-            title: Some("Manual".into()),
+            name: Some("Manual".into()),
             description: None,
             enabled: Some(true),
             trigger: RoutineTrigger::Manual,
@@ -426,7 +427,7 @@ mod tests {
     #[test]
     fn full_create_candidate_requires_bounded_identity_before_service_write() {
         let result = normalize_create_definition(RoutineDefinition {
-            title: Some("   ".into()),
+            name: Some("   ".into()),
             description: None,
             enabled: None,
             trigger: RoutineTrigger::Manual,
@@ -464,7 +465,7 @@ mod tests {
         )
         .unwrap();
         let definition = RoutineDefinition {
-            title: Some("Review item".into()),
+            name: Some("Review item".into()),
             description: None,
             enabled: Some(true),
             trigger: RoutineTrigger::Event {
@@ -484,7 +485,7 @@ mod tests {
         fs::create_dir_all(owner.routines_dir()).unwrap();
         fs::write(
             owner.routines_dir().join("review-item.md"),
-            parser::serialize_definition(&definition).unwrap(),
+            parser::serialize_definition(&definition, "01arz3ndektsv4rrffq69g5fav").unwrap(),
         )
         .unwrap();
         let row = parser::discover_owner(&owner).routines.remove(0);
@@ -518,8 +519,8 @@ mod tests {
             queue_key: "queue".into(),
             event_key: "event".into(),
             owner_path: "tasks".into(),
-            routine_id: row.routine_id,
-            definition_fingerprint: row.fingerprint,
+            routine_id: row.routine_id.expect("valid routine identity"),
+            definition_fingerprint: row.execution_fingerprint,
             payload_json: serde_json::to_string(&payload).unwrap(),
         };
 

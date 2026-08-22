@@ -1,8 +1,8 @@
 import type { RoutineRow } from "./types";
 
-export function compareRoutinesByTitle(left: RoutineRow, right: RoutineRow) {
+export function compareRoutinesByName(left: RoutineRow, right: RoutineRow) {
   return (
-    left.title.localeCompare(right.title, undefined, { sensitivity: "base" }) ||
+    left.name.localeCompare(right.name, undefined, { sensitivity: "base" }) ||
     left.id.localeCompare(right.id)
   );
 }
@@ -10,7 +10,7 @@ export function compareRoutinesByTitle(left: RoutineRow, right: RoutineRow) {
 export function routineSearchText(row: RoutineRow) {
   const definition = row.definition;
   return [
-    row.title,
+    row.name,
     row.description,
     row.filename,
     definition?.trigger.type,

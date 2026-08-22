@@ -170,6 +170,9 @@ pub(crate) async fn queue_collection_events(
     let mut inserted = 0;
     for change in &changes {
         for routine in &routines {
+            let Some(routine_id) = routine.routine_id.as_deref() else {
+                continue;
+            };
             if !routine.diagnostics.is_empty() {
                 continue;
             }
@@ -183,7 +186,7 @@ pub(crate) async fn queue_collection_events(
                 continue;
             }
             let entry = current.or(previous).expect("change always has an entry");
-            if !lineage_allows(parent.as_ref(), &routine.routine_id) {
+            if !lineage_allows(parent.as_ref(), routine_id) {
                 continue;
             }
             let already_active: bool = sqlx::query_scalar(
@@ -204,10 +207,10 @@ pub(crate) async fn queue_collection_events(
                    )"#,
             )
             .bind(collection_path)
-            .bind(&routine.routine_id)
+            .bind(routine_id)
             .bind(&entry.entry_path)
             .bind(collection_path)
-            .bind(&routine.routine_id)
+            .bind(routine_id)
             .bind(&entry.entry_path)
             .fetch_one(&mut **transaction)
             .await?;
@@ -217,7 +220,7 @@ pub(crate) async fn queue_collection_events(
             let event_key = stable_key(&change.key_material(previous, current));
             let queue_key = stable_key(&format!(
                 "event-queue\0{}\0{}\0{}\0{}",
-                collection_path, routine.routine_id, routine.fingerprint, event_key
+                collection_path, routine_id, routine.execution_fingerprint, event_key
             ));
             let payload = CollectionEventPayload {
                 repository_path: entry.repository_path.clone(),
@@ -245,8 +248,8 @@ pub(crate) async fn queue_collection_events(
             .bind(&queue_key)
             .bind(&event_key)
             .bind(collection_path)
-            .bind(&routine.routine_id)
-            .bind(&routine.fingerprint)
+            .bind(routine_id)
+            .bind(&routine.execution_fingerprint)
             .bind(change.event.as_str())
             .bind(&entry.entry_path)
             .bind(change.property_key.as_deref())

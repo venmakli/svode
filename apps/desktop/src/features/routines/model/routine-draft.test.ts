@@ -17,7 +17,7 @@ const manual: RoutineDefinition = {
   body: "Review changes.",
   description: "",
   enabled: null,
-  title: "Review",
+  name: "Review",
   trigger: { type: "manual" },
 };
 

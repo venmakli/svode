@@ -48,7 +48,7 @@ export function RoutineDefinitionForm({
         event.preventDefault();
         if (
           issues.size === 0 &&
-          definition.title.trim() &&
+          definition.name.trim() &&
           !executorUnavailable &&
           !executorError
         ) {

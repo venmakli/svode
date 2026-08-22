@@ -127,14 +127,25 @@ export function useRoutinesController(
   }, [create.pending, mutations.pending, state.phase]);
   const actions: RoutinePresentationActions = {
     createState: actionState,
-    getDeleteState: () => actionState,
-    getEditState: (row) =>
-      row.definition
+    getDeleteState: (row) =>
+      row.routineId
         ? actionState
         : {
-            reason: m.routines_invalid_edit_disabled(),
+            reason: m.routines_invalid_identity_disabled(),
             status: "disabled",
           },
+    getEditState: (row) =>
+      !row.routineId
+        ? {
+            reason: m.routines_invalid_identity_disabled(),
+            status: "disabled",
+          }
+        : row.definition
+          ? actionState
+          : {
+              reason: m.routines_invalid_edit_disabled(),
+              status: "disabled",
+            },
     getEnabledState: (row) =>
       row.valid && row.definition && row.definition.trigger.type !== "manual"
         ? actionState

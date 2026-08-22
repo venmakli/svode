@@ -14,7 +14,7 @@ import type { RoutineRow } from "../model/types";
 import { RoutineDiagnostics } from "./routine-diagnostics";
 
 export function RoutineDetailView({ row }: { row: RoutineRow }) {
-  if (!row.definition) {
+  if (!row.valid || !row.definition) {
     return (
       <div className="flex flex-col gap-4">
         <RoutineDiagnostics diagnostics={row.diagnostics} />
@@ -77,9 +77,6 @@ export function RoutineDetailView({ row }: { row: RoutineRow }) {
           placeholder={m.routines_instruction_empty()}
           onChange={() => undefined}
         />
-      </DetailValue>
-      <DetailValue label={m.routines_definition_path_label()}>
-        {row.definitionPath}
       </DetailValue>
     </div>
   );

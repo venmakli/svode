@@ -73,7 +73,7 @@ export async function updateRoutine(
       ...owner,
       definition: toDefinitionDto(definition),
       expectedFingerprint: row.fingerprint,
-      routineId: row.id,
+      routineId: requireRoutineId(row),
     }),
   );
 }
@@ -86,7 +86,7 @@ export async function deleteRoutine(
     await deleteRoutineCommand({
       ...owner,
       expectedFingerprint: row.fingerprint,
-      routineId: row.id,
+      routineId: requireRoutineId(row),
     }),
   );
 }
@@ -97,7 +97,7 @@ export async function dispatchManualRoutine(
 ): Promise<RoutineManualDispatchResult> {
   const result = await dispatchManualRoutineCommand({
     ...owner,
-    routineId: row.id,
+    routineId: requireRoutineId(row),
   });
   if (result.status === "blocked" || result.status === "failed") return result;
   return {
@@ -129,6 +129,7 @@ function normalizeMutationResult(
     };
   }
   return {
+    changedPaths: Object.freeze([...result.changedPaths]),
     routineId: result.routineId,
     snapshot: normalizeSnapshot(result.snapshot),
     status: "applied",
@@ -155,14 +156,14 @@ function normalizeRow(
 ): RoutineRow {
   return Object.freeze({
     definition: row.definition
-      ? normalizeDefinition(row.definition, row.title, row.description)
+      ? normalizeDefinition(row.definition, row.name, row.description)
       : null,
     definitionPath: row.path,
     description: row.description?.trim() ?? "",
     diagnostics: Object.freeze(row.diagnostics.map(normalizeDiagnostic)),
     filename: row.filename,
     fingerprint: row.fingerprint,
-    id: row.routineId,
+    id: row.routineId ?? `invalid:${row.path}`,
     lastRunAt: row.lastRunAt,
     lastRunOrigin: row.lastRunOrigin ?? null,
     lastRun: row.lastRun
@@ -173,14 +174,18 @@ function normalizeRow(
         })
       : null,
     nextRunAt: row.nextRunAt,
-    title: row.title,
-    valid: row.definition !== null && row.diagnostics.length === 0,
+    name: row.name,
+    routineId: row.routineId,
+    valid:
+      row.routineId !== null &&
+      row.definition !== null &&
+      row.diagnostics.length === 0,
   });
 }
 
 function normalizeDefinition(
   definition: RoutineDefinitionDto,
-  fallbackTitle: string,
+  fallbackName: string,
   fallbackDescription: string | null,
 ): RoutineDefinition {
   return Object.freeze({
@@ -197,7 +202,7 @@ function normalizeDefinition(
       definition.trigger.type === "manual"
         ? null
         : (definition.enabled ?? false),
-    title: definition.title ?? fallbackTitle,
+    name: definition.name ?? fallbackName,
     trigger:
       definition.trigger.type === "event"
         ? Object.freeze({
@@ -230,7 +235,7 @@ function toDefinitionDto(definition: RoutineDefinition): RoutineDefinitionDto {
     body: definition.body,
     description: definition.description.trim() || null,
     enabled: definition.trigger.type === "manual" ? null : definition.enabled,
-    title: definition.title.trim() || null,
+    name: definition.name.trim() || null,
     trigger:
       definition.trigger.type === "event"
         ? {
@@ -241,4 +246,11 @@ function toDefinitionDto(definition: RoutineDefinition): RoutineDefinitionDto {
           }
         : { ...definition.trigger },
   };
+}
+
+function requireRoutineId(row: RoutineRow) {
+  if (!row.routineId) {
+    throw new Error("Invalid Routine definitions do not have an addressable id");
+  }
+  return row.routineId;
 }

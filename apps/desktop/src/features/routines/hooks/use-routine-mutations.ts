@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { toast } from "sonner";
 
 import {
   deleteRoutine,
@@ -83,6 +84,13 @@ export function useRoutineMutations({
           return null;
         }
         replaceSnapshot(result.snapshot);
+        if (result.warnings.length > 0) {
+          toast.warning(m.routines_update_applied_warning(), {
+            description: result.warnings
+              .map((warning) => warning.message)
+              .join("\n"),
+          });
+        }
         return (
           result.snapshot.rows.find((candidate) => candidate.id === row.id) ??
           null
@@ -138,11 +146,12 @@ export function useRoutineMutations({
     editSession,
     error,
     openDelete: (row: RoutineRow) => {
+      if (!row.routineId) return;
       setError(null);
       setDeleteTarget(row);
     },
     openEdit: (row: RoutineRow) => {
-      if (!row.definition) return;
+      if (!row.routineId || !row.definition) return;
       setError(null);
       setEditSession({
         draft: row.definition,

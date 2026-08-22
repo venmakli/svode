@@ -12,6 +12,7 @@ import {
 
 import type { RoutineRow } from "../model/types";
 import { RoutineAutomaticConsent } from "./routine-automatic-consent";
+import { RoutineDetailView } from "./routine-detail-view";
 import {
   createRoutinesPresentation,
   createRoutinesPresentationDescriptor,
@@ -28,7 +29,7 @@ const review: RoutineRow = {
     body: "Review changes.",
     description: "Review the current owner.",
     enabled: null,
-    title: "Review",
+    name: "Review",
     trigger: { type: "manual" },
   },
   definitionPath: ".routines/review.md",
@@ -37,11 +38,12 @@ const review: RoutineRow = {
   filename: "review.md",
   fingerprint: "fingerprint:review",
   id: "routine:review",
+  routineId: "routine:review",
   lastRun: null,
   lastRunAt: null,
   lastRunOrigin: null,
   nextRunAt: null,
-  title: "Review",
+  name: "Review",
   valid: true,
 };
 
@@ -50,7 +52,7 @@ const scheduled: RoutineRow = {
   definition: {
     ...review.definition!,
     enabled: false,
-    title: "Daily summary",
+    name: "Daily summary",
     trigger: {
       cron: "0 9 * * *",
       missedRuns: "skip",
@@ -62,7 +64,7 @@ const scheduled: RoutineRow = {
   filename: "daily-summary.md",
   fingerprint: "fingerprint:summary",
   id: "routine:summary",
-  title: "Daily summary",
+  name: "Daily summary",
 };
 
 function actions(calls: string[]): RoutinePresentationActions {
@@ -138,7 +140,35 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
   ).toBe("Open session");
 });
 
-test("routines query searches definitions and defaults to title ordering", () => {
+test("routine detail hides technical paths when valid and preserves exact recovery paths when invalid", () => {
+  const valid = renderToStaticMarkup(<RoutineDetailView row={review} />);
+  expect(valid.includes(review.definitionPath)).toBe(false);
+
+  const invalidPath = ".routines/broken.md";
+  const invalid = renderToStaticMarkup(
+    <RoutineDetailView
+      row={{
+        ...review,
+        definitionPath: invalidPath,
+        diagnostics: [
+          {
+            code: "routine_id_invalid",
+            field: "id",
+            message: "id must be a lowercase ULID",
+            path: invalidPath,
+          },
+        ],
+        id: `invalid:${invalidPath}`,
+        routineId: null,
+        valid: false,
+      }}
+    />,
+  );
+  expect(invalid.includes(invalidPath)).toBe(true);
+  expect(invalid.includes("id must be a lowercase ULID")).toBe(true);
+});
+
+test("routines query searches definitions and defaults to name ordering", () => {
   const descriptor = createRoutinesPresentationDescriptor({
     actions: actions([]),
     createDetailRequest: () => ({

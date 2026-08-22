@@ -33,7 +33,7 @@ export function RoutineCreateReview({
           {ownerLabel}
         </ReviewValue>
         <ReviewValue label={m.routines_title_label()}>
-          {definition.title.trim()}
+          {definition.name.trim()}
         </ReviewValue>
         {definition.description.trim() ? (
           <ReviewValue label={m.routines_description_label()}>

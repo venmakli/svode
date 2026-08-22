@@ -38,7 +38,7 @@ export type RoutineAction =
     };
 
 export interface RoutineDefinition {
-  title: string;
+  name: string;
   description: string;
   enabled: boolean | null;
   trigger: RoutineTrigger;
@@ -55,10 +55,11 @@ export interface RoutineDiagnostic {
 
 export interface RoutineRow {
   id: string;
+  routineId: string | null;
   definitionPath: string;
   filename: string;
   fingerprint: string;
-  title: string;
+  name: string;
   description: string;
   definition: RoutineDefinition | null;
   diagnostics: readonly RoutineDiagnostic[];
@@ -147,6 +148,7 @@ export type RoutineMutationResult =
       status: "applied";
       snapshot: RoutineCatalogSnapshot;
       routineId: string;
+      changedPaths: readonly string[];
       warnings: readonly RoutineDiagnostic[];
     }
   | { status: "stale"; currentFingerprint: string | null }

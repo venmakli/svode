@@ -33,7 +33,7 @@ export function RoutineDeleteDialog({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            {m.routines_delete_title({ title: routine.title })}
+            {m.routines_delete_title({ title: routine.name })}
           </AlertDialogTitle>
           <AlertDialogDescription>
             {m.routines_delete_description()}

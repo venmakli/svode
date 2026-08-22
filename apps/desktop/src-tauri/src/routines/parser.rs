@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
 
@@ -19,7 +19,8 @@ const MAX_DIAGNOSTIC_MESSAGE_CHARS: usize = 512;
 #[derive(Debug, Clone)]
 pub(crate) struct ParsedRoutine {
     pub definition: Option<RoutineDefinition>,
-    pub title: String,
+    pub portable_id: Option<String>,
+    pub name: String,
     pub description: Option<String>,
     pub diagnostics: Vec<RoutineDiagnostic>,
 }
@@ -41,7 +42,9 @@ pub(crate) struct RoutineDirectoryScan {
 #[serde(deny_unknown_fields)]
 struct RoutineFrontmatter {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    title: Option<String>,
+    id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -153,7 +156,8 @@ pub(crate) fn parse_routine(
         Err(diagnostic) => {
             return ParsedRoutine {
                 definition: None,
-                title: fallback,
+                portable_id: None,
+                name: fallback,
                 description: None,
                 diagnostics: vec![diagnostic],
             };
@@ -165,7 +169,8 @@ pub(crate) fn parse_routine(
         Err(error) => {
             return ParsedRoutine {
                 definition: None,
-                title: fallback,
+                portable_id: None,
+                name: fallback,
                 description: None,
                 diagnostics: vec![RoutineDiagnostic::new(
                     "routine_frontmatter_invalid",
@@ -175,25 +180,32 @@ pub(crate) fn parse_routine(
         }
     };
 
+    let portable_id = frontmatter.id.filter(|id| is_lowercase_ulid(id));
     let definition = RoutineDefinition {
-        title: frontmatter.title,
+        name: frontmatter.name,
         description: frontmatter.description,
         enabled: frontmatter.enabled,
         trigger: frontmatter.trigger.into(),
         action: frontmatter.action.into(),
         body: body.to_string(),
     };
-    let title = definition
-        .title
+    let name = definition
+        .name
         .as_deref()
-        .filter(|title| !title.trim().is_empty())
+        .filter(|name| !name.trim().is_empty())
         .unwrap_or(&fallback)
         .to_string();
     let description = definition.description.clone();
-    let diagnostics = validate_definition(&definition, owner_kind);
+    let mut diagnostics = validate_definition(&definition, owner_kind);
+    if portable_id.is_none() {
+        diagnostics.push(
+            RoutineDiagnostic::new("routine_id_invalid", "id must be a lowercase ULID").field("id"),
+        );
+    }
     ParsedRoutine {
         definition: Some(definition),
-        title,
+        portable_id,
+        name,
         description,
         diagnostics,
     }
@@ -205,16 +217,16 @@ pub(crate) fn validate_definition(
 ) -> Vec<RoutineDiagnostic> {
     let mut diagnostics = Vec::new();
     if definition
-        .title
+        .name
         .as_ref()
-        .is_some_and(|title| title.trim().is_empty() || title.chars().count() > 240)
+        .is_some_and(|name| name.trim().is_empty() || name.chars().count() > 240)
     {
         diagnostics.push(
             RoutineDiagnostic::new(
-                "routine_title_invalid",
-                "title must be non-empty when supplied and at most 240 characters",
+                "routine_name_invalid",
+                "name must be non-empty when supplied and at most 240 characters",
             )
-            .field("title"),
+            .field("name"),
         );
     }
     if definition
@@ -608,11 +620,35 @@ pub(crate) fn scan_routine_directory(
 
 pub(crate) fn discover_owner(owner: &ResolvedRoutineOwner) -> RoutineCatalogSnapshot {
     let scan = scan_routine_directory(&owner.owner_root, owner.descriptor.kind);
-    let routines = scan
+    let mut routines = scan
         .files
         .into_iter()
         .map(|file| row_from_file(owner, file))
         .collect::<Vec<_>>();
+    let id_counts = routines
+        .iter()
+        .filter_map(|row| row.portable_id.clone())
+        .fold(HashMap::<String, usize>::new(), |mut counts, id| {
+            *counts.entry(id).or_default() += 1;
+            counts
+        });
+    for row in &mut routines {
+        if row
+            .portable_id
+            .as_deref()
+            .is_some_and(|id| id_counts.get(id).copied().unwrap_or_default() > 1)
+        {
+            row.routine_id = None;
+            row.diagnostics.push(
+                RoutineDiagnostic::new(
+                    "routine_id_duplicate",
+                    "id must be unique inside the exact Routine owner",
+                )
+                .field("id")
+                .path(row.path.clone()),
+            );
+        }
+    }
     let catalog_fingerprint = catalog_fingerprint(&routines, &scan.diagnostics);
     RoutineCatalogSnapshot {
         owner: owner.descriptor.clone(),
@@ -624,7 +660,11 @@ pub(crate) fn discover_owner(owner: &ResolvedRoutineOwner) -> RoutineCatalogSnap
 }
 
 fn row_from_file(owner: &ResolvedRoutineOwner, file: DiscoveredRoutineFile) -> RoutineRow {
-    let routine_id = routine_id(&owner.identity(), &file.filename);
+    let routine_id = file
+        .parsed
+        .portable_id
+        .as_deref()
+        .map(|portable_id| routine_id(&owner.identity(), portable_id));
     let owner_path = &owner.descriptor.owner_path;
     let path = if owner_path == "." {
         format!(".routines/{}", file.filename)
@@ -632,6 +672,10 @@ fn row_from_file(owner: &ResolvedRoutineOwner, file: DiscoveredRoutineFile) -> R
         format!("{owner_path}/.routines/{}", file.filename)
     };
     let definition = file.parsed.definition;
+    let execution_fingerprint = definition
+        .as_ref()
+        .map(execution_fingerprint)
+        .unwrap_or_else(|| file.fingerprint.clone());
     let (enabled, trigger_type, trigger_summary, action_type, action_summary, executor) =
         definition
             .as_ref()
@@ -654,9 +698,10 @@ fn row_from_file(owner: &ResolvedRoutineOwner, file: DiscoveredRoutineFile) -> R
             .unwrap_or((None, None, None, None, None, None));
     RoutineRow {
         routine_id,
+        portable_id: file.parsed.portable_id,
         filename: file.filename,
         path: path.clone(),
-        title: file.parsed.title,
+        name: file.parsed.name,
         description: file.parsed.description,
         enabled,
         trigger_type,
@@ -669,6 +714,7 @@ fn row_from_file(owner: &ResolvedRoutineOwner, file: DiscoveredRoutineFile) -> R
         next_run_at: None,
         last_run: None,
         fingerprint: file.fingerprint,
+        execution_fingerprint,
         definition,
         diagnostics: file
             .parsed
@@ -696,9 +742,13 @@ fn action_summary(action: &RoutineAction) -> String {
     }
 }
 
-pub(crate) fn serialize_definition(definition: &RoutineDefinition) -> Result<String, String> {
+pub(crate) fn serialize_definition(
+    definition: &RoutineDefinition,
+    portable_id: &str,
+) -> Result<String, String> {
     let frontmatter = RoutineFrontmatter {
-        title: definition.title.clone(),
+        id: Some(portable_id.to_string()),
+        name: definition.name.clone(),
         description: definition.description.clone(),
         enabled: definition.enabled,
         trigger: PortableRoutineTrigger::from(&definition.trigger),
@@ -760,9 +810,34 @@ pub(crate) fn fingerprint(bytes: &[u8]) -> String {
     )
 }
 
-fn routine_id(owner_identity: &str, filename: &str) -> String {
-    let value = format!("{owner_identity}\0{filename}");
+fn routine_id(owner_identity: &str, portable_id: &str) -> String {
+    let value = format!("{owner_identity}\0{portable_id}");
     format!("routine:{}", fingerprint(value.as_bytes()))
+}
+
+pub(crate) fn execution_fingerprint(definition: &RoutineDefinition) -> String {
+    #[derive(Serialize)]
+    struct ExecutionDefinition<'a> {
+        enabled: Option<bool>,
+        trigger: &'a super::model::RoutineTrigger,
+        action: &'a super::model::RoutineAction,
+        body: &'a str,
+    }
+
+    let bytes = serde_json::to_vec(&ExecutionDefinition {
+        enabled: definition.enabled,
+        trigger: &definition.trigger,
+        action: &definition.action,
+        body: &definition.body,
+    })
+    .expect("Routine execution definition is serializable");
+    fingerprint(&bytes)
+}
+
+fn is_lowercase_ulid(value: &str) -> bool {
+    value.len() == 26
+        && value == value.to_ascii_lowercase()
+        && ulid::Ulid::from_string(&value.to_ascii_uppercase()).is_ok()
 }
 
 pub(crate) fn catalog_fingerprint(
@@ -771,7 +846,9 @@ pub(crate) fn catalog_fingerprint(
 ) -> String {
     let mut value = String::new();
     for row in rows {
-        value.push_str(&row.routine_id);
+        value.push_str(row.routine_id.as_deref().unwrap_or_default());
+        value.push('\0');
+        value.push_str(&row.path);
         value.push('\0');
         value.push_str(&row.fingerprint);
         value.push('\0');
@@ -802,20 +879,37 @@ fn push_diagnostic(diagnostics: &mut Vec<RoutineDiagnostic>, diagnostic: Routine
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::IndexKey;
+    use crate::routines::model::RoutineOwnerDescriptor;
 
     const ACTOR: &str = "agent:01arz3ndektsv4rrffq69g5fav";
+    const ID: &str = "01arz3ndektsv4rrffq69g5fav";
 
     fn valid_manual() -> String {
         format!(
-            "---\ntitle: Test\ntrigger:\n  type: manual\naction:\n  type: run_agent\n  executor: {ACTOR}\n---\nBody\n"
+            "---\nid: {ID}\nname: Test\ntrigger:\n  type: manual\naction:\n  type: run_agent\n  executor: {ACTOR}\n---\nBody\n"
         )
+    }
+
+    fn owner(root: &Path) -> ResolvedRoutineOwner {
+        ResolvedRoutineOwner {
+            descriptor: RoutineOwnerDescriptor {
+                kind: RoutineOwnerKind::Project,
+                space_id: "root".into(),
+                owner_path: ".".into(),
+            },
+            project_path: root.into(),
+            space_path: root.into(),
+            owner_root: root.into(),
+            index_key: IndexKey::Root(root.into()),
+        }
     }
 
     #[test]
     fn parses_formats_and_preserves_markdown_body() {
         let parsed = parse_routine(&valid_manual(), "same.md", RoutineOwnerKind::Space);
         let definition = parsed.definition.expect("typed definition");
-        assert_eq!(definition.title.as_deref(), Some("Test"));
+        assert_eq!(definition.name.as_deref(), Some("Test"));
         assert_eq!(definition.body, "Body\n");
         assert!(parsed.diagnostics.is_empty());
     }
@@ -824,7 +918,7 @@ mod tests {
     fn missing_and_malformed_frontmatter_are_discoverable() {
         let missing = parse_routine("Body", "fallback.md", RoutineOwnerKind::Space);
         assert!(missing.definition.is_none());
-        assert_eq!(missing.title, "fallback");
+        assert_eq!(missing.name, "fallback");
         assert_eq!(missing.diagnostics[0].code, "routine_frontmatter_missing");
 
         let malformed = parse_routine("---\ntrigger: [\n---\n", "bad.md", RoutineOwnerKind::Space);
@@ -834,8 +928,10 @@ mod tests {
 
     #[test]
     fn validates_trigger_action_matrix_and_event_owner() {
-        let raw = "---\ntrigger:\n  type: event\n  event: collection.entry_deleted\naction:\n  type: update_properties\n  target: trigger.entry\n  set:\n    done: true\n---\n";
-        let parsed = parse_routine(raw, "bad.md", RoutineOwnerKind::Space);
+        let raw = format!(
+            "---\nid: {ID}\nname: Test\ntrigger:\n  type: event\n  event: collection.entry_deleted\naction:\n  type: update_properties\n  target: trigger.entry\n  set:\n    done: true\n---\n"
+        );
+        let parsed = parse_routine(&raw, "bad.md", RoutineOwnerKind::Space);
         assert!(parsed.definition.is_some());
         let codes = parsed
             .diagnostics
@@ -848,8 +944,10 @@ mod tests {
 
     #[test]
     fn validates_schedule_shape_and_explicit_executor() {
-        let raw = "---\ntrigger:\n  type: schedule\n  cron: '* * *'\n  timezone: local\n  missed_runs: skip\naction:\n  type: run_agent\n  executor: ''\n---\n";
-        let parsed = parse_routine(raw, "schedule.md", RoutineOwnerKind::Space);
+        let raw = format!(
+            "---\nid: {ID}\nname: Test\ntrigger:\n  type: schedule\n  cron: '* * *'\n  timezone: local\n  missed_runs: skip\naction:\n  type: run_agent\n  executor: ''\n---\n"
+        );
+        let parsed = parse_routine(&raw, "schedule.md", RoutineOwnerKind::Space);
         assert!(parsed.definition.is_some());
         assert_eq!(parsed.diagnostics.len(), 3);
     }
@@ -857,12 +955,14 @@ mod tests {
     #[test]
     fn portable_yaml_and_ipc_use_their_respective_field_conventions() {
         let raw = format!(
-            "---\ntrigger:\n  type: schedule\n  cron: '0 9 * * 1-5'\n  timezone: Europe/Paris\n  missed_runs: run_once\naction:\n  type: run_agent\n  executor: {ACTOR}\n---\n"
+            "---\nid: {ID}\nname: Schedule\ntrigger:\n  type: schedule\n  cron: '0 9 * * 1-5'\n  timezone: Europe/Paris\n  missed_runs: run_once\naction:\n  type: run_agent\n  executor: {ACTOR}\n---\n"
         );
         let definition = parse_routine(&raw, "schedule.md", RoutineOwnerKind::Space)
             .definition
             .expect("typed definition");
-        let yaml = serialize_definition(&definition).unwrap();
+        let yaml = serialize_definition(&definition, ID).unwrap();
+        assert!(yaml.contains(ID));
+        assert!(yaml.contains("name: Schedule"));
         assert!(yaml.contains("missed_runs: run_once"));
         assert!(!yaml.contains("missedRuns"));
 
@@ -873,8 +973,10 @@ mod tests {
 
     #[test]
     fn property_values_preserve_json_compatible_structures() {
-        let raw = "---\ntrigger:\n  type: event\n  event: collection.entry_created\naction:\n  type: update_properties\n  target: trigger.entry\n  set:\n    labels: [one, two]\n    metadata:\n      source: routine\n---\n";
-        let definition = parse_routine(raw, "properties.md", RoutineOwnerKind::Collection)
+        let raw = format!(
+            "---\nid: {ID}\nname: Properties\ntrigger:\n  type: event\n  event: collection.entry_created\naction:\n  type: update_properties\n  target: trigger.entry\n  set:\n    labels: [one, two]\n    metadata:\n      source: routine\n---\n"
+        );
+        let definition = parse_routine(&raw, "properties.md", RoutineOwnerKind::Collection)
             .definition
             .expect("typed definition");
         let RoutineAction::UpdateProperties { set, .. } = definition.action else {
@@ -903,6 +1005,92 @@ mod tests {
             scan.diagnostics
                 .iter()
                 .all(|diagnostic| diagnostic.code == "routine_file_unsafe")
+        );
+    }
+
+    #[test]
+    fn portable_identity_is_required_unique_and_independent_of_filename() {
+        let temp = tempfile::tempdir().unwrap();
+        let routines = temp.path().join(".routines");
+        fs::create_dir_all(&routines).unwrap();
+        fs::write(routines.join("first.md"), valid_manual()).unwrap();
+
+        let first = discover_owner(&owner(temp.path()));
+        let first_row = &first.routines[0];
+        assert!(first_row.routine_id.is_some());
+        let routine_id = first_row.routine_id.clone();
+        fs::rename(routines.join("first.md"), routines.join("renamed.md")).unwrap();
+        let renamed = discover_owner(&owner(temp.path()));
+        assert_eq!(renamed.routines[0].routine_id, routine_id);
+
+        fs::write(routines.join("duplicate.md"), valid_manual()).unwrap();
+        let duplicate = discover_owner(&owner(temp.path()));
+        assert!(
+            duplicate
+                .routines
+                .iter()
+                .all(|row| row.routine_id.is_none())
+        );
+        assert!(duplicate.routines.iter().all(|row| {
+            row.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "routine_id_duplicate"
+                    && diagnostic.path.as_deref() == Some(row.path.as_str())
+            })
+        }));
+    }
+
+    #[test]
+    fn malformed_identity_and_legacy_title_fail_closed_without_aliasing() {
+        let missing = parse_routine(
+            &valid_manual().replace(&format!("id: {ID}\n"), ""),
+            "missing.md",
+            RoutineOwnerKind::Space,
+        );
+        assert!(missing.portable_id.is_none());
+        assert!(
+            missing
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "routine_id_invalid")
+        );
+
+        let legacy = valid_manual().replace("name: Test", "title: Legacy");
+        let legacy = parse_routine(&legacy, "legacy.md", RoutineOwnerKind::Space);
+        assert!(legacy.definition.is_none());
+        assert!(
+            legacy
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "routine_frontmatter_invalid")
+        );
+    }
+
+    #[test]
+    fn display_edits_change_source_but_not_execution_fingerprint() {
+        let first = parse_routine(&valid_manual(), "first.md", RoutineOwnerKind::Space)
+            .definition
+            .unwrap();
+        let renamed = RoutineDefinition {
+            name: Some("Renamed".into()),
+            description: Some("Updated description".into()),
+            ..first.clone()
+        };
+        assert_eq!(
+            execution_fingerprint(&first),
+            execution_fingerprint(&renamed)
+        );
+        assert_ne!(
+            fingerprint(serialize_definition(&first, ID).unwrap().as_bytes()),
+            fingerprint(serialize_definition(&renamed, ID).unwrap().as_bytes())
+        );
+
+        let changed_body = RoutineDefinition {
+            body: "Different body".into(),
+            ..first
+        };
+        assert_ne!(
+            execution_fingerprint(&renamed),
+            execution_fingerprint(&changed_body)
         );
     }
 }

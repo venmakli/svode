@@ -41,7 +41,7 @@ export type RoutineActionDto =
     };
 
 export interface RoutineDefinitionDto {
-  title?: string | null;
+  name?: string | null;
   description?: string | null;
   enabled?: boolean | null;
   trigger: RoutineTriggerDto;
@@ -57,10 +57,10 @@ export interface RoutineDiagnosticDto {
 }
 
 export interface RoutineRowDto {
-  routineId: string;
+  routineId: string | null;
   filename: string;
   path: string;
-  title: string;
+  name: string;
   description: string | null;
   enabled: boolean | null;
   triggerType: RoutineTriggerTypeDto | null;
@@ -73,6 +73,7 @@ export interface RoutineRowDto {
   nextRunAt: string | null;
   lastRun?: RoutineRunRefDto | null;
   fingerprint: string;
+  executionFingerprint: string;
   definition: RoutineDefinitionDto | null;
   diagnostics: RoutineDiagnosticDto[];
 }
@@ -114,6 +115,7 @@ export type RoutineMutationResultDto =
       status: "applied";
       routineId: string;
       snapshot: RoutineCatalogSnapshotDto;
+      changedPaths: string[];
       warnings: RoutineDiagnosticDto[];
     }
   | { status: "stale"; currentFingerprint?: string | null }

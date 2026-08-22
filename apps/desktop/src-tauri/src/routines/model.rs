@@ -92,7 +92,7 @@ impl ResolvedRoutineOwner {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RoutineDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
+    pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -581,10 +581,12 @@ impl RoutineDiagnostic {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RoutineRow {
-    pub routine_id: String,
+    pub routine_id: Option<String>,
+    #[serde(skip)]
+    pub(crate) portable_id: Option<String>,
     pub filename: String,
     pub path: String,
-    pub title: String,
+    pub name: String,
     pub description: Option<String>,
     pub enabled: Option<bool>,
     pub trigger_type: Option<RoutineTriggerType>,
@@ -599,6 +601,7 @@ pub struct RoutineRow {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_run: Option<RoutineRunRef>,
     pub fingerprint: String,
+    pub execution_fingerprint: String,
     pub definition: Option<RoutineDefinition>,
     pub diagnostics: Vec<RoutineDiagnostic>,
 }
@@ -630,6 +633,7 @@ pub enum RoutineMutationResult {
     Applied {
         routine_id: String,
         snapshot: RoutineCatalogSnapshot,
+        changed_paths: Vec<String>,
         warnings: Vec<RoutineDiagnostic>,
     },
     Stale {
