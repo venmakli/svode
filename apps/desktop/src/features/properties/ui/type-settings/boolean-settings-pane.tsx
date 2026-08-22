@@ -15,7 +15,7 @@ export function BooleanSettingsPane({
   return (
     <div className="flex flex-col gap-2 p-3">
       <ColumnSelect
-        label={m.property_boolean_display()}
+        label={m.table_number_display()}
         value={effectiveBooleanDisplay(column.display)}
         disabled={pending}
         options={[
