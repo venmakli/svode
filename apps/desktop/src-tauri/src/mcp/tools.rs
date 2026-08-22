@@ -521,7 +521,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "add_collection_column",
-            "Add a schema column to an existing collection. Read get_collection_schema first. actor values are canonical emails; status is workflow state; unique_id is read-only after materialization. Does not autocommit.",
+            "Add a schema column to an existing collection. Read get_collection_schema first. For boolean completion/confirmation fields use display checkbox; for maintained enabled/active fields use display switch; omit display when intent is ambiguous to use checkbox. actor values are canonical emails; status is workflow state; unique_id is read-only after materialization. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -535,7 +535,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "update_collection_column",
-            "Patch configurable settings of an existing collection column, such as options, display, color, sensitivity, relation, date settings, or status groups. For new fields prefer add_collection_column. Does not autocommit.",
+            "Patch configurable settings of an existing collection column, such as options, display, color, sensitivity, relation, date settings, or status groups. Read get_collection_schema first and preserve the current boolean display unless the user explicitly asks to change its presentation. For new fields prefer add_collection_column. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -706,7 +706,7 @@ Property semantics:
 - Always read get_collection_schema before schema changes.
 - actor is for assignee/owner/reviewer/participants. Values are canonical email strings, or arrays of canonical emails when the column allows multiple actors. Use list_actors first; do not create select options from people names.
 - status is workflow state with groups todo, in_progress, and done. A collection should have at most one status column.
-- boolean is a two-state field. Values are JSON true/false, or null to clear the stored key; do not use string surrogates such as checked/unchecked or on/off.
+- boolean is a two-state field. Values are JSON true/false, or null to clear the stored key; do not use string surrogates such as checked/unchecked or on/off. Use display checkbox for completion, confirmation, verification, or consent semantics. Use display switch for a maintained enabled, active, published, available, or permission state with immediate effect. If the intent is ambiguous, omit display so the safe default remains checkbox. On unrelated column updates, preserve the existing display instead of reinterpreting it.
 - unique_id is read-only after creation/materialization. Do not write unique_id through update_entry_fields.
 - date is for due dates, events, and calendar views. Calendar views require date_field.
 - email and phone should use typed email/phone fields and sensitivity pii for contact data.
@@ -1156,7 +1156,7 @@ fn column_patch_req(name: &'static str) -> (&'static str, Value) {
 fn column_schema() -> Value {
     json!({
         "type": "object",
-        "description": "Svode column definition. actor values are canonical emails; relation values are entry paths; status options should use todo/in_progress/done groups.",
+        "description": "Svode column definition. Boolean columns use display checkbox for completion/confirmation and switch for maintained enabled/active state; omit display when ambiguous. actor values are canonical emails; relation values are entry paths; status options should use todo/in_progress/done groups.",
         "additionalProperties": false,
         "properties": column_properties(true),
         "required": ["name", "type"]
@@ -1181,7 +1181,14 @@ fn column_properties(include_name_type: bool) -> Value {
         json!({"description": "Default field value. Must match the column type."}),
     );
     properties.insert("options".to_string(), json!({"type": ["array", "null"], "items": option_schema(), "description": "select/multi_select/status options. status options may include group todo/in_progress/done."}));
-    properties.insert("display".to_string(), json!({"type": ["string", "null"]}));
+    properties.insert(
+        "display".to_string(),
+        json!({
+            "type": ["string", "null"],
+            "enum": ["number", "percent", "bar", "ring", "short", "medium", "long", "all_time", "checkbox", "switch", null],
+            "description": "Type-specific presentation. For boolean use checkbox for completion/confirmation, switch for maintained enabled/active state, or omit/null for the default checkbox. Preserve the current value on unrelated updates. This never changes boolean JSON true/false/null value semantics."
+        }),
+    );
     properties.insert("min".to_string(), json!({"type": ["number", "null"]}));
     properties.insert("max".to_string(), json!({"type": ["number", "null"]}));
     properties.insert("color".to_string(), json!({"type": ["string", "null"]}));
@@ -1758,6 +1765,47 @@ mod tests {
         assert!(types.contains(&json!("boolean")));
         assert!(!types.contains(&json!("checkbox")));
         assert!(guide_text().contains("Values are JSON true/false"));
+    }
+
+    #[test]
+    fn boolean_display_schema_and_guidance_preserve_value_semantics() {
+        let display = &column_schema()["properties"]["display"];
+        let values = display["enum"].as_array().expect("display enum");
+        assert!(values.contains(&json!("checkbox")));
+        assert!(values.contains(&json!("switch")));
+        assert!(
+            display["description"]
+                .as_str()
+                .expect("display description")
+                .contains("JSON true/false/null")
+        );
+
+        let definitions = definitions();
+        let add = definitions
+            .iter()
+            .find(|definition| definition.name == "add_collection_column")
+            .expect("add_collection_column definition");
+        assert!(add.description.contains("completion/confirmation"));
+        assert!(add.description.contains("enabled/active"));
+        assert!(add.description.contains("omit display"));
+
+        let update = definitions
+            .iter()
+            .find(|definition| definition.name == "update_collection_column")
+            .expect("update_collection_column definition");
+        assert!(update.description.contains("preserve"));
+        assert!(update.description.contains("explicitly asks"));
+
+        let guide = guide_text();
+        for guidance in [
+            "completion, confirmation, verification, or consent",
+            "enabled, active, published, available, or permission",
+            "omit display",
+            "preserve the existing display",
+            "do not use string surrogates",
+        ] {
+            assert!(guide.contains(guidance), "missing guidance: {guidance}");
+        }
     }
 
     #[test]

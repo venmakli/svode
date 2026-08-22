@@ -267,6 +267,79 @@ views: []
 }
 
 #[test]
+fn boolean_display_is_strict_and_mutates_only_the_portable_schema() {
+    let checkbox: CollectionSchema = serde_yml::from_str(
+        "columns:\n  - { name: Active, type: boolean, display: checkbox }\nviews: []\n",
+    )
+    .unwrap();
+    validate_schema(&checkbox).unwrap();
+
+    let switch: CollectionSchema = serde_yml::from_str(
+        "columns:\n  - { name: Active, type: boolean, display: switch }\nviews: []\n",
+    )
+    .unwrap();
+    validate_schema(&switch).unwrap();
+
+    for raw in [
+        "columns:\n  - { name: Active, type: boolean, display: ring }\nviews: []\n",
+        "columns:\n  - { name: Notes, type: text, display: switch }\nviews: []\n",
+    ] {
+        let schema: CollectionSchema = serde_yml::from_str(raw).unwrap();
+        let error = validate_schema(&schema).unwrap_err().to_string();
+        assert!(error.contains("invalid display"));
+        assert!(error.contains(if raw.contains("ring") {
+            "ring"
+        } else {
+            "switch"
+        }));
+        assert!(error.contains(if raw.contains("Active") {
+            "Active"
+        } else {
+            "Notes"
+        }));
+    }
+
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path();
+    fs::create_dir_all(space.join("tasks")).unwrap();
+    fs::write(
+        space.join("tasks/schema.yaml"),
+        "columns:\n  - { name: Active, type: boolean }\nviews:\n  - { name: Table, type: table, visible_fields: [title, Active] }\n",
+    )
+    .unwrap();
+    let entry_path = space.join("tasks/item.md");
+    fs::write(&entry_path, "---\ntitle: Item\nActive: false\n---\nBody\n").unwrap();
+    let entry_before = fs::read_to_string(&entry_path).unwrap();
+
+    let updated = update_schema_column(
+        space.to_str().unwrap(),
+        "tasks",
+        "Active",
+        serde_yml::from_str("display: switch").unwrap(),
+    )
+    .unwrap();
+
+    let active = updated
+        .columns
+        .iter()
+        .find(|column| column.name == "Active")
+        .unwrap();
+    assert_eq!(active.display.as_deref(), Some("switch"));
+    assert_eq!(fs::read_to_string(&entry_path).unwrap(), entry_before);
+    assert_eq!(updated.views.len(), 1);
+
+    let defaulted = update_schema_column(
+        space.to_str().unwrap(),
+        "tasks",
+        "Active",
+        serde_yml::from_str("display: null").unwrap(),
+    )
+    .unwrap();
+    assert_eq!(defaulted.columns[0].display, None);
+    assert_eq!(fs::read_to_string(&entry_path).unwrap(), entry_before);
+}
+
+#[test]
 fn conversion_to_boolean_preserves_unrecognized_values_as_conflicts() {
     let tmp = TempDir::new().unwrap();
     let space = tmp.path();

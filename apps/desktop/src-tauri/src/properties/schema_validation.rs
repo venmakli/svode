@@ -789,7 +789,9 @@ fn validate_column_display(column: &Column) -> Result<(), AppError> {
     let allowed = match column.type_ {
         PropertyType::Number => ["number", "percent", "bar", "ring"].contains(&display),
         PropertyType::Date => ["short", "medium", "long"].contains(&display),
-        _ => true,
+        PropertyType::Actor => display == "all_time",
+        PropertyType::Boolean => ["checkbox", "switch"].contains(&display),
+        _ => false,
     };
     if !allowed {
         return Err(schema_error(format!(

@@ -234,6 +234,7 @@ function hasTypeSettings(column: Column) {
     "actor",
     "unique_id",
     "relation",
+    "boolean",
   ].includes(column.type);
 }
 
@@ -263,6 +264,9 @@ function typeSettingsMeta(column: Column): {
   }
   if (column.type === "relation") {
     return { icon: ListTree, label: m.table_type_settings_relation() };
+  }
+  if (column.type === "boolean") {
+    return { icon: Check, label: m.table_type_settings_boolean() };
   }
 
   return null;

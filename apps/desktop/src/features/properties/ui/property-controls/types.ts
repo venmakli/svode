@@ -13,6 +13,8 @@ export interface PropertyControlProps {
   actors?: ActorCandidate[];
   relationContext?: RelationContext;
   relationPresentation?: "default" | "table";
+  accessibilityLabel?: string;
+  density?: "default" | "compact";
   onRequestActors?: (allTime: boolean) => Promise<ActorCandidate[]>;
   onChange: (value: unknown) => void | Promise<void>;
   onOpenChange?: (open: boolean) => void;

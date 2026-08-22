@@ -1,5 +1,5 @@
-import { Checkbox } from "@/components/ui/checkbox";
 import { effectiveBooleanValue } from "../model/boolean";
+import { BooleanPropertyControl } from "./boolean-property";
 import { ActorControl } from "./property-controls/actor-control";
 import { DateControl } from "./property-controls/date-control";
 import {
@@ -31,6 +31,8 @@ export function PropertyControl({
   actors = [],
   relationContext,
   relationPresentation,
+  accessibilityLabel,
+  density,
   onRequestActors,
   onChange,
   onOpenChange,
@@ -130,13 +132,15 @@ export function PropertyControl({
       );
     case "boolean":
       return (
-        <Checkbox
-          checked={effectiveBooleanValue(value) ?? false}
+        <BooleanPropertyControl
+          display={column.display}
+          value={effectiveBooleanValue(value) ?? false}
           disabled={disabled}
-          aria-label={column.name}
-          aria-invalid={invalid || undefined}
-          onCheckedChange={(checked) => {
-            void onChange(checked === true);
+          invalid={invalid}
+          accessibilityLabel={accessibilityLabel ?? column.name}
+          density={density}
+          onChange={(checked) => {
+            void onChange(checked);
           }}
         />
       );

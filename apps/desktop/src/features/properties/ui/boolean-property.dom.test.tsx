@@ -41,6 +41,15 @@ test("boolean controls render effective false and never coerce conflicts to chec
               changes.push(value);
             }}
           />
+          <PropertyControl
+            accessibilityLabel="Published: Task one"
+            column={{ name: "Published", type: "boolean", display: "switch" }}
+            density="compact"
+            value={false}
+            onChange={(value) => {
+              changes.push(value);
+            }}
+          />
         </>,
       );
     });
@@ -54,14 +63,24 @@ test("boolean controls render effective false and never coerce conflicts to chec
     const truthy = dom.window.document.querySelector<HTMLElement>(
       '[role="checkbox"][aria-label="True"]',
     )!;
+    const switchControl = dom.window.document.querySelector<HTMLElement>(
+      '[role="switch"][aria-label="Published: Task one"]',
+    )!;
 
     expect(missing.getAttribute("aria-checked")).toBe("false");
     expect(invalid.getAttribute("aria-checked")).toBe("false");
     expect(invalid.getAttribute("aria-invalid")).toBe("true");
     expect(truthy.getAttribute("aria-checked")).toBe("true");
+    expect(switchControl.tagName).toBe("BUTTON");
+    expect(switchControl.getAttribute("data-size")).toBe("sm");
+    expect(switchControl.getAttribute("aria-checked")).toBe("false");
+
+    switchControl.focus();
+    expect(dom.window.document.activeElement).toBe(switchControl);
 
     await act(async () => missing.click());
-    expect(changes).toEqual([true]);
+    await act(async () => switchControl.click());
+    expect(changes).toEqual([true, true]);
   } finally {
     await act(async () => root.unmount());
     restoreGlobals();
@@ -89,6 +108,10 @@ test("passive boolean values distinguish false from a visible type conflict", as
             column={{ name: "Invalid", type: "boolean" }}
             value="false"
           />
+          <PropertyValue
+            column={{ name: "Published", type: "boolean", display: "switch" }}
+            value
+          />
         </>,
       );
     });
@@ -98,6 +121,15 @@ test("passive boolean values distinguish false from a visible type conflict", as
     )!;
     expect(indicator.getAttribute("role")).toBe("img");
     expect(Boolean(indicator.getAttribute("aria-label"))).toBe(true);
+    expect(indicator.getAttribute("data-property-boolean-display")).toBe(
+      "checkbox",
+    );
+    const passiveSwitch = dom.window.document.querySelector<HTMLElement>(
+      '[data-property-boolean-display="switch"]',
+    )!;
+    expect(passiveSwitch.getAttribute("role")).toBe("img");
+    expect(passiveSwitch.getAttribute("tabindex")).toBeNull();
+    expect(Boolean(passiveSwitch.getAttribute("aria-label"))).toBe(true);
     expect(dom.window.document.body.textContent?.includes("false")).toBe(true);
   } finally {
     await act(async () => root.unmount());

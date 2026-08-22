@@ -28,6 +28,7 @@ import type {
   ViewType,
 } from "@/features/collection/query/model";
 import type { CollectionSchema, PropertyType } from "@/features/properties";
+import { TypeSettingsPane } from "@/features/properties/column-settings";
 import { handleError } from "../../hooks/error-feedback";
 import { TypePane } from "../table/column-menu-panes";
 import { SortableFieldVisibilityRow } from "../view-settings-panes";
@@ -165,6 +166,10 @@ export function ViewSettingsPropertyEditPane({
   toggleField,
   openFieldFilter,
   openFieldSort,
+  spacePath,
+  collectionPath,
+  projectPath,
+  onSchemaChange,
 }: {
   selectedProperty: string;
   savedFields: string[];
@@ -173,7 +178,15 @@ export function ViewSettingsPropertyEditPane({
   toggleField: (field: string, locked?: boolean) => void;
   openFieldFilter: (field: string) => void;
   openFieldSort: (field: string) => void;
+  spacePath: string;
+  collectionPath: string;
+  projectPath?: string | null;
+  onSchemaChange: (schema: CollectionSchema) => void;
 }) {
+  const selectedColumn = schema.columns.find(
+    (column) => column.name === selectedProperty,
+  );
+
   return (
     <div className="flex flex-col p-1">
       <SettingsSection label={m.collection_properties_label()} />
@@ -188,10 +201,7 @@ export function ViewSettingsPropertyEditPane({
         <SettingsRow
           icon={LayoutGrid}
           label={m.table_column_type()}
-          meta={
-            schema.columns.find((column) => column.name === selectedProperty)
-              ?.type ?? "-"
-          }
+          meta={selectedColumn?.type ?? "-"}
           onClick={() => undefined}
         />
       )}
@@ -207,6 +217,18 @@ export function ViewSettingsPropertyEditPane({
           selectedProperty !== "title" && toggleField(selectedProperty)
         }
       />
+      {selectedColumn?.type === "boolean" ? (
+        <>
+          <SettingsSection label={m.table_type_settings()} />
+          <TypeSettingsPane
+            column={selectedColumn}
+            spacePath={spacePath}
+            collectionPath={collectionPath}
+            projectPath={projectPath}
+            onSchemaChange={onSchemaChange}
+          />
+        </>
+      ) : null}
       <SettingsSection label={m.table_query_section()} />
       <SettingsRow
         icon={Filter}

@@ -92,6 +92,7 @@ export function FrontmatterPanel({
                 spacePath={spacePath}
                 projectPath={projectPath}
                 filePath={filePath}
+                entryLabel={meta.title}
                 schemaResult={schemaResult}
                 values={meta.extra ?? {}}
                 onOpenPath={onOpenPath}

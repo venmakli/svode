@@ -77,6 +77,7 @@ export function ScopeOwnerHeader({ actions }: { actions?: ReactNode }) {
             projectPath={context.projectPath}
             spaceId={context.spaceId}
             filePath={context.readmePath}
+            entryLabel={entry.meta.title}
             schemaResult={schemaResult}
             values={entry.meta.extra ?? {}}
             mode="full"

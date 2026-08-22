@@ -208,6 +208,7 @@ export function useTableColumns({
             property ? (
               <PropertyCell
                 column={property}
+                entryLabel={row.original.entry.meta.title}
                 actors={actors}
                 onRequestActors={onRequestActors}
                 relationContext={{

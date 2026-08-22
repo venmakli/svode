@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
-import { Check, Copy, ExternalLink, Mail, PhoneCall } from "lucide-react";
+import { Copy, ExternalLink, Mail, PhoneCall } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -35,6 +35,7 @@ import {
   openPropertyExternal,
 } from "../api/property-actions";
 import { effectiveBooleanValue } from "../model/boolean";
+import { BooleanPropertyValue } from "./boolean-property";
 
 export function PropertyValueActions({
   column,
@@ -119,23 +120,7 @@ export function PropertyValue({
     if (effective === undefined) {
       return <span className="text-destructive">{valueToString(value)}</span>;
     }
-    return (
-      <span
-        data-property-boolean-value={effective ? "true" : "false"}
-        role="img"
-        aria-label={
-          effective ? m.property_boolean_yes() : m.property_boolean_no()
-        }
-        className={cn(
-          "inline-flex size-4 shrink-0 items-center justify-center rounded-[4px] border",
-          effective
-            ? "border-primary bg-primary text-primary-foreground"
-            : "border-input bg-background",
-        )}
-      >
-        {effective ? <Check className="size-3.5" aria-hidden /> : null}
-      </span>
-    );
+    return <BooleanPropertyValue display={column.display} value={effective} />;
   }
   if (isEmptyValue(value)) {
     return <span className="text-muted-foreground">-</span>;

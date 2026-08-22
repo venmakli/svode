@@ -19,6 +19,7 @@ test("table boolean cell renders missing and conflicts as unchecked without trut
         <>
           <PropertyCell
             actors={[]}
+            entryLabel="Task one"
             column={{ name: "Missing", type: "boolean" }}
             editing={false}
             value={undefined}
@@ -29,9 +30,21 @@ test("table boolean cell renders missing and conflicts as unchecked without trut
           />
           <PropertyCell
             actors={[]}
+            entryLabel="Task one"
             column={{ name: "Invalid", type: "boolean" }}
             editing={false}
             value="true"
+            onCancel={() => undefined}
+            onCommit={() => undefined}
+            onEdit={() => undefined}
+            onRequestActors={async () => []}
+          />
+          <PropertyCell
+            actors={[]}
+            entryLabel="Task two"
+            column={{ name: "Published", type: "boolean", display: "switch" }}
+            editing={false}
+            value
             onCancel={() => undefined}
             onCommit={() => undefined}
             onEdit={() => undefined}
@@ -42,15 +55,20 @@ test("table boolean cell renders missing and conflicts as unchecked without trut
     });
 
     const missing = dom.window.document.querySelector(
-      '[role="checkbox"][aria-label="Missing"]',
+      '[role="checkbox"][aria-label="Missing: Task one"]',
     )!;
     const invalid = dom.window.document.querySelector(
-      '[role="checkbox"][aria-label="Invalid"]',
+      '[role="checkbox"][aria-label="Invalid: Task one"]',
+    )!;
+    const switchControl = dom.window.document.querySelector(
+      '[role="switch"][aria-label="Published: Task two"]',
     )!;
     expect(missing.getAttribute("aria-checked")).toBe("false");
     expect(missing.getAttribute("aria-invalid")).toBeNull();
     expect(invalid.getAttribute("aria-checked")).toBe("false");
     expect(invalid.getAttribute("aria-invalid")).toBe("true");
+    expect(switchControl.getAttribute("aria-checked")).toBe("true");
+    expect(switchControl.getAttribute("data-size")).toBe("sm");
   } finally {
     await act(async () => root.unmount());
     restoreGlobals();

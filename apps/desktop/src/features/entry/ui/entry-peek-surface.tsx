@@ -93,6 +93,7 @@ export function EntryPeekSurface({
               projectPath={projectPath}
               spaceId={spaceId}
               filePath={entry.path}
+              entryLabel={entry.meta.title}
               schemaResult={schemaResult}
               values={entry.meta.extra ?? {}}
               mode="peek"

@@ -239,6 +239,10 @@ export function ViewSettingsPopover({
           toggleField={toggleField}
           openFieldFilter={openFieldFilter}
           openFieldSort={openFieldSort}
+          spacePath={spacePath}
+          collectionPath={collectionPath}
+          projectPath={projectPath}
+          onSchemaChange={onSchemaChange}
         />
       ),
     },

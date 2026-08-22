@@ -30,17 +30,19 @@ export function ColumnSelect({
   label,
   value,
   options,
+  disabled,
   onChange,
 }: {
   label: string;
   value: string;
   options: ColumnSelectOption[];
+  disabled?: boolean;
   onChange: (value: string) => void;
 }) {
   return (
     <label className="flex items-center gap-2 text-sm">
       <span className="w-20 text-muted-foreground">{label}</span>
-      <Select value={value} onValueChange={onChange}>
+      <Select value={value} disabled={disabled} onValueChange={onChange}>
         <SelectTrigger className="h-8 flex-1">
           <SelectValue />
         </SelectTrigger>

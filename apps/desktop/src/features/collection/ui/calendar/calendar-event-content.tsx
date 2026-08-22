@@ -247,6 +247,8 @@ function CalendarPropertyControl({
         column={column}
         value={value}
         invalid={validation.invalid}
+        accessibilityLabel={`${column.name}: ${entry.meta.title}`}
+        density="compact"
         actors={propertyContext.actors}
         relationContext={{
           spacePath: propertyContext.spacePath,

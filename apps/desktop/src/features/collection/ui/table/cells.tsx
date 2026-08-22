@@ -1,11 +1,9 @@
 import { useRef, useState } from "react";
 import { Database, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/shared/lib/utils";
 import {
-  effectiveBooleanValue,
   shouldClosePropertyEditorOnChange,
   validatePropertyValue,
 } from "@/features/properties";
@@ -24,6 +22,7 @@ import * as m from "@/paraglide/messages.js";
 
 export function PropertyCell({
   column,
+  entryLabel,
   actors,
   onRequestActors,
   relationContext,
@@ -34,6 +33,7 @@ export function PropertyCell({
   onCommit,
 }: {
   column: Column;
+  entryLabel: string;
   actors: ActorCandidate[];
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   relationContext?: RelationContext;
@@ -48,11 +48,13 @@ export function PropertyCell({
   if (column.type === "boolean") {
     return (
       <div className="flex h-7 items-center px-1">
-        <Checkbox
-          checked={effectiveBooleanValue(value) ?? false}
-          aria-label={column.name}
-          aria-invalid={validation.invalid || undefined}
-          onCheckedChange={(checked) => onCommit(checked === true)}
+        <PropertyControl
+          column={column}
+          value={value}
+          invalid={validation.invalid}
+          accessibilityLabel={`${column.name}: ${entryLabel}`}
+          density="compact"
+          onChange={onCommit}
         />
       </div>
     );
@@ -100,6 +102,8 @@ export function PropertyCell({
             column={column}
             value={value}
             invalid={validation.invalid}
+            accessibilityLabel={`${column.name}: ${entryLabel}`}
+            density="compact"
             autoOpen
             actors={actors}
             relationContext={relationContext}

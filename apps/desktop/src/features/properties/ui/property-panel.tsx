@@ -53,6 +53,7 @@ interface PropertyPanelProps {
   projectPath?: string | null;
   spaceId?: string | null;
   filePath: string;
+  entryLabel: string;
   schemaResult: EntrySchemaResult;
   values: Record<string, unknown>;
   mode?: "peek" | "full";
@@ -76,6 +77,7 @@ export function PropertyPanel({
   projectPath,
   spaceId,
   filePath,
+  entryLabel,
   schemaResult,
   values,
   mode = "peek",
@@ -144,6 +146,7 @@ export function PropertyPanel({
               <div className="min-w-0">
                 <PropertyPanelValue
                   column={column}
+                  entryLabel={entryLabel}
                   value={panelValues[column.name]}
                   invalid={state.invalid}
                   disabled={state.code === "type_conflict"}
@@ -365,6 +368,7 @@ function invalidOptionValues(column: Column, value: unknown): string[] {
 
 function PropertyPanelValue({
   column,
+  entryLabel,
   value,
   invalid,
   disabled,
@@ -376,6 +380,7 @@ function PropertyPanelValue({
   onValueChange,
 }: {
   column: Column;
+  entryLabel: string;
   value: unknown;
   invalid: boolean;
   disabled: boolean;
@@ -401,6 +406,7 @@ function PropertyPanelValue({
           column={column}
           value={value}
           invalid={invalid}
+          accessibilityLabel={`${column.name}: ${entryLabel}`}
           disabled={disabled}
           autoOpen
           actors={actors}

@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   normalizeUniqueIdCounter,
@@ -22,45 +22,80 @@ export function useColumnTypeSettings({
   projectPath,
   onSchemaChange,
 }: UseColumnTypeSettingsInput) {
+  const identity = `${spacePath}\u0000${collectionPath}\u0000${projectPath ?? ""}\u0000${column.name}`;
+  const identityRef = useRef(identity);
+  const requestGenerationRef = useRef(0);
+  const [pendingIdentity, setPendingIdentity] = useState<string | null>(null);
+  if (identityRef.current !== identity) {
+    identityRef.current = identity;
+    requestGenerationRef.current += 1;
+  }
+
   const handleError = useCallback((error: unknown) => {
     console.error(error);
     toast.error(propertyErrorMessage(error));
   }, []);
 
+  const runMutation = useCallback(
+    async (mutation: () => Promise<CollectionSchema>) => {
+      const requestIdentity = identity;
+      const requestGeneration = ++requestGenerationRef.current;
+      setPendingIdentity(requestIdentity);
+      try {
+        const next = await mutation();
+        if (
+          identityRef.current === requestIdentity &&
+          requestGenerationRef.current === requestGeneration
+        ) {
+          onSchemaChange(next);
+        }
+      } catch (error) {
+        if (
+          identityRef.current === requestIdentity &&
+          requestGenerationRef.current === requestGeneration
+        ) {
+          handleError(error);
+        }
+      } finally {
+        if (
+          identityRef.current === requestIdentity &&
+          requestGenerationRef.current === requestGeneration
+        ) {
+          setPendingIdentity(null);
+        }
+      }
+    },
+    [handleError, identity, onSchemaChange],
+  );
+
   const patchColumn = useCallback(
     async (patch: ColumnPatch) => {
-      try {
-        const next = await updateSchemaColumn({
+      await runMutation(() =>
+        updateSchemaColumn({
           spacePath,
           collectionPath,
           columnName: column.name,
           patch,
           projectPath,
-        });
-        onSchemaChange(next);
-      } catch (error) {
-        handleError(error);
-      }
+        }),
+      );
     },
-    [
-      collectionPath,
-      column.name,
-      handleError,
-      onSchemaChange,
-      projectPath,
-      spacePath,
-    ],
+    [collectionPath, column.name, projectPath, runMutation, spacePath],
   );
 
   const normalizeCounter = useCallback(() => {
-    void normalizeUniqueIdCounter({
-      spacePath,
-      collectionPath,
-      projectPath,
-    })
-      .then(onSchemaChange)
-      .catch(handleError);
-  }, [collectionPath, handleError, onSchemaChange, projectPath, spacePath]);
+    void runMutation(() =>
+      normalizeUniqueIdCounter({
+        spacePath,
+        collectionPath,
+        projectPath,
+      }),
+    );
+  }, [collectionPath, projectPath, runMutation, spacePath]);
 
-  return { patchColumn, normalizeCounter };
+  return {
+    patchColumn,
+    normalizeCounter,
+    pending: pendingIdentity === identity,
+  };
 }

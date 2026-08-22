@@ -31,6 +31,7 @@ export type StatusGroup = "todo" | "in_progress" | "done";
 
 export type NumberDisplay = "number" | "percent" | "bar" | "ring";
 export type DateDisplay = "short" | "medium" | "long";
+export type BooleanDisplay = "checkbox" | "switch";
 
 export interface PropertyOption {
   name: string;
@@ -46,7 +47,7 @@ export interface Column {
   type: PropertyType;
   default?: unknown;
   options?: PropertyOption[] | null;
-  display?: NumberDisplay | DateDisplay | string | null;
+  display?: string | null;
   min?: number | null;
   max?: number | null;
   color?: ColorName | null;

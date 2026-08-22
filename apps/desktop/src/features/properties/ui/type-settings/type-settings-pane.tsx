@@ -6,6 +6,7 @@ import { ColumnSelect, ToggleRow } from "./common";
 import { NumberSettingsPane } from "./number-settings-pane";
 import { OptionsPane } from "./options-pane";
 import { RelationSettingsPane } from "./relation-settings-pane";
+import { BooleanSettingsPane } from "./boolean-settings-pane";
 import * as m from "@/paraglide/messages.js";
 
 export function TypeSettingsPane({
@@ -21,7 +22,7 @@ export function TypeSettingsPane({
   projectPath?: string | null;
   onSchemaChange: (schema: CollectionSchema) => void;
 }) {
-  const { patchColumn, normalizeCounter } = useColumnTypeSettings({
+  const { patchColumn, normalizeCounter, pending } = useColumnTypeSettings({
     column,
     spacePath,
     collectionPath,
@@ -49,6 +50,16 @@ export function TypeSettingsPane({
     return <NumberSettingsPane column={column} onPatchColumn={patchColumn} />;
   }
 
+  if (column.type === "boolean") {
+    return (
+      <BooleanSettingsPane
+        column={column}
+        pending={pending}
+        onPatchColumn={patchColumn}
+      />
+    );
+  }
+
   if (column.type === "date") {
     return (
       <div className="flex flex-col gap-2 p-3">
@@ -66,9 +77,7 @@ export function TypeSettingsPane({
         <ToggleRow
           label={m.property_date_range()}
           checked={Boolean(column.rangeByDefault)}
-          onChange={(checked) =>
-            void patchColumn({ rangeByDefault: checked })
-          }
+          onChange={(checked) => void patchColumn({ rangeByDefault: checked })}
         />
       </div>
     );

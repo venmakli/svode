@@ -110,6 +110,8 @@ function CardPropertyItem({
             column={column}
             value={value}
             invalid={validation.invalid}
+            accessibilityLabel={`${column.name}: ${entry.meta.title}`}
+            density="compact"
             actors={actors}
             relationContext={relationContext}
             onRequestActors={onRequestActors}
