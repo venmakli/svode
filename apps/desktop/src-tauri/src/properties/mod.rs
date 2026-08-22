@@ -2619,7 +2619,7 @@ pub fn validate_property_value(column: &Column, value: &Value) -> Result<(), App
             expect_string_value(&column.name, value).map(|_| ())
         }
         PropertyType::Relation => validate_relation_value_shape(column, value).map(|_| ()),
-        PropertyType::Checkbox => {
+        PropertyType::Boolean => {
             if value.as_bool().is_some() {
                 Ok(())
             } else {
@@ -4177,7 +4177,7 @@ fn infer_column(field: &str, value: &Value) -> Column {
 
 fn infer_type(value: &Value) -> PropertyType {
     if value.as_bool().is_some() {
-        return PropertyType::Checkbox;
+        return PropertyType::Boolean;
     }
     if value.as_f64().is_some() {
         return PropertyType::Number;

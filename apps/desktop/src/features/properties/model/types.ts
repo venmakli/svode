@@ -7,7 +7,7 @@ export type PropertyType =
   | "date"
   | "unique_id"
   | "actor"
-  | "checkbox"
+  | "boolean"
   | "url"
   | "email"
   | "phone"

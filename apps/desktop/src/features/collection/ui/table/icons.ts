@@ -24,7 +24,7 @@ export const PROPERTY_TYPE_ICONS: Record<PropertyType, LucideIcon> = {
   date: Calendar,
   unique_id: Hash,
   actor: User,
-  checkbox: Check,
+  boolean: Check,
   url: Link,
   email: Mail,
   phone: Phone,

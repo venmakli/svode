@@ -451,7 +451,7 @@ pub(super) fn validate_filter_op(
                 | FilterOp::IsEmpty
                 | FilterOp::IsNotEmpty
         ),
-        FieldType::Checkbox => matches!(filter.op, FilterOp::Eq | FilterOp::Neq),
+        FieldType::Boolean => matches!(filter.op, FilterOp::Eq | FilterOp::Neq),
         FieldType::SelectLike | FieldType::Actor => matches!(
             filter.op,
             FilterOp::Eq
@@ -508,7 +508,7 @@ pub(super) enum FieldType {
     Number,
     UniqueId,
     Date,
-    Checkbox,
+    Boolean,
     SelectLike,
     Multi,
     Status,
@@ -642,7 +642,7 @@ fn validate_filter_value(
             parse_unique_id_filter_value(column, value)?;
         }
         FieldType::Date => validate_date_filter_value(&filter.field, value)?,
-        FieldType::Checkbox => {
+        FieldType::Boolean => {
             if value.as_bool().is_none() {
                 return Err(schema_error(format!(
                     "filter '{}' requires boolean value",
@@ -736,7 +736,7 @@ pub(super) fn field_type(
             PropertyType::Date => FieldType::Date,
             PropertyType::Actor if actor_multiple(column) => FieldType::ActorMulti,
             PropertyType::Actor => FieldType::Actor,
-            PropertyType::Checkbox => FieldType::Checkbox,
+            PropertyType::Boolean => FieldType::Boolean,
             PropertyType::Relation => FieldType::Multi,
         });
     }

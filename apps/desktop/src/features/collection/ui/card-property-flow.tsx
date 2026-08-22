@@ -77,7 +77,7 @@ function CardPropertyItem({
   onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
 }) {
   const value = valueForColumn(entry, column);
-  if (isEmptyValue(value) && column.type !== "checkbox") return null;
+  if (isEmptyValue(value) && column.type !== "boolean") return null;
 
   const validation = validatePropertyValue(column, value);
   const interactive = Boolean(onUpdateField) && isInteractiveCardType(column);
@@ -143,7 +143,7 @@ function isInteractiveCardType(column: Column) {
     column.type === "date" ||
     column.type === "actor" ||
     column.type === "relation" ||
-    column.type === "checkbox"
+    column.type === "boolean"
   );
 }
 

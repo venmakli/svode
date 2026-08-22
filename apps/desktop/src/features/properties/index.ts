@@ -33,6 +33,7 @@ export {
   shouldClosePropertyEditorOnChange,
   validatePropertyValue,
 } from "./model/validation";
+export { effectiveBooleanValue } from "./model/boolean";
 export {
   PROPERTY_TYPES,
   actorDisplayName,

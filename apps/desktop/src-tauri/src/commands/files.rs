@@ -299,7 +299,7 @@ fn property_type_message(type_: PropertyType) -> &'static str {
         PropertyType::Date => "date",
         PropertyType::Relation => "relation",
         PropertyType::Actor => "actor",
-        PropertyType::Checkbox => "checkbox",
+        PropertyType::Boolean => "boolean",
         PropertyType::Url => "url",
         PropertyType::Email => "email",
         PropertyType::Phone => "phone",

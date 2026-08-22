@@ -35,7 +35,7 @@ export const PROPERTY_TYPES: { value: PropertyType; label: string }[] = [
   { value: "date", label: "Date" },
   { value: "unique_id", label: "ID" },
   { value: "actor", label: "Actor" },
-  { value: "checkbox", label: "Checkbox" },
+  { value: "boolean", label: "Yes / no" },
   { value: "url", label: "URL" },
   { value: "email", label: "Email" },
   { value: "phone", label: "Phone" },

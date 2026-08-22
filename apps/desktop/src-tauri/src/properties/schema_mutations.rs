@@ -1388,7 +1388,7 @@ fn convert_value_for_type(value: Value, column: &Column) -> Value {
             other => value_to_scalar_string(&other)
                 .map(|item| Value::Sequence(vec![Value::String(item)])),
         },
-        PropertyType::Checkbox => value_to_bool(&value).map(Value::Bool),
+        PropertyType::Boolean => value_to_bool(&value).map(Value::Bool),
         PropertyType::Date => {
             if validate_date_value(&column.name, &value).is_ok() {
                 Some(value)

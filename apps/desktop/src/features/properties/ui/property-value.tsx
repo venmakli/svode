@@ -34,6 +34,7 @@ import {
   copyPropertyValue,
   openPropertyExternal,
 } from "../api/property-actions";
+import { effectiveBooleanValue } from "../model/boolean";
 
 export function PropertyValueActions({
   column,
@@ -113,6 +114,29 @@ export function PropertyValue({
       )
     );
   }
+  if (column.type === "boolean") {
+    const effective = effectiveBooleanValue(value);
+    if (effective === undefined) {
+      return <span className="text-destructive">{valueToString(value)}</span>;
+    }
+    return (
+      <span
+        data-property-boolean-value={effective ? "true" : "false"}
+        role="img"
+        aria-label={
+          effective ? m.property_boolean_yes() : m.property_boolean_no()
+        }
+        className={cn(
+          "inline-flex size-4 shrink-0 items-center justify-center rounded-[4px] border",
+          effective
+            ? "border-primary bg-primary text-primary-foreground"
+            : "border-input bg-background",
+        )}
+      >
+        {effective ? <Check className="size-3.5" aria-hidden /> : null}
+      </span>
+    );
+  }
   if (isEmptyValue(value)) {
     return <span className="text-muted-foreground">-</span>;
   }
@@ -172,13 +196,6 @@ export function PropertyValue({
     );
   }
   if (column.type === "date") return formatDateValue(value, column.display);
-  if (column.type === "checkbox") {
-    return value ? (
-      <Check data-icon="inline-start" />
-    ) : (
-      <span className="text-muted-foreground">-</span>
-    );
-  }
   if (column.type === "number" && typeof value === "number") {
     if (column.display === "bar" || column.display === "ring") {
       return <NumberPreview column={column} value={value} />;

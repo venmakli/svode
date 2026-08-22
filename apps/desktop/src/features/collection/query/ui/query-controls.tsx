@@ -220,7 +220,7 @@ function FilterValueControl({
       />
     );
   }
-  if (field.type === "checkbox") {
+  if (field.type === "boolean") {
     return (
       <ToggleGroup
         type="single"
@@ -550,7 +550,7 @@ function fieldTypeLabel(type: PropertyType) {
     date: String(m.table_property_type_date()),
     unique_id: String(m.table_property_type_unique_id()),
     actor: String(m.table_property_type_actor()),
-    checkbox: String(m.table_property_type_checkbox()),
+    boolean: String(m.table_property_type_boolean()),
     url: String(m.table_property_type_url()),
     email: String(m.table_property_type_email()),
     phone: String(m.table_property_type_phone()),
@@ -569,7 +569,7 @@ function propertyTypeIcon(type: PropertyType) {
     date: Calendar,
     unique_id: Hash,
     actor: User,
-    checkbox: Check,
+    boolean: Check,
     url: Link,
     email: Mail,
     phone: Phone,

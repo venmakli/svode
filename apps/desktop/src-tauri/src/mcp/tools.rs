@@ -706,6 +706,7 @@ Property semantics:
 - Always read get_collection_schema before schema changes.
 - actor is for assignee/owner/reviewer/participants. Values are canonical email strings, or arrays of canonical emails when the column allows multiple actors. Use list_actors first; do not create select options from people names.
 - status is workflow state with groups todo, in_progress, and done. A collection should have at most one status column.
+- boolean is a two-state field. Values are JSON true/false, or null to clear the stored key; do not use string surrogates such as checked/unchecked or on/off.
 - unique_id is read-only after creation/materialization. Do not write unique_id through update_entry_fields.
 - date is for due dates, events, and calendar views. Calendar views require date_field.
 - email and phone should use typed email/phone fields and sensitivity pii for contact data.
@@ -1170,7 +1171,7 @@ fn column_properties(include_name_type: bool) -> Value {
             "type".to_string(),
             json!({
                 "type": "string",
-                "enum": ["text", "number", "unique_id", "select", "multi_select", "status", "date", "relation", "actor", "checkbox", "url", "email", "phone"]
+                "enum": ["text", "number", "unique_id", "select", "multi_select", "status", "date", "relation", "actor", "boolean", "url", "email", "phone"]
             }),
         );
     }
@@ -1746,6 +1747,17 @@ mod tests {
     #[test]
     fn unique_id_next_schema_matches_backend_minimum() {
         assert_eq!(column_schema()["properties"]["next"]["minimum"], json!(1));
+    }
+
+    #[test]
+    fn column_schema_publishes_boolean_as_the_only_two_state_type() {
+        let schema = column_schema();
+        let types = schema["properties"]["type"]["enum"]
+            .as_array()
+            .expect("column type enum");
+        assert!(types.contains(&json!("boolean")));
+        assert!(!types.contains(&json!("checkbox")));
+        assert!(guide_text().contains("Values are JSON true/false"));
     }
 
     #[test]

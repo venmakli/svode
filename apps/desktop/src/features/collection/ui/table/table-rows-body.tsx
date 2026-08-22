@@ -231,6 +231,6 @@ function nestedPreviewValueClass(column: Column) {
   if (column.type === "select" || column.type === "status") {
     return "shrink-0";
   }
-  if (column.type === "checkbox") return "shrink-0";
+  if (column.type === "boolean") return "shrink-0";
   return "max-w-48 shrink truncate";
 }

@@ -9,7 +9,7 @@ export type PropertyTypeDto =
   | "date"
   | "unique_id"
   | "actor"
-  | "checkbox"
+  | "boolean"
   | "url"
   | "email"
   | "phone"

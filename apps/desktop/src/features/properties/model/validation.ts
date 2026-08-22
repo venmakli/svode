@@ -70,7 +70,7 @@ export function validatePropertyValue(
         )
         ? validPropertyValue()
         : invalidPropertyValue("invalid_option");
-    case "checkbox":
+    case "boolean":
       return typeof value === "boolean"
         ? validPropertyValue()
         : invalidPropertyValue("type_conflict");

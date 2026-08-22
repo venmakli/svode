@@ -96,7 +96,9 @@ export function AddColumnDialog({
                 <SelectGroup>
                   {PROPERTY_TYPES.map((item) => (
                     <SelectItem key={item.value} value={item.value}>
-                      {item.label}
+                      {item.value === "boolean"
+                        ? m.table_property_type_boolean()
+                        : item.label}
                     </SelectItem>
                   ))}
                 </SelectGroup>
@@ -248,7 +250,9 @@ export function ChangeTypeDialog({
             <SelectGroup>
               {PROPERTY_TYPES.map((item) => (
                 <SelectItem key={item.value} value={item.value}>
-                  {item.label}
+                  {item.value === "boolean"
+                    ? m.table_property_type_boolean()
+                    : item.label}
                 </SelectItem>
               ))}
             </SelectGroup>

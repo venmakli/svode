@@ -14,6 +14,7 @@ import type {
 interface TestRow {
   active: boolean;
   due?: string | { start: string; end: string };
+  enabled?: unknown;
   id: string;
   name: string;
   priority?: string;
@@ -29,6 +30,17 @@ const priorityColumn = {
 };
 
 const fields: readonly SystemCollectionFieldDescriptor<TestRow>[] = [
+  {
+    filter: { kind: "property" },
+    getValue: (row) => row.enabled,
+    key: "enabled",
+    label: "Enabled",
+    sort: { kind: "property" },
+    valueSemantics: {
+      column: { name: "Enabled", type: "boolean" },
+      kind: "property",
+    },
+  },
   {
     filter: { kind: "property" },
     getValue: (row) => row.name,
@@ -418,6 +430,71 @@ test("field sort keeps empty values last in both directions and uses rowId ties"
   expect(ascending.rows.map((row) => row.id)).toEqual(["a", "z", "empty"]);
   expect(descending.rows.map((row) => row.id)).toEqual(["a", "z", "empty"]);
   expect(inputOrder.rows.map((row) => row.id)).toEqual(["z", "a", "empty"]);
+});
+
+test("boolean property queries treat missing and null as false without coercing conflicts", () => {
+  const rows = [
+    { active: true, enabled: true, id: "true", name: "True" },
+    { active: true, enabled: false, id: "false", name: "False" },
+    { active: true, id: "missing", name: "Missing" },
+    { active: true, enabled: null, id: "null", name: "Null" },
+    { active: true, enabled: "false", id: "invalid", name: "Invalid" },
+  ];
+  const falseRows = applySystemCollectionQuery({
+    descriptor: descriptor(),
+    query: query({
+      filters: [{ fieldKey: "enabled", operator: "eq", value: false }],
+      sort: [{ direction: "asc", fieldKey: "name" }],
+    }),
+    rows,
+  });
+  const notTrueRows = applySystemCollectionQuery({
+    descriptor: descriptor(),
+    query: query({
+      filters: [{ fieldKey: "enabled", operator: "neq", value: true }],
+      sort: [{ direction: "asc", fieldKey: "name" }],
+    }),
+    rows,
+  });
+  const ascending = applySystemCollectionQuery({
+    descriptor: descriptor(),
+    query: query({
+      sort: [{ direction: "asc", fieldKey: "enabled" }],
+    }),
+    rows,
+  });
+  const descending = applySystemCollectionQuery({
+    descriptor: descriptor(),
+    query: query({
+      sort: [{ direction: "desc", fieldKey: "enabled" }],
+    }),
+    rows,
+  });
+
+  expect(falseRows.rows.map((row) => row.id)).toEqual([
+    "false",
+    "missing",
+    "null",
+  ]);
+  expect(notTrueRows.rows.map((row) => row.id)).toEqual([
+    "false",
+    "missing",
+    "null",
+  ]);
+  expect(ascending.rows.map((row) => row.id)).toEqual([
+    "false",
+    "missing",
+    "null",
+    "true",
+    "invalid",
+  ]);
+  expect(descending.rows.map((row) => row.id)).toEqual([
+    "true",
+    "false",
+    "missing",
+    "null",
+    "invalid",
+  ]);
 });
 
 test("validator drops descriptor-stale capabilities and rejects incomplete custom rules", () => {

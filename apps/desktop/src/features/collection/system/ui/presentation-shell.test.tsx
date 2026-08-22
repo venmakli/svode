@@ -46,7 +46,7 @@ function descriptor(
     label: "Enabled",
     valueSemantics: {
       kind: "property" as const,
-      column: { name: "enabled", type: "checkbox" as const },
+      column: { name: "enabled", type: "boolean" as const },
     },
   };
 

@@ -1,5 +1,9 @@
 import type { Column } from "@/features/properties";
-import { isDateRangeValue, isEmptyValue } from "@/features/properties";
+import {
+  effectiveBooleanValue,
+  isDateRangeValue,
+  isEmptyValue,
+} from "@/features/properties";
 
 import {
   defaultFilterOpForField,
@@ -312,7 +316,7 @@ function validateSystemCollectionPropertyFilterValue(
       ? null
       : "invalid_value";
   }
-  if (field.type === "checkbox") {
+  if (field.type === "boolean") {
     return typeof raw === "boolean" ? null : "invalid_value";
   }
   if (field.type === "date") {
@@ -482,6 +486,20 @@ function matchesPropertyFilter<Row>(
   const wanted = values[0];
   const empty = isEmptyValue(value);
 
+  if (
+    column.type === "boolean" &&
+    (rule.operator === "eq" || rule.operator === "neq")
+  ) {
+    const effective = effectiveBooleanValue(value);
+    const expected = effectiveBooleanValue(wanted);
+    if (effective === undefined || expected === undefined) {
+      return false;
+    }
+    return rule.operator === "eq"
+      ? effective === expected
+      : effective !== expected;
+  }
+
   switch (rule.operator) {
     case "is_empty":
       return empty;
@@ -599,12 +617,18 @@ function compareRowsByFields<Row>(
     }
     const leftValue = field.getValue(left);
     const rightValue = field.getValue(right);
-    const emptyOrder = compareEmptyValues(leftValue, rightValue);
-    if (emptyOrder !== 0) {
-      return emptyOrder;
-    }
-    if (isEmptyValue(leftValue)) {
-      continue;
+    const booleanProperty =
+      field.sort.kind === "property" &&
+      field.valueSemantics?.kind === "property" &&
+      field.valueSemantics.column.type === "boolean";
+    if (!booleanProperty) {
+      const emptyOrder = compareEmptyValues(leftValue, rightValue);
+      if (emptyOrder !== 0) {
+        return emptyOrder;
+      }
+      if (isEmptyValue(leftValue)) {
+        continue;
+      }
     }
     const compared =
       field.sort.kind === "property" &&
@@ -643,6 +667,17 @@ function comparePropertyValues(
   direction: SystemCollectionSortDescriptor["direction"],
 ): number {
   const multiplier = directionMultiplier(direction);
+  if (column.type === "boolean") {
+    const leftBoolean = effectiveBooleanValue(left);
+    const rightBoolean = effectiveBooleanValue(right);
+    if (leftBoolean === undefined || rightBoolean === undefined) {
+      if (leftBoolean !== rightBoolean) {
+        return leftBoolean === undefined ? 1 : -1;
+      }
+      return compareText(left, right);
+    }
+    return multiplier * (Number(leftBoolean) - Number(rightBoolean));
+  }
   if (column.type === "select" || column.type === "status") {
     const leftIndex = optionIndex(column, left);
     const rightIndex = optionIndex(column, right);
@@ -692,9 +727,6 @@ function comparePropertyScalar(
       dateBounds(left)?.start ?? "",
       dateBounds(right)?.start ?? "",
     );
-  }
-  if (column.type === "checkbox") {
-    return Number(Boolean(left)) - Number(Boolean(right));
   }
   return compareText(left, right);
 }

@@ -1,14 +1,13 @@
 import { expect, test } from "bun:test";
-import type { Entry } from "../src/features/entry";
+import { propertyFieldSavePolicy, type Entry } from "../src/features/entry";
 import {
   ENTRY_FIELD_TEXT_SAVE_DELAY_MS,
-  enqueueEntryFieldSave,
   entryFieldSavePolicy,
   mergeSavedEntryField,
   patchEntryField,
   rollbackEntryField,
 } from "../src/features/entry/model/field-save";
-import { propertyFieldSavePolicy } from "../src/features/properties/model/save-policy";
+import { enqueueEntryFieldSave } from "../src/features/entry/lib/entry-field-save-queue";
 
 function entry(overrides: Partial<Entry> = {}): Entry {
   return {
@@ -53,7 +52,7 @@ test("property field policy keeps property type semantics in properties owner", 
   expect(propertyFieldSavePolicy({ type: "select" })).toEqual({
     mode: "immediate",
   });
-  expect(propertyFieldSavePolicy({ type: "checkbox" })).toEqual({
+  expect(propertyFieldSavePolicy({ type: "boolean" })).toEqual({
     mode: "immediate",
   });
 });

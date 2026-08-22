@@ -161,8 +161,17 @@ fn push_filter_field_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str, ty:
     match ty {
         FieldType::Number | FieldType::UniqueId => push_number_field_expr(query, field),
         FieldType::Date => push_date_field_expr(query, field),
+        FieldType::Boolean => push_boolean_field_expr(query, field),
         _ => push_field_expr(query, field),
     }
+}
+
+fn push_boolean_field_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str) {
+    query.push("(CASE COALESCE(json_type(fields, ");
+    query.push_bind(json_path(field));
+    query.push(
+        "), 'missing') WHEN 'true' THEN 1 WHEN 'false' THEN 0 WHEN 'null' THEN 0 WHEN 'missing' THEN 0 ELSE NULL END)",
+    );
 }
 
 fn push_text_sort_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str) {
@@ -238,7 +247,7 @@ fn push_binary_filter(
     ty: FieldType,
     op: &str,
 ) -> Result<(), AppError> {
-    if op == "!=" {
+    if op == "!=" && ty != FieldType::Boolean {
         push_not_empty_expr(query, schema, &filter.field)?;
         query.push(" AND ");
     }
@@ -431,6 +440,13 @@ fn push_sort_sql(
     desc: bool,
 ) -> Result<(), AppError> {
     let ty = field_type(schema, field, FieldContext::Sort)?;
+    if ty == FieldType::Boolean {
+        push_boolean_field_expr(query, field);
+        query.push(" IS NULL ASC, ");
+        push_boolean_field_expr(query, field);
+        query.push(sort_direction(desc));
+        return Ok(());
+    }
     push_empty_expr(query, schema, field)?;
     query.push(" ASC, ");
     match ty {
@@ -446,10 +462,7 @@ fn push_sort_sql(
             push_date_field_expr(query, field);
             query.push(sort_direction(desc));
         }
-        FieldType::Checkbox => {
-            push_field_expr(query, field);
-            query.push(sort_direction(desc));
-        }
+        FieldType::Boolean => unreachable!("boolean sort returns before generic empty ordering"),
         FieldType::SelectLike | FieldType::Status => {
             push_option_sort_sql(query, schema, field, desc)?;
         }

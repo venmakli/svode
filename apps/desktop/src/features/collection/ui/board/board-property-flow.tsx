@@ -59,7 +59,7 @@ function BoardPropertyChip({
   onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
 }) {
   const value = entry.meta.extra?.[column.name] ?? null;
-  if (isEmptyValue(value) && column.type !== "checkbox") return null;
+  if (isEmptyValue(value) && column.type !== "boolean") return null;
 
   const validation = validatePropertyValue(column, value);
   const interactive =

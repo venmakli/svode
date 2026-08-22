@@ -73,7 +73,7 @@ export function createRoutinesPresentationDescriptor({
     propertyField(
       "enabled",
       m.routines_field_enabled(),
-      { name: "enabled", type: "checkbox" },
+      { name: "enabled", type: "boolean" },
       (row) => row.definition?.enabled ?? false,
       {
         getState: actions.getEnabledState,

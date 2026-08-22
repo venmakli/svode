@@ -13,10 +13,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { PropertyType } from "@/features/properties";
-import {
-  isSensitivePropertyType,
-  PROPERTY_TYPES,
-} from "@/features/properties";
+import { isSensitivePropertyType, PROPERTY_TYPES } from "@/features/properties";
 import { PROPERTY_TYPE_ICONS } from "./icons";
 import * as m from "@/paraglide/messages.js";
 
@@ -97,7 +94,7 @@ export function propertyTypeLabel(type: PropertyType) {
     date: String(m.table_property_type_date()),
     unique_id: String(m.table_property_type_unique_id()),
     actor: String(m.table_property_type_actor()),
-    checkbox: String(m.table_property_type_checkbox()),
+    boolean: String(m.table_property_type_boolean()),
     url: String(m.table_property_type_url()),
     email: String(m.table_property_type_email()),
     phone: String(m.table_property_type_phone()),

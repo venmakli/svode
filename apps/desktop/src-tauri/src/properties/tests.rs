@@ -60,7 +60,7 @@ fn routine_property_batch_applies_multiple_values_null_and_date_sentinel() {
         r#"columns:
   - { name: completed_at, type: date }
   - { name: note, type: text }
-  - { name: reviewed, type: checkbox }
+  - { name: reviewed, type: boolean }
 views: []
 "#,
     )
@@ -189,6 +189,162 @@ views: []
     let parsed: CollectionSchema = serde_yml::from_str(&serialized).unwrap();
     assert_eq!(parsed.columns[0].name, "Статус");
     assert_eq!(parsed.columns[1].options.as_ref().unwrap()[1].name, "Фича");
+}
+
+#[test]
+fn boolean_schema_is_canonical_strict_and_inferred_from_boolean_values() {
+    let raw = r#"
+columns:
+  - { name: Active, type: boolean, default: false }
+views: []
+"#;
+    let schema: CollectionSchema = serde_yml::from_str(raw).unwrap();
+    validate_schema(&schema).unwrap();
+    assert_eq!(schema.columns[0].type_, PropertyType::Boolean);
+    assert_eq!(schema.columns[0].default, Some(Value::Bool(false)));
+    assert!(
+        serde_yml::to_string(&schema)
+            .unwrap()
+            .contains("type: boolean")
+    );
+
+    let legacy = serde_yml::from_str::<CollectionSchema>(
+        "columns:\n  - { name: Active, type: checkbox }\nviews: []\n",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(legacy.contains("checkbox"));
+    assert!(legacy.contains("boolean"));
+
+    let invalid_default: CollectionSchema = serde_yml::from_str(
+        "columns:\n  - { name: Active, type: boolean, default: yes }\nviews: []\n",
+    )
+    .unwrap();
+    let error = validate_schema(&invalid_default).unwrap_err().to_string();
+    assert!(error.contains("Active must be a boolean"));
+
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path();
+    fs::create_dir_all(space.join("tasks")).unwrap();
+    fs::write(space.join("tasks/schema.yaml"), raw).unwrap();
+    let mut meta = EntryMeta::new_persisted("Item");
+    assert!(
+        apply_schema_defaults_for_path(space.to_str().unwrap(), "tasks/item.md", &mut meta,)
+            .unwrap()
+    );
+    assert_eq!(meta.extra.get("Active"), Some(&Value::Bool(false)));
+
+    fs::write(
+        space.join("tasks/schema.yaml"),
+        "columns:\n  - { name: Active, type: boolean }\nviews: []\n",
+    )
+    .unwrap();
+    let mut meta_without_default = EntryMeta::new_persisted("No default");
+    assert!(
+        !apply_schema_defaults_for_path(
+            space.to_str().unwrap(),
+            "tasks/no-default.md",
+            &mut meta_without_default,
+        )
+        .unwrap()
+    );
+    assert!(!meta_without_default.extra.contains_key("Active"));
+
+    fs::write(space.join("tasks/schema.yaml"), "columns: []\nviews: []\n").unwrap();
+    fs::write(
+        space.join("tasks/item.md"),
+        "---\ntitle: Item\nActive: true\n---\n",
+    )
+    .unwrap();
+    let inferred =
+        promote_orphan(space.to_str().unwrap(), "tasks", "tasks/item.md", "Active").unwrap();
+    assert_eq!(inferred.columns[0].type_, PropertyType::Boolean);
+    assert!(
+        fs::read_to_string(space.join("tasks/schema.yaml"))
+            .unwrap()
+            .contains("type: boolean")
+    );
+}
+
+#[test]
+fn conversion_to_boolean_preserves_unrecognized_values_as_conflicts() {
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path();
+    fs::create_dir_all(space.join("tasks")).unwrap();
+    fs::write(
+        space.join("tasks/schema.yaml"),
+        "columns:\n  - { name: Active, type: text }\nviews: []\n",
+    )
+    .unwrap();
+    for (name, value) in [("yes", "yes"), ("zero", "0"), ("invalid", "maybe")] {
+        fs::write(
+            space.join(format!("tasks/{name}.md")),
+            format!("---\ntitle: {name}\nActive: {value}\n---\n"),
+        )
+        .unwrap();
+    }
+
+    change_schema_type(
+        space.to_str().unwrap(),
+        "tasks",
+        "Active",
+        PropertyType::Boolean,
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(
+        entry::read(space.to_str().unwrap(), "tasks/yes.md")
+            .unwrap()
+            .meta
+            .extra
+            .get("Active"),
+        Some(&Value::Bool(true))
+    );
+    assert_eq!(
+        entry::read(space.to_str().unwrap(), "tasks/zero.md")
+            .unwrap()
+            .meta
+            .extra
+            .get("Active"),
+        Some(&Value::Bool(false))
+    );
+    assert_eq!(
+        entry::read(space.to_str().unwrap(), "tasks/invalid.md")
+            .unwrap()
+            .meta
+            .extra
+            .get("Active")
+            .and_then(Value::as_str),
+        Some("maybe")
+    );
+
+    change_schema_type(
+        space.to_str().unwrap(),
+        "tasks",
+        "Active",
+        PropertyType::Text,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        entry::read(space.to_str().unwrap(), "tasks/yes.md")
+            .unwrap()
+            .meta
+            .extra
+            .get("Active")
+            .and_then(Value::as_str),
+        Some("true")
+    );
+    assert_eq!(
+        entry::read(space.to_str().unwrap(), "tasks/zero.md")
+            .unwrap()
+            .meta
+            .extra
+            .get("Active")
+            .and_then(Value::as_str),
+        Some("false")
+    );
 }
 
 #[test]
@@ -2380,6 +2536,124 @@ views: []
         .unwrap();
     let titles: Vec<String> = rows.into_iter().map(|row| row.title).collect();
     assert_eq!(titles, vec!["C"]);
+}
+
+#[tokio::test]
+async fn boolean_query_uses_effective_false_for_missing_and_null() {
+    let schema: CollectionSchema =
+        serde_yml::from_str("columns:\n  - { name: Active, type: boolean }\nviews: []\n").unwrap();
+    validate_schema(&schema).unwrap();
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::query(
+        r#"
+            CREATE TABLE entries (
+                file_path TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                created TEXT NOT NULL,
+                updated TEXT NOT NULL,
+                collection_root_path TEXT,
+                in_collection INTEGER NOT NULL,
+                is_entry_head INTEGER NOT NULL,
+                fields TEXT NOT NULL
+            )
+            "#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    for (path, title, fields) in [
+        ("tasks/true.md", "True", serde_json::json!({"Active": true})),
+        (
+            "tasks/false.md",
+            "False",
+            serde_json::json!({"Active": false}),
+        ),
+        ("tasks/missing.md", "Missing", serde_json::json!({})),
+        ("tasks/null.md", "Null", serde_json::json!({"Active": null})),
+        (
+            "tasks/invalid.md",
+            "Invalid",
+            serde_json::json!({"Active": "false"}),
+        ),
+    ] {
+        sqlx::query(
+            r#"
+                INSERT INTO entries (
+                    file_path, title, description, created, updated, collection_root_path,
+                    in_collection, is_entry_head, fields
+                ) VALUES (?, ?, NULL, '2026-01-01', '2026-01-01', 'tasks', 1, 1, ?)
+                "#,
+        )
+        .bind(path)
+        .bind(title)
+        .bind(fields.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    for (op, value, expected) in [
+        (FilterOp::Eq, false, vec!["False", "Missing", "Null"]),
+        (FilterOp::Neq, true, vec!["False", "Missing", "Null"]),
+        (FilterOp::Eq, true, vec!["True"]),
+        (FilterOp::Neq, false, vec!["True"]),
+    ] {
+        let rows = query_entry_rows(
+            &pool,
+            &schema,
+            "tasks",
+            &[Filter {
+                field: "Active".into(),
+                op,
+                value: Some(Value::Bool(value)),
+                values: None,
+            }],
+            &[Sort {
+                field: "title".into(),
+                desc: false,
+            }],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            rows.into_iter().map(|row| row.title).collect::<Vec<_>>(),
+            expected
+        );
+    }
+
+    for (desc, expected) in [
+        (false, vec!["False", "Missing", "Null", "True", "Invalid"]),
+        (true, vec!["True", "False", "Missing", "Null", "Invalid"]),
+    ] {
+        let rows = query_entry_rows(
+            &pool,
+            &schema,
+            "tasks",
+            &[],
+            &[
+                Sort {
+                    field: "Active".into(),
+                    desc,
+                },
+                Sort {
+                    field: "title".into(),
+                    desc: false,
+                },
+            ],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            rows.into_iter().map(|row| row.title).collect::<Vec<_>>(),
+            expected
+        );
+    }
 }
 
 #[test]

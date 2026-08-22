@@ -448,7 +448,7 @@ mod tests {
         write_space_config(project, &space_config("Project", None)).unwrap();
         fs::write(
             collection.join("schema.yaml"),
-            "columns:\n  - { name: reviewed, type: checkbox }\nviews: []\n",
+            "columns:\n  - { name: reviewed, type: boolean }\nviews: []\n",
         )
         .unwrap();
         fs::write(

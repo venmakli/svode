@@ -1,7 +1,4 @@
-import type {
-  CollectionSchema,
-  PropertyType,
-} from "@/features/properties";
+import type { CollectionSchema, PropertyType } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
 import type {
   CollectionView,
@@ -61,7 +58,7 @@ const FILTER_OPS_BY_TYPE: Record<PropertyType, FilterOp[]> = {
   number: ["eq", "neq", "gt", "lt", "gte", "lte", "is_empty", "is_not_empty"],
   date: ["eq", "neq", "before", "after", "is_empty", "is_not_empty"],
   unique_id: ["eq", "neq", "in", "not_in", "is_empty", "is_not_empty"],
-  checkbox: ["eq", "neq"],
+  boolean: ["eq", "neq"],
   select: ["eq", "neq", "in", "not_in", "is_empty", "is_not_empty"],
   multi_select: [
     "contains",
@@ -290,7 +287,7 @@ function isFilterValueValid(filter: QueryFilter, field: QueryField) {
         Number.isFinite(Number(raw)))
     );
   }
-  if (field.type === "checkbox") return typeof raw === "boolean";
+  if (field.type === "boolean") return typeof raw === "boolean";
   if (
     field.type === "select" ||
     field.type === "multi_select" ||

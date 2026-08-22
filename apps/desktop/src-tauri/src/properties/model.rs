@@ -16,7 +16,7 @@ pub enum PropertyType {
     Date,
     Relation,
     Actor,
-    Checkbox,
+    Boolean,
     Url,
     Email,
     Phone,

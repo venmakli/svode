@@ -41,7 +41,7 @@ export function normalizeVisibleFields(
 
 export function defaultColumnWidth(column?: Column) {
   if (!column) return 260;
-  if (column.type === "checkbox") return 72;
+  if (column.type === "boolean") return 72;
   if (column.type === "select" || column.type === "status") return 140;
   if (column.type === "text") return 220;
   if (column.type === "url" || column.type === "email") return 200;
@@ -51,7 +51,7 @@ export function defaultColumnWidth(column?: Column) {
 
 export function minColumnWidth(column?: Column) {
   if (!column) return 200;
-  if (column.type === "checkbox") return 60;
+  if (column.type === "boolean") return 60;
   if (column.type === "select" || column.type === "status") return 120;
   if (column.type === "text") return 200;
   return 120;

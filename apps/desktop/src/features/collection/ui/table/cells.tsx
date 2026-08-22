@@ -5,6 +5,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/shared/lib/utils";
 import {
+  effectiveBooleanValue,
   shouldClosePropertyEditorOnChange,
   validatePropertyValue,
 } from "@/features/properties";
@@ -44,11 +45,12 @@ export function PropertyCell({
 }) {
   const validation = validatePropertyValue(column, value);
 
-  if (column.type === "checkbox") {
+  if (column.type === "boolean") {
     return (
       <div className="flex h-7 items-center px-1">
         <Checkbox
-          checked={Boolean(value)}
+          checked={effectiveBooleanValue(value) ?? false}
+          aria-label={column.name}
           aria-invalid={validation.invalid || undefined}
           onCheckedChange={(checked) => onCommit(checked === true)}
         />
