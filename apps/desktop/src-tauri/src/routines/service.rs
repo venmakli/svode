@@ -35,6 +35,7 @@ pub(crate) enum RoutineMutationCaller {
 pub(crate) struct RoutineMutationPolicy {
     caller: RoutineMutationCaller,
     confirm_automatic_execution: bool,
+    materialize_filename: bool,
     require_valid_definition: bool,
 }
 
@@ -43,14 +44,16 @@ impl RoutineMutationPolicy {
         Self {
             caller: RoutineMutationCaller::Desktop,
             confirm_automatic_execution: true,
+            materialize_filename: true,
             require_valid_definition: true,
         }
     }
 
-    pub(crate) fn desktop() -> Self {
+    pub(crate) fn desktop(materialize_filename: bool) -> Self {
         Self {
             caller: RoutineMutationCaller::Desktop,
             confirm_automatic_execution: true,
+            materialize_filename,
             require_valid_definition: false,
         }
     }
@@ -59,6 +62,7 @@ impl RoutineMutationPolicy {
         Self {
             caller: RoutineMutationCaller::ExternalMcp,
             confirm_automatic_execution,
+            materialize_filename: true,
             require_valid_definition: true,
         }
     }
@@ -69,6 +73,7 @@ impl RoutineMutationPolicy {
         Self {
             caller: RoutineMutationCaller::RoutineMcp,
             confirm_automatic_execution,
+            materialize_filename: true,
             require_valid_definition: true,
         }
     }
@@ -432,7 +437,7 @@ pub(crate) async fn update_managed(
     };
     let old_filename = row.filename.clone();
     let old_path = row.path.clone();
-    let target_filename = format!("{}.md", crate::files::entry::slugify(&name));
+    let target_filename = update_target_filename(&old_filename, &name, policy);
     let directory = owner.routines_dir();
     let write_fingerprint = expected_fingerprint.clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
@@ -500,6 +505,18 @@ pub(crate) async fn update_managed(
         changed_paths,
         warnings,
     })
+}
+
+fn update_target_filename(
+    current_filename: &str,
+    definition_name: &str,
+    policy: RoutineMutationPolicy,
+) -> String {
+    if policy.materialize_filename {
+        format!("{}.md", crate::files::entry::slugify(definition_name))
+    } else {
+        current_filename.to_string()
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1348,6 +1365,26 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn desktop_inline_update_preserves_the_current_filename() {
+        assert_eq!(
+            update_target_filename(
+                "current-name.md",
+                "Another Routine",
+                RoutineMutationPolicy::desktop(false),
+            ),
+            "current-name.md"
+        );
+        assert_eq!(
+            update_target_filename(
+                "current-name.md",
+                "Another Routine",
+                RoutineMutationPolicy::desktop(true),
+            ),
+            "another-routine.md"
+        );
     }
 
     #[test]

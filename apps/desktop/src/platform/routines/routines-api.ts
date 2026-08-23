@@ -197,6 +197,7 @@ export function updateRoutine(
     routineId: string;
     expectedFingerprint: string;
     definition: RoutineDefinitionDto;
+    materializeFilename: boolean;
   },
 ) {
   return invokeCommand<RoutineMutationResultDto>("routines_update", {

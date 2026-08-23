@@ -85,11 +85,21 @@ export interface SystemCollectionFieldDescriptor<Row> {
   key: string;
   label: string;
   getValue(row: Row): unknown;
+  getAccessibilityLabel?(row: Row): string;
+  getApplicability?(row: Row): SystemCollectionFieldApplicability;
   valueSemantics?: SystemCollectionValueSemantics<Row>;
   filter?: SystemCollectionFilterSemantics<Row>;
   sort?: SystemCollectionSortSemantics<Row>;
   edit?: SystemCollectionFieldEdit<Row>;
 }
+
+export type SystemCollectionFieldApplicability =
+  | { status: "applicable" }
+  | { status: "hidden" }
+  | {
+      status: "unavailable";
+      label: string;
+    };
 
 export type SystemCollectionValueSemantics<Row> =
   | { kind: "property"; column: Column }

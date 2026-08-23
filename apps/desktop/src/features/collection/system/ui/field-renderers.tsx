@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 
 import { validatePropertyValue } from "@/features/properties";
@@ -9,6 +9,7 @@ import * as m from "@/paraglide/messages.js";
 import { runSystemCollectionCallback } from "../lib/interaction";
 import type {
   SystemCollectionActionState,
+  SystemCollectionFieldApplicability,
   SystemCollectionFieldDescriptor,
 } from "../model/types";
 
@@ -37,6 +38,17 @@ export function SystemCollectionFieldValue({
   field,
   row,
 }: SystemCollectionFieldProps) {
+  const applicability = readFieldApplicability(field, row);
+  if (applicability.status === "hidden") return null;
+  if (applicability.status !== "applicable") {
+    return (
+      <SystemCollectionFieldPassiveState
+        applicability={applicability}
+        fieldKey={field.key}
+      />
+    );
+  }
+
   const value = field.getValue(row);
 
   if (field.valueSemantics?.kind === "property") {
@@ -53,6 +65,41 @@ export function SystemCollectionFieldValue({
         field: field.key,
       })}
     />
+  );
+}
+
+function readFieldApplicability(
+  field: SystemCollectionFieldDescriptor<unknown>,
+  row: unknown,
+): SystemCollectionFieldApplicability {
+  try {
+    return field.getApplicability?.(row) ?? { status: "applicable" };
+  } catch {
+    return {
+      label: m.system_collection_callback_error(),
+      status: "unavailable",
+    };
+  }
+}
+
+function SystemCollectionFieldPassiveState({
+  applicability,
+  fieldKey,
+}: {
+  applicability: Exclude<
+    SystemCollectionFieldApplicability,
+    { status: "applicable" | "hidden" }
+  >;
+  fieldKey: string;
+}) {
+  return (
+    <span
+      className="text-xs text-muted-foreground"
+      data-system-collection-field={fieldKey}
+      data-system-collection-field-applicability={applicability.status}
+    >
+      {applicability.label}
+    </span>
   );
 }
 
@@ -76,12 +123,26 @@ function readFieldState(
 export function SystemCollectionFieldControl({
   field,
   row,
+  density = "default",
   onRejected,
 }: SystemCollectionFieldProps & {
+  density?: "default" | "compact";
   onRejected(fieldKey: string, message: string): void;
 }) {
+  const localPendingRef = useRef(false);
   const [localPending, setLocalPending] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+
+  const applicability = readFieldApplicability(field, row);
+  if (applicability.status === "hidden") return null;
+  if (applicability.status !== "applicable") {
+    return (
+      <SystemCollectionFieldPassiveState
+        applicability={applicability}
+        fieldKey={field.key}
+      />
+    );
+  }
 
   if (field.valueSemantics?.kind !== "property" || !field.edit) {
     return (
@@ -126,13 +187,18 @@ export function SystemCollectionFieldControl({
           value={value}
           invalid={validation.invalid}
           disabled={disabled}
+          accessibilityLabel={field.getAccessibilityLabel?.(row) ?? field.label}
+          density={density}
           onChange={async (nextValue: unknown) => {
+            if (localPendingRef.current) return;
+            localPendingRef.current = true;
             setLocalPending(true);
             setLocalError(null);
             const result = await runSystemCollectionCallback(
               () => edit.update(row, nextValue),
               m.system_collection_callback_error(),
             );
+            localPendingRef.current = false;
             setLocalPending(false);
             if (!result.ok && result.message) {
               setLocalError(result.message);

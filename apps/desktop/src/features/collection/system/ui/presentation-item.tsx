@@ -75,10 +75,7 @@ export function SystemCollectionPresentationItem({
 
   const reportError = useCallback(
     (
-      kind: Exclude<
-        SystemCollectionInteractionError["kind"],
-        "create"
-      >,
+      kind: Exclude<SystemCollectionInteractionError["kind"], "create">,
       targetId: string | undefined,
       message: string,
     ) => {
@@ -167,7 +164,7 @@ export function SystemCollectionPresentationItem({
       }
       return <SystemCollectionFieldValue field={field} row={row} />;
     },
-    renderFieldControl: (fieldKey: string) => {
+    renderFieldControl: (fieldKey: string, density: "default" | "compact") => {
       const field = descriptor.fields.find(
         (candidate) => candidate.key === fieldKey,
       );
@@ -180,6 +177,7 @@ export function SystemCollectionPresentationItem({
       }
       return (
         <SystemCollectionFieldControl
+          density={density}
           field={field}
           row={row}
           onRejected={(targetId, message) =>
@@ -204,7 +202,10 @@ export function SystemCollectionPresentationItem({
     const fields = layout.visibleFields.map((fieldKey) => (
       <CollectionPresentationPropertyItem key={fieldKey} className="max-w-44">
         {descriptor.fields.find((field) => field.key === fieldKey)?.edit
-          ? renderContext.renderFieldControl(fieldKey)
+          ? renderContext.renderFieldControl(
+              fieldKey,
+              layout.density === "compact" ? "compact" : "default",
+            )
           : renderContext.renderField(fieldKey)}
       </CollectionPresentationPropertyItem>
     ));
@@ -255,7 +256,10 @@ export function SystemCollectionPresentationItem({
   const fields = layout.visibleFields.map((fieldKey) => (
     <CollectionPresentationPropertyItem key={fieldKey}>
       {descriptor.fields.find((field) => field.key === fieldKey)?.edit
-        ? renderContext.renderFieldControl(fieldKey)
+        ? renderContext.renderFieldControl(
+            fieldKey,
+            layout.density === "compact" ? "compact" : "default",
+          )
         : renderContext.renderField(fieldKey)}
     </CollectionPresentationPropertyItem>
   ));

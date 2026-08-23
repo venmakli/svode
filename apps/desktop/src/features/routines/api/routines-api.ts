@@ -67,12 +67,14 @@ export async function updateRoutine(
   owner: RoutineOwnerInput,
   row: RoutineRow,
   definition: RoutineDefinition,
+  options: { materializeFilename: boolean },
 ): Promise<RoutineMutationResult> {
   return normalizeMutationResult(
     await updateRoutineCommand({
       ...owner,
       definition: toDefinitionDto(definition),
       expectedFingerprint: row.fingerprint,
+      materializeFilename: options.materializeFilename,
       routineId: requireRoutineId(row),
     }),
   );
@@ -250,7 +252,9 @@ function toDefinitionDto(definition: RoutineDefinition): RoutineDefinitionDto {
 
 function requireRoutineId(row: RoutineRow) {
   if (!row.routineId) {
-    throw new Error("Invalid Routine definitions do not have an addressable id");
+    throw new Error(
+      "Invalid Routine definitions do not have an addressable id",
+    );
   }
   return row.routineId;
 }

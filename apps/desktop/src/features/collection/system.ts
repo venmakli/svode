@@ -29,6 +29,7 @@ export type {
   SystemCollectionDetailFocusOptions,
   SystemCollectionDetailRequest,
   SystemCollectionDetailSelection,
+  SystemCollectionFieldApplicability,
   SystemCollectionFieldDescriptor,
   SystemCollectionFieldEdit,
   SystemCollectionFilterEditorInput,

@@ -53,11 +53,17 @@ export function useRoutineMutations({
   );
 
   const applyUpdate = useCallback(
-    async (row: RoutineRow, definition: RoutineDefinition) => {
+    async (
+      row: RoutineRow,
+      definition: RoutineDefinition,
+      options: { materializeFilename?: boolean } = {},
+    ) => {
       setPending(true);
       setError(null);
       try {
-        const result = await updateRoutine(owner, row, definition);
+        const result = await updateRoutine(owner, row, definition, {
+          materializeFilename: options.materializeFilename ?? true,
+        });
         if (result.status !== "applied") {
           const snapshot = await handleFailure(result);
           if (result.status === "stale") {

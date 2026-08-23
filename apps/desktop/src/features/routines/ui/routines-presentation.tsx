@@ -71,17 +71,6 @@ export function createRoutinesPresentationDescriptor({
 }): SystemCollectionPresentationDescriptor<RoutineRow> {
   const fields: readonly SystemCollectionFieldDescriptor<RoutineRow>[] = [
     propertyField(
-      "enabled",
-      m.routines_field_enabled(),
-      { name: "enabled", type: "boolean" },
-      (row) => row.definition?.enabled ?? false,
-      {
-        getState: actions.getEnabledState,
-        showDisabledReason: false,
-        update: (row, value) => actions.onEnabledChange(row, value === true),
-      },
-    ),
-    propertyField(
       "trigger",
       m.routines_field_trigger(),
       {
@@ -129,6 +118,33 @@ export function createRoutinesPresentationDescriptor({
       { display: "medium", name: "next-run", type: "date" },
       (row) => row.nextRunAt,
     ),
+    {
+      ...propertyField(
+        "enabled",
+        m.routines_field_enabled(),
+        { display: "switch", name: "enabled", type: "boolean" },
+        (row) => row.definition?.enabled ?? false,
+        {
+          getState: actions.getEnabledState,
+          showDisabledReason: false,
+          update: (row, value) => actions.onEnabledChange(row, value === true),
+        },
+      ),
+      getAccessibilityLabel: (row) =>
+        m.routines_enabled_accessibility({ name: row.name }),
+      getApplicability: (row) => {
+        if (!row.valid || !row.definition) {
+          return {
+            label: m.routines_unavailable(),
+            status: "unavailable",
+          };
+        }
+        if (row.definition.trigger.type === "manual") {
+          return { status: "hidden" };
+        }
+        return { status: "applicable" };
+      },
+    },
   ];
 
   return {
@@ -159,12 +175,12 @@ export function createRoutinesPresentationDescriptor({
         />
       ),
       visibleFields: [
-        "enabled",
         "trigger",
         "action",
         "executor",
         "last-run",
         "next-run",
+        "enabled",
       ],
     },
     query: {

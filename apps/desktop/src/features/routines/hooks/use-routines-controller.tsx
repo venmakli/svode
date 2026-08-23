@@ -172,10 +172,14 @@ export function useRoutinesController(
     onEdit: mutations.openEdit,
     onEnabledChange: async (row, enabled) => {
       if (!row.definition || row.definition.trigger.type === "manual") return;
-      const updated = await mutations.applyUpdate(row, {
-        ...row.definition,
-        enabled,
-      });
+      const updated = await mutations.applyUpdate(
+        row,
+        {
+          ...row.definition,
+          enabled,
+        },
+        { materializeFilename: false },
+      );
       if (!updated) throw new Error(m.routines_mutation_blocked());
     },
     onRun: dispatch.run,

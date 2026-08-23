@@ -67,6 +67,44 @@ const scheduled: RoutineRow = {
   name: "Daily summary",
 };
 
+const invalid: RoutineRow = {
+  ...review,
+  definition: null,
+  definitionPath: ".routines/broken.md",
+  diagnostics: [
+    {
+      code: "routine_trigger_invalid",
+      field: "trigger",
+      message: "trigger is invalid",
+      path: ".routines/broken.md",
+    },
+  ],
+  filename: "broken.md",
+  fingerprint: "fingerprint:broken",
+  id: "invalid:.routines/broken.md",
+  name: "Broken routine",
+  routineId: null,
+  valid: false,
+};
+
+const eventRoutine: RoutineRow = {
+  ...scheduled,
+  definition: {
+    ...scheduled.definition!,
+    enabled: true,
+    name: "Triage new entries",
+    trigger: {
+      event: "collection.entry_created",
+      type: "event",
+    },
+  },
+  definitionPath: ".routines/triage-new-entries.md",
+  filename: "triage-new-entries.md",
+  fingerprint: "fingerprint:triage",
+  id: "routine:triage",
+  name: "Triage new entries",
+};
+
 function actions(calls: string[]): RoutinePresentationActions {
   return {
     createState: { status: "idle" },
@@ -99,21 +137,39 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
   expect(descriptor.id).toBe("all");
   expect(descriptor.layout.kind).toBe("list");
   expect(descriptor.fields.map((field) => field.key)).toEqual([
-    "enabled",
     "trigger",
     "action",
     "executor",
     "last-run",
     "next-run",
+    "enabled",
   ]);
   expect(descriptor.layout.visibleFields).toEqual([
-    "enabled",
     "trigger",
     "action",
     "executor",
     "last-run",
     "next-run",
+    "enabled",
   ]);
+  const enabledField = descriptor.fields.at(-1)!;
+  expect(enabledField.valueSemantics).toEqual({
+    column: { display: "switch", name: "enabled", type: "boolean" },
+    kind: "property",
+  });
+  expect(enabledField.getApplicability?.(scheduled)).toEqual({
+    status: "applicable",
+  });
+  expect(enabledField.getApplicability?.(review)).toEqual({
+    status: "hidden",
+  });
+  expect(enabledField.getApplicability?.(invalid)).toEqual({
+    label: "Unavailable",
+    status: "unavailable",
+  });
+  expect(enabledField.getAccessibilityLabel?.(scheduled)).toBe(
+    "Enabled: Daily summary",
+  );
   expect(descriptor.create?.id).toBe("add-routine");
   expect("refresh" in descriptor).toBe(false);
   expect(descriptor.rowActions?.map((action) => action.id)).toEqual([
@@ -193,6 +249,26 @@ test("routines query searches definitions and defaults to name ordering", () => 
     "routine:review",
   ]);
   expect(searched.rows.map((row) => row.id)).toEqual(["routine:summary"]);
+
+  const enabledScheduled: RoutineRow = {
+    ...scheduled,
+    definition: { ...scheduled.definition!, enabled: true },
+    id: "routine:enabled-summary",
+    name: "Enabled summary",
+  };
+  const disabledRows = applySystemCollectionQuery({
+    descriptor,
+    query: {
+      filters: [{ fieldKey: "enabled", operator: "eq", value: false }],
+      search: "",
+      sort: [],
+    },
+    rows: [review, scheduled, enabledScheduled],
+  });
+  expect(disabledRows.rows.map((row) => row.id)).toEqual([
+    "routine:summary",
+    "routine:review",
+  ]);
 });
 
 test("routines delegate create, row actions, and inline enabled edits", async () => {
@@ -297,14 +373,20 @@ test("routines render the common toolbar and a single fixed All list", () => {
   expect(markup.includes("Add routine")).toBe(false);
   expect(markup.includes(">Add<")).toBe(true);
   expect(markup.includes('data-system-collection-field="enabled"')).toBe(true);
+  expect(markup.includes('role="switch"')).toBe(true);
+  expect(markup.includes('data-size="sm"')).toBe(true);
+  expect(markup.includes('aria-label="Enabled: Daily summary"')).toBe(true);
+  expect(markup.includes('role="checkbox"')).toBe(false);
 });
 
-test("manual enabled controls keep their disabled reason tooltip-only", () => {
+test("manual routines omit enabled while invalid routines render a passive marker", () => {
   const routineActions = actions([]);
-  routineActions.getEnabledState = () => ({
-    reason: "tooltip-only-manual-reason",
-    status: "disabled",
-  });
+  routineActions.getEnabledState = (row) => {
+    if (row.id !== scheduled.id) {
+      throw new Error("passive rows must not read control state");
+    }
+    return { status: "idle" };
+  };
   const presentation = createRoutinesPresentation({
     actions: routineActions,
     createDetailRequest: () => ({
@@ -312,7 +394,10 @@ test("manual enabled controls keep their disabled reason tooltip-only", () => {
       description: null,
       title: null,
     }),
-    state: { phase: "ready", rows: [review] },
+    state: {
+      phase: "ready",
+      rows: [scheduled, eventRoutine, review, invalid],
+    },
   });
   const instance: SystemCollectionInstance = {
     defaultPresentationId: "all",
@@ -336,8 +421,14 @@ test("manual enabled controls keep their disabled reason tooltip-only", () => {
     </TooltipProvider>,
   );
 
-  expect(markup.includes('title="tooltip-only-manual-reason"')).toBe(true);
-  expect(markup.includes(">tooltip-only-manual-reason<")).toBe(false);
+  expect(markup.match(/role="switch"/g)?.length).toBe(2);
+  expect(markup.includes('role="checkbox"')).toBe(false);
+  expect(markup.includes("Not applicable")).toBe(false);
+  expect(
+    markup.includes('data-system-collection-field-applicability="unavailable"'),
+  ).toBe(true);
+  expect(markup.includes("Unavailable")).toBe(true);
+  expect(markup.includes("flex-wrap")).toBe(true);
 });
 
 test("retry is contextual to blocking and background catalog failures", () => {
