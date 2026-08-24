@@ -54,6 +54,13 @@ interface CoverBannerProps {
   size?: "default" | "compact";
 }
 
+interface CoverPickerProps extends Pick<
+  CoverBannerProps,
+  "cover" | "projectPath" | "spacePath" | "documentPath" | "onCoverChange"
+> {
+  iconOnly?: boolean;
+}
+
 function clampPosition(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
@@ -62,37 +69,14 @@ function colorStyle(name: CoverColorName) {
   return { background: COVER_GRADIENTS[name] };
 }
 
-export function CoverBanner({
+export function CoverPicker({
   cover,
   projectPath,
   spacePath,
   documentPath,
   onCoverChange,
-  size = "default",
-}: CoverBannerProps) {
-  const bannerRef = useRef<HTMLDivElement>(null);
-  const dragStartRef = useRef<{ y: number; position: number } | null>(null);
-  const [isRepositioning, setIsRepositioning] = useState(false);
-  const [draftPosition, setDraftPosition] = useState<number | null>(null);
-  const [imageLoadState, setImageLoadState] = useState<{
-    src: string;
-    status: "loaded" | "error";
-  } | null>(null);
-
-  const imageSrc = useMemo(() => {
-    if (!cover || cover.type !== "image" || !spacePath) return undefined;
-    return getCoverImageSrc(spacePath, cover.path);
-  }, [cover, spacePath]);
-
-  const imagePosition =
-    cover?.type === "image" ? (draftPosition ?? cover.position ?? 50) : 50;
-  const imageIsPending = Boolean(imageSrc && imageLoadState?.src !== imageSrc);
-  const imageHasError = Boolean(
-    imageSrc &&
-    imageLoadState?.src === imageSrc &&
-    imageLoadState.status === "error",
-  );
-
+  iconOnly = false,
+}: CoverPickerProps) {
   const uploadImageCover = useCoverUpload({
     projectPath,
     spacePath,
@@ -100,45 +84,21 @@ export function CoverBanner({
     onCoverChange,
   });
 
-  function handlePointerDown(e: PointerEvent<HTMLDivElement>) {
-    if (!isRepositioning || cover?.type !== "image") return;
-    e.preventDefault();
-    e.currentTarget.setPointerCapture(e.pointerId);
-    dragStartRef.current = {
-      y: e.clientY,
-      position: cover.position ?? 50,
-    };
-  }
+  const label = cover ? m.editor_change_cover() : m.editor_add_cover();
 
-  function handlePointerMove(e: PointerEvent<HTMLDivElement>) {
-    const start = dragStartRef.current;
-    const box = bannerRef.current?.getBoundingClientRect();
-    if (!start || !box || box.height === 0) return;
-    const delta = ((e.clientY - start.y) / box.height) * 100;
-    setDraftPosition(clampPosition(start.position + delta));
-  }
-
-  function handlePointerUp(e: PointerEvent<HTMLDivElement>) {
-    if (!dragStartRef.current || cover?.type !== "image") return;
-    e.currentTarget.releasePointerCapture(e.pointerId);
-    dragStartRef.current = null;
-    const nextPosition = draftPosition ?? cover.position ?? 50;
-    setDraftPosition(null);
-    setIsRepositioning(false);
-    onCoverChange({ ...cover, position: nextPosition });
-  }
-
-  const picker = (
+  return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
           variant={cover ? "secondary" : "ghost"}
-          size="sm"
-          className={cn(!cover && "h-10 w-full justify-center")}
+          size={iconOnly ? "icon-sm" : "sm"}
         >
-          <ImagePlus data-icon="inline-start" />
-          {cover ? m.editor_change_cover() : m.editor_add_cover()}
+          <ImagePlus
+            data-icon={iconOnly ? undefined : "inline-start"}
+            className={cn(iconOnly && "text-muted-foreground/40")}
+          />
+          {iconOnly ? <span className="sr-only">{label}</span> : label}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
@@ -192,16 +152,68 @@ export function CoverBanner({
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
 
-  if (!cover) {
-    return (
-      <div className="group h-12">
-        <div className="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-          {picker}
-        </div>
-      </div>
-    );
+export function CoverBanner({
+  cover,
+  projectPath,
+  spacePath,
+  documentPath,
+  onCoverChange,
+  size = "default",
+}: CoverBannerProps) {
+  const bannerRef = useRef<HTMLDivElement>(null);
+  const dragStartRef = useRef<{ y: number; position: number } | null>(null);
+  const [isRepositioning, setIsRepositioning] = useState(false);
+  const [draftPosition, setDraftPosition] = useState<number | null>(null);
+  const [imageLoadState, setImageLoadState] = useState<{
+    src: string;
+    status: "loaded" | "error";
+  } | null>(null);
+
+  const imageSrc = useMemo(() => {
+    if (!cover || cover.type !== "image" || !spacePath) return undefined;
+    return getCoverImageSrc(spacePath, cover.path);
+  }, [cover, spacePath]);
+
+  const imagePosition =
+    cover?.type === "image" ? (draftPosition ?? cover.position ?? 50) : 50;
+  const imageIsPending = Boolean(imageSrc && imageLoadState?.src !== imageSrc);
+  const imageHasError = Boolean(
+    imageSrc &&
+    imageLoadState?.src === imageSrc &&
+    imageLoadState.status === "error",
+  );
+
+  function handlePointerDown(e: PointerEvent<HTMLDivElement>) {
+    if (!isRepositioning || cover?.type !== "image") return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragStartRef.current = {
+      y: e.clientY,
+      position: cover.position ?? 50,
+    };
   }
+
+  function handlePointerMove(e: PointerEvent<HTMLDivElement>) {
+    const start = dragStartRef.current;
+    const box = bannerRef.current?.getBoundingClientRect();
+    if (!start || !box || box.height === 0) return;
+    const delta = ((e.clientY - start.y) / box.height) * 100;
+    setDraftPosition(clampPosition(start.position + delta));
+  }
+
+  function handlePointerUp(e: PointerEvent<HTMLDivElement>) {
+    if (!dragStartRef.current || cover?.type !== "image") return;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    dragStartRef.current = null;
+    const nextPosition = draftPosition ?? cover.position ?? 50;
+    setDraftPosition(null);
+    setIsRepositioning(false);
+    onCoverChange({ ...cover, position: nextPosition });
+  }
+
+  if (!cover) return null;
 
   return (
     <div
@@ -238,7 +250,13 @@ export function CoverBanner({
         />
       )}
       <div className="absolute right-3 top-3 flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-        {picker}
+        <CoverPicker
+          cover={cover}
+          projectPath={projectPath}
+          spacePath={spacePath}
+          documentPath={documentPath}
+          onCoverChange={onCoverChange}
+        />
         {cover.type === "image" && (
           <Button
             type="button"

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CoverBanner } from "./cover-banner";
+import { CoverBanner, CoverPicker } from "./cover-banner";
 import { TitleZone } from "./title-zone";
 import { cn } from "@/shared/lib/utils";
 import type { EntryCover } from "../model/types";
@@ -44,14 +44,16 @@ export function EntryIdentityHeader({
 }: EntryIdentityHeaderProps) {
   return (
     <>
-      <CoverBanner
-        cover={cover}
-        projectPath={projectPath}
-        spacePath={spacePath}
-        documentPath={documentPath}
-        onCoverChange={onCoverChange}
-        size={coverSize}
-      />
+      {cover ? (
+        <CoverBanner
+          cover={cover}
+          projectPath={projectPath}
+          spacePath={spacePath}
+          documentPath={documentPath}
+          onCoverChange={onCoverChange}
+          size={coverSize}
+        />
+      ) : null}
       <div
         className={cn(
           "flex min-w-0 items-start justify-between gap-4",
@@ -69,9 +71,21 @@ export function EntryIdentityHeader({
             onBodyFocus={onBodyFocus}
           />
         </div>
-        {actions || metadata ? (
+        {actions || metadata || !cover ? (
           <div className="flex max-w-[22rem] shrink-0 flex-col items-end text-right">
-            <div className="flex h-8 items-center justify-end">{actions}</div>
+            <div className="flex h-8 items-center justify-end">
+              {!cover ? (
+                <CoverPicker
+                  cover={null}
+                  projectPath={projectPath}
+                  spacePath={spacePath}
+                  documentPath={documentPath}
+                  onCoverChange={onCoverChange}
+                  iconOnly
+                />
+              ) : null}
+              {actions}
+            </div>
             {metadata}
           </div>
         ) : null}
