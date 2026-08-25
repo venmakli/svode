@@ -45,7 +45,7 @@
   "editor_title": "Редактор документов",
   "editor_placeholder": "Редактор будет реализован в Фазе 3",
   "editor_untitled": "Без названия",
-  "editor_name_conflict": "Документ с таким названием уже существует здесь ({path}).",
+  "editor_name_conflict": "Документ с таким названием уже существует ({path}).",
   "editor_name_existing_conflict": "Повторяющееся название · {path}",
   "editor_placeholder_body": "Начните писать или введите / для команд",
   "editor_add_cover": "Добавить обложку",
