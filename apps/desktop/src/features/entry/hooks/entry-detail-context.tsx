@@ -11,7 +11,7 @@ import {
 import { normalizeSchema, type EntrySchemaResult } from "@/features/properties";
 import { getEntrySchema } from "@/features/properties/api";
 import { useSpaceTreeSync } from "@/features/space";
-import { createEntry, readEntry, renameEntry } from "../entry-api";
+import { createEntry, readEntry } from "../entry-api";
 import { isEntryTreeMetaField, useEntryFieldSave } from "../field-save";
 import { humanizeOwnerPath, isReadmeMissingError } from "../lib/readme-state";
 import type { Entry, EntryCover } from "../model";
@@ -147,18 +147,10 @@ export function EntryDetailProvider({
         spacePath,
         parentPath: ownerPath === "." ? "" : ownerPath,
         title: resolvedFallbackTitle,
+        asReadme: true,
         projectPath,
       });
-      let nextEntry = created;
-      if (created.path.toLowerCase() !== readmePath.toLowerCase()) {
-        await renameEntry({
-          spacePath,
-          from: created.path,
-          to: readmePath,
-          projectPath,
-        });
-        nextEntry = await readEntry({ spacePath, path: readmePath });
-      }
+      const nextEntry = created;
       const nextSchema = await loadSchema();
       setEntry(nextEntry);
       setSchemaResult(nextSchema);

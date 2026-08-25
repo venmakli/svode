@@ -22,6 +22,7 @@ interface EntryIdentityHeaderProps {
   actions?: ReactNode;
   metadata?: ReactNode;
   coverSize?: "default" | "compact";
+  titleError?: string | null;
 }
 
 export function EntryIdentityHeader({
@@ -41,6 +42,7 @@ export function EntryIdentityHeader({
   actions,
   metadata,
   coverSize = "default",
+  titleError,
 }: EntryIdentityHeaderProps) {
   return (
     <>
@@ -69,6 +71,7 @@ export function EntryIdentityHeader({
             onIconChange={onIconChange}
             onDescriptionChange={onDescriptionChange}
             onBodyFocus={onBodyFocus}
+            titleError={titleError}
           />
         </div>
         {actions || metadata || !cover ? (

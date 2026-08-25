@@ -76,6 +76,17 @@ pub fn read(space: &str, path: &str) -> Result<Entry, AppError> {
 
     let content = fs::read_to_string(&abs_path)?;
 
+    let name_conflict = crate::files::naming::document_name_conflict(
+        Path::new(space),
+        path,
+        &match frontmatter::parse_status(&content) {
+            ParseStatus::Valid { ref meta, .. } if meta.frontmatter_keys.title => {
+                meta.title.clone()
+            }
+            _ => fallback_title_for_path(path),
+        },
+    )?;
+
     match frontmatter::parse_status(&content) {
         ParseStatus::Valid { mut meta, body } => {
             apply_runtime_metadata(&mut meta, &abs_path, path)?;
@@ -84,6 +95,7 @@ pub fn read(space: &str, path: &str) -> Result<Entry, AppError> {
                 body,
                 path: path.to_string(),
                 warnings: Vec::new(),
+                name_conflict,
             })
         }
         ParseStatus::Missing { body } => {
@@ -93,6 +105,7 @@ pub fn read(space: &str, path: &str) -> Result<Entry, AppError> {
                 body,
                 path: path.to_string(),
                 warnings: Vec::new(),
+                name_conflict,
             })
         }
         ParseStatus::Malformed { message, body } => {
@@ -102,6 +115,7 @@ pub fn read(space: &str, path: &str) -> Result<Entry, AppError> {
                 body,
                 path: path.to_string(),
                 warnings: vec![EntryWarning::malformed_frontmatter(message)],
+                name_conflict,
             })
         }
     }
@@ -142,7 +156,7 @@ pub(super) fn write_serialized(
 
 pub(super) fn refresh_markdown_copy_metadata(
     path: &Path,
-    title_suffix: Option<&str>,
+    title_override: Option<&str>,
 ) -> Result<(), AppError> {
     let raw = fs::read_to_string(path)?;
     let (mut meta, body) = match frontmatter::try_parse(&raw)? {
@@ -155,9 +169,9 @@ pub(super) fn refresh_markdown_copy_metadata(
             (EntryMeta::new_persisted(title_from_stem(stem)), raw)
         }
     };
-    if let Some(suffix) = title_suffix {
+    if let Some(title) = title_override {
         meta.mark_title_present();
-        meta.title.push_str(suffix);
+        meta.title = title.to_string();
     }
     write_serialized(path, &meta, &body)
 }

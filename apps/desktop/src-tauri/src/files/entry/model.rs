@@ -213,6 +213,8 @@ pub struct Entry {
     pub path: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<EntryWarning>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_conflict: Option<crate::files::naming::DocumentNameConflict>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

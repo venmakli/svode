@@ -2216,6 +2216,7 @@ pub fn update_relation_entry_field(
             body,
             path: source_path.clone(),
             warnings: Vec::new(),
+            name_conflict: None,
         }))
     })
 }

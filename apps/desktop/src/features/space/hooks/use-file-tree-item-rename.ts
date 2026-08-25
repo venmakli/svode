@@ -18,6 +18,10 @@ import {
   updateTreeEntryTitle,
 } from "../api/tree-entry-actions";
 import type { SpaceInfo } from "../model";
+import {
+  documentNameConflictFromError,
+  findDocumentNameConflictPath,
+} from "@/features/entry/entry-api";
 
 interface UseFileTreeItemRenameInput {
   node: TreeNode;
@@ -39,6 +43,7 @@ interface UseFileTreeItemRenameInput {
     description?: string | null,
   ) => void;
   removeTreePath: (spaceId: string, path: string) => void;
+  siblingRows: readonly TreeNode[];
 }
 
 export function useFileTreeItemRename({
@@ -52,9 +57,13 @@ export function useFileTreeItemRename({
   reloadTreeParents,
   patchEntryTreeMeta,
   removeTreePath,
+  siblingRows,
 }: UseFileTreeItemRenameInput) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
+  const [renameConflictPath, setRenameConflictPath] = useState<string | null>(
+    null,
+  );
   const editRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -66,14 +75,31 @@ export function useFileTreeItemRename({
 
   function handleStartRename() {
     setEditValue(node.title);
+    setRenameConflictPath(null);
     setIsEditing(true);
   }
 
   async function handleRenameSubmit() {
-    const newName = editValue.trim();
-    if (!space || !newName || newName === node.title) {
+    const newName = editValue;
+    if (!space || !newName.trim() || newName === node.title) {
       setIsEditing(false);
       return;
+    }
+
+    if (!bareFolder) {
+      const conflictPath = findDocumentNameConflictPath(
+        newName,
+        siblingRows,
+        node.path,
+      );
+      if (conflictPath) {
+        setRenameConflictPath(conflictPath);
+        requestAnimationFrame(() => {
+          editRef.current?.focus();
+          editRef.current?.select();
+        });
+        return;
+      }
     }
 
     try {
@@ -111,8 +137,21 @@ export function useFileTreeItemRename({
           entry.meta.icon,
           entry.meta.description ?? null,
         );
+        const parent = node.path.toLowerCase().endsWith("/readme.md")
+          ? node.path.split("/").slice(0, -2).join("/")
+          : node.path.split("/").slice(0, -1).join("/");
+        await reloadTreeParents(spaceId, [parent]);
       }
     } catch (err) {
+      const conflict = documentNameConflictFromError(err);
+      if (conflict) {
+        setRenameConflictPath(conflict.conflicts[0]?.path ?? null);
+        requestAnimationFrame(() => {
+          editRef.current?.focus();
+          editRef.current?.select();
+        });
+        return;
+      }
       console.error("Failed to rename:", err);
       toast.error(m.toast_error());
     }
@@ -135,6 +174,7 @@ export function useFileTreeItemRename({
     handleRenameSubmit,
     handleStartRename,
     isEditing,
+    renameConflictPath,
     setEditValue,
   };
 }

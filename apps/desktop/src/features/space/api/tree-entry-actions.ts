@@ -41,6 +41,7 @@ export function createTreePage(input: {
     space: input.spacePath,
     parentPath: input.parentPath,
     title: input.title,
+    allocateUniqueTitle: true,
     projectPath: input.projectPath,
   });
 }
@@ -145,21 +146,14 @@ export async function makeBareFolderDocument(input: {
   title: string;
   projectPath: ProjectPath;
 }): Promise<string> {
-  const entry = await createTreePage({
-    spacePath: input.spacePath,
+  const readmePath = `${input.folderPath}/README.md`;
+  await createEntry({
+    space: input.spacePath,
     parentPath: input.folderPath,
     title: input.title,
+    asReadme: true,
     projectPath: input.projectPath,
   });
-  const readmePath = `${input.folderPath}/README.md`;
-  if (entry.path !== readmePath) {
-    await renameTreeEntryPath({
-      spacePath: input.spacePath,
-      from: entry.path,
-      to: readmePath,
-      projectPath: input.projectPath,
-    });
-  }
   return readmePath;
 }
 

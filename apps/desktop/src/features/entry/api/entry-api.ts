@@ -36,6 +36,8 @@ export interface CreateEntryInput {
   parentPath: string | null;
   title: string;
   contextualDefaults?: Record<string, unknown> | null;
+  allocateUniqueTitle?: boolean;
+  asReadme?: boolean;
   projectPath?: string | null;
 }
 
@@ -137,6 +139,8 @@ export async function createEntry(input: CreateEntryInput): Promise<Entry> {
     parentPath: input.parentPath,
     title: input.title,
     contextualDefaults: input.contextualDefaults ?? null,
+    allocateUniqueTitle: input.allocateUniqueTitle ?? false,
+    asReadme: input.asReadme ?? false,
     projectPath: input.projectPath ?? null,
   });
   return entryFromDto(entry);

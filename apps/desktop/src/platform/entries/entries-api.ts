@@ -20,11 +20,17 @@ export interface EntryWarningDto {
   message: string;
 }
 
+export interface DocumentNameConflictDto {
+  parentPath: string | null;
+  conflicts: Array<{ path: string; title: string }>;
+}
+
 export interface EntryDto {
   meta: EntryMetaDto;
   body: string;
   path: string;
   warnings?: EntryWarningDto[];
+  name_conflict?: DocumentNameConflictDto;
 }
 
 export interface LinkValidationResultDto {
@@ -64,6 +70,8 @@ export function createEntry(input: {
   parentPath: string | null;
   title: string;
   contextualDefaults?: Record<string, unknown> | null;
+  allocateUniqueTitle?: boolean;
+  asReadme?: boolean;
   projectPath: string | null;
 }): Promise<EntryDto> {
   return invokeCommand<EntryDto>("create_entry", { ...input });

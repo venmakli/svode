@@ -9,3 +9,8 @@ export {
   isEntryTreeMetaField,
   type EntryFieldSavePolicy,
 } from "./field-save";
+export {
+  documentNameConflictFromError,
+  documentNameKey,
+  findDocumentNameConflictPath,
+} from "./document-name";

@@ -29,11 +29,17 @@ export interface EntryWarning {
   message: string;
 }
 
+export interface DocumentNameConflict {
+  parentPath: string | null;
+  conflicts: Array<{ path: string; title: string }>;
+}
+
 export interface Entry {
   meta: EntryMeta;
   body: string;
   path: string;
   warnings?: EntryWarning[];
+  name_conflict?: DocumentNameConflict;
 }
 
 export interface EntryDetailState {

@@ -159,6 +159,7 @@ export async function applySpaceFileEvent({
       spaceId,
       kind,
     });
+    repairTree(repairParentPathForSpaceFileEvent(payload));
     return;
   }
 
@@ -171,6 +172,7 @@ export async function applySpaceFileEvent({
       spaceId,
       kind,
     });
+    repairTree(repairParentPathForSpaceFileEvent(payload));
     return;
   }
 
@@ -180,6 +182,7 @@ export async function applySpaceFileEvent({
     spaceId,
     kind,
   });
+  repairTree(repairParentPathForSpaceFileEvent(payload));
 }
 
 function updateSchemaCapability(
@@ -263,7 +266,6 @@ async function applyChangedSpaceFileEvent({
   getStore,
   payload,
   readEntry,
-  repairTree,
   spaceId,
   kind,
 }: Omit<ApplySpaceFileEventInput, "eventName"> & {
@@ -278,7 +280,6 @@ async function applyChangedSpaceFileEvent({
   }
 
   if (kind === "folder") {
-    repairTree(parentPathForTreeEvent(path, payload.parentPath));
     return;
   }
 

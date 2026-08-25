@@ -51,6 +51,7 @@ export function useFileTreeItemActions({
     activeSpaceId,
     activeRootId,
     activeRootPath,
+    childrenByParentPath,
   } = useSpaceStore();
 
   const space =
@@ -83,6 +84,12 @@ export function useFileTreeItemActions({
     reloadTreeParents,
     patchEntryTreeMeta,
     removeTreePath,
+    siblingRows:
+      childrenByParentPath[spaceId]?.[
+        node.path.toLowerCase().endsWith("/readme.md")
+          ? node.path.split("/").slice(0, -2).join("/")
+          : node.path.split("/").slice(0, -1).join("/")
+      ] ?? [],
   });
 
   const creation = useFileTreeItemCreate({
@@ -148,6 +155,7 @@ export function useFileTreeItemActions({
     handleStartRename: rename.handleStartRename,
     isActive,
     isEditing: rename.isEditing,
+    renameConflictPath: rename.renameConflictPath,
     isUnsaved,
     knownChildren,
     setEditValue: rename.setEditValue,

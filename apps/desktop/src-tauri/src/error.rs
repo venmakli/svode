@@ -83,6 +83,9 @@ pub enum AppError {
     #[error("Invalid identity field: {0}")]
     IdentityInvalid(&'static str),
 
+    #[error("Document name is already used in this container")]
+    DocumentNameConflict(crate::files::naming::DocumentNameConflict),
+
     #[error("{0}")]
     General(String),
 }
@@ -115,6 +118,7 @@ impl AppError {
             AppError::StrategyInherited => "strategy_inherited",
             AppError::IdentityMissing => "identity_missing",
             AppError::IdentityInvalid(_) => "identity_invalid",
+            AppError::DocumentNameConflict(_) => "document_name_conflict",
             AppError::General(_) => "general",
         }
     }
@@ -125,6 +129,47 @@ impl Serialize for AppError {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.to_string())
+        match self {
+            AppError::DocumentNameConflict(conflict) => {
+                #[derive(Serialize)]
+                #[serde(rename_all = "camelCase")]
+                struct StructuredError<'a> {
+                    kind: &'static str,
+                    conflict: &'a crate::files::naming::DocumentNameConflict,
+                }
+                StructuredError {
+                    kind: self.kind(),
+                    conflict,
+                }
+                .serialize(serializer)
+            }
+            _ => serializer.serialize_str(&self.to_string()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn document_name_conflict_serializes_as_structured_tauri_error() {
+        let value = serde_json::to_value(AppError::DocumentNameConflict(
+            crate::files::naming::DocumentNameConflict {
+                parent_path: Some("docs".to_string()),
+                conflicts: vec![crate::files::naming::DocumentNameConflictEvidence {
+                    path: "docs/existing.md".to_string(),
+                    title: "Existing".to_string(),
+                }],
+            },
+        ))
+        .unwrap();
+
+        assert_eq!(value["kind"], "document_name_conflict");
+        assert_eq!(value["conflict"]["parentPath"], "docs");
+        assert_eq!(
+            value["conflict"]["conflicts"][0]["path"],
+            "docs/existing.md"
+        );
     }
 }

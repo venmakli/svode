@@ -568,7 +568,7 @@ fn write_metadata_frontmatter(
     icon: Option<Option<String>>,
     description: Option<Option<String>>,
     cover: Option<Option<entry::Cover>>,
-) -> Result<entry::Entry, McpBusinessError> {
+) -> Result<entry::Entry, crate::error::AppError> {
     let abs = Path::new(space).join(path);
     let raw = fs::read_to_string(&abs)?;
     let (mut meta, body) = match crate::files::frontmatter::parse_status(&raw) {
@@ -585,21 +585,19 @@ fn write_metadata_frontmatter(
             )
         }
         crate::files::frontmatter::ParseStatus::Malformed { message, .. } => {
-            return Err(McpBusinessError::new(
-                "MALFORMED_FRONTMATTER",
-                format!("cannot update metadata while frontmatter is malformed: {message}"),
-            ));
+            return Err(crate::error::AppError::FrontmatterParse(format!(
+                "cannot update metadata while frontmatter is malformed: {message}"
+            )));
         }
     };
+    let title_requested = title.is_some();
     if let Some(title) = title {
-        let title = title.trim();
-        if title.is_empty() {
-            return Err(McpBusinessError::new(
-                "INVALID_METADATA",
-                "title must not be empty",
+        if title.trim().is_empty() {
+            return Err(crate::error::AppError::General(
+                "title must not be empty".to_string(),
             ));
         }
-        meta.title = title.to_string();
+        meta.title = title;
         meta.mark_title_present();
     }
     if let Some(icon) = icon {
@@ -623,8 +621,11 @@ fn write_metadata_frontmatter(
             meta.mark_cover_present();
         }
     }
+    if title_requested {
+        crate::files::naming::ensure_document_name_available(Path::new(space), path, &meta.title)?;
+    }
     fs::write(abs, crate::files::frontmatter::serialize(&meta, &body))?;
-    entry::read(space, path).map_err(Into::into)
+    entry::read(space, path)
 }
 
 async fn pool_for_space(

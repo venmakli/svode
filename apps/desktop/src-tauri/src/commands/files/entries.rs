@@ -90,6 +90,8 @@ pub async fn create_entry(
     parent_path: Option<String>,
     title: String,
     contextual_defaults: Option<HashMap<String, serde_json::Value>>,
+    allocate_unique_title: Option<bool>,
+    as_readme: Option<bool>,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
@@ -103,16 +105,14 @@ pub async fn create_entry(
                 .collect::<Result<HashMap<_, _>, AppError>>()
         })
         .transpose()?;
-    let created = if let Some(contextual_defaults) = contextual_defaults {
-        entry::create_with_contextual_defaults(
-            &space,
-            parent_path.as_deref(),
-            &title,
-            Some(contextual_defaults),
-        )?
-    } else {
-        entry::create(&space, parent_path.as_deref(), &title)?
-    };
+    let created = entry::create_with_options(
+        &space,
+        parent_path.as_deref(),
+        &title,
+        contextual_defaults,
+        allocate_unique_title.unwrap_or(false),
+        as_readme.unwrap_or(false),
+    )?;
     update_index_entry_or_reindex(
         &index_state,
         project_path.as_deref(),

@@ -335,6 +335,7 @@ fn normalize_entry_path_arg(space: &Path, path: &str) -> Result<String, AppError
 }
 
 /// Create a new entry on disk. Returns the created Entry.
+#[allow(dead_code)]
 pub fn create(space: &str, parent_path: Option<&str>, title: &str) -> Result<Entry, AppError> {
     create_with_contextual_defaults(space, parent_path, title, None)
 }
@@ -346,10 +347,72 @@ pub fn create_with_contextual_defaults(
     title: &str,
     contextual_defaults: Option<HashMap<String, serde_yml::Value>>,
 ) -> Result<Entry, AppError> {
-    let slug = slugify(title);
+    create_with_options(space, parent_path, title, contextual_defaults, false, false)
+}
+
+pub fn create_with_options(
+    space: &str,
+    parent_path: Option<&str>,
+    title: &str,
+    contextual_defaults: Option<HashMap<String, serde_yml::Value>>,
+    allocate_unique_title: bool,
+    as_readme: bool,
+) -> Result<Entry, AppError> {
+    crate::files::naming::with_document_name_lock(space, || {
+        create_with_options_inner(
+            space,
+            parent_path,
+            title,
+            contextual_defaults,
+            allocate_unique_title,
+            as_readme,
+        )
+    })
+}
+
+fn create_with_options_inner(
+    space: &str,
+    parent_path: Option<&str>,
+    title: &str,
+    contextual_defaults: Option<HashMap<String, serde_yml::Value>>,
+    allocate_unique_title: bool,
+    as_readme: bool,
+) -> Result<Entry, AppError> {
+    let parent_path = parent_path
+        .map(str::trim)
+        .filter(|parent| !parent.is_empty());
+    let initial_scope_path = if as_readme {
+        parent_path
+            .map(|parent| format!("{parent}/README.md"))
+            .unwrap_or_else(|| "README.md".to_string())
+    } else {
+        parent_path
+            .map(|parent| format!("{parent}/.svode-name-probe-{}.md", ulid::Ulid::new()))
+            .unwrap_or_else(|| format!(".svode-name-probe-{}.md", ulid::Ulid::new()))
+    };
+    let title = if allocate_unique_title {
+        crate::files::naming::allocate_document_title(Path::new(space), &initial_scope_path, title)?
+    } else {
+        crate::files::naming::ensure_document_name_available(
+            Path::new(space),
+            &initial_scope_path,
+            title,
+        )?;
+        title.to_string()
+    };
+    let slug = slugify(&title);
 
     // Find a non-colliding filename: slug.md, slug-1.md, slug-2.md, ...
-    let (rel_path, abs_path) = {
+    let (rel_path, abs_path) = if as_readme {
+        let rel_path = parent_path
+            .map(|parent| format!("{parent}/README.md"))
+            .unwrap_or_else(|| "README.md".to_string());
+        let abs_path = resolve(space, &rel_path);
+        if abs_path.exists() {
+            return Err(AppError::FileAlreadyExists(rel_path));
+        }
+        (rel_path, abs_path)
+    } else {
         let make_rel = |name: &str| match parent_path {
             Some(parent) => format!("{parent}/{name}.md"),
             None => format!("{name}.md"),
@@ -380,7 +443,7 @@ pub fn create_with_contextual_defaults(
         fs::create_dir_all(parent_dir)?;
     }
 
-    let mut meta = EntryMeta::new_persisted(title.to_string());
+    let mut meta = EntryMeta::new_persisted(title);
     crate::properties::apply_schema_defaults_for_path(space, &rel_path, &mut meta)?;
     if let Some(contextual_defaults) = contextual_defaults.as_ref() {
         crate::properties::apply_contextual_defaults_for_path(
@@ -408,14 +471,17 @@ pub fn create_with_contextual_defaults(
         .unwrap_or_default()
         .to_string_lossy()
         .to_string();
-    let dir_key = parent_path.unwrap_or(".");
-    order_append(Path::new(space), dir_key, &filename);
+    if !as_readme {
+        let dir_key = parent_path.unwrap_or(".");
+        order_append(Path::new(space), dir_key, &filename);
+    }
 
     Ok(Entry {
         meta,
         body: body.to_string(),
         path: rel_path,
         warnings: Vec::new(),
+        name_conflict: None,
     })
 }
 
@@ -552,6 +618,45 @@ pub fn write(
     backlink_index: Option<&BacklinkIndex>,
     skip_rename: bool,
 ) -> Result<WriteResult, AppError> {
+    if title.is_some() || !skip_rename {
+        return crate::files::naming::with_document_name_lock(space, || {
+            write_inner(
+                space,
+                path,
+                content,
+                title,
+                icon,
+                extra,
+                _existing_id,
+                backlink_index,
+                skip_rename,
+            )
+        });
+    }
+    write_inner(
+        space,
+        path,
+        content,
+        title,
+        icon,
+        extra,
+        _existing_id,
+        backlink_index,
+        skip_rename,
+    )
+}
+
+fn write_inner(
+    space: &str,
+    path: &str,
+    content: &str,
+    title: Option<&str>,
+    icon: Option<&str>,
+    extra: Option<HashMap<String, serde_yml::Value>>,
+    _existing_id: Option<&str>,
+    backlink_index: Option<&BacklinkIndex>,
+    skip_rename: bool,
+) -> Result<WriteResult, AppError> {
     let abs_path = resolve(space, path);
 
     if !abs_path.exists() {
@@ -577,6 +682,15 @@ pub fn write(
         }
     }
     .map(str::to_string);
+    if (title.is_some() || !skip_rename)
+        && let Some(materialized_title) = materialized_title.as_deref()
+    {
+        crate::files::naming::ensure_document_name_available(
+            Path::new(space),
+            path,
+            materialized_title,
+        )?;
+    }
     let rename_needed = !skip_rename
         && materialized_title.as_deref().is_some_and(|t| {
             let new_slug = slugify(t);
@@ -1042,6 +1156,21 @@ pub fn update_field(
     field: &str,
     value: serde_json::Value,
 ) -> Result<Entry, AppError> {
+    if field == "title" {
+        return crate::files::naming::with_document_name_lock(space, || {
+            update_field_inner(space, project_path, path, field, value)
+        });
+    }
+    update_field_inner(space, project_path, path, field, value)
+}
+
+fn update_field_inner(
+    space: &str,
+    project_path: Option<&str>,
+    path: &str,
+    field: &str,
+    value: serde_json::Value,
+) -> Result<Entry, AppError> {
     let is_custom = !matches!(
         field,
         "created" | "updated" | "title" | "icon" | "description" | "cover"
@@ -1092,14 +1221,20 @@ pub fn update_field(
     } else {
         apply_entry_field_update(&mut meta, field, value)?;
     }
+    if field == "title" {
+        crate::files::naming::ensure_document_name_available(Path::new(space), path, &meta.title)?;
+    }
     persistence::write_serialized(&abs_path, &meta, &body)?;
     apply_runtime_metadata(&mut meta, &abs_path, path)?;
+    let name_conflict =
+        crate::files::naming::document_name_conflict(Path::new(space), path, &meta.title)?;
 
     Ok(Entry {
         meta,
         body,
         path: path.to_string(),
         warnings: Vec::new(),
+        name_conflict,
     })
 }
 
@@ -1712,6 +1847,12 @@ pub fn convert_bare_folder_to_collection(
 }
 
 pub fn duplicate_entry(space: &Path, file_path: &str) -> Result<Entry, AppError> {
+    crate::files::naming::with_document_name_lock(&space.to_string_lossy(), || {
+        duplicate_entry_inner(space, file_path)
+    })
+}
+
+fn duplicate_entry_inner(space: &Path, file_path: &str) -> Result<Entry, AppError> {
     let rel = file_path.trim_matches('/').replace('\\', "/");
     let source_abs = space.join(&rel);
     if !source_abs.exists() {
@@ -1753,9 +1894,14 @@ pub fn duplicate_entry(space: &Path, file_path: &str) -> Result<Entry, AppError>
         (source_abs.clone(), order_name, parent, rel.clone())
     };
 
-    let copy_title = read(&space.to_string_lossy(), &root_head_rel)
+    let requested_copy_title = read(&space.to_string_lossy(), &root_head_rel)
         .map(|entry| format!("{} (copy)", entry.meta.title))
         .unwrap_or_else(|_| format!("{} (copy)", source_order_name));
+    let copy_title = crate::files::naming::allocate_document_title(
+        space,
+        &root_head_rel,
+        &requested_copy_title,
+    )?;
     let copy_stem = slugify(&copy_title);
     let dest_abs = if root_source_abs.is_dir() {
         unique_child_path(&parent_abs, &copy_stem, None)
@@ -1767,7 +1913,7 @@ pub fn duplicate_entry(space: &Path, file_path: &str) -> Result<Entry, AppError>
         copy_dir_recursive(&root_source_abs, &dest_abs)?;
         let head = dest_abs.join("README.md");
         if head.exists() {
-            refresh_markdown_copy_metadata(&head, Some(" (copy)"))?;
+            refresh_markdown_copy_metadata(&head, Some(&copy_title))?;
         }
         let mut files = Vec::new();
         collect_entry_md_files(&dest_abs, &mut files)?;
@@ -1778,7 +1924,7 @@ pub fn duplicate_entry(space: &Path, file_path: &str) -> Result<Entry, AppError>
         }
     } else {
         fs::copy(&root_source_abs, &dest_abs)?;
-        refresh_markdown_copy_metadata(&dest_abs, Some(" (copy)"))?;
+        refresh_markdown_copy_metadata(&dest_abs, Some(&copy_title))?;
     }
 
     crate::properties::rewrite_internal_relation_refs_for_copy(
@@ -2177,7 +2323,7 @@ mod tests {
     }
 
     #[test]
-    fn test_create_collision_suffix() {
+    fn test_explicit_create_rejects_duplicate_visible_title() {
         let tmp = TempDir::new().unwrap();
         let ws = tmp.path().to_str().unwrap();
 
@@ -2185,13 +2331,9 @@ mod tests {
         let e1 = create(ws, None, "Test Doc").unwrap();
         assert_eq!(e1.path, "test-doc.md");
 
-        // Create second with same title → should get -1
-        let e2 = create(ws, None, "Test Doc").unwrap();
-        assert_eq!(e2.path, "test-doc-1.md");
-
-        // Third → -2
-        let e3 = create(ws, None, "Test Doc").unwrap();
-        assert_eq!(e3.path, "test-doc-2.md");
+        let error = create(ws, None, "Test Doc").unwrap_err();
+        assert!(matches!(error, AppError::DocumentNameConflict(_)));
+        assert!(!resolve(ws, "test-doc-1.md").exists());
     }
 
     #[test]
@@ -2285,15 +2427,15 @@ mod tests {
     }
 
     #[test]
-    fn test_write_title_change_collision_no_rename() {
+    fn test_write_title_change_collision_is_rejected_before_content_write() {
         let tmp = TempDir::new().unwrap();
         let ws = tmp.path().to_str().unwrap();
 
         let e1 = create(ws, None, "Doc A").unwrap();
         let _e2 = create(ws, None, "Doc B").unwrap();
 
-        // Try to rename Doc A to Doc B — collision, should save content but not rename
-        let result = write(
+        let before = fs::read_to_string(resolve(ws, &e1.path)).unwrap();
+        let error = write(
             ws,
             &e1.path,
             "updated body",
@@ -2304,11 +2446,11 @@ mod tests {
             None,
             false,
         )
-        .unwrap();
+        .unwrap_err();
 
-        assert_eq!(result.new_path, None);
-        // Original file still exists with updated content
+        assert!(matches!(error, AppError::DocumentNameConflict(_)));
         assert!(resolve(ws, "doc-a.md").exists());
+        assert_eq!(fs::read_to_string(resolve(ws, &e1.path)).unwrap(), before);
     }
 
     #[test]
@@ -2479,5 +2621,140 @@ mod tests {
         assert_eq!(result.new_path.as_deref(), Some("new-title.md"));
         assert!(resolve(ws, "new-title.md").is_file());
         assert!(!resolve(ws, "old-title.md").exists());
+    }
+
+    #[test]
+    fn quick_create_allocates_visible_titles_and_explicit_create_is_non_destructive() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path().to_string_lossy();
+
+        let first = create_with_options(&space, None, "Untitled", None, true, false).unwrap();
+        let second = create_with_options(&space, None, "Untitled", None, true, false).unwrap();
+        assert_eq!(first.meta.title, "Untitled");
+        assert_eq!(second.meta.title, "Untitled 2");
+
+        let error = create_with_options(&space, None, "untitled", None, false, false).unwrap_err();
+        assert!(matches!(error, AppError::DocumentNameConflict(_)));
+        assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 3);
+    }
+
+    #[test]
+    fn folder_document_and_leaf_share_a_logical_parent_name_scope() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path().to_string_lossy();
+        create_with_options(&space, None, "Shared", None, false, false).unwrap();
+        fs::create_dir(tmp.path().join("folder")).unwrap();
+
+        let error = create_with_options(
+            &space,
+            Some("folder"),
+            "  ＳＨＡＲＥＤ  ",
+            None,
+            false,
+            true,
+        )
+        .unwrap_err();
+        assert!(matches!(error, AppError::DocumentNameConflict(_)));
+        assert!(!tmp.path().join("folder/README.md").exists());
+    }
+
+    #[test]
+    fn distinct_names_that_share_a_slug_do_not_overwrite_each_other() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path().to_string_lossy();
+        let first = create_with_options(&space, None, "A+B", None, false, false).unwrap();
+        let second = create_with_options(&space, None, "AB", None, false, false).unwrap();
+
+        assert_eq!(first.path, "ab.md");
+        assert_eq!(second.path, "ab-1.md");
+        assert_eq!(read(&space, &first.path).unwrap().meta.title, "A+B");
+        assert_eq!(read(&space, &second.path).unwrap().meta.title, "AB");
+    }
+
+    #[test]
+    fn repeated_duplicate_allocates_a_unique_visible_copy_title() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path().to_string_lossy();
+        let source = create_with_options(&space, None, "Source", None, false, false).unwrap();
+
+        let first = duplicate_entry(tmp.path(), &source.path).unwrap();
+        let second = duplicate_entry(tmp.path(), &source.path).unwrap();
+
+        assert_eq!(first.meta.title, "Source (copy)");
+        assert_eq!(second.meta.title, "Source (copy) 2");
+        assert_ne!(first.path, second.path);
+    }
+
+    #[test]
+    fn concurrent_quick_creates_allocate_distinct_visible_titles() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path().to_string_lossy().to_string();
+        let first_space = space.clone();
+        let second_space = space.clone();
+        let first = std::thread::spawn(move || {
+            create_with_options(&first_space, None, "Untitled", None, true, false).unwrap()
+        });
+        let second = std::thread::spawn(move || {
+            create_with_options(&second_space, None, "Untitled", None, true, false).unwrap()
+        });
+        let mut titles = [
+            first.join().unwrap().meta.title,
+            second.join().unwrap().meta.title,
+        ];
+        titles.sort();
+        assert_eq!(titles, ["Untitled", "Untitled 2"]);
+    }
+
+    #[test]
+    fn unrelated_body_save_stays_available_for_existing_external_duplicates() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path().to_string_lossy();
+        fs::write(
+            tmp.path().join("one.md"),
+            "---\ntitle: Shared\n---\nOld one\n",
+        )
+        .unwrap();
+        fs::write(
+            tmp.path().join("two.md"),
+            "---\ntitle: shared\n---\nOld two\n",
+        )
+        .unwrap();
+
+        write(
+            &space,
+            "one.md",
+            "Updated one\n",
+            None,
+            None,
+            None,
+            None,
+            None,
+            true,
+        )
+        .unwrap();
+        assert!(
+            fs::read_to_string(tmp.path().join("one.md"))
+                .unwrap()
+                .ends_with("Updated one\n")
+        );
+
+        let before = fs::read_to_string(tmp.path().join("one.md")).unwrap();
+        let error = write(
+            &space,
+            "one.md",
+            "Explicit save\n",
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap_err();
+        assert!(matches!(error, AppError::DocumentNameConflict(_)));
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("one.md")).unwrap(),
+            before
+        );
     }
 }

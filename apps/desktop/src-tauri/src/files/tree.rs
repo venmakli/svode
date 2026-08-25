@@ -26,6 +26,8 @@ pub struct TreeNode {
     pub description: Option<String>,
     pub has_changes: bool,
     pub has_schema: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_conflict: Option<crate::files::naming::DocumentNameConflict>,
     pub children: Vec<TreeNode>,
 }
 
@@ -50,6 +52,8 @@ pub struct TreeChildNode {
     #[serde(rename = "hasChildren")]
     pub has_children: bool,
     pub kind: TreeChildKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_conflict: Option<crate::files::naming::DocumentNameConflict>,
 }
 
 fn is_readme_name(name: &str) -> bool {
@@ -264,11 +268,13 @@ pub fn build_tree(space: &str) -> Result<Vec<TreeNode>, AppError> {
         );
         return Err(error);
     }
-    let result = {
+    let result: Result<Vec<TreeNode>, AppError> = {
         let order = read_order(root);
         let skip_dirs = child_folder_names(root);
         let policy = TreeIgnorePolicy::from_space_root(root);
-        read_dir_recursive(root, root, &order, &skip_dirs, &policy)
+        let mut nodes = read_dir_recursive(root, root, &order, &skip_dirs, &policy)?;
+        annotate_recursive_name_conflicts(root, &mut nodes)?;
+        Ok(nodes)
     };
     let duration_ms = started.elapsed().as_millis() as u64;
 
@@ -320,7 +326,25 @@ pub fn list_tree_children(
 
     let order = read_order(root);
     let skip_dirs = child_folder_names(root);
-    read_dir_direct(root, &dir, &parent_rel, &order, &skip_dirs, &policy)
+    let mut nodes = read_dir_direct(root, &dir, &parent_rel, &order, &skip_dirs, &policy)?;
+    for node in &mut nodes {
+        if node.path.to_lowercase().ends_with(".md") && !node.has_schema {
+            node.name_conflict =
+                crate::files::naming::document_name_conflict(root, &node.path, &node.title)?;
+        }
+    }
+    Ok(nodes)
+}
+
+fn annotate_recursive_name_conflicts(space: &Path, nodes: &mut [TreeNode]) -> Result<(), AppError> {
+    for node in nodes {
+        if node.path.to_lowercase().ends_with(".md") && !node.has_schema {
+            node.name_conflict =
+                crate::files::naming::document_name_conflict(space, &node.path, &node.title)?;
+        }
+        annotate_recursive_name_conflicts(space, &mut node.children)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn normalize_tree_parent_path(parent_path: Option<&str>) -> Result<String, AppError> {
@@ -436,6 +460,7 @@ fn read_dir_direct(
                 } else {
                     TreeChildKind::Folder
                 },
+                name_conflict: None,
             });
         } else if meta.is_file()
             && ((name.ends_with(".md") && !is_readme_name(&name))
@@ -453,6 +478,7 @@ fn read_dir_direct(
                 parent: parent.clone(),
                 has_children: false,
                 kind: TreeChildKind::Document,
+                name_conflict: None,
             });
         }
     }
@@ -621,6 +647,7 @@ fn read_dir_recursive(
                 description,
                 has_changes: false,
                 has_schema,
+                name_conflict: None,
                 children,
             });
         } else if meta.is_file() && name.ends_with(".md") {
@@ -633,6 +660,7 @@ fn read_dir_recursive(
                 description,
                 has_changes: false,
                 has_schema: false,
+                name_conflict: None,
                 children: vec![],
             });
         }

@@ -62,7 +62,7 @@ pub(super) async fn write_document(
     let (_, space) = resolve_space(app, args.space_id).await?;
     let path = validate_document_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
-    let result = entry::write(
+    let result = match entry::write(
         &space,
         &path,
         &args.content,
@@ -72,7 +72,13 @@ pub(super) async fn write_document(
         None,
         None,
         true,
-    )?;
+    ) {
+        Ok(result) => result,
+        Err(crate::error::AppError::DocumentNameConflict(conflict)) => {
+            return Ok(document_name_conflict_result(conflict));
+        }
+        Err(error) => return Err(error.into()),
+    };
     let changed = vec![result.new_path.clone().unwrap_or(path.clone())];
     Ok(ToolCallResult::ok(
         format!("Updated document {path}."),
@@ -94,9 +100,6 @@ pub(super) async fn create_document(
             format!("File already exists: {path}"),
         ));
     }
-    if let Some(parent) = abs.parent() {
-        fs::create_dir_all(parent)?;
-    }
     let title = args.title.unwrap_or_else(|| {
         Path::new(&path)
             .file_stem()
@@ -104,25 +107,43 @@ pub(super) async fn create_document(
             .unwrap_or("Untitled")
             .replace(['-', '_'], " ")
     });
-    let mut meta = entry::EntryMeta::new_persisted(title);
-    meta.icon = args.icon;
-    if meta.icon.is_some() {
-        meta.mark_icon_present();
+    let mutation = crate::files::naming::with_document_name_lock(&space, || {
+        if abs.exists() {
+            return Err(crate::error::AppError::FileAlreadyExists(path.clone()));
+        }
+        crate::files::naming::ensure_document_name_available(Path::new(&space), &path, &title)?;
+        if let Some(parent) = abs.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut meta = entry::EntryMeta::new_persisted(title);
+        meta.icon = args.icon;
+        if meta.icon.is_some() {
+            meta.mark_icon_present();
+        }
+        meta.description = args
+            .description
+            .and_then(|value| (!value.trim().is_empty()).then_some(value));
+        if meta.description.is_some() {
+            meta.mark_description_present();
+        }
+        meta.cover = args.cover;
+        if meta.cover.is_some() {
+            meta.mark_cover_present();
+        }
+        fs::write(
+            &abs,
+            crate::files::frontmatter::serialize(&meta, args.content.as_deref().unwrap_or("")),
+        )?;
+        Ok(())
+    });
+    if let Err(error) = mutation {
+        return match error {
+            crate::error::AppError::DocumentNameConflict(conflict) => {
+                Ok(document_name_conflict_result(conflict))
+            }
+            error => Err(error.into()),
+        };
     }
-    meta.description = args
-        .description
-        .and_then(|value| (!value.trim().is_empty()).then_some(value));
-    if meta.description.is_some() {
-        meta.mark_description_present();
-    }
-    meta.cover = args.cover;
-    if meta.cover.is_some() {
-        meta.mark_cover_present();
-    }
-    fs::write(
-        &abs,
-        crate::files::frontmatter::serialize(&meta, args.content.as_deref().unwrap_or("")),
-    )?;
     Ok(ToolCallResult::ok(
         format!("Created document {path}."),
         json!({ "path": path, "changedPaths": [path] }),
@@ -137,18 +158,44 @@ pub(super) async fn update_document_metadata(
     let (_, space) = resolve_space(app, args.space_id).await?;
     let path = validate_document_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
-    let document = write_metadata_frontmatter(
-        &space,
-        &path,
-        args.title,
-        args.icon,
-        args.description,
-        args.cover,
-    )?;
+    let document = match crate::files::naming::with_document_name_lock(&space, || {
+        write_metadata_frontmatter(
+            &space,
+            &path,
+            args.title,
+            args.icon,
+            args.description,
+            args.cover,
+        )
+    }) {
+        Ok(document) => document,
+        Err(crate::error::AppError::DocumentNameConflict(conflict)) => {
+            return Ok(document_name_conflict_result(conflict));
+        }
+        Err(error) => return Err(error.into()),
+    };
     Ok(ToolCallResult::ok(
         format!("Updated metadata for {path}."),
         json!({ "document": document, "changedPaths": [path] }),
     ))
+}
+
+fn document_name_conflict_result(
+    conflict: crate::files::naming::DocumentNameConflict,
+) -> ToolCallResult {
+    let message = "document name is already used in this container";
+    ToolCallResult {
+        content: vec![crate::mcp::protocol::ContentBlock::text(message)],
+        structured_content: Some(json!({
+            "error": {
+                "code": "DOCUMENT_NAME_CONFLICT",
+                "message": message,
+                "parentPath": conflict.parent_path,
+                "conflicts": conflict.conflicts,
+            }
+        })),
+        is_error: true,
+    }
 }
 
 pub(super) async fn import_asset(
@@ -255,4 +302,27 @@ pub(super) async fn search_documents(
         format!("Found {} matching documents.", results.len()),
         json!({ "items": results, "total": total, "limit": limit, "offset": start }),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn name_conflict_result_preserves_container_and_conflicting_document_evidence() {
+        let result = document_name_conflict_result(crate::files::naming::DocumentNameConflict {
+            parent_path: Some("docs".to_string()),
+            conflicts: vec![crate::files::naming::DocumentNameConflictEvidence {
+                path: "docs/existing.md".to_string(),
+                title: "Existing".to_string(),
+            }],
+        });
+
+        assert!(result.is_error);
+        let error = &result.structured_content.unwrap()["error"];
+        assert_eq!(error["code"], "DOCUMENT_NAME_CONFLICT");
+        assert_eq!(error["parentPath"], "docs");
+        assert_eq!(error["conflicts"][0]["path"], "docs/existing.md");
+        assert_eq!(error["conflicts"][0]["title"], "Existing");
+    }
 }

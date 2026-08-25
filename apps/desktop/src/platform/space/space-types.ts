@@ -119,6 +119,10 @@ export interface TreeNodeDto {
   kind?: "document" | "folder" | "collection";
   hasChildren?: boolean;
   has_children?: boolean;
+  name_conflict?: {
+    parentPath: string | null;
+    conflicts: Array<{ path: string; title: string }>;
+  };
   children: TreeNodeDto[];
 }
 

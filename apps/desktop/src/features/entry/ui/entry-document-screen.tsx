@@ -28,6 +28,7 @@ import { EntrySubpages } from "./entry-subpages";
 import { EntrySystemFields } from "./entry-system-fields";
 import { handleError } from "../lib/errors";
 import { propertyFieldSavePolicy } from "../property-field-save";
+import { useEntryDocumentName } from "../hooks/use-entry-document-name";
 
 interface EntryDocumentScreenProps {
   spacePath: string;
@@ -80,6 +81,12 @@ export function EntryDocumentScreen({
     },
     [],
   );
+  const currentEntry = loadedEntryKey === documentTargetKey ? entry : null;
+  const documentName = useEntryDocumentName({
+    documentPath,
+    entry: currentEntry,
+    spaceId,
+  });
   const updateField = useEntryFieldSave({
     spacePath,
     projectPath,
@@ -93,7 +100,13 @@ export function EntryDocumentScreen({
           updated.meta.icon,
           updated.meta.description ?? null,
         );
+        void reloadTreePathParent(spaceId, updated.path);
       }
+      if (context.field === "title") documentName.clearSavedConflict();
+    },
+    onError: (error, context) => {
+      if (context.field !== "title") return;
+      documentName.handleSaveError(error);
     },
   });
 
@@ -157,8 +170,6 @@ export function EntryDocumentScreen({
     };
   }, [reload]);
 
-  const currentEntry = loadedEntryKey === documentTargetKey ? entry : null;
-
   async function updateCover(cover: EntryCover | null) {
     if (!currentEntry) return;
     await updateField(currentEntry, "cover", cover);
@@ -188,8 +199,15 @@ export function EntryDocumentScreen({
   if (!currentEntry) {
     return <EntryDocumentLoadingState />;
   }
-
+  const activeEntry = currentEntry;
   const showSubpages = detailState?.form === "folder";
+
+  function updateTitle(value: string) {
+    if (!documentName.acceptTitle(value)) return;
+    void updateField(activeEntry, "title", value).catch((error) => {
+      if (!documentName.handleSaveError(error)) handleError(error);
+    });
+  }
 
   return (
     <div className="flex min-h-full flex-col">
@@ -202,9 +220,8 @@ export function EntryDocumentScreen({
           projectPath={projectPath ?? null}
           spacePath={spacePath}
           documentPath={currentEntry.path}
-          onTitleChange={(value) =>
-            void updateField(currentEntry, "title", value).catch(handleError)
-          }
+          onTitleChange={updateTitle}
+          titleError={documentName.titleError}
           onIconChange={(value) =>
             void updateField(currentEntry, "icon", value).catch(handleError)
           }

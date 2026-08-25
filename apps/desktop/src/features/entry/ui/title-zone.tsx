@@ -7,6 +7,7 @@ import {
 } from "react";
 import { SmilePlus, type LucideIcon } from "lucide-react";
 import { EmojiPicker } from "@/components/ui/emoji-picker";
+import { Field, FieldError } from "@/components/ui/field";
 import { cn } from "@/shared/lib/utils";
 import * as m from "@/paraglide/messages.js";
 
@@ -23,6 +24,8 @@ interface TitleZoneProps {
   fallbackIcon?: LucideIcon;
   fallbackEmoji?: string | null;
   onActivateIdentity?: () => void;
+  titleError?: string | null;
+  titleErrorId?: string;
 }
 
 export function TitleZone({
@@ -38,7 +41,10 @@ export function TitleZone({
   fallbackIcon: FallbackIcon,
   fallbackEmoji,
   onActivateIdentity,
+  titleError,
+  titleErrorId = "entry-title-error",
 }: TitleZoneProps) {
+  const titleRef = useRef<HTMLInputElement>(null);
   const descriptionRef = useRef<HTMLTextAreaElement>(null);
   const isTitleFocusedRef = useRef(false);
   const isDescriptionFocusedRef = useRef(false);
@@ -75,6 +81,13 @@ export function TitleZone({
       };
     }
   }, [description]);
+
+  useEffect(() => {
+    if (!titleError) return;
+    titleRef.current?.focus();
+    const end = titleRef.current?.value.length ?? 0;
+    titleRef.current?.setSelectionRange(end, end);
+  }, [titleError]);
 
   const resizeDescription = useCallback(() => {
     const node = descriptionRef.current;
@@ -157,30 +170,38 @@ export function TitleZone({
         )}
       </div>
       <div className="flex min-w-0 flex-1 flex-col">
-        <input
-          type="text"
-          value={titleDraft}
-          readOnly={readOnly}
-          onFocus={
-            readOnly
-              ? undefined
-              : () => {
-                  isTitleFocusedRef.current = true;
-                }
-          }
-          onBlur={() => {
-            isTitleFocusedRef.current = false;
-          }}
-          onClick={readOnly ? onActivateIdentity : undefined}
-          onChange={(e) => {
-            const next = e.target.value;
-            setTitleDraft(next);
-            onTitleChange(next || defaultTitle);
-          }}
-          onKeyDown={handleKeyDown}
-          placeholder={defaultTitle}
-          className="min-w-0 bg-transparent text-[22px] font-bold leading-8 outline-none placeholder:text-muted-foreground/40"
-        />
+        <Field data-invalid={titleError ? "true" : undefined} className="gap-0">
+          <input
+            ref={titleRef}
+            type="text"
+            value={titleDraft}
+            readOnly={readOnly}
+            aria-invalid={titleError ? true : undefined}
+            aria-describedby={titleError ? titleErrorId : undefined}
+            onFocus={
+              readOnly
+                ? undefined
+                : () => {
+                    isTitleFocusedRef.current = true;
+                  }
+            }
+            onBlur={() => {
+              isTitleFocusedRef.current = false;
+            }}
+            onClick={readOnly ? onActivateIdentity : undefined}
+            onChange={(e) => {
+              const next = e.target.value;
+              setTitleDraft(next);
+              onTitleChange(next || defaultTitle);
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder={defaultTitle}
+            className="min-w-0 bg-transparent text-[22px] font-bold leading-8 outline-none placeholder:text-muted-foreground/40"
+          />
+          <FieldError id={titleErrorId} className="text-xs leading-4">
+            {titleError}
+          </FieldError>
+        </Field>
         {canShowDescription && (hasDescription || isEditingDescription) ? (
           <textarea
             ref={descriptionRef}

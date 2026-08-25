@@ -45,6 +45,8 @@
   "editor_title": "Document Editor",
   "editor_placeholder": "Editor will be implemented in Phase 3",
   "editor_untitled": "Untitled",
+  "editor_name_conflict": "A document with this name already exists here ({path}).",
+  "editor_name_existing_conflict": "Duplicate name · {path}",
   "editor_placeholder_body": "Start writing or type / for commands",
   "editor_add_cover": "Add cover",
   "editor_change_cover": "Change cover",

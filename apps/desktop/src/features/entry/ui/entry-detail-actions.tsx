@@ -123,6 +123,7 @@ export function EntryDetailActions({
       spacePath,
       parentPath,
       title: String(m.editor_untitled()),
+      allocateUniqueTitle: true,
       contextualDefaults: null,
       projectPath: projectPath ?? null,
     });

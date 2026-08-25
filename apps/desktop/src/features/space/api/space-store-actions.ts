@@ -121,6 +121,7 @@ export function createSpaceEntry(input: {
     space: input.spacePath,
     parentPath: input.parentPath,
     title: input.title,
+    allocateUniqueTitle: true,
     projectPath: input.projectPath,
   });
 }

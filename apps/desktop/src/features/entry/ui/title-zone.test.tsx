@@ -22,3 +22,24 @@ test("renders a read-only fallback emoji without mounting the editable picker", 
   expect(markup.includes("🎨")).toBe(true);
   expect(markup.includes('aria-label="Design"')).toBe(true);
 });
+
+test("exposes an inline document name conflict through the title field", () => {
+  const markup = renderToStaticMarkup(
+    <TitleZone
+      title="Shared"
+      icon={null}
+      description=""
+      fallbackEmoji="📄"
+      titleError="A document with this name already exists here (other.md)."
+      onTitleChange={() => undefined}
+      onIconChange={() => undefined}
+      onDescriptionChange={() => undefined}
+      onBodyFocus={() => undefined}
+    />,
+  );
+
+  expect(markup.includes('aria-invalid="true"')).toBe(true);
+  expect(markup.includes('aria-describedby="entry-title-error"')).toBe(true);
+  expect(markup.includes('role="alert"')).toBe(true);
+  expect(markup.includes("other.md")).toBe(true);
+});

@@ -40,6 +40,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
+import { FieldError } from "@/components/ui/field";
 import {
   ChevronRight,
   Database,
@@ -108,6 +109,7 @@ export function FileTreeItem({
     handleStartRename,
     isActive,
     isEditing,
+    renameConflictPath,
     isUnsaved,
     knownChildren,
     setEditValue,
@@ -202,21 +204,40 @@ export function FileTreeItem({
       relativePath: node.path,
     });
   };
+  const projectedConflictPath = node.name_conflict?.conflicts[0]?.path ?? null;
+  const renameErrorId = `tree-name-error-${node.path.replace(/[^a-z0-9_-]/gi, "-")}`;
   const titleElement = isEditing ? (
-    <input
-      ref={editRef}
-      className="truncate bg-transparent outline-none text-sm w-full border-b border-primary"
-      value={editValue}
-      onChange={(e) => setEditValue(e.target.value)}
-      onBlur={handleRenameSubmit}
-      onKeyDown={handleRenameKeyDown}
-      onClick={(e) => e.stopPropagation()}
-    />
+    <div className="flex min-w-0 flex-1 flex-col">
+      <input
+        ref={editRef}
+        className="w-full truncate border-b border-primary bg-transparent text-sm outline-none"
+        value={editValue}
+        aria-invalid={renameConflictPath ? true : undefined}
+        aria-describedby={renameConflictPath ? renameErrorId : undefined}
+        onChange={(e) => setEditValue(e.target.value)}
+        onBlur={handleRenameSubmit}
+        onKeyDown={handleRenameKeyDown}
+        onClick={(e) => e.stopPropagation()}
+      />
+      <FieldError id={renameErrorId} className="truncate text-[10px] leading-3">
+        {renameConflictPath
+          ? m.editor_name_conflict({ path: renameConflictPath })
+          : null}
+      </FieldError>
+    </div>
   ) : (
-    <span className="truncate">{node.title}</span>
+    <div className="flex min-w-0 flex-1 flex-col">
+      <span className="truncate">{node.title}</span>
+      {projectedConflictPath ? (
+        <span className="truncate text-[10px] leading-3 text-muted-foreground">
+          {node.path}
+        </span>
+      ) : null}
+    </div>
   );
 
   const hasDescription = !bareFolder && !!node.description?.trim();
+  const hasMetadataTooltip = hasDescription || !!projectedConflictPath;
 
   const dragHandle = (
     <button
@@ -333,7 +354,7 @@ export function FileTreeItem({
   );
 
   function withDescriptionTooltip(element: ReactElement) {
-    if (!hasDescription) return element;
+    if (!hasMetadataTooltip) return element;
     return (
       <Tooltip>
         <TooltipTrigger asChild>{element}</TooltipTrigger>
@@ -342,9 +363,14 @@ export function FileTreeItem({
           className="flex flex-col items-start gap-0.5"
         >
           <span>{node.title}</span>
-          <span className="text-xs text-muted-foreground">
-            {node.description}
-          </span>
+          {hasDescription ? (
+            <span className="text-xs text-muted-foreground">
+              {node.description}
+            </span>
+          ) : null}
+          {projectedConflictPath ? (
+            <span className="text-xs text-muted-foreground">{node.path}</span>
+          ) : null}
         </TooltipContent>
       </Tooltip>
     );
@@ -363,8 +389,14 @@ export function FileTreeItem({
                 data-svode-resource-drag-source={isEditing ? undefined : true}
                 draggable={!isEditing}
                 isActive={isActive}
+                aria-label={
+                  projectedConflictPath
+                    ? `${node.title}. ${m.editor_name_existing_conflict({ path: node.path })}`
+                    : undefined
+                }
                 className={cn(
                   "flex-1",
+                  projectedConflictPath && "h-auto min-h-7 py-1",
                   !isEditing && "cursor-pointer active:cursor-grabbing",
                   nestHighlight,
                 )}
@@ -402,8 +434,14 @@ export function FileTreeItem({
                 data-svode-resource-drag-source={isEditing ? undefined : true}
                 draggable={!isEditing}
                 isActive={isActive}
+                aria-label={
+                  projectedConflictPath
+                    ? `${node.title}. ${m.editor_name_existing_conflict({ path: node.path })}`
+                    : undefined
+                }
                 className={cn(
                   "flex-1",
+                  projectedConflictPath && "h-auto min-h-7 py-1",
                   !isEditing && "cursor-pointer active:cursor-grabbing",
                   nestHighlight,
                 )}
