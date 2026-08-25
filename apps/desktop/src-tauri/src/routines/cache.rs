@@ -591,6 +591,7 @@ mod tests {
             filename: format!("{id}.md"),
             path: format!("tasks/.routines/{id}.md"),
             name: id.into(),
+            name_conflict: None,
             description: None,
             enabled: None,
             trigger_type: None,

@@ -207,3 +207,75 @@ test("desktop update forwards filename materialization intent", async () => {
     dom.window.close();
   }
 });
+
+test("desktop create preserves structured name-conflict evidence", async () => {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", {
+    url: "http://localhost/",
+  });
+  const previousWindow = globalThis.window;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: dom.window,
+  });
+  mockNativeIpc(() => ({
+    conflict: {
+      conflicts: [
+        {
+          filename: "existing.md",
+          name: "Existing",
+          path: ".routines/existing.md",
+          routineId: "routine:existing",
+        },
+      ],
+      owner: { kind: "project", ownerPath: ".", spaceId: "root" },
+    },
+    status: "name_conflict",
+  }));
+
+  try {
+    const result = await createRoutine(
+      {
+        ownerKind: "registered_space",
+        ownerPath: ".",
+        projectPath: "/project",
+        spaceId: "root",
+        spacePath: "/project",
+      },
+      {
+        action: {
+          executor: "agent:01arz3ndektsv4rrffq69g5fav",
+          type: "run_agent",
+        },
+        body: "Review changes.",
+        description: "",
+        enabled: null,
+        name: " existing ",
+        trigger: { type: "manual" },
+      },
+    );
+
+    expect(result).toEqual({
+      conflict: {
+        conflicts: [
+          {
+            filename: "existing.md",
+            name: "Existing",
+            path: ".routines/existing.md",
+            routineId: "routine:existing",
+          },
+        ],
+        ownerPath: ".",
+        resolvedOwnerKind: "project",
+        spaceId: "root",
+      },
+      status: "name_conflict",
+    });
+  } finally {
+    clearNativeMocks();
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
+    dom.window.close();
+  }
+});

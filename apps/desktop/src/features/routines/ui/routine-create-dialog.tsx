@@ -50,6 +50,7 @@ export function RoutineCreateDialog({
   error,
   definition,
   initialDefinition,
+  nameError = null,
   automaticAuthority,
   executorError,
   executorLoading,
@@ -70,6 +71,7 @@ export function RoutineCreateDialog({
   executorLoading: boolean;
   executors: readonly AgentActorOption[];
   initialDefinition: RoutineDefinition;
+  nameError?: string | null;
   ownerLabel: string;
   pending: boolean;
   retryBlocked: boolean;
@@ -97,8 +99,9 @@ export function RoutineCreateDialog({
       executorError,
       executorLoading,
       executors,
+      nameAvailable: !nameError,
     }),
-    [collectionOwner, executorError, executorLoading, executors],
+    [collectionOwner, executorError, executorLoading, executors, nameError],
   );
   const issues = validateRoutineDraft(definition);
   const stepIndex = ROUTINE_CREATE_STEPS.indexOf(step);
@@ -117,6 +120,17 @@ export function RoutineCreateDialog({
   useEffect(() => {
     if (!pending) submitRequestedRef.current = false;
   }, [pending]);
+
+  useEffect(() => {
+    if (!nameError) return;
+    focusTargetRef.current = "control";
+    const frame = window.requestAnimationFrame(() => {
+      if (step === "basics") {
+        focusCurrentStep(contentRef.current, "basics", "control");
+      } else setStep("basics");
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [nameError, step]);
 
   const markAttempted = (target: RoutineCreateStep) => {
     setAttemptedSteps((current) => new Set([...current, target]));
@@ -250,7 +264,10 @@ export function RoutineCreateDialog({
                     <RoutineIdentityFields
                       definition={definition}
                       idPrefix="routine-create"
-                      showValidation={attemptedSteps.has("basics")}
+                      nameError={nameError}
+                      showValidation={
+                        attemptedSteps.has("basics") || Boolean(nameError)
+                      }
                       onChange={onChange}
                     />
                   </div>

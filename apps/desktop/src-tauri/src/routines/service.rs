@@ -8,8 +8,8 @@ use tauri::AppHandle;
 
 use super::model::{
     ResolvedRoutineOwner, RoutineCatalogSnapshot, RoutineDefinition, RoutineDiagnostic,
-    RoutineOwnerDescriptor, RoutineOwnerInputKind, RoutineOwnerKind, RoutineRunOrigin,
-    RoutineTrigger,
+    RoutineNameConflict, RoutineNameConflictEvidence, RoutineOwnerDescriptor,
+    RoutineOwnerInputKind, RoutineOwnerKind, RoutineRow, RoutineRunOrigin, RoutineTrigger,
 };
 use super::{authority, cache, parser};
 use crate::AppError;
@@ -106,6 +106,9 @@ pub(crate) enum ManagedRoutineMutationResult {
     },
     Conflict {
         current_fingerprint: Option<String>,
+    },
+    NameConflict {
+        conflict: RoutineNameConflict,
     },
     Blocked {
         code: RoutineMutationBlockedCode,
@@ -348,6 +351,11 @@ pub(crate) async fn create_managed(
     let owner = revalidate_owner(git_state, &owner, &repository).await?;
     authorize_mutation(app, git_state, access_state, &repository).await?;
 
+    let current = discover_owner(&owner).await?;
+    if let Some(conflict) = routine_name_conflict(&current, name, None) {
+        return Ok(ManagedRoutineMutationResult::NameConflict { conflict });
+    }
+
     let portable_id = ulid::Ulid::new().to_string().to_ascii_lowercase();
     let content = match serialize_candidate(&definition, &portable_id) {
         Ok(content) => content,
@@ -425,6 +433,11 @@ pub(crate) async fn update_managed(
         return Ok(ManagedRoutineMutationResult::Conflict {
             current_fingerprint: Some(row.fingerprint.clone()),
         });
+    }
+    if update_requires_name_check(row, &name, policy)
+        && let Some(conflict) = routine_name_conflict(&current, &name, Some(&routine_id))
+    {
+        return Ok(ManagedRoutineMutationResult::NameConflict { conflict });
     }
     let Some(portable_id) = row.portable_id.clone() else {
         return Ok(ManagedRoutineMutationResult::Conflict {
@@ -517,6 +530,43 @@ fn update_target_filename(
     } else {
         current_filename.to_string()
     }
+}
+
+fn update_requires_name_check(
+    current: &RoutineRow,
+    candidate_name: &str,
+    policy: RoutineMutationPolicy,
+) -> bool {
+    policy.materialize_filename
+        || crate::files::naming::display_name_key(&current.name)
+            != crate::files::naming::display_name_key(candidate_name)
+}
+
+fn routine_name_conflict(
+    snapshot: &RoutineCatalogSnapshot,
+    candidate_name: &str,
+    exclude_routine_id: Option<&str>,
+) -> Option<RoutineNameConflict> {
+    let candidate_key = crate::files::naming::display_name_key(candidate_name);
+    let conflicts = snapshot
+        .routines
+        .iter()
+        .filter(|row| {
+            exclude_routine_id
+                .is_none_or(|routine_id| row.routine_id.as_deref() != Some(routine_id))
+                && crate::files::naming::display_name_key(&row.name) == candidate_key
+        })
+        .map(|row| RoutineNameConflictEvidence {
+            routine_id: row.routine_id.clone(),
+            name: row.name.clone(),
+            filename: row.filename.clone(),
+            path: row.path.clone(),
+        })
+        .collect::<Vec<_>>();
+    (!conflicts.is_empty()).then(|| RoutineNameConflict {
+        owner: snapshot.owner.clone(),
+        conflicts,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1157,6 +1207,19 @@ mod tests {
         }
     }
 
+    fn manual_definition(name: &str) -> RoutineDefinition {
+        RoutineDefinition {
+            name: Some(name.into()),
+            description: None,
+            enabled: None,
+            trigger: RoutineTrigger::Manual,
+            action: RoutineAction::RunAgent {
+                executor: "agent:01arz3ndektsv4rrffq69g5fav".into(),
+            },
+            body: String::new(),
+        }
+    }
+
     #[test]
     fn resolves_project_space_and_collection_owners_without_ambiguity() {
         let temp = tempfile::tempdir().unwrap();
@@ -1274,6 +1337,7 @@ mod tests {
             filename: "one.md".into(),
             path: ".routines/one.md".into(),
             name: "One".into(),
+            name_conflict: None,
             description: None,
             enabled: Some(true),
             trigger_type: Some(super::super::model::RoutineTriggerType::Manual),
@@ -1385,6 +1449,109 @@ mod tests {
             ),
             "another-routine.md"
         );
+    }
+
+    #[test]
+    fn serialized_create_and_update_rechecks_allow_only_one_equivalent_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner = project_owner(temp.path());
+        let first_id = "01arz3ndektsv4rrffq69g5fav";
+        let second_id = "01arz3ndektsv4rrffq69g5faw";
+
+        let empty = parser::discover_owner(&owner);
+        assert!(routine_name_conflict(&empty, "Quarterly Review", None).is_none());
+        let first_definition = manual_definition("Quarterly Review");
+        let first = parser::serialize_definition(&first_definition, first_id).unwrap();
+        create_definition_file(&owner, "Quarterly Review", first.as_bytes()).unwrap();
+
+        let after_first = parser::discover_owner(&owner);
+        let create_conflict =
+            routine_name_conflict(&after_first, "  ＱＵＡＲＴＥＲＬＹ\u{2003}review ", None)
+                .expect("second serialized create must observe the winner");
+        assert_eq!(create_conflict.conflicts.len(), 1);
+        assert_eq!(fs::read_dir(owner.routines_dir()).unwrap().count(), 1);
+        assert!(
+            routine_name_conflict(
+                &parser::discover_owner(&collection_owner(temp.path())),
+                "Quarterly Review",
+                None,
+            )
+            .is_none(),
+            "the same display name remains available in another exact owner"
+        );
+
+        let second_definition = manual_definition("Other");
+        let second = parser::serialize_definition(&second_definition, second_id).unwrap();
+        create_definition_file(&owner, "Other", second.as_bytes()).unwrap();
+        let before_updates = parser::discover_owner(&owner);
+        let first_row = before_updates
+            .routines
+            .iter()
+            .find(|row| row.name == "Quarterly Review")
+            .unwrap();
+        let second_row = before_updates
+            .routines
+            .iter()
+            .find(|row| row.name == "Other")
+            .unwrap();
+        let second_routine_id = second_row.routine_id.clone().unwrap();
+
+        let shared_definition = manual_definition("Shared");
+        let shared = parser::serialize_definition(&shared_definition, first_id).unwrap();
+        assert!(matches!(
+            update_definition_file_cas(
+                &owner.routines_dir(),
+                &first_row.filename,
+                "shared.md",
+                &first_row.fingerprint,
+                shared.as_bytes(),
+            )
+            .unwrap(),
+            DefinitionUpdateOutcome::Applied { .. }
+        ));
+        let after_winner = parser::discover_owner(&owner);
+        let update_conflict =
+            routine_name_conflict(&after_winner, "SHARED", Some(second_routine_id.as_str()))
+                .expect("second serialized update must observe the winner");
+        assert_eq!(update_conflict.conflicts[0].name, "Shared");
+        assert_eq!(
+            parser::discover_owner(&owner)
+                .routines
+                .iter()
+                .find(|row| row.routine_id.as_deref() == Some(&second_routine_id))
+                .unwrap()
+                .name,
+            "Other"
+        );
+    }
+
+    #[test]
+    fn explicit_name_intent_checks_conflicts_but_unrelated_inline_save_does_not() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner = project_owner(temp.path());
+        let content = parser::serialize_definition(
+            &manual_definition("Existing duplicate"),
+            "01arz3ndektsv4rrffq69g5fav",
+        )
+        .unwrap();
+        create_definition_file(&owner, "Existing duplicate", content.as_bytes()).unwrap();
+        let row = parser::discover_owner(&owner).routines.remove(0);
+
+        assert!(update_requires_name_check(
+            &row,
+            "Existing duplicate",
+            RoutineMutationPolicy::desktop(true),
+        ));
+        assert!(!update_requires_name_check(
+            &row,
+            "  EXISTING\u{2003}DUPLICATE ",
+            RoutineMutationPolicy::desktop(false),
+        ));
+        assert!(update_requires_name_check(
+            &row,
+            "Different",
+            RoutineMutationPolicy::desktop(false),
+        ));
     }
 
     #[test]
@@ -1516,13 +1683,14 @@ mod tests {
             body: String::new(),
         };
         let first = parser::serialize_definition(&definition, first_id).unwrap();
+        definition.name = Some("Same-name".into());
         let second = parser::serialize_definition(&definition, second_id).unwrap();
         assert_eq!(
             create_definition_file(&owner, "Same name", first.as_bytes()).unwrap(),
             "same-name.md"
         );
         assert_eq!(
-            create_definition_file(&owner, "Same name", second.as_bytes()).unwrap(),
+            create_definition_file(&owner, "Same-name", second.as_bytes()).unwrap(),
             "same-name-1.md"
         );
 

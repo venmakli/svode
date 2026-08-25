@@ -56,6 +56,7 @@ export function useRoutinesController(
     owner: routineOwner,
     refresh,
     replaceSnapshot,
+    rows: state.phase === "ready" ? state.snapshot.rows : [],
   });
   const dispatch = useRoutineDispatch({ onOpenSession, owner: routineOwner });
   const createReadOnlyDetail = useRoutineDetail({
@@ -66,11 +67,13 @@ export function useRoutinesController(
     executors: executors.options,
     instanceKey,
     mutationError: mutations.error,
+    nameError: mutations.nameError,
     getRunState: dispatch.getRunState,
     onOpenSession: dispatch.openLastSession,
     onRun: dispatch.run,
     owner: routineOwner,
     pending: mutations.pending,
+    onEditChange: mutations.changeEditDraft,
     setEditSession: mutations.setEditSession,
   });
   const onRoutineCreated = useCallback(
@@ -163,7 +166,7 @@ export function useRoutinesController(
           automaticConsent.loading || automaticConsent.error
             ? null
             : automaticConsent.enabled,
-        baselineRoutineIds: state.snapshot.rows.map((row) => row.id),
+        baselineRows: state.snapshot.rows,
         owner: routineOwner,
         ownerLabel: routineOwnerLabel(owner),
       });
@@ -211,6 +214,7 @@ export function useRoutinesController(
           executorLoading={createExecutors.loading}
           executors={createExecutors.options}
           initialDefinition={create.session.initialDraft}
+          nameError={create.nameError}
           ownerLabel={create.session.ownerLabel}
           pending={create.pending}
           retryBlocked={create.retryBlocked}

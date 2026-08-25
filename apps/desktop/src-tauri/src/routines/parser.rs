@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use super::ResolvedRoutineOwner;
 use super::model::{
     CollectionEvent, EventMatch, MissedRuns, RoutineAction, RoutineActionTarget,
-    RoutineCatalogSnapshot, RoutineDefinition, RoutineDiagnostic, RoutineOwnerKind, RoutineRow,
-    RoutineTrigger,
+    RoutineCatalogSnapshot, RoutineDefinition, RoutineDiagnostic, RoutineNameConflictProjection,
+    RoutineOwnerKind, RoutineRow, RoutineTrigger,
 };
 
 pub(crate) const MAX_ROUTINE_BYTES: u64 = 1024 * 1024;
@@ -649,6 +649,32 @@ pub(crate) fn discover_owner(owner: &ResolvedRoutineOwner) -> RoutineCatalogSnap
             );
         }
     }
+    let name_groups = routines.iter().enumerate().fold(
+        BTreeMap::<String, Vec<usize>>::new(),
+        |mut groups, (index, row)| {
+            groups
+                .entry(crate::files::naming::display_name_key(&row.name))
+                .or_default()
+                .push(index);
+            groups
+        },
+    );
+    for indices in name_groups.values().filter(|indices| indices.len() > 1) {
+        let paths = indices
+            .iter()
+            .map(|index| routines[*index].path.clone())
+            .collect::<Vec<_>>();
+        for index in indices {
+            let current_path = &routines[*index].path;
+            routines[*index].name_conflict = Some(RoutineNameConflictProjection {
+                conflicting_paths: paths
+                    .iter()
+                    .filter(|path| *path != current_path)
+                    .cloned()
+                    .collect(),
+            });
+        }
+    }
     let catalog_fingerprint = catalog_fingerprint(&routines, &scan.diagnostics);
     RoutineCatalogSnapshot {
         owner: owner.descriptor.clone(),
@@ -702,6 +728,7 @@ fn row_from_file(owner: &ResolvedRoutineOwner, file: DiscoveredRoutineFile) -> R
         filename: file.filename,
         path: path.clone(),
         name: file.parsed.name,
+        name_conflict: None,
         description: file.parsed.description,
         enabled,
         trigger_type,
@@ -1037,6 +1064,48 @@ mod tests {
                     && diagnostic.path.as_deref() == Some(row.path.as_str())
             })
         }));
+    }
+
+    #[test]
+    fn equivalent_external_names_publish_lossless_conflict_projection() {
+        let temp = tempfile::tempdir().unwrap();
+        let routines = temp.path().join(".routines");
+        fs::create_dir_all(&routines).unwrap();
+        let first = valid_manual().replace("name: Test", "name: Quarterly Review");
+        let second = valid_manual()
+            .replace(ID, "01arz3ndektsv4rrffq69g5faw")
+            .replace("name: Test", "name: ＱＵＡＲＴＥＲＬＹ\u{2003}review");
+        fs::write(routines.join("first.md"), first).unwrap();
+        fs::write(routines.join("second.md"), second).unwrap();
+
+        let conflicted = discover_owner(&owner(temp.path()));
+        assert_eq!(conflicted.routines.len(), 2);
+        assert!(conflicted.routines.iter().all(|row| {
+            row.routine_id.is_some()
+                && row.name_conflict.as_ref().is_some_and(|conflict| {
+                    conflict.conflicting_paths.len() == 1
+                        && conflict.conflicting_paths[0] != row.path
+                })
+        }));
+        let first_identity = conflicted.routines[0].routine_id.clone();
+        let first_execution = conflicted.routines[0].execution_fingerprint.clone();
+
+        fs::write(
+            routines.join("second.md"),
+            valid_manual()
+                .replace(ID, "01arz3ndektsv4rrffq69g5faw")
+                .replace("name: Test", "name: Different"),
+        )
+        .unwrap();
+        let recovered = discover_owner(&owner(temp.path()));
+        assert!(
+            recovered
+                .routines
+                .iter()
+                .all(|row| row.name_conflict.is_none())
+        );
+        assert_eq!(recovered.routines[0].routine_id, first_identity);
+        assert_eq!(recovered.routines[0].execution_fingerprint, first_execution);
     }
 
     #[test]

@@ -19,6 +19,7 @@ import type {
   RoutineCatalogSnapshot,
   RoutineDefinition,
   RoutineDiagnostic,
+  RoutineNameConflict,
   RoutineMutationResult,
   RoutineManualDispatchResult,
   RoutineOwnerKind,
@@ -124,6 +125,12 @@ function normalizeMutationResult(
   result: RoutineMutationResultDto,
 ): RoutineMutationResult {
   if (result.status === "blocked") return result;
+  if (result.status === "name_conflict") {
+    return {
+      conflict: normalizeNameConflict(result.conflict),
+      status: "name_conflict",
+    };
+  }
   if (result.status === "stale") {
     return {
       currentFingerprint: result.currentFingerprint ?? null,
@@ -177,11 +184,34 @@ function normalizeRow(
       : null,
     nextRunAt: row.nextRunAt,
     name: row.name,
+    nameConflict: row.nameConflict
+      ? Object.freeze({
+          conflictingPaths: Object.freeze([
+            ...row.nameConflict.conflictingPaths,
+          ]),
+        })
+      : null,
     routineId: row.routineId,
     valid:
       row.routineId !== null &&
       row.definition !== null &&
       row.diagnostics.length === 0,
+  });
+}
+
+function normalizeNameConflict(
+  conflict: Extract<
+    RoutineMutationResultDto,
+    { status: "name_conflict" }
+  >["conflict"],
+): RoutineNameConflict {
+  return Object.freeze({
+    conflicts: Object.freeze(
+      conflict.conflicts.map((evidence) => Object.freeze({ ...evidence })),
+    ),
+    ownerPath: conflict.owner.ownerPath,
+    resolvedOwnerKind: conflict.owner.kind,
+    spaceId: conflict.owner.spaceId,
   });
 }
 

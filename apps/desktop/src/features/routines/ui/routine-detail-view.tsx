@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
+import { AlertTriangle } from "lucide-react";
 
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ControlledMarkdownEditor } from "@/features/editor";
@@ -17,6 +19,7 @@ export function RoutineDetailView({ row }: { row: RoutineRow }) {
   if (!row.valid || !row.definition) {
     return (
       <div className="flex flex-col gap-4">
+        <RoutineNameConflictNotice row={row} />
         <RoutineDiagnostics diagnostics={row.diagnostics} />
         <DetailValue label={m.routines_definition_path_label()}>
           {row.definitionPath}
@@ -27,6 +30,7 @@ export function RoutineDetailView({ row }: { row: RoutineRow }) {
 
   return (
     <div className="flex flex-col gap-5">
+      <RoutineNameConflictNotice row={row} />
       {row.diagnostics.length > 0 ? (
         <RoutineDiagnostics diagnostics={row.diagnostics} />
       ) : null}
@@ -79,6 +83,19 @@ export function RoutineDetailView({ row }: { row: RoutineRow }) {
         />
       </DetailValue>
     </div>
+  );
+}
+
+function RoutineNameConflictNotice({ row }: { row: RoutineRow }) {
+  if (!row.nameConflict) return null;
+  return (
+    <Alert>
+      <AlertTriangle />
+      <AlertTitle>{m.routines_name_conflict_title()}</AlertTitle>
+      <AlertDescription>
+        {m.routines_name_conflict_detail({ path: row.definitionPath })}
+      </AlertDescription>
+    </Alert>
   );
 }
 

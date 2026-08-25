@@ -224,6 +224,42 @@ test("routine detail hides technical paths when valid and preserves exact recove
   expect(invalid.includes("id must be a lowercase ULID")).toBe(true);
 });
 
+test("duplicate-name rows conditionally expose their current path and remain usable", () => {
+  const conflictRow: RoutineRow = {
+    ...review,
+    nameConflict: {
+      conflictingPaths: [".routines/existing.md"],
+    },
+  };
+  const descriptor = createRoutinesPresentationDescriptor({
+    actions: actions([]),
+    createDetailRequest: () => ({
+      content: null,
+      description: null,
+      title: null,
+    }),
+  });
+  const normalDescription =
+    descriptor.layout.kind === "list"
+      ? descriptor.layout.getDescription?.(review)
+      : null;
+  const conflictDescription =
+    descriptor.layout.kind === "list"
+      ? descriptor.layout.getDescription?.(conflictRow)
+      : null;
+  const normalMarkup = renderToStaticMarkup(<>{normalDescription}</>);
+  const conflictMarkup = renderToStaticMarkup(<>{conflictDescription}</>);
+  const detailMarkup = renderToStaticMarkup(
+    <RoutineDetailView row={conflictRow} />,
+  );
+
+  expect(normalMarkup.includes(review.definitionPath)).toBe(false);
+  expect(conflictMarkup.includes(review.definitionPath)).toBe(true);
+  expect(detailMarkup.includes("Duplicate routine name")).toBe(true);
+  expect(detailMarkup.includes(review.definitionPath)).toBe(true);
+  expect(descriptor.rowActions?.[0]?.isVisible?.(conflictRow)).toBe(true);
+});
+
 test("routines query searches definitions and defaults to name ordering", () => {
   const descriptor = createRoutinesPresentationDescriptor({
     actions: actions([]),

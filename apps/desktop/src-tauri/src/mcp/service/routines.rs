@@ -482,6 +482,16 @@ async fn mutation_result(
             },
             json!({ "currentFingerprint": current_fingerprint }),
         )),
+        crate::routines::service::ManagedRoutineMutationResult::NameConflict { conflict } => {
+            Ok(mutation_error(
+                "ROUTINE_NAME_CONFLICT",
+                "routine name is already used inside the explicit owner",
+                json!({
+                    "owner": conflict.owner,
+                    "conflicts": conflict.conflicts,
+                }),
+            ))
+        }
         crate::routines::service::ManagedRoutineMutationResult::Blocked {
             code,
             message,
@@ -627,6 +637,7 @@ fn summary_payload(row: &RoutineRow) -> Value {
         "filename": row.filename,
         "path": row.path,
         "name": row.name,
+        "nameConflict": row.name_conflict,
         "description": row.description,
         "triggerType": row.trigger_type,
         "triggerSummary": row.trigger_summary,
@@ -656,6 +667,7 @@ fn detail_payload(
         "filename": row.filename,
         "path": row.path,
         "name": row.name,
+        "nameConflict": row.name_conflict,
         "description": row.description,
         "definition": row.definition,
         "fingerprint": row.fingerprint,
@@ -719,6 +731,7 @@ mod tests {
             filename: format!("{id}.md"),
             path: format!(".routines/{id}.md"),
             name: id.into(),
+            name_conflict: None,
             description: Some("description".into()),
             enabled: None,
             trigger_type: definition.as_ref().map(|_| RoutineTriggerType::Manual),
@@ -943,6 +956,24 @@ mod tests {
             "ROUTINE_AUTOMATIC_CONFIRMATION_REQUIRED"
         );
         assert_eq!(blocked.content[0].text, "confirm");
+
+        let name_conflict = mutation_error(
+            "ROUTINE_NAME_CONFLICT",
+            "name conflict",
+            json!({
+                "owner": { "kind": "project", "spaceId": "root", "ownerPath": "." },
+                "conflicts": [{
+                    "routineId": "routine:one",
+                    "name": "One",
+                    "filename": "one.md",
+                    "path": ".routines/one.md"
+                }]
+            }),
+        );
+        let name_error = &name_conflict.structured_content.as_ref().unwrap()["error"];
+        assert_eq!(name_error["code"], "ROUTINE_NAME_CONFLICT");
+        assert_eq!(name_error["owner"]["ownerPath"], ".");
+        assert_eq!(name_error["conflicts"][0]["path"], ".routines/one.md");
 
         assert!(validate_mutation_identity("routine:one", "fingerprint").is_ok());
         assert_eq!(

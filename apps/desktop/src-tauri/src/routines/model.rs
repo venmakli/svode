@@ -578,6 +578,28 @@ impl RoutineDiagnostic {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutineNameConflictProjection {
+    pub conflicting_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutineNameConflictEvidence {
+    pub routine_id: Option<String>,
+    pub name: String,
+    pub filename: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutineNameConflict {
+    pub owner: RoutineOwnerDescriptor,
+    pub conflicts: Vec<RoutineNameConflictEvidence>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RoutineRow {
@@ -587,6 +609,8 @@ pub struct RoutineRow {
     pub filename: String,
     pub path: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_conflict: Option<RoutineNameConflictProjection>,
     pub description: Option<String>,
     pub enabled: Option<bool>,
     pub trigger_type: Option<RoutineTriggerType>,
@@ -639,6 +663,9 @@ pub enum RoutineMutationResult {
     Stale {
         #[serde(skip_serializing_if = "Option::is_none")]
         current_fingerprint: Option<String>,
+    },
+    NameConflict {
+        conflict: RoutineNameConflict,
     },
     Blocked {
         message: String,

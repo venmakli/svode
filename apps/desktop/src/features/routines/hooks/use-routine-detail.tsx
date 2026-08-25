@@ -27,11 +27,13 @@ export function useRoutineDetail({
   executors,
   instanceKey,
   mutationError,
+  nameError,
   getRunState,
   onOpenSession,
   onRun,
   owner,
   pending,
+  onEditChange,
   setEditSession,
 }: {
   applyUpdate(
@@ -44,11 +46,13 @@ export function useRoutineDetail({
   executors: readonly AgentActorOption[];
   instanceKey: string;
   mutationError: string | null;
+  nameError: string | null;
   getRunState(row: RoutineRow): SystemCollectionActionState;
   onOpenSession(row: RoutineRow): void;
   onRun(row: RoutineRow): Promise<void>;
   owner: RoutineOwnerInput;
   pending: boolean;
+  onEditChange(definition: RoutineDefinition): void;
   setEditSession(
     value:
       | RoutineEditSession
@@ -111,13 +115,8 @@ export function useRoutineDetail({
               executorError={executorError}
               executors={executors}
               formId={formId}
-              onChange={(draft) =>
-                setEditSession((current) => {
-                  if (!current) return current;
-                  current.guard.dirty = true;
-                  return { ...current, draft };
-                })
-              }
+              nameError={nameError}
+              onChange={onEditChange}
               onSubmit={() => {
                 void (async () => {
                   const updated = await applyUpdate(session.row, session.draft);
@@ -185,11 +184,13 @@ export function useRoutineDetail({
     executors,
     instanceKey,
     mutationError,
+    nameError,
     getRunState,
     onOpenSession,
     onRun,
     owner.ownerKind,
     pending,
+    onEditChange,
     setEditSession,
   ]);
 

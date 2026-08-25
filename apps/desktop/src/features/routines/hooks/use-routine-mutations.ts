@@ -13,6 +13,7 @@ import type {
   RoutineMutationResult,
   RoutineRow,
 } from "../model/types";
+import { findRoutineNameConflictPath } from "../model/routine-name";
 import * as m from "@/paraglide/messages.js";
 
 export interface RoutineEditSession {
@@ -25,11 +26,13 @@ export function useRoutineMutations({
   owner,
   refresh,
   replaceSnapshot,
+  rows,
   onDetailInvalidated,
 }: {
   owner: RoutineOwnerInput;
   refresh(): Promise<RoutineCatalogSnapshot | null>;
   replaceSnapshot(snapshot: RoutineCatalogSnapshot): void;
+  rows: readonly RoutineRow[];
   onDetailInvalidated(): void | Promise<void>;
 }) {
   const [editSession, setEditSession] = useState<RoutineEditSession | null>(
@@ -38,12 +41,33 @@ export function useRoutineMutations({
   const [deleteTarget, setDeleteTarget] = useState<RoutineRow | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [authoritativeNameConflictPath, setAuthoritativeNameConflictPath] =
+    useState<string | null>(null);
+  const optimisticNameConflictPath = editSession
+    ? findRoutineNameConflictPath(
+        editSession.draft.name,
+        rows,
+        editSession.row.id,
+      )
+    : null;
+  const nameConflictPath =
+    authoritativeNameConflictPath ?? optimisticNameConflictPath;
+  const nameError = nameConflictPath
+    ? m.routines_name_conflict({ path: nameConflictPath })
+    : null;
 
   const handleFailure = useCallback(
     async (result: Exclude<RoutineMutationResult, { status: "applied" }>) => {
       if (result.status === "stale") {
+        setAuthoritativeNameConflictPath(null);
         setError(m.routines_mutation_stale());
         return refresh();
+      } else if (result.status === "name_conflict") {
+        setAuthoritativeNameConflictPath(
+          result.conflict.conflicts[0]?.path ?? result.conflict.ownerPath,
+        );
+        setError(null);
+        return null;
       } else {
         setError(result.message || m.routines_mutation_blocked());
         return null;
@@ -58,11 +82,24 @@ export function useRoutineMutations({
       definition: RoutineDefinition,
       options: { materializeFilename?: boolean } = {},
     ) => {
+      const materializeFilename = options.materializeFilename ?? true;
+      if (materializeFilename) {
+        const conflictPath = findRoutineNameConflictPath(
+          definition.name,
+          rows,
+          row.id,
+        );
+        if (conflictPath) {
+          setAuthoritativeNameConflictPath(conflictPath);
+          setError(null);
+          return null;
+        }
+      }
       setPending(true);
       setError(null);
       try {
         const result = await updateRoutine(owner, row, definition, {
-          materializeFilename: options.materializeFilename ?? true,
+          materializeFilename,
         });
         if (result.status !== "applied") {
           const snapshot = await handleFailure(result);
@@ -89,6 +126,7 @@ export function useRoutineMutations({
           }
           return null;
         }
+        setAuthoritativeNameConflictPath(null);
         replaceSnapshot(result.snapshot);
         if (result.warnings.length > 0) {
           toast.warning(m.routines_update_applied_warning(), {
@@ -108,7 +146,7 @@ export function useRoutineMutations({
         setPending(false);
       }
     },
-    [handleFailure, onDetailInvalidated, owner, replaceSnapshot],
+    [handleFailure, onDetailInvalidated, owner, replaceSnapshot, rows],
   );
 
   const submitDelete = useCallback(async () => {
@@ -131,6 +169,7 @@ export function useRoutineMutations({
       replaceSnapshot(result.snapshot);
       setDeleteTarget(null);
       setEditSession(null);
+      setAuthoritativeNameConflictPath(null);
       await onDetailInvalidated();
     } catch (reason) {
       setError(routineErrorMessage(reason));
@@ -151,6 +190,7 @@ export function useRoutineMutations({
     deleteTarget,
     editSession,
     error,
+    nameError,
     openDelete: (row: RoutineRow) => {
       if (!row.routineId) return;
       setError(null);
@@ -159,6 +199,7 @@ export function useRoutineMutations({
     openEdit: (row: RoutineRow) => {
       if (!row.routineId || !row.definition) return;
       setError(null);
+      setAuthoritativeNameConflictPath(null);
       setEditSession({
         draft: row.definition,
         guard: { dirty: false },
@@ -166,6 +207,15 @@ export function useRoutineMutations({
       });
     },
     pending,
+    changeEditDraft: (draft: RoutineDefinition) => {
+      setAuthoritativeNameConflictPath(null);
+      setError(null);
+      setEditSession((current) => {
+        if (!current) return current;
+        current.guard.dirty = true;
+        return { ...current, draft };
+      });
+    },
     setEditSession,
     submitDelete,
   };

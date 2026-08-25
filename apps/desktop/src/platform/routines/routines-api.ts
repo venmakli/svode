@@ -56,11 +56,32 @@ export interface RoutineDiagnosticDto {
   path?: string | null;
 }
 
+export interface RoutineNameConflictProjectionDto {
+  conflictingPaths: string[];
+}
+
+export interface RoutineNameConflictEvidenceDto {
+  routineId: string | null;
+  name: string;
+  filename: string;
+  path: string;
+}
+
+export interface RoutineNameConflictDto {
+  owner: {
+    kind: RoutineResolvedOwnerKindDto;
+    spaceId: string;
+    ownerPath: string;
+  };
+  conflicts: RoutineNameConflictEvidenceDto[];
+}
+
 export interface RoutineRowDto {
   routineId: string | null;
   filename: string;
   path: string;
   name: string;
+  nameConflict?: RoutineNameConflictProjectionDto | null;
   description: string | null;
   enabled: boolean | null;
   triggerType: RoutineTriggerTypeDto | null;
@@ -119,6 +140,7 @@ export type RoutineMutationResultDto =
       warnings: RoutineDiagnosticDto[];
     }
   | { status: "stale"; currentFingerprint?: string | null }
+  | { status: "name_conflict"; conflict: RoutineNameConflictDto }
   | { status: "blocked"; message: string };
 
 export type RoutineDispatchBlockedCodeDto =

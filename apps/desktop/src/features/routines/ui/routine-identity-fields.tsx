@@ -15,18 +15,21 @@ export function RoutineIdentityFields({
   autoFocus = false,
   definition,
   idPrefix,
+  nameError = null,
   showValidation = true,
   onChange,
 }: {
   autoFocus?: boolean;
   definition: RoutineDefinition;
   idPrefix: string;
+  nameError?: string | null;
   showValidation?: boolean;
   onChange(definition: RoutineDefinition): void;
 }) {
-  const nameInvalid =
+  const nameShapeInvalid =
     showValidation &&
     (!definition.name.trim() || definition.name.trim().length > 240);
+  const nameInvalid = nameShapeInvalid || Boolean(nameError);
   const descriptionInvalid =
     showValidation && definition.description.length > 2_000;
   return (
@@ -47,7 +50,7 @@ export function RoutineIdentityFields({
           }
         />
         {nameInvalid ? (
-          <FieldError>{m.routines_title_required()}</FieldError>
+          <FieldError>{nameError ?? m.routines_title_required()}</FieldError>
         ) : null}
       </Field>
       <Field data-invalid={descriptionInvalid}>

@@ -17,6 +17,7 @@ export interface RoutineCreateValidationContext {
   executorError: string | null;
   executorLoading: boolean;
   executors: readonly AgentActorOption[];
+  nameAvailable?: boolean;
 }
 
 export function createRoutineDraft(): RoutineDefinition {
@@ -65,6 +66,7 @@ export function isRoutineCreateStepValid(
     return (
       nameLength > 0 &&
       nameLength <= 240 &&
+      context.nameAvailable !== false &&
       definition.description.length <= 2_000
     );
   }

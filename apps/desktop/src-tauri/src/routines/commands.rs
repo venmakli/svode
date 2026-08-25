@@ -273,6 +273,9 @@ fn desktop_mutation_result(result: service::ManagedRoutineMutationResult) -> Rou
         } => RoutineMutationResult::Stale {
             current_fingerprint,
         },
+        service::ManagedRoutineMutationResult::NameConflict { conflict } => {
+            RoutineMutationResult::NameConflict { conflict }
+        }
         service::ManagedRoutineMutationResult::Blocked { message, .. } => {
             RoutineMutationResult::Blocked { message }
         }

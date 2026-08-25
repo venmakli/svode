@@ -53,6 +53,24 @@ export interface RoutineDiagnostic {
   path: string | null;
 }
 
+export interface RoutineNameConflictProjection {
+  conflictingPaths: readonly string[];
+}
+
+export interface RoutineNameConflictEvidence {
+  routineId: string | null;
+  name: string;
+  filename: string;
+  path: string;
+}
+
+export interface RoutineNameConflict {
+  resolvedOwnerKind: RoutineResolvedOwnerKind;
+  spaceId: string;
+  ownerPath: string;
+  conflicts: readonly RoutineNameConflictEvidence[];
+}
+
 export interface RoutineRow {
   id: string;
   routineId: string | null;
@@ -60,6 +78,7 @@ export interface RoutineRow {
   filename: string;
   fingerprint: string;
   name: string;
+  nameConflict?: RoutineNameConflictProjection | null;
   description: string;
   definition: RoutineDefinition | null;
   diagnostics: readonly RoutineDiagnostic[];
@@ -152,4 +171,5 @@ export type RoutineMutationResult =
       warnings: readonly RoutineDiagnostic[];
     }
   | { status: "stale"; currentFingerprint: string | null }
+  | { status: "name_conflict"; conflict: RoutineNameConflict }
   | { status: "blocked"; message: string };

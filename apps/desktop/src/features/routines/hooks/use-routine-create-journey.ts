@@ -14,6 +14,7 @@ import {
   normalizeRoutineCreateCandidate,
   routineDefinitionMatchesCandidate,
 } from "../model/routine-create";
+import { findRoutineNameConflictPath } from "../model/routine-name";
 import type {
   RoutineCatalogSnapshot,
   RoutineDefinition,
@@ -24,7 +25,7 @@ import { routineErrorMessage } from "./use-routine-catalog";
 
 interface RoutineCreateSession {
   automaticAuthority: boolean | null;
-  baselineRoutineIds: readonly string[];
+  baselineRows: readonly RoutineRow[];
   draft: RoutineDefinition;
   initialDraft: RoutineDefinition;
   owner: RoutineOwnerInput;
@@ -46,26 +47,29 @@ export function useRoutineCreateJourney({
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [retryBlocked, setRetryBlocked] = useState(false);
+  const [authoritativeNameConflictPath, setAuthoritativeNameConflictPath] =
+    useState<string | null>(null);
   const pendingRef = useRef(false);
 
   const open = useCallback(
     ({
       automaticAuthority,
-      baselineRoutineIds,
+      baselineRows,
       owner,
       ownerLabel,
     }: {
       automaticAuthority: boolean | null;
-      baselineRoutineIds: readonly string[];
+      baselineRows: readonly RoutineRow[];
       owner: RoutineOwnerInput;
       ownerLabel: string;
     }) => {
       const draft = createRoutineDraft();
       setError(null);
       setRetryBlocked(false);
+      setAuthoritativeNameConflictPath(null);
       setSession({
         automaticAuthority,
-        baselineRoutineIds,
+        baselineRows,
         draft,
         initialDraft: cloneRoutineDefinition(draft),
         owner: { ...owner },
@@ -79,6 +83,7 @@ export function useRoutineCreateJourney({
     if (pendingRef.current) return;
     setError(null);
     setRetryBlocked(false);
+    setAuthoritativeNameConflictPath(null);
     setSession(null);
   }, []);
 
@@ -86,10 +91,22 @@ export function useRoutineCreateJourney({
     setSession((current) => (current ? { ...current, draft } : current));
     setError(null);
     setRetryBlocked(false);
+    setAuthoritativeNameConflictPath(null);
   }, []);
 
+  const optimisticNameConflictPath = session
+    ? findRoutineNameConflictPath(session.draft.name, session.baselineRows)
+    : null;
+  const nameConflictPath =
+    authoritativeNameConflictPath ?? optimisticNameConflictPath;
+  const nameError = nameConflictPath
+    ? m.routines_name_conflict({ path: nameConflictPath })
+    : null;
+
   const submit = useCallback(async () => {
-    if (!session || pendingRef.current || retryBlocked) return;
+    if (!session || pendingRef.current || retryBlocked || nameConflictPath) {
+      return;
+    }
     const active = session;
     const candidate = normalizeRoutineCreateCandidate(active.draft);
     pendingRef.current = true;
@@ -98,6 +115,13 @@ export function useRoutineCreateJourney({
     try {
       const result = await createRoutine(active.owner, candidate);
       if (result.status !== "applied") {
+        if (result.status === "name_conflict") {
+          setAuthoritativeNameConflictPath(
+            result.conflict.conflicts[0]?.path ?? active.owner.ownerPath,
+          );
+          setError(null);
+          return;
+        }
         setError(
           result.status === "stale"
             ? m.routines_mutation_stale()
@@ -114,6 +138,7 @@ export function useRoutineCreateJourney({
         return;
       }
       publishWarnings(result.warnings);
+      setAuthoritativeNameConflictPath(null);
       setSession(null);
       await onApplied({ owner: active.owner, row, snapshot: result.snapshot });
     } catch (reason) {
@@ -126,12 +151,13 @@ export function useRoutineCreateJourney({
       pendingRef.current = false;
       setPending(false);
     }
-  }, [onApplied, retryBlocked, session]);
+  }, [nameConflictPath, onApplied, retryBlocked, session]);
 
   return {
     change,
     close,
     error,
+    nameError,
     open,
     pending,
     retryBlocked,
@@ -153,7 +179,7 @@ async function reconcileUncertainCreate(
 ) {
   try {
     const snapshot = await loadRoutineCatalog(session.owner);
-    const baseline = new Set(session.baselineRoutineIds);
+    const baseline = new Set(session.baselineRows.map((row) => row.id));
     const matches = snapshot.rows.filter(
       (row) =>
         !baseline.has(row.id) &&

@@ -161,7 +161,7 @@ export function createRoutinesPresentationDescriptor({
     label: m.routines_presentation_all(),
     layout: {
       density: "compact",
-      getDescription: (row) => row.description || row.filename,
+      getDescription: routineSecondaryDescription,
       getTitle: (row) => row.name,
       kind: "list",
       renderLeading: (row) => (
@@ -325,9 +325,17 @@ export function routineDetailTitle(row: RoutineRow) {
       <span className="flex min-w-0 flex-col text-left">
         <span className="truncate">{row.name}</span>
         <span className="truncate text-sm font-normal text-muted-foreground">
-          {row.description || row.filename}
+          {routineSecondaryDescription(row)}
         </span>
       </span>
     </span>
   );
+}
+
+function routineSecondaryDescription(row: RoutineRow) {
+  if (!row.nameConflict) return row.description || row.filename;
+  const description = row.description
+    ? `${row.description} · ${row.definitionPath}`
+    : row.definitionPath;
+  return <span title={row.definitionPath}>{description}</span>;
 }

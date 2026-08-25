@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+
 import type { AgentActorOption } from "@/features/actors";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -23,6 +25,7 @@ export function RoutineDefinitionForm({
   executorError,
   executors,
   formId,
+  nameError,
   onChange,
   onSubmit,
 }: {
@@ -31,6 +34,7 @@ export function RoutineDefinitionForm({
   executorError: string | null;
   executors: readonly AgentActorOption[];
   formId: string;
+  nameError: string | null;
   onChange(definition: RoutineDefinition): void;
   onSubmit(): void;
 }) {
@@ -40,6 +44,12 @@ export function RoutineDefinitionForm({
     action.type === "run_agent" &&
     (!action.executor ||
       !executors.some((option) => option.value === action.executor));
+  useEffect(() => {
+    if (!nameError) return;
+    window.requestAnimationFrame(() => {
+      document.getElementById(`${formId}-name`)?.focus();
+    });
+  }, [formId, nameError]);
   return (
     <form
       id={formId}
@@ -49,6 +59,7 @@ export function RoutineDefinitionForm({
         if (
           issues.size === 0 &&
           definition.name.trim() &&
+          !nameError &&
           !executorUnavailable &&
           !executorError
         ) {
@@ -61,6 +72,7 @@ export function RoutineDefinitionForm({
           autoFocus
           definition={definition}
           idPrefix={formId}
+          nameError={nameError}
           onChange={onChange}
         />
         {definition.trigger.type !== "manual" ? (

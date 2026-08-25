@@ -143,14 +143,45 @@ if (!isolatedDialogDomProcess) {
       await harness.cleanup();
     }
   });
+
+  test("authoritative name conflict keeps the draft and returns focus to Basics", async () => {
+    const harness = await renderHarness({ conflictOnSubmit: true });
+    try {
+      await clickButton(harness.dom, "Fill title");
+      await clickButton(harness.dom, "Continue");
+      await clickButton(harness.dom, "Continue");
+      await clickButton(harness.dom, "Continue");
+      expect(currentStep(harness.dom)).toBe("review");
+
+      await clickButton(harness.dom, "Create routine");
+
+      const title = harness.dom.window.document.querySelector<HTMLInputElement>(
+        '[data-routine-create-focus="basics"]',
+      )!;
+      expect(currentStep(harness.dom)).toBe("basics");
+      expect(title.value).toBe("Review changes");
+      expect(title.getAttribute("aria-invalid")).toBe("true");
+      expect(harness.dom.window.document.activeElement).toBe(title);
+      expect(
+        harness.dom.window.document.body.textContent?.includes(
+          ".routines/existing.md",
+        ),
+      ).toBe(true);
+      expect(textOf(harness.dom, "[data-submit-count]")).toBe("1");
+    } finally {
+      await harness.cleanup();
+    }
+  });
 }
 
 function JourneyHarness({
   Dialog,
+  conflictOnSubmit = false,
   pendingOnSubmit = false,
   startOpen,
 }: {
   Dialog: DialogComponent;
+  conflictOnSubmit?: boolean;
   pendingOnSubmit?: boolean;
   startOpen: boolean;
 }) {
@@ -160,12 +191,17 @@ function JourneyHarness({
   const [pending, setPending] = useState(false);
   const [submitCount, setSubmitCount] = useState(0);
   const [closeCount, setCloseCount] = useState(0);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const changeDefinition = (next: RoutineDefinition) => {
+    setDefinition(next);
+    setNameError(null);
+  };
   return (
     <>
       <button
         type="button"
         onClick={() => {
-          setDefinition(validDefinition());
+          changeDefinition(validDefinition());
           setOpen(true);
         }}
       >
@@ -174,7 +210,7 @@ function JourneyHarness({
       <button
         type="button"
         onClick={() =>
-          setDefinition((current) => ({ ...current, name: "Review changes" }))
+          changeDefinition({ ...definition, name: "Review changes" })
         }
       >
         Fill title
@@ -191,10 +227,11 @@ function JourneyHarness({
           executorLoading={false}
           executors={[actor]}
           initialDefinition={initial}
+          nameError={nameError}
           ownerLabel="Collection · Tasks"
           pending={pending}
           retryBlocked={false}
-          onChange={setDefinition}
+          onChange={changeDefinition}
           onClose={() => {
             setCloseCount((count) => count + 1);
             setOpen(false);
@@ -202,6 +239,11 @@ function JourneyHarness({
           onRetryExecutors={() => undefined}
           onSubmit={() => {
             setSubmitCount((count) => count + 1);
+            if (conflictOnSubmit) {
+              setNameError(
+                "This name is already used in this owner by .routines/existing.md. Choose a unique name.",
+              );
+            }
             if (pendingOnSubmit) setPending(true);
           }}
         />
@@ -211,9 +253,11 @@ function JourneyHarness({
 }
 
 async function renderHarness({
+  conflictOnSubmit,
   pendingOnSubmit,
   startOpen = true,
 }: {
+  conflictOnSubmit?: boolean;
   pendingOnSubmit?: boolean;
   startOpen?: boolean;
 } = {}) {
@@ -226,6 +270,7 @@ async function renderHarness({
     root.render(
       <JourneyHarness
         Dialog={RoutineCreateDialog}
+        conflictOnSubmit={conflictOnSubmit}
         pendingOnSubmit={pendingOnSubmit}
         startOpen={startOpen}
       />,

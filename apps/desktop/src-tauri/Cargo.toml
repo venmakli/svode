@@ -41,6 +41,8 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 opendal = { version = "0.58.1", features = ["services-s3"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 portable-pty = "0.9.0"
+unicode-casefold = "0.2"
+unicode-normalization = "0.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"
