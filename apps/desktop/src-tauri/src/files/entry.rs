@@ -1811,6 +1811,15 @@ pub fn convert_bare_folder_to_collection(
     space: &Path,
     folder_path: &str,
 ) -> Result<Entry, AppError> {
+    crate::files::naming::with_document_name_lock(&space.to_string_lossy(), || {
+        convert_bare_folder_to_collection_inner(space, folder_path)
+    })
+}
+
+fn convert_bare_folder_to_collection_inner(
+    space: &Path,
+    folder_path: &str,
+) -> Result<Entry, AppError> {
     let rel = folder_path.trim_matches('/').replace('\\', "/");
     let folder_abs = space.join(&rel);
     if !folder_abs.is_dir() {
@@ -1836,6 +1845,11 @@ pub fn convert_bare_folder_to_collection(
         .and_then(|name| name.to_str())
         .unwrap_or("Collection");
     let mut meta = EntryMeta::new_persisted(humanize_slug(folder_name));
+    crate::files::naming::ensure_document_name_available(
+        space,
+        &format!("{rel}/README.md"),
+        &meta.title,
+    )?;
     crate::properties::apply_schema_defaults_for_path(
         &space.to_string_lossy(),
         &format!("{rel}/README.md"),
@@ -2656,6 +2670,46 @@ mod tests {
         .unwrap_err();
         assert!(matches!(error, AppError::DocumentNameConflict(_)));
         assert!(!tmp.path().join("folder/README.md").exists());
+    }
+
+    #[test]
+    fn collection_rows_use_the_same_name_scope_and_unique_allocators() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path().to_string_lossy();
+        fs::create_dir(tmp.path().join("collection")).unwrap();
+        fs::write(tmp.path().join("collection/schema.yaml"), "name: Test\n").unwrap();
+
+        let first =
+            create_with_options(&space, Some("collection"), "Shared", None, false, false).unwrap();
+        let conflict = create_with_options(
+            &space,
+            Some("collection"),
+            "  ＳＨＡＲＥＤ  ",
+            None,
+            false,
+            false,
+        )
+        .unwrap_err();
+        assert!(matches!(conflict, AppError::DocumentNameConflict(_)));
+
+        let quick =
+            create_with_options(&space, Some("collection"), "Shared", None, true, false).unwrap();
+        let copy = duplicate_entry(tmp.path(), &first.path).unwrap();
+        assert_eq!(quick.meta.title, "Shared 2");
+        assert_eq!(copy.meta.title, "Shared (copy)");
+    }
+
+    #[test]
+    fn converting_a_bare_folder_cannot_create_a_collection_head_name_conflict() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path().to_string_lossy();
+        create_with_options(&space, None, "Shared", None, false, false).unwrap();
+        create_folder(&space, None, "shared").unwrap();
+
+        let error = convert_bare_folder_to_collection(tmp.path(), "shared").unwrap_err();
+        assert!(matches!(error, AppError::DocumentNameConflict(_)));
+        assert!(!tmp.path().join("shared/README.md").exists());
+        assert!(!tmp.path().join("shared/schema.yaml").exists());
     }
 
     #[test]

@@ -2,11 +2,9 @@ import { useCallback, type Dispatch, type SetStateAction } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { toast } from "sonner";
 import type { Entry } from "@/features/entry";
-import {
-  entryParentDir,
-  reorderVisibleEntries,
-} from "../../lib/entry-tree";
+import { entryParentDir, reorderVisibleEntries } from "../../lib/entry-tree";
 import { useCollectionTreeOrder } from "../use-collection-tree-order";
+import { handleEntryCreateError } from "../error-feedback";
 import * as m from "@/paraglide/messages.js";
 
 interface UseGalleryEntryActionsOptions {
@@ -51,18 +49,11 @@ export function useGalleryEntryActions({
         await loadEntries();
         return created;
       } catch (error) {
-        console.warn("Failed to create gallery entry:", error);
-        toast.error(m.board_create_error());
+        handleEntryCreateError(error);
         return null;
       }
     },
-    [
-      collectionPath,
-      loadEntries,
-      onCreateEntry,
-      reloadOrderParent,
-      setEntries,
-    ],
+    [collectionPath, loadEntries, onCreateEntry, reloadOrderParent, setEntries],
   );
 
   const reorderEntries = useCallback(

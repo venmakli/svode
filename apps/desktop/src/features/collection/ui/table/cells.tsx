@@ -3,6 +3,7 @@ import { Database, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/shared/lib/utils";
+import { documentNameConflictDisplayPath } from "@/features/entry/entry-api";
 import {
   shouldClosePropertyEditorOnChange,
   validatePropertyValue,
@@ -302,6 +303,7 @@ export function TitleCell({
   onOpenFullPage: () => void;
   onOpenNested: () => void;
 }) {
+  const conflictPath = documentNameConflictDisplayPath(row.entry);
   return (
     <div
       className="flex min-w-0 items-center gap-1"
@@ -324,7 +326,17 @@ export function TitleCell({
           onOpenFullPage();
         }}
       >
-        <span className="truncate">{row.entry.meta.title}</span>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate">{row.entry.meta.title}</span>
+          {conflictPath ? (
+            <span
+              data-entry-name-conflict-path
+              className="truncate text-xs text-muted-foreground"
+            >
+              {conflictPath}
+            </span>
+          ) : null}
+        </span>
       </button>
       {nested ? (
         <Button

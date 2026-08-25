@@ -93,6 +93,7 @@ export async function instantiateTemplate({
   templateSlug,
   parentDir,
   initialTitle,
+  allocateUniqueTitle,
   forceFolder,
   contextualDefaults,
   projectPath,
@@ -102,6 +103,7 @@ export async function instantiateTemplate({
   templateSlug: string;
   parentDir: string;
   initialTitle?: string | null;
+  allocateUniqueTitle?: boolean;
   forceFolder?: boolean;
   contextualDefaults?: Record<string, unknown> | null;
   projectPath?: string | null;
@@ -112,6 +114,7 @@ export async function instantiateTemplate({
     templateSlug,
     parentDir,
     initialTitle: initialTitle ?? null,
+    allocateUniqueTitle: Boolean(allocateUniqueTitle),
     forceFolder: Boolean(forceFolder),
     contextualDefaults: contextualDefaults ?? {},
     projectPath: projectPath ?? null,

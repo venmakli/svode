@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -74,28 +74,16 @@ pub(crate) fn logical_document_parent(path: &str) -> Option<String> {
     Some(repo_path(path.parent().unwrap_or_else(|| Path::new(""))))
 }
 
-fn document_storage_parent(path: &str) -> PathBuf {
+fn has_hidden_storage_parent(path: &str) -> bool {
     Path::new(path.trim_matches('/'))
         .parent()
-        .unwrap_or_else(|| Path::new(""))
-        .to_path_buf()
+        .into_iter()
+        .flat_map(Path::components)
+        .any(|component| component.as_os_str().to_string_lossy().starts_with('.'))
 }
 
-fn is_collection_scoped(space: &Path, path: &str) -> bool {
-    let mut directory = document_storage_parent(path);
-    loop {
-        if space.join(&directory).join("schema.yaml").is_file() {
-            return true;
-        }
-        if !directory.pop() {
-            break;
-        }
-    }
-    false
-}
-
-pub(crate) fn is_ordinary_document(space: &Path, path: &str) -> bool {
-    logical_document_parent(path).is_some() && !is_collection_scoped(space, path)
+pub(crate) fn is_user_document(path: &str) -> bool {
+    logical_document_parent(path).is_some() && !has_hidden_storage_parent(path)
 }
 
 fn title_for_markdown(path: &Path, fallback: String) -> String {
@@ -110,7 +98,7 @@ fn title_for_markdown(path: &Path, fallback: String) -> String {
         .unwrap_or(fallback)
 }
 
-fn direct_ordinary_siblings(
+fn direct_document_siblings(
     space: &Path,
     parent_path: Option<&str>,
 ) -> Result<Vec<DocumentNameConflictEvidence>, AppError> {
@@ -119,19 +107,15 @@ fn direct_ordinary_siblings(
     if !directory.is_dir() {
         return Ok(Vec::new());
     }
-    if is_collection_scoped(space, &format!("{parent}/placeholder.md")) {
-        return Ok(Vec::new());
-    }
-
     let mut siblings = Vec::new();
     for item in fs::read_dir(&directory)?.filter_map(Result::ok) {
         let path = item.path();
         let name = item.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
         let rel = path.strip_prefix(space).unwrap_or(&path);
         if path.is_dir() {
-            if path.join("schema.yaml").is_file() {
-                continue;
-            }
             let Some(readme) = fs::read_dir(&path)
                 .ok()
                 .into_iter()
@@ -169,13 +153,13 @@ pub(crate) fn document_name_conflict(
     path: &str,
     title: &str,
 ) -> Result<Option<DocumentNameConflict>, AppError> {
-    if !is_ordinary_document(space, path) {
+    if !is_user_document(path) {
         return Ok(None);
     }
     let parent = logical_document_parent(path);
     let key = display_name_key(title);
     let current = path.trim_matches('/').replace('\\', "/");
-    let conflicts = direct_ordinary_siblings(space, parent.as_deref())?
+    let conflicts = direct_document_siblings(space, parent.as_deref())?
         .into_iter()
         .filter(|sibling| sibling.path != current && display_name_key(&sibling.title) == key)
         .collect::<Vec<_>>();
@@ -201,7 +185,7 @@ pub(crate) fn allocate_document_title(
     path_for_scope: &str,
     requested: &str,
 ) -> Result<String, AppError> {
-    if !is_ordinary_document(space, path_for_scope) {
+    if !is_user_document(path_for_scope) {
         return Ok(requested.to_string());
     }
     if document_name_conflict(space, path_for_scope, requested)?.is_none() {
@@ -257,7 +241,7 @@ mod tests {
     }
 
     #[test]
-    fn home_and_collection_documents_are_excluded() {
+    fn home_is_excluded_but_collection_heads_and_rows_share_document_scopes() {
         let tmp = TempDir::new().unwrap();
         write_document(tmp.path(), "README.md", "Shared");
         write_document(tmp.path(), "shared.md", "Shared");
@@ -270,14 +254,29 @@ mod tests {
         fs::create_dir_all(tmp.path().join("collection")).unwrap();
         fs::write(tmp.path().join("collection/schema.yaml"), "name: Test\n").unwrap();
         write_document(tmp.path(), "collection/README.md", "Shared");
-        write_document(tmp.path(), "collection/row.md", "Shared");
         assert!(
             document_name_conflict(tmp.path(), "collection/README.md", "Shared")
                 .unwrap()
-                .is_none()
+                .is_some()
         );
+
+        write_document(tmp.path(), "collection/row-one.md", "Row");
+        write_document(tmp.path(), "collection/row-two.md", " row ");
         assert!(
-            document_name_conflict(tmp.path(), "collection/row.md", "Shared")
+            document_name_conflict(tmp.path(), "collection/row-one.md", "Row")
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn hidden_template_sources_stay_outside_the_user_document_namespace() {
+        let tmp = TempDir::new().unwrap();
+        write_document(tmp.path(), ".templates/one.md", "Shared");
+        write_document(tmp.path(), ".templates/two.md", "shared");
+
+        assert!(
+            document_name_conflict(tmp.path(), ".templates/one.md", "Shared")
                 .unwrap()
                 .is_none()
         );
@@ -306,5 +305,21 @@ mod tests {
             crate::files::tree::list_tree_children(tmp.path().to_string_lossy().as_ref(), None)
                 .unwrap();
         assert!(recovered.iter().all(|node| node.name_conflict.is_none()));
+    }
+
+    #[test]
+    fn external_collection_duplicates_project_on_rows() {
+        let tmp = TempDir::new().unwrap();
+        fs::create_dir_all(tmp.path().join("collection")).unwrap();
+        fs::write(tmp.path().join("collection/schema.yaml"), "name: Test\n").unwrap();
+        write_document(tmp.path(), "collection/one.md", "Shared");
+        write_document(tmp.path(), "collection/two.md", "shared");
+
+        let duplicated = crate::files::tree::list_tree_children(
+            tmp.path().to_string_lossy().as_ref(),
+            Some("collection"),
+        )
+        .unwrap();
+        assert!(duplicated.iter().all(|node| node.name_conflict.is_some()));
     }
 }

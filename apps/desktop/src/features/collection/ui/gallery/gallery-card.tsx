@@ -8,6 +8,7 @@ import {
   ContextMenuItem,
 } from "@/components/ui/context-menu";
 import { cn } from "@/shared/lib/utils";
+import { documentNameConflictDisplayPath } from "@/features/entry/entry-api";
 import { CardPropertyFlow } from "../card-property-flow";
 import { EntryTitleIcon } from "../entry-title-icon";
 import { CollectionPresentationGalleryCard } from "../presentation-gallery-card";
@@ -84,6 +85,7 @@ function GalleryCardContent({
   const showTitle = cardFields.includes("title");
   const showIcon = cardFields.includes("icon");
   const showDescription = cardFields.includes("description");
+  const conflictPath = documentNameConflictDisplayPath(entry);
 
   return (
     <CollectionPresentationGalleryCard
@@ -119,9 +121,10 @@ function GalleryCardContent({
       }
       title={showTitle ? entry.meta.title : undefined}
       description={
-        showDescription && entry.meta.description
+        conflictPath ??
+        (showDescription && entry.meta.description
           ? entry.meta.description
-          : undefined
+          : undefined)
       }
       properties={
         <CardPropertyFlow

@@ -42,10 +42,12 @@ export function useCollectionEntryActions({
 
   async function createEntry(
     asFolder = false,
-    title: string = String(m.editor_untitled()),
+    title?: string,
     openAfterCreate = true,
     contextualDefaults?: Record<string, unknown>,
   ) {
+    const allocateUniqueTitle = title === undefined;
+    const requestedTitle = title ?? String(m.editor_untitled());
     const defaultTemplateSlug = schema?.templates?.default ?? null;
     if (defaultTemplateSlug) {
       try {
@@ -54,7 +56,8 @@ export function useCollectionEntryActions({
           collectionPath,
           templateSlug: defaultTemplateSlug,
           parentDir: collectionPath,
-          initialTitle: title,
+          initialTitle: requestedTitle,
+          allocateUniqueTitle,
           forceFolder: asFolder,
           contextualDefaults: contextualDefaults ?? null,
           projectPath,
@@ -75,7 +78,8 @@ export function useCollectionEntryActions({
     const created = await createEntryApi({
       spacePath,
       parentPath: collectionPath,
-      title,
+      title: requestedTitle,
+      allocateUniqueTitle,
       contextualDefaults: contextualDefaults ?? null,
       projectPath: projectPath ?? null,
     });

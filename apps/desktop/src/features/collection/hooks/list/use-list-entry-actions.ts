@@ -9,6 +9,7 @@ import {
   siblingEntries,
 } from "../../lib/entry-tree";
 import { useCollectionTreeOrder } from "../use-collection-tree-order";
+import { handleEntryCreateError } from "../error-feedback";
 import * as m from "@/paraglide/messages.js";
 
 interface UseListEntryActionsOptions {
@@ -51,18 +52,11 @@ export function useListEntryActions({
         await loadEntries();
         return created;
       } catch (error) {
-        console.warn("Failed to create list entry:", error);
-        toast.error(m.board_create_error());
+        handleEntryCreateError(error);
         return null;
       }
     },
-    [
-      collectionPath,
-      loadEntries,
-      onCreateEntry,
-      reloadOrderParent,
-      setEntries,
-    ],
+    [collectionPath, loadEntries, onCreateEntry, reloadOrderParent, setEntries],
   );
 
   const reorderEntries = useCallback(
@@ -104,14 +98,7 @@ export function useListEntryActions({
         toast.error(m.board_move_error());
       }
     },
-    [
-      entries,
-      loadEntries,
-      reloadOrderParent,
-      rows,
-      saveOrder,
-      setEntries,
-    ],
+    [entries, loadEntries, reloadOrderParent, rows, saveOrder, setEntries],
   );
 
   return { createEntry, reorderEntries };

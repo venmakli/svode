@@ -1,5 +1,6 @@
 export * from "./api/entry-api";
 export {
+  documentNameConflictDisplayPath,
   documentNameConflictFromError,
   documentNameKey,
   findDocumentNameConflictPath,

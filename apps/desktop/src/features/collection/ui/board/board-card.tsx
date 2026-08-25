@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/context-menu";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/shared/lib/utils";
+import { documentNameConflictDisplayPath } from "@/features/entry/entry-api";
 import { isFolderEntry, isNestedCollectionEntry } from "./utils";
 import { BoardPropertyFlow } from "./board-property-flow";
 import type { BoardCardProps } from "./types";
@@ -71,6 +72,7 @@ export function BoardCardContent({
   onDelete,
 }: BoardCardProps) {
   const { entry } = card;
+  const conflictPath = documentNameConflictDisplayPath(entry);
   const showIcon = cardFields.includes("icon");
   const showDescription = cardFields.includes("description");
   const nestedCollection = isNestedCollectionEntry(
@@ -112,6 +114,14 @@ export function BoardCardContent({
                 <div className="line-clamp-2 text-[13px] font-medium leading-snug">
                   {entry.meta.title}
                 </div>
+                {conflictPath ? (
+                  <div
+                    data-entry-name-conflict-path
+                    className="mt-1 truncate text-xs text-muted-foreground"
+                  >
+                    {conflictPath}
+                  </div>
+                ) : null}
                 {showDescription && entry.meta.description ? (
                   <div className="mt-1 truncate text-xs text-muted-foreground">
                     {entry.meta.description}

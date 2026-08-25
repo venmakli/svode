@@ -10,6 +10,7 @@ export {
   type EntryFieldSavePolicy,
 } from "./field-save";
 export {
+  documentNameConflictDisplayPath,
   documentNameConflictFromError,
   documentNameKey,
   findDocumentNameConflictPath,

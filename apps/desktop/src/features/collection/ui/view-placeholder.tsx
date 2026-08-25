@@ -12,9 +12,13 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import type { CollectionView, ViewType } from "@/features/collection/query/model";
+import type {
+  CollectionView,
+  ViewType,
+} from "@/features/collection/query/model";
 import type { CollectionSchema } from "@/features/properties";
 import type { Entry } from "@/features/entry";
+import { documentNameConflictDisplayPath } from "@/features/entry/entry-api";
 import { useViewPlaceholderEntries } from "../hooks";
 import { IncompleteState } from "./incomplete-state";
 import { titleFilter } from "../lib/utils";
@@ -95,38 +99,51 @@ export function ViewPlaceholder({
         </Empty>
       ) : (
         <div className="rounded-lg border bg-background">
-          {filtered.slice(0, 20).map((entry) => (
-            <ContextMenu key={entry.path}>
-              <ContextMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="flex w-full justify-start gap-2 border-b px-3 py-2 text-left last:border-b-0 hover:bg-muted"
-                  onClick={() => onOpenEntry(entry)}
-                >
-                  <FileText />
-                  <span className="truncate">{entry.meta.title}</span>
-                </Button>
-              </ContextMenuTrigger>
-              <ContextMenuContent className="w-48">
-                <ContextMenuItem onClick={() => onOpenEntry(entry)}>
-                  <FileText data-icon="inline-start" />
-                  {m.collection_open_in_peek()}
-                </ContextMenuItem>
-                <ContextMenuItem onClick={() => onDuplicateEntry(entry)}>
-                  <Copy data-icon="inline-start" />
-                  {m.collection_duplicate_entry()}
-                </ContextMenuItem>
-                <ContextMenuItem
-                  className="text-destructive focus:text-destructive"
-                  onClick={() => onDeleteEntry(entry)}
-                >
-                  <Trash2 data-icon="inline-start" />
-                  {m.space_delete()}
-                </ContextMenuItem>
-              </ContextMenuContent>
-            </ContextMenu>
-          ))}
+          {filtered.slice(0, 20).map((entry) => {
+            const conflictPath = documentNameConflictDisplayPath(entry);
+            return (
+              <ContextMenu key={entry.path}>
+                <ContextMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="flex w-full justify-start gap-2 border-b px-3 py-2 text-left last:border-b-0 hover:bg-muted"
+                    onClick={() => onOpenEntry(entry)}
+                  >
+                    <FileText />
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate">{entry.meta.title}</span>
+                      {conflictPath ? (
+                        <span
+                          data-entry-name-conflict-path
+                          className="truncate text-xs text-muted-foreground"
+                        >
+                          {conflictPath}
+                        </span>
+                      ) : null}
+                    </span>
+                  </Button>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="w-48">
+                  <ContextMenuItem onClick={() => onOpenEntry(entry)}>
+                    <FileText data-icon="inline-start" />
+                    {m.collection_open_in_peek()}
+                  </ContextMenuItem>
+                  <ContextMenuItem onClick={() => onDuplicateEntry(entry)}>
+                    <Copy data-icon="inline-start" />
+                    {m.collection_duplicate_entry()}
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={() => onDeleteEntry(entry)}
+                  >
+                    <Trash2 data-icon="inline-start" />
+                    {m.space_delete()}
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
+            );
+          })}
         </div>
       )}
     </div>

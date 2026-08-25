@@ -298,6 +298,7 @@ export function instantiateTemplate(
     templateSlug: string;
     parentDir: string;
     initialTitle?: string | null;
+    allocateUniqueTitle?: boolean;
     forceFolder?: boolean;
     contextualDefaults?: Record<string, unknown> | null;
   },
@@ -308,6 +309,7 @@ export function instantiateTemplate(
     templateSlug: input.templateSlug,
     parentDir: input.parentDir,
     initialTitle: input.initialTitle ?? null,
+    allocateUniqueTitle: Boolean(input.allocateUniqueTitle),
     forceFolder: Boolean(input.forceFolder),
     contextualDefaults: input.contextualDefaults ?? {},
     projectPath: input.projectPath ?? null,

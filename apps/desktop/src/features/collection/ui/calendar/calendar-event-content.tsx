@@ -13,6 +13,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { Entry } from "@/features/entry";
+import { documentNameConflictDisplayPath } from "@/features/entry/entry-api";
 import { validatePropertyValue, type Column } from "@/features/properties";
 import { PropertyControl } from "@/features/properties/control";
 import { PropertyValue } from "@/features/properties/display";
@@ -48,6 +49,7 @@ export function CalendarEventContent({
   const model = arg.event.extendedProps.model as CalendarEventModel | undefined;
   if (!model) return null;
   const { entry } = model;
+  const conflictPath = documentNameConflictDisplayPath(entry);
   const list = scope === "list";
   const compact = scope === "week" || scope === "day";
 
@@ -94,6 +96,14 @@ export function CalendarEventContent({
                       {entry.meta.title}
                     </span>
                   </div>
+                  {conflictPath ? (
+                    <div
+                      data-entry-name-conflict-path
+                      className="truncate text-xs text-muted-foreground"
+                    >
+                      {conflictPath}
+                    </div>
+                  ) : null}
                   {list &&
                   model.cardFields.includes("description") &&
                   entry.meta.description ? (
@@ -160,6 +170,7 @@ function CalendarEventTooltip({
   propertyContext: CalendarPropertyContext;
 }) {
   const { entry } = model;
+  const conflictPath = documentNameConflictDisplayPath(entry);
   return (
     <div className="flex min-w-0 flex-col gap-2">
       <div className="flex min-w-0 items-center gap-2">
@@ -168,6 +179,11 @@ function CalendarEventTooltip({
         ) : null}
         <div className="min-w-0">
           <div className="truncate font-medium">{entry.meta.title}</div>
+          {conflictPath ? (
+            <div className="truncate text-xs text-muted-foreground">
+              {conflictPath}
+            </div>
+          ) : null}
           {model.cardFields.includes("description") &&
           entry.meta.description ? (
             <div className="truncate text-xs text-muted-foreground">

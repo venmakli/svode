@@ -328,7 +328,7 @@ pub fn list_tree_children(
     let skip_dirs = child_folder_names(root);
     let mut nodes = read_dir_direct(root, &dir, &parent_rel, &order, &skip_dirs, &policy)?;
     for node in &mut nodes {
-        if node.path.to_lowercase().ends_with(".md") && !node.has_schema {
+        if node.path.to_lowercase().ends_with(".md") {
             node.name_conflict =
                 crate::files::naming::document_name_conflict(root, &node.path, &node.title)?;
         }
@@ -338,7 +338,7 @@ pub fn list_tree_children(
 
 fn annotate_recursive_name_conflicts(space: &Path, nodes: &mut [TreeNode]) -> Result<(), AppError> {
     for node in nodes {
-        if node.path.to_lowercase().ends_with(".md") && !node.has_schema {
+        if node.path.to_lowercase().ends_with(".md") {
             node.name_conflict =
                 crate::files::naming::document_name_conflict(space, &node.path, &node.title)?;
         }

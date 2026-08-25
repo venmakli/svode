@@ -91,6 +91,7 @@ pub async fn instantiate_template(
     template_slug: String,
     parent_dir: String,
     initial_title: Option<String>,
+    allocate_unique_title: Option<bool>,
     force_folder: bool,
     contextual_defaults: Option<HashMap<String, serde_json::Value>>,
     project_path: Option<String>,
@@ -112,6 +113,7 @@ pub async fn instantiate_template(
         &template_slug,
         &parent_dir,
         initial_title,
+        allocate_unique_title.unwrap_or(false),
         force_folder,
         contextual_defaults,
     )?;

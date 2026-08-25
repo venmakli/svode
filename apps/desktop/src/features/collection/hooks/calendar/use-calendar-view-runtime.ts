@@ -12,10 +12,12 @@ import type {
 } from "@fullcalendar/core";
 import { toast } from "sonner";
 import { propertyFieldSavePolicy, type Entry } from "@/features/entry";
+import { documentNameConflictFromError } from "@/features/entry/entry-api";
 import type { Column } from "@/features/properties";
 import { getLocale } from "@/paraglide/runtime.js";
 import { useCollectionActors } from "../use-collection-actors";
 import { useCollectionColumnActions } from "../use-collection-column-actions";
+import { handleEntryCreateError } from "../error-feedback";
 import * as m from "@/paraglide/messages.js";
 import {
   anchorFromMouse,
@@ -27,7 +29,10 @@ import {
   mountCalendarDayNewButton,
   nearestListCreateDate,
 } from "./calendar-dom";
-import type { CalendarCreateDraft, CalendarViewProps } from "../../model/calendar-types";
+import type {
+  CalendarCreateDraft,
+  CalendarViewProps,
+} from "../../model/calendar-types";
 import {
   calendarCustomFields,
   calendarDateColumn,
@@ -388,6 +393,10 @@ export function useCalendarViewRuntime({
 }
 
 export function reportCalendarError(error: unknown) {
+  if (documentNameConflictFromError(error)) {
+    handleEntryCreateError(error);
+    return;
+  }
   console.error(error);
   toast.error(String(error));
 }

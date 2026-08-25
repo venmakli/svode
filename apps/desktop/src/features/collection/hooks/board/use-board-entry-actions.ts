@@ -11,10 +11,8 @@ import {
   reorderEntryAround,
   updateEntryGroupValue,
 } from "../../lib/board-entry";
-import {
-  useCollectionEntryFieldSave,
-  useCollectionTreeOrder,
-} from "..";
+import { useCollectionEntryFieldSave, useCollectionTreeOrder } from "..";
+import { handleEntryCreateError } from "../error-feedback";
 import * as m from "@/paraglide/messages.js";
 
 interface MoveBoardCardArgs {
@@ -235,12 +233,17 @@ export function useBoardEntryActions({
         await loadEntries();
         return created;
       } catch (error) {
-        console.warn("Failed to create board entry:", error);
-        toast.error(m.board_create_error());
+        handleEntryCreateError(error);
         return null;
       }
     },
-    [groupColumn, loadEntries, onCreateEntry, setEntries, setManualOrderEntries],
+    [
+      groupColumn,
+      loadEntries,
+      onCreateEntry,
+      setEntries,
+      setManualOrderEntries,
+    ],
   );
 
   return { commitField, createDraft, moveCard };

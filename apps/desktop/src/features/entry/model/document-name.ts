@@ -13,18 +13,23 @@ export function documentNameKey(value: string) {
 
 export function findDocumentNameConflictPath(
   title: string,
-  siblings: readonly { path: string; title: string; has_schema: boolean }[],
+  siblings: readonly { path: string; title: string }[],
   currentPath: string,
 ) {
   const key = documentNameKey(title);
   return (
     siblings.find(
       (sibling) =>
-        !sibling.has_schema &&
-        sibling.path !== currentPath &&
-        documentNameKey(sibling.title) === key,
+        sibling.path !== currentPath && documentNameKey(sibling.title) === key,
     )?.path ?? null
   );
+}
+
+export function documentNameConflictDisplayPath(entry: {
+  path: string;
+  name_conflict?: DocumentNameConflict | null;
+}) {
+  return entry.name_conflict ? entry.path : null;
 }
 
 export function documentNameConflictFromError(

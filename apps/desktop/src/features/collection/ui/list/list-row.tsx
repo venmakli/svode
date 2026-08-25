@@ -16,6 +16,7 @@ import {
   ContextMenuItem,
 } from "@/components/ui/context-menu";
 import { cn } from "@/shared/lib/utils";
+import { documentNameConflictDisplayPath } from "@/features/entry/entry-api";
 import { CardPropertyFlow } from "../card-property-flow";
 import { EntryTitleIcon } from "../entry-title-icon";
 import { CollectionPresentationListRow } from "../presentation-core";
@@ -88,6 +89,7 @@ export function CollectionListRowContent({
   dragListeners?: ButtonHTMLAttributes<HTMLButtonElement>;
 }) {
   const { entry } = row;
+  const conflictPath = documentNameConflictDisplayPath(entry);
   const showIcon = cardFields.includes("icon");
   const showDescription =
     density === "comfortable" && cardFields.includes("description");
@@ -171,6 +173,14 @@ export function CollectionListRowContent({
                 </Button>
               ) : null}
             </div>
+            {conflictPath ? (
+              <div
+                data-entry-name-conflict-path
+                className="truncate text-xs text-muted-foreground"
+              >
+                {conflictPath}
+              </div>
+            ) : null}
             {showDescription && entry.meta.description ? (
               <div className="mt-1 truncate text-xs text-muted-foreground">
                 {entry.meta.description}

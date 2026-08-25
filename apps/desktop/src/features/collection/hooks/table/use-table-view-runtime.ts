@@ -13,6 +13,7 @@ import { titleFilter } from "../../lib/utils";
 import { useCollectionActors } from "../use-collection-actors";
 import { useCollectionColumnActions } from "../use-collection-column-actions";
 import { useCollectionEntryFieldSave } from "../use-collection-entry-field-save";
+import { handleEntryCreateError } from "../error-feedback";
 import {
   usePersistentSet,
   usePersistentSizing,
@@ -199,11 +200,15 @@ export function useTableViewRuntime({
         setComposerAsFolder(false);
         return;
       }
-      await createEntry(title, asFolder || composerAsFolder, () => {
-        setComposerValue("");
-        setComposerOpen(false);
-        setComposerAsFolder(false);
-      });
+      try {
+        await createEntry(title, asFolder || composerAsFolder, () => {
+          setComposerValue("");
+          setComposerOpen(false);
+          setComposerAsFolder(false);
+        });
+      } catch (error) {
+        handleEntryCreateError(error);
+      }
     },
     [composerAsFolder, composerValue, createEntry],
   );

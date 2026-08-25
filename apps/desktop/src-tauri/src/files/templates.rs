@@ -213,6 +213,31 @@ pub fn instantiate(
     template_slug: &str,
     parent_dir: &str,
     initial_title: Option<String>,
+    allocate_unique_title: bool,
+    force_folder: bool,
+    contextual_defaults: Option<HashMap<String, Value>>,
+) -> Result<InstantiatedTemplate, AppError> {
+    crate::files::naming::with_document_name_lock(space, || {
+        instantiate_inner(
+            space,
+            collection_path,
+            template_slug,
+            parent_dir,
+            initial_title,
+            allocate_unique_title,
+            force_folder,
+            contextual_defaults,
+        )
+    })
+}
+
+fn instantiate_inner(
+    space: &str,
+    collection_path: &str,
+    template_slug: &str,
+    parent_dir: &str,
+    initial_title: Option<String>,
+    allocate_unique_title: bool,
     force_folder: bool,
     contextual_defaults: Option<HashMap<String, Value>>,
 ) -> Result<InstantiatedTemplate, AppError> {
@@ -224,14 +249,37 @@ pub fn instantiate(
         return Err(AppError::FileNotFound(parent_rel));
     }
 
-    let root_title = initial_title.unwrap_or_default();
+    let hierarchy = force_folder || source.is_dir;
+    let requested_title = initial_title.unwrap_or_default();
+    let probe_id = ulid::Ulid::new().to_string().to_lowercase();
+    let scope_probe = if hierarchy {
+        join_rel(
+            &parent_rel,
+            &format!("svode-name-probe-{probe_id}/README.md"),
+        )
+    } else {
+        join_rel(&parent_rel, &format!(".svode-name-probe-{probe_id}.md"))
+    };
+    let root_title = if allocate_unique_title {
+        crate::files::naming::allocate_document_title(
+            Path::new(space),
+            &scope_probe,
+            &requested_title,
+        )?
+    } else {
+        crate::files::naming::ensure_document_name_available(
+            Path::new(space),
+            &scope_probe,
+            &requested_title,
+        )?;
+        requested_title
+    };
     let root_slug_source = if root_title.trim().is_empty() {
         "untitled"
     } else {
         root_title.as_str()
     };
     let root_slug = entry::slugify(root_slug_source);
-    let hierarchy = force_folder || source.is_dir;
     let dest_root_abs = if hierarchy {
         unique_child_path(&parent_abs, &root_slug, None)
     } else {
@@ -290,6 +338,48 @@ pub fn instantiate(
         entry: entry::read(space, &head_rel)?,
         template_title: source.title,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn template_instantiation_uses_collection_document_name_contract() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path().to_string_lossy();
+        fs::create_dir(tmp.path().join("collection")).unwrap();
+        properties::write_default_collection_schema(&space, "collection").unwrap();
+        create(&space, "collection", "Template", TemplateKind::Leaf).unwrap();
+        entry::create_with_options(&space, Some("collection"), "Shared", None, false, false)
+            .unwrap();
+
+        let conflict = instantiate(
+            &space,
+            "collection",
+            "template",
+            "collection",
+            Some(" shared ".into()),
+            false,
+            false,
+            None,
+        );
+        assert!(matches!(conflict, Err(AppError::DocumentNameConflict(_))));
+
+        let allocated = instantiate(
+            &space,
+            "collection",
+            "template",
+            "collection",
+            Some("Shared".into()),
+            true,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(allocated.entry.meta.title, "Shared 2");
+    }
 }
 
 pub fn ensure_template_exists(

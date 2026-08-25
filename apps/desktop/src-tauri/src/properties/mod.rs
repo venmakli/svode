@@ -2211,12 +2211,17 @@ pub fn update_relation_entry_field(
             meta.extra.insert(field.to_string(), normalized);
         }
         fs::write(&source_abs, frontmatter::serialize(&meta, &body))?;
+        let name_conflict = crate::files::naming::document_name_conflict(
+            Path::new(space),
+            &source_path,
+            &meta.title,
+        )?;
         Ok(Some(entry::Entry {
             meta,
             body,
             path: source_path.clone(),
             warnings: Vec::new(),
-            name_conflict: None,
+            name_conflict,
         }))
     })
 }
