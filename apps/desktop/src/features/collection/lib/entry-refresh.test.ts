@@ -3,6 +3,8 @@ import type { Entry } from "@/features/entry";
 import {
   collectionEntriesTargetKey,
   mergeStableEntriesByPath,
+  rebaseCollectionEntries,
+  rebaseCollectionPathSet,
   sameStringSet,
 } from "./entry-refresh";
 
@@ -91,4 +93,25 @@ test("collectionEntriesTargetKey changes when collection target changes", () => 
       collectionPath: "tasks",
     }) === base,
   ).toBe(false);
+});
+
+test("rebases loaded collection rows without clearing the current view", () => {
+  const entries = [
+    entry("tasks/one.md", "One"),
+    entry("tasks/nested/two.md", "Two"),
+    entry("other/three.md", "Three"),
+  ];
+
+  expect(rebaseCollectionEntries(entries, "tasks", "Задачи")).toEqual([
+    { ...entries[0], path: "Задачи/one.md" },
+    { ...entries[1], path: "Задачи/nested/two.md" },
+    entries[2],
+  ]);
+  expect(
+    rebaseCollectionPathSet(
+      new Set(["tasks", "tasks/nested", "other"]),
+      "tasks",
+      "Задачи",
+    ),
+  ).toEqual(new Set(["Задачи", "Задачи/nested", "other"]));
 });

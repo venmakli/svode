@@ -6,6 +6,7 @@ import { EmptyProjectState } from "@/features/space/app-shell";
 import {
   createCollectionDirectoryOwner,
   createRegisteredSpaceOwner,
+  type ScopeOwnerKey,
 } from "@/features/scope-surfaces";
 import {
   Empty,
@@ -33,8 +34,12 @@ function findNodeInTree(
 }
 
 export function ActiveSpaceContent() {
-  const { activeDocument, activeDocumentSpaceId, activeScopeOpenRequest } =
-    useActiveEntrySelection();
+  const {
+    activeDocument,
+    activeDocumentSpaceId,
+    activePathRetarget,
+    activeScopeOpenRequest,
+  } = useActiveEntrySelection();
   const collectionRouteState = useCollectionRouteState();
   const { fileTrees, rootSpaces, spaces, activeRootId, activeRootPath } =
     useSpace();
@@ -43,6 +48,13 @@ export function ActiveSpaceContent() {
   const activeNode = activeDocument
     ? findNodeInTree(tree, activeDocument)
     : null;
+  const previousActiveNode =
+    !activeNode &&
+    activePathRetarget?.path === activeDocument &&
+    activePathRetarget.spaceId === documentSpaceId
+      ? findNodeInTree(tree, activePathRetarget.fromPath)
+      : null;
+  const activeNodeSnapshot = activeNode ?? previousActiveNode;
   const activeSpace = documentSpaceId
     ? [...rootSpaces, ...spaces].find((space) => space.id === documentSpaceId)
     : null;
@@ -57,20 +69,29 @@ export function ActiveSpaceContent() {
   const hasDocuments = rootTree.length > 0;
   const isEmpty = !hasChildren && !hasDocuments;
   const isCollection = Boolean(
-    activeNode?.has_schema && activeSpace && documentSpaceId,
+    activeNodeSnapshot?.has_schema && activeSpace && documentSpaceId,
   );
   const usesEntryDocumentScreen = Boolean(
     !isCollection && activeSpace && documentSpaceId && activeDocument,
   );
+  const collectionSessionKey =
+    activeScopeOpenRequest?.key ?? collectionOwnerPath(activeDocument ?? "");
+  const previousCollectionOwnerKey =
+    activePathRetarget &&
+    activePathRetarget.path === activeDocument &&
+    activePathRetarget.spaceId === documentSpaceId &&
+    documentSpaceId
+      ? (`collection:${documentSpaceId}:${collectionOwnerPath(activePathRetarget.fromPath)}` as ScopeOwnerKey)
+      : undefined;
   const activeContent =
     isCollection &&
-    activeNode &&
+    activeNodeSnapshot &&
     activeSpace &&
     documentSpaceId &&
     activeRootPath &&
     activeDocument ? (
       <ScopeSurfacePage
-        key={`collection:${documentSpaceId}:${collectionOwnerPath(activeDocument)}`}
+        key={`collection-session:${documentSpaceId}:${collectionSessionKey}`}
         owner={createCollectionDirectoryOwner({
           spaceId: documentSpaceId,
           spacePath: activeSpace.path,
@@ -83,6 +104,8 @@ export function ActiveSpaceContent() {
         routeState={collectionRouteState}
         openIntent={activeScopeOpenRequest?.intent}
         openRequestKey={activeScopeOpenRequest?.key}
+        previousOwnerKey={previousCollectionOwnerKey}
+        sessionKey={collectionSessionKey}
       />
     ) : activeSpace && documentSpaceId && activeDocument ? (
       <EntryDocumentScreen

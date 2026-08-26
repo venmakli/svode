@@ -26,6 +26,7 @@ export function useTableViewRuntime({
   view,
   schema,
   collectionPath,
+  previousCollectionPath,
   spacePath,
   projectPath,
   searchQuery,
@@ -68,6 +69,7 @@ export function useTableViewRuntime({
     loadEntries,
   } = useTableEntries({
     collectionPath,
+    previousCollectionPath,
     filters,
     includeNested: showNested,
     projectPath,

@@ -57,6 +57,7 @@ export function useCalendarViewRuntime({
   view,
   schema,
   collectionPath,
+  previousCollectionPath,
   spacePath,
   projectPath,
   searchQuery,
@@ -113,6 +114,7 @@ export function useCalendarViewRuntime({
     updateField,
   } = useCalendarEntries({
     collectionPath,
+    previousCollectionPath,
     filters,
     projectPath,
     refreshToken,

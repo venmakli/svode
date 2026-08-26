@@ -10,6 +10,7 @@ interface ScopeSurfaceState {
     requestKey: number,
     surfaceId: ScopeSurfaceId,
   ) => void;
+  retargetOwner: (fromOwnerKey: ScopeOwnerKey, ownerKey: ScopeOwnerKey) => void;
   clearSurface: (ownerKey: ScopeOwnerKey) => void;
 }
 
@@ -36,6 +37,30 @@ export const useScopeSurfaceStore = create<ScopeSurfaceState>((set) => ({
           ...state.openRequestKeyByOwnerKey,
           [ownerKey]: requestKey,
         },
+      };
+    });
+  },
+  retargetOwner: (fromOwnerKey, ownerKey) => {
+    set((state) => {
+      if (fromOwnerKey === ownerKey) return state;
+      const previousSurface = state.surfaceByOwnerKey[fromOwnerKey];
+      const previousRequest = state.openRequestKeyByOwnerKey[fromOwnerKey];
+      if (previousSurface === undefined && previousRequest === undefined) {
+        return state;
+      }
+      const nextSurfaces = { ...state.surfaceByOwnerKey };
+      const nextRequests = { ...state.openRequestKeyByOwnerKey };
+      if (previousSurface !== undefined) {
+        nextSurfaces[ownerKey] = previousSurface;
+      }
+      if (previousRequest !== undefined) {
+        nextRequests[ownerKey] = previousRequest;
+      }
+      delete nextSurfaces[fromOwnerKey];
+      delete nextRequests[fromOwnerKey];
+      return {
+        surfaceByOwnerKey: nextSurfaces,
+        openRequestKeyByOwnerKey: nextRequests,
       };
     });
   },

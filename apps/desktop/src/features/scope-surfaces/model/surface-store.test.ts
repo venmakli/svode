@@ -63,3 +63,21 @@ test("keeps separate selections through owner switching", () => {
     "collection:root:tasks": "collection",
   });
 });
+
+test("retargets the active surface session to a renamed owner", () => {
+  useScopeSurfaceStore.setState({
+    surfaceByOwnerKey: { "collection:root:tasks": "readme" },
+    openRequestKeyByOwnerKey: { "collection:root:tasks": 7 },
+  });
+
+  useScopeSurfaceStore
+    .getState()
+    .retargetOwner("collection:root:tasks", "collection:root:Задачи");
+
+  expect(useScopeSurfaceStore.getState().surfaceByOwnerKey).toEqual({
+    "collection:root:Задачи": "readme",
+  });
+  expect(useScopeSurfaceStore.getState().openRequestKeyByOwnerKey).toEqual({
+    "collection:root:Задачи": 7,
+  });
+});

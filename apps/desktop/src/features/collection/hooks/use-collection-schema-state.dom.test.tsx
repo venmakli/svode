@@ -98,17 +98,72 @@ test("collection schema state rejects late loads and setters from a previous tar
   }
 });
 
+test("collection path handoff keeps the loaded schema visible during refresh", async () => {
+  requests.length = 0;
+  const dom = new JSDOM(
+    "<!doctype html><html><body><div id=app></div></body></html>",
+    { pretendToBeVisual: true, url: "http://localhost/" },
+  );
+  const restoreGlobals = installDomGlobals(dom);
+  const root = createRoot(dom.window.document.getElementById("app")!);
+
+  try {
+    await act(async () => {
+      root.render(<Harness collectionPath="tasks" />);
+    });
+    await act(async () => {
+      requests[0]!.resolve({
+        columns: [{ name: "Status", type: "status" }],
+      });
+      await Promise.resolve();
+    });
+    expect(dom.window.document.body.textContent?.includes("Status")).toBe(
+      true,
+    );
+
+    await act(async () => {
+      root.render(
+        <Harness collectionPath="Задачи" previousCollectionPath="tasks" />,
+      );
+    });
+    expect(requests[1]?.collectionPath).toBe("Задачи");
+    expect(dom.window.document.body.textContent?.includes("Status")).toBe(
+      true,
+    );
+    expect(dom.window.document.body.textContent?.includes("loading")).toBe(
+      false,
+    );
+
+    await act(async () => {
+      requests[1]!.resolve({
+        columns: [{ name: "Status", type: "status" }],
+      });
+      await Promise.resolve();
+    });
+    expect(dom.window.document.body.textContent?.includes("Status")).toBe(
+      true,
+    );
+  } finally {
+    await act(async () => root.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 function Harness({
   collectionPath,
+  previousCollectionPath,
   captureSetter,
 }: {
   collectionPath: string;
+  previousCollectionPath?: string | null;
   captureSetter?: (
     setter: Dispatch<SetStateAction<CollectionSchema | null>>,
   ) => void;
 }) {
   const { schema, setSchema, loading } = useCollectionSchemaState({
     collectionPath,
+    previousCollectionPath,
     spacePath: "/project",
   });
   captureSetter?.(setSchema);

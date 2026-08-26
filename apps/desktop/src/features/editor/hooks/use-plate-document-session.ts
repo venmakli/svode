@@ -30,6 +30,7 @@ interface UsePlateDocumentSessionInput {
   initialEntry: Entry | null;
   initialEntrySpacePath: string | null;
   onDocumentPathChange?: (path: string) => void;
+  documentPathHandoff?: { previousPath: string; path: string } | null;
   projectPath: string | null;
   spacePath: string | null;
 }
@@ -53,6 +54,7 @@ export function usePlateDocumentSession({
   initialEntry,
   initialEntrySpacePath,
   onDocumentPathChange,
+  documentPathHandoff,
   projectPath: projectPathProp,
   spacePath: spacePathProp,
 }: UsePlateDocumentSessionInput): UsePlateDocumentSessionResult {
@@ -102,6 +104,7 @@ export function usePlateDocumentSession({
   );
 
   const isLoadingRef = useRef(false);
+  const adoptedDocumentKeyRef = useRef<string | null>(null);
   const currentPathRef = useRef<string | null>(null);
   const currentCacheKeyRef = useRef<string | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -141,10 +144,12 @@ export function usePlateDocumentSession({
   } = useEditorDocumentLoader({
     bodyOnly,
     bodyOnlyMeta,
+    adoptedDocumentKeyRef,
     cancelDebounce,
     clearUnsaved,
     currentCacheKeyRef,
     currentDocument,
+    documentPathHandoff: documentPathHandoff ?? null,
     currentDocumentSpaceId,
     currentPathRef,
     editor,
@@ -179,31 +184,30 @@ export function usePlateDocumentSession({
     handleSaveAll,
     persistRenamedDocumentBody,
     scheduleAutoSave,
-  } =
-    useEditorDocumentWriter({
-      activeRootId,
-      activeWsId,
-      bufferTimerRef,
-      cancelDebounce,
-      clearUnsaved,
-      currentCacheKeyRef,
-      currentDocument,
-      currentPathRef,
-      debounceTimerRef,
-      descriptionRef,
-      editor,
-      iconRef,
-      isDebouncePendingRef,
-      ownNoncesRef,
-      patchEntryTreeMeta,
-      projectPath,
-      reloadTreePathParents,
-      removeTreePath,
-      saveScopeTree,
-      setCurrentDocument,
-      spacePath,
-      titleRef,
-    });
+  } = useEditorDocumentWriter({
+    activeRootId,
+    activeWsId,
+    bufferTimerRef,
+    cancelDebounce,
+    clearUnsaved,
+    currentCacheKeyRef,
+    currentDocument,
+    currentPathRef,
+    debounceTimerRef,
+    descriptionRef,
+    editor,
+    iconRef,
+    isDebouncePendingRef,
+    ownNoncesRef,
+    patchEntryTreeMeta,
+    projectPath,
+    reloadTreePathParents,
+    removeTreePath,
+    saveScopeTree,
+    setCurrentDocument,
+    spacePath,
+    titleRef,
+  });
 
   useEditorPendingRename({
     pendingRename,
@@ -218,7 +222,10 @@ export function usePlateDocumentSession({
     clearUnsaved,
     markUnsaved,
     persistRenamedDocumentBody,
-    setCurrentDocument,
+    setCurrentDocument: (path) => {
+      adoptedDocumentKeyRef.current = getDocumentCacheKey(spacePath, path);
+      setCurrentDocument(path);
+    },
     patchEntryTreeMeta,
     setTitle,
   });

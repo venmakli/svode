@@ -70,6 +70,7 @@ export function ReadmeSurface() {
           current ? { ...current, path } : current,
         )
       }
+      documentPathHandoff={context.pathHandoff}
     />
   );
 }

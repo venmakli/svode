@@ -40,6 +40,7 @@ export interface BoardViewProps {
   query: UseViewQueryResult;
   schema: CollectionSchema;
   collectionPath: string;
+  previousCollectionPath?: string | null;
   spacePath: string;
   projectPath?: string | null;
   searchQuery: string;

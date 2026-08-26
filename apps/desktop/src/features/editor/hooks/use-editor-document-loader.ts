@@ -32,10 +32,12 @@ interface MutableRef<T> {
 interface UseEditorDocumentLoaderInput {
   bodyOnly: boolean;
   bodyOnlyMeta: EntryMeta | null;
+  adoptedDocumentKeyRef: MutableRef<string | null>;
   cancelDebounce: () => void;
   clearUnsaved: (scopePath: string | null | undefined, path: string) => void;
   currentCacheKeyRef: MutableRef<string | null>;
   currentDocument: string | null;
+  documentPathHandoff: { previousPath: string; path: string } | null;
   currentDocumentSpaceId: string | null;
   currentPathRef: MutableRef<string | null>;
   editor: PlateEditor | null;
@@ -79,10 +81,12 @@ function showEntryWarnings(entry: { warnings?: { kind: string }[] }) {
 export function useEditorDocumentLoader({
   bodyOnly,
   bodyOnlyMeta,
+  adoptedDocumentKeyRef,
   cancelDebounce,
   clearUnsaved,
   currentCacheKeyRef,
   currentDocument,
+  documentPathHandoff,
   currentDocumentSpaceId,
   currentPathRef,
   editor,
@@ -175,6 +179,35 @@ export function useEditorDocumentLoader({
     loadSeqRef.current = sequence;
     const startedAt = nowMs();
     const currentCacheKey = getDocumentCacheKey(spacePath, currentDocument);
+    const adoptsProvidedPath =
+      documentPathHandoff?.path === currentDocument &&
+      documentPathHandoff.previousPath === currentPathRef.current;
+    if (
+      adoptedDocumentKeyRef.current === currentCacheKey ||
+      adoptsProvidedPath
+    ) {
+      adoptedDocumentKeyRef.current = null;
+      if (adoptsProvidedPath && documentPathHandoff) {
+        const editorState = useEditorStore.getState();
+        const wasUnsaved = editorState.hasUnsaved(
+          spacePath,
+          documentPathHandoff.previousPath,
+        );
+        setCachedDocumentValue(spacePath, currentDocument, editor.children);
+        deleteCachedDocumentValue(documentPathHandoff.previousPath, spacePath);
+        editorState.clearUnsaved(spacePath, documentPathHandoff.previousPath);
+        if (wasUnsaved) editorState.markUnsaved(spacePath, currentDocument);
+      }
+      currentPathRef.current = currentDocument;
+      currentCacheKeyRef.current = currentCacheKey;
+      isLoadingRef.current = false;
+      queueMicrotask(() => {
+        if (sequence !== loadSeqRef.current) return;
+        setDocumentLoading(false);
+        setLoadedDocumentKey(currentCacheKey);
+      });
+      return;
+    }
     const prevPath = currentPathRef.current;
     const prevCacheKey = currentCacheKeyRef.current;
 
@@ -290,7 +323,9 @@ export function useEditorDocumentLoader({
     }
   }, [
     editor,
+    adoptedDocumentKeyRef,
     currentDocument,
+    documentPathHandoff,
     currentDocumentSpaceId,
     spacePath,
     initialEntryLoadKey,

@@ -51,6 +51,60 @@ test("keeps title editing local until blur commits one rename intent", async () 
   }
 });
 
+test("canonical title update keeps Enter focus in the description", async () => {
+  const dom = new JSDOM(
+    "<!doctype html><html><body><div id=app></div></body></html>",
+    { pretendToBeVisual: true, url: "http://localhost/" },
+  );
+  const restoreGlobals = installDomGlobals(dom);
+  const root = createRoot(dom.window.document.getElementById("app")!);
+  const renderTitle = (title: string) =>
+    root.render(
+      <TitleZone
+        title={title}
+        icon={null}
+        description=""
+        fallbackEmoji="📄"
+        onTitleChange={() => undefined}
+        onIconChange={() => undefined}
+        onDescriptionChange={() => undefined}
+        onBodyFocus={() => undefined}
+      />,
+    );
+
+  try {
+    await act(async () => renderTitle("Initial"));
+    const input =
+      dom.window.document.querySelector<HTMLInputElement>(
+        'input[type="text"]',
+      )!;
+
+    await act(async () => {
+      input.focus();
+      input.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          bubbles: true,
+          key: "Enter",
+        }),
+      );
+      await new Promise((resolve) =>
+        dom.window.requestAnimationFrame(() => resolve(undefined)),
+      );
+    });
+    const description =
+      dom.window.document.querySelector<HTMLTextAreaElement>("textarea")!;
+    expect(dom.window.document.activeElement).toBe(description);
+
+    await act(async () => renderTitle("Renamed"));
+    expect(dom.window.document.querySelector("textarea")).toBe(description);
+    expect(dom.window.document.activeElement).toBe(description);
+  } finally {
+    await act(async () => root.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 function setInputValue(input: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(
     input.ownerDocument.defaultView!.HTMLInputElement.prototype,

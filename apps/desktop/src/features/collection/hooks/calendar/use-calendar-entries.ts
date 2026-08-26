@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   listCollectionInfos,
@@ -14,12 +14,15 @@ import type { Entry } from "@/features/entry";
 import {
   collectionEntriesTargetKey,
   mergeStableEntriesByPath,
+  rebaseCollectionEntries,
+  rebaseCollectionPathSet,
   sameStringSet,
 } from "../../lib/entry-refresh";
 import * as m from "@/paraglide/messages.js";
 
 export function useCalendarEntries({
   collectionPath,
+  previousCollectionPath = null,
   filters,
   projectPath,
   refreshToken,
@@ -27,6 +30,7 @@ export function useCalendarEntries({
   spacePath,
 }: {
   collectionPath: string;
+  previousCollectionPath?: string | null;
   filters: QueryFilter[];
   projectPath?: string | null;
   refreshToken: number;
@@ -43,6 +47,13 @@ export function useCalendarEntries({
     projectPath,
     spacePath,
   });
+  const previousTargetKey = previousCollectionPath
+    ? collectionEntriesTargetKey({
+        collectionPath: previousCollectionPath,
+        projectPath,
+        spacePath,
+      })
+    : null;
   const targetRef = useRef(targetKey);
   targetRef.current = targetKey;
   const loadedTargetRef = useRef<string | null>(null);
@@ -54,7 +65,28 @@ export function useCalendarEntries({
     requestRef.current = request;
     const requestTarget = targetKey;
     const initialLoad = loadedTargetRef.current !== requestTarget;
-    if (initialLoad) setLoading(true);
+    const retargeting =
+      initialLoad && loadedTargetRef.current === previousTargetKey;
+    if (retargeting && previousCollectionPath) {
+      setEntries((current) =>
+        rebaseCollectionEntries(
+          current,
+          previousCollectionPath,
+          collectionPath,
+        ),
+      );
+      setNestedCollectionPaths((current) =>
+        rebaseCollectionPathSet(
+          current,
+          previousCollectionPath,
+          collectionPath,
+        ),
+      );
+      loadedTargetRef.current = requestTarget;
+      setLoading(false);
+    } else if (initialLoad) {
+      setLoading(true);
+    }
     try {
       const [baseEntries, collections] = await Promise.all([
         queryCalendarEntries({
@@ -83,9 +115,17 @@ export function useCalendarEntries({
       if (requestRef.current === request && targetRef.current === requestTarget)
         setLoading(false);
     }
-  }, [collectionPath, projectPath, queryArgs, spacePath, targetKey]);
+  }, [
+    collectionPath,
+    previousCollectionPath,
+    previousTargetKey,
+    projectPath,
+    queryArgs,
+    spacePath,
+    targetKey,
+  ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     void loadEntries();
   }, [loadEntries, refreshToken]);
 

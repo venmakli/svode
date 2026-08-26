@@ -164,9 +164,14 @@ function CollectionViewsSurfaceInternal({
   setOwnerEntry: setEntry,
   renderNested,
 }: CollectionViewsSurfaceInternalProps) {
+  const entryContext = useOptionalEntryDetailContext();
   const collectionPath = useMemo(
     () => collectionPathFor(documentPath),
     [documentPath],
+  );
+  const previousCollectionPath = collectionPathHandoffFromEntry(
+    entryContext?.pathHandoff ?? null,
+    collectionPath,
   );
   const readmePath = readmePathFor(collectionPath);
   const openDocument = useOpenEntryDocument();
@@ -185,6 +190,7 @@ function CollectionViewsSurfaceInternal({
     useCollectionSchemaState({
       spacePath,
       collectionPath,
+      previousCollectionPath,
     });
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -481,6 +487,7 @@ function CollectionViewsSurfaceInternal({
               query={query}
               schema={schema}
               collectionPath={collectionPath}
+              previousCollectionPath={previousCollectionPath}
               projectPath={projectPath}
               spacePath={spacePath}
               searchQuery={searchQuery}
@@ -564,4 +571,14 @@ function CollectionViewsSurfaceInternal({
       />
     </div>
   );
+}
+
+function collectionPathHandoffFromEntry(
+  handoff: { previousPath: string; path: string } | null,
+  collectionPath: string,
+) {
+  if (!handoff || collectionPathFor(handoff.path) !== collectionPath) {
+    return null;
+  }
+  return collectionPathFor(handoff.previousPath);
 }

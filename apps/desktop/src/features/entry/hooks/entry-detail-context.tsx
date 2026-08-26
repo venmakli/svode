@@ -20,8 +20,15 @@ import {
 import { humanizeOwnerPath, isReadmeMissingError } from "../lib/readme-state";
 import type { Entry, EntryCover } from "../model";
 import { propertyFieldSavePolicy } from "../property-field-save";
+import { useRetargetEntryDocument } from "./use-entry-selection";
+import { handleError } from "../lib/errors";
 
 export type ReadmeStatus = "loading" | "ready" | "missing" | "error";
+
+export interface EntryPathHandoff {
+  previousPath: string;
+  path: string;
+}
 
 export interface EntryDetailContextValue {
   entry: Entry | null;
@@ -44,6 +51,7 @@ export interface EntryDetailContextValue {
   spaceId: string;
   readmePath: string;
   onOpenPath: (path: string, spaceId?: string | null) => void;
+  pathHandoff: EntryPathHandoff | null;
 }
 
 const EntryDetailContext = createContext<EntryDetailContextValue | null>(null);
@@ -79,13 +87,15 @@ export function EntryDetailProvider({
   );
   const [status, setStatus] = useState<ReadmeStatus>("loading");
   const [error, setError] = useState<string | null>(null);
+  const [pathHandoff, setPathHandoff] = useState<EntryPathHandoff | null>(null);
   const reloadSequenceRef = useRef(0);
+  const adoptedReadmePathRef = useRef<string | null>(null);
+  const retargetDocument = useRetargetEntryDocument();
   const {
     patchEntryTreeMeta,
     reloadTreeParent,
     reloadTreePathParent,
     reloadTreePathParents,
-    removeTreePath,
   } = useSpaceTreeSync();
   const applyEntryUpdate = useCallback(
     (entryPath: string, update: (current: Entry) => Entry) => {
@@ -100,7 +110,8 @@ export function EntryDetailProvider({
     projectPath,
     applyEntryUpdate,
     onSaved: (updated, context) => {
-      if (isEntryTreeMetaField(context.field)) {
+      const pathChanged = updated.path !== context.previousEntry.path;
+      if (isEntryTreeMetaField(context.field) && !pathChanged) {
         patchEntryTreeMeta(
           spaceId,
           updated.path,
@@ -111,14 +122,15 @@ export function EntryDetailProvider({
       }
       if (
         context.field === "title" &&
-        updated.path !== context.previousEntry.path
+        pathChanged
       ) {
-        removeTreePath(spaceId, context.previousEntry.path);
-        void reloadTreePathParents(spaceId, [
-          context.previousEntry.path,
-          updated.path,
-        ]);
-        onOpenPath(updated.path, spaceId);
+        const previousPath = context.previousEntry.path;
+        adoptedReadmePathRef.current = updated.path;
+        setPathHandoff({ previousPath, path: updated.path });
+        retargetDocument(previousPath, updated.path, spaceId);
+        void reloadTreePathParents(spaceId, [previousPath, updated.path]).catch(
+          handleError,
+        );
       }
     },
   });
@@ -159,11 +171,17 @@ export function EntryDetailProvider({
   }, [loadSchema, readmePath, spacePath]);
 
   useEffect(() => {
+    if (adoptedReadmePathRef.current === readmePath) {
+      adoptedReadmePathRef.current = null;
+      return () => {
+        reloadSequenceRef.current += 1;
+      };
+    }
     queueMicrotask(() => void reload());
     return () => {
       reloadSequenceRef.current += 1;
     };
-  }, [reload]);
+  }, [readmePath, reload]);
 
   const createReadme = useCallback(async () => {
     try {
@@ -238,6 +256,7 @@ export function EntryDetailProvider({
       spaceId,
       readmePath,
       onOpenPath,
+      pathHandoff,
     }),
     [
       createReadme,
@@ -245,6 +264,7 @@ export function EntryDetailProvider({
       error,
       fallbackIcon,
       onOpenPath,
+      pathHandoff,
       projectPath,
       readmePath,
       reload,

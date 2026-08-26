@@ -28,6 +28,7 @@ export function useBoardViewRuntime({
   query,
   schema,
   collectionPath,
+  previousCollectionPath,
   spacePath,
   projectPath,
   searchQuery,
@@ -55,6 +56,7 @@ export function useBoardViewRuntime({
     loadEntries,
   } = useBoardEntries({
     collectionPath,
+    previousCollectionPath,
     filters,
     projectPath,
     refreshToken,

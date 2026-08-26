@@ -40,6 +40,8 @@ interface ScopeSurfacePageProps {
   headerActions?: ReactNode;
   openIntent?: ScopeOpenIntent;
   openRequestKey?: number;
+  previousOwnerKey?: ScopeOwnerRef["ownerKey"];
+  sessionKey?: string | number;
   compactSurfaceState?: CollectionPeekSurfaceState;
   fallbackTitle?: string;
   fallbackIcon?: string | null;
@@ -52,6 +54,8 @@ export function ScopeSurfacePage({
   headerActions,
   openIntent,
   openRequestKey,
+  previousOwnerKey,
+  sessionKey,
   compactSurfaceState,
   fallbackTitle,
   fallbackIcon,
@@ -160,6 +164,8 @@ export function ScopeSurfacePage({
         }
         openIntent={openIntent}
         openRequestKey={openRequestKey}
+        previousOwnerKey={previousOwnerKey}
+        sessionKey={sessionKey}
         compactSurfaceId={
           compactSurfaceState?.surfaceId ?? localCompactSurfaceId
         }

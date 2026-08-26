@@ -27,6 +27,7 @@ interface PlateDocumentEditorProps {
   initialEntry?: Entry | null;
   initialEntrySpacePath?: string | null;
   onDocumentPathChange?: (path: string) => void;
+  documentPathHandoff?: { previousPath: string; path: string } | null;
 }
 
 export function PlateDocumentEditor({
@@ -40,6 +41,7 @@ export function PlateDocumentEditor({
   initialEntry = null,
   initialEntrySpacePath = null,
   onDocumentPathChange,
+  documentPathHandoff = null,
 }: PlateDocumentEditorProps) {
   const editor = usePlateEditor({
     plugins: EditorKit,
@@ -62,6 +64,7 @@ export function PlateDocumentEditor({
     initialEntry,
     initialEntrySpacePath,
     onDocumentPathChange,
+    documentPathHandoff,
     projectPath: projectPathProp,
     spacePath: spacePathProp,
   });

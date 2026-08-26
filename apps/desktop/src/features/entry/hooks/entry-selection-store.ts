@@ -17,28 +17,39 @@ export interface ScopeOpenRequest {
   intent: ScopeOpenIntent;
 }
 
+export interface EntryPathRetarget {
+  key: number;
+  fromPath: string;
+  path: string;
+  spaceId: string | null;
+}
+
 export interface EntrySelectionState {
   activeDocument: string | null;
   activeDocumentSpaceId: string | null;
   activeRevealRequest: EntryRevealRequest | null;
   activeScopeOpenRequest: ScopeOpenRequest | null;
+  activePathRetarget: EntryPathRetarget | null;
   openDocument: (
     path: string,
     spaceId?: string,
     options?: OpenEntryDocumentOptions,
   ) => void;
   openScopeHome: (spaceId?: string) => void;
+  retargetDocument: (fromPath: string, path: string, spaceId?: string) => void;
   closeDocument: () => void;
 }
 
 let nextRevealRequestKey = 1;
 let nextScopeOpenRequestKey = 1;
+let nextPathRetargetKey = 1;
 
 export const useEntrySelectionStore = create<EntrySelectionState>((set) => ({
   activeDocument: null,
   activeDocumentSpaceId: null,
   activeRevealRequest: null,
   activeScopeOpenRequest: null,
+  activePathRetarget: null,
 
   openDocument: (path, spaceId?, options?) =>
     set((state) => {
@@ -63,6 +74,7 @@ export const useEntrySelectionStore = create<EntrySelectionState>((set) => ({
           key: nextScopeOpenRequestKey++,
           intent: options?.scopeOpenIntent ?? { kind: "default" },
         },
+        activePathRetarget: null,
       };
     }),
 
@@ -83,6 +95,35 @@ export const useEntrySelectionStore = create<EntrySelectionState>((set) => ({
           key: nextScopeOpenRequestKey++,
           intent: { kind: "default" },
         },
+        activePathRetarget: null,
+      };
+    }),
+
+  retargetDocument: (fromPath, path, spaceId?) =>
+    set((state) => {
+      const targetSpaceId = spaceId ?? state.activeDocumentSpaceId;
+      if (
+        state.activeDocument !== fromPath ||
+        state.activeDocumentSpaceId !== targetSpaceId ||
+        fromPath === path
+      ) {
+        return state;
+      }
+      return {
+        activeDocument: path,
+        activeDocumentSpaceId: targetSpaceId,
+        activeRevealRequest:
+          state.activeRevealRequest?.path === fromPath &&
+          state.activeRevealRequest.spaceId === targetSpaceId
+            ? { ...state.activeRevealRequest, path }
+            : state.activeRevealRequest,
+        activeScopeOpenRequest: state.activeScopeOpenRequest,
+        activePathRetarget: {
+          key: nextPathRetargetKey++,
+          fromPath,
+          path,
+          spaceId: targetSpaceId ?? null,
+        },
       };
     }),
 
@@ -92,5 +133,6 @@ export const useEntrySelectionStore = create<EntrySelectionState>((set) => ({
       activeDocumentSpaceId: null,
       activeRevealRequest: null,
       activeScopeOpenRequest: null,
+      activePathRetarget: null,
     }),
 }));

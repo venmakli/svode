@@ -41,6 +41,50 @@ export function sameStringSet(left: Set<string>, right: Set<string>) {
   return true;
 }
 
+export function rebaseCollectionEntries(
+  entries: Entry[],
+  previousCollectionPath: string,
+  collectionPath: string,
+) {
+  let changed = false;
+  const next = entries.map((entry) => {
+    const path = rebaseCollectionPath(
+      entry.path,
+      previousCollectionPath,
+      collectionPath,
+    );
+    if (path === entry.path) return entry;
+    changed = true;
+    return { ...entry, path };
+  });
+  return changed ? next : entries;
+}
+
+export function rebaseCollectionPathSet(
+  paths: Set<string>,
+  previousCollectionPath: string,
+  collectionPath: string,
+) {
+  const next = new Set(
+    Array.from(paths, (path) =>
+      rebaseCollectionPath(path, previousCollectionPath, collectionPath),
+    ),
+  );
+  return sameStringSet(paths, next) ? paths : next;
+}
+
+export function rebaseCollectionPath(
+  path: string,
+  previousCollectionPath: string,
+  collectionPath: string,
+) {
+  if (path === previousCollectionPath) return collectionPath;
+  const prefix = `${previousCollectionPath}/`;
+  return path.startsWith(prefix)
+    ? `${collectionPath}/${path.slice(prefix.length)}`
+    : path;
+}
+
 function sameEntry(left: Entry, right: Entry) {
   return (
     left.path === right.path &&

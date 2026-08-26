@@ -10,6 +10,7 @@ export function useActiveEntrySelection(): EntrySelectionSnapshot {
         activeDocumentSpaceId: state.activeDocumentSpaceId,
         activeRevealRequest: state.activeRevealRequest,
         activeScopeOpenRequest: state.activeScopeOpenRequest,
+        activePathRetarget: state.activePathRetarget,
       }),
     ),
   );
@@ -29,6 +30,10 @@ export function useOpenEntryDocument() {
 
 export function useOpenEntryScopeHome() {
   return useEntrySelectionStore((state) => state.openScopeHome);
+}
+
+export function useRetargetEntryDocument() {
+  return useEntrySelectionStore((state) => state.retargetDocument);
 }
 
 export function useCloseEntryDocument() {

@@ -23,6 +23,8 @@ interface ScopeSurfaceHostProps {
   header: ReactNode;
   openIntent?: ScopeOpenIntent;
   openRequestKey?: number;
+  previousOwnerKey?: ScopeOwnerRef["ownerKey"];
+  sessionKey?: string | number;
   compactSurfaceId?: ScopeSurfaceId;
   onCompactSurfaceIdChange?: (surfaceId: ScopeSurfaceId) => void;
 }
@@ -34,6 +36,8 @@ export function ScopeSurfaceHost({
   header,
   openIntent,
   openRequestKey,
+  previousOwnerKey,
+  sessionKey,
   compactSurfaceId,
   onCompactSurfaceIdChange,
 }: ScopeSurfaceHostProps) {
@@ -46,25 +50,37 @@ export function ScopeSurfaceHost({
   const storedSurfaceId = useScopeSurfaceStore(
     (state) => state.surfaceByOwnerKey[owner.ownerKey],
   );
+  const previousStoredSurfaceId = useScopeSurfaceStore((state) =>
+    previousOwnerKey ? state.surfaceByOwnerKey[previousOwnerKey] : undefined,
+  );
   const appliedOpenRequestKey = useScopeSurfaceStore(
     (state) => state.openRequestKeyByOwnerKey[owner.ownerKey],
+  );
+  const previousAppliedOpenRequestKey = useScopeSurfaceStore((state) =>
+    previousOwnerKey
+      ? state.openRequestKeyByOwnerKey[previousOwnerKey]
+      : undefined,
   );
   const setStoredSurface = useScopeSurfaceStore((state) => state.setSurface);
   const applyOpenRequest = useScopeSurfaceStore(
     (state) => state.applyOpenRequest,
   );
+  const retargetOwner = useScopeSurfaceStore((state) => state.retargetOwner);
+  const effectiveStoredSurfaceId = storedSurfaceId ?? previousStoredSurfaceId;
+  const effectiveAppliedOpenRequestKey =
+    appliedOpenRequestKey ?? previousAppliedOpenRequestKey;
   const defaultSurfaceId = resolveDefaultScopeSurface(owner);
   const hasPendingOpenRequest =
     presentation === "full" &&
     openRequestKey !== undefined &&
-    openRequestKey !== appliedOpenRequestKey;
+    openRequestKey !== effectiveAppliedOpenRequestKey;
   const intentSurfaceId =
     openIntent?.kind === "target" ? openIntent.surfaceId : defaultSurfaceId;
   const requestedSurfaceId =
     presentation === "full"
       ? hasPendingOpenRequest
         ? intentSurfaceId
-        : (storedSurfaceId ?? defaultSurfaceId)
+        : (effectiveStoredSurfaceId ?? defaultSurfaceId)
       : compactSurfaceId;
   const fallbackSurfaceId =
     presentation === "full" ? defaultSurfaceId : "readme";
@@ -73,6 +89,11 @@ export function ScopeSurfaceHost({
     requestedSurfaceId,
     fallbackSurfaceId,
   );
+
+  useEffect(() => {
+    if (!previousOwnerKey || previousOwnerKey === owner.ownerKey) return;
+    retargetOwner(previousOwnerKey, owner.ownerKey);
+  }, [owner.ownerKey, previousOwnerKey, retargetOwner]);
 
   useEffect(() => {
     if (
@@ -98,7 +119,7 @@ export function ScopeSurfaceHost({
       presentation === "full" &&
       activeSurface &&
       !hasPendingOpenRequest &&
-      storedSurfaceId !== activeSurface.id
+      effectiveStoredSurfaceId !== activeSurface.id
     ) {
       setStoredSurface(owner.ownerKey, activeSurface.id);
     }
@@ -108,7 +129,7 @@ export function ScopeSurfaceHost({
     owner.ownerKey,
     presentation,
     setStoredSurface,
-    storedSurfaceId,
+    effectiveStoredSurfaceId,
   ]);
 
   if (!activeSurface) return <>{header}</>;
@@ -136,7 +157,7 @@ export function ScopeSurfaceHost({
         }}
       >
         <ScopeSurfaceErrorBoundary
-          key={`${owner.ownerKey}:${activeSurface.id}`}
+          key={`${sessionKey ?? owner.ownerKey}:${activeSurface.id}`}
         >
           {activeSurface.render({ owner, presentation })}
         </ScopeSurfaceErrorBoundary>

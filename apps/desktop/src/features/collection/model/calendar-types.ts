@@ -42,6 +42,7 @@ export interface CalendarViewProps {
   view: CollectionView;
   schema: CollectionSchema;
   collectionPath: string;
+  previousCollectionPath?: string | null;
   spacePath: string;
   projectPath?: string | null;
   searchQuery: string;

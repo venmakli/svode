@@ -23,6 +23,7 @@ interface CollectionViewContentProps {
   query: UseViewQueryResult;
   schema: CollectionSchema;
   collectionPath: string;
+  previousCollectionPath?: string | null;
   projectPath?: string | null;
   spacePath: string;
   searchQuery: string;
@@ -56,6 +57,7 @@ export function CollectionViewContent({
   query,
   schema,
   collectionPath,
+  previousCollectionPath,
   projectPath,
   spacePath,
   searchQuery,
@@ -82,6 +84,7 @@ export function CollectionViewContent({
     view,
     schema,
     collectionPath,
+    previousCollectionPath,
     projectPath,
     spacePath,
     searchQuery,

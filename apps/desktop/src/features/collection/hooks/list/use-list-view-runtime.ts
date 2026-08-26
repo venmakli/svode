@@ -19,6 +19,7 @@ export function useListViewRuntime({
   view,
   schema,
   collectionPath,
+  previousCollectionPath,
   spacePath,
   projectPath,
   searchQuery,
@@ -43,6 +44,7 @@ export function useListViewRuntime({
   const { entries, setEntries, nestedCollectionPaths, loading, loadEntries } =
     useListEntries({
       collectionPath,
+      previousCollectionPath,
       filters,
       projectPath,
       refreshToken,

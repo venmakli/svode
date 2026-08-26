@@ -13,6 +13,7 @@ export interface ListViewProps {
   query: UseViewQueryResult;
   schema: CollectionSchema;
   collectionPath: string;
+  previousCollectionPath?: string | null;
   spacePath: string;
   projectPath?: string | null;
   searchQuery: string;

@@ -23,6 +23,7 @@ export function useGalleryViewRuntime({
   view,
   schema,
   collectionPath,
+  previousCollectionPath,
   spacePath,
   projectPath,
   searchQuery,
@@ -47,6 +48,7 @@ export function useGalleryViewRuntime({
   const { entries, setEntries, nestedCollectionPaths, loading, loadEntries } =
     useGalleryEntries({
       collectionPath,
+      previousCollectionPath,
       filters,
       projectPath,
       refreshToken,

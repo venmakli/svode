@@ -10,7 +10,11 @@ import {
   readEntry,
 } from "../entry-api";
 import { isEntryTreeMetaField, useEntryFieldSave } from "../field-save";
-import { useOpenEntryDocument, useOpenEntryScopeHome } from "../selection";
+import {
+  useOpenEntryDocument,
+  useOpenEntryScopeHome,
+  useRetargetEntryDocument,
+} from "../selection";
 import type { Entry, EntryCover, EntryDetailState } from "../model";
 import { PropertyPanel } from "@/features/properties/panel";
 import { normalizeSchema } from "@/features/properties";
@@ -56,6 +60,7 @@ export function EntryDocumentScreen({
     [openDocument, spaceId],
   );
   const openScopeHome = useOpenEntryScopeHome();
+  const retargetDocument = useRetargetEntryDocument();
   const patchEntryTreeMeta = useSpaceTreeSync(
     (state) => state.patchEntryTreeMeta,
   );
@@ -75,6 +80,7 @@ export function EntryDocumentScreen({
   const [detailState, setDetailState] = useState<EntryDetailState | null>(null);
   const [deleteEntry, setDeleteEntry] = useState<Entry | null>(null);
   const reloadSeqRef = useRef(0);
+  const adoptedDocumentTargetKeyRef = useRef<string | null>(null);
   const applyEntryUpdate = useCallback(
     (entryPath: string, update: (entry: Entry) => Entry) => {
       setEntry((current) =>
@@ -178,6 +184,12 @@ export function EntryDocumentScreen({
   }, [documentPath, documentTargetKey, openScopeHome, spaceId, spacePath]);
 
   useEffect(() => {
+    if (adoptedDocumentTargetKeyRef.current === documentTargetKey) {
+      adoptedDocumentTargetKeyRef.current = null;
+      return () => {
+        reloadSeqRef.current += 1;
+      };
+    }
     let cancelled = false;
     queueMicrotask(() => {
       if (!cancelled) void reload().catch(handleError);
@@ -185,7 +197,7 @@ export function EntryDocumentScreen({
     return () => {
       cancelled = true;
     };
-  }, [reload]);
+  }, [documentTargetKey, reload]);
 
   async function updateCover(cover: EntryCover | null) {
     if (!currentEntry) return;
@@ -313,9 +325,13 @@ export function EntryDocumentScreen({
         initialEntry={currentEntry}
         initialEntrySpacePath={spacePath}
         onDocumentPathChange={(path) => {
+          adoptedDocumentTargetKeyRef.current = getDocumentTargetKey(
+            spacePath,
+            path,
+          );
           setEntry((current) => (current ? { ...current, path } : current));
           setLoadedEntryKey(getDocumentTargetKey(spacePath, path));
-          openDocument(path, spaceId);
+          retargetDocument(documentPath, path, spaceId);
         }}
       />
       {showSubpages ? (
