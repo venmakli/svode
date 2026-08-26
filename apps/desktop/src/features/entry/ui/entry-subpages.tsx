@@ -21,15 +21,13 @@ import {
   saveEntryTreeOrderNames,
 } from "../entry-api";
 import { useOpenEntryDocument } from "../selection";
-import {
-  getSpaceTreeSyncSnapshot,
-  useSpaceTreeSync,
-} from "@/features/space";
+import { getSpaceTreeSyncSnapshot, useSpaceTreeSync } from "@/features/space";
 import { detailPageSectionClassName } from "@/shared/ui/page-layout";
 import type { TreeNode } from "@/features/space";
 import { cn } from "@/shared/lib/utils";
 import { normalizeEntryPath } from "../lib/path";
 import { handleError } from "../lib/errors";
+import { publishEntryFilenameWarnings } from "../lib/filename-warning";
 import * as m from "@/paraglide/messages.js";
 
 interface EntrySubpagesProps {
@@ -96,6 +94,7 @@ export function EntrySubpages({
       contextualDefaults: null,
       projectPath: projectPath ?? null,
     });
+    publishEntryFilenameWarnings(created.warnings);
     await loadTreeChildren(spaceId, folderPath, { force: true });
     openDocument(created.path, spaceId);
   }

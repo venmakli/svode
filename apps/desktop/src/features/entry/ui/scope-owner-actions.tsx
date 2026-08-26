@@ -4,6 +4,7 @@ import { deleteEntry, duplicateEntry } from "../entry-api";
 import { useOpenEntryDocument } from "../selection";
 import { useEntryDetailContext } from "../hooks/entry-detail-context";
 import { handleError } from "../lib/errors";
+import { publishEntryFilenameWarnings } from "../lib/filename-warning";
 import type { Entry } from "../model";
 import { EntryDeleteDialog } from "./entry-delete-dialog";
 import { EntryDetailActions } from "./entry-detail-actions";
@@ -23,6 +24,7 @@ export function ScopeOwnerActions() {
       filePath: entry.path,
       projectPath: context.projectPath,
     });
+    publishEntryFilenameWarnings(duplicated.warnings);
     await reloadTreePathParent(context.spaceId, duplicated.path);
     openDocument(duplicated.path, context.spaceId);
   }

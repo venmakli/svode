@@ -1,11 +1,8 @@
-import {
-  convertToCollection,
-  createFolder,
-} from "@/platform/collections/collections-api";
+import { retargetEntryFilenameWarnings, type Entry } from "@/features/entry";
+import { createEntry } from "@/features/entry/entry-api";
+import { convertToCollection } from "@/platform/collections/collections-api";
 
-export interface CollectionEntry {
-  path: string;
-}
+export type CollectionEntry = Entry;
 
 interface CreateCollectionArgs {
   spacePath: string;
@@ -20,18 +17,27 @@ export async function createCollection({
   title,
   projectPath,
 }: CreateCollectionArgs): Promise<CollectionEntry> {
-  const folderPath = await createFolder({
+  const entry = await createEntry({
     spacePath,
     parentPath,
-    name: title,
+    title,
+    allocateUniqueTitle: true,
+    contextualDefaults: null,
     projectPath: projectPath ?? null,
   });
 
   const conversion = await convertToCollection({
     spacePath,
-    path: folderPath,
+    path: entry.path,
     projectPath: projectPath ?? null,
   });
 
-  return { path: conversion.entry.path };
+  return {
+    ...entry,
+    path: conversion.entry.path,
+    warnings: retargetEntryFilenameWarnings(
+      entry.warnings,
+      conversion.entry.path,
+    ),
+  };
 }

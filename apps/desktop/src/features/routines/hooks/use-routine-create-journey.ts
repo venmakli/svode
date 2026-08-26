@@ -21,6 +21,7 @@ import type {
   RoutineDiagnostic,
   RoutineRow,
 } from "../model/types";
+import { routineMutationWarningDescription } from "../lib/routine-mutation-warning";
 import { routineErrorMessage } from "./use-routine-catalog";
 
 interface RoutineCreateSession {
@@ -208,6 +209,6 @@ async function reconcileUncertainCreate(
 function publishWarnings(warnings: readonly RoutineDiagnostic[]) {
   if (warnings.length === 0) return;
   toast.warning(m.routines_create_applied_warning(), {
-    description: warnings.map((warning) => warning.message).join("\n"),
+    description: warnings.map(routineMutationWarningDescription).join("\n"),
   });
 }

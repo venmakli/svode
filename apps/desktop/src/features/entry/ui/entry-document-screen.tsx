@@ -27,6 +27,7 @@ import {
 import { EntrySubpages } from "./entry-subpages";
 import { EntrySystemFields } from "./entry-system-fields";
 import { handleError } from "../lib/errors";
+import { publishEntryFilenameWarnings } from "../lib/filename-warning";
 import { propertyFieldSavePolicy } from "../property-field-save";
 import { useEntryDocumentName } from "../hooks/use-entry-document-name";
 
@@ -192,6 +193,7 @@ export function EntryDocumentScreen({
       filePath: entryToDuplicate.path,
       projectPath: projectPath ?? null,
     });
+    publishEntryFilenameWarnings(duplicated.warnings);
     await reloadTreePathParent(spaceId, duplicated.path);
     openDocument(duplicated.path, spaceId);
   }

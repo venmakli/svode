@@ -27,6 +27,7 @@ export interface EntryMeta {
 export interface EntryWarning {
   kind: string;
   message: string;
+  path?: string | null;
 }
 
 export interface DocumentNameConflict {
@@ -53,6 +54,7 @@ export interface WriteResult {
   modifiedFiles: string[];
   modifiedSources?: { spaceId: string | null; path: string }[];
   writeNonce: string;
+  warnings: EntryWarning[];
 }
 
 export interface LinkValidationResult {

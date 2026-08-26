@@ -6,8 +6,8 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
-use crate::files::entry::slugify;
 use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
+use crate::files::{entry::slugify, filename};
 
 /// Byte span of a markdown link `[text](url)` in the source content.
 #[derive(Debug, Clone, Serialize)]
@@ -578,9 +578,9 @@ impl BacklinkIndex {
             }
         };
 
-        // When caller provides a new title, auto-update link text whose slug
-        // matches the old filename stem. Preserves intentional custom texts
-        // like `[click here]`.
+        // When caller provides a new title, auto-update link text whose current
+        // or legacy projection matches the old filename stem. Preserves
+        // intentional custom texts like `[click here]`.
         let old_stem = link_stem_of(old_path);
         let text_replace = new_title.map(|t| (old_stem.as_str(), t));
 
@@ -669,9 +669,9 @@ impl BacklinkIndex {
 
 /// Replace links that resolve to `old_path` from this source location. When
 /// `text_replace` is Some((old_stem, new_text)), link text is also replaced
-/// with new_text for links whose text slugifies to old_stem (i.e. the text was
-/// derived from the target's previous title). Custom texts like `[click here]`
-/// stay intact.
+/// with new_text for links whose text projects to old_stem (i.e. the text was
+/// derived from the target's previous title). The legacy slug comparison keeps
+/// backlinks compatible with files created before the Unicode filename policy.
 fn replace_target_links(
     content: &str,
     source_rel_path: &str,
@@ -700,7 +700,10 @@ fn replacement_label(
 ) -> Option<String> {
     let text = &content[link.label_start..link.label_end];
     text_replace
-        .filter(|(old_stem, _)| !old_stem.is_empty() && slugify(text) == *old_stem)
+        .filter(|(old_stem, _)| {
+            !old_stem.is_empty()
+                && (filename::project(text).stem == *old_stem || slugify(text) == *old_stem)
+        })
         .map(|(_, new_text)| new_text.to_string())
 }
 

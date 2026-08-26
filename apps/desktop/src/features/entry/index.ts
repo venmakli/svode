@@ -16,3 +16,7 @@ export {
   isTextLikePropertyType,
   propertyFieldSavePolicy,
 } from "./property-field-save";
+export {
+  publishEntryFilenameWarnings,
+  retargetEntryFilenameWarnings,
+} from "./lib/filename-warning";

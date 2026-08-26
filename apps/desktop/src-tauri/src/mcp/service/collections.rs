@@ -185,6 +185,7 @@ pub(super) async fn create_entry(
     }
     ensure_mutation_paths_were_authorized(&relation_targets)?;
     let mut created = entry::create_with_contextual_defaults(&space, parent, &args.title, None)?;
+    let filename_warnings = std::mem::take(&mut created.warnings);
     if let Some(fields) = fields {
         for (field, value) in fields {
             created = entry::update_field(
@@ -223,6 +224,7 @@ pub(super) async fn create_entry(
         }
         created.body = body;
     }
+    created.warnings.extend(filename_warnings);
     Ok(ToolCallResult::ok(
         format!("Created entry {}.", created.path),
         json!({ "entry": created, "changedPaths": [created.path] }),

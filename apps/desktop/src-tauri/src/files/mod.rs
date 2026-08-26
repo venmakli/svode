@@ -1,5 +1,6 @@
 pub mod backlinks;
 pub mod entry;
+pub(crate) mod filename;
 pub mod frontmatter;
 pub(crate) mod link_fix;
 pub(crate) mod naming;

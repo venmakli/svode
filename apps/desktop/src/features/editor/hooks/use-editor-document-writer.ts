@@ -3,7 +3,10 @@ import { MarkdownPlugin } from "@platejs/markdown";
 import type { PlateEditor } from "platejs/react";
 import { toast } from "sonner";
 
-import type { WriteResult } from "@/features/entry";
+import {
+  publishEntryFilenameWarnings,
+  type WriteResult,
+} from "@/features/entry";
 import { writeEntry } from "@/features/entry/entry-api";
 import {
   commitFileAndMaybeSync,
@@ -135,6 +138,9 @@ export function useEditorDocumentWriter({
 
       if (result.writeNonce) {
         ownNoncesRef.current.add(result.writeNonce);
+      }
+      if (!skipRename) {
+        publishEntryFilenameWarnings(result.warnings);
       }
 
       return result;

@@ -14,6 +14,7 @@ use super::model::{
 use super::{authority, cache, parser};
 use crate::AppError;
 use crate::agent_actors;
+use crate::files::filename::{self, FilenameProjection};
 use crate::git;
 use crate::git::access::{
     RepositoryAccessState, access_store_path, ensure_mutation_paths_were_authorized,
@@ -364,14 +365,36 @@ pub(crate) async fn create_managed(
 
     let write_owner = owner.clone();
     let write_name = name.to_string();
-    let filename = tauri::async_runtime::spawn_blocking(move || {
-        create_definition_file(&write_owner, &write_name, &content)
-    })
-    .await
-    .map_err(blocking_task_error)??;
+    let (filename, filename_projection, allocated_suffix) =
+        tauri::async_runtime::spawn_blocking(move || {
+            create_definition_file(&write_owner, &write_name, &content)
+        })
+        .await
+        .map_err(blocking_task_error)??;
     let changed_path = definition_path(&owner, &filename);
-    let (snapshot, warnings) =
+    let (snapshot, mut warnings) =
         projection_after_write(index_state, terminal_manager, &owner, &changed_path).await?;
+    if filename_projection.is_lossy() {
+        warnings.push(
+            RoutineDiagnostic::new(
+                "routine_filename_projection",
+                format!(
+                    "the Routine filename was safely projected ({})",
+                    filename_projection.reason_codes()
+                ),
+            )
+            .path(changed_path.clone()),
+        );
+    }
+    if allocated_suffix {
+        warnings.push(
+            RoutineDiagnostic::new(
+                "routine_filename_collision",
+                "the desired Routine filename was occupied, so the first available numeric suffix was used",
+            )
+            .path(changed_path.clone()),
+        );
+    }
     let Some(row) = snapshot
         .routines
         .iter()
@@ -450,7 +473,8 @@ pub(crate) async fn update_managed(
     };
     let old_filename = row.filename.clone();
     let old_path = row.path.clone();
-    let target_filename = update_target_filename(&old_filename, &name, policy);
+    let (target_filename, filename_projection) =
+        update_target_filename(&old_filename, &name, policy);
     let directory = owner.routines_dir();
     let write_fingerprint = expected_fingerprint.clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
@@ -491,13 +515,27 @@ pub(crate) async fn update_managed(
     let current_path = definition_path(&owner, &current_filename);
     let (snapshot, mut warnings) =
         projection_after_write(index_state, terminal_manager, &owner, &current_path).await?;
-    if let Some(target_path) = collision_target {
+    if let Some(projection) = filename_projection
+        && projection.is_lossy()
+    {
+        warnings.push(
+            RoutineDiagnostic::new(
+                "routine_filename_projection",
+                format!(
+                    "the Routine filename was safely projected ({})",
+                    projection.reason_codes()
+                ),
+            )
+            .path(current_path.clone()),
+        );
+    }
+    if collision_target.is_some() {
         warnings.push(
             RoutineDiagnostic::new(
                 "routine_rename_collision",
                 "the Routine was saved, but its desired filename is already used by another Routine",
             )
-            .path(target_path),
+            .path(current_path.clone()),
         );
     }
     changed_paths.dedup();
@@ -524,11 +562,15 @@ fn update_target_filename(
     current_filename: &str,
     definition_name: &str,
     policy: RoutineMutationPolicy,
-) -> String {
+) -> (String, Option<FilenameProjection>) {
     if policy.materialize_filename {
-        format!("{}.md", crate::files::entry::slugify(definition_name))
+        let projection = filename::project(definition_name);
+        (
+            filename::component_name(&projection.stem, Some("md")),
+            Some(projection),
+        )
     } else {
-        current_filename.to_string()
+        (current_filename.to_string(), None)
     }
 }
 
@@ -829,21 +871,21 @@ fn create_definition_file(
     owner: &ResolvedRoutineOwner,
     name: &str,
     content: &[u8],
-) -> Result<String, AppError> {
+) -> Result<(String, FilenameProjection, bool), AppError> {
     let directory = owner.routines_dir();
     ensure_routines_directory(&directory)?;
-    let slug = crate::files::entry::slugify(name);
-    for suffix in 0..=100 {
-        let filename = if suffix == 0 {
-            format!("{slug}.md")
-        } else {
-            format!("{slug}-{suffix}.md")
-        };
+    let projection = filename::project(name);
+    for suffix in 0..=10_000 {
+        let candidate = projection.with_numeric_suffix(suffix);
+        let filename = filename::component_name(&candidate.stem, Some("md"));
+        if filename::component_conflicts_portably(&directory, &filename, None)? {
+            continue;
+        }
         let path = directory.join(&filename);
         match write_new_file(&path, content) {
             Ok(()) => {
                 sync_directory(&directory)?;
-                return Ok(filename);
+                return Ok((filename, candidate, suffix > 0));
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(AppError::Io(error)),
@@ -932,8 +974,30 @@ fn update_definition_file_cas(
         };
     }
 
+    if filename::portable_component_key(current_filename)
+        == filename::portable_component_key(target_filename)
+    {
+        return match atomic_replace_cas(&current_path, expected_fingerprint, bytes)? {
+            FileCasOutcome::Applied => {
+                let intermediate = directory.join(format!(".routine-{}.rename", ulid::Ulid::new()));
+                fs::rename(&current_path, &intermediate)?;
+                let target_path = directory.join(target_filename);
+                if let Err(error) = fs::rename(&intermediate, &target_path) {
+                    let _ = fs::rename(&intermediate, &current_path);
+                    return Err(AppError::Io(error));
+                }
+                sync_directory(directory)?;
+                Ok(DefinitionUpdateOutcome::Applied {
+                    filename: target_filename.to_string(),
+                    renamed: true,
+                })
+            }
+            FileCasOutcome::Stale(current) => Ok(DefinitionUpdateOutcome::Stale(current)),
+        };
+    }
+
     let target_path = directory.join(target_filename);
-    if target_path.exists() {
+    if filename::component_conflicts_portably(directory, target_filename, Some(current_filename))? {
         return match atomic_replace_cas(&current_path, expected_fingerprint, bytes)? {
             FileCasOutcome::Applied => Ok(DefinitionUpdateOutcome::Collision {
                 filename: current_filename.to_string(),
@@ -1438,7 +1502,8 @@ mod tests {
                 "current-name.md",
                 "Another Routine",
                 RoutineMutationPolicy::desktop(false),
-            ),
+            )
+            .0,
             "current-name.md"
         );
         assert_eq!(
@@ -1446,8 +1511,9 @@ mod tests {
                 "current-name.md",
                 "Another Routine",
                 RoutineMutationPolicy::desktop(true),
-            ),
-            "another-routine.md"
+            )
+            .0,
+            "Another Routine.md"
         );
     }
 
@@ -1591,8 +1657,10 @@ mod tests {
         };
         let portable_id = "01arz3ndektsv4rrffq69g5fav";
         let content = parser::serialize_definition(&definition, portable_id).unwrap();
-        let filename = create_definition_file(&owner, "Initial title", content.as_bytes()).unwrap();
-        assert_eq!(filename, "initial-title.md");
+        let filename = create_definition_file(&owner, "Initial title", content.as_bytes())
+            .unwrap()
+            .0;
+        assert_eq!(filename, "Initial title.md");
         assert!(!owner.routines_dir().join("schema.yaml").exists());
         let first = parser::discover_owner(&owner);
         let first_row = first
@@ -1686,27 +1754,31 @@ mod tests {
         definition.name = Some("Same-name".into());
         let second = parser::serialize_definition(&definition, second_id).unwrap();
         assert_eq!(
-            create_definition_file(&owner, "Same name", first.as_bytes()).unwrap(),
-            "same-name.md"
+            create_definition_file(&owner, "Same name", first.as_bytes())
+                .unwrap()
+                .0,
+            "Same name.md"
         );
         assert_eq!(
-            create_definition_file(&owner, "Same-name", second.as_bytes()).unwrap(),
-            "same-name-1.md"
+            create_definition_file(&owner, "Same name", second.as_bytes())
+                .unwrap()
+                .0,
+            "Same name-1.md"
         );
 
         let before = parser::discover_owner(&owner);
         let row = before
             .routines
             .iter()
-            .find(|row| row.filename == "same-name.md")
+            .find(|row| row.filename == "Same name.md")
             .unwrap();
         let stable_id = row.routine_id.clone();
         definition.name = Some("Renamed".into());
         let renamed = parser::serialize_definition(&definition, first_id).unwrap();
         let outcome = update_definition_file_cas(
             &owner.routines_dir(),
-            "same-name.md",
-            "renamed.md",
+            "Same name.md",
+            "Renamed.md",
             &row.fingerprint,
             renamed.as_bytes(),
         )
@@ -1716,13 +1788,13 @@ mod tests {
             DefinitionUpdateOutcome::Applied {
                 filename,
                 renamed: true,
-            } if filename == "renamed.md"
+            } if filename == "Renamed.md"
         ));
         let renamed_snapshot = parser::discover_owner(&owner);
         let renamed_row = renamed_snapshot
             .routines
             .iter()
-            .find(|row| row.filename == "renamed.md")
+            .find(|row| row.filename == "Renamed.md")
             .unwrap();
         assert_eq!(renamed_row.routine_id, stable_id);
 
@@ -1730,8 +1802,8 @@ mod tests {
         let collision_content = parser::serialize_definition(&definition, first_id).unwrap();
         let collision = update_definition_file_cas(
             &owner.routines_dir(),
-            "renamed.md",
-            "same-name-1.md",
+            "Renamed.md",
+            "Same name-1.md",
             &renamed_row.fingerprint,
             collision_content.as_bytes(),
         )
@@ -1741,17 +1813,17 @@ mod tests {
             DefinitionUpdateOutcome::Collision {
                 filename,
                 target_filename,
-            } if filename == "renamed.md" && target_filename == "same-name-1.md"
+            } if filename == "Renamed.md" && target_filename == "Same name-1.md"
         ));
-        assert!(owner.routines_dir().join("renamed.md").is_file());
-        assert!(owner.routines_dir().join("same-name-1.md").is_file());
+        assert!(owner.routines_dir().join("Renamed.md").is_file());
+        assert!(owner.routines_dir().join("Same name-1.md").is_file());
         let after_collision = parser::discover_owner(&owner);
         assert_eq!(after_collision.routines.len(), 2);
         assert_eq!(
             after_collision
                 .routines
                 .iter()
-                .find(|row| row.filename == "renamed.md")
+                .find(|row| row.filename == "Renamed.md")
                 .unwrap()
                 .routine_id,
             stable_id
@@ -1795,20 +1867,22 @@ mod tests {
     }
 
     #[test]
-    fn slug_transliterates_cyrillic_and_keeps_a_portable_fallback() {
+    fn routine_filename_projection_preserves_safe_unicode_and_punctuation() {
+        assert_eq!(filename::project("  Привет, мир!  ").stem, "Привет, мир!");
+        assert_eq!(filename::project("Ёжик и щука").stem, "Ёжик и щука");
+        assert_eq!(filename::project("日本語").stem, "日本語");
         assert_eq!(
-            crate::files::entry::slugify("  Привет, мир!  "),
-            "privet-mir"
+            filename::project("Quarterly Review!").stem,
+            "Quarterly Review!"
         );
-        assert_eq!(
-            crate::files::entry::slugify("Ёжик и щука"),
-            "yozhik-i-shchuka"
-        );
-        assert_eq!(crate::files::entry::slugify("日本語"), "untitled");
-        assert_eq!(
-            crate::files::entry::slugify("Quarterly Review!"),
-            "quarterly-review"
-        );
+
+        let temp = tempfile::tempdir().unwrap();
+        let owner = project_owner(temp.path());
+        let (created, projection, suffixed) =
+            create_definition_file(&owner, "日本語 Routine 🚀", b"managed").unwrap();
+        assert_eq!(created, "日本語 Routine 🚀.md");
+        assert!(projection.reasons.is_empty());
+        assert!(!suffixed);
     }
 
     #[tokio::test]

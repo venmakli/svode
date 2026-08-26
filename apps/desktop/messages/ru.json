@@ -1469,5 +1469,13 @@
   "routines_dispatch_failed": "Не удалось запустить сессию агента.",
   "routines_invalid_run_disabled": "Исправьте definition рутины перед запуском.",
   "routines_manual_run_only": "Рутине по событию нужна конкретная запись Collection, поэтому её нельзя запустить вручную.",
-  "routines_run_agent_only": "Действие доступно только для рутин с run_agent."
+  "routines_run_agent_only": "Действие доступно только для рутин с run_agent.",
+  "entry_filename_adjusted": "Имя файла скорректировано",
+  "entry_filename_adjusted_description": "Файл безопасно сохранён как {path}.",
+  "entry_filename_collision": "Имя файла уже занято",
+  "entry_filename_allocated_description": "Желаемое имя файла занято; файл сохранён как {path}.",
+  "entry_filename_collision_description": "Отображаемое имя сохранено, но файл остался по пути {path}.",
+  "routines_filename_adjusted_description": "Routine безопасно сохранена как {path}.",
+  "routines_filename_allocated_description": "Желаемое имя файла занято; Routine сохранена как {path}.",
+  "routines_filename_collision_description": "Имя сохранено, но файл Routine остался по пути {path}."
 }

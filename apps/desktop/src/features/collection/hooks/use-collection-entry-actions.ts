@@ -6,7 +6,11 @@ import {
   deleteEntry as deleteEntryApi,
   duplicateEntry as duplicateEntryApi,
 } from "@/features/entry/entry-api";
-import type { Entry } from "@/features/entry";
+import {
+  publishEntryFilenameWarnings,
+  retargetEntryFilenameWarnings,
+  type Entry,
+} from "@/features/entry";
 import type { CollectionSchema } from "@/features/properties";
 import { useSpaceTreeSync } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
@@ -62,6 +66,7 @@ export function useCollectionEntryActions({
           contextualDefaults: contextualDefaults ?? null,
           projectPath,
         });
+        publishEntryFilenameWarnings(created.warnings);
         refreshEntries();
         await reloadTreeParent(spaceId, collectionPath);
         if (openAfterCreate) {
@@ -85,12 +90,20 @@ export function useCollectionEntryActions({
     });
     let nextEntry = created;
     if (asFolder) {
-      nextEntry = await convertEntryToFolderApi({
+      const converted = await convertEntryToFolderApi({
         spacePath,
         filePath: created.path,
         projectPath: projectPath ?? null,
       });
+      nextEntry = {
+        ...converted,
+        warnings: retargetEntryFilenameWarnings(
+          created.warnings,
+          converted.path,
+        ),
+      };
     }
+    publishEntryFilenameWarnings(nextEntry.warnings);
     refreshEntries();
     await reloadTreeParent(spaceId, collectionPath);
     if (openAfterCreate) {
@@ -105,6 +118,7 @@ export function useCollectionEntryActions({
       filePath: entryToDuplicate.path,
       projectPath: projectPath ?? null,
     });
+    publishEntryFilenameWarnings(duplicated.warnings);
     refreshEntries();
     await reloadTreeParent(spaceId, collectionPath);
     openDocument(duplicated.path, spaceId);
@@ -128,6 +142,7 @@ export function useCollectionEntryActions({
       filePath: entryToDuplicate.path,
       projectPath: projectPath ?? null,
     });
+    publishEntryFilenameWarnings(duplicated.warnings);
     await reloadTreePathParent(spaceId, duplicated.path);
     openDocument(duplicated.path, spaceId);
   }

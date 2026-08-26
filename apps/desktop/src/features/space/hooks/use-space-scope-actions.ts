@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { createCollection } from "@/features/collection";
+import { publishEntryFilenameWarnings } from "@/features/entry";
 import { useOpenEntryDocument } from "@/features/entry/selection";
 import { createTreeFolder } from "../api/tree-entry-actions";
 import { useSpaceActions } from "./use-space-actions";
@@ -33,6 +34,7 @@ export function useSpaceScopeActions({
       try {
         const entry = await createEntry(scope.path, "Untitled");
         if (entry) {
+          publishEntryFilenameWarnings(entry.warnings);
           onActivateContent();
           openDocument(entry.path, scope.id);
         }
@@ -75,6 +77,7 @@ export function useSpaceScopeActions({
           title: m.editor_untitled(),
           projectPath: activeRootPath,
         });
+        publishEntryFilenameWarnings(entry.warnings);
         await reloadTreeParent(scope.id, null);
         onActivateContent();
         openDocument(entry.path, scope.id);

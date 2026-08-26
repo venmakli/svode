@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
 use crate::files::backlinks::{BacklinkIndex, ModifiedLinkSource};
+use crate::files::filename::{self, FilenameProjection};
 use crate::files::frontmatter;
 use crate::files::tree;
 
@@ -27,7 +28,7 @@ fn resolve(space: &str, rel: &str) -> PathBuf {
     Path::new(space).join(rel)
 }
 
-/// Transliterate Cyrillic characters to Latin equivalents.
+/// Legacy ASCII projection used only by hidden template source slugs.
 fn transliterate(input: &str) -> String {
     let mut result = String::with_capacity(input.len() * 2);
     for c in input.chars() {
@@ -77,7 +78,7 @@ fn transliterate(input: &str) -> String {
 
 const MAX_SLUG_LENGTH: usize = 60;
 
-/// Generate a URL-safe slug from a title.
+/// Generate a legacy ASCII template source slug from a title.
 pub(crate) fn slugify(title: &str) -> String {
     // Transliterate Cyrillic → Latin, then lowercase
     let transliterated = transliterate(title);
@@ -223,6 +224,29 @@ fn unique_child_path(parent: &Path, stem: &str, extension: Option<&str>) -> Path
         "{stem}-{}",
         ulid::Ulid::new().to_string().to_lowercase()
     ))
+}
+
+pub(crate) fn filename_projection_warning(
+    projection: &FilenameProjection,
+    actual_path: &str,
+) -> Option<EntryWarning> {
+    projection
+        .is_lossy()
+        .then(|| EntryWarning::filename_projection(actual_path, &projection.reason_codes()))
+}
+
+pub(crate) fn filename_allocation_warnings(
+    requested: &FilenameProjection,
+    actual: &FilenameProjection,
+    actual_path: &str,
+) -> Vec<EntryWarning> {
+    let mut warnings = filename_projection_warning(actual, actual_path)
+        .into_iter()
+        .collect::<Vec<_>>();
+    if actual.stem != requested.stem {
+        warnings.push(EntryWarning::filename_collision_allocated(actual_path));
+    }
+    warnings
 }
 
 fn rewrite_relations_after_fs_move(
@@ -400,10 +424,9 @@ fn create_with_options_inner(
         )?;
         title.to_string()
     };
-    let slug = slugify(&title);
+    let projection = filename::project(&title);
 
-    // Find a non-colliding filename: slug.md, slug-1.md, slug-2.md, ...
-    let (rel_path, abs_path) = if as_readme {
+    let (rel_path, abs_path, applied_projection) = if as_readme {
         let rel_path = parent_path
             .map(|parent| format!("{parent}/README.md"))
             .unwrap_or_else(|| "README.md".to_string());
@@ -411,31 +434,15 @@ fn create_with_options_inner(
         if abs_path.exists() {
             return Err(AppError::FileAlreadyExists(rel_path));
         }
-        (rel_path, abs_path)
+        (rel_path, abs_path, None)
     } else {
-        let make_rel = |name: &str| match parent_path {
-            Some(parent) => format!("{parent}/{name}.md"),
-            None => format!("{name}.md"),
-        };
-
-        let base_rel = make_rel(&slug);
-        let base_abs = resolve(space, &base_rel);
-
-        if !base_abs.exists() {
-            (base_rel, base_abs)
-        } else {
-            let mut found = None;
-            for i in 1..=100 {
-                let candidate = format!("{slug}-{i}");
-                let rel = make_rel(&candidate);
-                let abs = resolve(space, &rel);
-                if !abs.exists() {
-                    found = Some((rel, abs));
-                    break;
-                }
-            }
-            found.ok_or_else(|| AppError::FileAlreadyExists(make_rel(&slug)))?
-        }
+        let parent_abs = parent_path
+            .map(|parent| resolve(space, parent))
+            .unwrap_or_else(|| PathBuf::from(space));
+        let (abs_path, applied_projection) =
+            filename::allocate_available_path(&parent_abs, &projection, Some("md"))?;
+        let rel_path = rel_from_abs(Path::new(space), &abs_path);
+        (rel_path, abs_path, Some(applied_projection))
     };
 
     // Ensure parent directory exists
@@ -476,11 +483,15 @@ fn create_with_options_inner(
         order_append(Path::new(space), dir_key, &filename);
     }
 
+    let warnings = applied_projection
+        .as_ref()
+        .map(|actual| filename_allocation_warnings(&projection, actual, &rel_path))
+        .unwrap_or_default();
     Ok(Entry {
         meta,
         body: body.to_string(),
         path: rel_path,
-        warnings: Vec::new(),
+        warnings,
         name_conflict: None,
     })
 }
@@ -521,13 +532,107 @@ pub fn create_folder(
 
 /// Write body content and, when explicitly requested, metadata.
 /// Body-only writes preserve existing frontmatter bytes and never materialize
-/// runtime fallback metadata. If title changes, the file may be renamed based
-/// on the new slug.
+/// runtime fallback metadata. If title changes, the file may be renamed from
+/// the shared Unicode-safe filename projection.
 /// Returns WriteResult with new_path if a rename occurred.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlannedWriteRename {
     pub new_path: String,
     pub folder_rename_old: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EntryFilenamePlan {
+    Unchanged(FilenameProjection),
+    Rename {
+        projection: FilenameProjection,
+        rename: PlannedWriteRename,
+    },
+    Collision(FilenameProjection),
+}
+
+fn entry_filename_plan(
+    space: &str,
+    path: &str,
+    title: &str,
+) -> Result<EntryFilenamePlan, AppError> {
+    let projection = filename::project(title);
+    if !crate::files::naming::is_user_document(path) {
+        return Ok(EntryFilenamePlan::Unchanged(projection));
+    }
+
+    let current = Path::new(path);
+    let is_readme = current
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"));
+    if is_readme {
+        let Some(parent) = current
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        else {
+            return Ok(EntryFilenamePlan::Unchanged(projection));
+        };
+        let grandparent = parent.parent().unwrap_or(Path::new(""));
+        let current_component = parent
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        if projection.stem == current_component {
+            return Ok(EntryFilenamePlan::Unchanged(projection));
+        }
+        let target_parent = resolve(space, &grandparent.to_string_lossy());
+        if filename::component_conflicts_portably(
+            &target_parent,
+            &projection.stem,
+            Some(current_component),
+        )? {
+            return Ok(EntryFilenamePlan::Collision(projection));
+        }
+        let new_dir = if grandparent.as_os_str().is_empty() {
+            projection.stem.clone()
+        } else {
+            format!("{}/{}", grandparent.to_string_lossy(), projection.stem)
+        };
+        let readme = current.file_name().unwrap_or_default().to_string_lossy();
+        return Ok(EntryFilenamePlan::Rename {
+            projection,
+            rename: PlannedWriteRename {
+                new_path: format!("{new_dir}/{readme}"),
+                folder_rename_old: Some(parent.to_string_lossy().to_string()),
+            },
+        });
+    }
+
+    let current_component = current
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    let target_component = filename::component_name(&projection.stem, Some("md"));
+    if target_component == current_component {
+        return Ok(EntryFilenamePlan::Unchanged(projection));
+    }
+    let parent = current.parent().unwrap_or(Path::new(""));
+    let target_parent = resolve(space, &parent.to_string_lossy());
+    if filename::component_conflicts_portably(
+        &target_parent,
+        &target_component,
+        Some(current_component),
+    )? {
+        return Ok(EntryFilenamePlan::Collision(projection));
+    }
+    let new_path = if parent.as_os_str().is_empty() {
+        target_component
+    } else {
+        format!("{}/{target_component}", parent.to_string_lossy())
+    };
+    Ok(EntryFilenamePlan::Rename {
+        projection,
+        rename: PlannedWriteRename {
+            new_path,
+            folder_rename_old: None,
+        },
+    })
 }
 
 pub fn planned_write_rename(
@@ -536,7 +641,8 @@ pub fn planned_write_rename(
     title: Option<&str>,
     skip_rename: bool,
 ) -> Result<Option<PlannedWriteRename>, AppError> {
-    if skip_rename {
+    let has_naming_intent = title.is_some() || filename::has_managed_naming_intent(space, path);
+    if skip_rename || !has_naming_intent {
         return Ok(None);
     }
     let abs_path = resolve(space, path);
@@ -555,56 +661,10 @@ pub fn planned_write_rename(
     let Some(title) = materialized_title else {
         return Ok(None);
     };
-    let new_slug = slugify(title);
-    let current = Path::new(path);
-    let current_stem = current
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("");
-    let is_readme = current
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"));
-    if !is_readme && new_slug == current_stem {
-        return Ok(None);
+    match entry_filename_plan(space, path, title)? {
+        EntryFilenamePlan::Rename { rename, .. } => Ok(Some(rename)),
+        EntryFilenamePlan::Unchanged(_) | EntryFilenamePlan::Collision(_) => Ok(None),
     }
-    if is_readme {
-        let Some(parent) = current
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-        else {
-            return Ok(None);
-        };
-        let grandparent = parent.parent().unwrap_or(Path::new(""));
-        let new_dir = if grandparent.as_os_str().is_empty() {
-            new_slug
-        } else {
-            format!("{}/{new_slug}", grandparent.to_string_lossy())
-        };
-        if resolve(space, &new_dir).exists() {
-            return Ok(None);
-        }
-        let readme = current.file_name().unwrap_or_default().to_string_lossy();
-        return Ok(Some(PlannedWriteRename {
-            new_path: format!("{new_dir}/{readme}"),
-            folder_rename_old: Some(parent.to_string_lossy().to_string()),
-        }));
-    }
-
-    let parent = current.parent().unwrap_or(Path::new(""));
-    let new_file = format!("{new_slug}.md");
-    let new_path = if parent.as_os_str().is_empty() {
-        new_file
-    } else {
-        format!("{}/{new_file}", parent.to_string_lossy())
-    };
-    if resolve(space, &new_path).exists() {
-        return Ok(None);
-    }
-    Ok(Some(PlannedWriteRename {
-        new_path,
-        folder_rename_old: None,
-    }))
 }
 
 pub fn write(
@@ -682,32 +742,26 @@ fn write_inner(
         }
     }
     .map(str::to_string);
-    if (title.is_some() || !skip_rename)
-        && let Some(materialized_title) = materialized_title.as_deref()
-    {
+    let has_naming_intent =
+        !skip_rename && (title.is_some() || filename::has_managed_naming_intent(space, path));
+    if has_naming_intent && let Some(materialized_title) = materialized_title.as_deref() {
         crate::files::naming::ensure_document_name_available(
             Path::new(space),
             path,
             materialized_title,
         )?;
     }
-    let rename_needed = !skip_rename
-        && materialized_title.as_deref().is_some_and(|t| {
-            let new_slug = slugify(t);
-            let current_stem = Path::new(path)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
-            let is_readme = Path::new(path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.eq_ignore_ascii_case("readme.md"));
-            new_slug != current_stem || is_readme
-        });
-
+    let filename_plan = if has_naming_intent {
+        materialized_title
+            .as_deref()
+            .map(|materialized_title| entry_filename_plan(space, path, materialized_title))
+            .transpose()?
+    } else {
+        None
+    };
     let metadata_requested = match &parsed_existing {
         frontmatter::ParseStatus::Valid { meta, .. } => {
-            rename_needed
+            has_naming_intent
                 || title.is_some_and(|t| meta.title != t)
                 || icon.is_some_and(|i| meta.icon.as_deref() != Some(i))
                 || extra
@@ -715,7 +769,7 @@ fn write_inner(
                     .is_some_and(|incoming| incoming != &meta.extra)
         }
         frontmatter::ParseStatus::Missing { .. } => {
-            rename_needed
+            has_naming_intent
                 || title.is_some_and(title_changes_fallback)
                 || icon.is_some()
                 || extra.as_ref().is_some_and(extra_changes_empty)
@@ -739,6 +793,7 @@ fn write_inner(
             modified_files: Vec::new(),
             modified_sources: Vec::new(),
             write_nonce,
+            warnings: Vec::new(),
         });
     }
 
@@ -772,7 +827,7 @@ fn write_inner(
     if let frontmatter::ParseStatus::Valid { meta: old_meta, .. } =
         frontmatter::parse_status(&existing)
     {
-        if !rename_needed
+        if !has_naming_intent
             && old_body.as_deref() == Some(content)
             && old_meta.title == meta.title
             && old_meta.icon == meta.icon
@@ -786,6 +841,7 @@ fn write_inner(
                 modified_files: Vec::new(),
                 modified_sources: Vec::new(),
                 write_nonce,
+                warnings: Vec::new(),
             });
         }
     }
@@ -804,102 +860,82 @@ fn write_inner(
             modified_files: Vec::new(),
             modified_sources: Vec::new(),
             write_nonce,
+            warnings: Vec::new(),
         });
     }
 
-    // Materialize rename when slug(title) diverges from filename stem.
-    // Gate by title-change-since-last-read would miss renames when auto-save
-    // debounce already persisted the new title to frontmatter before ⌘S.
+    // Materialize a filename projection only for an explicit naming intent.
+    // This preserves legacy and externally-created filenames during ordinary
+    // body or metadata saves while still completing a title edit after the
+    // debounced field write has already persisted the new title.
     let mut new_path: Option<String> = None;
-
-    if let Some(t) = materialized_title.as_deref() {
-        let new_slug = slugify(t);
-        let current_stem = Path::new(path)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
-
-        // Check if the file is a readme.md (category file)
-        let is_readme = Path::new(path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.eq_ignore_ascii_case("readme.md"));
-
-        if new_slug != current_stem || is_readme {
-            if is_readme {
-                // For readme.md, rename the parent folder
-                if let Some(parent_rel) = Path::new(path).parent() {
-                    if parent_rel.as_os_str().is_empty() {
-                        // readme.md at root, no parent folder to rename
-                    } else {
-                        let grandparent = parent_rel.parent().unwrap_or(Path::new(""));
-                        let new_dir_name = new_slug.clone();
-                        let new_dir_rel = if grandparent.as_os_str().is_empty() {
-                            new_dir_name.clone()
-                        } else {
-                            format!("{}/{}", grandparent.display(), new_dir_name)
-                        };
-                        let new_dir_abs = resolve(space, &new_dir_rel);
-
-                        if !new_dir_abs.exists() {
-                            let old_dir_abs = resolve(space, &parent_rel.to_string_lossy());
-                            fs::rename(&old_dir_abs, &new_dir_abs)?;
-                            let readme_filename = Path::new(path)
-                                .file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy();
-                            let renamed_path = format!("{}/{}", new_dir_rel, readme_filename);
-                            if let Err(error) = crate::properties::rename_template_slug_references(
-                                space,
-                                path,
-                                &renamed_path,
-                            ) {
-                                let _ = fs::rename(&new_dir_abs, &old_dir_abs);
-                                return Err(error);
-                            }
-                            if let Err(error) = crate::properties::rewrite_relation_paths_for_move(
-                                space,
-                                &parent_rel.to_string_lossy(),
-                                &new_dir_rel,
-                            ) {
-                                let _ = fs::rename(&new_dir_abs, &old_dir_abs);
-                                return Err(error);
-                            }
-                            new_path = Some(renamed_path);
-                        }
-                        // If collision, content is already saved, just skip rename
-                    }
+    let mut warnings = Vec::new();
+    match filename_plan {
+        Some(EntryFilenamePlan::Unchanged(projection)) => {
+            if let Some(warning) = filename_projection_warning(&projection, path) {
+                warnings.push(warning);
+            }
+            filename::clear_managed_naming_intent(space, path);
+        }
+        Some(EntryFilenamePlan::Collision(projection)) => {
+            if let Some(warning) = filename_projection_warning(&projection, path) {
+                warnings.push(warning);
+            }
+            warnings.push(EntryWarning::filename_rename_collision(path));
+        }
+        Some(EntryFilenamePlan::Rename { projection, rename }) => {
+            let target_abs = resolve(space, &rename.new_path);
+            if let Some(old_folder) = rename.folder_rename_old.as_deref() {
+                let old_folder_abs = resolve(space, old_folder);
+                let new_folder_rel = Path::new(&rename.new_path)
+                    .parent()
+                    .unwrap_or(Path::new(""))
+                    .to_string_lossy()
+                    .to_string();
+                let new_folder_abs = resolve(space, &new_folder_rel);
+                fs::rename(&old_folder_abs, &new_folder_abs)?;
+                if let Err(error) = crate::properties::rename_template_slug_references(
+                    space,
+                    path,
+                    &rename.new_path,
+                ) {
+                    let _ = fs::rename(&new_folder_abs, &old_folder_abs);
+                    return Err(error);
+                }
+                if let Err(error) = crate::properties::rewrite_relation_paths_for_move(
+                    space,
+                    old_folder,
+                    &new_folder_rel,
+                ) {
+                    let _ = fs::rename(&new_folder_abs, &old_folder_abs);
+                    return Err(error);
                 }
             } else {
-                // Regular file: rename slug.md
-                let parent_dir = Path::new(path).parent().unwrap_or(Path::new(""));
-                let new_filename = format!("{new_slug}.md");
-                let new_rel = if parent_dir.as_os_str().is_empty() {
-                    new_filename
-                } else {
-                    format!("{}/{}", parent_dir.display(), new_filename)
-                };
-                let new_abs = resolve(space, &new_rel);
-
-                if !new_abs.exists() {
-                    fs::rename(&abs_path, &new_abs)?;
-                    if let Err(error) =
-                        crate::properties::rename_template_slug_references(space, path, &new_rel)
-                    {
-                        let _ = fs::rename(&new_abs, &abs_path);
-                        return Err(error);
-                    }
-                    if let Err(error) =
-                        crate::properties::rewrite_relation_paths_for_move(space, path, &new_rel)
-                    {
-                        let _ = fs::rename(&new_abs, &abs_path);
-                        return Err(error);
-                    }
-                    new_path = Some(new_rel);
+                fs::rename(&abs_path, &target_abs)?;
+                if let Err(error) = crate::properties::rename_template_slug_references(
+                    space,
+                    path,
+                    &rename.new_path,
+                ) {
+                    let _ = fs::rename(&target_abs, &abs_path);
+                    return Err(error);
                 }
-                // If collision, content is already saved, just skip rename
+                if let Err(error) = crate::properties::rewrite_relation_paths_for_move(
+                    space,
+                    path,
+                    &rename.new_path,
+                ) {
+                    let _ = fs::rename(&target_abs, &abs_path);
+                    return Err(error);
+                }
             }
+            if let Some(warning) = filename_projection_warning(&projection, &rename.new_path) {
+                warnings.push(warning);
+            }
+            filename::clear_managed_naming_intent(space, path);
+            new_path = Some(rename.new_path);
         }
+        None => {}
     }
 
     // Update order.json if file/folder was renamed
@@ -1023,6 +1059,7 @@ fn write_inner(
             .collect(),
         modified_files,
         write_nonce,
+        warnings,
     })
 }
 
@@ -1208,6 +1245,7 @@ fn update_field_inner(
             )));
         }
     };
+    let previous_title = (field == "title").then(|| meta.title.clone());
 
     if is_custom && !value.is_null() {
         let yaml_value = serde_yml::to_value(value.clone())
@@ -1225,6 +1263,13 @@ fn update_field_inner(
         crate::files::naming::ensure_document_name_available(Path::new(space), path, &meta.title)?;
     }
     persistence::write_serialized(&abs_path, &meta, &body)?;
+    if previous_title
+        .as_deref()
+        .is_some_and(|previous_title| previous_title != meta.title)
+        && crate::files::naming::is_user_document(path)
+    {
+        filename::mark_managed_naming_intent(space, path);
+    }
     apply_runtime_metadata(&mut meta, &abs_path, path)?;
     let name_conflict =
         crate::files::naming::document_name_conflict(Path::new(space), path, &meta.title)?;
@@ -1916,12 +1961,12 @@ fn duplicate_entry_inner(space: &Path, file_path: &str) -> Result<Entry, AppErro
         &root_head_rel,
         &requested_copy_title,
     )?;
-    let copy_stem = slugify(&copy_title);
-    let dest_abs = if root_source_abs.is_dir() {
-        unique_child_path(&parent_abs, &copy_stem, None)
-    } else {
-        unique_child_path(&parent_abs, &copy_stem, Some("md"))
-    };
+    let projection = filename::project(&copy_title);
+    let (dest_abs, actual_projection) = filename::allocate_available_path(
+        &parent_abs,
+        &projection,
+        (!root_source_abs.is_dir()).then_some("md"),
+    )?;
 
     if root_source_abs.is_dir() {
         copy_dir_recursive(&root_source_abs, &dest_abs)?;
@@ -1970,7 +2015,13 @@ fn duplicate_entry_inner(space: &Path, file_path: &str) -> Result<Entry, AppErro
     } else {
         rel_from_abs(space, &dest_abs)
     };
-    read(&space.to_string_lossy(), &entry_rel)
+    let mut entry = read(&space.to_string_lossy(), &entry_rel)?;
+    entry.warnings.extend(filename_allocation_warnings(
+        &projection,
+        &actual_projection,
+        &entry_rel,
+    ));
+    Ok(entry)
 }
 
 fn copy_dir_recursive(source: &Path, dest: &Path) -> Result<(), AppError> {
@@ -2343,11 +2394,30 @@ mod tests {
 
         // Create first entry
         let e1 = create(ws, None, "Test Doc").unwrap();
-        assert_eq!(e1.path, "test-doc.md");
+        assert_eq!(e1.path, "Test Doc.md");
 
         let error = create(ws, None, "Test Doc").unwrap_err();
         assert!(matches!(error, AppError::DocumentNameConflict(_)));
-        assert!(!resolve(ws, "test-doc-1.md").exists());
+        assert!(!resolve(ws, "Test Doc-1.md").exists());
+    }
+
+    #[test]
+    fn managed_entry_and_collection_flows_preserve_readable_unicode_paths() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().to_str().unwrap();
+
+        let leaf = create(ws, None, "Привет 世界 🚀").unwrap();
+        assert_eq!(leaf.path, "Привет 世界 🚀.md");
+        assert!(leaf.warnings.is_empty());
+
+        let head = create(ws, None, "Καλημέρα κόσμε").unwrap();
+        let head = convert_entry_to_folder(tmp.path(), &head.path, None).unwrap();
+        convert_entry_to_nested_collection(tmp.path(), &head.path).unwrap();
+        assert_eq!(head.path, "Καλημέρα κόσμε/README.md");
+
+        let row = create(ws, Some("Καλημέρα κόσμε"), "مرحبا بالعالم").unwrap();
+        assert_eq!(row.path, "Καλημέρα κόσμε/مرحبا بالعالم.md");
+        assert!(row.warnings.is_empty());
     }
 
     #[test]
@@ -2420,7 +2490,7 @@ mod tests {
         let ws = tmp.path().to_str().unwrap();
 
         let entry = create(ws, None, "Original Title").unwrap();
-        assert_eq!(entry.path, "original-title.md");
+        assert_eq!(entry.path, "Original Title.md");
 
         let result = write(
             ws,
@@ -2435,9 +2505,9 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result.new_path, Some("new-title.md".to_string()));
-        assert!(!resolve(ws, "original-title.md").exists());
-        assert!(resolve(ws, "new-title.md").exists());
+        assert_eq!(result.new_path, Some("New Title.md".to_string()));
+        assert!(!resolve(ws, "Original Title.md").exists());
+        assert!(resolve(ws, "New Title.md").exists());
     }
 
     #[test]
@@ -2463,7 +2533,7 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(error, AppError::DocumentNameConflict(_)));
-        assert!(resolve(ws, "doc-a.md").exists());
+        assert!(resolve(ws, "Doc A.md").exists());
         assert_eq!(fs::read_to_string(resolve(ws, &e1.path)).unwrap(), before);
     }
 
@@ -2488,7 +2558,68 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.new_path, None);
-        assert!(resolve(ws, "keep-same.md").exists());
+        assert!(resolve(ws, "Keep Same.md").exists());
+    }
+
+    #[test]
+    fn explicit_body_save_does_not_migrate_an_existing_legacy_path() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().to_str().unwrap();
+        fs::write(
+            resolve(ws, "legacy-slug.md"),
+            "---\ntitle: Привет мир\n---\nOld body\n",
+        )
+        .unwrap();
+
+        let result = write(
+            ws,
+            "legacy-slug.md",
+            "New body\n",
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(result.new_path, None);
+        assert!(resolve(ws, "legacy-slug.md").is_file());
+        assert!(!resolve(ws, "Привет мир.md").exists());
+    }
+
+    #[test]
+    fn unsafe_title_rename_collision_keeps_current_path_and_reports_it() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().to_str().unwrap();
+        let source = create(ws, None, "Source").unwrap();
+        let occupied = create(ws, None, "A-B").unwrap();
+
+        let result = write(
+            ws,
+            &source.path,
+            "Saved body",
+            Some("A/B"),
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(result.new_path, None);
+        assert!(resolve(ws, &source.path).is_file());
+        assert!(resolve(ws, &occupied.path).is_file());
+        assert!(result.warnings.iter().any(|warning| {
+            warning.kind == "filename_rename_collision"
+                && warning.path.as_deref() == Some(source.path.as_str())
+        }));
+        assert!(result.warnings.iter().any(|warning| {
+            warning.kind == "filename_projection"
+                && warning.path.as_deref() == Some(source.path.as_str())
+        }));
     }
 
     #[test]
@@ -2632,8 +2763,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result.new_path.as_deref(), Some("new-title.md"));
-        assert!(resolve(ws, "new-title.md").is_file());
+        assert_eq!(result.new_path.as_deref(), Some("New title.md"));
+        assert!(resolve(ws, "New title.md").is_file());
         assert!(!resolve(ws, "old-title.md").exists());
     }
 
@@ -2713,16 +2844,34 @@ mod tests {
     }
 
     #[test]
-    fn distinct_names_that_share_a_slug_do_not_overwrite_each_other() {
+    fn distinct_safe_names_keep_distinct_readable_filenames() {
         let tmp = TempDir::new().unwrap();
         let space = tmp.path().to_string_lossy();
         let first = create_with_options(&space, None, "A+B", None, false, false).unwrap();
         let second = create_with_options(&space, None, "AB", None, false, false).unwrap();
 
-        assert_eq!(first.path, "ab.md");
-        assert_eq!(second.path, "ab-1.md");
+        assert_eq!(first.path, "A+B.md");
+        assert_eq!(second.path, "AB.md");
         assert_eq!(read(&space, &first.path).unwrap().meta.title, "A+B");
         assert_eq!(read(&space, &second.path).unwrap().meta.title, "AB");
+    }
+
+    #[test]
+    fn managed_create_allocates_suffix_and_reports_actual_lossy_path() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path().to_string_lossy();
+        create_with_options(&space, None, "A-B", None, false, false).unwrap();
+
+        let created = create_with_options(&space, None, "A/B", None, false, false).unwrap();
+
+        assert_eq!(created.path, "A-B-1.md");
+        assert!(created.warnings.iter().any(|warning| {
+            warning.kind == "filename_projection" && warning.path.as_deref() == Some("A-B-1.md")
+        }));
+        assert!(created.warnings.iter().any(|warning| {
+            warning.kind == "filename_collision_allocated"
+                && warning.path.as_deref() == Some("A-B-1.md")
+        }));
     }
 
     #[test]
@@ -2792,8 +2941,7 @@ mod tests {
                 .ends_with("Updated one\n")
         );
 
-        let before = fs::read_to_string(tmp.path().join("one.md")).unwrap();
-        let error = write(
+        let result = write(
             &space,
             "one.md",
             "Explicit save\n",
@@ -2804,11 +2952,14 @@ mod tests {
             None,
             false,
         )
-        .unwrap_err();
-        assert!(matches!(error, AppError::DocumentNameConflict(_)));
-        assert_eq!(
-            fs::read_to_string(tmp.path().join("one.md")).unwrap(),
-            before
+        .unwrap();
+        assert_eq!(result.new_path, None);
+        assert!(tmp.path().join("one.md").is_file());
+        assert!(tmp.path().join("two.md").is_file());
+        assert!(
+            fs::read_to_string(tmp.path().join("one.md"))
+                .unwrap()
+                .ends_with("Explicit save\n")
         );
     }
 }

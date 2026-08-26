@@ -28,6 +28,7 @@ import type { Entry, EntryDetailState } from "../model";
 import { normalizeEntryPath } from "../lib/path";
 import { handleError } from "../lib/errors";
 import * as m from "@/paraglide/messages.js";
+import { publishEntryFilenameWarnings } from "../lib/filename-warning";
 
 interface EntryDetailActionsProps {
   entry: Entry;
@@ -127,6 +128,7 @@ export function EntryDetailActions({
       contextualDefaults: null,
       projectPath: projectPath ?? null,
     });
+    publishEntryFilenameWarnings(childEntry.warnings);
     await reloadTreePathParents(spaceId, [entry.path, folderEntry.path]);
     await reloadTreeParent(spaceId, parentPath);
     setState({

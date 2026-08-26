@@ -18,6 +18,7 @@ export interface EntryMetaDto {
 export interface EntryWarningDto {
   kind: string;
   message: string;
+  path?: string | null;
 }
 
 export interface DocumentNameConflictDto {
@@ -63,6 +64,7 @@ export interface WriteResultDto {
   modified_files: string[];
   modified_sources?: { spaceId: string | null; path: string }[];
   write_nonce: string;
+  warnings?: EntryWarningDto[];
 }
 
 export function createEntry(input: {

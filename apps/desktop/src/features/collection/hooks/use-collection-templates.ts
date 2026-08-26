@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import { toast } from "sonner";
-import type { Entry } from "@/features/entry";
+import { publishEntryFilenameWarnings, type Entry } from "@/features/entry";
 import type { CollectionSchema } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
 import { useSpaceTreeSync } from "@/features/space";
@@ -15,10 +15,7 @@ import {
   reorderTemplates,
   setDefaultTemplate,
 } from "../api";
-import {
-  entryTemplateSlug,
-  normalizeEntryPath,
-} from "../lib/utils";
+import { entryTemplateSlug, normalizeEntryPath } from "../lib/utils";
 import {
   templateHeadPath,
   type EntryPeekTarget,
@@ -87,6 +84,7 @@ export function useCollectionTemplates({
       contextualDefaults: null,
       projectPath,
     });
+    publishEntryFilenameWarnings(created.warnings);
     refreshEntries();
     await reloadTreeParent(spaceId, collectionPath);
     openDocument(created.path, spaceId);

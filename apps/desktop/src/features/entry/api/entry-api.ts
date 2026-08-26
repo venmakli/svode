@@ -293,6 +293,7 @@ function writeResultFromDto(result: WriteResultDto): WriteResult {
     modifiedFiles: result.modified_files,
     modifiedSources: result.modified_sources,
     writeNonce: result.write_nonce,
+    warnings: result.warnings ?? [],
   };
 }
 

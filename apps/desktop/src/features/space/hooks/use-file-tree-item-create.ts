@@ -1,5 +1,6 @@
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
+import { publishEntryFilenameWarnings } from "@/features/entry";
 import type { TreeNode } from "../model/types";
 import {
   convertTreeBareFolderToCollection,
@@ -58,6 +59,7 @@ export function useFileTreeItemCreate({
         title: String(m.editor_untitled()),
         projectPath: activeRootPath,
       });
+      publishEntryFilenameWarnings(entry.warnings);
       if (parentNodePath !== node.path) {
         removeTreePath(spaceId, node.path);
         await reloadTreePathParent(spaceId, node.path);

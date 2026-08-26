@@ -7,7 +7,7 @@ use serde_yml::Value;
 
 use crate::error::AppError;
 use crate::files::entry::{self, Entry, EntryMeta};
-use crate::files::{frontmatter, tree};
+use crate::files::{filename, frontmatter, tree};
 use crate::properties::{self, CollectionSchema};
 
 const TEMPLATES_DIR: &str = ".templates";
@@ -274,17 +274,9 @@ fn instantiate_inner(
         )?;
         requested_title
     };
-    let root_slug_source = if root_title.trim().is_empty() {
-        "untitled"
-    } else {
-        root_title.as_str()
-    };
-    let root_slug = entry::slugify(root_slug_source);
-    let dest_root_abs = if hierarchy {
-        unique_child_path(&parent_abs, &root_slug, None)
-    } else {
-        unique_child_path(&parent_abs, &root_slug, Some("md"))
-    };
+    let projection = filename::project(&root_title);
+    let (dest_root_abs, actual_projection) =
+        filename::allocate_available_path(&parent_abs, &projection, (!hierarchy).then_some("md"))?;
     let head_abs = if hierarchy {
         dest_root_abs.join(README_FILE)
     } else {
@@ -334,8 +326,14 @@ fn instantiate_inner(
         );
     }
 
+    let mut entry = entry::read(space, &head_rel)?;
+    entry.warnings.extend(entry::filename_allocation_warnings(
+        &projection,
+        &actual_projection,
+        &head_rel,
+    ));
     Ok(InstantiatedTemplate {
-        entry: entry::read(space, &head_rel)?,
+        entry,
         template_title: source.title,
     })
 }
@@ -379,6 +377,20 @@ mod tests {
         )
         .unwrap();
         assert_eq!(allocated.entry.meta.title, "Shared 2");
+
+        let unicode = instantiate(
+            &space,
+            "collection",
+            "template",
+            "collection",
+            Some("日本語 Template 🚀".into()),
+            false,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(unicode.entry.path, "collection/日本語 Template 🚀.md");
+        assert!(unicode.entry.warnings.is_empty());
     }
 }
 
@@ -692,28 +704,6 @@ fn unique_template_slug(templates_abs: &Path, base_slug: &str) -> String {
         "{base_slug}-{}",
         ulid::Ulid::new().to_string().to_lowercase()
     )
-}
-
-fn unique_child_path(parent: &Path, stem: &str, extension: Option<&str>) -> PathBuf {
-    let make = |candidate: &str| match extension {
-        Some(ext) => parent.join(format!("{candidate}.{ext}")),
-        None => parent.join(candidate),
-    };
-    for i in 0..=1000 {
-        let candidate = if i == 0 {
-            stem.to_string()
-        } else {
-            format!("{stem}-{i}")
-        };
-        let path = make(&candidate);
-        if !path.exists() {
-            return path;
-        }
-    }
-    make(&format!(
-        "{stem}-{}",
-        ulid::Ulid::new().to_string().to_lowercase()
-    ))
 }
 
 fn copy_dir_recursive_all(source: &Path, dest: &Path) -> Result<(), AppError> {

@@ -14,6 +14,7 @@ import type {
   RoutineRow,
 } from "../model/types";
 import { findRoutineNameConflictPath } from "../model/routine-name";
+import { routineMutationWarningDescription } from "../lib/routine-mutation-warning";
 import * as m from "@/paraglide/messages.js";
 
 export interface RoutineEditSession {
@@ -131,7 +132,7 @@ export function useRoutineMutations({
         if (result.warnings.length > 0) {
           toast.warning(m.routines_update_applied_warning(), {
             description: result.warnings
-              .map((warning) => warning.message)
+              .map(routineMutationWarningDescription)
               .join("\n"),
           });
         }

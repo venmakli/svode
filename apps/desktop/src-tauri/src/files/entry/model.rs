@@ -66,6 +66,8 @@ pub struct WriteResult {
     /// Short-TTL nonce associated with this write; attached to the watcher
     /// `file:changed` payload so the editor can drop its own echo.
     pub write_nonce: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<EntryWarning>,
 }
 
 pub struct DeleteResult {
@@ -194,6 +196,8 @@ impl Serialize for EntryMeta {
 pub struct EntryWarning {
     pub kind: String,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 impl EntryWarning {
@@ -201,6 +205,33 @@ impl EntryWarning {
         Self {
             kind: "malformed_frontmatter".to_string(),
             message,
+            path: None,
+        }
+    }
+
+    pub(super) fn filename_projection(path: &str, reasons: &str) -> Self {
+        Self {
+            kind: "filename_projection".to_string(),
+            message: format!("filename was safely projected ({reasons})"),
+            path: Some(path.to_string()),
+        }
+    }
+
+    pub(super) fn filename_rename_collision(current_path: &str) -> Self {
+        Self {
+            kind: "filename_rename_collision".to_string(),
+            message: "display name was saved, but the current filename was kept because the target is occupied".to_string(),
+            path: Some(current_path.to_string()),
+        }
+    }
+
+    pub(super) fn filename_collision_allocated(actual_path: &str) -> Self {
+        Self {
+            kind: "filename_collision_allocated".to_string(),
+            message:
+                "the desired filename was occupied, so the first available numeric suffix was used"
+                    .to_string(),
+            path: Some(actual_path.to_string()),
         }
     }
 }

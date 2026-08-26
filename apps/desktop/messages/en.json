@@ -1469,5 +1469,13 @@
   "routines_dispatch_failed": "The agent session could not be started.",
   "routines_invalid_run_disabled": "Fix the routine definition before running it.",
   "routines_manual_run_only": "Event routines need a concrete Collection event and cannot be run manually.",
-  "routines_run_agent_only": "This action is available only for run_agent routines."
+  "routines_run_agent_only": "This action is available only for run_agent routines.",
+  "entry_filename_adjusted": "Filename adjusted",
+  "entry_filename_adjusted_description": "Saved safely as {path}.",
+  "entry_filename_collision": "Filename already in use",
+  "entry_filename_allocated_description": "The preferred filename was occupied; the file was saved as {path}.",
+  "entry_filename_collision_description": "The display name was saved, but the file remains at {path}.",
+  "routines_filename_adjusted_description": "The routine was saved safely as {path}.",
+  "routines_filename_allocated_description": "The preferred filename was occupied; the routine was saved as {path}.",
+  "routines_filename_collision_description": "The name was saved, but the routine file remains at {path}."
 }
