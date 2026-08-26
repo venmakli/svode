@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { ScopeOpenIntent } from "@/features/scope-surfaces";
+import type { Entry } from "../model";
 
 export interface EntryRevealRequest {
   key: number;
@@ -24,12 +25,20 @@ export interface EntryPathRetarget {
   spaceId: string | null;
 }
 
+export interface EntryTitleOutcome {
+  key: number;
+  scopePath: string;
+  previousPath: string;
+  entry: Entry;
+}
+
 export interface EntrySelectionState {
   activeDocument: string | null;
   activeDocumentSpaceId: string | null;
   activeRevealRequest: EntryRevealRequest | null;
   activeScopeOpenRequest: ScopeOpenRequest | null;
   activePathRetarget: EntryPathRetarget | null;
+  titleOutcomeBySourceKey: Record<string, EntryTitleOutcome>;
   openDocument: (
     path: string,
     spaceId?: string,
@@ -37,12 +46,26 @@ export interface EntrySelectionState {
   ) => void;
   openScopeHome: (spaceId?: string) => void;
   retargetDocument: (fromPath: string, path: string, spaceId?: string) => void;
+  publishTitleOutcome: (
+    scopePath: string,
+    previousPath: string,
+    entry: Entry,
+  ) => void;
   closeDocument: () => void;
 }
 
 let nextRevealRequestKey = 1;
 let nextScopeOpenRequestKey = 1;
 let nextPathRetargetKey = 1;
+let nextTitleOutcomeKey = 1;
+
+function normalizeEntryIdentityPart(value: string) {
+  return value.replaceAll("\\", "/").replace(/\/+$/g, "");
+}
+
+export function entryTitleOutcomeSourceKey(scopePath: string, path: string) {
+  return `${normalizeEntryIdentityPart(scopePath)}\0${normalizeEntryIdentityPart(path)}`;
+}
 
 export const useEntrySelectionStore = create<EntrySelectionState>((set) => ({
   activeDocument: null,
@@ -50,6 +73,7 @@ export const useEntrySelectionStore = create<EntrySelectionState>((set) => ({
   activeRevealRequest: null,
   activeScopeOpenRequest: null,
   activePathRetarget: null,
+  titleOutcomeBySourceKey: {},
 
   openDocument: (path, spaceId?, options?) =>
     set((state) => {
@@ -126,6 +150,19 @@ export const useEntrySelectionStore = create<EntrySelectionState>((set) => ({
         },
       };
     }),
+
+  publishTitleOutcome: (scopePath, previousPath, entry) =>
+    set((state) => ({
+      titleOutcomeBySourceKey: {
+        ...state.titleOutcomeBySourceKey,
+        [entryTitleOutcomeSourceKey(scopePath, previousPath)]: {
+          key: nextTitleOutcomeKey++,
+          scopePath: normalizeEntryIdentityPart(scopePath),
+          previousPath,
+          entry,
+        },
+      },
+    })),
 
   closeDocument: () =>
     set({

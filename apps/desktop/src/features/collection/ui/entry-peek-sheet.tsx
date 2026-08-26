@@ -13,7 +13,7 @@ import { cn } from "@/shared/lib/utils";
 import type { Entry } from "@/features/entry";
 import { EntryDetailActions, EntryPeekSurface } from "@/features/entry/detail";
 import { handleError } from "../hooks/error-feedback";
-import { useEntryPeekLoader } from "../hooks";
+import { resolveLoadedPeekEntry, useEntryPeekLoader } from "../hooks";
 import type {
   CollectionPeekSurfaceState,
   CollectionRouteState,
@@ -46,6 +46,7 @@ interface EntryPeekSheetProps {
     actions: ReactNode,
     routeState: CollectionRouteState,
     surfaceState: CollectionPeekSurfaceState,
+    sessionKey: string,
   ) => ReactNode;
 }
 
@@ -69,12 +70,19 @@ export function EntryPeekSheet({
   const effectiveSpacePath = target?.spacePath ?? spacePath;
   const effectiveProjectPath = target?.projectPath ?? projectPath;
   const effectiveSpaceId = target?.spaceId ?? spaceId;
-  const { entry, setEntry, schemaResult, setSchemaResult } = useEntryPeekLoader(
-    {
-      target,
-      spacePath: effectiveSpacePath,
-    },
-  );
+  const {
+    entry,
+    setEntry,
+    schemaResult,
+    setSchemaResult,
+    loadedTargetKey,
+    pathHandoff,
+    targetKey,
+  } = useEntryPeekLoader({
+    target,
+    spacePath: effectiveSpacePath,
+    spaceId: effectiveSpaceId,
+  });
 
   const contentClassName = useMemo(
     () =>
@@ -85,8 +93,12 @@ export function EntryPeekSheet({
     [],
   );
 
-  const currentEntry =
-    target && entry?.path !== target.entry.path ? target.entry : entry;
+  const currentEntry = resolveLoadedPeekEntry(
+    target,
+    entry,
+    loadedTargetKey,
+    targetKey,
+  );
   const detailActions =
     currentEntry && !target?.nested ? (
       <EntryPeekActions
@@ -131,8 +143,9 @@ export function EntryPeekSheet({
 
         {target?.nested && currentEntry ? (
           <NestedScopePeek
-            key={`${effectiveSpaceId}:${currentEntry.path}`}
+            key={targetKey ?? undefined}
             entry={currentEntry}
+            sessionKey={targetKey ?? `${effectiveSpaceId}:${target.entry.path}`}
             renderActions={({ surfaceId, viewName }) => {
               const detail = (
                 <EntryPeekActions
@@ -193,6 +206,7 @@ export function EntryPeekSheet({
                 spacePath={effectiveSpacePath}
                 projectPath={effectiveProjectPath}
                 spaceId={effectiveSpaceId}
+                documentPathHandoff={pathHandoff}
                 actions={detailActions}
                 metadataBefore={
                   target?.template ? (
@@ -215,10 +229,12 @@ export function EntryPeekSheet({
 
 function NestedScopePeek({
   entry,
+  sessionKey,
   renderActions,
   renderNested,
 }: {
   entry: Entry;
+  sessionKey: string;
   renderActions: (state: {
     surfaceId: CollectionPeekSurfaceState["surfaceId"];
     viewName: string | null;
@@ -246,10 +262,16 @@ function NestedScopePeek({
     <>
       <PeekTopBar>{actions.peek}</PeekTopBar>
       <PeekScrollSurface>
-        {renderNested(entry, actions.detail, routeState, {
-          surfaceId,
-          onSurfaceIdChange: setSurfaceId,
-        })}
+        {renderNested(
+          entry,
+          actions.detail,
+          routeState,
+          {
+            surfaceId,
+            onSurfaceIdChange: setSurfaceId,
+          },
+          sessionKey,
+        )}
       </PeekScrollSurface>
     </>
   );

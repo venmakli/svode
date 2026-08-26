@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import type { Entry } from "../model";
 import { useEntrySelectionStore } from "./entry-selection-store";
 
 function resetSelection() {
@@ -8,6 +9,7 @@ function resetSelection() {
     activeRevealRequest: null,
     activeScopeOpenRequest: null,
     activePathRetarget: null,
+    titleOutcomeBySourceKey: {},
   });
 }
 
@@ -36,6 +38,51 @@ test("repeated owner selection is a no-op but an explicit target creates a reque
     kind: "target",
     surfaceId: "collection",
   });
+});
+
+test("title outcomes remain available to every consumer and chain by path", () => {
+  resetSelection();
+  const first: Entry = {
+    path: "Renamed.md",
+    meta: {
+      title: "Renamed",
+      icon: null,
+      created: "created",
+      updated: "updated",
+      extra: {},
+    },
+    body: "",
+    warnings: [],
+  };
+  useEntrySelectionStore
+    .getState()
+    .publishTitleOutcome("/tmp/space", "Untitled.md", first);
+
+  const firstOutcome =
+    useEntrySelectionStore.getState().titleOutcomeBySourceKey[
+      "/tmp/space\0Untitled.md"
+    ];
+  expect(firstOutcome?.entry).toBe(first);
+  expect(
+    useEntrySelectionStore.getState().titleOutcomeBySourceKey[
+      "/tmp/space\0Untitled.md"
+    ],
+  ).toBe(firstOutcome);
+
+  const second = {
+    ...first,
+    path: "Final.md",
+    meta: { ...first.meta, title: "Final" },
+  };
+  useEntrySelectionStore
+    .getState()
+    .publishTitleOutcome("/tmp/space", "Renamed.md", second);
+
+  expect(
+    useEntrySelectionStore.getState().titleOutcomeBySourceKey[
+      "/tmp/space\0Renamed.md"
+    ]?.entry,
+  ).toBe(second);
 });
 
 test("canonical path retarget preserves the current scope session", () => {

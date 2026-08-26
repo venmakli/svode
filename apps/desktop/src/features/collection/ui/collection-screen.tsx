@@ -115,6 +115,7 @@ export interface CollectionViewsSurfaceProps extends Omit<
     actions: ReactNode,
     routeState: CollectionRouteState,
     surfaceState: CollectionPeekSurfaceState,
+    sessionKey: string,
   ) => ReactNode;
 }
 
@@ -149,6 +150,7 @@ interface CollectionViewsSurfaceInternalProps extends CollectionScreenProps {
     actions: ReactNode,
     routeState: CollectionRouteState,
     surfaceState: CollectionPeekSurfaceState,
+    sessionKey: string,
   ) => ReactNode;
 }
 

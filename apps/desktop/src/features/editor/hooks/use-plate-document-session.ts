@@ -17,7 +17,6 @@ import { resolveEditorDocumentContext } from "../lib/editor-asset-context";
 import { useEditorDocumentLoader } from "./use-editor-document-loader";
 import { useEditorDocumentWriter } from "./use-editor-document-writer";
 import { useEditorLinkValidation } from "./use-editor-link-validation";
-import { useEditorPendingRename } from "./use-editor-pending-rename";
 import { useEditorSaveShortcuts } from "./use-editor-save-shortcuts";
 import { useFileWatcher } from "./use-file-watcher";
 
@@ -69,13 +68,7 @@ export function usePlateDocumentSession({
   } = useSpace();
   const { patchEntryTreeMeta, reloadTreePathParents, removeTreePath } =
     useSpaceTreeSync();
-  const {
-    markUnsaved,
-    clearUnsaved,
-    pendingRename,
-    clearPendingRename,
-    setBrokenLinks,
-  } = useEditorStore();
+  const { markUnsaved, clearUnsaved, setBrokenLinks } = useEditorStore();
 
   const currentDocument = documentPath ?? activeDocument;
   const currentDocumentSpaceId = documentSpaceId ?? activeDocumentSpaceId;
@@ -139,7 +132,6 @@ export function usePlateDocumentSession({
     iconRef,
     loadedDocumentKey,
     refreshLoadedDocumentKey,
-    setTitle,
     titleRef,
   } = useEditorDocumentLoader({
     bodyOnly,
@@ -179,56 +171,31 @@ export function usePlateDocumentSession({
 
   useEffect(() => cancelDebounce, [cancelDebounce]);
 
-  const {
-    handleSave,
-    handleSaveAll,
-    persistRenamedDocumentBody,
-    scheduleAutoSave,
-  } = useEditorDocumentWriter({
-    activeRootId,
-    activeWsId,
-    bufferTimerRef,
-    cancelDebounce,
-    clearUnsaved,
-    currentCacheKeyRef,
-    currentDocument,
-    currentPathRef,
-    debounceTimerRef,
-    descriptionRef,
-    editor,
-    iconRef,
-    isDebouncePendingRef,
-    ownNoncesRef,
-    patchEntryTreeMeta,
-    projectPath,
-    reloadTreePathParents,
-    removeTreePath,
-    saveScopeTree,
-    setCurrentDocument,
-    spacePath,
-    titleRef,
-  });
-
-  useEditorPendingRename({
-    pendingRename,
-    currentDocument,
-    editor,
-    spacePath,
-    activeWsId,
-    titleRef,
-    iconRef,
-    descriptionRef,
-    clearPendingRename,
-    clearUnsaved,
-    markUnsaved,
-    persistRenamedDocumentBody,
-    setCurrentDocument: (path) => {
-      adoptedDocumentKeyRef.current = getDocumentCacheKey(spacePath, path);
-      setCurrentDocument(path);
-    },
-    patchEntryTreeMeta,
-    setTitle,
-  });
+  const { handleSave, handleSaveAll, scheduleAutoSave } =
+    useEditorDocumentWriter({
+      activeRootId,
+      activeWsId,
+      bufferTimerRef,
+      cancelDebounce,
+      clearUnsaved,
+      currentCacheKeyRef,
+      currentDocument,
+      currentPathRef,
+      debounceTimerRef,
+      descriptionRef,
+      editor,
+      iconRef,
+      isDebouncePendingRef,
+      ownNoncesRef,
+      patchEntryTreeMeta,
+      projectPath,
+      reloadTreePathParents,
+      removeTreePath,
+      saveScopeTree,
+      setCurrentDocument,
+      spacePath,
+      titleRef,
+    });
 
   useEditorSaveShortcuts({ onSave: handleSave, onSaveAll: handleSaveAll });
 

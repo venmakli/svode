@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PlateDocumentEditor } from "@/features/editor";
-import { requestEditorFileRename } from "@/features/editor/file-tree-sync";
 import {
   deleteEntry as deleteEntryApi,
   duplicateEntry as duplicateEntryApi,
@@ -13,9 +12,15 @@ import { isEntryTreeMetaField, useEntryFieldSave } from "../field-save";
 import {
   useOpenEntryDocument,
   useOpenEntryScopeHome,
+  useEntryTitleOutcomeEffect,
   useRetargetEntryDocument,
 } from "../selection";
-import type { Entry, EntryCover, EntryDetailState } from "../model";
+import {
+  applyEntryTitleOutcome,
+  type Entry,
+  type EntryCover,
+  type EntryDetailState,
+} from "../model";
 import { PropertyPanel } from "@/features/properties/panel";
 import { normalizeSchema } from "@/features/properties";
 import { type EntrySchemaResult } from "@/features/properties";
@@ -79,6 +84,10 @@ export function EntryDocumentScreen({
   );
   const [detailState, setDetailState] = useState<EntryDetailState | null>(null);
   const [deleteEntry, setDeleteEntry] = useState<Entry | null>(null);
+  const [pathHandoff, setPathHandoff] = useState<{
+    previousPath: string;
+    path: string;
+  } | null>(null);
   const reloadSeqRef = useRef(0);
   const adoptedDocumentTargetKeyRef = useRef<string | null>(null);
   const applyEntryUpdate = useCallback(
@@ -89,7 +98,10 @@ export function EntryDocumentScreen({
     },
     [],
   );
-  const currentEntry = loadedEntryKey === documentTargetKey ? entry : null;
+  const renderedDocumentTargetKey =
+    adoptedDocumentTargetKeyRef.current ?? documentTargetKey;
+  const currentEntry =
+    loadedEntryKey === renderedDocumentTargetKey ? entry : null;
   const documentName = useEntryDocumentName({
     documentPath,
     entry: currentEntry,
@@ -99,24 +111,17 @@ export function EntryDocumentScreen({
     spacePath,
     projectPath,
     applyEntryUpdate,
-    onTitleSaved: (previousPath, updated) =>
-      requestEditorFileRename(
-        spacePath,
-        previousPath,
-        updated.meta.title,
-        updated.path === previousPath ? null : updated.path,
-      ),
+    deferTitlePathAdoption: true,
     onSaved: (updated, context) => {
       if (isEntryTreeMetaField(context.field)) {
         patchEntryTreeMeta(
           spaceId,
-          updated.path,
+          context.previousEntry.path,
           updated.meta.title,
           updated.meta.icon,
           updated.meta.description ?? null,
         );
         if (updated.path !== context.previousEntry.path) {
-          removeTreePath(spaceId, context.previousEntry.path);
           void reloadTreePathParents(spaceId, [
             context.previousEntry.path,
             updated.path,
@@ -130,6 +135,33 @@ export function EntryDocumentScreen({
     onError: (error, context) => {
       if (context.field !== "title") return;
       documentName.handleSaveError(error);
+    },
+  });
+
+  useEntryTitleOutcomeEffect({
+    scopePath: spacePath,
+    path: entry?.path ?? documentPath,
+    onOutcome: (titleOutcome) => {
+      const nextTargetKey = getDocumentTargetKey(
+        spacePath,
+        titleOutcome.entry.path,
+      );
+      adoptedDocumentTargetKeyRef.current = nextTargetKey;
+      setEntry((current) =>
+        current ? applyEntryTitleOutcome(current, titleOutcome.entry) : current,
+      );
+      setLoadedEntryKey(nextTargetKey);
+      if (titleOutcome.previousPath !== titleOutcome.entry.path) {
+        setPathHandoff({
+          previousPath: titleOutcome.previousPath,
+          path: titleOutcome.entry.path,
+        });
+        retargetDocument(
+          titleOutcome.previousPath,
+          titleOutcome.entry.path,
+          spaceId,
+        );
+      }
     },
   });
 
@@ -324,6 +356,7 @@ export function EntryDocumentScreen({
         bodyOnlyMeta={currentEntry.meta}
         initialEntry={currentEntry}
         initialEntrySpacePath={spacePath}
+        documentPathHandoff={pathHandoff}
         onDocumentPathChange={(path) => {
           adoptedDocumentTargetKeyRef.current = getDocumentTargetKey(
             spacePath,

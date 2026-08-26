@@ -79,8 +79,6 @@ export function useFileTreeItemActions({
     space,
     bareFolder,
     activeRootPath,
-    activeDocument,
-    activeDocumentSpaceId,
     reloadTreeParents,
     patchEntryTreeMeta,
     removeTreePath,

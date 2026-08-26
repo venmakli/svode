@@ -4,6 +4,7 @@ export {
   normalizeEntry,
   normalizeEntryCover,
 } from "./normalize-entry";
+export { applyEntryTitleOutcome } from "./title-outcome";
 export {
   ENTRY_FIELD_TEXT_SAVE_DELAY_MS,
   isEntryTreeMetaField,

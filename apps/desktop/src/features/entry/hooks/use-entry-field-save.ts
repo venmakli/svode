@@ -7,6 +7,7 @@ import {
 } from "../lib/entry-field-save-queue";
 import { publishEntryFilenameWarnings } from "../lib/filename-warning";
 import type { Entry } from "../model/types";
+import { publishEntryTitleOutcome } from "./entry-selection-actions";
 import {
   entryFieldSavePolicy,
   mergeSavedEntryFieldResult,
@@ -39,7 +40,7 @@ export function useEntryFieldSave({
   spacePath,
   projectPath,
   applyEntryUpdate,
-  onTitleSaved,
+  deferTitlePathAdoption = false,
   onSaved,
   onError,
 }: {
@@ -49,7 +50,7 @@ export function useEntryFieldSave({
     entryPath: string,
     update: (entry: Entry) => Entry,
   ) => void;
-  onTitleSaved?: (previousPath: string, entry: Entry) => void;
+  deferTitlePathAdoption?: boolean;
   onSaved?: (entry: Entry, context: EntryFieldSaveContext) => void;
   onError?: (error: unknown, context: EntryFieldSaveContext) => void;
 }) {
@@ -173,14 +174,17 @@ export function useEntryFieldSave({
               );
             }
             publishEntryFilenameWarnings(updated.warnings);
-            onTitleSaved?.(requestPath, updated);
+            publishEntryTitleOutcome(spacePath, requestPath, updated);
           }
           const outcomeContext =
             requestPath === context.previousEntry.path
               ? context
               : {
                   ...context,
-                  previousEntry: { ...context.previousEntry, path: requestPath },
+                  previousEntry: {
+                    ...context.previousEntry,
+                    path: requestPath,
+                  },
                 };
           let appliedEntry: Entry | null = null;
           if (applyResult && mountedRef.current) {
@@ -189,7 +193,7 @@ export function useEntryFieldSave({
                 current,
                 field,
                 updated,
-                Boolean(onTitleSaved),
+                deferTitlePathAdoption,
               ));
             };
             applyEntryUpdate(requestPath, applySavedUpdate);
@@ -251,6 +255,13 @@ export function useEntryFieldSave({
         });
       });
     },
-    [applyEntryUpdate, onError, onSaved, onTitleSaved, projectPath, spacePath],
+    [
+      applyEntryUpdate,
+      deferTitlePathAdoption,
+      onError,
+      onSaved,
+      projectPath,
+      spacePath,
+    ],
   );
 }

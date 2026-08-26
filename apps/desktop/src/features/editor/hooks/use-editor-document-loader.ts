@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Descendant } from "platejs";
 import type { PlateEditor } from "platejs/react";
 import { toast } from "sonner";
@@ -56,7 +49,6 @@ interface UseEditorDocumentLoaderResult {
   iconRef: MutableRef<string | null>;
   loadedDocumentKey: string | null;
   refreshLoadedDocumentKey: (cacheKey: string | null) => void;
-  setTitle: Dispatch<SetStateAction<string>>;
   titleRef: MutableRef<string>;
 }
 
@@ -363,7 +355,6 @@ export function useEditorDocumentLoader({
     iconRef,
     loadedDocumentKey,
     refreshLoadedDocumentKey,
-    setTitle,
     titleRef,
   };
 }

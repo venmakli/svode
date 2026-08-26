@@ -69,7 +69,6 @@ interface UseEditorDocumentWriterInput {
 interface UseEditorDocumentWriterResult {
   handleSave: () => Promise<void>;
   handleSaveAll: () => Promise<void>;
-  persistRenamedDocumentBody: (path: string) => Promise<boolean>;
   scheduleAutoSave: () => void;
 }
 
@@ -150,22 +149,6 @@ export function useEditorDocumentWriter({
       return result;
     },
     [currentPathRef, editor, ownNoncesRef, projectPath, spacePath],
-  );
-
-  const persistRenamedDocumentBody = useCallback(
-    async (path: string): Promise<boolean> => {
-      try {
-        const result = await performWrite(true, path);
-        if (!result) return false;
-        void refreshGitSpaceStatus(spacePath);
-        return true;
-      } catch (err) {
-        console.error("Failed to preserve document body after rename:", err);
-        toast.error(m.editor_error_save());
-        return false;
-      }
-    },
-    [performWrite, spacePath],
   );
 
   const scheduleAutoSave = useCallback(() => {
@@ -332,7 +315,6 @@ export function useEditorDocumentWriter({
   return {
     handleSave,
     handleSaveAll,
-    persistRenamedDocumentBody,
     scheduleAutoSave,
   };
 }

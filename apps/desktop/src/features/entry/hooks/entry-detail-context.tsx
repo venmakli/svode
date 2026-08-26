@@ -18,9 +18,12 @@ import {
   type SaveEntryFieldOptions,
 } from "../field-save";
 import { humanizeOwnerPath, isReadmeMissingError } from "../lib/readme-state";
-import type { Entry, EntryCover } from "../model";
+import { applyEntryTitleOutcome, type Entry, type EntryCover } from "../model";
 import { propertyFieldSavePolicy } from "../property-field-save";
-import { useRetargetEntryDocument } from "./use-entry-selection";
+import {
+  useEntryTitleOutcomeEffect,
+  useRetargetEntryDocument,
+} from "./use-entry-selection";
 import { handleError } from "../lib/errors";
 
 export type ReadmeStatus = "loading" | "ready" | "missing" | "error";
@@ -109,29 +112,45 @@ export function EntryDetailProvider({
     spacePath,
     projectPath,
     applyEntryUpdate,
+    deferTitlePathAdoption: true,
     onSaved: (updated, context) => {
       const pathChanged = updated.path !== context.previousEntry.path;
-      if (isEntryTreeMetaField(context.field) && !pathChanged) {
+      if (isEntryTreeMetaField(context.field)) {
         patchEntryTreeMeta(
           spaceId,
-          updated.path,
+          context.previousEntry.path,
           updated.meta.title,
           updated.meta.icon,
           updated.meta.description ?? null,
         );
       }
-      if (
-        context.field === "title" &&
-        pathChanged
-      ) {
-        const previousPath = context.previousEntry.path;
-        adoptedReadmePathRef.current = updated.path;
-        setPathHandoff({ previousPath, path: updated.path });
-        retargetDocument(previousPath, updated.path, spaceId);
-        void reloadTreePathParents(spaceId, [previousPath, updated.path]).catch(
-          handleError,
-        );
+      if (context.field === "title" && pathChanged) {
+        void reloadTreePathParents(spaceId, [
+          context.previousEntry.path,
+          updated.path,
+        ]).catch(handleError);
       }
+    },
+  });
+
+  useEntryTitleOutcomeEffect({
+    scopePath: spacePath,
+    path: entry?.path ?? readmePath,
+    onOutcome: (titleOutcome) => {
+      setEntry((current) =>
+        current ? applyEntryTitleOutcome(current, titleOutcome.entry) : current,
+      );
+      if (titleOutcome.previousPath === titleOutcome.entry.path) return;
+      adoptedReadmePathRef.current = titleOutcome.entry.path;
+      setPathHandoff({
+        previousPath: titleOutcome.previousPath,
+        path: titleOutcome.entry.path,
+      });
+      retargetDocument(
+        titleOutcome.previousPath,
+        titleOutcome.entry.path,
+        spaceId,
+      );
     },
   });
 

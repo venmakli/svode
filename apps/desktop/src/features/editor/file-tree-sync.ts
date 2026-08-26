@@ -35,17 +35,6 @@ export function clearCommittedReviewMarkers(
   }
 }
 
-export function requestEditorFileRename(
-  scopePath: string | null | undefined,
-  path: string,
-  title: string,
-  newPath: string | null,
-): void {
-  const editor = useEditorStore.getState();
-  if (newPath) editor.suppressPaths(scopePath, [path, newPath]);
-  editor.requestRename(scopePath, path, title, newPath);
-}
-
 export function suppressEditorFileEvents(
   scopePath: string | null | undefined,
   paths: string[],

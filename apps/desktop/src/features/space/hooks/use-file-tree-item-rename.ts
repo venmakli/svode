@@ -10,9 +10,10 @@ import * as m from "@/paraglide/messages.js";
 import type { TreeNode } from "../model/types";
 import {
   markEditorFilesStale,
-  requestEditorFileRename,
   suppressEditorFileEvents,
 } from "@/features/editor/file-tree-sync";
+import { publishEntryTitleOutcome } from "@/features/entry/selection";
+import { normalizeEntry } from "@/features/entry";
 import {
   renameTreeEntryPath,
   updateTreeEntryTitle,
@@ -29,8 +30,6 @@ interface UseFileTreeItemRenameInput {
   space: SpaceInfo | undefined;
   bareFolder: boolean;
   activeRootPath: string | null;
-  activeDocument: string | null;
-  activeDocumentSpaceId: string | null;
   reloadTreeParents: (
     spaceId: string,
     parentPaths: Array<string | null | undefined>,
@@ -52,8 +51,6 @@ export function useFileTreeItemRename({
   space,
   bareFolder,
   activeRootPath,
-  activeDocument,
-  activeDocumentSpaceId,
   reloadTreeParents,
   patchEntryTreeMeta,
   removeTreePath,
@@ -65,6 +62,7 @@ export function useFileTreeItemRename({
     null,
   );
   const editRef = useRef<HTMLInputElement>(null);
+  const renameInFlightRef = useRef(false);
 
   useEffect(() => {
     if (isEditing && editRef.current) {
@@ -80,6 +78,7 @@ export function useFileTreeItemRename({
   }
 
   async function handleRenameSubmit() {
+    if (renameInFlightRef.current) return;
     const newName = editValue;
     if (!space || !newName.trim() || newName === node.title) {
       setIsEditing(false);
@@ -102,6 +101,7 @@ export function useFileTreeItemRename({
       }
     }
 
+    renameInFlightRef.current = true;
     try {
       if (bareFolder) {
         const parent = node.path.includes("/")
@@ -121,33 +121,28 @@ export function useFileTreeItemRename({
         removeTreePath(spaceId, node.path);
         await reloadTreeParents(spaceId, [parent]);
       } else {
-        const entry = await updateTreeEntryTitle({
-          spacePath: space.path,
-          filePath: node.path,
-          title: newName,
-          projectPath: activeRootPath,
-        });
-        if (activeDocument === node.path && activeDocumentSpaceId === spaceId) {
-          requestEditorFileRename(
-            space.path,
-            node.path,
-            newName,
-            entry.path === node.path ? null : entry.path,
-          );
+        const entry = normalizeEntry(
+          await updateTreeEntryTitle({
+            spacePath: space.path,
+            filePath: node.path,
+            title: newName,
+            projectPath: activeRootPath,
+          }),
+        );
+        if (entry.path !== node.path) {
+          suppressEditorFileEvents(space.path, [node.path, entry.path]);
         }
+        publishEntryTitleOutcome(space.path, node.path, entry);
         patchEntryTreeMeta(
           spaceId,
-          entry.path,
-          newName,
+          node.path,
+          entry.meta.title,
           entry.meta.icon,
           entry.meta.description ?? null,
         );
         const parent = node.path.toLowerCase().endsWith("/readme.md")
           ? node.path.split("/").slice(0, -2).join("/")
           : node.path.split("/").slice(0, -1).join("/");
-        if (entry.path !== node.path) {
-          removeTreePath(spaceId, node.path);
-        }
         const nextParent = entry.path.toLowerCase().endsWith("/readme.md")
           ? entry.path.split("/").slice(0, -2).join("/")
           : entry.path.split("/").slice(0, -1).join("/");
@@ -165,6 +160,8 @@ export function useFileTreeItemRename({
       }
       console.error("Failed to rename:", err);
       toast.error(m.toast_error());
+    } finally {
+      renameInFlightRef.current = false;
     }
     setIsEditing(false);
   }
@@ -172,7 +169,7 @@ export function useFileTreeItemRename({
   function handleRenameKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Enter") {
       event.preventDefault();
-      void handleRenameSubmit();
+      event.currentTarget.blur();
     } else if (event.key === "Escape") {
       setIsEditing(false);
     }

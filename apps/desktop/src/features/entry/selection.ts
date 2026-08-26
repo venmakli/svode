@@ -3,10 +3,12 @@ export {
   getActiveEntrySelection,
   openEntryDocument,
   openEntryScopeHome,
+  publishEntryTitleOutcome,
   retargetEntryDocument,
   type EntryPathRetarget,
   type EntryRevealRequest,
   type EntrySelectionSnapshot,
+  type EntryTitleOutcome,
   type OpenEntryDocumentOptions,
 } from "./hooks/entry-selection-actions";
 export {
@@ -14,6 +16,8 @@ export {
   useActiveEntryDocumentSpaceId,
   useActiveEntrySelection,
   useCloseEntryDocument,
+  useEntryTitleOutcome,
+  useEntryTitleOutcomeEffect,
   useOpenEntryDocument,
   useOpenEntryScopeHome,
   useRetargetEntryDocument,

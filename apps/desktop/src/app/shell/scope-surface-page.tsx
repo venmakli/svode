@@ -100,6 +100,7 @@ export function ScopeSurfacePage({
       actions: ReactNode,
       nestedRouteState: CollectionRouteState,
       nestedSurfaceState: CollectionPeekSurfaceState,
+      nestedSessionKey: string,
     ) => {
       const nestedOwner = createCollectionDirectoryOwner({
         spaceId: owner.spaceId,
@@ -111,12 +112,12 @@ export function ScopeSurfacePage({
       });
       return (
         <ScopeSurfacePage
-          key={nestedOwner.ownerKey}
           owner={nestedOwner}
           presentation="compact"
           routeState={nestedRouteState}
           compactSurfaceState={nestedSurfaceState}
           headerActions={actions}
+          sessionKey={nestedSessionKey}
         />
       );
     },

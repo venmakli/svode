@@ -5,10 +5,12 @@ import {
   type OpenEntryDocumentOptions,
   type ScopeOpenRequest,
 } from "./entry-selection-store";
+import type { Entry } from "../model";
 
 export type {
   EntryRevealRequest,
   EntryPathRetarget,
+  EntryTitleOutcome,
   OpenEntryDocumentOptions,
   ScopeOpenRequest,
 } from "./entry-selection-store";
@@ -56,6 +58,16 @@ export function retargetEntryDocument(
   spaceId?: string,
 ) {
   useEntrySelectionStore.getState().retargetDocument(fromPath, path, spaceId);
+}
+
+export function publishEntryTitleOutcome(
+  scopePath: string,
+  previousPath: string,
+  entry: Entry,
+) {
+  useEntrySelectionStore
+    .getState()
+    .publishTitleOutcome(scopePath, previousPath, entry);
 }
 
 export function closeEntryDocument() {
