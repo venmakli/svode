@@ -6,6 +6,7 @@ import {
 } from "react";
 import { Separator } from "@/components/ui/separator";
 import { PlateDocumentEditor } from "@/features/editor";
+import { requestEditorFileRename } from "@/features/editor/file-tree-sync";
 import { PropertyPanel } from "@/features/properties/panel";
 import type { EntrySchemaResult } from "@/features/properties";
 import { useSpaceTreeSync } from "@/features/space";
@@ -152,6 +153,10 @@ function useEntryPeekFieldSave({
   const patchEntryTreeMeta = useSpaceTreeSync(
     (state) => state.patchEntryTreeMeta,
   );
+  const reloadTreePathParents = useSpaceTreeSync(
+    (state) => state.reloadTreePathParents,
+  );
+  const removeTreePath = useSpaceTreeSync((state) => state.removeTreePath);
   const applyEntryUpdate = useCallback(
     (entryPath: string, update: (entry: Entry) => Entry) => {
       onEntryChange((current) =>
@@ -165,6 +170,13 @@ function useEntryPeekFieldSave({
     spacePath,
     projectPath,
     applyEntryUpdate,
+    onTitleSaved: (previousPath, updated) =>
+      requestEditorFileRename(
+        spacePath,
+        previousPath,
+        updated.meta.title,
+        updated.path === previousPath ? null : updated.path,
+      ),
     onSaved: (updated, context) => {
       if (isEntryTreeMetaField(context.field)) {
         patchEntryTreeMeta(
@@ -174,6 +186,13 @@ function useEntryPeekFieldSave({
           updated.meta.icon,
           updated.meta.description ?? null,
         );
+        if (updated.path !== context.previousEntry.path) {
+          removeTreePath(spaceId, context.previousEntry.path);
+          void reloadTreePathParents(spaceId, [
+            context.previousEntry.path,
+            updated.path,
+          ]);
+        }
       }
     },
   });

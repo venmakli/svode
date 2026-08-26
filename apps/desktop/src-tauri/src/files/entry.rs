@@ -2769,6 +2769,36 @@ mod tests {
     }
 
     #[test]
+    fn test_title_write_renames_readme_backed_collection_directory() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().to_str().unwrap();
+        let head = create(ws, None, "Без названия").unwrap();
+        let head = convert_entry_to_folder(tmp.path(), &head.path, None).unwrap();
+        convert_entry_to_nested_collection(tmp.path(), &head.path).unwrap();
+
+        let result = write(
+            ws,
+            &head.path,
+            &head.body,
+            Some("Проекты команды"),
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            result.new_path.as_deref(),
+            Some("Проекты команды/README.md")
+        );
+        assert!(resolve(ws, "Проекты команды/README.md").is_file());
+        assert!(resolve(ws, "Проекты команды/schema.yaml").is_file());
+        assert!(!resolve(ws, "Без названия").exists());
+    }
+
+    #[test]
     fn quick_create_allocates_visible_titles_and_explicit_create_is_non_destructive() {
         let tmp = TempDir::new().unwrap();
         let space = tmp.path().to_string_lossy();

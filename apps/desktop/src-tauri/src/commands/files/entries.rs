@@ -192,7 +192,40 @@ pub async fn update_entry_field(
     value: serde_json::Value,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
+    nonces: State<'_, Arc<WriteNonceRegistry>>,
+    autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
+    if field == "title" {
+        let title = value.as_str().ok_or_else(|| {
+            AppError::General("invalid entry field: title must be a string".into())
+        })?;
+        let current = entry::read(&space, &file_path)?;
+        if current.meta.title == title {
+            return Ok(current);
+        }
+
+        let result = write_entry(
+            app,
+            space.clone(),
+            file_path.clone(),
+            current.body,
+            Some(title.to_string()),
+            None,
+            None,
+            None,
+            Some(false),
+            project_path,
+            index_state,
+            nonces,
+            autocommit,
+        )
+        .await?;
+        let current_path = result.new_path.as_deref().unwrap_or(&file_path);
+        let mut updated = entry::read(&space, current_path)?;
+        updated.warnings = result.warnings;
+        return Ok(updated);
+    }
+
     let relation_paths = properties::relation_entry_field_mutation_paths_with_project(
         &space,
         project_path.as_deref(),

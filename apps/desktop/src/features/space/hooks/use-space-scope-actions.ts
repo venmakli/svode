@@ -32,7 +32,10 @@ export function useSpaceScopeActions({
     async (scope: ScopeTarget) => {
       if (onBeforeNavigation && !(await onBeforeNavigation())) return;
       try {
-        const entry = await createEntry(scope.path, "Untitled");
+        const entry = await createEntry(
+          scope.path,
+          String(m.editor_untitled()),
+        );
         if (entry) {
           publishEntryFilenameWarnings(entry.warnings);
           onActivateContent();

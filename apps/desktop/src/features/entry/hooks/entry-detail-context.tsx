@@ -72,8 +72,13 @@ export function EntryDetailProvider({
   const [status, setStatus] = useState<ReadmeStatus>("loading");
   const [error, setError] = useState<string | null>(null);
   const reloadSequenceRef = useRef(0);
-  const { patchEntryTreeMeta, reloadTreeParent, reloadTreePathParent } =
-    useSpaceTreeSync();
+  const {
+    patchEntryTreeMeta,
+    reloadTreeParent,
+    reloadTreePathParent,
+    reloadTreePathParents,
+    removeTreePath,
+  } = useSpaceTreeSync();
   const applyEntryUpdate = useCallback(
     (entryPath: string, update: (current: Entry) => Entry) => {
       setEntry((current) =>
@@ -95,6 +100,17 @@ export function EntryDetailProvider({
           updated.meta.icon,
           updated.meta.description ?? null,
         );
+      }
+      if (
+        context.field === "title" &&
+        updated.path !== context.previousEntry.path
+      ) {
+        removeTreePath(spaceId, context.previousEntry.path);
+        void reloadTreePathParents(spaceId, [
+          context.previousEntry.path,
+          updated.path,
+        ]);
+        onOpenPath(updated.path, spaceId);
       }
     },
   });

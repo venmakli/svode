@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef } from "react";
 import { updateEntryField } from "../api/entry-api";
 import { enqueueEntryFieldSave } from "../lib/entry-field-save-queue";
+import { publishEntryFilenameWarnings } from "../lib/filename-warning";
 import type { Entry } from "../model/types";
 import {
   entryFieldSavePolicy,
-  mergeSavedEntryField,
+  mergeSavedEntryFieldResult,
   patchEntryField,
   rollbackEntryField,
   type EntryFieldSavePolicy,
@@ -34,6 +35,7 @@ export function useEntryFieldSave({
   spacePath,
   projectPath,
   applyEntryUpdate,
+  onTitleSaved,
   onSaved,
   onError,
 }: {
@@ -43,6 +45,7 @@ export function useEntryFieldSave({
     entryPath: string,
     update: (entry: Entry) => Entry,
   ) => void;
+  onTitleSaved?: (previousPath: string, entry: Entry) => void;
   onSaved?: (entry: Entry, context: EntryFieldSaveContext) => void;
   onError?: (error: unknown, context: EntryFieldSaveContext) => void;
 }) {
@@ -112,14 +115,23 @@ export function useEntryFieldSave({
               }),
           );
           if (versionsRef.current.get(key) !== version) return null;
+          if (field === "title") {
+            publishEntryFilenameWarnings(updated.warnings);
+            onTitleSaved?.(entry.path, updated);
+          }
           let appliedEntry: Entry | null = null;
           if (applyResult && mountedRef.current) {
-            applyEntryUpdate(entry.path, (current) =>
-              (appliedEntry = mergeSavedEntryField(current, field, updated)),
-            );
+            applyEntryUpdate(entry.path, (current) => {
+              return (appliedEntry = mergeSavedEntryFieldResult(
+                current,
+                field,
+                updated,
+                Boolean(onTitleSaved),
+              ));
+            });
           }
           const result = appliedEntry ?? updated;
-          onSaved?.(result, context);
+          onSaved?.(updated, context);
           return result;
         } catch (error) {
           if (versionsRef.current.get(key) === version) {
@@ -154,6 +166,13 @@ export function useEntryFieldSave({
         });
       });
     },
-    [applyEntryUpdate, onError, onSaved, projectPath, spacePath],
+    [
+      applyEntryUpdate,
+      onError,
+      onSaved,
+      onTitleSaved,
+      projectPath,
+      spacePath,
+    ],
   );
 }

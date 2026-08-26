@@ -174,23 +174,12 @@ export function usePlateDocumentSession({
 
   useEffect(() => cancelDebounce, [cancelDebounce]);
 
-  useEditorPendingRename({
-    pendingRename,
-    currentDocument,
-    editor,
-    spacePath,
-    activeWsId,
-    titleRef,
-    iconRef,
-    descriptionRef,
-    clearPendingRename,
-    clearUnsaved,
-    setCurrentDocument,
-    patchEntryTreeMeta,
-    setTitle,
-  });
-
-  const { handleSave, handleSaveAll, scheduleAutoSave } =
+  const {
+    handleSave,
+    handleSaveAll,
+    persistRenamedDocumentBody,
+    scheduleAutoSave,
+  } =
     useEditorDocumentWriter({
       activeRootId,
       activeWsId,
@@ -215,6 +204,24 @@ export function usePlateDocumentSession({
       spacePath,
       titleRef,
     });
+
+  useEditorPendingRename({
+    pendingRename,
+    currentDocument,
+    editor,
+    spacePath,
+    activeWsId,
+    titleRef,
+    iconRef,
+    descriptionRef,
+    clearPendingRename,
+    clearUnsaved,
+    markUnsaved,
+    persistRenamedDocumentBody,
+    setCurrentDocument,
+    patchEntryTreeMeta,
+    setTitle,
+  });
 
   useEditorSaveShortcuts({ onSave: handleSave, onSaveAll: handleSaveAll });
 

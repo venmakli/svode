@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import type { Entry } from "./types";
 import {
   mergeSavedEntryField,
+  mergeSavedEntryFieldResult,
   patchEntryField,
   rollbackEntryField,
 } from "./field-save";
@@ -46,6 +47,21 @@ test("mergeSavedEntryField applies saved values and timestamp", () => {
   const mergedStatus = mergeSavedEntryField(current, "status", saved);
   expect(Object.prototype.hasOwnProperty.call(mergedStatus.meta.extra, "status"))
     .toBe(false);
+});
+
+test("mergeSavedEntryFieldResult applies backend path unless editor coordination owns it", () => {
+  const current = { ...entry(), path: "Без названия/README.md" };
+  const saved = {
+    ...entry({ title: "Проекты команды" }),
+    path: "Проекты команды/README.md",
+  };
+
+  expect(
+    mergeSavedEntryFieldResult(current, "title", saved, false).path,
+  ).toBe("Проекты команды/README.md");
+  expect(mergeSavedEntryFieldResult(current, "title", saved, true).path).toBe(
+    "Без названия/README.md",
+  );
 });
 
 test("rollbackEntryField restores previous field without rewinding updated", () => {

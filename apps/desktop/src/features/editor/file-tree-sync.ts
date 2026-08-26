@@ -41,7 +41,9 @@ export function requestEditorFileRename(
   title: string,
   newPath: string | null,
 ): void {
-  useEditorStore.getState().requestRename(scopePath, path, title, newPath);
+  const editor = useEditorStore.getState();
+  if (newPath) editor.suppressPaths(scopePath, [path, newPath]);
+  editor.requestRename(scopePath, path, title, newPath);
 }
 
 export function suppressEditorFileEvents(

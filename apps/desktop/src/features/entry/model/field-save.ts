@@ -94,6 +94,18 @@ export function mergeSavedEntryField(
   return { ...current, meta: { ...nextMeta, extra } };
 }
 
+export function mergeSavedEntryFieldResult(
+  current: Entry,
+  field: string,
+  saved: Entry,
+  preserveCurrentPath: boolean,
+): Entry {
+  const merged = mergeSavedEntryField(current, field, saved);
+  return preserveCurrentPath || saved.path === current.path
+    ? merged
+    : { ...merged, path: saved.path };
+}
+
 export function rollbackEntryField(
   current: Entry,
   field: string,

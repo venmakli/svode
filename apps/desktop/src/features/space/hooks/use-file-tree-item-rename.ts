@@ -128,11 +128,16 @@ export function useFileTreeItemRename({
           projectPath: activeRootPath,
         });
         if (activeDocument === node.path && activeDocumentSpaceId === spaceId) {
-          requestEditorFileRename(space.path, node.path, newName, null);
+          requestEditorFileRename(
+            space.path,
+            node.path,
+            newName,
+            entry.path === node.path ? null : entry.path,
+          );
         }
         patchEntryTreeMeta(
           spaceId,
-          node.path,
+          entry.path,
           newName,
           entry.meta.icon,
           entry.meta.description ?? null,
@@ -140,7 +145,13 @@ export function useFileTreeItemRename({
         const parent = node.path.toLowerCase().endsWith("/readme.md")
           ? node.path.split("/").slice(0, -2).join("/")
           : node.path.split("/").slice(0, -1).join("/");
-        await reloadTreeParents(spaceId, [parent]);
+        if (entry.path !== node.path) {
+          removeTreePath(spaceId, node.path);
+        }
+        const nextParent = entry.path.toLowerCase().endsWith("/readme.md")
+          ? entry.path.split("/").slice(0, -2).join("/")
+          : entry.path.split("/").slice(0, -1).join("/");
+        await reloadTreeParents(spaceId, [parent, nextParent]);
       }
     } catch (err) {
       const conflict = documentNameConflictFromError(err);

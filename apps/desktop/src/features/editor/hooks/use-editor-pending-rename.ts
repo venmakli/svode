@@ -29,6 +29,8 @@ interface UseEditorPendingRenameInput {
   descriptionRef: MutableRef<string>;
   clearPendingRename: () => void;
   clearUnsaved: (scopePath: string | null | undefined, path: string) => void;
+  markUnsaved: (scopePath: string | null | undefined, path: string) => void;
+  persistRenamedDocumentBody: (path: string) => Promise<boolean>;
   setCurrentDocument: (path: string) => void;
   patchEntryTreeMeta: (
     spaceId: string,
@@ -51,6 +53,8 @@ export function useEditorPendingRename({
   descriptionRef,
   clearPendingRename,
   clearUnsaved,
+  markUnsaved,
+  persistRenamedDocumentBody,
   setCurrentDocument,
   patchEntryTreeMeta,
   setTitle,
@@ -73,12 +77,15 @@ export function useEditorPendingRename({
     queueMicrotask(() => setTitle(newTitle));
 
     if (newPath) {
-      if (spacePath) {
-        setCachedDocumentValue(spacePath, newPath, editor.children);
-        deleteCachedDocumentValue(pendingRename.path, spacePath);
-      }
-      clearUnsaved(spacePath, pendingRename.path);
-      setCurrentDocument(newPath);
+      void persistRenamedDocumentBody(newPath).then((bodyPersisted) => {
+        if (spacePath) {
+          setCachedDocumentValue(spacePath, newPath, editor.children);
+          deleteCachedDocumentValue(pendingRename.path, spacePath);
+        }
+        clearUnsaved(spacePath, pendingRename.path);
+        if (!bodyPersisted) markUnsaved(spacePath, newPath);
+        setCurrentDocument(newPath);
+      });
       return;
     }
 
@@ -102,6 +109,8 @@ export function useEditorPendingRename({
     descriptionRef,
     clearPendingRename,
     clearUnsaved,
+    markUnsaved,
+    persistRenamedDocumentBody,
     setCurrentDocument,
     patchEntryTreeMeta,
     setTitle,

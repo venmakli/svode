@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PlateDocumentEditor } from "@/features/editor";
+import { requestEditorFileRename } from "@/features/editor/file-tree-sync";
 import {
   deleteEntry as deleteEntryApi,
   duplicateEntry as duplicateEntryApi,
@@ -92,6 +93,13 @@ export function EntryDocumentScreen({
     spacePath,
     projectPath,
     applyEntryUpdate,
+    onTitleSaved: (previousPath, updated) =>
+      requestEditorFileRename(
+        spacePath,
+        previousPath,
+        updated.meta.title,
+        updated.path === previousPath ? null : updated.path,
+      ),
     onSaved: (updated, context) => {
       if (isEntryTreeMetaField(context.field)) {
         patchEntryTreeMeta(
@@ -101,7 +109,15 @@ export function EntryDocumentScreen({
           updated.meta.icon,
           updated.meta.description ?? null,
         );
-        void reloadTreePathParent(spaceId, updated.path);
+        if (updated.path !== context.previousEntry.path) {
+          removeTreePath(spaceId, context.previousEntry.path);
+          void reloadTreePathParents(spaceId, [
+            context.previousEntry.path,
+            updated.path,
+          ]);
+        } else {
+          void reloadTreePathParent(spaceId, updated.path);
+        }
       }
       if (context.field === "title") documentName.clearSavedConflict();
     },
