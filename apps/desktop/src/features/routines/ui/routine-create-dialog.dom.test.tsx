@@ -70,6 +70,12 @@ if (!isolatedDialogDomProcess) {
           "[data-routine-create-scroll-owner]",
         ).length,
       ).toBe(1);
+      expect(
+        harness.dom.window.document.body.style.pointerEvents === "none",
+      ).toBe(false);
+      expect(
+        harness.dom.window.document.body.hasAttribute("data-scroll-locked"),
+      ).toBe(false);
 
       await clickButton(harness.dom, "Continue");
       const title = harness.dom.window.document.querySelector<HTMLInputElement>(
@@ -172,6 +178,45 @@ if (!isolatedDialogDomProcess) {
       await harness.cleanup();
     }
   });
+
+  test("timezone popup remains wheel-scrollable inside the create dialog", async () => {
+    const harness = await renderHarness();
+    try {
+      await clickButton(harness.dom, "Fill title");
+      await clickButton(harness.dom, "Continue");
+      await clickButton(harness.dom, "Use schedule");
+
+      const input = harness.dom.window.document.querySelector<HTMLInputElement>(
+        "#routine-create-timezone",
+      )!;
+      await act(async () => {
+        input.focus();
+        input.dispatchEvent(
+          new harness.dom.window.MouseEvent("mousedown", {
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+        await nextTurn();
+        await new Promise((resolve) =>
+          harness.dom.window.requestAnimationFrame(resolve),
+        );
+      });
+
+      const list = harness.dom.window.document.querySelector<HTMLElement>(
+        '[data-slot="combobox-list"]',
+      )!;
+      const wheel = new harness.dom.window.WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        deltaY: 120,
+      });
+      expect(list.dispatchEvent(wheel)).toBe(true);
+      expect(wheel.defaultPrevented).toBe(false);
+    } finally {
+      await harness.cleanup();
+    }
+  });
 }
 
 function JourneyHarness({
@@ -214,6 +259,23 @@ function JourneyHarness({
         }
       >
         Fill title
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          changeDefinition({
+            ...definition,
+            enabled: false,
+            trigger: {
+              cron: "0 9 * * 1-5",
+              missedRuns: "skip",
+              timeBasis: { mode: "local" },
+              type: "schedule",
+            },
+          })
+        }
+      >
+        Use schedule
       </button>
       <span data-submit-count>{submitCount}</span>
       <span data-close-count>{closeCount}</span>
@@ -377,6 +439,7 @@ function installDomGlobals(dom: JSDOM) {
     Node: dom.window.Node,
     NodeFilter: dom.window.NodeFilter,
     PointerEvent: dom.window.MouseEvent,
+    WheelEvent: dom.window.WheelEvent,
     ResizeObserver: class {
       disconnect() {}
       observe() {}

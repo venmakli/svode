@@ -195,7 +195,11 @@ export function RoutineCreateDialog({
 
   return (
     <>
-      <Dialog open onOpenChange={(open) => !open && requestClose()}>
+      <Dialog
+        open
+        modal={false}
+        onOpenChange={(open) => !open && requestClose()}
+      >
         <DialogContent
           ref={contentRef}
           className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden"
