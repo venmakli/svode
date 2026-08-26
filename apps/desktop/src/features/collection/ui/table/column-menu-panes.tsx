@@ -1,273 +1,113 @@
-import {
-  ArrowUpDown,
-  BarChart3,
-  Calendar,
-  Check,
-  Copy,
-  EyeOff,
-  Filter,
-  Flag,
-  Grid2X2,
-  ListTree,
-  Trash2,
-  User,
-  KeyRound,
-  type LucideIcon,
-} from "lucide-react";
+import { ArrowUpDown, EyeOff, Filter } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import { FILTER_OP_LABELS } from "@/features/collection/query/model";
 import type { QueryFilter, QuerySort } from "@/features/collection/query/model";
-import type { Column, PropertyType } from "@/features/properties";
 import {
-  isSensitiveColumn,
-  isSensitivePropertyType,
-} from "@/features/properties";
-import { SettingsRow, SettingsSection } from "../settings-row";
-import { PROPERTY_TYPE_ICONS } from "./icons";
-import {
-  propertyTypeLabel,
-  SensitivePropertyTypeHint,
-} from "./property-type-picker";
+  SchemaMenuRow,
+  SchemaMenuSection,
+  SchemaMenuSeparator,
+  type SchemaColumnMenuExtensionControls,
+} from "@/features/properties/column-menu";
 import * as m from "@/paraglide/messages.js";
 
-export type ColumnMenuPane = "main" | "type" | "filter" | "sort" | "settings";
-
-export function MainPane({
-  field,
+export function TitleColumnMainPane({
   label,
-  column,
-  isTitle,
-  visibleFields,
   filter,
   sort,
   onLabelChange,
-  onUpdateViewPatch,
+  onRename,
   onOpenPane,
-  onClose,
-  onRenameColumn,
-  onRenameSystemField,
 }: {
-  field: string;
   label: string;
-  column?: Column;
-  isTitle: boolean;
-  visibleFields: string[];
   filter: QueryFilter | null;
   sort: QuerySort | null;
   onLabelChange: (label: string) => void;
-  onUpdateViewPatch: (patch: Record<string, unknown>) => Promise<void>;
-  onOpenPane: (pane: ColumnMenuPane) => void;
-  onClose: () => void;
-  onRenameColumn: (
-    nextName: string,
-    visibleFields: string[],
-    onUpdateViewPatch: (patch: Record<string, unknown>) => Promise<void>,
-  ) => void;
-  onRenameSystemField: (label: string | null) => void;
+  onRename: (label: string | null) => void;
+  onOpenPane: (pane: string) => void;
 }) {
-  const typeSettings = column ? typeSettingsMeta(column) : null;
-
   return (
     <div className="flex flex-col p-1">
       <div className="p-1">
         <Input
           autoFocus
           value={label}
+          aria-label={m.property_dialog_name()}
           className="h-9 border-0 bg-muted px-3 text-sm font-semibold shadow-none focus-visible:ring-0"
           onChange={(event) => onLabelChange(event.target.value)}
           onBlur={(event) => {
             const next = event.currentTarget.value.trim();
             if (!next) return;
-            if (isTitle) {
-              onRenameSystemField(
-                next === m.collection_field_title() ? null : next,
-              );
-            } else if (next !== field) {
-              onRenameColumn(next, visibleFields, onUpdateViewPatch);
-            }
+            onRename(next === m.collection_field_title() ? null : next);
           }}
           onKeyDown={(event) => {
             if (event.key === "Enter") event.currentTarget.blur();
           }}
         />
       </div>
-      {!isTitle && column ? (
-        <>
-          <SettingsSection label={m.collection_properties_label()} />
-          <SettingsRow
-            icon={Grid2X2}
-            label={m.table_column_type()}
-            meta={propertyTypeLabel(column.type)}
-            onClick={() => onOpenPane("type")}
-          />
-          <SettingsRow
-            icon={EyeOff}
-            label={m.table_hide_column()}
-            onClick={() => {
-              void onUpdateViewPatch({
-                visible_fields: visibleFields.filter(
-                  (visible) => visible !== field,
-                ),
-              });
-              onClose();
-            }}
-          />
-          <ColumnMenuSeparator />
-        </>
-      ) : null}
-      <SettingsSection label={m.table_query_section()} />
-      <SettingsRow
+      <SchemaMenuSection label={m.table_query_section()} />
+      <SchemaMenuRow
         icon={Filter}
         label={m.table_filter()}
         meta={filter ? FILTER_OP_LABELS[filter.op] : m.collection_none()}
         onClick={() => onOpenPane("filter")}
       />
-      <SettingsRow
+      <SchemaMenuRow
         icon={ArrowUpDown}
         label={m.view_query_sort_title()}
         meta={sort ? sortDirectionLabel(sort) : m.collection_none()}
         onClick={() => onOpenPane("sort")}
       />
-      {typeSettings ? (
-        <>
-          <ColumnMenuSeparator />
-          <SettingsSection label={m.table_type_settings()} />
-          <SettingsRow
-            icon={typeSettings.icon}
-            label={typeSettings.label}
-            onClick={() => onOpenPane("settings")}
-          />
-        </>
-      ) : null}
     </div>
   );
 }
 
-function ColumnMenuSeparator() {
-  return <div className="mx-1 my-1 h-px bg-border/70" />;
-}
-
-export function TypePane({
-  activeType,
-  onSelect,
+export function TableSchemaMenuExtension({
+  field,
+  visibleFields,
+  filter,
+  sort,
+  onUpdateViewPatch,
+  controls,
 }: {
-  activeType: PropertyType;
-  onSelect: (type: PropertyType) => void;
+  field: string;
+  visibleFields: string[];
+  filter: QueryFilter | null;
+  sort: QuerySort | null;
+  onUpdateViewPatch: (patch: Record<string, unknown>) => Promise<void>;
+  controls: SchemaColumnMenuExtensionControls;
 }) {
   return (
-    <TooltipProvider>
-      <div className="p-1">
-        {Object.entries(PROPERTY_TYPE_ICONS).map(([type, Icon]) => {
-          const propertyType = type as PropertyType;
-          const isActive = type === activeType;
-          return (
-            <SettingsRow
-              key={type}
-              icon={Icon}
-              label={propertyTypeLabel(propertyType)}
-              right={
-                <span className="flex items-center gap-2">
-                  {isSensitivePropertyType(propertyType) ? (
-                    <SensitivePropertyTypeHint />
-                  ) : null}
-                  {isActive ? <Check data-icon="inline-end" /> : null}
-                </span>
-              }
-              onClick={() => onSelect(propertyType)}
-            />
-          );
-        })}
-      </div>
-    </TooltipProvider>
-  );
-}
-
-export function ColumnDangerActions({
-  column,
-  onDelete,
-  onDuplicateColumn,
-}: {
-  column: Column;
-  onDelete: () => void;
-  onDuplicateColumn: (column: Column, baseName: string) => void;
-}) {
-  const sensitive = isSensitiveColumn(column);
-
-  return (
-    <TooltipProvider>
-      <div className="flex flex-col">
-        <SettingsRow
-          icon={Copy}
-          label={m.table_duplicate_column()}
-          right={null}
-          onClick={() => {
-            onDuplicateColumn(
-              column,
-              `${column.name} (${m.table_duplicate_column_suffix()})`,
-            );
-          }}
-        />
-        <SettingsRow
-          icon={Trash2}
-          label={m.table_delete_column()}
-          right={sensitive ? <SensitivePropertyTypeHint /> : null}
-          destructive
-          onClick={onDelete}
-        />
-      </div>
-    </TooltipProvider>
+    <>
+      <SchemaMenuRow
+        icon={EyeOff}
+        label={m.table_hide_column()}
+        onClick={() => {
+          void onUpdateViewPatch({
+            visible_fields: visibleFields.filter(
+              (visible) => visible !== field,
+            ),
+          });
+          controls.close();
+        }}
+      />
+      <SchemaMenuSeparator />
+      <SchemaMenuSection label={m.table_query_section()} />
+      <SchemaMenuRow
+        icon={Filter}
+        label={m.table_filter()}
+        meta={filter ? FILTER_OP_LABELS[filter.op] : m.collection_none()}
+        onClick={() => controls.openPane("filter")}
+      />
+      <SchemaMenuRow
+        icon={ArrowUpDown}
+        label={m.view_query_sort_title()}
+        meta={sort ? sortDirectionLabel(sort) : m.collection_none()}
+        onClick={() => controls.openPane("sort")}
+      />
+    </>
   );
 }
 
 function sortDirectionLabel(sort: QuerySort) {
   return sort.desc ? m.view_query_sort_desc() : m.view_query_sort_asc();
-}
-
-function hasTypeSettings(column: Column) {
-  return [
-    "select",
-    "multi_select",
-    "status",
-    "date",
-    "number",
-    "actor",
-    "unique_id",
-    "relation",
-    "boolean",
-  ].includes(column.type);
-}
-
-function typeSettingsMeta(column: Column): {
-  icon: LucideIcon;
-  label: string;
-} | null {
-  if (!hasTypeSettings(column)) return null;
-
-  if (column.type === "select" || column.type === "multi_select") {
-    return { icon: Grid2X2, label: m.table_type_settings_options() };
-  }
-  if (column.type === "status") {
-    return { icon: Flag, label: m.table_type_settings_status() };
-  }
-  if (column.type === "date") {
-    return { icon: Calendar, label: m.table_type_settings_date() };
-  }
-  if (column.type === "number") {
-    return { icon: BarChart3, label: m.table_type_settings_number() };
-  }
-  if (column.type === "actor") {
-    return { icon: User, label: m.table_type_settings_actor() };
-  }
-  if (column.type === "unique_id") {
-    return { icon: KeyRound, label: m.table_type_settings_unique_id() };
-  }
-  if (column.type === "relation") {
-    return { icon: ListTree, label: m.table_type_settings_relation() };
-  }
-  if (column.type === "boolean") {
-    return { icon: Check, label: m.table_type_settings_boolean() };
-  }
-
-  return null;
 }

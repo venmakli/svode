@@ -1,20 +1,19 @@
 import { useState, type ReactNode } from "react";
-import { AlertTriangle, ArrowLeft, Check } from "lucide-react";
+import { ArrowLeft, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import type { PropertyType } from "@/features/properties";
 import { isSensitivePropertyType, PROPERTY_TYPES } from "@/features/properties";
-import { PROPERTY_TYPE_ICONS } from "./icons";
+import {
+  PROPERTY_TYPE_ICONS,
+  propertyTypeLabel,
+  SensitivePropertyTypeHint,
+} from "@/features/properties/column-menu";
 import * as m from "@/paraglide/messages.js";
 
 export function PropertyTypePicker({
@@ -84,40 +83,4 @@ export function PropertyTypePicker({
   );
 }
 
-export function propertyTypeLabel(type: PropertyType) {
-  const labels: Record<PropertyType, string> = {
-    text: String(m.table_property_type_text()),
-    number: String(m.table_property_type_number()),
-    select: String(m.table_property_type_select()),
-    multi_select: String(m.table_property_type_multi_select()),
-    status: String(m.table_property_type_status()),
-    date: String(m.table_property_type_date()),
-    unique_id: String(m.table_property_type_unique_id()),
-    actor: String(m.table_property_type_actor()),
-    boolean: String(m.table_property_type_boolean()),
-    url: String(m.table_property_type_url()),
-    email: String(m.table_property_type_email()),
-    phone: String(m.table_property_type_phone()),
-    relation: String(m.table_property_type_relation()),
-  };
-  return labels[type];
-}
-
-export function SensitivePropertyTypeHint() {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span
-          aria-label={m.property_pii_git_history_hint()}
-          className="inline-flex text-muted-foreground"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <AlertTriangle className="size-3.5" data-icon="inline-end" />
-        </span>
-      </TooltipTrigger>
-      <TooltipContent side="right" align="center" className="max-w-64">
-        {m.property_pii_git_history_hint()}
-      </TooltipContent>
-    </Tooltip>
-  );
-}
+export { propertyTypeLabel, SensitivePropertyTypeHint };

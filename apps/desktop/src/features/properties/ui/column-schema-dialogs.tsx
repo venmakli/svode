@@ -194,10 +194,12 @@ export function ChangeTypeDialog({
   open,
   onOpenChange,
   column,
+  initialType,
   collectionPath,
   onSubmit,
 }: BaseDialogProps & {
   column: Column | null;
+  initialType?: PropertyType | null;
   collectionPath?: string | null;
   onSubmit: (
     newType: PropertyType,
@@ -213,7 +215,7 @@ export function ChangeTypeDialog({
   useEffect(() => {
     return deferStateUpdate(() => {
       if (column) {
-        setType(column.type);
+        setType(initialType ?? column.type);
         setPrefix(column.prefix ?? "");
         setActorMultiple(Boolean(column.multiple));
         setGroups(
@@ -226,7 +228,7 @@ export function ChangeTypeDialog({
         );
       }
     });
-  }, [column]);
+  }, [column, initialType]);
 
   const needsStatusGroups = column?.type === "select" && type === "status";
 

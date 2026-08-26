@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList } from "@/components/ui/tabs";
 import { cn } from "@/shared/lib/utils";
-import { MultiPanePopover } from "@/features/collection/query/ui";
+import { MultiPanePopover } from "@/shared/ui/multi-pane-popover";
 import type {
   CollectionView,
   ViewType,

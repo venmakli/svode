@@ -29,8 +29,8 @@ import type {
 } from "@/features/collection/query/model";
 import type { CollectionSchema, PropertyType } from "@/features/properties";
 import { TypeSettingsPane } from "@/features/properties/column-settings";
+import { PropertyTypeMenuPane } from "@/features/properties/column-menu";
 import { handleError } from "../../hooks/error-feedback";
-import { TypePane } from "../table/column-menu-panes";
 import { SortableFieldVisibilityRow } from "../view-settings-panes";
 import { SettingsRow, SettingsSection } from "../settings-row";
 import * as m from "@/paraglide/messages.js";
@@ -149,7 +149,7 @@ export function ViewSettingsPropertyAddTypePane({
   addColumnWithType: (propertyType: PropertyType) => Promise<void>;
 }) {
   return (
-    <TypePane
+    <PropertyTypeMenuPane
       activeType="text"
       onSelect={(nextType) =>
         void addColumnWithType(nextType).catch(handleError)

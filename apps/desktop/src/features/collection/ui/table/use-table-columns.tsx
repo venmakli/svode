@@ -12,9 +12,10 @@ import type {
   RelationOpenTarget,
 } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
+import { PROPERTY_TYPE_ICONS } from "@/features/properties/column-menu";
 import { ColumnMenuPopover } from "./column-menu";
 import { PropertyCell, TitleCell } from "./cells";
-import { PROPERTY_TYPE_ICONS, TITLE_ICON } from "./icons";
+import { TITLE_ICON } from "./icons";
 import { ColumnHeader } from "./table-shell";
 import type { CollectionTableRow, TableEditingCell } from "./types";
 import {

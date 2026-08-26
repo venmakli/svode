@@ -4,16 +4,11 @@ import {
   addOption as addOptionApi,
   addSchemaColumn,
   assignEntryUniqueId,
-  changeSchemaType,
   clearFieldValues,
   clearOptionValues,
-  deleteOption as deleteOptionApi,
-  deleteSchemaColumn,
   getEntrySchema,
   listPropertyActors,
   promoteOrphan as promoteOrphanApi,
-  renameOption as renameOptionApi,
-  renameSchemaColumn,
 } from "../api/schema-api";
 import { normalizeSchema } from "../lib/utils";
 import type {
@@ -21,9 +16,7 @@ import type {
   Column,
   EntrySchemaResult,
   PropertyOption,
-  PropertyType,
   RelationContext,
-  SchemaMutationWarning,
 } from "../model/types";
 import * as m from "@/paraglide/messages.js";
 
@@ -115,6 +108,18 @@ export function usePropertyPanelState({
     return result;
   }, [applySchemaResult, filePath, onSchemaChange, spacePath]);
 
+  const applyCollectionSchema = useCallback(
+    (nextSchema: typeof schema) => {
+      const result: EntrySchemaResult = {
+        schema: normalizeSchema(nextSchema),
+        collectionRootPath,
+      };
+      applySchemaResult(result);
+      onSchemaChange?.(result);
+    },
+    [applySchemaResult, collectionRootPath, onSchemaChange],
+  );
+
   const schemaMutationContext = useMemo<SchemaMutationContext>(
     () => ({
       spacePath,
@@ -160,56 +165,6 @@ export function usePropertyPanelState({
     [refreshSchema, runSchemaMutation, schemaMutationContext],
   );
 
-  const changeColumnType = useCallback(
-    async (
-      column: Column,
-      newType: PropertyType,
-      conversionStrategy?: Record<string, unknown>,
-    ) => {
-      try {
-        const result = await changeSchemaType({
-          ...schemaMutationContext,
-          columnName: column.name,
-          newType,
-          conversionStrategy,
-        });
-        showSchemaMutationWarnings(result.warnings);
-        await refreshSchema();
-        return true;
-      } catch (error) {
-        handleSchemaError(error);
-        return false;
-      }
-    },
-    [handleSchemaError, refreshSchema, schemaMutationContext],
-  );
-
-  const renameColumn = useCallback(
-    (column: Column, newName: string) =>
-      runSchemaMutation(async () => {
-        await renameSchemaColumn({
-          ...schemaMutationContext,
-          oldName: column.name,
-          newName,
-        });
-        await refreshSchema();
-      }),
-    [refreshSchema, runSchemaMutation, schemaMutationContext],
-  );
-
-  const deleteColumn = useCallback(
-    (column: Column, deleteValues: boolean) =>
-      runSchemaMutation(async () => {
-        await deleteSchemaColumn({
-          ...schemaMutationContext,
-          columnName: column.name,
-          deleteValues,
-        });
-        await refreshSchema();
-      }),
-    [refreshSchema, runSchemaMutation, schemaMutationContext],
-  );
-
   const addOption = useCallback(
     (column: Column, option: PropertyOption) =>
       runSchemaMutation(async () => {
@@ -217,34 +172,6 @@ export function usePropertyPanelState({
           ...schemaMutationContext,
           columnName: column.name,
           option,
-        });
-        await refreshSchema();
-      }),
-    [refreshSchema, runSchemaMutation, schemaMutationContext],
-  );
-
-  const renameOption = useCallback(
-    (column: Column, option: PropertyOption, newOptionName: string) =>
-      runSchemaMutation(async () => {
-        await renameOptionApi({
-          ...schemaMutationContext,
-          columnName: column.name,
-          oldOptionName: option.name,
-          newOptionName,
-        });
-        await refreshSchema();
-      }),
-    [refreshSchema, runSchemaMutation, schemaMutationContext],
-  );
-
-  const deleteOption = useCallback(
-    (column: Column, option: PropertyOption, deleteValues: boolean) =>
-      runSchemaMutation(async () => {
-        await deleteOptionApi({
-          ...schemaMutationContext,
-          columnName: column.name,
-          optionName: option.name,
-          deleteValues,
         });
         await refreshSchema();
       }),
@@ -323,14 +250,10 @@ export function usePropertyPanelState({
     relationContext,
     loadActors,
     handleSchemaError,
+    applyCollectionSchema,
     assignUniqueId,
     addColumn,
-    changeColumnType,
-    renameColumn,
-    deleteColumn,
     addOption,
-    renameOption,
-    deleteOption,
     promoteOrphan,
     clearOrphanValues,
     clearInvalidOptionValues,
@@ -339,19 +262,6 @@ export function usePropertyPanelState({
 
 function schemaResultCollectionPath(result: EntrySchemaResult) {
   return result.collectionRootPath ?? "";
-}
-
-function showSchemaMutationWarnings(warnings: SchemaMutationWarning[]) {
-  for (const warning of warnings) {
-    if (warning.code === "relation_unconverted_values") {
-      toast.warning(
-        m.property_relation_convert_warning({
-          count: String(warning.count),
-          field: warning.field,
-        }),
-      );
-    }
-  }
 }
 
 function removeOptionValues(value: unknown, optionNames: string[]) {

@@ -97,6 +97,7 @@
   "property_state_invalid_key": "Некорректный ID",
   "property_state_no_key": "Нет ключа",
   "property_collection_path": "Свойства из {path}",
+  "property_column_menu_label": "Открыть настройки свойства «{name}», тип «{type}»",
   "property_dialog_add_column_title": "Добавить свойство",
   "property_dialog_add_column_desc": "Выберите тип, задайте имя и опции, если они нужны.",
   "property_dialog_type": "Тип",

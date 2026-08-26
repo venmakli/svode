@@ -59,9 +59,7 @@ export function MultiPanePopover<TPane extends string>({
     if (nextOpen) {
       const next = initialPane ?? mainPane;
       setInnerPane(next);
-      if (pane === undefined) {
-        onPaneChange?.(next);
-      }
+      if (pane === undefined) onPaneChange?.(next);
     }
     onOpenChange?.(nextOpen);
   }

@@ -37,6 +37,7 @@ const allowedFeatureSubpathExceptions = new Set([
   "@/features/git/sidebar",
   "@/features/identity/app-shell",
   "@/features/properties/api",
+  "@/features/properties/column-menu",
   "@/features/properties/column-settings",
   "@/features/properties/control",
   "@/features/properties/display",

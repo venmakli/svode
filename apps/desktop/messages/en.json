@@ -97,6 +97,7 @@
   "property_state_invalid_key": "Invalid key",
   "property_state_no_key": "No key",
   "property_collection_path": "Properties from {path}",
+  "property_column_menu_label": "Open settings for {name}, {type} property",
   "property_dialog_add_column_title": "Add property",
   "property_dialog_add_column_desc": "Choose a type, name it, and define options when needed.",
   "property_dialog_type": "Type",

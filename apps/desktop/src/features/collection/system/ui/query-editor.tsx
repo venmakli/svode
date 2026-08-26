@@ -8,12 +8,9 @@ import {
   AlertTitle,
 } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  MultiPanePopover,
-  QueryList,
-  SortEditor,
-} from "@/features/collection/query/ui";
+import { QueryList, SortEditor } from "@/features/collection/query/ui";
 import type { ActorCandidate } from "@/features/properties";
+import { MultiPanePopover } from "@/shared/ui/multi-pane-popover";
 import * as m from "@/paraglide/messages.js";
 
 import { useControlledQueryEditor } from "../../query/hooks";

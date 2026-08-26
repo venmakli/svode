@@ -298,7 +298,7 @@ export function promoteOrphan(
 export function addSchemaColumn(
   input: SchemaMutationInputDto & { column: ColumnDto },
 ) {
-  return invokeSchemaMutation("add_schema_column", input, {
+  return invokeSchemaMutation<CollectionSchemaDto>("add_schema_column", input, {
     column: input.column,
   });
 }
@@ -325,10 +325,14 @@ export function renameSchemaColumn(
     newName: string;
   },
 ) {
-  return invokeSchemaMutation("rename_schema_column", input, {
-    oldName: input.oldName,
-    newName: input.newName,
-  });
+  return invokeSchemaMutation<CollectionSchemaDto>(
+    "rename_schema_column",
+    input,
+    {
+      oldName: input.oldName,
+      newName: input.newName,
+    },
+  );
 }
 
 export function deleteSchemaColumn(

@@ -1,7 +1,7 @@
 import { Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/shared/lib/utils";
-import { MultiPanePopover } from "@/features/collection/query/ui";
+import { MultiPanePopover } from "@/shared/ui/multi-pane-popover";
 import type {
   CollectionView,
   UseViewQueryResult,

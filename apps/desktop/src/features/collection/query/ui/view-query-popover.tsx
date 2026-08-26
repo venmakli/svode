@@ -11,12 +11,10 @@ import {
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type {
-  CollectionSchema,
-} from "@/features/properties";
+import type { CollectionSchema } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
-import { MultiPanePopover } from "./multi-pane-popover";
+import { MultiPanePopover } from "@/shared/ui/multi-pane-popover";
 import {
   FieldChoiceList,
   FilterEditor,

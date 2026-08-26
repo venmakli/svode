@@ -112,13 +112,15 @@ export function promoteOrphan(
   return propertiesPlatform.promoteOrphan(input);
 }
 
-export function addSchemaColumn(
+export async function addSchemaColumn(
   input: SchemaMutationInput & { column: Column },
-) {
-  return propertiesPlatform.addSchemaColumn({
-    ...input,
-    column: toColumnDto(input.column),
-  });
+): Promise<CollectionSchema> {
+  return normalizeSchema(
+    await propertiesPlatform.addSchemaColumn({
+      ...input,
+      column: toColumnDto(input.column),
+    }),
+  );
 }
 
 export async function updateSchemaColumn(
@@ -135,13 +137,13 @@ export async function updateSchemaColumn(
   );
 }
 
-export function renameSchemaColumn(
+export async function renameSchemaColumn(
   input: SchemaMutationInput & {
     oldName: string;
     newName: string;
   },
-) {
-  return propertiesPlatform.renameSchemaColumn(input);
+): Promise<CollectionSchema> {
+  return normalizeSchema(await propertiesPlatform.renameSchemaColumn(input));
 }
 
 export async function deleteSchemaColumn(
