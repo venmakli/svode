@@ -35,7 +35,8 @@ test("storage reset uses a compact dialog trigger next to the authority control"
   );
 
   expect(trigger.includes('aria-haspopup="dialog"')).toBe(true);
-  expect(trigger.includes("Local routine state was reset")).toBe(true);
+  expect(trigger.includes("Local routine data was recreated")).toBe(true);
+  expect(content.includes("couldn&#x27;t find or open")).toBe(true);
   expect(content.includes("Your routines are still available")).toBe(true);
   expect(content.includes("automatic runs were turned off")).toBe(true);
   expect(content.includes("Got it")).toBe(true);
