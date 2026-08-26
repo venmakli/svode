@@ -8,11 +8,9 @@ import { routineErrorMessage } from "./use-routine-catalog";
 
 export function useRoutineStorageRecovery({
   owner,
-  refreshCatalog,
   retryAutomaticConsent,
 }: {
   owner: RoutineOwnerInput;
-  refreshCatalog(): Promise<unknown>;
   retryAutomaticConsent(): void;
 }) {
   const ownerKey = JSON.stringify(owner);
@@ -38,7 +36,6 @@ export function useRoutineStorageRecovery({
       await acknowledgeRoutineStorageRecovery(owner);
       if (requestId !== requestIdRef.current) return;
       retryAutomaticConsent();
-      await refreshCatalog();
     } catch (cause) {
       if (requestId !== requestIdRef.current) return;
       setError(routineErrorMessage(cause));
@@ -48,7 +45,7 @@ export function useRoutineStorageRecovery({
         setPending(false);
       }
     }
-  }, [owner, refreshCatalog, retryAutomaticConsent]);
+  }, [owner, retryAutomaticConsent]);
 
-  return { acknowledge, error, pending };
+  return { dismiss: acknowledge, error, pending };
 }

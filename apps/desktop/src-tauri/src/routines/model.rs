@@ -676,6 +676,7 @@ pub enum RoutineMutationResult {
 #[serde(rename_all = "camelCase")]
 pub struct RoutineAutomaticConsent {
     pub enabled: bool,
+    pub storage_reset_pending: bool,
 }
 
 #[cfg(test)]

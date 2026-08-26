@@ -27,9 +27,18 @@ const collectionOwner: RoutineOwnerInput = {
 test("owner navigation keeps unconfirmed and stale authority values isolated", async () => {
   const dom = createDom();
   const restoreGlobals = installDomGlobals(dom);
-  const spaceFirst = deferred<{ enabled: boolean }>();
-  const collection = deferred<{ enabled: boolean }>();
-  const spaceReturn = deferred<{ enabled: boolean }>();
+  const spaceFirst = deferred<{
+    enabled: boolean;
+    storageResetPending: boolean;
+  }>();
+  const collection = deferred<{
+    enabled: boolean;
+    storageResetPending: boolean;
+  }>();
+  const spaceReturn = deferred<{
+    enabled: boolean;
+    storageResetPending: boolean;
+  }>();
   const calls: unknown[] = [];
   let spaceReads = 0;
   mockNativeIpc((command, args) => {
@@ -56,14 +65,14 @@ test("owner navigation keeps unconfirmed and stale authority values isolated", a
     await act(async () => {
       root.render(<Harness owner={collectionOwner} />);
       await nextTurn();
-      spaceFirst.resolve({ enabled: true });
+      spaceFirst.resolve({ enabled: true, storageResetPending: false });
       await nextTurn();
     });
     expect(textOf(dom, "[data-phase]")).toBe("loading");
     expect(textOf(dom, "[data-owner-kind]")).toBe("collection");
 
     await act(async () => {
-      collection.resolve({ enabled: false });
+      collection.resolve({ enabled: false, storageResetPending: false });
       await nextTurn();
     });
     expect(textOf(dom, "[data-phase]")).toBe("ready");
@@ -77,7 +86,7 @@ test("owner navigation keeps unconfirmed and stale authority values isolated", a
     expect(textOf(dom, "[data-enabled]")).toBe("unknown");
 
     await act(async () => {
-      spaceReturn.resolve({ enabled: true });
+      spaceReturn.resolve({ enabled: true, storageResetPending: false });
       await nextTurn();
     });
     expect(textOf(dom, "[data-phase]")).toBe("ready");
@@ -94,13 +103,16 @@ test("owner navigation keeps unconfirmed and stale authority values isolated", a
 test("failed mutation re-reads the canonical owner value and skips same-value writes", async () => {
   const dom = createDom();
   const restoreGlobals = installDomGlobals(dom);
-  const mutation = deferred<{ enabled: boolean }>();
+  const mutation = deferred<{
+    enabled: boolean;
+    storageResetPending: boolean;
+  }>();
   const mutationArgs: unknown[] = [];
   let reads = 0;
   mockNativeIpc((command, args) => {
     if (command === "routines_get_automatic_consent") {
       reads += 1;
-      return { enabled: false };
+      return { enabled: false, storageResetPending: false };
     }
     if (command === "routines_set_automatic_consent") {
       mutationArgs.push(args);
@@ -145,11 +157,14 @@ test("failed mutation re-reads the canonical owner value and skips same-value wr
 test("a late owner mutation cannot publish into the next owner", async () => {
   const dom = createDom();
   const restoreGlobals = installDomGlobals(dom);
-  const mutation = deferred<{ enabled: boolean }>();
+  const mutation = deferred<{
+    enabled: boolean;
+    storageResetPending: boolean;
+  }>();
   const mutationArgs: unknown[] = [];
   mockNativeIpc((command, args) => {
     if (command === "routines_get_automatic_consent") {
-      return { enabled: false };
+      return { enabled: false, storageResetPending: false };
     }
     if (command === "routines_set_automatic_consent") {
       mutationArgs.push(args);
@@ -176,7 +191,7 @@ test("a late owner mutation cannot publish into the next owner", async () => {
     expect(textOf(dom, "[data-enabled]")).toBe("off");
 
     await act(async () => {
-      mutation.resolve({ enabled: true });
+      mutation.resolve({ enabled: true, storageResetPending: false });
       await nextTurn();
     });
     expect(textOf(dom, "[data-owner-kind]")).toBe("collection");
@@ -193,7 +208,10 @@ test("a late owner mutation cannot publish into the next owner", async () => {
 test("initial read failure can retry without guessing an off value", async () => {
   const dom = createDom();
   const restoreGlobals = installDomGlobals(dom);
-  const retryRead = deferred<{ enabled: boolean }>();
+  const retryRead = deferred<{
+    enabled: boolean;
+    storageResetPending: boolean;
+  }>();
   let reads = 0;
   mockNativeIpc((command) => {
     if (command !== "routines_get_automatic_consent") {
@@ -218,7 +236,7 @@ test("initial read failure can retry without guessing an off value", async () =>
     expect(textOf(dom, "[data-phase]")).toBe("loading");
 
     await act(async () => {
-      retryRead.resolve({ enabled: true });
+      retryRead.resolve({ enabled: true, storageResetPending: false });
       await nextTurn();
       await nextTurn();
     });
@@ -226,6 +244,44 @@ test("initial read failure can retry without guessing an off value", async () =>
     expect(textOf(dom, "[data-phase]")).toBe("ready");
     expect(textOf(dom, "[data-enabled]")).toBe("on");
     expect(textOf(dom, "[data-error]")).toBe("");
+  } finally {
+    await act(async () => root.unmount());
+    clearNativeMocks();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("explicit enable clears the storage reset notice from the canonical response", async () => {
+  const dom = createDom();
+  const restoreGlobals = installDomGlobals(dom);
+  mockNativeIpc((command) => {
+    if (command === "routines_get_automatic_consent") {
+      return { enabled: false, storageResetPending: true };
+    }
+    if (command === "routines_set_automatic_consent") {
+      return { enabled: true, storageResetPending: false };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const root = createRoot(dom.window.document.getElementById("app")!);
+
+  try {
+    await act(async () => {
+      root.render(<Harness owner={spaceOwner} />);
+      await nextTurn();
+      await nextTurn();
+    });
+    expect(textOf(dom, "[data-enabled]")).toBe("off");
+    expect(textOf(dom, "[data-storage-reset]")).toBe("pending");
+
+    await clickAndFlush(dom, "[data-change]");
+    await act(async () => {
+      await nextTurn();
+    });
+
+    expect(textOf(dom, "[data-enabled]")).toBe("on");
+    expect(textOf(dom, "[data-storage-reset]")).toBe("clear");
   } finally {
     await act(async () => root.unmount());
     clearNativeMocks();
@@ -246,6 +302,9 @@ function Harness({ owner }: { owner: RoutineOwnerInput }) {
       </span>
       <span data-owner-kind>{state.ownerKind}</span>
       <span data-error>{state.error}</span>
+      <span data-storage-reset>
+        {state.storageResetPending ? "pending" : "clear"}
+      </span>
       <button
         type="button"
         data-change

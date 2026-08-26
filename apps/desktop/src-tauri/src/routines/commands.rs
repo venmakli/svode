@@ -101,6 +101,7 @@ pub async fn routines_get_automatic_consent(
     .resolve()?;
     Ok(RoutineAutomaticConsent {
         enabled: service::read_automatic_authority(&index_state, &owner).await?,
+        storage_reset_pending: authority::recovery_required(&owner.space_path)?,
     })
 }
 
@@ -125,6 +126,7 @@ pub async fn routines_set_automatic_consent(
     index_state.get_or_create_routines(&owner.index_key).await?;
     Ok(RoutineAutomaticConsent {
         enabled: authority::set(&owner, enabled)?,
+        storage_reset_pending: authority::recovery_required(&owner.space_path)?,
     })
 }
 

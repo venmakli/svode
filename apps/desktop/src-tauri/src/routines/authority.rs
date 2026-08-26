@@ -31,9 +31,6 @@ fn read_key(space_dir: &Path, owner_key: &str) -> Result<bool, AppError> {
     let routines = config::read_local_config(space_dir)?
         .routines
         .unwrap_or_default();
-    if routines.recovery.is_some() {
-        return Err(recovery_required_error(space_dir));
-    }
     Ok(routines
         .automatic_authority
         .get(owner_key)
@@ -47,10 +44,8 @@ pub(crate) fn set(owner: &ResolvedRoutineOwner, enabled: bool) -> Result<bool, A
         let routines = local
             .routines
             .get_or_insert_with(RoutinesLocalConfig::default);
-        if routines.recovery.is_some() {
-            return Err(recovery_required_error(&owner.space_path));
-        }
         if enabled {
+            routines.recovery = None;
             routines.automatic_authority.insert(owner_key, true);
         } else {
             routines.automatic_authority.remove(&owner_key);
@@ -110,13 +105,6 @@ pub(crate) fn acknowledge_recovery(space_dir: &Path) -> Result<(), AppError> {
         routines.recovery = None;
         Ok(())
     })
-}
-
-fn recovery_required_error(space_dir: &Path) -> AppError {
-    AppError::General(format!(
-        "routine storage recovery acknowledgement is required for {}",
-        space_dir.display()
-    ))
 }
 
 pub(crate) async fn discover_project_owners(
@@ -221,10 +209,17 @@ mod tests {
     }
 
     #[test]
-    fn recovery_clears_authority_and_requires_separate_acknowledgement() {
+    fn recovery_clears_authority_and_explicit_enable_resolves_the_notice() {
         let temp = tempdir().unwrap();
         let root = owner(temp.path().into(), "root", RoutineOwnerKind::Project, ".");
+        let collection = owner(
+            temp.path().into(),
+            "root",
+            RoutineOwnerKind::Collection,
+            "tasks",
+        );
         assert!(set(&root, true).unwrap());
+        assert!(set(&collection, true).unwrap());
         mark_storage_ready(temp.path()).unwrap();
 
         record_recovery(
@@ -237,9 +232,32 @@ mod tests {
         .unwrap();
 
         assert!(recovery_required(temp.path()).unwrap());
-        assert!(read(&root).is_err());
-        assert!(set(&root, true).is_err());
+        assert!(!read(&root).unwrap());
+        assert!(!read(&collection).unwrap());
+
+        assert!(set(&root, true).unwrap());
+        assert!(!recovery_required(temp.path()).unwrap());
+        assert!(read(&root).unwrap());
+        assert!(!read(&collection).unwrap());
+    }
+
+    #[test]
+    fn dismissing_recovery_keeps_every_authority_off() {
+        let temp = tempdir().unwrap();
+        let root = owner(temp.path().into(), "root", RoutineOwnerKind::Project, ".");
+        assert!(set(&root, true).unwrap());
+
+        record_recovery(
+            temp.path(),
+            RecoveryEvidence {
+                reason: "missing",
+                quarantine_files: Vec::new(),
+            },
+        )
+        .unwrap();
+
         acknowledge_recovery(temp.path()).unwrap();
+
         assert!(!recovery_required(temp.path()).unwrap());
         assert!(!read(&root).unwrap());
     }
@@ -274,7 +292,7 @@ mod tests {
         state.get_or_create_routines(&root.index_key).await.unwrap();
 
         assert!(recovery_required(temp.path()).unwrap());
-        assert!(read(&root).is_err());
+        assert!(!read(&root).unwrap());
         assert!(
             config::read_local_config(temp.path())
                 .unwrap()

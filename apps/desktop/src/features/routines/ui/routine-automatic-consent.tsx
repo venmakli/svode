@@ -1,7 +1,6 @@
 import { useId } from "react";
-import { Power, RotateCcw } from "lucide-react";
+import { Power } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -21,7 +20,6 @@ export function RoutineAutomaticConsent({
   ownerKind,
   pending,
   onChange,
-  onRetry,
 }: {
   enabled: boolean | null;
   error: string | null;
@@ -29,22 +27,21 @@ export function RoutineAutomaticConsent({
   ownerKind: RoutineResolvedOwnerKind;
   pending: boolean;
   onChange(enabled: boolean): void;
-  onRetry(): void;
 }) {
   const controlId = useId();
   const descriptionId = `${controlId}-description`;
   const label = automaticAuthorityLabel(ownerKind);
   const description = m.routines_automatic_authority_description();
-  const retryLabel = `${m.routines_retry()}: ${label}`;
+  const unavailable = enabled === null && !loading;
 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <Label
           htmlFor={controlId}
-          data-disabled={loading || pending}
+          data-disabled={loading || pending || unavailable}
           data-invalid={Boolean(error)}
-          aria-disabled={loading || pending}
+          aria-disabled={loading || pending || unavailable}
           className="h-7 w-auto shrink-0 gap-1.5 rounded-md border bg-background px-2 data-[disabled=true]:opacity-50 data-[invalid=true]:border-destructive data-[invalid=true]:text-destructive"
           data-routine-automatic-authority={ownerKind}
         >
@@ -58,32 +55,19 @@ export function RoutineAutomaticConsent({
           />
           {loading ? (
             <Skeleton className="h-3.5 w-6 rounded-full" aria-hidden="true" />
-          ) : enabled === null ? (
-            <Button
-              id={controlId}
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              className="-mx-1"
-              aria-describedby={descriptionId}
-              aria-invalid="true"
-              aria-label={retryLabel}
-              data-routine-automatic-authority-retry
-              onClick={onRetry}
-            >
-              <RotateCcw data-icon="inline-start" />
-            </Button>
           ) : (
             <Switch
               id={controlId}
               size="sm"
-              checked={enabled}
-              disabled={pending}
+              checked={enabled === true}
+              disabled={pending || unavailable}
               aria-busy={pending}
               aria-describedby={descriptionId}
               aria-invalid={Boolean(error)}
               aria-label={label}
-              onCheckedChange={(checked) => onChange(checked === true)}
+              onCheckedChange={(checked) => {
+                if (!unavailable) onChange(checked === true);
+              }}
             />
           )}
           <span

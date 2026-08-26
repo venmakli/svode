@@ -19,11 +19,8 @@ test("compact authority keeps exact owner semantics in its accessible label and 
       ownerKind,
       pending: false,
       onChange: () => undefined,
-      onRetry: () => undefined,
     });
-    const labelledControlId = markup.match(
-      /<label[^>]*for="([^"]+)"/,
-    )?.[1];
+    const labelledControlId = markup.match(/<label[^>]*for="([^"]+)"/)?.[1];
 
     expect(markup.includes(label)).toBe(true);
     expect(markup.includes("this device")).toBe(true);
@@ -45,7 +42,6 @@ test("loading authority keeps stable unknown geometry without an off switch", ()
     ownerKind: "space",
     pending: false,
     onChange: () => undefined,
-    onRetry: () => undefined,
   });
 
   expect(
@@ -55,7 +51,7 @@ test("loading authority keeps stable unknown geometry without an off switch", ()
   expect(markup.includes('role="switch"')).toBe(false);
 });
 
-test("unavailable authority offers a bounded owner-labelled retry", () => {
+test("unavailable authority keeps a disabled switch instead of changing control type", () => {
   const markup = renderAuthority({
     enabled: null,
     error: "Authority unavailable",
@@ -63,13 +59,12 @@ test("unavailable authority offers a bounded owner-labelled retry", () => {
     ownerKind: "collection",
     pending: false,
     onChange: () => undefined,
-    onRetry: () => undefined,
   });
 
   expect(markup.includes("Authority unavailable")).toBe(true);
-  expect(markup.includes("Retry: Automatic runs · Collection")).toBe(true);
-  expect(markup.includes("data-routine-automatic-authority-retry")).toBe(true);
-  expect(markup.includes('role="switch"')).toBe(false);
+  expect(markup.includes('role="switch"')).toBe(true);
+  expect(markup.includes('aria-checked="false"')).toBe(true);
+  expect(markup.includes('disabled=""')).toBe(true);
   expect(markup.includes('aria-invalid="true"')).toBe(true);
 });
 
@@ -81,7 +76,6 @@ test("pending and save-error states preserve the confirmed switch value", () => 
     ownerKind: "project",
     pending: true,
     onChange: () => undefined,
-    onRetry: () => undefined,
   });
   const failed = renderAuthority({
     enabled: false,
@@ -90,7 +84,6 @@ test("pending and save-error states preserve the confirmed switch value", () => 
     ownerKind: "project",
     pending: false,
     onChange: () => undefined,
-    onRetry: () => undefined,
   });
 
   expect(pending.includes('aria-checked="true"')).toBe(true);

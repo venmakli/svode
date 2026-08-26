@@ -17,7 +17,6 @@ import {
   routineSearchText,
 } from "../model/routine-values";
 import type { RoutineCatalogState, RoutineRow } from "../model/types";
-import { RoutineStorageRecoveryDiagnostic } from "./routine-storage-recovery-diagnostic";
 import { RoutineTriggerIcon } from "./routine-trigger-icon";
 
 export interface RoutinePresentationActions {
@@ -256,11 +255,6 @@ function routineActionTypeLabel(row: RoutineRow) {
 export function toRoutinePresentationState(
   state: RoutineCatalogState,
   onRetry: () => void,
-  storageRecovery?: {
-    error: string | null;
-    pending: boolean;
-    onAcknowledge(): void;
-  },
 ): SystemCollectionPresentationState<RoutineRow> {
   if (state.phase === "initial") return { phase: "initial" };
   if (state.phase === "blocking_error") {
@@ -278,20 +272,11 @@ export function toRoutinePresentationState(
     };
   }
   const diagnostics: ReactNode[] = state.snapshot.diagnostics.map(
-    (diagnostic, index) =>
-      diagnostic.code === "routine_storage_recovery_required" &&
-      storageRecovery ? (
-        <RoutineStorageRecoveryDiagnostic
-          key={`${diagnostic.code}:${index}`}
-          error={storageRecovery.error}
-          pending={storageRecovery.pending}
-          onAcknowledge={storageRecovery.onAcknowledge}
-        />
-      ) : (
-        <span key={`${diagnostic.code}:${diagnostic.path ?? ""}:${index}`}>
-          {diagnostic.message}
-        </span>
-      ),
+    (diagnostic, index) => (
+      <span key={`${diagnostic.code}:${diagnostic.path ?? ""}:${index}`}>
+        {diagnostic.message}
+      </span>
+    ),
   );
   if (state.refreshError) {
     diagnostics.push(

@@ -16,16 +16,14 @@ const owner: RoutineOwnerInput = {
   spacePath: "/project/space-a",
 };
 
-test("storage recovery acknowledgement is single-flight and refreshes both owners", async () => {
+test("storage reset dismissal is single-flight and refreshes authority state", async () => {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
     { pretendToBeVisual: true, url: "http://localhost/" },
   );
   const restoreGlobals = installDomGlobals(dom);
   const acknowledgement = deferred<void>();
-  const refresh = deferred<void>();
   const calls: unknown[] = [];
-  let refreshes = 0;
   let consentRetries = 0;
   mockNativeIpc((command, args) => {
     expect(command).toBe("routines_acknowledge_storage_recovery");
@@ -39,10 +37,6 @@ test("storage recovery acknowledgement is single-flight and refreshes both owner
       root.render(
         <Harness
           owner={owner}
-          refreshCatalog={() => {
-            refreshes += 1;
-            return refresh.promise;
-          }}
           retryAutomaticConsent={() => {
             consentRetries += 1;
           }}
@@ -52,9 +46,10 @@ test("storage recovery acknowledgement is single-flight and refreshes both owner
     });
 
     await act(async () => {
-      const button = dom.window.document.querySelector<HTMLButtonElement>(
-        "[data-acknowledge]",
-      )!;
+      const button =
+        dom.window.document.querySelector<HTMLButtonElement>(
+          "[data-acknowledge]",
+        )!;
       button.click();
       button.click();
       await nextTurn();
@@ -67,13 +62,6 @@ test("storage recovery acknowledgement is single-flight and refreshes both owner
       await nextTurn();
     });
     expect(consentRetries).toBe(1);
-    expect(refreshes).toBe(1);
-    expect(textOf(dom, "[data-phase]")).toBe("pending");
-
-    await act(async () => {
-      refresh.resolve();
-      await nextTurn();
-    });
     expect(textOf(dom, "[data-phase]")).toBe("idle");
     expect(textOf(dom, "[data-error]")).toBe("");
   } finally {
@@ -86,16 +74,13 @@ test("storage recovery acknowledgement is single-flight and refreshes both owner
 
 function Harness({
   owner,
-  refreshCatalog,
   retryAutomaticConsent,
 }: {
   owner: RoutineOwnerInput;
-  refreshCatalog(): Promise<unknown>;
   retryAutomaticConsent(): void;
 }) {
   const recovery = useRoutineStorageRecovery({
     owner,
-    refreshCatalog,
     retryAutomaticConsent,
   });
   return (
@@ -105,7 +90,7 @@ function Harness({
       <button
         type="button"
         data-acknowledge
-        onClick={() => void recovery.acknowledge()}
+        onClick={() => void recovery.dismiss()}
       />
     </>
   );

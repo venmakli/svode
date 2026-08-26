@@ -27,7 +27,6 @@ test("the full compact control toggles once from either the shell or switch", as
             ownerKind="project"
             pending={false}
             onChange={(enabled) => changes.push(enabled)}
-            onRetry={() => undefined}
           />
         </TooltipProvider>,
       );
@@ -36,9 +35,8 @@ test("the full compact control toggles once from either the shell or switch", as
     const shell = dom.window.document.querySelector<HTMLLabelElement>(
       "[data-routine-automatic-authority]",
     )!;
-    const switchControl = dom.window.document.querySelector<HTMLButtonElement>(
-      '[role="switch"]',
-    )!;
+    const switchControl =
+      dom.window.document.querySelector<HTMLButtonElement>('[role="switch"]')!;
 
     await act(async () => shell.click());
     expect(changes).toEqual([true]);

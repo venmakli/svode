@@ -48,7 +48,6 @@ export function useRoutinesController(
   const automaticConsent = useRoutineAutomaticConsent(routineOwner);
   const storageRecovery = useRoutineStorageRecovery({
     owner: routineOwner,
-    refreshCatalog: refresh,
     retryAutomaticConsent: automaticConsent.retry,
   });
   const executors = useRoutineExecutors(owner.projectPath, owner.spacePath);
@@ -197,11 +196,7 @@ export function useRoutinesController(
     actions,
     createDetailRequest: createReadOnlyDetail,
     getExecutorLabel: (row) => executorLabel(row, executors.options),
-    state: toRoutinePresentationState(state, () => void refresh(), {
-      error: storageRecovery.error,
-      onAcknowledge: () => void storageRecovery.acknowledge(),
-      pending: storageRecovery.pending,
-    }),
+    state: toRoutinePresentationState(state, () => void refresh()),
   });
   const instance: SystemCollectionInstance = {
     defaultPresentationId: "all",
@@ -250,6 +245,7 @@ export function useRoutinesController(
     detailController,
     instance,
     overlays,
+    storageRecovery,
   };
 }
 

@@ -8,6 +8,7 @@ import * as m from "@/paraglide/messages.js";
 import { useRoutinesController } from "../hooks/use-routines-controller";
 import type { RoutineSessionTarget } from "../model/types";
 import { RoutineAutomaticConsent } from "./routine-automatic-consent";
+import { RoutineAutomaticConsentNotice } from "./routine-automatic-consent-notice";
 
 export function RoutinesSurface({
   owner,
@@ -20,17 +21,29 @@ export function RoutinesSurface({
     controller.collectionState.phase === "ready" ? (
       <SystemCollectionPresentationCore
         trailingActions={
-          <RoutineAutomaticConsent
-            enabled={controller.automaticConsent.enabled}
-            error={controller.automaticConsent.error}
-            loading={controller.automaticConsent.loading}
-            ownerKind={controller.automaticConsent.ownerKind}
-            pending={controller.automaticConsent.pending}
-            onChange={(enabled) =>
-              void controller.automaticConsent.setEnabled(enabled)
-            }
-            onRetry={controller.automaticConsent.retry}
-          />
+          <>
+            <RoutineAutomaticConsentNotice
+              automaticError={controller.automaticConsent.error}
+              loading={controller.automaticConsent.loading}
+              recoveryError={controller.storageRecovery.error}
+              recoveryPending={controller.storageRecovery.pending}
+              storageResetPending={
+                controller.automaticConsent.storageResetPending
+              }
+              onDismissReset={() => void controller.storageRecovery.dismiss()}
+              onRetry={controller.automaticConsent.retry}
+            />
+            <RoutineAutomaticConsent
+              enabled={controller.automaticConsent.enabled}
+              error={controller.automaticConsent.error}
+              loading={controller.automaticConsent.loading}
+              ownerKind={controller.automaticConsent.ownerKind}
+              pending={controller.automaticConsent.pending}
+              onChange={(enabled) =>
+                void controller.automaticConsent.setEnabled(enabled)
+              }
+            />
+          </>
         }
         detailController={controller.detailController ?? undefined}
         instance={controller.instance}

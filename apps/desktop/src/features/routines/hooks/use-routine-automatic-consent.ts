@@ -14,6 +14,7 @@ interface RoutineAutomaticConsentState {
   error: string | null;
   loading: boolean;
   pending: boolean;
+  storageResetPending: boolean;
 }
 
 export function useRoutineAutomaticConsent(owner: RoutineOwnerInput) {
@@ -57,6 +58,7 @@ export function useRoutineAutomaticConsent(owner: RoutineOwnerInput) {
           error: null,
           loading: false,
           pending: false,
+          storageResetPending: consent.storageResetPending,
         });
       },
       (error: unknown) => {
@@ -67,6 +69,7 @@ export function useRoutineAutomaticConsent(owner: RoutineOwnerInput) {
           error: routineErrorMessage(error),
           loading: false,
           pending: false,
+          storageResetPending: false,
         });
       },
     );
@@ -105,14 +108,17 @@ export function useRoutineAutomaticConsent(owner: RoutineOwnerInput) {
           error: null,
           loading: false,
           pending: false,
+          storageResetPending: consent.storageResetPending,
         });
       } catch (error) {
         if (requestId !== requestIdRef.current) return;
         const message = routineErrorMessage(error);
         let canonicalEnabled = confirmed.enabled;
+        let canonicalStorageResetPending = confirmed.storageResetPending;
         try {
           const canonical = await loadRoutineAutomaticConsent(commandOwner);
           canonicalEnabled = canonical.enabled;
+          canonicalStorageResetPending = canonical.storageResetPending;
         } catch {
           // The last confirmed value remains authoritative for this mounted owner.
         }
@@ -123,6 +129,7 @@ export function useRoutineAutomaticConsent(owner: RoutineOwnerInput) {
           error: message,
           loading: false,
           pending: false,
+          storageResetPending: canonicalStorageResetPending,
         });
       }
     },
@@ -131,12 +138,7 @@ export function useRoutineAutomaticConsent(owner: RoutineOwnerInput) {
 
   const retry = useCallback(() => {
     const current = stateRef.current;
-    if (
-      current.ownerKey !== ownerKey ||
-      current.enabled !== null ||
-      current.loading ||
-      current.pending
-    ) {
+    if (current.ownerKey !== ownerKey || current.loading || current.pending) {
       return;
     }
 
@@ -162,6 +164,7 @@ function initialState(ownerKey: string): RoutineAutomaticConsentState {
     error: null,
     loading: true,
     pending: false,
+    storageResetPending: false,
   };
 }
 

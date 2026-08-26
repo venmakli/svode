@@ -307,17 +307,6 @@ pub(crate) async fn read_catalog(
             ));
         }
     }
-    match authority::recovery_required(&owner.space_path) {
-        Ok(true) => snapshot.diagnostics.push(RoutineDiagnostic::new(
-            "routine_storage_recovery_required",
-            "local routine storage was recovered; acknowledge the recovery before re-enabling automatic runs",
-        )),
-        Ok(false) => {}
-        Err(error) => snapshot.diagnostics.push(RoutineDiagnostic::new(
-            "routine_storage_recovery_unavailable",
-            format!("local routine recovery state is unavailable: {error}"),
-        )),
-    }
     snapshot.catalog_fingerprint = publication_fingerprint(&snapshot);
     Ok(snapshot)
 }

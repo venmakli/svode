@@ -122,6 +122,7 @@ export interface RoutineCatalogSnapshotDto {
 
 export interface RoutineAutomaticConsentDto {
   enabled: boolean;
+  storageResetPending: boolean;
 }
 
 export interface RoutineInvalidatedEventDto {
