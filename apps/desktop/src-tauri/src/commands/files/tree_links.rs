@@ -96,9 +96,10 @@ pub fn get_expanded_paths(space: String) -> Result<Vec<String>, AppError> {
 
 #[tauri::command]
 pub fn save_expanded_paths(space: String, paths: Vec<String>) -> Result<(), AppError> {
-    let mut local = config::read_local_config(Path::new(&space))?;
-    local.expanded_paths = paths;
-    config::write_local_config(Path::new(&space), &local)
+    config::mutate_local_config(Path::new(&space), |local| {
+        local.expanded_paths = paths;
+        Ok(())
+    })
 }
 
 #[tauri::command]

@@ -15,7 +15,7 @@ use super::{
 use crate::AppError;
 use crate::git::access::RepositoryAccessState;
 use crate::git::commands::GitState;
-use crate::index::{IndexKey, IndexState};
+use crate::index::IndexState;
 use crate::terminal::TerminalManager;
 
 #[derive(Debug)]
@@ -122,13 +122,15 @@ pub async fn routines_set_automatic_consent(
         owner_kind,
     }
     .resolve()?;
-    let pool = index_state
-        .get_or_create(&IndexKey::Root(owner.project_path.clone()))
-        .await?;
-    authority::migrate_legacy_for_project(&pool, &index_state, &owner.project_path).await?;
+    index_state.get_or_create_routines(&owner.index_key).await?;
     Ok(RoutineAutomaticConsent {
-        enabled: authority::set(&pool, &owner, enabled).await?,
+        enabled: authority::set(&owner, enabled)?,
     })
+}
+
+#[tauri::command]
+pub async fn routines_acknowledge_storage_recovery(space_path: String) -> Result<(), AppError> {
+    authority::acknowledge_recovery(Path::new(&space_path))
 }
 
 #[tauri::command]

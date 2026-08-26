@@ -518,6 +518,39 @@ test("retry is contextual to blocking and background catalog failures", () => {
   ).toBe(true);
 });
 
+test("storage recovery diagnostic keeps ready rows mounted with acknowledgement action", () => {
+  const state = toRoutinePresentationState(
+    {
+      ...readySnapshotState(),
+      snapshot: {
+        ...readySnapshotState().snapshot,
+        diagnostics: [
+          {
+            code: "routine_storage_recovery_required",
+            field: null,
+            message: "backend fallback",
+            path: null,
+          },
+        ],
+      },
+    },
+    () => undefined,
+    {
+      error: null,
+      onAcknowledge: () => undefined,
+      pending: false,
+    },
+  );
+
+  expect(state.phase).toBe("ready");
+  if (state.phase !== "ready") throw new Error("expected ready state");
+  expect(state.rows).toEqual([review]);
+  const markup = renderToStaticMarkup(<>{state.diagnostics}</>);
+  expect(markup.includes("Automatic routines were turned off")).toBe(true);
+  expect(markup.includes("Acknowledge recovery")).toBe(true);
+  expect(markup.includes("backend fallback")).toBe(false);
+});
+
 function readySnapshotState() {
   return {
     phase: "ready" as const,

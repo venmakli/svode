@@ -262,3 +262,9 @@ export function setRoutineAutomaticConsent(
     { ...input },
   );
 }
+
+export function acknowledgeRoutineStorageRecovery(spacePath: string) {
+  return invokeCommand<void>("routines_acknowledge_storage_recovery", {
+    spacePath,
+  });
+}

@@ -428,16 +428,24 @@ pub fn mutate_catalog_compound(
         return Err(CatalogError::Stale);
     }
 
-    let local_before = fs::read(local_path(owner));
+    let actor_id = compound
+        .approval_mode
+        .map(|_| {
+            mutation_actor_id(&compound.mutation)
+                .ok_or_else(|| CatalogError::Invalid("approval needs an actor id".into()))
+        })
+        .transpose()?;
+    let local_before = actor_id
+        .map(|actor_id| read_local_actor_value(owner, actor_id))
+        .transpose()?;
     if let Some(mode) = compound.approval_mode {
-        let actor_id = mutation_actor_id(&compound.mutation)
-            .ok_or_else(|| CatalogError::Invalid("approval needs an actor id".into()))?;
+        let actor_id = actor_id.expect("approval mode resolved an actor id");
         write_local_approval(owner, actor_id.to_string(), mode)?;
     }
 
     if let Err(error) = publish_catalog(owner, &next) {
-        if compound.approval_mode.is_some() {
-            restore_local_bytes(owner, local_before)?;
+        if let Some(actor_id) = actor_id {
+            write_local_actor_value(owner, actor_id, local_before.flatten())?;
         }
         return Err(error);
     }
@@ -536,21 +544,6 @@ fn normalize_actor(mut actor: AgentActor) -> AgentActor {
     actor
 }
 
-fn restore_local_bytes(
-    owner: &Path,
-    before: Result<Vec<u8>, std::io::Error>,
-) -> Result<(), CatalogError> {
-    match before {
-        Ok(bytes) => atomic_write(&local_path(owner), &bytes),
-        Err(e) if e.kind() == ErrorKind::NotFound => match fs::remove_file(local_path(owner)) {
-            Ok(()) => Ok(()),
-            Err(ref e) if e.kind() == ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(CatalogError::Io(e.to_string())),
-        },
-        Err(e) => Err(CatalogError::Io(e.to_string())),
-    }
-}
-
 pub fn read_local_approval(owner: &Path, actor_id: &str) -> Result<ApprovalMode, CatalogError> {
     let path = local_path(owner);
     let raw = match fs::read(&path) {
@@ -572,30 +565,10 @@ pub fn write_local_approval(
     actor_id: String,
     approval_mode: ApprovalMode,
 ) -> Result<(), CatalogError> {
-    let path = local_path(owner);
-    let mut settings: serde_json::Value = match fs::read(&path) {
-        Ok(raw) => {
-            serde_json::from_slice(&raw).map_err(|e| CatalogError::Invalid(e.to_string()))?
-        }
-        Err(e) if e.kind() == ErrorKind::NotFound => serde_json::json!({}),
-        Err(e) => return Err(CatalogError::Io(e.to_string())),
-    };
-    let root = settings
-        .as_object_mut()
-        .ok_or_else(|| CatalogError::Invalid("local config must be an object".into()))?;
-    let actors = root
-        .entry("agentActors")
-        .or_insert_with(|| serde_json::json!({}));
-    let actors = actors
-        .as_object_mut()
-        .ok_or_else(|| CatalogError::Invalid("agentActors must be an object".into()))?;
-    actors.insert(
-        actor_id,
-        serde_json::json!({ "approvalMode": approval_mode }),
-    );
-    atomic_write(
-        &path,
-        &serde_json::to_vec_pretty(&settings).map_err(|e| CatalogError::Invalid(e.to_string()))?,
+    write_local_actor_value(
+        owner,
+        &actor_id,
+        Some(serde_json::json!({ "approvalMode": approval_mode })),
     )
 }
 
@@ -619,31 +592,61 @@ pub fn set_local_approval(
 }
 
 pub fn remove_local_approval(owner: &Path, actor_id: &str) -> Result<(), CatalogError> {
-    let path = local_path(owner);
-    let mut value: serde_json::Value = match fs::read(&path) {
-        Ok(raw) => {
-            serde_json::from_slice(&raw).map_err(|e| CatalogError::Invalid(e.to_string()))?
-        }
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(CatalogError::Io(e.to_string())),
+    write_local_actor_value(owner, actor_id, None)
+}
+
+fn read_local_actor_value(
+    owner: &Path,
+    actor_id: &str,
+) -> Result<Option<serde_json::Value>, CatalogError> {
+    let local = crate::space::config::read_local_config(owner).map_err(local_config_error)?;
+    let Some(actors) = local.extensions.get("agentActors") else {
+        return Ok(None);
     };
-    if let Some(actors) = value
-        .get_mut("agentActors")
-        .and_then(serde_json::Value::as_object_mut)
-    {
-        actors.remove(actor_id);
-        if actors.is_empty() {
-            value
-                .as_object_mut()
-                .expect("object containing agentActors")
-                .remove("agentActors");
+    let actors = actors
+        .as_object()
+        .ok_or_else(|| CatalogError::Invalid("agentActors must be an object".into()))?;
+    Ok(actors.get(actor_id).cloned())
+}
+
+fn write_local_actor_value(
+    owner: &Path,
+    actor_id: &str,
+    value: Option<serde_json::Value>,
+) -> Result<(), CatalogError> {
+    crate::space::config::mutate_local_config(owner, |local| {
+        if value.is_none() && !local.extensions.contains_key("agentActors") {
+            return Ok(());
         }
-        atomic_write(
-            &path,
-            &serde_json::to_vec_pretty(&value).map_err(|e| CatalogError::Invalid(e.to_string()))?,
-        )?;
+        let actors = local
+            .extensions
+            .entry("agentActors".to_string())
+            .or_insert_with(|| serde_json::json!({}));
+        let actors = actors
+            .as_object_mut()
+            .ok_or_else(|| crate::AppError::General("agentActors must be an object".to_string()))?;
+        match value {
+            Some(value) => {
+                actors.insert(actor_id.to_string(), value);
+            }
+            None => {
+                actors.remove(actor_id);
+            }
+        }
+        if actors.is_empty() {
+            local.extensions.remove("agentActors");
+        }
+        Ok(())
+    })
+    .map_err(local_config_error)
+}
+
+fn local_config_error(error: crate::AppError) -> CatalogError {
+    match error {
+        crate::AppError::Serde(error) => CatalogError::Invalid(error.to_string()),
+        crate::AppError::General(message) => CatalogError::Invalid(message),
+        error => CatalogError::Io(error.to_string()),
     }
-    Ok(())
 }
 
 fn validate_catalog(c: &AgentActorCatalog) -> Result<(), CatalogError> {

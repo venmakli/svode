@@ -20,7 +20,7 @@ use crate::git::access::{
     require_repository_mutation_paths,
 };
 use crate::git::commands::{GitState, require_cli};
-use crate::index::{IndexKey, IndexState};
+use crate::index::IndexState;
 use crate::terminal::TerminalManager;
 
 const SCHEDULER_INTERVAL: Duration = Duration::from_secs(60);
@@ -67,24 +67,13 @@ impl RoutineSchedulerState {
 
 async fn tick_project(
     app: &AppHandle,
-    project_id: &str,
+    _project_id: &str,
     project_path: &Path,
 ) -> Result<(), AppError> {
     let index_state = app.state::<IndexState>();
-    let root_pool = index_state
-        .get_or_create(&IndexKey::Root(project_path.to_path_buf()))
-        .await?;
-    if let Err(error) =
-        authority::migrate_legacy_for_project(&root_pool, &index_state, project_path).await
-    {
-        tracing::warn!(
-            project_id = %project_id,
-            "routine automatic authority migration failed closed: {error}"
-        );
-    }
     let owners = authority::discover_project_owners(&index_state, project_path).await?;
     for owner in owners {
-        if let Err(error) = tick_owner(app, &owner, &root_pool).await {
+        if let Err(error) = tick_owner(app, &owner).await {
             tracing::warn!(
                 owner = %owner.descriptor.owner_path,
                 "routine schedule owner tick failed: {error}"
@@ -94,15 +83,11 @@ async fn tick_project(
     Ok(())
 }
 
-async fn tick_owner(
-    app: &AppHandle,
-    owner: &ResolvedRoutineOwner,
-    authority_pool: &sqlx::SqlitePool,
-) -> Result<(), AppError> {
+async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(), AppError> {
     let index_state = app.state::<IndexState>();
     let terminal_manager = app.state::<TerminalManager>();
-    let pool = index_state.get_or_create(&owner.index_key).await?;
-    let automatic_authority = match authority::read(authority_pool, owner).await {
+    let pool = index_state.get_or_create_routines(&owner.index_key).await?;
+    let automatic_authority = match authority::read(owner) {
         Ok(enabled) => enabled,
         Err(error) => {
             tracing::warn!(

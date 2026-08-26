@@ -217,7 +217,7 @@ pub(crate) async fn read_catalog(
     owner: &ResolvedRoutineOwner,
 ) -> Result<RoutineCatalogSnapshot, AppError> {
     let mut snapshot = discover_owner(owner).await?;
-    match index_state.get_or_create(&owner.index_key).await {
+    match index_state.get_or_create_routines(&owner.index_key).await {
         Ok(pool) => {
             if let Err(error) = cache::replace_owner_snapshot(&pool, &snapshot).await {
                 tracing::warn!(
@@ -307,6 +307,17 @@ pub(crate) async fn read_catalog(
             ));
         }
     }
+    match authority::recovery_required(&owner.space_path) {
+        Ok(true) => snapshot.diagnostics.push(RoutineDiagnostic::new(
+            "routine_storage_recovery_required",
+            "local routine storage was recovered; acknowledge the recovery before re-enabling automatic runs",
+        )),
+        Ok(false) => {}
+        Err(error) => snapshot.diagnostics.push(RoutineDiagnostic::new(
+            "routine_storage_recovery_unavailable",
+            format!("local routine recovery state is unavailable: {error}"),
+        )),
+    }
     snapshot.catalog_fingerprint = publication_fingerprint(&snapshot);
     Ok(snapshot)
 }
@@ -315,11 +326,8 @@ pub(crate) async fn read_automatic_authority(
     index_state: &IndexState,
     owner: &ResolvedRoutineOwner,
 ) -> Result<bool, AppError> {
-    let pool = index_state
-        .get_or_create(&IndexKey::Root(owner.project_path.clone()))
-        .await?;
-    authority::migrate_legacy_for_project(&pool, index_state, &owner.project_path).await?;
-    authority::read(&pool, owner).await
+    index_state.get_or_create_routines(&owner.index_key).await?;
+    authority::read(owner)
 }
 
 pub(crate) async fn discover_owner(
@@ -1896,7 +1904,10 @@ mod tests {
         )
         .unwrap();
         let index_state = IndexState::new();
-        let pool = index_state.get_or_create(&owner.index_key).await.unwrap();
+        let pool = index_state
+            .get_or_create_routines(&owner.index_key)
+            .await
+            .unwrap();
         pool.close().await;
 
         let (snapshot, warnings) = projection_after_write(
@@ -1969,11 +1980,7 @@ mod tests {
                 .await
                 .unwrap()
         );
-        let pool = index_state
-            .get_or_create(&IndexKey::Root(owner.project_path.clone()))
-            .await
-            .unwrap();
-        authority::set(&pool, &owner, true).await.unwrap();
+        authority::set(&owner, true).unwrap();
         assert!(
             read_automatic_authority(&index_state, &owner)
                 .await

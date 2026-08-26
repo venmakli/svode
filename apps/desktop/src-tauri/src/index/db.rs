@@ -5,8 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::AppError;
 
-/// Current schema version. Bumping this forces a drop-and-recreate of all
-/// index tables on next open (the index is a rebuildable cache).
+/// Current schema version. An incompatible file is quarantined as a complete
+/// SQLite family before a fresh rebuildable index is created.
 ///
 /// Bumped to 2 in stage-3.5 Phase 5: adds the `broken_links` table that
 /// Phase 7 will populate during cross-space link validation.
@@ -48,10 +48,31 @@ use crate::error::AppError;
 /// Bumped to 13 in Stage 7 Phase 8.4: adds the per-source reconciliation
 /// manifest plus independent content revision and source generation counters.
 ///
-/// Stage 8 DF-070A adds `routine_automatic_authority` additively below rather
-/// than rebuilding this cache, because routine queue/checkpoint/run evidence
-/// must survive the compatibility migration.
-const SCHEMA_VERSION: i64 = 13;
+/// Bumped to 14 in Stage 8 DF-071: removes every Routines-owned table. A
+/// mismatch now quarantines and recreates the whole derived index file.
+pub(crate) const SCHEMA_VERSION: i64 = 14;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SchemaStatus {
+    Current,
+    Uninitialized,
+    Incompatible(Option<i64>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuarantineReason {
+    Corrupt,
+    Incompatible,
+}
+
+impl QuarantineReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Corrupt => "corrupt",
+            Self::Incompatible => "incompatible",
+        }
+    }
+}
 
 /// Create a connection pool for a space's index database.
 /// Ensures the parent directory exists and enables WAL mode.
@@ -81,14 +102,18 @@ pub(crate) fn is_corrupt_database_error(error: &AppError) -> bool {
         || message.contains("database corruption")
 }
 
-/// Move an unreadable derived index aside before creating a fresh cache.
+/// Move a SQLite main file and its sidecars aside before creating a new store.
 /// The quarantined files remain available for manual inspection/recovery.
-pub(crate) fn quarantine_corrupt_database(db_path: &Path) -> Result<(), AppError> {
+pub(crate) fn quarantine_database_family(
+    db_path: &Path,
+    reason: QuarantineReason,
+) -> Result<Vec<std::path::PathBuf>, AppError> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs();
-    for suffix in ["", "-wal", "-shm"] {
+        .as_millis();
+    let mut quarantined = Vec::new();
+    for suffix in ["", "-wal", "-shm", "-journal"] {
         let source = if suffix.is_empty() {
             db_path.to_path_buf()
         } else {
@@ -105,73 +130,63 @@ pub(crate) fn quarantine_corrupt_database(db_path: &Path) -> Result<(), AppError
             continue;
         }
         let backup = source.with_file_name(format!(
-            "{}.corrupt-{stamp}",
+            "{}.{}-{stamp}",
             source
                 .file_name()
                 .and_then(|name| name.to_str())
-                .unwrap_or("index.db")
+                .unwrap_or("index.db"),
+            reason.as_str(),
         ));
-        std::fs::rename(source, backup)?;
+        std::fs::rename(&source, &backup)?;
+        quarantined.push(backup);
     }
-    Ok(())
+    Ok(quarantined)
 }
 
-/// Ensure the schema is at the current version. If the stored version differs
-/// (including when tables don't exist yet), drop and recreate all tables.
-pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
-    // Bootstrap the version table so we can read it on first open as well as
-    // after a version bump (we DELETE+INSERT into it below to update).
-    sqlx::query("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")
-        .execute(pool)
-        .await?;
-
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS routine_automatic_authority (
-            owner_key TEXT PRIMARY KEY,
-            enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
-            updated_at TEXT NOT NULL
-        )
-        "#,
+pub(crate) async fn schema_status(pool: &SqlitePool) -> Result<SchemaStatus, AppError> {
+    let has_version_table: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version')",
     )
-    .execute(pool)
+    .fetch_one(pool)
     .await?;
-
+    if has_version_table == 0 {
+        let table_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+        )
+        .fetch_one(pool)
+        .await?;
+        return Ok(if table_count == 0 {
+            SchemaStatus::Uninitialized
+        } else {
+            SchemaStatus::Incompatible(None)
+        });
+    }
     let current: Option<i64> = sqlx::query_scalar("SELECT version FROM schema_version LIMIT 1")
         .fetch_optional(pool)
         .await?;
+    Ok(if current == Some(SCHEMA_VERSION) {
+        SchemaStatus::Current
+    } else {
+        SchemaStatus::Incompatible(current)
+    })
+}
 
-    if current == Some(SCHEMA_VERSION) {
-        return Ok(());
+/// Initialize the current schema. Existing incompatible files are handled by
+/// the owning open path so no unknown table is ever modified in place.
+pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
+    match schema_status(pool).await? {
+        SchemaStatus::Current => return Ok(()),
+        SchemaStatus::Uninitialized => {}
+        SchemaStatus::Incompatible(found) => {
+            return Err(AppError::Index(format!(
+                "index schema version mismatch (found {found:?}, expected {SCHEMA_VERSION})"
+            )));
+        }
     }
 
-    tracing::info!(
-        "index schema version mismatch (found {:?}, expected {}), rebuilding",
-        current,
-        SCHEMA_VERSION
-    );
-
-    // Drop existing tables/triggers. Order matters for FTS content-linked tables.
-    let drops = [
-        "DROP TRIGGER IF EXISTS entries_au",
-        "DROP TRIGGER IF EXISTS entries_ad",
-        "DROP TRIGGER IF EXISTS entries_ai",
-        "DROP TABLE IF EXISTS entries_fts",
-        "DROP TABLE IF EXISTS entries",
-        "DROP TABLE IF EXISTS assets",
-        "DROP TABLE IF EXISTS broken_links",
-        "DROP TABLE IF EXISTS routine_definitions",
-        "DROP TABLE IF EXISTS routine_event_queue",
-        "DROP TABLE IF EXISTS knowledge_links",
-        "DROP TABLE IF EXISTS knowledge_fragments",
-        "DROP TABLE IF EXISTS knowledge_agent_applicability",
-        "DROP TABLE IF EXISTS knowledge_documents",
-        "DROP TABLE IF EXISTS knowledge_source_manifest",
-        "DROP TABLE IF EXISTS knowledge_manifest",
-    ];
-    for stmt in drops {
-        sqlx::query(stmt).execute(pool).await?;
-    }
+    sqlx::query("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+        .execute(pool)
+        .await?;
 
     let ddl = [
         r#"
@@ -247,99 +262,6 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         )
         "#,
         "CREATE INDEX IF NOT EXISTS idx_broken_links_source ON broken_links(source_rel_path)",
-        r#"
-        CREATE TABLE IF NOT EXISTS routine_definitions (
-            owner_path TEXT NOT NULL,
-            routine_id TEXT NOT NULL,
-            fingerprint TEXT NOT NULL,
-            row_json TEXT NOT NULL,
-            refreshed_at TEXT NOT NULL,
-            PRIMARY KEY (owner_path, routine_id)
-        )
-        "#,
-        "CREATE INDEX IF NOT EXISTS idx_routine_definitions_owner ON routine_definitions(owner_path)",
-        r#"
-        CREATE TABLE IF NOT EXISTS routine_runs (
-            routine_run_id TEXT PRIMARY KEY,
-            routine_id TEXT NOT NULL,
-            owner_path TEXT NOT NULL,
-            trigger_type TEXT NOT NULL,
-            definition_fingerprint TEXT NOT NULL,
-            definition_json TEXT NOT NULL,
-            launch_id TEXT NOT NULL UNIQUE,
-            pty_id TEXT,
-            source TEXT NOT NULL,
-            source_session_id TEXT,
-            agent_session_id TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            terminal_status TEXT,
-            terminal_exit_code INTEGER,
-            terminal_reason TEXT,
-            terminal_observed_at TEXT,
-            session_status TEXT,
-            updated_at TEXT NOT NULL
-        )
-        "#,
-        "CREATE INDEX IF NOT EXISTS idx_routine_runs_owner_routine ON routine_runs(owner_path, routine_id, created_at DESC)",
-        "CREATE INDEX IF NOT EXISTS idx_routine_runs_launch ON routine_runs(launch_id)",
-        r#"
-        CREATE TABLE IF NOT EXISTS routine_schedule_state (
-            owner_path TEXT NOT NULL,
-            routine_id TEXT NOT NULL,
-            definition_fingerprint TEXT NOT NULL,
-            checkpoint_at TEXT NOT NULL,
-            next_run_at TEXT NOT NULL,
-            PRIMARY KEY (owner_path, routine_id)
-        )
-        "#,
-        r#"
-        CREATE TABLE IF NOT EXISTS routine_owner_roots (
-            owner_path TEXT PRIMARY KEY
-        )
-        "#,
-        r#"
-        CREATE TABLE IF NOT EXISTS routine_automatic_consent (
-            project_path TEXT PRIMARY KEY,
-            enabled INTEGER NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        "#,
-        r#"
-        CREATE TABLE IF NOT EXISTS routine_automatic_leases (
-            run_key TEXT PRIMARY KEY,
-            routine_id TEXT NOT NULL,
-            leased_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL
-        )
-        "#,
-        r#"
-        CREATE TABLE IF NOT EXISTS routine_remote_claims (
-            run_key TEXT PRIMARY KEY,
-            owner_path TEXT NOT NULL,
-            routine_id TEXT NOT NULL,
-            definition_fingerprint TEXT NOT NULL,
-            claimed_by TEXT NOT NULL,
-            claimed_at TEXT NOT NULL
-        )
-        "#,
-        "CREATE INDEX IF NOT EXISTS idx_routine_remote_claims_owner_routine ON routine_remote_claims(owner_path, routine_id, claimed_at DESC)",
-        r#"
-        CREATE TABLE IF NOT EXISTS routine_event_queue (
-            queue_key TEXT PRIMARY KEY,
-            event_key TEXT NOT NULL,
-            owner_path TEXT NOT NULL,
-            routine_id TEXT NOT NULL,
-            definition_fingerprint TEXT NOT NULL,
-            event_type TEXT NOT NULL,
-            entry_path TEXT NOT NULL,
-            property_key TEXT,
-            payload_json TEXT NOT NULL,
-            observed_at TEXT NOT NULL,
-            state TEXT NOT NULL DEFAULT 'pending'
-        )
-        "#,
-        "CREATE INDEX IF NOT EXISTS idx_routine_event_queue_pending ON routine_event_queue(state, observed_at)",
-        "CREATE INDEX IF NOT EXISTS idx_routine_event_queue_event ON routine_event_queue(event_key)",
         r#"
         CREATE TABLE IF NOT EXISTS knowledge_documents (
             source_path TEXT PRIMARY KEY,
@@ -428,9 +350,6 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         sqlx::query(stmt).execute(pool).await?;
     }
 
-    sqlx::query("DELETE FROM schema_version")
-        .execute(pool)
-        .await?;
     sqlx::query("INSERT INTO schema_version (version) VALUES (?)")
         .bind(SCHEMA_VERSION)
         .execute(pool)
@@ -457,6 +376,55 @@ mod tests {
                 .unwrap()
                 .flatten()
                 .any(|entry| entry.file_name().to_string_lossy().contains(".corrupt-"))
+        );
+    }
+
+    #[tokio::test]
+    async fn incompatible_index_is_quarantined_as_a_whole_file() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let db_path = temp.path().join("index.db");
+        let legacy = create_pool(&db_path).await.unwrap();
+        sqlx::query("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+            .execute(&legacy)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO schema_version VALUES (13)")
+            .execute(&legacy)
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE routine_runs (routine_run_id TEXT PRIMARY KEY)")
+            .execute(&legacy)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO routine_runs VALUES ('legacy-run')")
+            .execute(&legacy)
+            .await
+            .unwrap();
+        legacy.close().await;
+
+        let replacement = crate::index::open_prepared_pool(&db_path).await.unwrap();
+
+        assert_eq!(
+            schema_status(&replacement).await.unwrap(),
+            SchemaStatus::Current
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name LIKE 'routine_%'",
+            )
+            .fetch_one(&replacement)
+            .await
+            .unwrap(),
+            0
+        );
+        assert!(
+            std::fs::read_dir(temp.path())
+                .unwrap()
+                .flatten()
+                .any(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .contains(".incompatible-"))
         );
     }
 }

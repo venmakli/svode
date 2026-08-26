@@ -114,6 +114,7 @@ pub fn run() {
             routines::commands::routines_refresh,
             routines::commands::routines_get_automatic_consent,
             routines::commands::routines_set_automatic_consent,
+            routines::commands::routines_acknowledge_storage_recovery,
             routines::commands::routines_create,
             routines::commands::routines_update,
             routines::commands::routines_delete,

@@ -217,10 +217,32 @@ pub struct LocalConfig {
     pub agent_sessions: Option<AgentSessionsLocalConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git: Option<GitUserPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routines: Option<RoutinesLocalConfig>,
     #[serde(default)]
     pub expanded_paths: Vec<String>,
     #[serde(flatten)]
     pub extensions: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutinesLocalConfig {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub automatic_authority: BTreeMap<String, bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage_generation: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<RoutinesRecoveryLocalConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutinesRecoveryLocalConfig {
+    pub reason: String,
+    pub observed_at: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quarantine_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

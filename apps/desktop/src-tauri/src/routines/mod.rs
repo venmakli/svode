@@ -1,5 +1,5 @@
 pub(crate) mod authority;
-mod cache;
+pub(crate) mod cache;
 pub mod commands;
 pub(crate) mod dispatch;
 pub(crate) mod events;
@@ -8,6 +8,7 @@ mod parser;
 mod schedule;
 mod scheduler;
 pub(crate) mod service;
+pub(crate) mod storage;
 
 pub(crate) use scheduler::RoutineSchedulerState;
 

@@ -22,7 +22,6 @@ fn format_system_time(time: SystemTime) -> String {
 #[derive(Debug)]
 pub(crate) struct ReindexInventory {
     pub markdown_files: Vec<PathBuf>,
-    pub routine_owner_paths: Vec<String>,
     pub collection_paths: Vec<String>,
     pub source_manifest: Vec<SourceManifestRecord>,
     pub scan_failure_count: usize,
@@ -33,7 +32,6 @@ pub(crate) fn collect_reindex_inventory(
     skip_top_level: &[String],
 ) -> Result<ReindexInventory, AppError> {
     let mut discovered_markdown = Vec::new();
-    let mut routine_owner_paths = Vec::new();
     let mut collection_paths = Vec::new();
     let mut scan_failure_count = 0usize;
     let policy = TreeIgnorePolicy::from_space_root(space_dir);
@@ -43,7 +41,6 @@ pub(crate) fn collect_reindex_inventory(
         skip_top_level,
         &policy,
         &mut discovered_markdown,
-        &mut routine_owner_paths,
         &mut collection_paths,
         &mut scan_failure_count,
     )?;
@@ -83,11 +80,9 @@ pub(crate) fn collect_reindex_inventory(
             .then_with(|| left.source_path.cmp(&right.source_path))
     });
     safe_collection_paths.sort();
-    routine_owner_paths.sort();
 
     Ok(ReindexInventory {
         markdown_files,
-        routine_owner_paths,
         collection_paths: safe_collection_paths,
         source_manifest,
         scan_failure_count,
@@ -185,7 +180,6 @@ fn collect_md_files(
     skip_top_level: &[String],
     policy: &TreeIgnorePolicy,
     out: &mut Vec<PathBuf>,
-    routine_owner_paths: &mut Vec<String>,
     collection_paths: &mut Vec<String>,
     scan_failure_count: &mut usize,
 ) -> Result<(), AppError> {
@@ -196,11 +190,6 @@ fn collect_md_files(
             repo_relative_from_base(base, dir, RootMode::Reject)?
         };
         collection_paths.push(collection_path);
-    }
-    if dir != base && dir.join("schema.yaml").is_file() && dir.join(".routines").is_dir() {
-        if let Ok(path) = repo_relative_from_base(base, dir, RootMode::Reject) {
-            routine_owner_paths.push(path);
-        }
     }
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
@@ -256,7 +245,6 @@ fn collect_md_files(
                 skip_top_level,
                 policy,
                 out,
-                routine_owner_paths,
                 collection_paths,
                 scan_failure_count,
             )?;
@@ -329,7 +317,6 @@ mod tests {
     fn collect_rel_paths(tmp: &TempDir) -> Vec<String> {
         let policy = TreeIgnorePolicy::from_space_root(tmp.path());
         let mut files = Vec::new();
-        let mut routine_owners = Vec::new();
         let mut collection_paths = Vec::new();
         let mut scan_failure_count = 0;
         collect_md_files(
@@ -338,7 +325,6 @@ mod tests {
             &[],
             &policy,
             &mut files,
-            &mut routine_owners,
             &mut collection_paths,
             &mut scan_failure_count,
         )
@@ -433,31 +419,6 @@ mod tests {
             collect_rel_paths(&tmp),
             vec!["docs/guides/keep.md".to_string()]
         );
-    }
-
-    #[tokio::test]
-    async fn full_reindex_records_collection_routine_owners_in_the_existing_walk() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::create_dir_all(tmp.path().join("tasks/.routines")).unwrap();
-        std::fs::write(tmp.path().join("tasks/schema.yaml"), "columns: []\n").unwrap();
-        std::fs::create_dir_all(tmp.path().join("child/hidden/.routines")).unwrap();
-        std::fs::write(tmp.path().join("child/hidden/schema.yaml"), "columns: []\n").unwrap();
-        let pool = crate::index::db::create_pool(&tmp.path().join("index.db"))
-            .await
-            .unwrap();
-        crate::index::db::ensure_schema(&pool).await.unwrap();
-
-        full_reindex(&pool, tmp.path(), &["child".into()])
-            .await
-            .unwrap();
-
-        let owners = sqlx::query_scalar::<_, String>(
-            "SELECT owner_path FROM routine_owner_roots ORDER BY owner_path",
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-        assert_eq!(owners, vec!["tasks"]);
     }
 }
 
@@ -838,7 +799,6 @@ pub async fn full_reindex_for_target(
     .await
     .map_err(|error| AppError::Index(format!("source inventory task failed: {error}")))??;
     let md_files = inventory.markdown_files;
-    let routine_owner_paths = inventory.routine_owner_paths;
     let collection_paths = inventory.collection_paths;
     let mut source_manifest = inventory.source_manifest;
     let scan_failure_count = inventory.scan_failure_count;
@@ -982,9 +942,6 @@ pub async fn full_reindex_for_target(
 
     sqlx::query("DELETE FROM entries").execute(&mut *tx).await?;
     sqlx::query("DELETE FROM assets").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM routine_owner_roots")
-        .execute(&mut *tx)
-        .await?;
 
     crate::index::knowledge::replace_all(
         &mut tx,
@@ -1006,13 +963,6 @@ pub async fn full_reindex_for_target(
     for asset in &assets {
         insert_asset(&mut *tx, asset).await?;
     }
-    for owner_path in &routine_owner_paths {
-        sqlx::query("INSERT OR IGNORE INTO routine_owner_roots (owner_path) VALUES (?)")
-            .bind(owner_path)
-            .execute(&mut *tx)
-            .await?;
-    }
-
     tx.commit().await?;
 
     tracing::debug!(

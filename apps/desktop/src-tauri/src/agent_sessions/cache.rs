@@ -269,8 +269,7 @@ pub(super) fn write_snapshot(
     let updated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
 
     let write = tauri::async_runtime::block_on(async {
-        let pool = open_cache_pool(&db_path, true).await?;
-        ensure_cache_schema(&pool).await?;
+        let pool = open_writable_cache_pool(&db_path).await?;
         sqlx::query(
             r#"
             INSERT INTO source_cache (
@@ -433,6 +432,37 @@ async fn open_cache_pool(
         .max_connections(1)
         .connect_with(options)
         .await?)
+}
+
+async fn open_writable_cache_pool(db_path: &Path) -> Result<sqlx::SqlitePool, AppError> {
+    let initial = open_cache_pool(db_path, true).await;
+    match initial {
+        Ok(pool) => match ensure_cache_schema(&pool).await {
+            Ok(()) => Ok(pool),
+            Err(error) if crate::index::db::is_corrupt_database_error(&error) => {
+                pool.close().await;
+                replace_corrupt_cache(db_path).await
+            }
+            Err(error) => {
+                pool.close().await;
+                Err(error)
+            }
+        },
+        Err(error) if crate::index::db::is_corrupt_database_error(&error) => {
+            replace_corrupt_cache(db_path).await
+        }
+        Err(error) => Err(error),
+    }
+}
+
+async fn replace_corrupt_cache(db_path: &Path) -> Result<sqlx::SqlitePool, AppError> {
+    crate::index::db::quarantine_database_family(
+        db_path,
+        crate::index::db::QuarantineReason::Corrupt,
+    )?;
+    let pool = open_cache_pool(db_path, true).await?;
+    ensure_cache_schema(&pool).await?;
+    Ok(pool)
 }
 
 async fn ensure_cache_schema(pool: &sqlx::SqlitePool) -> Result<(), AppError> {

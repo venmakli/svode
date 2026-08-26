@@ -1,4 +1,8 @@
-use std::path::Path;
+use std::collections::HashMap;
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::error::AppError;
 
@@ -40,12 +44,72 @@ pub fn read_local_config(path: &Path) -> Result<LocalConfig, AppError> {
 }
 
 /// Write local config to {space_path}/.svode/local.json.
+#[cfg(test)]
 pub fn write_local_config(path: &Path, local: &LocalConfig) -> Result<(), AppError> {
+    with_local_config_lock(path, || write_local_config_locked(path, local))
+}
+
+pub fn mutate_local_config<T>(
+    path: &Path,
+    mutate: impl FnOnce(&mut LocalConfig) -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    with_local_config_lock(path, || {
+        let mut local = read_local_config(path)?;
+        let result = mutate(&mut local)?;
+        write_local_config_locked(path, &local)?;
+        Ok(result)
+    })
+}
+
+fn write_local_config_locked(path: &Path, local: &LocalConfig) -> Result<(), AppError> {
     let dir = path.join(".svode");
-    std::fs::create_dir_all(&dir)?;
+    fs::create_dir_all(&dir)?;
     let data = serde_json::to_string_pretty(local)?;
-    std::fs::write(dir.join("local.json"), data)?;
-    Ok(())
+    let target = dir.join("local.json");
+    let temp = dir.join(format!("local.json.tmp-{}", ulid::Ulid::new()));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        file.write_all(data.as_bytes())?;
+        file.sync_all()?;
+        fs::rename(&temp, &target)?;
+        #[cfg(unix)]
+        if let Err(error) = File::open(&dir).and_then(|directory| directory.sync_all()) {
+            tracing::warn!(
+                "failed to sync local config directory {}: {error}",
+                dir.display()
+            );
+        }
+        Ok::<_, AppError>(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temp);
+    }
+    result
+}
+
+fn with_local_config_lock<T>(
+    path: &Path,
+    operation: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
+    let config_path = path.join(".svode").join("local.json");
+    let lock = {
+        let locks = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut locks = locks
+            .lock()
+            .map_err(|_| AppError::General("local config lock registry poisoned".into()))?;
+        locks
+            .entry(config_path)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    };
+    let _guard = lock
+        .lock()
+        .map_err(|_| AppError::General("local config mutation lock poisoned".into()))?;
+    operation()
 }
 
 /// Effective per-user Git policy from local-only config.
@@ -60,15 +124,16 @@ pub fn effective_git_user_policy(path: &Path) -> GitUserPolicy {
 }
 
 pub fn write_git_user_policy(path: &Path, policy: &GitUserPolicy) -> Result<(), AppError> {
-    let mut local = read_local_config(path)?;
-    local.git = Some(policy.clone());
-    write_local_config(path, &local)
+    mutate_local_config(path, |local| {
+        local.git = Some(policy.clone());
+        Ok(())
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::space::types::{AgentSessionsLocalConfig, GitSpaceConfig};
+    use crate::space::types::{AgentSessionsLocalConfig, GitSpaceConfig, RoutinesLocalConfig};
 
     fn config_with_git() -> SpaceConfig {
         SpaceConfig {
@@ -184,6 +249,60 @@ mod tests {
         assert_eq!(
             value["agentActors"]["01arz3ndektsv4rrffq69g5fav"]["approvalMode"],
             "full"
+        );
+    }
+
+    #[test]
+    fn concurrent_owner_mutations_do_not_lose_unrelated_fields() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let path = Arc::new(temp.path().to_path_buf());
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let mut writers = Vec::new();
+
+        for owner in ["git", "sessions", "routines"] {
+            let path = path.clone();
+            let barrier = barrier.clone();
+            writers.push(std::thread::spawn(move || {
+                barrier.wait();
+                mutate_local_config(&path, |local| {
+                    match owner {
+                        "git" => {
+                            local.git = Some(GitUserPolicy {
+                                auto_sync: true,
+                                auto_commit_structural: false,
+                                auto_commit_system: true,
+                            });
+                        }
+                        "sessions" => {
+                            local.agent_sessions = Some(AgentSessionsLocalConfig {
+                                pinned_session_ids: vec!["codex:one".into()],
+                            });
+                        }
+                        "routines" => {
+                            let mut routines = RoutinesLocalConfig::default();
+                            routines.automatic_authority.insert("owner".into(), true);
+                            local.routines = Some(routines);
+                        }
+                        _ => unreachable!(),
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            }));
+        }
+        for writer in writers {
+            writer.join().unwrap();
+        }
+
+        let local = read_local_config(&path).unwrap();
+        assert!(local.git.unwrap().auto_sync);
+        assert_eq!(
+            local.agent_sessions.unwrap().pinned_session_ids,
+            vec!["codex:one"]
+        );
+        assert_eq!(
+            local.routines.unwrap().automatic_authority.get("owner"),
+            Some(&true)
         );
     }
 }

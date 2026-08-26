@@ -4,8 +4,6 @@ use std::path::Path;
 use crate::error::AppError;
 use crate::git::dates::derive_date_overrides;
 use crate::index::normalize_rel_result;
-#[cfg(test)]
-use crate::index::reindex::full_reindex;
 use crate::index::reindex::{build_entry_with_dates, markdown_source_record, upsert_entry};
 use crate::index::{IndexKey, IndexState};
 use crate::routines::CollectionEventOrigin;
@@ -55,7 +53,7 @@ pub(crate) async fn update_entry_with_origin(
     let (key, rel_path) = state.resolve(project, abs_path).await?;
     let dir = state.dir_for_key(&key).await?;
     let pool = state.get_or_create(&key).await?;
-    let authority_pool = automatic_authority_pool(state, project).await;
+    let routines_pool = state.get_or_create_routines(&key).await?;
 
     let normalized = normalize_rel_result(&rel_path)?;
     let abs = dir.join(&normalized);
@@ -69,7 +67,7 @@ pub(crate) async fn update_entry_with_origin(
     if !abs.exists() {
         return apply_targeted_change(
             &pool,
-            authority_pool.as_ref(),
+            &routines_pool,
             &key,
             &dir,
             &normalized,
@@ -91,7 +89,7 @@ pub(crate) async fn update_entry_with_origin(
         tracing::debug!("non-md file in update_entry, removing any stale row: {normalized}");
         return apply_targeted_change(
             &pool,
-            authority_pool.as_ref(),
+            &routines_pool,
             &key,
             &dir,
             &normalized,
@@ -106,7 +104,7 @@ pub(crate) async fn update_entry_with_origin(
     if source_record.diagnostic_code.is_some() {
         return apply_targeted_change(
             &pool,
-            authority_pool.as_ref(),
+            &routines_pool,
             &key,
             &dir,
             &normalized,
@@ -121,7 +119,7 @@ pub(crate) async fn update_entry_with_origin(
     let frontmatter_valid = markdown_frontmatter_diff_safe(&abs);
     apply_targeted_change(
         &pool,
-        authority_pool.as_ref(),
+        &routines_pool,
         &key,
         &dir,
         &normalized,
@@ -141,12 +139,12 @@ pub async fn delete_entry(
 ) -> Result<(), AppError> {
     let (key, rel_path) = state.resolve(project, abs_path).await?;
     let pool = state.get_or_create(&key).await?;
-    let authority_pool = automatic_authority_pool(state, project).await;
+    let routines_pool = state.get_or_create_routines(&key).await?;
     let lock = state.reindex_lock(&key).await;
     let _guard = lock.lock().await;
     apply_targeted_change(
         &pool,
-        authority_pool.as_ref(),
+        &routines_pool,
         &key,
         &state.dir_for_key(&key).await?,
         &rel_path,
@@ -198,12 +196,13 @@ pub async fn rebase_collection_schema_manifest(
     }
     crate::index::reconcile::advance_generation(&mut transaction, false, changed).await?;
     transaction.commit().await?;
+    state.sync_routine_projection(&key).await?;
     Ok(())
 }
 
 async fn apply_targeted_change(
-    pool: &SqlitePool,
-    authority_pool: Option<&SqlitePool>,
+    index_pool: &SqlitePool,
+    routines_pool: &SqlitePool,
     index_key: &IndexKey,
     space_dir: &Path,
     rel_path: &str,
@@ -226,15 +225,14 @@ async fn apply_targeted_change(
     if let (Some(record), Some(entry)) = (source_record.as_mut(), entry) {
         record.diagnostic_code = entry.source_diagnostic.clone();
     }
-    let folded_collection = folded_collection_artifact(space_dir, &normalized);
-    let mut transaction = pool.begin().await?;
-    let previous =
-        crate::routines::events::read_indexed_snapshot(&mut transaction, space_dir, &normalized)
-            .await?;
     let current = entry
         .map(|entry| crate::routines::events::snapshot_from_entry(space_dir, entry))
         .transpose()?
         .flatten();
+    let mut routines_transaction = routines_pool.begin().await?;
+    let previous =
+        crate::routines::events::read_observation_snapshot(&mut routines_transaction, &normalized)
+            .await?;
     let collection_path = current
         .as_ref()
         .map(|entry| entry.collection_path.as_str())
@@ -243,15 +241,13 @@ async fn apply_targeted_change(
                 .as_ref()
                 .map(|entry| entry.collection_path.as_str())
         });
-    let automatic_authority = match (authority_pool, collection_path) {
-        (Some(authority_pool), Some(collection_path)) => {
+    let automatic_authority = match collection_path {
+        Some(collection_path) => {
             match crate::routines::authority::read_indexed_collection(
-                authority_pool,
+                space_dir,
                 index_key,
                 collection_path,
-            )
-            .await
-            {
+            ) {
                 Ok(enabled) => enabled,
                 Err(error) => {
                     tracing::warn!(
@@ -262,11 +258,11 @@ async fn apply_targeted_change(
                 }
             }
         }
-        _ => false,
+        None => false,
     };
     if automatic_authority {
         crate::routines::events::queue_collection_events(
-            &mut transaction,
+            &mut routines_transaction,
             space_dir,
             previous.as_ref(),
             current.as_ref(),
@@ -275,6 +271,16 @@ async fn apply_targeted_change(
         )
         .await?;
     }
+    crate::routines::events::write_observation_snapshot(
+        &mut routines_transaction,
+        &normalized,
+        current.as_ref(),
+    )
+    .await?;
+    routines_transaction.commit().await?;
+
+    let folded_collection = folded_collection_artifact(space_dir, &normalized);
+    let mut transaction = index_pool.begin().await?;
     let mut knowledge_changed = false;
     if let Some(entry) = entry {
         upsert_entry(&mut *transaction, entry).await?;
@@ -462,32 +468,6 @@ pub async fn refresh_agent_context_projection(
     Ok(())
 }
 
-async fn automatic_authority_pool(state: &IndexState, project: &Path) -> Option<SqlitePool> {
-    let root_pool = match state
-        .get_or_create(&IndexKey::Root(project.to_path_buf()))
-        .await
-    {
-        Ok(pool) => pool,
-        Err(error) => {
-            tracing::warn!(
-                project = %project.display(),
-                "routine automatic authority store unavailable; Collection events fail closed: {error}"
-            );
-            return None;
-        }
-    };
-    if let Err(error) =
-        crate::routines::authority::migrate_legacy_for_project(&root_pool, state, project).await
-    {
-        tracing::warn!(
-            project = %project.display(),
-            "routine automatic authority migration failed closed for Collection events: {error}"
-        );
-        return None;
-    }
-    Some(root_pool)
-}
-
 fn markdown_frontmatter_diff_safe(path: &Path) -> bool {
     let Ok(raw) = std::fs::read_to_string(path) else {
         return false;
@@ -514,10 +494,10 @@ pub async fn reindex_after_pull(
     changed_files: Vec<String>,
 ) -> Result<(), AppError> {
     let pool = state.get_or_create(key).await?;
+    let routines_pool = state.get_or_create_routines(key).await?;
     let dir = state.dir_for_key(key).await?;
     let lock = state.reindex_lock(key).await;
     let _guard = lock.lock().await;
-    let authority_pool = automatic_authority_pool(state, key.project()).await;
 
     let schema_changed = changed_files.iter().any(|rel| {
         Path::new(rel)
@@ -550,7 +530,7 @@ pub async fn reindex_after_pull(
         if !abs.exists() {
             if let Err(e) = apply_targeted_change(
                 &pool,
-                authority_pool.as_ref(),
+                &routines_pool,
                 key,
                 &dir,
                 &normalized,
@@ -573,7 +553,7 @@ pub async fn reindex_after_pull(
         if !is_md {
             if let Err(e) = apply_targeted_change(
                 &pool,
-                authority_pool.as_ref(),
+                &routines_pool,
                 key,
                 &dir,
                 &normalized,
@@ -592,7 +572,7 @@ pub async fn reindex_after_pull(
             Ok(record) if record.diagnostic_code.is_some() => {
                 if let Err(e) = apply_targeted_change(
                     &pool,
-                    authority_pool.as_ref(),
+                    &routines_pool,
                     key,
                     &dir,
                     &normalized,
@@ -617,7 +597,7 @@ pub async fn reindex_after_pull(
             Ok(entry) => {
                 if let Err(e) = apply_targeted_change(
                     &pool,
-                    authority_pool.as_ref(),
+                    &routines_pool,
                     key,
                     &dir,
                     &normalized,
@@ -637,8 +617,8 @@ pub async fn reindex_after_pull(
     }
 
     if schema_changed {
-        let skip = state.skip_folders_for(key).await;
-        crate::index::reindex::full_reindex_for_target(&pool, key.project(), &dir, &skip).await?;
+        drop(_guard);
+        state.run_full_reindex(key).await?;
     }
     Ok(())
 }
@@ -667,7 +647,7 @@ mod tests {
             "routineId": routine_id,
             "filename": format!("{routine_id}.md"),
             "path": format!("{owner_path}/.routines/{routine_id}.md"),
-            "title": routine_id,
+            "name": routine_id,
             "description": null,
             "enabled": true,
             "triggerType": "event",
@@ -678,6 +658,7 @@ mod tests {
             "lastRunAt": null,
             "nextRunAt": null,
             "fingerprint": format!("fingerprint:{routine_id}"),
+            "executionFingerprint": format!("fingerprint:{routine_id}"),
             "definition": {
                 "enabled": true,
                 "trigger": trigger,
@@ -728,7 +709,7 @@ mod tests {
     }
 
     async fn set_automatic_events_enabled(
-        pool: &SqlitePool,
+        _pool: &SqlitePool,
         project: &Path,
         owner_path: &str,
         enabled: bool,
@@ -737,14 +718,15 @@ mod tests {
             &IndexKey::Root(project.to_path_buf()),
             owner_path,
         );
-        sqlx::query(
-            "INSERT OR REPLACE INTO routine_automatic_authority (owner_key, enabled, updated_at) VALUES (?, ?, ?)",
-        )
-        .bind(key)
-        .bind(if enabled { 1_i64 } else { 0_i64 })
-        .bind("2026-08-08T00:00:00Z")
-        .execute(pool)
-        .await
+        crate::space::config::mutate_local_config(project, |local| {
+            let routines = local.routines.get_or_insert_with(Default::default);
+            if enabled {
+                routines.automatic_authority.insert(key, true);
+            } else {
+                routines.automatic_authority.remove(&key);
+            }
+            Ok(())
+        })
         .unwrap();
     }
 
@@ -753,6 +735,13 @@ mod tests {
             .get_or_create(&IndexKey::Root(space.to_path_buf()))
             .await
             .expect("index pool")
+    }
+
+    async fn routines_pool(state: &IndexState, space: &Path) -> SqlitePool {
+        state
+            .get_or_create_routines(&IndexKey::Root(space.to_path_buf()))
+            .await
+            .expect("routines pool")
     }
 
     async fn entry_index_flags(
@@ -1057,18 +1046,21 @@ mod tests {
         .unwrap();
 
         let state = IndexState::new();
-        let pool = indexed_pool(&state, space).await;
-        full_reindex(&pool, space, &[]).await.unwrap();
-        set_automatic_events_enabled(&pool, space, "tasks", true).await;
+        let routines_pool = routines_pool(&state, space).await;
+        state
+            .run_full_reindex(&IndexKey::Root(space.to_path_buf()))
+            .await
+            .unwrap();
+        set_automatic_events_enabled(&routines_pool, space, "tasks", true).await;
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM routine_event_queue")
-                .fetch_one(&pool)
+                .fetch_one(&routines_pool)
                 .await
                 .unwrap(),
             0
         );
         insert_event_routine(
-            &pool,
+            &routines_pool,
             "tasks",
             "status-done",
             "collection.field_changed",
@@ -1076,16 +1068,16 @@ mod tests {
         )
         .await;
         insert_event_routine(
-            &pool,
+            &routines_pool,
             "tasks",
             "invalid-status-done",
             "collection.field_changed",
             Some(serde_json::json!({ "field": "Status", "from": "Open", "to": "Done" })),
         )
         .await;
-        mark_routine_invalid(&pool, "tasks", "invalid-status-done").await;
+        mark_routine_invalid(&routines_pool, "tasks", "invalid-status-done").await;
         insert_event_routine(
-            &pool,
+            &routines_pool,
             "tasks",
             "priority-only",
             "collection.field_changed",
@@ -1108,7 +1100,7 @@ mod tests {
         let queued: (i64, String, String, String) = sqlx::query_as(
             "SELECT COUNT(*), routine_id, property_key, payload_json FROM routine_event_queue",
         )
-        .fetch_one(&pool)
+        .fetch_one(&routines_pool)
         .await
         .unwrap();
         assert_eq!(queued.0, 1);
@@ -1121,19 +1113,18 @@ mod tests {
 
         let queue_key: String =
             sqlx::query_scalar("SELECT queue_key FROM routine_event_queue LIMIT 1")
-                .fetch_one(&pool)
+                .fetch_one(&routines_pool)
                 .await
                 .unwrap();
         assert!(!queue_key.is_empty());
         let (_, _, db_path): (i64, String, String) = sqlx::query_as("PRAGMA database_list")
-            .fetch_one(&pool)
+            .fetch_one(&routines_pool)
             .await
             .unwrap();
-        pool.close().await;
-        let reopened = crate::index::db::create_pool(Path::new(&db_path))
+        routines_pool.close().await;
+        let reopened = crate::routines::storage::reopen_current_pool(Path::new(&db_path))
             .await
             .unwrap();
-        crate::index::db::ensure_schema(&reopened).await.unwrap();
         assert_eq!(
             sqlx::query_scalar::<_, String>("SELECT queue_key FROM routine_event_queue LIMIT 1")
                 .fetch_one(&reopened)
@@ -1159,11 +1150,11 @@ mod tests {
 
         let state = IndexState::new();
         let key = IndexKey::Root(space.to_path_buf());
-        let pool = indexed_pool(&state, space).await;
-        full_reindex(&pool, space, &[]).await.unwrap();
-        set_automatic_events_enabled(&pool, space, "tasks", true).await;
+        let routines_pool = routines_pool(&state, space).await;
+        state.run_full_reindex(&key).await.unwrap();
+        set_automatic_events_enabled(&routines_pool, space, "tasks", true).await;
         insert_event_routine(
-            &pool,
+            &routines_pool,
             "tasks",
             "status-done",
             "collection.field_changed",
@@ -1193,7 +1184,7 @@ mod tests {
         let payload: String = sqlx::query_scalar(
             "SELECT payload_json FROM routine_event_queue WHERE routine_id = 'status-done'",
         )
-        .fetch_one(&pool)
+        .fetch_one(&routines_pool)
         .await
         .unwrap();
         let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
@@ -1215,8 +1206,16 @@ mod tests {
         .unwrap();
         let state = IndexState::new();
         let pool = indexed_pool(&state, space).await;
-        set_automatic_events_enabled(&pool, space, "tasks", false).await;
-        insert_event_routine(&pool, "tasks", "created", "collection.entry_created", None).await;
+        let routines_pool = routines_pool(&state, space).await;
+        set_automatic_events_enabled(&routines_pool, space, "tasks", false).await;
+        insert_event_routine(
+            &routines_pool,
+            "tasks",
+            "created",
+            "collection.entry_created",
+            None,
+        )
+        .await;
 
         let file = collection.join("item.md");
         std::fs::write(&file, "---\ntitle: Item\nStatus: Open\n---\nBody\n").unwrap();
@@ -1224,7 +1223,7 @@ mod tests {
 
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM routine_event_queue")
-                .fetch_one(&pool)
+                .fetch_one(&routines_pool)
                 .await
                 .unwrap(),
             0
@@ -1254,9 +1253,10 @@ mod tests {
         }
         let state = IndexState::new();
         let pool = indexed_pool(&state, space).await;
-        set_automatic_events_enabled(&pool, space, "tasks", true).await;
+        let routines_pool = routines_pool(&state, space).await;
+        set_automatic_events_enabled(&routines_pool, space, "tasks", true).await;
         insert_event_routine(
-            &pool,
+            &routines_pool,
             "tasks",
             "tasks-created",
             "collection.entry_created",
@@ -1264,7 +1264,7 @@ mod tests {
         )
         .await;
         insert_event_routine(
-            &pool,
+            &routines_pool,
             "notes",
             "notes-created",
             "collection.entry_created",
@@ -1282,7 +1282,7 @@ mod tests {
         let queued = sqlx::query_scalar::<_, String>(
             "SELECT routine_id FROM routine_event_queue ORDER BY routine_id",
         )
-        .fetch_all(&pool)
+        .fetch_all(&routines_pool)
         .await
         .unwrap();
         assert_eq!(queued, vec!["tasks-created"]);
@@ -1308,15 +1308,20 @@ mod tests {
         .unwrap();
         let state = IndexState::new();
         let pool = indexed_pool(&state, space).await;
-        insert_event_routine(&pool, "tasks", "created", "collection.entry_created", None).await;
+        let routines_pool = routines_pool(&state, space).await;
+        insert_event_routine(
+            &routines_pool,
+            "tasks",
+            "created",
+            "collection.entry_created",
+            None,
+        )
+        .await;
         sqlx::query("INSERT INTO routine_event_queue (queue_key, event_key, owner_path, routine_id, definition_fingerprint, event_type, entry_path, payload_json, observed_at, state) VALUES ('existing', 'existing', 'tasks', 'created', 'fingerprint:created', 'collection.entry_created', 'tasks/old.md', '{}', '2026-08-08T00:00:00Z', 'pending')")
-            .execute(&pool)
+            .execute(&routines_pool)
             .await
             .unwrap();
-        sqlx::query("DROP TABLE routine_automatic_authority")
-            .execute(&pool)
-            .await
-            .unwrap();
+        std::fs::write(space.join(".svode/local.json"), "not-json").unwrap();
 
         let file = collection.join("item.md");
         std::fs::write(&file, "---\ntitle: Item\nStatus: Open\n---\n").unwrap();
@@ -1324,7 +1329,7 @@ mod tests {
 
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM routine_event_queue")
-                .fetch_one(&pool)
+                .fetch_one(&routines_pool)
                 .await
                 .unwrap(),
             1
@@ -1352,25 +1357,39 @@ mod tests {
         )
         .unwrap();
         let state = IndexState::new();
-        let pool = indexed_pool(&state, space).await;
-        set_automatic_events_enabled(&pool, space, "tasks", true).await;
-        insert_event_routine(&pool, "tasks", "created", "collection.entry_created", None).await;
+        let routines_pool = routines_pool(&state, space).await;
+        set_automatic_events_enabled(&routines_pool, space, "tasks", true).await;
         insert_event_routine(
-            &pool,
+            &routines_pool,
+            "tasks",
+            "created",
+            "collection.entry_created",
+            None,
+        )
+        .await;
+        insert_event_routine(
+            &routines_pool,
             "tasks",
             "changed",
             "collection.field_changed",
             Some(serde_json::json!({ "field": "Status" })),
         )
         .await;
-        insert_event_routine(&pool, "tasks", "deleted", "collection.entry_deleted", None).await;
+        insert_event_routine(
+            &routines_pool,
+            "tasks",
+            "deleted",
+            "collection.entry_deleted",
+            None,
+        )
+        .await;
 
         let file = collection.join("item.md");
         std::fs::write(&file, "---\ntitle: Item\nStatus: Open\n---\nBody\n").unwrap();
         update_entry(&state, space, &file).await.unwrap();
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM routine_event_queue")
-                .fetch_one(&pool)
+                .fetch_one(&routines_pool)
                 .await
                 .unwrap(),
             1
@@ -1378,7 +1397,7 @@ mod tests {
         let created_payload: String = sqlx::query_scalar(
             "SELECT payload_json FROM routine_event_queue WHERE event_type = 'collection.entry_created'",
         )
-        .fetch_one(&pool)
+        .fetch_one(&routines_pool)
         .await
         .unwrap();
         let created_payload: serde_json::Value = serde_json::from_str(&created_payload).unwrap();
@@ -1391,7 +1410,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM routine_event_queue")
-                .fetch_one(&pool)
+                .fetch_one(&routines_pool)
                 .await
                 .unwrap(),
             1
@@ -1404,7 +1423,7 @@ mod tests {
         let payload: String = sqlx::query_scalar(
             "SELECT payload_json FROM routine_event_queue WHERE event_type = 'collection.entry_deleted'",
         )
-        .fetch_one(&pool)
+        .fetch_one(&routines_pool)
         .await
         .unwrap();
         let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();

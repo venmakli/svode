@@ -1,4 +1,5 @@
 import {
+  acknowledgeRoutineStorageRecovery as acknowledgeRoutineStorageRecoveryCommand,
   createRoutine as createRoutineCommand,
   deleteRoutine as deleteRoutineCommand,
   dispatchManualRoutine as dispatchManualRoutineCommand,
@@ -119,6 +120,12 @@ export async function updateRoutineAutomaticConsent(
   enabled: boolean,
 ) {
   return setRoutineAutomaticConsentCommand({ ...owner, enabled });
+}
+
+export async function acknowledgeRoutineStorageRecovery(
+  owner: RoutineOwnerInput,
+) {
+  return acknowledgeRoutineStorageRecoveryCommand(owner.spacePath);
 }
 
 function normalizeMutationResult(

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
@@ -13,6 +13,68 @@ use crate::agent_sessions::types::AgentSessionStatus;
 use crate::terminal::{
     AgentTerminalLifecycleSink, AgentTerminalOutcomeEvidence, AgentTerminalOutcomeStatus,
 };
+
+pub(crate) async fn reconcile_projection_from_index(
+    routines_pool: &SqlitePool,
+    index_pool: &SqlitePool,
+    space_dir: &Path,
+) -> Result<(), AppError> {
+    let rows = sqlx::query(
+        "SELECT file_path, title, collection_root_path, fields, created, updated \
+         FROM entries WHERE in_collection = 1 AND is_entry_head = 1 ORDER BY file_path",
+    )
+    .fetch_all(index_pool)
+    .await?;
+    let snapshots = rows
+        .into_iter()
+        .map(|row| super::events::snapshot_from_row(row, space_dir))
+        .collect::<Result<Vec<_>, _>>()?;
+    let owner_paths = sqlx::query_scalar::<_, String>(
+        "SELECT source_path FROM knowledge_source_manifest \
+         WHERE source_kind = 'collection_schema' AND diagnostic_code IS NULL \
+         ORDER BY source_path",
+    )
+    .fetch_all(index_pool)
+    .await?
+    .into_iter()
+    .filter_map(|schema_path| {
+        if schema_path == "schema.yaml" {
+            Some(".".to_string())
+        } else {
+            schema_path
+                .strip_suffix("/schema.yaml")
+                .map(ToString::to_string)
+        }
+    })
+    .collect::<std::collections::BTreeSet<_>>();
+    let observed_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+
+    let mut transaction = routines_pool.begin().await?;
+    sqlx::query("DELETE FROM routine_owner_roots")
+        .execute(&mut *transaction)
+        .await?;
+    for owner_path in owner_paths {
+        sqlx::query("INSERT INTO routine_owner_roots (owner_path) VALUES (?)")
+            .bind(owner_path)
+            .execute(&mut *transaction)
+            .await?;
+    }
+    sqlx::query("DELETE FROM routine_observation_baseline")
+        .execute(&mut *transaction)
+        .await?;
+    for snapshot in snapshots {
+        sqlx::query(
+            "INSERT INTO routine_observation_baseline (entry_path, snapshot_json, observed_at) VALUES (?, ?, ?)",
+        )
+        .bind(&snapshot.entry_path)
+        .bind(serde_json::to_string(&snapshot)?)
+        .bind(&observed_at)
+        .execute(&mut *transaction)
+        .await?;
+    }
+    transaction.commit().await?;
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RoutineScheduleState {
@@ -470,9 +532,7 @@ impl RoutineRunLifecycleSink {
         if pool.is_closed() {
             let db_path = self.db_path.clone();
             *pool = tauri::async_runtime::block_on(async move {
-                let pool = crate::index::db::create_pool(&db_path).await?;
-                crate::index::db::ensure_schema(&pool).await?;
-                Ok::<_, AppError>(pool)
+                crate::routines::storage::reopen_current_pool(&db_path).await
             })?;
         }
         Ok(pool.clone())
@@ -565,10 +625,14 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::index::db;
     use crate::routines::model::{
         RoutineAction, RoutineDiagnostic, RoutineOwnerDescriptor, RoutineOwnerKind, RoutineTrigger,
     };
+    use crate::routines::storage;
+
+    async fn routines_pool(path: &Path) -> SqlitePool {
+        storage::open_pool(path, false).await.unwrap().pool
+    }
 
     fn snapshot(owner_path: &str, rows: Vec<RoutineRow>) -> RoutineCatalogSnapshot {
         RoutineCatalogSnapshot {
@@ -613,10 +677,7 @@ mod tests {
     #[tokio::test]
     async fn owner_replace_is_transactional_and_does_not_touch_siblings() {
         let temp = tempdir().unwrap();
-        let pool = db::create_pool(&temp.path().join("index.db"))
-            .await
-            .unwrap();
-        db::ensure_schema(&pool).await.unwrap();
+        let pool = routines_pool(&temp.path().join("routines.db")).await;
 
         replace_owner_snapshot(&pool, &snapshot("tasks", vec![row("one"), row("two")]))
             .await
@@ -646,10 +707,7 @@ mod tests {
     #[tokio::test]
     async fn event_queue_is_ordered_and_one_active_per_routine() {
         let temp = tempdir().unwrap();
-        let pool = db::create_pool(&temp.path().join("index.db"))
-            .await
-            .unwrap();
-        db::ensure_schema(&pool).await.unwrap();
+        let pool = routines_pool(&temp.path().join("routines.db")).await;
         for (queue_key, routine_id, entry_path, observed_at) in [
             (
                 "second",
@@ -695,9 +753,8 @@ mod tests {
     #[tokio::test]
     async fn routine_run_mapping_survives_terminal_and_session_reconciliation() {
         let temp = tempdir().unwrap();
-        let db_path = temp.path().join("index.db");
-        let pool = db::create_pool(&db_path).await.unwrap();
-        db::ensure_schema(&pool).await.unwrap();
+        let db_path = temp.path().join("routines.db");
+        let pool = routines_pool(&db_path).await;
         let definition = RoutineDefinition {
             name: Some("Review".into()),
             description: None,
@@ -781,8 +838,7 @@ mod tests {
         .unwrap()
         .unwrap();
 
-        let reopened = db::create_pool(&db_path).await.unwrap();
-        db::ensure_schema(&reopened).await.unwrap();
+        let reopened = storage::reopen_current_pool(&db_path).await.unwrap();
         let after_reload = latest_run(&reopened, ".", "routine-one")
             .await
             .unwrap()
@@ -797,9 +853,8 @@ mod tests {
     #[tokio::test]
     async fn schedule_checkpoint_and_claim_evidence_are_durable() {
         let temp = tempdir().unwrap();
-        let db_path = temp.path().join("index.db");
-        let pool = db::create_pool(&db_path).await.unwrap();
-        db::ensure_schema(&pool).await.unwrap();
+        let db_path = temp.path().join("routines.db");
+        let pool = routines_pool(&db_path).await;
 
         write_schedule_state(
             &pool,
@@ -846,8 +901,7 @@ mod tests {
         .unwrap();
 
         pool.close().await;
-        let reopened = db::create_pool(&db_path).await.unwrap();
-        db::ensure_schema(&reopened).await.unwrap();
+        let reopened = storage::reopen_current_pool(&db_path).await.unwrap();
         assert_eq!(
             schedule_state(&reopened, ".", "routine-one")
                 .await
@@ -863,6 +917,78 @@ mod tests {
                 .unwrap()
                 .claimed_by,
             "device-two"
+        );
+    }
+
+    #[tokio::test]
+    async fn index_projection_reconciliation_preserves_operational_rows() {
+        let temp = tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("tasks")).unwrap();
+        std::fs::write(
+            temp.path().join("tasks/schema.yaml"),
+            "columns:\n  - { name: Status, type: text }\nviews: []\n",
+        )
+        .unwrap();
+        std::fs::write(
+            temp.path().join("tasks/item.md"),
+            "---\ntitle: Item\nStatus: Open\n---\n",
+        )
+        .unwrap();
+        let index_pool = crate::index::db::create_pool(&temp.path().join("index.db"))
+            .await
+            .unwrap();
+        crate::index::db::ensure_schema(&index_pool).await.unwrap();
+        crate::index::reindex::full_reindex(&index_pool, temp.path(), &[])
+            .await
+            .unwrap();
+        let routines_pool = routines_pool(&temp.path().join("routines.db")).await;
+        replace_owner_snapshot(&routines_pool, &snapshot("tasks", vec![row("kept")]))
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO routine_event_queue (queue_key, event_key, owner_path, routine_id, definition_fingerprint, event_type, entry_path, payload_json, observed_at, state) VALUES ('queued', 'event', 'tasks', 'kept', 'execution:kept', 'collection.entry_created', 'tasks/item.md', '{}', '2026-08-08T00:00:00Z', 'pending')")
+            .execute(&routines_pool)
+            .await
+            .unwrap();
+
+        reconcile_projection_from_index(&routines_pool, &index_pool, temp.path())
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM routine_observation_baseline")
+                .fetch_one(&routines_pool)
+                .await
+                .unwrap(),
+            1
+        );
+
+        sqlx::query("DELETE FROM entries")
+            .execute(&index_pool)
+            .await
+            .unwrap();
+        reconcile_projection_from_index(&routines_pool, &index_pool, temp.path())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM routine_definitions")
+                .fetch_one(&routines_pool)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM routine_event_queue")
+                .fetch_one(&routines_pool)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM routine_observation_baseline")
+                .fetch_one(&routines_pool)
+                .await
+                .unwrap(),
+            0
         );
     }
 }

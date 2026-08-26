@@ -439,18 +439,18 @@ pub(crate) fn set_pinned(
         )));
     }
 
-    let mut local = space_config::read_local_config(&project)?;
-    let overlay = local
-        .agent_sessions
-        .get_or_insert_with(AgentSessionsLocalConfig::default);
-    overlay
-        .pinned_session_ids
-        .retain(|id| scoped_ids.contains(id) && id != &session_id);
-    if pinned {
-        overlay.pinned_session_ids.push(session_id.clone());
-    }
-    let pinned_session_ids = overlay.pinned_session_ids.clone();
-    space_config::write_local_config(&project, &local)?;
+    let pinned_session_ids = space_config::mutate_local_config(&project, |local| {
+        let overlay = local
+            .agent_sessions
+            .get_or_insert_with(AgentSessionsLocalConfig::default);
+        overlay
+            .pinned_session_ids
+            .retain(|id| scoped_ids.contains(id) && id != &session_id);
+        if pinned {
+            overlay.pinned_session_ids.push(session_id.clone());
+        }
+        Ok(overlay.pinned_session_ids.clone())
+    })?;
 
     Ok(crate::agent_sessions::types::AgentSessionsPinResult {
         session_id,
@@ -1088,6 +1088,34 @@ mod tests {
         assert_eq!(rebuilt.cache.mode, AgentSessionsCacheMode::FreshScan);
         assert_eq!(rebuilt.sessions[0].source_session_id, "disk-cached");
         assert!(project.join(".svode/agent-sessions.db").is_file());
+    }
+
+    #[test]
+    fn corrupt_agent_sessions_cache_is_quarantined_and_rebuilt_in_place() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(project.join(".svode")).expect("project metadata");
+        write_codex_history(&home, "recovered-cache", &project, 1_700_000_000);
+        fs::write(project.join(".svode/agent-sessions.db"), "not sqlite")
+            .expect("corrupt cache fixture");
+
+        let state = AgentSessionsState::with_home(home);
+        let result = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("fresh scan after corrupt cache");
+
+        assert_eq!(result.cache.mode, AgentSessionsCacheMode::FreshScan);
+        assert_eq!(result.sessions[0].source_session_id, "recovered-cache");
+        assert!(project.join(".svode/agent-sessions.db").is_file());
+        assert!(
+            fs::read_dir(project.join(".svode"))
+                .unwrap()
+                .flatten()
+                .any(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("agent-sessions.db.corrupt-"))
+        );
     }
 
     #[test]

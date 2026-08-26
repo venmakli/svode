@@ -55,20 +55,48 @@ pub(crate) struct CollectionEventPayload {
     pub execution_run_id: Option<String>,
 }
 
-pub(crate) async fn read_indexed_snapshot(
+pub(crate) async fn read_observation_snapshot(
     transaction: &mut Transaction<'_, Sqlite>,
-    repository_path: &Path,
     entry_path: &str,
 ) -> Result<Option<IndexedEntrySnapshot>, AppError> {
-    let row = sqlx::query(
-        "SELECT file_path, title, collection_root_path, fields, created, updated \
-         FROM entries WHERE file_path = ? AND in_collection = 1 AND is_entry_head = 1",
+    let raw = sqlx::query_scalar::<_, String>(
+        "SELECT snapshot_json FROM routine_observation_baseline WHERE entry_path = ?",
     )
     .bind(entry_path)
     .fetch_optional(&mut **transaction)
     .await?;
-    row.map(|row| snapshot_from_row(row, repository_path))
+    raw.map(|raw| serde_json::from_str(&raw).map_err(AppError::from))
         .transpose()
+}
+
+pub(crate) async fn write_observation_snapshot(
+    transaction: &mut Transaction<'_, Sqlite>,
+    entry_path: &str,
+    current: Option<&IndexedEntrySnapshot>,
+) -> Result<(), AppError> {
+    match current {
+        Some(current) => {
+            sqlx::query(
+                r#"INSERT INTO routine_observation_baseline (entry_path, snapshot_json, observed_at)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(entry_path) DO UPDATE SET
+                       snapshot_json = excluded.snapshot_json,
+                       observed_at = excluded.observed_at"#,
+            )
+            .bind(entry_path)
+            .bind(serde_json::to_string(current)?)
+            .bind(Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true))
+            .execute(&mut **transaction)
+            .await?;
+        }
+        None => {
+            sqlx::query("DELETE FROM routine_observation_baseline WHERE entry_path = ?")
+                .bind(entry_path)
+                .execute(&mut **transaction)
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn snapshot_from_entry(
@@ -89,7 +117,7 @@ pub(crate) fn snapshot_from_entry(
     }))
 }
 
-fn snapshot_from_row(
+pub(crate) fn snapshot_from_row(
     row: sqlx::sqlite::SqliteRow,
     repository_path: &Path,
 ) -> Result<IndexedEntrySnapshot, AppError> {

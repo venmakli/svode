@@ -12,17 +12,13 @@ use crate::space::types::SpaceGitType;
 
 const GITIGNORE_TEMPLATE: &str = "# Svode local files
 .svode/local.json
-.svode/*.db
-.svode/*.db-wal
-.svode/*.db-shm
+.svode/*.db*
 ";
 
-const SVODE_LOCAL_IGNORE_ENTRIES: &[&str] = &[
-    ".svode/local.json",
-    ".svode/*.db",
-    ".svode/*.db-wal",
-    ".svode/*.db-shm",
-];
+const SVODE_LOCAL_IGNORE_ENTRIES: &[&str] = &[".svode/local.json", ".svode/*.db*"];
+
+const LOCAL_DB_EXCLUDE_PATHSPEC: &str = ":(exclude,glob)**/.svode/*.db*";
+const LOCAL_CONFIG_EXCLUDE_PATHSPEC: &str = ":(exclude,glob)**/.svode/local.json";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -237,13 +233,7 @@ pub async fn init_with_optional_scaffold_commit(
     ensure_svode_gitignore(space_dir)?;
 
     if commit_scaffold {
-        let out = cli.exec(space_dir, &["add", "."]).await?;
-        if out.exit_code != 0 {
-            return Err(AppError::GitCommandFailed(format!(
-                "git add failed: {}",
-                out.stderr
-            )));
-        }
+        add_all(cli, space_dir).await?;
 
         let _ = commit(cli, space_dir, "Scaffold .svode").await?;
     }
@@ -501,7 +491,18 @@ fn normalize_git_path(path: &str) -> Result<String, AppError> {
 
 /// Stage a specific file.
 pub async fn add(cli: &GitCli, space_dir: &Path, path: &str) -> Result<(), AppError> {
-    let out = cli.exec(space_dir, &["add", path]).await?;
+    let out = cli
+        .exec(
+            space_dir,
+            &[
+                "add",
+                "--",
+                path,
+                LOCAL_DB_EXCLUDE_PATHSPEC,
+                LOCAL_CONFIG_EXCLUDE_PATHSPEC,
+            ],
+        )
+        .await?;
     if out.exit_code != 0 {
         return Err(AppError::GitCommandFailed(format!(
             "git add failed: {}",
@@ -513,7 +514,18 @@ pub async fn add(cli: &GitCli, space_dir: &Path, path: &str) -> Result<(), AppEr
 
 /// Stage all changes.
 pub async fn add_all(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
-    let out = cli.exec(space_dir, &["add", "."]).await?;
+    let out = cli
+        .exec(
+            space_dir,
+            &[
+                "add",
+                "--",
+                ".",
+                LOCAL_DB_EXCLUDE_PATHSPEC,
+                LOCAL_CONFIG_EXCLUDE_PATHSPEC,
+            ],
+        )
+        .await?;
     if out.exit_code != 0 {
         return Err(AppError::GitCommandFailed(format!(
             "git add failed: {}",
@@ -1246,7 +1258,7 @@ pub fn ensure_svode_gitignore(space_dir: &Path) -> Result<bool, AppError> {
 
 const INLINE_BLOCK_START: &str = "# svode:inline:start";
 const INLINE_BLOCK_END: &str = "# svode:inline:end";
-const INLINE_BLOCK_CONTENT: &str = "*/.svode/local.json\n*/.svode/*.db\n*/.svode/*.db-*";
+const INLINE_BLOCK_CONTENT: &str = "*/.svode/local.json\n*/.svode/*.db*";
 
 const SPACES_BLOCK_START: &str = "# svode:spaces:start";
 const SPACES_BLOCK_END: &str = "# svode:spaces:end";
@@ -2364,7 +2376,7 @@ mod tests {
 
         assert!(changed);
         assert!(content.contains(".svode/local.json"));
-        assert!(content.contains(".svode/*.db-wal"));
+        assert!(content.contains(".svode/*.db*"));
 
         let changed_again = ensure_svode_gitignore(tmp.path()).unwrap();
         let content_again = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
@@ -2388,7 +2400,70 @@ mod tests {
         assert!(changed);
         assert!(content.starts_with("target/\n/.svode/local.json\n"));
         assert_eq!(content.matches(".svode/local.json").count(), 1);
-        assert!(content.contains(".svode/*.db-shm"));
+        assert!(content.contains(".svode/*.db*"));
+    }
+
+    #[tokio::test]
+    async fn managed_staging_excludes_tracked_root_and_inline_sqlite_families() {
+        let Ok(cli) = GitCli::detect() else {
+            return;
+        };
+        let tmp = TempDir::new().unwrap();
+        cli.exec(tmp.path(), &["init"]).await.unwrap();
+        cli.exec(tmp.path(), &["config", "user.email", "svode@example.test"])
+            .await
+            .unwrap();
+        cli.exec(tmp.path(), &["config", "user.name", "Svode Test"])
+            .await
+            .unwrap();
+        ensure_svode_gitignore(tmp.path()).unwrap();
+        ensure_inline_gitignore(tmp.path()).unwrap();
+        std::fs::create_dir_all(tmp.path().join(".svode")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("child/.svode")).unwrap();
+        std::fs::write(tmp.path().join(".svode/routines.db"), "legacy root").unwrap();
+        std::fs::write(
+            tmp.path().join("child/.svode/index.db-wal"),
+            "legacy inline",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("note.md"), "before").unwrap();
+        cli.exec(
+            tmp.path(),
+            &[
+                "add",
+                "-f",
+                ".gitignore",
+                ".svode/routines.db",
+                "child/.svode/index.db-wal",
+                "note.md",
+            ],
+        )
+        .await
+        .unwrap();
+        cli.exec(tmp.path(), &["commit", "-m", "fixture"])
+            .await
+            .unwrap();
+
+        std::fs::write(tmp.path().join(".svode/routines.db"), "changed root").unwrap();
+        std::fs::write(
+            tmp.path().join("child/.svode/index.db-wal"),
+            "changed inline",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("note.md"), "after").unwrap();
+        add_all(&cli, tmp.path()).await.unwrap();
+
+        let staged = cli
+            .exec(tmp.path(), &["diff", "--cached", "--name-only"])
+            .await
+            .unwrap();
+        assert_eq!(staged.stdout.trim(), "note.md");
+        let unstaged = cli
+            .exec(tmp.path(), &["diff", "--name-only"])
+            .await
+            .unwrap();
+        assert!(unstaged.stdout.contains(".svode/routines.db"));
+        assert!(unstaged.stdout.contains("child/.svode/index.db-wal"));
     }
 
     #[tokio::test]

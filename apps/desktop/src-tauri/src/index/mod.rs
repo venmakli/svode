@@ -152,15 +152,32 @@ fn read_child_space_name(space_dir: &Path, folder_name: &str) -> String {
 
 async fn open_prepared_pool(db_path: &Path) -> Result<SqlitePool, AppError> {
     match db::create_pool(db_path).await {
-        Ok(pool) => match db::ensure_schema(&pool).await {
-            Ok(()) => Ok(pool),
+        Ok(pool) => match db::schema_status(&pool).await {
+            Ok(db::SchemaStatus::Current) => Ok(pool),
+            Ok(db::SchemaStatus::Uninitialized) => {
+                db::ensure_schema(&pool).await?;
+                Ok(pool)
+            }
+            Ok(db::SchemaStatus::Incompatible(found)) => {
+                pool.close().await;
+                tracing::info!(
+                    "quarantining incompatible derived index at {} (found {:?}, expected {})",
+                    db_path.display(),
+                    found,
+                    db::SCHEMA_VERSION
+                );
+                db::quarantine_database_family(db_path, db::QuarantineReason::Incompatible)?;
+                let replacement = db::create_pool(db_path).await?;
+                db::ensure_schema(&replacement).await?;
+                Ok(replacement)
+            }
             Err(error) if db::is_corrupt_database_error(&error) => {
                 pool.close().await;
                 tracing::warn!(
                     "quarantining corrupt derived index at {}",
                     db_path.display()
                 );
-                db::quarantine_corrupt_database(db_path)?;
+                db::quarantine_database_family(db_path, db::QuarantineReason::Corrupt)?;
                 let replacement = db::create_pool(db_path).await?;
                 db::ensure_schema(&replacement).await?;
                 Ok(replacement)
@@ -172,7 +189,7 @@ async fn open_prepared_pool(db_path: &Path) -> Result<SqlitePool, AppError> {
                 "quarantining corrupt derived index at {}",
                 db_path.display()
             );
-            db::quarantine_corrupt_database(db_path)?;
+            db::quarantine_database_family(db_path, db::QuarantineReason::Corrupt)?;
             let replacement = db::create_pool(db_path).await?;
             db::ensure_schema(&replacement).await?;
             Ok(replacement)
@@ -248,6 +265,8 @@ fn normalize_abs_path(path: &Path) -> Option<PathBuf> {
 /// plus matching reindex serialization locks and runtime backlink indices.
 pub struct IndexState {
     pools: Mutex<HashMap<IndexKey, SqlitePool>>,
+    routine_pools: Mutex<HashMap<IndexKey, SqlitePool>>,
+    routine_storage_locks: Mutex<HashMap<IndexKey, Arc<Mutex<()>>>>,
     /// Per-key serialization lock for `full_reindex`. Two rapid `open_project`
     /// calls would otherwise spawn two concurrent reindexes against the same
     /// DB — correct under SQLite serialization, but doubles the work and
@@ -287,6 +306,8 @@ impl IndexState {
     pub fn new() -> Self {
         Self {
             pools: Mutex::new(HashMap::new()),
+            routine_pools: Mutex::new(HashMap::new()),
+            routine_storage_locks: Mutex::new(HashMap::new()),
             reindex_locks: Mutex::new(HashMap::new()),
             reindex_active: Mutex::new(HashMap::new()),
             reconcile_active: Mutex::new(HashMap::new()),
@@ -1086,7 +1107,10 @@ impl IndexState {
         let _flag_guard = ReindexActiveGuard(flag);
         for _ in 0..3 {
             match reconcile::reconcile_pool(self, key).await? {
-                reconcile::ReconcileOutcome::Applied => return Ok(()),
+                reconcile::ReconcileOutcome::Applied => {
+                    self.sync_routine_projection(key).await?;
+                    return Ok(());
+                }
                 reconcile::ReconcileOutcome::Retry => continue,
                 reconcile::ReconcileOutcome::Rebuild => return self.run_full_reindex(key).await,
             }
@@ -1109,7 +1133,8 @@ impl IndexState {
         let _guard = lock.lock().await;
         flag.store(true, Ordering::SeqCst);
         let _flag_guard = ReindexActiveGuard(flag);
-        reindex::full_reindex_for_target(&pool, key.project(), &dir, &skip).await
+        reindex::full_reindex_for_target(&pool, key.project(), &dir, &skip).await?;
+        self.sync_routine_projection(key).await
     }
 
     /// Get an existing pool for the key, or open one (creating the DB
@@ -1132,6 +1157,66 @@ impl IndexState {
         }
         pools.insert(key.clone(), pool.clone());
         Ok(pool)
+    }
+
+    /// Get (or create) the operational routines store paired with this index
+    /// target. Definitions, baselines, queues, runs, and scheduler claims are
+    /// never stored in the rebuildable search projection.
+    pub async fn get_or_create_routines(&self, key: &IndexKey) -> Result<SqlitePool, AppError> {
+        if let Some(pool) = self.routine_pools.lock().await.get(key).cloned() {
+            return Ok(pool);
+        }
+
+        let lock = {
+            let mut locks = self.routine_storage_locks.lock().await;
+            locks
+                .entry(key.clone())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone()
+        };
+        let _guard = lock.lock().await;
+        if let Some(pool) = self.routine_pools.lock().await.get(key).cloned() {
+            return Ok(pool);
+        }
+
+        let dir = self.dir_for_key(key).await?;
+        let previously_created = crate::routines::authority::storage_was_created(&dir)?;
+        let outcome = crate::routines::storage::open_pool(
+            &crate::routines::storage::database_path(&dir),
+            previously_created,
+        )
+        .await?;
+        if let Some(evidence) = outcome.recovery {
+            if let Err(error) = crate::routines::authority::record_recovery(&dir, evidence) {
+                outcome.pool.close().await;
+                return Err(error);
+            }
+        } else if !previously_created
+            && let Err(error) = crate::routines::authority::mark_storage_ready(&dir)
+        {
+            outcome.pool.close().await;
+            return Err(error);
+        }
+
+        let mut pools = self.routine_pools.lock().await;
+        if let Some(existing) = pools.get(key) {
+            outcome.pool.close().await;
+            return Ok(existing.clone());
+        }
+        pools.insert(key.clone(), outcome.pool.clone());
+        Ok(outcome.pool)
+    }
+
+    pub(crate) async fn sync_routine_projection(&self, key: &IndexKey) -> Result<(), AppError> {
+        let index_pool = self.get_or_create(key).await?;
+        let routines_pool = self.get_or_create_routines(key).await?;
+        let space_dir = self.dir_for_key(key).await?;
+        crate::routines::cache::reconcile_projection_from_index(
+            &routines_pool,
+            &index_pool,
+            &space_dir,
+        )
+        .await
     }
 
     /// Return only an already-open pool. Read-only snapshot surfaces use this
@@ -1168,11 +1253,17 @@ impl IndexState {
             tracing::info!("closing index pool for {:?}", key);
             pool.close().await;
         }
+        let routine_pool = self.routine_pools.lock().await.remove(key);
+        if let Some(pool) = routine_pool {
+            tracing::info!("closing routines pool for {:?}", key);
+            pool.close().await;
+        }
         self.backlinks.lock().await.remove(key);
         self.reindex_locks.lock().await.remove(key);
         self.reindex_active.lock().await.remove(key);
         self.reconcile_active.lock().await.remove(key);
         self.lfs_states.lock().await.remove(key);
+        self.routine_storage_locks.lock().await.remove(key);
     }
 
     /// Open root + all ready child-space pools for `project` and reconcile
@@ -1214,6 +1305,9 @@ impl IndexState {
             if let Err(e) = self.get_or_create(key).await {
                 tracing::warn!("open pool failed for {:?}: {e}", key);
             }
+            if let Err(e) = self.get_or_create_routines(key).await {
+                tracing::warn!("open routines pool failed for {:?}: {e}", key);
+            }
         }
 
         // Spawn cached-first manifest reconciliation. A new or incompatible
@@ -1240,7 +1334,7 @@ impl IndexState {
 
     /// Close every pool belonging to `project`.
     pub async fn close_project(&self, project: &Path) {
-        let keys_to_close: Vec<IndexKey> = {
+        let mut keys_to_close: HashSet<IndexKey> = {
             let pools = self.pools.lock().await;
             pools
                 .keys()
@@ -1248,6 +1342,14 @@ impl IndexState {
                 .cloned()
                 .collect()
         };
+        keys_to_close.extend(
+            self.routine_pools
+                .lock()
+                .await
+                .keys()
+                .filter(|key| key.project() == project)
+                .cloned(),
+        );
         for key in keys_to_close {
             self.close_key(&key).await;
         }
@@ -1495,7 +1597,7 @@ impl IndexState {
     }
 
     pub async fn routine_owner_paths(&self, key: &IndexKey) -> Result<Vec<String>, AppError> {
-        let pool = self.get_or_create(key).await?;
+        let pool = self.get_or_create_routines(key).await?;
         Ok(sqlx::query_scalar::<_, String>(
             "SELECT owner_path FROM routine_owner_roots ORDER BY owner_path",
         )

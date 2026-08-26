@@ -25,6 +25,7 @@ import { useRoutineDetail } from "./use-routine-detail";
 import { useRoutineDispatch } from "./use-routine-dispatch";
 import { useRoutineExecutors } from "./use-routine-executors";
 import { useRoutineMutations } from "./use-routine-mutations";
+import { useRoutineStorageRecovery } from "./use-routine-storage-recovery";
 
 export function useRoutinesController(
   owner: ScopeOwnerRef,
@@ -45,6 +46,11 @@ export function useRoutinesController(
   );
   const { refresh, replaceSnapshot, state } = useRoutineCatalog(routineOwner);
   const automaticConsent = useRoutineAutomaticConsent(routineOwner);
+  const storageRecovery = useRoutineStorageRecovery({
+    owner: routineOwner,
+    refreshCatalog: refresh,
+    retryAutomaticConsent: automaticConsent.retry,
+  });
   const executors = useRoutineExecutors(owner.projectPath, owner.spacePath);
   const detailController = useOptionalSystemCollectionDetailController();
   const instanceKey = `routines:${owner.ownerKey}`;
@@ -191,7 +197,11 @@ export function useRoutinesController(
     actions,
     createDetailRequest: createReadOnlyDetail,
     getExecutorLabel: (row) => executorLabel(row, executors.options),
-    state: toRoutinePresentationState(state, () => void refresh()),
+    state: toRoutinePresentationState(state, () => void refresh(), {
+      error: storageRecovery.error,
+      onAcknowledge: () => void storageRecovery.acknowledge(),
+      pending: storageRecovery.pending,
+    }),
   });
   const instance: SystemCollectionInstance = {
     defaultPresentationId: "all",

@@ -322,7 +322,7 @@ pub(super) async fn dispatch_routine(
         }
     };
 
-    let pool = index_state.get_or_create(&owner.index_key).await?;
+    let pool = index_state.get_or_create_routines(&owner.index_key).await?;
     let live_pty_ids = service::live_agent_pty_ids(terminal_manager)?;
     if let Some(run) = cache::latest_run(&pool, &owner.descriptor.owner_path, &routine_id).await?
         && run.blocks_relaunch(&live_pty_ids)
@@ -521,7 +521,7 @@ pub(super) async fn dispatch_routine(
         routine_run_id: Some(routine_run_id.clone()),
         lifecycle_sink: Some(Arc::new(cache::RoutineRunLifecycleSink::with_invalidation(
             pool.clone(),
-            owner.space_path.join(".svode").join("index.db"),
+            super::storage::database_path(&owner.space_path),
             routine_run_id.clone(),
             app.clone(),
             &owner,
