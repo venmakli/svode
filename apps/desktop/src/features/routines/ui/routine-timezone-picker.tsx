@@ -1,31 +1,42 @@
-import { useMemo, useState } from "react";
-import { ChevronsUpDown } from "lucide-react";
+import { useMemo } from "react";
 
-import { Button } from "@/components/ui/button";
 import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-  CommandSeparator,
-} from "@/components/ui/command";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+  Combobox,
+  ComboboxCollection,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxGroup,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxLabel,
+  ComboboxList,
+  ComboboxSeparator,
+} from "@/components/ui/combobox";
 import * as m from "@/paraglide/messages.js";
 import { getLocale } from "@/paraglide/runtime.js";
 
 import {
+  MAX_VISIBLE_TIMEZONES,
   currentSystemTimezone,
-  projectRoutineTimezoneOptions,
+  groupRoutineTimezones,
   supportedTimezones,
   timezoneDisplayLabel,
+  type RoutineTimezoneRegion,
 } from "../model/routine-time-basis";
 import type { RoutineTimeBasis } from "../model/types";
+
+interface TimezoneOption {
+  label: string;
+  searchValue: string;
+  timeBasis: RoutineTimeBasis;
+  value: string;
+}
+
+interface TimezoneGroup {
+  items: readonly TimezoneOption[];
+  label: string | null;
+  value: string;
+}
 
 export function RoutineTimezonePicker({
   id,
@@ -38,145 +49,152 @@ export function RoutineTimezonePicker({
   onChange(value: RoutineTimeBasis): void;
   value: RoutineTimeBasis;
 }) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
   const locale = getLocale();
   const currentTimezone = currentSystemTimezone();
   const timezones = useMemo(() => supportedTimezones(), []);
-  const {
-    fixedTimezones: visibleTimezones,
-    showCurrent,
-    showLocal,
-  } = projectRoutineTimezoneOptions({
-    currentTimezone,
-    localSearchText: m.routines_timezone_local(),
-    locale,
-    query,
-    timezones,
-  });
-
-  const select = (timeBasis: RoutineTimeBasis) => {
-    onChange(timeBasis);
-    setOpen(false);
-    setQuery("");
-  };
+  const groups = useMemo(
+    () =>
+      timezoneGroups({
+        currentTimezone,
+        locale,
+        timezones,
+        value,
+      }),
+    [currentTimezone, locale, timezones, value],
+  );
+  const selectedOption = useMemo(
+    () =>
+      groups
+        .flatMap((group) => group.items)
+        .find((option) => sameTimeBasis(option.timeBasis, value)) ??
+      timezoneOption(value, locale),
+    [groups, locale, value],
+  );
 
   return (
-    <Popover
-      open={open}
-      onOpenChange={(nextOpen) => {
-        setOpen(nextOpen);
-        if (!nextOpen) setQuery("");
+    <Combobox
+      items={groups}
+      value={selectedOption}
+      limit={MAX_VISIBLE_TIMEZONES}
+      autoHighlight
+      itemToStringLabel={(option: TimezoneOption) => option.label}
+      itemToStringValue={(option: TimezoneOption) => option.value}
+      isItemEqualToValue={(option, selected) => option.value === selected.value}
+      filter={(option: TimezoneOption, query) =>
+        option.searchValue.includes(query.trim().toLocaleLowerCase(locale))
+      }
+      onValueChange={(option) => {
+        if (option) onChange(option.timeBasis);
       }}
     >
-      <PopoverTrigger asChild>
-        <Button
-          id={id}
-          type="button"
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          aria-invalid={invalid}
-          className="w-full justify-between font-normal"
-          data-routine-create-focus="trigger"
-        >
-          <span className="min-w-0 truncate">
-            {timeBasisLabel(value, locale)}
-          </span>
-          <ChevronsUpDown data-icon="inline-end" className="opacity-50" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        className="w-80 max-w-[var(--radix-popover-content-available-width)] p-0"
-      >
-        <Command shouldFilter={false}>
-          <CommandInput
-            aria-label={m.routines_timezone_search()}
-            value={query}
-            placeholder={m.routines_timezone_search()}
-            onValueChange={setQuery}
-          />
-          <CommandList className="max-h-64">
-            {!showLocal && !showCurrent && visibleTimezones.length === 0 ? (
-              <CommandEmpty>{m.routines_timezone_empty()}</CommandEmpty>
-            ) : null}
-            {showLocal ? (
-              <CommandGroup>
-                <CommandItem
-                  value="local"
-                  data-checked={value.mode === "local"}
-                  onSelect={() => select({ mode: "local" })}
-                >
-                  <span className="truncate">
-                    {m.routines_timezone_local()}
-                  </span>
-                </CommandItem>
-              </CommandGroup>
-            ) : null}
-            {showCurrent || visibleTimezones.length > 0 ? (
-              <>
-                {showLocal ? <CommandSeparator /> : null}
-                <CommandGroup>
-                  {showCurrent && currentTimezone ? (
-                    <TimezoneItem
-                      timezone={currentTimezone}
-                      locale={locale}
-                      checked={
-                        value.mode === "fixed" &&
-                        value.timezone === currentTimezone
-                      }
-                      onSelect={() =>
-                        select({ mode: "fixed", timezone: currentTimezone })
-                      }
-                    />
-                  ) : null}
-                  {visibleTimezones.map((timezone) => (
-                    <TimezoneItem
-                      key={timezone}
-                      timezone={timezone}
-                      locale={locale}
-                      checked={
-                        value.mode === "fixed" && value.timezone === timezone
-                      }
-                      onSelect={() => select({ mode: "fixed", timezone })}
-                    />
-                  ))}
-                </CommandGroup>
-              </>
-            ) : null}
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+      <ComboboxInput
+        id={id}
+        aria-label={m.routines_timezone_label()}
+        aria-invalid={invalid}
+        placeholder={m.routines_timezone_search()}
+        className="w-full"
+        data-routine-create-focus="trigger"
+      />
+      <ComboboxContent>
+        <ComboboxEmpty>{m.routines_timezone_empty()}</ComboboxEmpty>
+        <ComboboxList>
+          {(group: TimezoneGroup, index) => (
+            <ComboboxGroup key={group.value} items={group.items}>
+              {group.label ? (
+                <ComboboxLabel>{group.label}</ComboboxLabel>
+              ) : null}
+              <ComboboxCollection>
+                {(option: TimezoneOption) => (
+                  <ComboboxItem key={option.value} value={option}>
+                    {option.label}
+                  </ComboboxItem>
+                )}
+              </ComboboxCollection>
+              {index < groups.length - 1 ? <ComboboxSeparator /> : null}
+            </ComboboxGroup>
+          )}
+        </ComboboxList>
+      </ComboboxContent>
+    </Combobox>
   );
 }
 
-function TimezoneItem({
-  checked,
+function timezoneGroups({
+  currentTimezone,
   locale,
-  onSelect,
-  timezone,
+  timezones,
+  value,
 }: {
-  checked: boolean;
+  currentTimezone: string | null;
   locale: string;
-  onSelect(): void;
-  timezone: string;
-}) {
-  return (
-    <CommandItem
-      value={`fixed:${timezone}`}
-      data-checked={checked}
-      onSelect={onSelect}
-    >
-      <span className="truncate">
-        {timezoneDisplayLabel(timezone, locale)}
-      </span>
-    </CommandItem>
-  );
+  timezones: readonly string[];
+  value: RoutineTimeBasis;
+}): readonly TimezoneGroup[] {
+  const localOption = timezoneOption({ mode: "local" }, locale);
+  const suggestedOptions = [localOption];
+  if (currentTimezone) {
+    suggestedOptions.push(
+      timezoneOption({ mode: "fixed", timezone: currentTimezone }, locale),
+    );
+  }
+  if (
+    value.mode === "fixed" &&
+    value.timezone !== currentTimezone &&
+    !timezones.includes(value.timezone)
+  ) {
+    suggestedOptions.push(timezoneOption(value, locale));
+  }
+
+  return [
+    { value: "suggested", label: null, items: suggestedOptions },
+    ...groupRoutineTimezones({ currentTimezone, timezones }).map((group) => ({
+      value: group.region,
+      label: timezoneRegionLabel(group.region),
+      items: group.timezones.map((timezone) =>
+        timezoneOption({ mode: "fixed", timezone }, locale),
+      ),
+    })),
+  ];
 }
 
-function timeBasisLabel(timeBasis: RoutineTimeBasis, locale: string) {
-  if (timeBasis.mode === "local") return m.routines_timezone_local();
-  return timezoneDisplayLabel(timeBasis.timezone, locale);
+function timezoneOption(
+  timeBasis: RoutineTimeBasis,
+  locale: string,
+): TimezoneOption {
+  if (timeBasis.mode === "local") {
+    const label = m.routines_timezone_local();
+    return {
+      label,
+      searchValue: label.toLocaleLowerCase(locale),
+      timeBasis,
+      value: "local",
+    };
+  }
+  const label = timezoneDisplayLabel(timeBasis.timezone, locale);
+  return {
+    label,
+    searchValue: `${label} ${timeBasis.timezone}`.toLocaleLowerCase(locale),
+    timeBasis,
+    value: `fixed:${timeBasis.timezone}`,
+  };
+}
+
+function timezoneRegionLabel(region: RoutineTimezoneRegion) {
+  const labels: Record<RoutineTimezoneRegion, () => string> = {
+    africa: m.routines_timezone_region_africa,
+    americas: m.routines_timezone_region_americas,
+    asia: m.routines_timezone_region_asia,
+    europe: m.routines_timezone_region_europe,
+    oceania: m.routines_timezone_region_oceania,
+    other: m.routines_timezone_region_other,
+  };
+  return labels[region]();
+}
+
+function sameTimeBasis(left: RoutineTimeBasis, right: RoutineTimeBasis) {
+  return (
+    left.mode === right.mode &&
+    (left.mode === "local" ||
+      (right.mode === "fixed" && left.timezone === right.timezone))
+  );
 }

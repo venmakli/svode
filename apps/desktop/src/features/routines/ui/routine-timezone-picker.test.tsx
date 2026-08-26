@@ -13,6 +13,9 @@ test("timezone picker keeps local as the explicit default", () => {
     />,
   );
   expect(markup.includes('role="combobox"')).toBe(true);
+  expect(markup.includes("<input")).toBe(true);
+  expect(markup.includes('id="routine-timezone"')).toBe(true);
+  expect(markup.includes('<button id="routine-timezone"')).toBe(false);
   expect(markup.includes("Local time")).toBe(true);
   expect(markup.includes('aria-invalid="false"')).toBe(true);
 });

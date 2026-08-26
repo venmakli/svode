@@ -4,11 +4,27 @@ const FALLBACK_TIMEZONES = ["UTC"] as const;
 const TIMEZONE_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
 export const MAX_VISIBLE_TIMEZONES = 100;
 
-export interface RoutineTimezoneOptionProjection {
-  fixedTimezones: readonly string[];
-  showCurrent: boolean;
-  showLocal: boolean;
+export type RoutineTimezoneRegion =
+  | "africa"
+  | "americas"
+  | "asia"
+  | "europe"
+  | "oceania"
+  | "other";
+
+export interface RoutineTimezoneGroupProjection {
+  region: RoutineTimezoneRegion;
+  timezones: readonly string[];
 }
+
+const TIMEZONE_REGION_ORDER: readonly RoutineTimezoneRegion[] = [
+  "americas",
+  "europe",
+  "africa",
+  "asia",
+  "oceania",
+  "other",
+];
 
 export function currentSystemTimezone(): string | null {
   try {
@@ -63,50 +79,59 @@ export function routineTimeBasisIdentity(timeBasis: RoutineTimeBasis) {
   return timeBasis.mode === "local" ? "local" : `fixed:${timeBasis.timezone}`;
 }
 
-export function projectRoutineTimezoneOptions({
+export function groupRoutineTimezones({
   currentTimezone,
-  localSearchText,
-  locale,
-  query,
-  referenceDate,
   timezones,
 }: {
   currentTimezone: string | null;
-  localSearchText: string;
-  locale: string;
-  query: string;
-  referenceDate?: Date;
   timezones: readonly string[];
-}): RoutineTimezoneOptionProjection {
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  const at = referenceDate ?? new Date();
-  return {
-    fixedTimezones: timezones
-      .filter(
-        (timezone) =>
-          timezone !== currentTimezone &&
-          matchesTimezone(timezone, normalizedQuery, locale, at),
-      )
-      .slice(0, MAX_VISIBLE_TIMEZONES),
-    showCurrent:
-      currentTimezone !== null &&
-      matchesTimezone(currentTimezone, normalizedQuery, locale, at),
-    showLocal:
-      !normalizedQuery ||
-      localSearchText.toLocaleLowerCase().includes(normalizedQuery),
-  };
+}): readonly RoutineTimezoneGroupProjection[] {
+  const groups = new Map<RoutineTimezoneRegion, string[]>();
+  for (const timezone of timezones) {
+    if (timezone === currentTimezone) continue;
+    const region = timezoneRegion(timezone);
+    const values = groups.get(region) ?? [];
+    values.push(timezone);
+    groups.set(region, values);
+  }
+
+  const currentRegion = currentTimezone
+    ? timezoneRegion(currentTimezone)
+    : null;
+  const orderedRegions = currentRegion
+    ? [
+        currentRegion,
+        ...TIMEZONE_REGION_ORDER.filter((region) => region !== currentRegion),
+      ]
+    : TIMEZONE_REGION_ORDER;
+
+  return orderedRegions.flatMap((region) => {
+    const values = groups.get(region);
+    return values ? [{ region, timezones: values }] : [];
+  });
 }
 
-function matchesTimezone(
+export function matchesRoutineTimezone(
   timezone: string,
   query: string,
   locale: string,
   at: Date,
 ) {
-  if (!query) return true;
+  const normalizedQuery = query.trim().toLocaleLowerCase(locale);
+  if (!normalizedQuery) return true;
   return `${timezoneDisplayLabel(timezone, locale, at)} ${timezoneCityLabel(timezone)} ${timezone}`
-    .toLocaleLowerCase()
-    .includes(query);
+    .toLocaleLowerCase(locale)
+    .includes(normalizedQuery);
+}
+
+function timezoneRegion(timezone: string): RoutineTimezoneRegion {
+  const prefix = timezone.split("/")[0];
+  if (prefix === "Africa") return "africa";
+  if (prefix === "America") return "americas";
+  if (prefix === "Asia") return "asia";
+  if (prefix === "Europe") return "europe";
+  if (["Australia", "Pacific"].includes(prefix)) return "oceania";
+  return "other";
 }
 
 function localizedTimezoneLocation(timezone: string, locale: string, at: Date) {
