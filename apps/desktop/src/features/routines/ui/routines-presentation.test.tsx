@@ -14,6 +14,10 @@ import type { RoutineRow } from "../model/types";
 import { RoutineAutomaticConsent } from "./routine-automatic-consent";
 import { RoutineDetailView } from "./routine-detail-view";
 import {
+  routineScheduleSummary,
+  routineTimeBasisLabel,
+} from "./routine-schedule-copy";
+import {
   createRoutinesPresentation,
   createRoutinesPresentationDescriptor,
   toRoutinePresentationState,
@@ -152,6 +156,13 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
     "next-run",
     "enabled",
   ]);
+  for (const key of ["trigger", "next-run"]) {
+    const semantics = descriptor.fields.find(
+      (field) => field.key === key,
+    )?.valueSemantics;
+    expect(semantics?.kind).toBe("property");
+    expect(semantics && "render" in semantics).toBe(false);
+  }
   const enabledField = descriptor.fields.at(-1)!;
   expect(enabledField.valueSemantics).toEqual({
     column: { display: "switch", name: "enabled", type: "boolean" },
@@ -224,14 +235,23 @@ test("routine detail hides technical paths when valid and preserves exact recove
   expect(invalid.includes("id must be a lowercase ULID")).toBe(true);
 });
 
-test("schedule surfaces distinguish fixed and local time bases with next-run context", () => {
+test("schedule properties and detail stay compact without time-basis annotations", () => {
+  const trigger = scheduled.definition!.trigger as Extract<
+    NonNullable<RoutineRow["definition"]>["trigger"],
+    { type: "schedule" }
+  >;
+  expect(routineScheduleSummary(trigger)).toBe("Schedule · 0 9 * * *");
+  expect(routineTimeBasisLabel(trigger.timeBasis)).toBe(
+    "Novosibirsk — GMT+07:00",
+  );
+
   const fixed = renderToStaticMarkup(
     <RoutineDetailView
       row={{ ...scheduled, nextRunAt: "2026-08-27T02:00:00Z" }}
     />,
   );
-  expect(fixed.includes("Fixed timezone")).toBe(true);
-  expect(fixed.includes("Asia/Novosibirsk")).toBe(true);
+  expect(fixed.includes("Fixed timezone")).toBe(false);
+  expect(fixed.includes("Asia/Novosibirsk")).toBe(false);
 
   const local = renderToStaticMarkup(
     <RoutineDetailView
@@ -251,8 +271,8 @@ test("schedule surfaces distinguish fixed and local time bases with next-run con
       }}
     />,
   );
-  expect(local.includes("Local time")).toBe(true);
-  expect(local.includes("first eligible device")).toBe(true);
+  expect(local.includes("Local time")).toBe(false);
+  expect(local.includes("first eligible device")).toBe(false);
 });
 
 test("duplicate-name rows conditionally expose their current path and remain usable", () => {

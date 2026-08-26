@@ -52,9 +52,6 @@ export function SystemCollectionFieldValue({
   const value = field.getValue(row);
 
   if (field.valueSemantics?.kind === "property") {
-    if (field.valueSemantics.render) {
-      return field.valueSemantics.render(value, row);
-    }
     return <PropertyValue column={field.valueSemantics.column} value={value} />;
   }
 

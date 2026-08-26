@@ -9,7 +9,10 @@ import * as m from "@/paraglide/messages.js";
 
 import type { RoutineCreateStep } from "../model/routine-create";
 import type { RoutineDefinition } from "../model/types";
-import { routineScheduleSummary } from "./routine-schedule-copy";
+import {
+  routineScheduleSummary,
+  routineTimeBasisLabel,
+} from "./routine-schedule-copy";
 
 export function RoutineCreateReview({
   automaticAuthority,
@@ -50,6 +53,11 @@ export function RoutineCreateReview({
         <Badge variant="secondary" className="self-start">
           {triggerSummary(definition)}
         </Badge>
+        {definition.trigger.type === "schedule" ? (
+          <ReviewValue label={m.routines_timezone_label()}>
+            {routineTimeBasisLabel(definition.trigger.timeBasis)}
+          </ReviewValue>
+        ) : null}
       </ReviewSection>
       <Separator />
       <ReviewSection

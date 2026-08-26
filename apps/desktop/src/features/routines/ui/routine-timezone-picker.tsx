@@ -17,12 +17,13 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import * as m from "@/paraglide/messages.js";
+import { getLocale } from "@/paraglide/runtime.js";
 
 import {
   currentSystemTimezone,
   projectRoutineTimezoneOptions,
   supportedTimezones,
-  timezoneCityLabel,
+  timezoneDisplayLabel,
 } from "../model/routine-time-basis";
 import type { RoutineTimeBasis } from "../model/types";
 
@@ -39,6 +40,7 @@ export function RoutineTimezonePicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const locale = getLocale();
   const currentTimezone = currentSystemTimezone();
   const timezones = useMemo(() => supportedTimezones(), []);
   const {
@@ -47,7 +49,8 @@ export function RoutineTimezonePicker({
     showLocal,
   } = projectRoutineTimezoneOptions({
     currentTimezone,
-    localSearchText: `${m.routines_timezone_local()} ${m.routines_timezone_local_description()}`,
+    localSearchText: m.routines_timezone_local(),
+    locale,
     query,
     timezones,
   });
@@ -77,65 +80,62 @@ export function RoutineTimezonePicker({
           className="w-full justify-between font-normal"
           data-routine-create-focus="trigger"
         >
-          <span className="min-w-0 truncate">{timeBasisLabel(value)}</span>
+          <span className="min-w-0 truncate">
+            {timeBasisLabel(value, locale)}
+          </span>
           <ChevronsUpDown data-icon="inline-end" className="opacity-50" />
         </Button>
       </PopoverTrigger>
       <PopoverContent
         align="start"
-        className="w-[var(--radix-popover-trigger-width)] p-0"
+        className="w-80 max-w-[var(--radix-popover-content-available-width)] p-0"
       >
         <Command shouldFilter={false}>
           <CommandInput
+            aria-label={m.routines_timezone_search()}
             value={query}
             placeholder={m.routines_timezone_search()}
             onValueChange={setQuery}
           />
-          <CommandList>
+          <CommandList className="max-h-64">
             {!showLocal && !showCurrent && visibleTimezones.length === 0 ? (
               <CommandEmpty>{m.routines_timezone_empty()}</CommandEmpty>
             ) : null}
-            {showLocal || showCurrent ? (
-              <CommandGroup heading={m.routines_timezone_recommended()}>
-                {showLocal ? (
-                  <CommandItem
-                    value="local"
-                    data-checked={value.mode === "local"}
-                    onSelect={() => select({ mode: "local" })}
-                  >
-                    <span className="flex min-w-0 flex-col">
-                      <span>{m.routines_timezone_local()}</span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {m.routines_timezone_local_description()}
-                      </span>
-                    </span>
-                  </CommandItem>
-                ) : null}
-                {showCurrent && currentTimezone ? (
-                  <TimezoneItem
-                    timezone={currentTimezone}
-                    checked={
-                      value.mode === "fixed" &&
-                      value.timezone === currentTimezone
-                    }
-                    label={m.routines_timezone_current({
-                      timezone: timezoneCityLabel(currentTimezone),
-                    })}
-                    onSelect={() =>
-                      select({ mode: "fixed", timezone: currentTimezone })
-                    }
-                  />
-                ) : null}
+            {showLocal ? (
+              <CommandGroup>
+                <CommandItem
+                  value="local"
+                  data-checked={value.mode === "local"}
+                  onSelect={() => select({ mode: "local" })}
+                >
+                  <span className="truncate">
+                    {m.routines_timezone_local()}
+                  </span>
+                </CommandItem>
               </CommandGroup>
             ) : null}
-            {visibleTimezones.length > 0 ? (
+            {showCurrent || visibleTimezones.length > 0 ? (
               <>
-                {showLocal || showCurrent ? <CommandSeparator /> : null}
-                <CommandGroup heading={m.routines_timezone_all()}>
+                {showLocal ? <CommandSeparator /> : null}
+                <CommandGroup>
+                  {showCurrent && currentTimezone ? (
+                    <TimezoneItem
+                      timezone={currentTimezone}
+                      locale={locale}
+                      checked={
+                        value.mode === "fixed" &&
+                        value.timezone === currentTimezone
+                      }
+                      onSelect={() =>
+                        select({ mode: "fixed", timezone: currentTimezone })
+                      }
+                    />
+                  ) : null}
                   {visibleTimezones.map((timezone) => (
                     <TimezoneItem
                       key={timezone}
                       timezone={timezone}
+                      locale={locale}
                       checked={
                         value.mode === "fixed" && value.timezone === timezone
                       }
@@ -154,12 +154,12 @@ export function RoutineTimezonePicker({
 
 function TimezoneItem({
   checked,
-  label,
+  locale,
   onSelect,
   timezone,
 }: {
   checked: boolean;
-  label?: string;
+  locale: string;
   onSelect(): void;
   timezone: string;
 }) {
@@ -169,17 +169,14 @@ function TimezoneItem({
       data-checked={checked}
       onSelect={onSelect}
     >
-      <span className="flex min-w-0 flex-col">
-        <span>{label ?? timezoneCityLabel(timezone)}</span>
-        <span className="truncate text-xs text-muted-foreground">
-          {timezone}
-        </span>
+      <span className="truncate">
+        {timezoneDisplayLabel(timezone, locale)}
       </span>
     </CommandItem>
   );
 }
 
-function timeBasisLabel(timeBasis: RoutineTimeBasis) {
+function timeBasisLabel(timeBasis: RoutineTimeBasis, locale: string) {
   if (timeBasis.mode === "local") return m.routines_timezone_local();
-  return `${m.routines_timezone_fixed()} · ${timezoneCityLabel(timeBasis.timezone)} (${timeBasis.timezone})`;
+  return timezoneDisplayLabel(timeBasis.timezone, locale);
 }

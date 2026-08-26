@@ -32,6 +32,8 @@ export function RoutineDetailView({ row }: { row: RoutineRow }) {
     );
   }
 
+  const nextRunCopy = routineNextRunCopy(row);
+
   return (
     <div className="flex flex-col gap-5">
       <RoutineNameConflictNotice row={row} />
@@ -73,9 +75,11 @@ export function RoutineDetailView({ row }: { row: RoutineRow }) {
             </span>
           </DetailValue>
         ) : null}
-        {routineNextRunCopy(row) ? (
+        {nextRunCopy ? (
           <DetailValue label={m.routines_field_next_run()}>
-            <RoutineNextRunValue row={row} />
+            <time dateTime={row.nextRunAt ?? undefined}>
+              {nextRunCopy}
+            </time>
           </DetailValue>
         ) : null}
       </div>
@@ -96,17 +100,6 @@ export function RoutineDetailView({ row }: { row: RoutineRow }) {
         />
       </DetailValue>
     </div>
-  );
-}
-
-function RoutineNextRunValue({ row }: { row: RoutineRow }) {
-  const copy = routineNextRunCopy(row);
-  if (!copy) return null;
-  return (
-    <span className="flex min-w-0 flex-col gap-0.5">
-      <time dateTime={row.nextRunAt ?? undefined}>{copy.value}</time>
-      <span className="text-xs text-muted-foreground">{copy.helper}</span>
-    </span>
   );
 }
 

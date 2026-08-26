@@ -162,9 +162,7 @@ export function RoutineScheduleFields({
         />
         {issues.has("timezone") ? (
           <FieldError>{m.routines_timezone_unknown()}</FieldError>
-        ) : (
-          <FieldDescription>{m.routines_timezone_hint()}</FieldDescription>
-        )}
+        ) : null}
       </Field>
 
       <Field>
