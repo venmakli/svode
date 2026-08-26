@@ -157,6 +157,50 @@ pub async fn delete_entry(
     .await
 }
 
+pub async fn rebase_collection_schema_manifest(
+    state: &IndexState,
+    space_dir: &Path,
+    old_root: &str,
+    new_root: &str,
+) -> Result<(), AppError> {
+    let key = state
+        .key_for_space_dir(space_dir)
+        .await
+        .unwrap_or_else(|| IndexKey::Root(space_dir.to_path_buf()));
+    let pool = state.get_or_create(&key).await?;
+    let lock = state.reindex_lock(&key).await;
+    let _guard = lock.lock().await;
+    let old_root = normalize_rel_result(old_root)?;
+    let new_root = normalize_rel_result(new_root)?;
+    let old_prefix = format!("{old_root}/");
+    let new_prefix = format!("{new_root}/");
+    let mut transaction = pool.begin().await?;
+    let paths = sqlx::query_scalar::<_, String>(
+        "SELECT source_path FROM knowledge_source_manifest WHERE source_kind = 'collection_schema'",
+    )
+    .fetch_all(&mut *transaction)
+    .await?;
+    let mut changed = false;
+    for old_path in paths {
+        let Some(remainder) = old_path.strip_prefix(&old_prefix) else {
+            continue;
+        };
+        let new_path = format!("{new_prefix}{remainder}");
+        changed |= sqlx::query(
+            "UPDATE knowledge_source_manifest SET source_path = ? WHERE source_path = ? AND source_kind = 'collection_schema'",
+        )
+        .bind(new_path)
+        .bind(old_path)
+        .execute(&mut *transaction)
+        .await?
+        .rows_affected()
+            > 0;
+    }
+    crate::index::reconcile::advance_generation(&mut transaction, false, changed).await?;
+    transaction.commit().await?;
+    Ok(())
+}
+
 async fn apply_targeted_change(
     pool: &SqlitePool,
     authority_pool: Option<&SqlitePool>,
@@ -256,6 +300,19 @@ async fn apply_targeted_change(
         if let Some(artifact) = folded_collection.as_ref() {
             knowledge_changed |=
                 crate::index::knowledge::upsert_artifact(&mut transaction, artifact).await?;
+        } else if Path::new(&normalized)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("readme.md"))
+            && let Some(parent) = Path::new(&normalized)
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            knowledge_changed |= crate::index::knowledge::delete_artifact(
+                &mut transaction,
+                &parent.to_string_lossy().replace('\\', "/"),
+            )
+            .await?;
         }
     }
     let manifest_changed = crate::index::reconcile::reconcile_source_record(

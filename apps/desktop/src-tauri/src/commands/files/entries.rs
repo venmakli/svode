@@ -199,31 +199,17 @@ pub async fn update_entry_field(
         let title = value.as_str().ok_or_else(|| {
             AppError::General("invalid entry field: title must be a string".into())
         })?;
-        let current = entry::read(&space, &file_path)?;
-        if current.meta.title == title {
-            return Ok(current);
-        }
-
-        let result = write_entry(
-            app,
-            space.clone(),
-            file_path.clone(),
-            current.body,
-            Some(title.to_string()),
-            None,
-            None,
-            None,
-            Some(false),
+        return update_entry_title_shared(
+            WriteEntryAuthorization::App(&app),
+            space,
+            file_path,
+            title.to_string(),
             project_path,
-            index_state,
-            nonces,
-            autocommit,
+            &index_state,
+            &nonces,
+            Some(&autocommit),
         )
-        .await?;
-        let current_path = result.new_path.as_deref().unwrap_or(&file_path);
-        let mut updated = entry::read(&space, current_path)?;
-        updated.warnings = result.warnings;
-        return Ok(updated);
+        .await;
     }
 
     let relation_paths = properties::relation_entry_field_mutation_paths_with_project(
@@ -267,17 +253,92 @@ pub async fn write_entry(
     nonces: State<'_, Arc<WriteNonceRegistry>>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<WriteResult, AppError> {
+    write_entry_shared(
+        WriteEntryAuthorization::App(&app),
+        space,
+        path,
+        content,
+        title,
+        icon,
+        extra,
+        existing_id,
+        skip_rename,
+        project_path,
+        &index_state,
+        &nonces,
+        Some(&autocommit),
+    )
+    .await
+}
+
+pub(super) enum WriteEntryAuthorization<'a> {
+    App(&'a AppHandle),
+    #[cfg(test)]
+    Preauthorized,
+}
+
+pub(super) async fn update_entry_title_shared(
+    authorization: WriteEntryAuthorization<'_>,
+    space: String,
+    file_path: String,
+    title: String,
+    project_path: Option<String>,
+    index_state: &IndexState,
+    nonces: &WriteNonceRegistry,
+    autocommit: Option<&AutocommitService>,
+) -> Result<Entry, AppError> {
+    let current = entry::read(&space, &file_path)?;
+    if current.meta.title == title {
+        return Ok(current);
+    }
+    let result = write_entry_shared(
+        authorization,
+        space.clone(),
+        file_path.clone(),
+        current.body,
+        Some(title),
+        None,
+        None,
+        None,
+        Some(false),
+        project_path,
+        index_state,
+        nonces,
+        autocommit,
+    )
+    .await?;
+    let current_path = result.new_path.as_deref().unwrap_or(&file_path);
+    let mut updated = entry::read(&space, current_path)?;
+    updated.warnings = result.warnings;
+    Ok(updated)
+}
+
+pub(super) async fn write_entry_shared(
+    authorization: WriteEntryAuthorization<'_>,
+    space: String,
+    path: String,
+    content: String,
+    title: Option<String>,
+    icon: Option<String>,
+    extra: Option<HashMap<String, serde_yml::Value>>,
+    existing_id: Option<String>,
+    skip_rename: Option<bool>,
+    project_path: Option<String>,
+    index_state: &IndexState,
+    nonces: &WriteNonceRegistry,
+    autocommit: Option<&AutocommitService>,
+) -> Result<WriteResult, AppError> {
     let skip_rename = skip_rename.unwrap_or(false);
-    let backlink_index = backlinks_for_space(&index_state, &space).await;
+    let backlink_index = backlinks_for_space(index_state, &space).await;
     let project = project_path.as_deref().filter(|p| !p.is_empty());
     let project_aware = project.is_some();
     if project_aware && !skip_rename {
-        ensure_backlinks_before_structural(&index_state, project).await;
+        ensure_backlinks_before_structural(index_state, project).await;
     }
     let write_plan = entry::planned_write_rename(&space, &path, title.as_deref(), skip_rename)?;
     let mut planned_paths = Vec::new();
     if let (Some(project), Some(_)) = (project, write_plan.as_ref()) {
-        let target_space_id = space_id_for_dir(&index_state, &space).await;
+        let target_space_id = space_id_for_dir(index_state, &space).await;
         planned_paths.extend_from_slice(
             index_state
                 .plan_links_on_rename_project(Path::new(project), target_space_id.as_deref(), &path)
@@ -300,7 +361,16 @@ pub async fn write_entry(
             );
         }
     }
-    let authorized_paths = require_planned_mutation_paths(&app, &space, planned_paths).await?;
+    let authorized_paths = match authorization {
+        WriteEntryAuthorization::App(app) => {
+            require_planned_mutation_paths(app, &space, planned_paths).await?
+        }
+        #[cfg(test)]
+        WriteEntryAuthorization::Preauthorized => {
+            planned_paths.push(PathBuf::from(&space));
+            planned_paths
+        }
+    };
     let mut result = scope_authorized_mutation_paths(authorized_paths.clone(), async {
         entry::write(
             &space,
@@ -336,107 +406,110 @@ pub async fn write_entry(
     // by the stale-row delete.
     if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
-        let target_space_id = space_id_for_dir(&index_state, &space).await;
+        let target_space_id = space_id_for_dir(index_state, &space).await;
         if !skip_rename {
             if let Some(ref new_path) = result.new_path {
-                match scope_authorized_mutation_paths(authorized_paths.clone(), async {
-                    index_state
-                        .update_links_on_rename_project(
-                            project,
-                            target_space_id.as_deref(),
-                            &path,
-                            new_path,
-                            title.as_deref(),
-                        )
-                        .await
-                })
-                .await
-                {
-                    Ok(modified) => {
-                        result.modified_files = modified.iter().map(|m| m.path.clone()).collect();
-                        result.modified_sources = modified.clone();
+                let folder_rename = Path::new(&path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.eq_ignore_ascii_case("readme.md"))
+                    .then(|| {
+                        let old_folder = Path::new(&path).parent()?.to_string_lossy().to_string();
+                        let new_folder =
+                            Path::new(new_path).parent()?.to_string_lossy().to_string();
+                        (!old_folder.is_empty() && old_folder != new_folder)
+                            .then_some((old_folder, new_folder))
+                    })
+                    .flatten();
+                if let Some((old_folder, new_folder)) = folder_rename {
+                    match scope_authorized_mutation_paths(authorized_paths.clone(), async {
+                        index_state
+                            .update_links_on_folder_rename_project(
+                                project,
+                                target_space_id.as_deref(),
+                                &old_folder,
+                                &new_folder,
+                                title.as_deref(),
+                            )
+                            .await
+                    })
+                    .await
+                    {
+                        Ok(modified) => {
+                            if let Some(autocommit) = autocommit {
+                                schedule_modified_source_spaces(
+                                    index_state,
+                                    autocommit,
+                                    project_path.as_deref(),
+                                    &modified,
+                                    entry_rename_op(&space, &old_folder, &new_folder),
+                                )
+                                .await;
+                            }
+                            result.modified_files =
+                                modified.iter().map(|item| item.path.clone()).collect();
+                            result.modified_sources = modified;
+                        }
+                        Err(e) => {
+                            tracing::warn!("cross-space folder backlink rewrite failed: {e}")
+                        }
+                    }
+                    let rebased = rebase_project_source_tree_after_move(
+                        index_state,
+                        project_path.as_deref(),
+                        &space,
+                        target_space_id.as_deref(),
+                        &old_folder,
+                        &new_folder,
+                        "write_entry",
+                    )
+                    .await;
+                    if let Some(autocommit) = autocommit {
                         schedule_modified_source_spaces(
-                            &index_state,
-                            &autocommit,
+                            index_state,
+                            autocommit,
                             project_path.as_deref(),
-                            &modified,
-                            entry_rename_op(&space, &path, new_path),
+                            &rebased,
+                            entry_rename_op(&space, &old_folder, &new_folder),
                         )
                         .await;
                     }
-                    Err(e) => tracing::warn!("cross-space backlink rewrite failed: {e}"),
-                }
-
-                let is_readme = Path::new(&path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.eq_ignore_ascii_case("readme.md"));
-                if is_readme {
-                    let old_folder = Path::new(&path)
-                        .parent()
-                        .map(|p| p.to_string_lossy().to_string());
-                    let new_folder = Path::new(new_path)
-                        .parent()
-                        .map(|p| p.to_string_lossy().to_string());
-                    if let (Some(of), Some(nf)) = (old_folder, new_folder) {
-                        if !of.is_empty() && of != nf {
-                            match scope_authorized_mutation_paths(authorized_paths.clone(), async {
-                                index_state
-                                    .update_links_on_folder_rename_project(
-                                        project,
-                                        target_space_id.as_deref(),
-                                        &of,
-                                        &nf,
-                                    )
-                                    .await
-                            })
-                            .await
-                            {
-                                Ok(extra) => {
-                                    schedule_modified_source_spaces(
-                                        &index_state,
-                                        &autocommit,
-                                        project_path.as_deref(),
-                                        &extra,
-                                        entry_rename_op(&space, &of, &nf),
-                                    )
-                                    .await;
-                                    for item in extra {
-                                        if !result.modified_sources.contains(&item) {
-                                            result.modified_files.push(item.path.clone());
-                                            result.modified_sources.push(item);
-                                        }
-                                    }
-                                }
-                                Err(e) => tracing::warn!(
-                                    "cross-space folder backlink rewrite failed: {e}"
-                                ),
-                            }
-                            let rebased = rebase_project_source_tree_after_move(
-                                &index_state,
-                                project_path.as_deref(),
-                                &space,
+                    for item in rebased {
+                        if !result.modified_sources.contains(&item) {
+                            result.modified_files.push(item.path.clone());
+                            result.modified_sources.push(item);
+                        }
+                    }
+                } else {
+                    match scope_authorized_mutation_paths(authorized_paths.clone(), async {
+                        index_state
+                            .update_links_on_rename_project(
+                                project,
                                 target_space_id.as_deref(),
-                                &of,
-                                &nf,
-                                "write_entry",
+                                &path,
+                                new_path,
+                                title.as_deref(),
                             )
-                            .await;
-                            schedule_modified_source_spaces(
-                                &index_state,
-                                &autocommit,
-                                project_path.as_deref(),
-                                &rebased,
-                                entry_rename_op(&space, &of, &nf),
-                            )
-                            .await;
-                            for item in rebased {
-                                if !result.modified_sources.contains(&item) {
-                                    result.modified_files.push(item.path.clone());
-                                    result.modified_sources.push(item);
-                                }
+                            .await
+                    })
+                    .await
+                    {
+                        Ok(modified) => {
+                            result.modified_files =
+                                modified.iter().map(|item| item.path.clone()).collect();
+                            result.modified_sources = modified.clone();
+                            if let Some(autocommit) = autocommit {
+                                schedule_modified_source_spaces(
+                                    index_state,
+                                    autocommit,
+                                    project_path.as_deref(),
+                                    &modified,
+                                    entry_rename_op(&space, &path, new_path),
+                                )
+                                .await;
                             }
                         }
+                        Err(e) => tracing::warn!("cross-space backlink rewrite failed: {e}"),
                     }
                 }
             }
@@ -465,7 +538,7 @@ pub async fn write_entry(
             .map(|_| vec![path.clone()])
             .unwrap_or_default();
         replace_index_entries_or_reindex(
-            &index_state,
+            index_state,
             project_path.as_deref(),
             &space,
             &deleted_paths,
@@ -495,19 +568,21 @@ pub async fn write_entry(
     // flush can drain it before the user-commit (Rename before Update).
     if !skip_rename {
         if let Some(ref new_path) = result.new_path {
-            maybe_autocommit_structural_paths(
-                &autocommit,
-                project_path.as_deref(),
-                &space,
-                entry_rename_op(&space, &path, new_path),
-                entry_paths_with_order(
+            if let Some(autocommit) = autocommit {
+                maybe_autocommit_structural_paths(
+                    autocommit,
+                    project_path.as_deref(),
                     &space,
-                    [
-                        abs_entry_path(&space, &path),
-                        abs_entry_path(&space, new_path),
-                    ],
-                ),
-            );
+                    entry_rename_op(&space, &path, new_path),
+                    entry_paths_with_order(
+                        &space,
+                        [
+                            abs_entry_path(&space, &path),
+                            abs_entry_path(&space, new_path),
+                        ],
+                    ),
+                );
+            }
         }
     }
 
@@ -713,6 +788,7 @@ pub async fn rename_entry_shared(
                     target_space_id.as_deref(),
                     from,
                     to,
+                    None,
                 )
                 .await
         } else {
@@ -879,6 +955,7 @@ pub async fn move_entry_shared(
                     target_space_id.as_deref(),
                     from,
                     &new_path,
+                    None,
                 )
                 .await
         } else {

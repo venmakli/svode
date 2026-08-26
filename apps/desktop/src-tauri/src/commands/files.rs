@@ -575,6 +575,16 @@ async fn rebase_project_source_tree_after_move(
         fallback_context,
     )
     .await;
+    if let Err(e) = index::update::rebase_collection_schema_manifest(
+        index_state,
+        space_root,
+        old_root,
+        new_root,
+    )
+    .await
+    {
+        tracing::warn!("{fallback_context}: rebase collection schema manifest failed: {e}");
+    }
     modified
 }
 

@@ -440,6 +440,137 @@ async fn moved_collection_tree_replaces_descendant_index_paths() {
 }
 
 #[tokio::test]
+async fn title_update_renames_collection_tree_and_rebases_indexes_and_backlinks() {
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path();
+    write_tree_config(&tmp, vec![], vec![]);
+    std::fs::create_dir_all(space.join(".git")).unwrap();
+    std::fs::create_dir_all(space.join("Old collection")).unwrap();
+    std::fs::write(
+        space.join("Old collection").join("schema.yaml"),
+        "columns: []\n",
+    )
+    .unwrap();
+    std::fs::write(
+        space.join("Old collection").join("README.md"),
+        "---\ntitle: Old collection\n---\ncollection-body-token\n",
+    )
+    .unwrap();
+    std::fs::write(
+        space.join("Old collection").join("Item.md"),
+        "---\ntitle: Item\n---\nitem-body-token\n",
+    )
+    .unwrap();
+    std::fs::write(
+        space.join("Source.md"),
+        "---\ntitle: Source\n---\nSee [Old collection](<Old collection/README.md>) and [Item](<Old collection/Item.md>).\n",
+    )
+    .unwrap();
+
+    let index_state = IndexState::new();
+    let pool = indexed_pool(&index_state, space).await;
+    index::reindex::full_reindex(&pool, space, &[])
+        .await
+        .unwrap();
+    let nonces = WriteNonceRegistry::new();
+
+    let updated = update_entry_title_shared(
+        WriteEntryAuthorization::Preauthorized,
+        space.to_string_lossy().into_owned(),
+        "Old collection/README.md".to_string(),
+        "Renamed collection".to_string(),
+        Some(space.to_string_lossy().into_owned()),
+        &index_state,
+        &nonces,
+        None,
+    )
+    .await
+    .expect("update collection title");
+
+    assert_eq!(updated.path, "Renamed collection/README.md");
+    assert!(!space.join("Old collection").exists());
+    assert!(space.join("Renamed collection").join("README.md").is_file());
+    assert!(space.join("Renamed collection").join("Item.md").is_file());
+    assert_eq!(
+        std::fs::read_to_string(space.join("Source.md")).unwrap(),
+        "---\ntitle: Source\n---\nSee [Renamed collection](<Renamed collection/README.md>) and [Item](<Renamed collection/Item.md>).\n"
+    );
+    assert_eq!(
+        indexed_paths(&pool).await,
+        vec![
+            "Renamed collection/Item.md".to_string(),
+            "Renamed collection/README.md".to_string(),
+            "Source.md".to_string(),
+        ]
+    );
+    let item_flags: (Option<String>, i64, i64) = sqlx::query_as(
+        "SELECT collection_root_path, in_collection, is_entry_head FROM entries WHERE file_path = ?",
+    )
+    .bind("Renamed collection/Item.md")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(item_flags, (Some("Renamed collection".to_string()), 1, 1));
+    let source_manifest_paths = sqlx::query_scalar::<_, String>(
+        "SELECT source_path FROM knowledge_source_manifest ORDER BY source_kind, source_path",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        source_manifest_paths,
+        vec![
+            "Renamed collection/schema.yaml".to_string(),
+            "Renamed collection/Item.md".to_string(),
+            "Renamed collection/README.md".to_string(),
+            "Source.md".to_string(),
+        ]
+    );
+    let knowledge_paths = sqlx::query_scalar::<_, String>(
+        "SELECT source_path FROM knowledge_documents ORDER BY source_path",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        knowledge_paths,
+        vec![
+            "Renamed collection".to_string(),
+            "Renamed collection/Item.md".to_string(),
+            "Source.md".to_string(),
+        ]
+    );
+    let target_urls = sqlx::query_scalar::<_, String>(
+        "SELECT target_url FROM knowledge_links WHERE source_path = 'Source.md' ORDER BY target_url",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        target_urls,
+        vec![
+            "Renamed collection/Item.md".to_string(),
+            "Renamed collection/README.md".to_string(),
+        ]
+    );
+    let backlinks = index_state
+        .backlinks_for(&IndexKey::Root(space.to_path_buf()))
+        .await;
+    assert!(
+        backlinks
+            .get_backlinks("Old collection/README.md")
+            .is_empty()
+    );
+    assert!(backlinks.get_backlinks("Old collection/Item.md").is_empty());
+    for path in ["Renamed collection/README.md", "Renamed collection/Item.md"] {
+        let incoming = backlinks.get_backlinks(path);
+        assert_eq!(incoming.len(), 1);
+        assert_eq!(incoming[0].source_path, "Source.md");
+        assert_eq!(incoming[0].link_count, 1);
+    }
+}
+
+#[tokio::test]
 async fn targeted_nested_collection_convert_recomputes_descendant_flags() {
     let tmp = TempDir::new().unwrap();
     let space = tmp.path();

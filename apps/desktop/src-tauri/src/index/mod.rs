@@ -7,7 +7,7 @@ pub mod search;
 pub mod update;
 
 use sqlx::SqlitePool;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -836,6 +836,15 @@ impl IndexState {
 
         let modified = dedupe_modified_sources(modified);
         for item in &modified {
+            let source_dir = self
+                .space_path_of(project, item.space_id.as_deref())
+                .await?;
+            if let Err(error) =
+                crate::index::update::update_entry(self, project, &source_dir.join(&item.path))
+                    .await
+            {
+                tracing::warn!("failed to update rewritten backlink source index: {error}");
+            }
             self.update_file_backlinks(project, item.space_id.as_deref(), &item.path)
                 .await?;
         }
@@ -899,6 +908,7 @@ impl IndexState {
         target_space_id: Option<&str>,
         old_folder: &str,
         new_folder: &str,
+        new_head_title: Option<&str>,
     ) -> Result<Vec<ModifiedLinkSource>, AppError> {
         let current_plan = self
             .plan_links_on_folder_rename_project(project, target_space_id, old_folder)
@@ -908,27 +918,108 @@ impl IndexState {
         let target_key = self
             .key_for_project_space_id(project, target_space_id)
             .await?;
+        let target_dir = self.dir_for_key(&target_key).await?;
         let target_index = self.backlinks_for(&target_key).await;
         let old_norm = normalize_rel_result(old_folder)?;
         let new_norm = normalize_rel_result(new_folder)?;
-        let mut all = Vec::new();
-        for old_target in target_index.target_paths_under(&old_norm) {
-            let remainder = old_target
-                .strip_prefix(&format!("{}/", old_norm))
-                .unwrap_or(&old_target);
-            let new_target = format!("{}/{}", new_norm, remainder);
-            all.extend(
-                self.update_links_on_rename_project(
-                    project,
-                    target_space_id,
-                    &old_target,
-                    &new_target,
-                    None,
-                )
-                .await?,
-            );
+        let old_prefix = format!("{old_norm}/");
+        let mut targets = target_index
+            .target_paths_under(&old_norm)
+            .into_iter()
+            .map(|old_target| {
+                let remainder = old_target.strip_prefix(&old_prefix).unwrap_or(&old_target);
+                let new_target = format!("{new_norm}/{remainder}");
+                (old_target, new_target)
+            })
+            .collect::<Vec<_>>();
+        targets.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut sources = targets
+            .iter()
+            .flat_map(|(old_target, _)| {
+                target_index
+                    .sources_for_target(old_target)
+                    .into_iter()
+                    .map(|(source, _)| source)
+            })
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        sources.sort_by(|left, right| {
+            (&left.source_space_id, &left.source_path)
+                .cmp(&(&right.source_space_id, &right.source_path))
+        });
+        let mut planned = Vec::new();
+        for source in sources {
+            let source_dir = self
+                .space_path_of(project, source.source_space_id.as_deref())
+                .await?;
+            let source_abs = source_dir.join(&source.source_path);
+            if !source_abs.exists() {
+                continue;
+            }
+            let content = std::fs::read_to_string(&source_abs)?;
+            let mut updated = content.clone();
+            for (old_target, new_target) in &targets {
+                let is_head = Path::new(old_target)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.eq_ignore_ascii_case("readme.md"))
+                    && Path::new(old_target).parent() == Some(Path::new(&old_norm));
+                let text_replace = if is_head {
+                    new_head_title.map(|title| (link_stem(old_target), title))
+                } else {
+                    None
+                };
+                updated = replace_link_urls_between(
+                    &updated,
+                    &source_abs,
+                    &target_dir.join(old_target),
+                    &target_dir.join(new_target),
+                    text_replace
+                        .as_ref()
+                        .map(|(old_stem, title)| (old_stem.as_str(), *title)),
+                );
+            }
+            if updated != content {
+                planned.push((
+                    source_abs,
+                    content,
+                    updated,
+                    ModifiedLinkSource {
+                        space_id: source.source_space_id,
+                        path: source.source_path,
+                    },
+                ));
+            }
         }
-        Ok(dedupe_modified_sources(all))
+        let mut written = Vec::new();
+        for (source_abs, content, updated, _) in &planned {
+            if let Err(error) = std::fs::write(source_abs, updated) {
+                for (written_path, original) in written {
+                    let _ = std::fs::write(written_path, original);
+                }
+                return Err(AppError::Io(error));
+            }
+            written.push((source_abs, content));
+        }
+        let modified = planned
+            .into_iter()
+            .map(|(_, _, _, source)| source)
+            .collect::<Vec<_>>();
+        for item in &modified {
+            let source_dir = self
+                .space_path_of(project, item.space_id.as_deref())
+                .await?;
+            if let Err(error) =
+                crate::index::update::update_entry(self, project, &source_dir.join(&item.path))
+                    .await
+            {
+                tracing::warn!("failed to update rewritten folder backlink source index: {error}");
+            }
+            self.update_file_backlinks(project, item.space_id.as_deref(), &item.path)
+                .await?;
+        }
+        Ok(modified)
     }
 
     pub async fn rebase_source_links_project(
@@ -1678,7 +1769,7 @@ mod tests {
 
         fs::rename(project.join("Folder"), project.join("Archive")).unwrap();
         let modified = state
-            .update_links_on_folder_rename_project(project, None, "Folder", "Archive")
+            .update_links_on_folder_rename_project(project, None, "Folder", "Archive", None)
             .await
             .unwrap();
 
