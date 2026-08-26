@@ -367,15 +367,76 @@ async fn targeted_duplicate_indexes_created_tree_only() {
     )
     .await;
 
-    assert_eq!(entry.path, "original-copy.md");
+    assert_eq!(entry.path, "Original (copy).md");
     assert_eq!(
         indexed_paths(&pool).await,
-        vec!["Original.md".to_string(), "original-copy.md".to_string()]
+        vec!["Original (copy).md".to_string(), "Original.md".to_string()]
     );
     let hits = index::search::search_fts(&pool, "original-token", None, None, 10)
         .await
         .unwrap();
     assert_eq!(hits.len(), 2);
+}
+
+#[tokio::test]
+async fn moved_collection_tree_replaces_descendant_index_paths() {
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path();
+    let state = IndexState::new();
+    std::fs::create_dir_all(space.join("Old collection")).unwrap();
+    std::fs::write(
+        space.join("Old collection").join("schema.yaml"),
+        "columns: []\n",
+    )
+    .unwrap();
+    std::fs::write(
+        space.join("Old collection").join("README.md"),
+        "---\ntitle: Old collection\n---\n",
+    )
+    .unwrap();
+    std::fs::write(
+        space.join("Old collection").join("Item.md"),
+        "---\ntitle: Item\n---\n",
+    )
+    .unwrap();
+    for path in ["Old collection/README.md", "Old collection/Item.md"] {
+        index::update::update_entry(&state, space, &space.join(path))
+            .await
+            .unwrap();
+    }
+    let pool = indexed_pool(&state, space).await;
+
+    std::fs::rename(
+        space.join("Old collection"),
+        space.join("Renamed collection"),
+    )
+    .unwrap();
+    rebase_project_source_tree_after_move(
+        &state,
+        Some(space.to_str().unwrap()),
+        space.to_str().unwrap(),
+        None,
+        "Old collection",
+        "Renamed collection",
+        "test_collection_rename",
+    )
+    .await;
+
+    assert_eq!(
+        indexed_paths(&pool).await,
+        vec![
+            "Renamed collection/Item.md".to_string(),
+            "Renamed collection/README.md".to_string(),
+        ]
+    );
+    let item_flags: (Option<String>, i64, i64) = sqlx::query_as(
+        "SELECT collection_root_path, in_collection, is_entry_head FROM entries WHERE file_path = ?",
+    )
+    .bind("Renamed collection/Item.md")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(item_flags, (Some("Renamed collection".to_string()), 1, 1));
 }
 
 #[tokio::test]

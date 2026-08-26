@@ -36,7 +36,9 @@ export function ScopeOwnerHeader({ actions }: { actions?: ReactNode }) {
           spacePath={context.spacePath}
           documentPath={context.readmePath}
           onTitleChange={(value) =>
-            void context.updateField("title", value).catch(handleError)
+            void context
+              .updateField("title", value, { flush: true })
+              .catch(handleError)
           }
           onIconChange={(value) =>
             void context.updateField("icon", value).catch(handleError)

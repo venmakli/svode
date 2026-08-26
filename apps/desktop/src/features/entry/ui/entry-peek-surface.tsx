@@ -67,7 +67,9 @@ export function EntryPeekSurface({
           spacePath={spacePath}
           documentPath={entry.path}
           onTitleChange={(value) =>
-            void updateField(entry, "title", value).catch(handleError)
+            void updateField(entry, "title", value, { flush: true }).catch(
+              handleError,
+            )
           }
           onIconChange={(value) =>
             void updateField(entry, "icon", value).catch(handleError)

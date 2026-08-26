@@ -222,9 +222,11 @@ export function EntryDocumentScreen({
 
   function updateTitle(value: string) {
     if (!documentName.acceptTitle(value)) return;
-    void updateField(activeEntry, "title", value).catch((error) => {
-      if (!documentName.handleSaveError(error)) handleError(error);
-    });
+    void updateField(activeEntry, "title", value, { flush: true }).catch(
+      (error) => {
+        if (!documentName.handleSaveError(error)) handleError(error);
+      },
+    );
   }
 
   return (

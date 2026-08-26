@@ -187,12 +187,13 @@ export function TitleZone({
             }
             onBlur={() => {
               isTitleFocusedRef.current = false;
+              const nextTitle = titleDraft || defaultTitle;
+              if (nextTitle !== title) onTitleChange(nextTitle);
             }}
             onClick={readOnly ? onActivateIdentity : undefined}
             onChange={(e) => {
               const next = e.target.value;
               setTitleDraft(next);
-              onTitleChange(next || defaultTitle);
             }}
             onKeyDown={handleKeyDown}
             placeholder={defaultTitle}

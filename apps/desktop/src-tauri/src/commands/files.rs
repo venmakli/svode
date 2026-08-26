@@ -516,11 +516,15 @@ async fn rebase_project_source_tree_after_move(
 
     let project = Path::new(proj);
     let mut modified = Vec::new();
+    let mut deleted_paths = Vec::with_capacity(files.len());
+    let mut updated_paths = Vec::with_capacity(files.len());
     let old_root_abs = space_root.join(old_root);
     let new_root_abs = space_root.join(new_root);
     for file in files {
         let new_rel = normalize_rel_lossy(file.strip_prefix(space_root).unwrap_or(&file));
         let old_rel = moved_child_old_path(&new_rel, old_root, new_root);
+        deleted_paths.push(old_rel.clone());
+        updated_paths.push(new_rel.clone());
         if let Err(e) = index_state
             .remove_file_backlinks(project, source_space_id, &old_rel)
             .await
@@ -544,14 +548,6 @@ async fn rebase_project_source_tree_after_move(
                             "{fallback_context}: write moved source rebase failed for {new_rel}: {e}"
                         );
                     } else {
-                        update_index_entry_or_reindex(
-                            index_state,
-                            project_path,
-                            space,
-                            &new_rel,
-                            fallback_context,
-                        )
-                        .await;
                         modified.push(ModifiedLinkSource {
                             space_id: source_space_id.map(ToString::to_string),
                             path: new_rel.clone(),
@@ -570,6 +566,15 @@ async fn rebase_project_source_tree_after_move(
             tracing::warn!("{fallback_context}: update moved source backlinks failed: {e}");
         }
     }
+    replace_index_entries_or_reindex(
+        index_state,
+        project_path,
+        space,
+        &deleted_paths,
+        &updated_paths,
+        fallback_context,
+    )
+    .await;
     modified
 }
 

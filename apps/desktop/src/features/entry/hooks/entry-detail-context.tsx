@@ -12,7 +12,11 @@ import { normalizeSchema, type EntrySchemaResult } from "@/features/properties";
 import { getEntrySchema } from "@/features/properties/api";
 import { useSpaceTreeSync } from "@/features/space";
 import { createEntry, readEntry } from "../entry-api";
-import { isEntryTreeMetaField, useEntryFieldSave } from "../field-save";
+import {
+  isEntryTreeMetaField,
+  useEntryFieldSave,
+  type SaveEntryFieldOptions,
+} from "../field-save";
 import { humanizeOwnerPath, isReadmeMissingError } from "../lib/readme-state";
 import type { Entry, EntryCover } from "../model";
 import { propertyFieldSavePolicy } from "../property-field-save";
@@ -29,7 +33,11 @@ export interface EntryDetailContextValue {
   fallbackIcon: string | null;
   reload: () => Promise<void>;
   createReadme: () => Promise<Entry>;
-  updateField: (field: string, value: unknown) => Promise<void>;
+  updateField: (
+    field: string,
+    value: unknown,
+    options?: SaveEntryFieldOptions,
+  ) => Promise<void>;
   updateCover: (cover: EntryCover | null) => Promise<void>;
   spacePath: string;
   projectPath: string | null;
@@ -193,14 +201,20 @@ export function EntryDetailProvider({
   ]);
 
   const updateField = useCallback(
-    async (field: string, value: unknown) => {
+    async (
+      field: string,
+      value: unknown,
+      options: SaveEntryFieldOptions = {},
+    ) => {
       const target = entry ?? (await createReadme());
       const column = schemaResult?.schema.columns.find(
         (item) => item.name === field,
       );
       await saveField(target, field, value, {
-        flush: !entry,
-        policy: column ? propertyFieldSavePolicy(column) : undefined,
+        flush: options.flush ?? !entry,
+        policy:
+          options.policy ??
+          (column ? propertyFieldSavePolicy(column) : undefined),
       });
     },
     [createReadme, entry, saveField, schemaResult],

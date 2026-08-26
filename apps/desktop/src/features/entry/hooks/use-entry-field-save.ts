@@ -95,6 +95,28 @@ export function useEntryFieldSave({
         pendingRef.current.delete(key);
       }
 
+      const flushPendingEntryFields = async () => {
+        const prefix = `${entry.path}:`;
+        const pending = Array.from(pendingRef.current.entries()).filter(
+          ([pendingKey]) => pendingKey.startsWith(prefix),
+        );
+        for (const [pendingKey, item] of pending) {
+          clearTimeout(item.timer);
+          pendingRef.current.delete(pendingKey);
+        }
+        await Promise.all(
+          pending.map(async ([, item]) => {
+            try {
+              const result = await item.flush();
+              item.resolve(result);
+            } catch (error) {
+              item.reject(error);
+              throw error;
+            }
+          }),
+        );
+      };
+
       const runSave = async ({
         applyResult = true,
         rollbackOnError = true,
@@ -103,6 +125,9 @@ export function useEntryFieldSave({
         rollbackOnError?: boolean;
       } = {}) => {
         try {
+          if (field === "title" && options.flush) {
+            await flushPendingEntryFields();
+          }
           const updated = await enqueueEntryFieldSave(
             `${spacePath}:${entry.path}`,
             () =>
@@ -162,17 +187,10 @@ export function useEntryFieldSave({
           resolve,
           reject,
           version,
-          flush: () => runSave({ applyResult: false, rollbackOnError: false }),
+          flush: () => runSave(),
         });
       });
     },
-    [
-      applyEntryUpdate,
-      onError,
-      onSaved,
-      onTitleSaved,
-      projectPath,
-      spacePath,
-    ],
+    [applyEntryUpdate, onError, onSaved, onTitleSaved, projectPath, spacePath],
   );
 }

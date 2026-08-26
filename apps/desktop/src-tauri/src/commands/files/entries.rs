@@ -412,6 +412,30 @@ pub async fn write_entry(
                                     "cross-space folder backlink rewrite failed: {e}"
                                 ),
                             }
+                            let rebased = rebase_project_source_tree_after_move(
+                                &index_state,
+                                project_path.as_deref(),
+                                &space,
+                                target_space_id.as_deref(),
+                                &of,
+                                &nf,
+                                "write_entry",
+                            )
+                            .await;
+                            schedule_modified_source_spaces(
+                                &index_state,
+                                &autocommit,
+                                project_path.as_deref(),
+                                &rebased,
+                                entry_rename_op(&space, &of, &nf),
+                            )
+                            .await;
+                            for item in rebased {
+                                if !result.modified_sources.contains(&item) {
+                                    result.modified_files.push(item.path.clone());
+                                    result.modified_sources.push(item);
+                                }
+                            }
                         }
                     }
                 }
@@ -449,6 +473,22 @@ pub async fn write_entry(
             "write_entry",
         )
         .await;
+    } else if !skip_rename
+        && let Some(new_path) = result.new_path.as_deref()
+        && Path::new(&path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
+        && let (Some(old_folder), Some(new_folder)) =
+            (Path::new(&path).parent(), Path::new(new_path).parent())
+        && old_folder != new_folder
+    {
+        rebase_legacy_source_tree_after_move(
+            &space,
+            &backlink_index,
+            &old_folder.to_string_lossy(),
+            &new_folder.to_string_lossy(),
+        );
     }
 
     // On ⌘S-path rename, schedule the structural commit so `git_commit_file`'s
