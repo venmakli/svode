@@ -49,11 +49,11 @@ test("manual, schedule and both Collection event actions use one definition mode
     action: { executor: actor.value, type: "run_agent" as const },
     name: "Review",
   };
-  const schedule = changeRoutineTrigger(manual, "schedule", "Asia/Novosibirsk");
+  const schedule = changeRoutineTrigger(manual, "schedule");
   expect(firstInvalidRoutineCreateStep(schedule, ready)).toBeNull();
   expect(normalizeRoutineCreateCandidate(schedule).enabled).toBe(false);
 
-  const event = changeRoutineTrigger(manual, "event", "UTC");
+  const event = changeRoutineTrigger(manual, "event");
   expect(firstInvalidRoutineCreateStep(event, ready)).toBeNull();
   const updateProperties = changeRoutineAction(event, "update_properties");
   const validUpdate = {
@@ -107,7 +107,6 @@ test("create normalization disables automation and supports exact reconciliation
       name: "  Weekly review  ",
     },
     "schedule",
-    "UTC",
   );
   const candidate = normalizeRoutineCreateCandidate({
     ...schedule,

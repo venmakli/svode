@@ -9,6 +9,7 @@ import * as m from "@/paraglide/messages.js";
 
 import type { RoutineCreateStep } from "../model/routine-create";
 import type { RoutineDefinition } from "../model/types";
+import { routineScheduleSummary } from "./routine-schedule-copy";
 
 export function RoutineCreateReview({
   automaticAuthority,
@@ -159,7 +160,7 @@ function triggerSummary(definition: RoutineDefinition) {
   const trigger = definition.trigger;
   if (trigger.type === "manual") return m.routines_trigger_manual();
   if (trigger.type === "schedule") {
-    return `${m.routines_trigger_schedule()} · ${trigger.cron} · ${trigger.timezone}`;
+    return routineScheduleSummary(trigger);
   }
   if (trigger.event === "collection.entry_created") {
     return `${m.routines_trigger_event()} · ${m.routines_event_created()}`;

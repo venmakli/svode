@@ -17,6 +17,10 @@ import {
   routineSearchText,
 } from "../model/routine-values";
 import type { RoutineCatalogState, RoutineRow } from "../model/types";
+import {
+  routineNextRunCopy,
+  routineTimeBasisLabel,
+} from "./routine-schedule-copy";
 import { RoutineTriggerIcon } from "./routine-trigger-icon";
 
 export interface RoutinePresentationActions {
@@ -83,6 +87,8 @@ export function createRoutinesPresentationDescriptor({
         type: "select",
       },
       (row) => routineTriggerTypeLabel(row),
+      undefined,
+      (_value, row) => <RoutineTriggerFieldValue row={row} />,
     ),
     propertyField(
       "action",
@@ -117,6 +123,8 @@ export function createRoutinesPresentationDescriptor({
       m.routines_field_next_run(),
       { display: "medium", name: "next-run", type: "date" },
       (row) => row.nextRunAt,
+      undefined,
+      (_value, row) => <RoutineNextRunFieldValue row={row} />,
     ),
     {
       ...propertyField(
@@ -223,6 +231,7 @@ function propertyField(
   column: Column,
   getValue: (row: RoutineRow) => unknown,
   edit?: SystemCollectionFieldDescriptor<RoutineRow>["edit"],
+  render?: (value: unknown, row: RoutineRow) => ReactNode,
 ): SystemCollectionFieldDescriptor<RoutineRow> {
   return {
     edit,
@@ -231,8 +240,37 @@ function propertyField(
     key,
     label,
     sort: { kind: "property" },
-    valueSemantics: { column, kind: "property" },
+    valueSemantics: render
+      ? { column, kind: "property", render }
+      : { column, kind: "property" },
   };
+}
+
+function RoutineTriggerFieldValue({ row }: { row: RoutineRow }) {
+  const typeLabel = routineTriggerTypeLabel(row) ?? "—";
+  const trigger = row.definition?.trigger;
+  if (trigger?.type !== "schedule") return typeLabel;
+  return (
+    <span className="flex min-w-0 flex-col">
+      <span>{typeLabel}</span>
+      <span className="truncate text-xs text-muted-foreground">
+        {routineTimeBasisLabel(trigger.timeBasis)}
+      </span>
+    </span>
+  );
+}
+
+function RoutineNextRunFieldValue({ row }: { row: RoutineRow }) {
+  const copy = routineNextRunCopy(row);
+  if (!copy) return <span className="text-muted-foreground">—</span>;
+  return (
+    <span className="flex min-w-0 flex-col">
+      <time dateTime={row.nextRunAt ?? undefined}>{copy.value}</time>
+      <span className="truncate text-xs text-muted-foreground">
+        {copy.helper}
+      </span>
+    </span>
+  );
 }
 
 function routineTriggerTypeLabel(row: RoutineRow) {

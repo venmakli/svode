@@ -250,7 +250,12 @@ function normalizeDefinition(
               ? Object.freeze({ ...definition.trigger.match })
               : null,
           })
-        : Object.freeze({ ...definition.trigger }),
+        : definition.trigger.type === "schedule"
+          ? Object.freeze({
+              ...definition.trigger,
+              timeBasis: Object.freeze({ ...definition.trigger.timeBasis }),
+            })
+          : Object.freeze({ ...definition.trigger }),
   });
 }
 
@@ -283,7 +288,12 @@ function toDefinitionDto(definition: RoutineDefinition): RoutineDefinitionDto {
               ? { ...definition.trigger.match }
               : null,
           }
-        : { ...definition.trigger },
+        : definition.trigger.type === "schedule"
+          ? {
+              ...definition.trigger,
+              timeBasis: { ...definition.trigger.timeBasis },
+            }
+          : { ...definition.trigger },
   };
 }
 

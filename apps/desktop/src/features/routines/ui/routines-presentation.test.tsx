@@ -56,7 +56,7 @@ const scheduled: RoutineRow = {
     trigger: {
       cron: "0 9 * * *",
       missedRuns: "skip",
-      timezone: "Asia/Novosibirsk",
+      timeBasis: { mode: "fixed", timezone: "Asia/Novosibirsk" },
       type: "schedule",
     },
   },
@@ -222,6 +222,37 @@ test("routine detail hides technical paths when valid and preserves exact recove
   );
   expect(invalid.includes(invalidPath)).toBe(true);
   expect(invalid.includes("id must be a lowercase ULID")).toBe(true);
+});
+
+test("schedule surfaces distinguish fixed and local time bases with next-run context", () => {
+  const fixed = renderToStaticMarkup(
+    <RoutineDetailView
+      row={{ ...scheduled, nextRunAt: "2026-08-27T02:00:00Z" }}
+    />,
+  );
+  expect(fixed.includes("Fixed timezone")).toBe(true);
+  expect(fixed.includes("Asia/Novosibirsk")).toBe(true);
+
+  const local = renderToStaticMarkup(
+    <RoutineDetailView
+      row={{
+        ...scheduled,
+        definition: {
+          ...scheduled.definition!,
+          trigger: {
+            ...scheduled.definition!.trigger,
+            timeBasis: { mode: "local" },
+          } as Extract<
+            NonNullable<RoutineRow["definition"]>["trigger"],
+            { type: "schedule" }
+          >,
+        },
+        nextRunAt: "2026-08-27T02:00:00Z",
+      }}
+    />,
+  );
+  expect(local.includes("Local time")).toBe(true);
+  expect(local.includes("first eligible device")).toBe(true);
 });
 
 test("duplicate-name rows conditionally expose their current path and remain usable", () => {

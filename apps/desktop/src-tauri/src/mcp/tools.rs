@@ -837,10 +837,28 @@ fn routine_definition_req() -> (&'static str, Value) {
                             "properties": {
                                 "type": { "const": "schedule" },
                                 "cron": { "type": "string" },
-                                "timezone": { "type": "string" },
+                                "timeBasis": {
+                                    "oneOf": [
+                                        {
+                                            "type": "object",
+                                            "additionalProperties": false,
+                                            "properties": { "mode": { "const": "local" } },
+                                            "required": ["mode"]
+                                        },
+                                        {
+                                            "type": "object",
+                                            "additionalProperties": false,
+                                            "properties": {
+                                                "mode": { "const": "fixed" },
+                                                "timezone": { "type": "string" }
+                                            },
+                                            "required": ["mode", "timezone"]
+                                        }
+                                    ]
+                                },
                                 "missedRuns": { "type": "string", "enum": ["skip", "run_once"] }
                             },
-                            "required": ["type", "cron", "timezone", "missedRuns"]
+                            "required": ["type", "cron", "timeBasis", "missedRuns"]
                         },
                         {
                             "type": "object",

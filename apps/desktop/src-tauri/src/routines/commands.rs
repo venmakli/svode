@@ -377,7 +377,9 @@ mod tests {
         }
     }
 
-    use crate::routines::model::{CollectionEvent, MissedRuns, RoutineAction, RoutineTrigger};
+    use crate::routines::model::{
+        CollectionEvent, MissedRuns, RoutineAction, RoutineTimeBasis, RoutineTrigger,
+    };
 
     #[test]
     fn full_create_candidate_is_preserved_and_automatic_routines_are_disabled() {
@@ -387,7 +389,9 @@ mod tests {
             enabled: Some(true),
             trigger: RoutineTrigger::Schedule {
                 cron: "30 8 * * 1".into(),
-                timezone: "Europe/Paris".into(),
+                time_basis: RoutineTimeBasis::Fixed {
+                    timezone: "Europe/Paris".into(),
+                },
                 missed_runs: MissedRuns::RunOnce,
             },
             action: RoutineAction::RunAgent {

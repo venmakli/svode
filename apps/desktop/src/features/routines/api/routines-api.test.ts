@@ -42,7 +42,7 @@ test("desktop create sends one full definition mutation and preserves applied wa
               trigger: {
                 cron: "0 9 * * 1-5",
                 missedRuns: "skip",
-                timezone: "UTC",
+                timeBasis: { mode: "local" },
                 type: "schedule",
               },
             },
@@ -94,7 +94,7 @@ test("desktop create sends one full definition mutation and preserves applied wa
         trigger: {
           cron: "0 9 * * 1-5",
           missedRuns: "skip",
-          timezone: "UTC",
+          timeBasis: { mode: "local" },
           type: "schedule",
         },
       },
@@ -114,7 +114,7 @@ test("desktop create sends one full definition mutation and preserves applied wa
       trigger: {
         cron: "0 9 * * 1-5",
         missedRuns: "skip",
-        timezone: "UTC",
+        timeBasis: { mode: "local" },
         type: "schedule",
       },
     });
@@ -162,7 +162,7 @@ test("desktop update forwards filename materialization intent", async () => {
       trigger: {
         cron: "0 9 * * 1-5",
         missedRuns: "skip",
-        timezone: "UTC",
+        timeBasis: { mode: "local" },
         type: "schedule",
       },
     },

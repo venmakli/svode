@@ -8,12 +8,16 @@ export type RoutineEventType =
   | "collection.field_changed"
   | "collection.entry_deleted";
 
+export type RoutineTimeBasis =
+  | { mode: "local" }
+  | { mode: "fixed"; timezone: string };
+
 export type RoutineTrigger =
   | { type: "manual" }
   | {
       type: "schedule";
       cron: string;
-      timezone: string;
+      timeBasis: RoutineTimeBasis;
       missedRuns: "skip" | "run_once";
     }
   | {

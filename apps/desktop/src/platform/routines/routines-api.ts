@@ -14,12 +14,16 @@ export type RoutineEventTypeDto =
   | "collection.field_changed"
   | "collection.entry_deleted";
 
+export type RoutineTimeBasisDto =
+  | { mode: "local" }
+  | { mode: "fixed"; timezone: string };
+
 export type RoutineTriggerDto =
   | { type: "manual" }
   | {
       type: "schedule";
       cron: string;
-      timezone: string;
+      timeBasis: RoutineTimeBasisDto;
       missedRuns: "skip" | "run_once";
     }
   | {

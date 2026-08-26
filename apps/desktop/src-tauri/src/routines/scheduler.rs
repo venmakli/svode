@@ -118,7 +118,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
             trigger:
                 RoutineTrigger::Schedule {
                     cron,
-                    timezone,
+                    time_basis,
                     missed_runs,
                 },
             ..
@@ -131,38 +131,74 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
         let Some(state) =
             state.filter(|state| state.definition_fingerprint == row.execution_fingerprint)
         else {
-            write_baseline(
+            if let Err(error) = write_baseline(
                 app,
                 &pool,
                 owner,
                 routine_id,
                 &row.execution_fingerprint,
                 cron,
-                timezone,
+                time_basis,
                 now,
             )
-            .await?;
+            .await
+            {
+                tracing::warn!(
+                    routine_id,
+                    "routine schedule baseline failed closed: {error}"
+                );
+            }
             continue;
         };
         let Ok(checkpoint) = DateTime::parse_from_rfc3339(&state.checkpoint_at)
             .map(|value| value.with_timezone(&Utc))
         else {
-            write_baseline(
+            if let Err(error) = write_baseline(
                 app,
                 &pool,
                 owner,
                 routine_id,
                 &row.execution_fingerprint,
                 cron,
-                timezone,
+                time_basis,
                 now,
             )
-            .await?;
+            .await
+            {
+                tracing::warn!(
+                    routine_id,
+                    "routine schedule baseline failed closed: {error}"
+                );
+            }
             continue;
         };
-        let evaluation = super::schedule::evaluate(cron, timezone, checkpoint, now, *missed_runs)
-            .map_err(AppError::General)?;
+        let evaluation =
+            match super::schedule::evaluate(cron, time_basis, checkpoint, now, *missed_runs) {
+                Ok(evaluation) => evaluation,
+                Err(error) => {
+                    tracing::warn!(
+                        routine_id,
+                        "routine schedule evaluation failed closed: {error}"
+                    );
+                    continue;
+                }
+            };
         if !evaluation.had_occurrence {
+            let next = evaluation
+                .next_at
+                .to_rfc3339_opts(SecondsFormat::Secs, true);
+            if next != state.next_run_at {
+                cache::write_schedule_state(
+                    &pool,
+                    &owner.descriptor.owner_path,
+                    routine_id,
+                    &row.execution_fingerprint,
+                    &state.checkpoint_at,
+                    &next,
+                )
+                .await?;
+                super::emit_owner_invalidation(app, owner);
+            }
             continue;
         }
 
@@ -209,7 +245,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
             continue;
         }
 
-        let Some(due_at) = evaluation.due_at else {
+        let Some(due) = evaluation.due else {
             advance_checkpoint(
                 app,
                 &pool,
@@ -228,7 +264,12 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
         else {
             continue;
         };
-        let run_key = scheduled_run_key(&repository_id, routine_id, due_at);
+        let run_key = scheduled_run_key(
+            &repository_id,
+            routine_id,
+            &time_basis.identity(),
+            &due.nominal_civil_time,
+        );
         let claim_time = now.timestamp();
         let claim = access_state
             .claim_routine(
@@ -486,10 +527,10 @@ async fn write_baseline(
     routine_id: &str,
     fingerprint: &str,
     cron: &str,
-    timezone: &str,
+    time_basis: &super::model::RoutineTimeBasis,
     now: DateTime<Utc>,
 ) -> Result<(), AppError> {
-    let next = super::schedule::next_after(cron, timezone, now).map_err(AppError::General)?;
+    let next = super::schedule::next_after(cron, time_basis, now).map_err(AppError::General)?;
     advance_checkpoint(app, pool, owner, routine_id, fingerprint, now, next).await
 }
 
@@ -550,11 +591,14 @@ async fn record_claim(
     Ok(())
 }
 
-fn scheduled_run_key(repository_id: &str, routine_id: &str, due_at: DateTime<Utc>) -> String {
-    let value = format!(
-        "{repository_id}\0{routine_id}\0{}",
-        due_at.to_rfc3339_opts(SecondsFormat::Secs, true)
-    );
+fn scheduled_run_key(
+    repository_id: &str,
+    routine_id: &str,
+    time_basis_identity: &str,
+    nominal_civil_time: &str,
+) -> String {
+    let value =
+        format!("{repository_id}\0{routine_id}\0{time_basis_identity}\0{nominal_civil_time}");
     let mut hash = 0xcbf29ce484222325_u64;
     for byte in value.as_bytes() {
         hash ^= u64::from(*byte);
@@ -569,26 +613,18 @@ mod tests {
 
     #[test]
     fn scheduled_keys_are_stable_and_slot_specific() {
-        let first = scheduled_run_key(
-            "repo-1",
-            "routine-1",
-            "2026-08-07T09:00:00Z".parse().unwrap(),
-        );
+        let first = scheduled_run_key("repo-1", "routine-1", "local", "2026-08-07T09:00");
         assert_eq!(
             first,
-            scheduled_run_key(
-                "repo-1",
-                "routine-1",
-                "2026-08-07T09:00:00Z".parse().unwrap()
-            )
+            scheduled_run_key("repo-1", "routine-1", "local", "2026-08-07T09:00",)
         );
         assert_ne!(
             first,
-            scheduled_run_key(
-                "repo-1",
-                "routine-1",
-                "2026-08-08T09:00:00Z".parse().unwrap()
-            )
+            scheduled_run_key("repo-1", "routine-1", "local", "2026-08-08T09:00",)
+        );
+        assert_ne!(
+            first,
+            scheduled_run_key("repo-1", "routine-1", "fixed:UTC", "2026-08-07T09:00",)
         );
     }
 }

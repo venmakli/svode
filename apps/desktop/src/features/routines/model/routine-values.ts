@@ -26,7 +26,13 @@ export function routineTriggerSummary(row: RoutineRow) {
   const trigger = row.definition?.trigger;
   if (!trigger) return "—";
   if (trigger.type === "manual") return "manual";
-  if (trigger.type === "schedule") return `schedule · ${trigger.cron}`;
+  if (trigger.type === "schedule") {
+    const timeBasis =
+      trigger.timeBasis.mode === "local"
+        ? "local"
+        : `fixed:${trigger.timeBasis.timezone}`;
+    return `schedule · ${trigger.cron} · ${timeBasis}`;
+  }
   return trigger.event;
 }
 

@@ -28,7 +28,7 @@ const scheduled: RoutineRow = {
     trigger: {
       cron: "0 9 * * *",
       missedRuns: "skip",
-      timezone: "Asia/Novosibirsk",
+      timeBasis: { mode: "fixed", timezone: "Asia/Novosibirsk" },
       type: "schedule",
     },
   },

@@ -114,7 +114,7 @@ pub enum RoutineTrigger {
     Manual,
     Schedule {
         cron: String,
-        timezone: String,
+        time_basis: RoutineTimeBasis,
         missed_runs: MissedRuns,
     },
     Event {
@@ -122,6 +122,27 @@ pub enum RoutineTrigger {
         #[serde(default, rename = "match", skip_serializing_if = "Option::is_none")]
         match_: Option<EventMatch>,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(
+    tag = "mode",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum RoutineTimeBasis {
+    Local,
+    Fixed { timezone: String },
+}
+
+impl RoutineTimeBasis {
+    pub fn identity(&self) -> String {
+        match self {
+            Self::Local => "local".to_string(),
+            Self::Fixed { timezone } => format!("fixed:{timezone}"),
+        }
+    }
 }
 
 impl RoutineTrigger {

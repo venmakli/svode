@@ -102,7 +102,11 @@ export type SystemCollectionFieldApplicability =
     };
 
 export type SystemCollectionValueSemantics<Row> =
-  | { kind: "property"; column: Column }
+  | {
+      kind: "property";
+      column: Column;
+      render?(value: unknown, row: Row): ReactNode;
+    }
   | {
       kind: "custom";
       render(value: unknown, row: Row): ReactNode;

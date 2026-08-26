@@ -28,6 +28,7 @@ import {
   type RoutineSchedulePreset,
 } from "../model/routine-schedule";
 import type { RoutineTrigger } from "../model/types";
+import { RoutineTimezonePicker } from "./routine-timezone-picker";
 
 const WEEKDAYS = [
   ["1", m.routines_schedule_weekday_monday],
@@ -153,17 +154,14 @@ export function RoutineScheduleFields({
         <FieldLabel htmlFor={`${idPrefix}-timezone`}>
           {m.routines_timezone_label()}
         </FieldLabel>
-        <Input
+        <RoutineTimezonePicker
           id={`${idPrefix}-timezone`}
-          data-routine-create-focus="trigger"
-          value={trigger.timezone}
-          aria-invalid={issues.has("timezone")}
-          onChange={(event) =>
-            onChange({ ...trigger, timezone: event.target.value })
-          }
+          value={trigger.timeBasis}
+          invalid={issues.has("timezone")}
+          onChange={(timeBasis) => onChange({ ...trigger, timeBasis })}
         />
         {issues.has("timezone") ? (
-          <FieldError>{m.routines_timezone_required()}</FieldError>
+          <FieldError>{m.routines_timezone_unknown()}</FieldError>
         ) : (
           <FieldDescription>{m.routines_timezone_hint()}</FieldDescription>
         )}

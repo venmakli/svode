@@ -22,24 +22,24 @@ const manual: RoutineDefinition = {
 };
 
 test("trigger changes clear incompatible config and disable automatic drafts", () => {
-  const schedule = changeRoutineTrigger(manual, "schedule", "Asia/Novosibirsk");
+  const schedule = changeRoutineTrigger(manual, "schedule");
   expect({ enabled: schedule.enabled, trigger: schedule.trigger }).toEqual({
     enabled: false,
     trigger: {
       cron: "0 9 * * 1-5",
       missedRuns: "skip",
-      timezone: "Asia/Novosibirsk",
+      timeBasis: { mode: "local" },
       type: "schedule",
     },
   });
 
-  const nextManual = changeRoutineTrigger(schedule, "manual", "UTC");
+  const nextManual = changeRoutineTrigger(schedule, "manual");
   expect(nextManual.enabled).toBeNull();
   expect(nextManual.trigger).toEqual({ type: "manual" });
 });
 
 test("delete events force run_agent and field events own match config", () => {
-  const event = changeRoutineTrigger(manual, "event", "UTC");
+  const event = changeRoutineTrigger(manual, "event");
   const update = changeRoutineAction(event, "update_properties");
   const fieldChanged = changeRoutineEvent(update, "collection.field_changed");
   expect(fieldChanged.trigger).toEqual({
@@ -53,11 +53,15 @@ test("delete events force run_agent and field events own match config", () => {
 });
 
 test("validation covers schedule, executor and update set", () => {
-  const schedule = changeRoutineTrigger(manual, "schedule", "");
+  const schedule = changeRoutineTrigger(manual, "schedule");
   const invalid = {
     ...schedule,
     action: { executor: "", type: "run_agent" as const },
-    trigger: { ...schedule.trigger, cron: "0 9 *", timezone: "" },
+    trigger: {
+      ...schedule.trigger,
+      cron: "0 9 *",
+      timeBasis: { mode: "fixed" as const, timezone: "" },
+    },
   };
   expect([...validateRoutineDraft(invalid)]).toEqual([
     "cron",
@@ -66,7 +70,7 @@ test("validation covers schedule, executor and update set", () => {
   ]);
 
   const event = changeRoutineAction(
-    changeRoutineTrigger(manual, "event", "UTC"),
+    changeRoutineTrigger(manual, "event"),
     "update_properties",
   );
   expect(validateRoutineDraft(event).has("set")).toBe(true);
@@ -79,11 +83,18 @@ test("property values accept JSON scalars and plain sentinels", () => {
 });
 
 test("validation rejects unknown timezones and blank property keys", () => {
-  const schedule = changeRoutineTrigger(manual, "schedule", "Mars/Olympus");
-  expect(validateRoutineDraft(schedule).has("timezone")).toBe(true);
+  const schedule = changeRoutineTrigger(manual, "schedule");
+  const invalidSchedule = {
+    ...schedule,
+    trigger: {
+      ...schedule.trigger,
+      timeBasis: { mode: "fixed" as const, timezone: "Mars/Olympus" },
+    },
+  };
+  expect(validateRoutineDraft(invalidSchedule).has("timezone")).toBe(true);
 
   const event = changeRoutineAction(
-    changeRoutineTrigger(manual, "event", "UTC"),
+    changeRoutineTrigger(manual, "event"),
     "update_properties",
   );
   expect(

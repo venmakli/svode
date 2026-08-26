@@ -8,7 +8,7 @@ use super::ResolvedRoutineOwner;
 use super::model::{
     CollectionEvent, EventMatch, MissedRuns, RoutineAction, RoutineActionTarget,
     RoutineCatalogSnapshot, RoutineDefinition, RoutineDiagnostic, RoutineNameConflictProjection,
-    RoutineOwnerKind, RoutineRow, RoutineTrigger,
+    RoutineOwnerKind, RoutineRow, RoutineTimeBasis, RoutineTrigger,
 };
 
 pub(crate) const MAX_ROUTINE_BYTES: u64 = 1024 * 1024;
@@ -59,7 +59,10 @@ enum PortableRoutineTrigger {
     Manual,
     Schedule {
         cron: String,
-        timezone: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        time_basis: Option<PortableRoutineTimeBasis>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timezone: Option<String>,
         missed_runs: MissedRuns,
     },
     Event {
@@ -69,20 +72,78 @@ enum PortableRoutineTrigger {
     },
 }
 
-impl From<PortableRoutineTrigger> for RoutineTrigger {
-    fn from(value: PortableRoutineTrigger) -> Self {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+enum PortableRoutineTimeBasis {
+    Local,
+    Fixed { timezone: String },
+}
+
+impl From<PortableRoutineTimeBasis> for RoutineTimeBasis {
+    fn from(value: PortableRoutineTimeBasis) -> Self {
         match value {
-            PortableRoutineTrigger::Manual => Self::Manual,
+            PortableRoutineTimeBasis::Local => Self::Local,
+            PortableRoutineTimeBasis::Fixed { timezone } => Self::Fixed { timezone },
+        }
+    }
+}
+
+impl From<&RoutineTimeBasis> for PortableRoutineTimeBasis {
+    fn from(value: &RoutineTimeBasis) -> Self {
+        match value {
+            RoutineTimeBasis::Local => Self::Local,
+            RoutineTimeBasis::Fixed { timezone } => Self::Fixed {
+                timezone: super::schedule::canonical_timezone(timezone)
+                    .unwrap_or_else(|_| timezone.clone()),
+            },
+        }
+    }
+}
+
+impl PortableRoutineTrigger {
+    fn into_runtime(self) -> Result<RoutineTrigger, RoutineDiagnostic> {
+        match self {
+            PortableRoutineTrigger::Manual => Ok(RoutineTrigger::Manual),
             PortableRoutineTrigger::Schedule {
                 cron,
+                time_basis,
                 timezone,
                 missed_runs,
-            } => Self::Schedule {
-                cron,
-                timezone,
-                missed_runs,
-            },
-            PortableRoutineTrigger::Event { event, match_ } => Self::Event { event, match_ },
+            } => {
+                let time_basis = match (time_basis, timezone) {
+                    (Some(time_basis), None) => time_basis.into(),
+                    (None, Some(timezone)) => RoutineTimeBasis::Fixed { timezone },
+                    (Some(_), Some(_)) => {
+                        return Err(RoutineDiagnostic::new(
+                            "routine_time_basis_ambiguous",
+                            "schedule trigger must use time_basis or legacy timezone, not both",
+                        )
+                        .field("trigger.time_basis"));
+                    }
+                    (None, None) => {
+                        return Err(RoutineDiagnostic::new(
+                            "routine_time_basis_missing",
+                            "schedule trigger requires time_basis",
+                        )
+                        .field("trigger.time_basis"));
+                    }
+                };
+                let time_basis = match time_basis {
+                    RoutineTimeBasis::Fixed { timezone } => RoutineTimeBasis::Fixed {
+                        timezone: super::schedule::canonical_timezone(&timezone)
+                            .unwrap_or(timezone),
+                    },
+                    RoutineTimeBasis::Local => RoutineTimeBasis::Local,
+                };
+                Ok(RoutineTrigger::Schedule {
+                    cron,
+                    time_basis,
+                    missed_runs,
+                })
+            }
+            PortableRoutineTrigger::Event { event, match_ } => {
+                Ok(RoutineTrigger::Event { event, match_ })
+            }
         }
     }
 }
@@ -93,11 +154,12 @@ impl From<&RoutineTrigger> for PortableRoutineTrigger {
             RoutineTrigger::Manual => Self::Manual,
             RoutineTrigger::Schedule {
                 cron,
-                timezone,
+                time_basis,
                 missed_runs,
             } => Self::Schedule {
                 cron: cron.clone(),
-                timezone: timezone.clone(),
+                time_basis: Some(PortableRoutineTimeBasis::from(time_basis)),
+                timezone: None,
                 missed_runs: *missed_runs,
             },
             RoutineTrigger::Event { event, match_ } => Self::Event {
@@ -181,11 +243,23 @@ pub(crate) fn parse_routine(
     };
 
     let portable_id = frontmatter.id.filter(|id| is_lowercase_ulid(id));
+    let trigger = match frontmatter.trigger.into_runtime() {
+        Ok(trigger) => trigger,
+        Err(diagnostic) => {
+            return ParsedRoutine {
+                definition: None,
+                portable_id,
+                name: frontmatter.name.unwrap_or(fallback),
+                description: frontmatter.description,
+                diagnostics: vec![diagnostic],
+            };
+        }
+    };
     let definition = RoutineDefinition {
         name: frontmatter.name,
         description: frontmatter.description,
         enabled: frontmatter.enabled,
-        trigger: frontmatter.trigger.into(),
+        trigger,
         action: frontmatter.action.into(),
         body: body.to_string(),
     };
@@ -267,16 +341,20 @@ pub(crate) fn validate_definition(
                 diagnostics.push(incompatible_action("manual", "run_agent"));
             }
         }
-        RoutineTrigger::Schedule { cron, timezone, .. } => {
+        RoutineTrigger::Schedule {
+            cron, time_basis, ..
+        } => {
             if let Err(message) = super::schedule::validate_cron(cron) {
                 diagnostics.push(
                     RoutineDiagnostic::new("routine_cron_invalid", message).field("trigger.cron"),
                 );
             }
-            if let Err(message) = super::schedule::validate_timezone(timezone) {
+            if let RoutineTimeBasis::Fixed { timezone } = time_basis
+                && let Err(message) = super::schedule::validate_timezone(timezone)
+            {
                 diagnostics.push(
                     RoutineDiagnostic::new("routine_timezone_invalid", message)
-                        .field("trigger.timezone"),
+                        .field("trigger.timeBasis.timezone"),
                 );
             }
             if !matches!(definition.action, RoutineAction::RunAgent { .. }) {
@@ -755,7 +833,14 @@ fn row_from_file(owner: &ResolvedRoutineOwner, file: DiscoveredRoutineFile) -> R
 fn trigger_summary(trigger: &RoutineTrigger) -> String {
     match trigger {
         RoutineTrigger::Manual => "manual".to_string(),
-        RoutineTrigger::Schedule { cron, timezone, .. } => format!("schedule: {cron} ({timezone})"),
+        RoutineTrigger::Schedule {
+            cron, time_basis, ..
+        } => match time_basis {
+            RoutineTimeBasis::Local => format!("schedule: {cron} (local)"),
+            RoutineTimeBasis::Fixed { timezone } => {
+                format!("schedule: {cron} (fixed: {timezone})")
+            }
+        },
         RoutineTrigger::Event { event, .. } => event.as_str().to_string(),
     }
 }
@@ -990,12 +1075,57 @@ mod tests {
         let yaml = serialize_definition(&definition, ID).unwrap();
         assert!(yaml.contains(ID));
         assert!(yaml.contains("name: Schedule"));
+        assert!(yaml.contains("time_basis:"));
+        assert!(yaml.contains("mode: fixed"));
+        assert!(yaml.contains("timezone: Europe/Paris"));
         assert!(yaml.contains("missed_runs: run_once"));
         assert!(!yaml.contains("missedRuns"));
 
         let ipc = serde_json::to_value(&definition).unwrap();
+        assert_eq!(ipc["trigger"]["timeBasis"]["mode"], "fixed");
+        assert_eq!(ipc["trigger"]["timeBasis"]["timezone"], "Europe/Paris");
+        assert!(ipc["trigger"].get("timezone").is_none());
         assert_eq!(ipc["trigger"]["missedRuns"], "run_once");
         assert!(ipc["trigger"].get("missed_runs").is_none());
+    }
+
+    #[test]
+    fn local_time_basis_round_trips_without_a_zone_snapshot() {
+        let raw = format!(
+            "---\nid: {ID}\nname: Local schedule\ntrigger:\n  type: schedule\n  cron: '0 9 * * *'\n  time_basis:\n    mode: local\n  missed_runs: skip\naction:\n  type: run_agent\n  executor: {ACTOR}\n---\n"
+        );
+        let definition = parse_routine(&raw, "local.md", RoutineOwnerKind::Space)
+            .definition
+            .expect("typed definition");
+        assert!(matches!(
+            definition.trigger,
+            RoutineTrigger::Schedule {
+                time_basis: RoutineTimeBasis::Local,
+                ..
+            }
+        ));
+        let yaml = serialize_definition(&definition, ID).unwrap();
+        assert!(yaml.contains("mode: local"));
+        assert!(!yaml.contains("timezone:"));
+    }
+
+    #[test]
+    fn unavailable_fixed_timezone_is_retained_with_a_typed_diagnostic() {
+        let raw = format!(
+            "---\nid: {ID}\nname: Unknown timezone\ntrigger:\n  type: schedule\n  cron: '0 9 * * *'\n  time_basis:\n    mode: fixed\n    timezone: Mars/Olympus\n  missed_runs: skip\naction:\n  type: run_agent\n  executor: {ACTOR}\n---\n"
+        );
+        let parsed = parse_routine(&raw, "unknown.md", RoutineOwnerKind::Space);
+        assert!(matches!(
+            parsed.definition.as_ref().map(|definition| &definition.trigger),
+            Some(RoutineTrigger::Schedule {
+                time_basis: RoutineTimeBasis::Fixed { timezone },
+                ..
+            }) if timezone == "Mars/Olympus"
+        ));
+        assert!(parsed.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "routine_timezone_invalid"
+                && diagnostic.field.as_deref() == Some("trigger.timeBasis.timezone")
+        }));
     }
 
     #[test]

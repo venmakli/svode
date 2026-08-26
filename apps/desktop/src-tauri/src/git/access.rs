@@ -969,9 +969,15 @@ async fn claim_remote_routine(
     let current = read_remote_ref(cli, repository, &remote.push_url, &reference).await?;
     let expected = match current {
         RemoteRead::Oid(oid) => {
-            if let Some(existing) =
-                read_routine_claim(cli, repository, &remote.push_url, &reference, &oid).await?
-                && existing.run_key == payload.run_key
+            if let Some(existing) = find_routine_claim(
+                cli,
+                repository,
+                &remote.push_url,
+                &reference,
+                &oid,
+                &payload.run_key,
+            )
+            .await?
             {
                 return Ok(RoutineClaimResult::AlreadyClaimed {
                     claimed_by: existing.claimed_by,
@@ -1017,9 +1023,15 @@ async fn claim_remote_routine(
         });
     }
     if let RemoteRead::Oid(oid) = readback
-        && let Some(existing) =
-            read_routine_claim(cli, repository, &remote.push_url, &reference, &oid).await?
-        && existing.run_key == payload.run_key
+        && let Some(existing) = find_routine_claim(
+            cli,
+            repository,
+            &remote.push_url,
+            &reference,
+            &oid,
+            &payload.run_key,
+        )
+        .await?
     {
         return Ok(RoutineClaimResult::AlreadyClaimed {
             claimed_by: existing.claimed_by,
@@ -1037,12 +1049,13 @@ fn routine_claim_readback_confirms(new_oid: &str, readback: &RemoteRead) -> bool
     matches!(readback, RemoteRead::Oid(oid) if oid == new_oid)
 }
 
-async fn read_routine_claim(
+async fn find_routine_claim(
     cli: &GitCli,
     repository: &Path,
     push_url: &str,
     reference: &str,
     oid: &str,
+    run_key: &str,
 ) -> Result<Option<RoutineClaimPayload>, AppError> {
     let fetch = cli
         .exec_sensitive_with_stdin(
@@ -1056,13 +1069,17 @@ async fn read_routine_claim(
     if fetch.exit_code != 0 {
         return Ok(None);
     }
-    let show = cli
-        .exec(repository, &["show", "-s", "--format=%B", oid])
+    let log = cli
+        .exec(repository, &["log", "--format=%B%x00", oid])
         .await?;
-    if show.exit_code != 0 {
+    if log.exit_code != 0 {
         return Ok(None);
     }
-    Ok(parse_routine_claim(&show.stdout))
+    Ok(log
+        .stdout
+        .split('\0')
+        .filter_map(parse_routine_claim)
+        .find(|claim| claim.run_key == run_key))
 }
 
 fn parse_routine_claim(message: &str) -> Option<RoutineClaimPayload> {
@@ -1670,6 +1687,26 @@ mod tests {
             .await
             .expect("second slot claim");
         assert!(matches!(second_slot, RoutineClaimResult::Claimed { .. }));
+        let historical_slot = second_state
+            .claim_routine(
+                &cli,
+                &second,
+                &second_store,
+                &second_access,
+                "routine-one",
+                "slot-one",
+                "definition-one",
+                1_700_000_300,
+            )
+            .await
+            .expect("historical slot claim lookup");
+        assert!(matches!(
+            historical_slot,
+            RoutineClaimResult::AlreadyClaimed {
+                claimed_at: 1_700_000_100,
+                ..
+            }
+        ));
         let reference = format!("refs/svode/routines/{}", stable_hash("routine-one"));
         let oid = git_ok(&cli, &remote, &["rev-parse", &reference])
             .await
@@ -1682,6 +1719,13 @@ mod tests {
         assert!(commit.lines().any(|line| line.starts_with("parent ")));
         assert!(commit.contains("run-key=slot-two"));
         assert!(commit.contains("definition-hash=definition-one"));
+        assert_eq!(
+            git_ok(&cli, &remote, &["rev-list", "--count", &reference])
+                .await
+                .stdout
+                .trim(),
+            "2"
+        );
         assert!(
             git_ok(&cli, &first, &["status", "--porcelain"])
                 .await

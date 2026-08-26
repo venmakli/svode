@@ -118,7 +118,7 @@ fn validate_definition_shape(value: &Value) -> Result<(), String> {
             Some("manual") => reject_unknown_keys(trigger, &["type"], "definition.trigger")?,
             Some("schedule") => reject_unknown_keys(
                 trigger,
-                &["type", "cron", "timezone", "missedRuns"],
+                &["type", "cron", "timeBasis", "missedRuns"],
                 "definition.trigger",
             )?,
             Some("event") => {
@@ -132,6 +132,21 @@ fn validate_definition_shape(value: &Value) -> Result<(), String> {
                 }
             }
             _ => {}
+        }
+        if trigger.get("type").and_then(Value::as_str) == Some("schedule")
+            && let Some(time_basis) = trigger.get("timeBasis").and_then(Value::as_object)
+        {
+            match time_basis.get("mode").and_then(Value::as_str) {
+                Some("local") => {
+                    reject_unknown_keys(time_basis, &["mode"], "definition.trigger.timeBasis")?
+                }
+                Some("fixed") => reject_unknown_keys(
+                    time_basis,
+                    &["mode", "timezone"],
+                    "definition.trigger.timeBasis",
+                )?,
+                _ => {}
+            }
         }
     }
     if let Some(action) = definition.get("action").and_then(Value::as_object) {

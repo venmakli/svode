@@ -9,7 +9,8 @@ use tauri::AppHandle;
 use super::model::{
     ResolvedRoutineOwner, RoutineCatalogSnapshot, RoutineDefinition, RoutineDiagnostic,
     RoutineNameConflict, RoutineNameConflictEvidence, RoutineOwnerDescriptor,
-    RoutineOwnerInputKind, RoutineOwnerKind, RoutineRow, RoutineRunOrigin, RoutineTrigger,
+    RoutineOwnerInputKind, RoutineOwnerKind, RoutineRow, RoutineRunOrigin, RoutineTimeBasis,
+    RoutineTrigger,
 };
 use super::{authority, cache, parser};
 use crate::AppError;
@@ -231,13 +232,17 @@ pub(crate) async fn read_catalog(
             }
             let live_pty_ids = live_agent_pty_ids(terminal_manager)?;
             let now = Utc::now();
+            let mut schedule_diagnostics = Vec::new();
             for row in &mut snapshot.routines {
                 let Some(routine_id) = row.routine_id.as_deref() else {
                     continue;
                 };
                 if row.diagnostics.is_empty()
                     && let Some(RoutineDefinition {
-                        trigger: RoutineTrigger::Schedule { cron, timezone, .. },
+                        trigger:
+                            RoutineTrigger::Schedule {
+                                cron, time_basis, ..
+                            },
                         ..
                     }) = row.definition.as_ref()
                 {
@@ -247,20 +252,61 @@ pub(crate) async fn read_catalog(
                     if let Some(current) = current
                         .filter(|state| state.definition_fingerprint == row.execution_fingerprint)
                     {
-                        row.next_run_at = Some(current.next_run_at);
-                    } else if let Ok(next) = super::schedule::next_after(cron, timezone, now) {
-                        let checkpoint = now.to_rfc3339_opts(SecondsFormat::Secs, true);
-                        let next = next.to_rfc3339_opts(SecondsFormat::Secs, true);
-                        cache::write_schedule_state(
-                            &pool,
-                            &owner.descriptor.owner_path,
-                            routine_id,
-                            &row.execution_fingerprint,
-                            &checkpoint,
-                            &next,
-                        )
-                        .await?;
-                        row.next_run_at = Some(next);
+                        if matches!(time_basis, RoutineTimeBasis::Local) {
+                            match super::schedule::next_after(cron, time_basis, now) {
+                                Ok(next) => {
+                                    let next = next.to_rfc3339_opts(SecondsFormat::Secs, true);
+                                    if next != current.next_run_at {
+                                        cache::write_schedule_state(
+                                            &pool,
+                                            &owner.descriptor.owner_path,
+                                            routine_id,
+                                            &row.execution_fingerprint,
+                                            &current.checkpoint_at,
+                                            &next,
+                                        )
+                                        .await?;
+                                    }
+                                    row.next_run_at = Some(next);
+                                }
+                                Err(error) => schedule_diagnostics.push(
+                                    RoutineDiagnostic::new(
+                                        "routine_local_timezone_unavailable",
+                                        error,
+                                    )
+                                    .path(row.path.clone()),
+                                ),
+                            }
+                        } else {
+                            row.next_run_at = Some(current.next_run_at);
+                        }
+                    } else {
+                        match super::schedule::next_after(cron, time_basis, now) {
+                            Ok(next) => {
+                                let checkpoint = now.to_rfc3339_opts(SecondsFormat::Secs, true);
+                                let next = next.to_rfc3339_opts(SecondsFormat::Secs, true);
+                                cache::write_schedule_state(
+                                    &pool,
+                                    &owner.descriptor.owner_path,
+                                    routine_id,
+                                    &row.execution_fingerprint,
+                                    &checkpoint,
+                                    &next,
+                                )
+                                .await?;
+                                row.next_run_at = Some(next);
+                            }
+                            Err(error) if matches!(time_basis, RoutineTimeBasis::Local) => {
+                                schedule_diagnostics.push(
+                                    RoutineDiagnostic::new(
+                                        "routine_local_timezone_unavailable",
+                                        error,
+                                    )
+                                    .path(row.path.clone()),
+                                );
+                            }
+                            Err(_) => {}
+                        }
                     }
                 }
 
@@ -295,6 +341,7 @@ pub(crate) async fn read_catalog(
                     row.last_run = Some(run.to_ref(&live_pty_ids));
                 }
             }
+            snapshot.diagnostics.extend(schedule_diagnostics);
         }
         Err(error) => {
             tracing::warn!(

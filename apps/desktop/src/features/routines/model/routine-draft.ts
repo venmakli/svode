@@ -6,6 +6,7 @@ import type {
   RoutineTrigger,
   RoutineTriggerType,
 } from "./types";
+import { isValidTimezone } from "./routine-time-basis";
 
 export type RoutineDraftIssue =
   | "cron"
@@ -17,7 +18,6 @@ export type RoutineDraftIssue =
 export function changeRoutineTrigger(
   definition: RoutineDefinition,
   type: RoutineTriggerType,
-  timezone: string,
 ): RoutineDefinition {
   const trigger: RoutineTrigger =
     type === "manual"
@@ -26,7 +26,7 @@ export function changeRoutineTrigger(
         ? {
             cron: "0 9 * * 1-5",
             missedRuns: "skip",
-            timezone,
+            timeBasis: { mode: "local" },
             type: "schedule",
           }
         : {
@@ -91,7 +91,12 @@ export function validateRoutineDraft(
     if (definition.trigger.cron.trim().split(/\s+/).length !== 5) {
       issues.add("cron");
     }
-    if (!isValidTimeZone(definition.trigger.timezone)) issues.add("timezone");
+    if (
+      definition.trigger.timeBasis.mode === "fixed" &&
+      !isValidTimezone(definition.trigger.timeBasis.timezone)
+    ) {
+      issues.add("timezone");
+    }
   }
   if (
     definition.trigger.type === "event" &&
@@ -133,14 +138,4 @@ function toRunAgent(action: RoutineAction): RoutineAction {
     executor: action.type === "run_agent" ? action.executor : "",
     type: "run_agent",
   };
-}
-
-function isValidTimeZone(timezone: string) {
-  if (!timezone.trim()) return false;
-  try {
-    new Intl.DateTimeFormat("en", { timeZone: timezone }).format(0);
-    return true;
-  } catch {
-    return false;
-  }
 }

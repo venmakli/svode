@@ -14,6 +14,10 @@ import {
 } from "../model/routine-values";
 import type { RoutineRow } from "../model/types";
 import { RoutineDiagnostics } from "./routine-diagnostics";
+import {
+  routineNextRunCopy,
+  routineScheduleSummary,
+} from "./routine-schedule-copy";
 
 export function RoutineDetailView({ row }: { row: RoutineRow }) {
   if (!row.valid || !row.definition) {
@@ -36,7 +40,11 @@ export function RoutineDetailView({ row }: { row: RoutineRow }) {
       ) : null}
       <div className="grid gap-4 sm:grid-cols-2">
         <DetailValue label={m.routines_field_trigger()}>
-          <Badge variant="secondary">{routineTriggerSummary(row)}</Badge>
+          <Badge variant="secondary">
+            {row.definition.trigger.type === "schedule"
+              ? routineScheduleSummary(row.definition.trigger)
+              : routineTriggerSummary(row)}
+          </Badge>
         </DetailValue>
         <DetailValue label={m.routines_field_action()}>
           <Badge variant="secondary">{routineActionSummary(row)}</Badge>
@@ -65,6 +73,11 @@ export function RoutineDetailView({ row }: { row: RoutineRow }) {
             </span>
           </DetailValue>
         ) : null}
+        {routineNextRunCopy(row) ? (
+          <DetailValue label={m.routines_field_next_run()}>
+            <RoutineNextRunValue row={row} />
+          </DetailValue>
+        ) : null}
       </div>
       <Separator />
       <DetailValue
@@ -83,6 +96,17 @@ export function RoutineDetailView({ row }: { row: RoutineRow }) {
         />
       </DetailValue>
     </div>
+  );
+}
+
+function RoutineNextRunValue({ row }: { row: RoutineRow }) {
+  const copy = routineNextRunCopy(row);
+  if (!copy) return null;
+  return (
+    <span className="flex min-w-0 flex-col gap-0.5">
+      <time dateTime={row.nextRunAt ?? undefined}>{copy.value}</time>
+      <span className="text-xs text-muted-foreground">{copy.helper}</span>
+    </span>
   );
 }
 

@@ -53,11 +53,7 @@ export function RoutineTriggerFields({
             if (value === definition.trigger.type) return;
             if (!window.confirm(m.routines_change_type_confirm())) return;
             onChange(
-              changeRoutineTrigger(
-                definition,
-                value as RoutineTriggerType,
-                Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-              ),
+              changeRoutineTrigger(definition, value as RoutineTriggerType),
             );
           }}
         >

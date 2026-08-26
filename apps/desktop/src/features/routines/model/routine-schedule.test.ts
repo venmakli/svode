@@ -11,7 +11,7 @@ import type { RoutineTrigger } from "./types";
 const schedule: Extract<RoutineTrigger, { type: "schedule" }> = {
   cron: "0 9 * * 1-5",
   missedRuns: "skip",
-  timezone: "Asia/Novosibirsk",
+  timeBasis: { mode: "fixed", timezone: "Asia/Novosibirsk" },
   type: "schedule",
 };
 
