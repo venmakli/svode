@@ -5,6 +5,22 @@
     {
       "kind": "ci-build",
       "version": "0.0.7",
+      "commit": "d79e39c8b4c3d56c9e18334ef02c0ce021466e81",
+      "sourceRef": "main",
+      "runId": 33061168822,
+      "publishedAt": "2026-08-27T10:19:01.865Z",
+      "expiresAt": "2026-08-30T10:19:01.865Z",
+      "platforms": {
+        "linux": {
+          "url": "https://github.com/venmakli/svode/actions/runs/33061168822/artifacts/9642299673",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/33061168822",
+          "artifactName": "Svode-linux-deb"
+        }
+      }
+    },
+    {
+      "kind": "ci-build",
+      "version": "0.0.7",
       "commit": "297b3789a8e3407333437b93239255629dc57690",
       "sourceRef": "main",
       "runId": 32945443948,
