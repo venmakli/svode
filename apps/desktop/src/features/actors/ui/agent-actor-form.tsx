@@ -34,6 +34,11 @@ import type {
   AgentActorSelectOption,
 } from "../model/agent-actor-types";
 
+import {
+  agentActorApprovalDescription,
+  agentActorApprovalLabel,
+  agentActorEffectiveBoundary,
+} from "./agent-actor-copy";
 import { AgentAdapterCard } from "./agent-adapter-card";
 
 export type AgentActorFormSection = "identity" | "adapters" | "permissions";
@@ -53,7 +58,6 @@ export function AgentActorForm({
   expandedAdapter,
   formId,
   pendingAdapter,
-  readOnly = false,
   sections = ALL_SECTIONS,
   showValidation = true,
   validation,
@@ -80,7 +84,6 @@ export function AgentActorForm({
   expandedAdapter?: AgentActorBinding["adapter"] | null;
   formId: string;
   pendingAdapter: AgentActorBinding["adapter"] | null;
-  readOnly?: boolean;
   sections?: readonly AgentActorFormSection[];
   showValidation?: boolean;
   validation?: AgentActorDraftValidation;
@@ -108,7 +111,7 @@ export function AgentActorForm({
         if (!validateOnSubmit || (!errors.name && !errors.adapters)) onSubmit();
       }}
     >
-      {!readOnly && sections.includes("identity") ? (
+      {sections.includes("identity") ? (
         <FieldGroup>
           <Field data-invalid={showValidation && Boolean(errors.name)}>
             <FieldLabel htmlFor={`${formId}-name`}>
@@ -156,48 +159,42 @@ export function AgentActorForm({
             }
           >
             <FieldLabel>{m.agent_actors_approval_label()}</FieldLabel>
-            {readOnly ? (
-              <span className="text-sm">
-                {approvalLabel(draft.approvalMode)}
-              </span>
-            ) : (
-              <Select
-                value={draft.approvalMode}
-                onValueChange={(value) =>
-                  onChange({
-                    ...draft,
-                    approvalMode: value as AgentActorDraft["approvalMode"],
-                  })
+            <Select
+              value={draft.approvalMode}
+              onValueChange={(value) =>
+                onChange({
+                  ...draft,
+                  approvalMode: value as AgentActorDraft["approvalMode"],
+                })
+              }
+            >
+              <SelectTrigger
+                className="w-full"
+                data-agent-actor-focus="permissions"
+                aria-invalid={
+                  showValidation &&
+                  !sections.includes("adapters") &&
+                  Boolean(errors.adapters)
                 }
               >
-                <SelectTrigger
-                  className="w-full"
-                  data-agent-actor-focus="permissions"
-                  aria-invalid={
-                    showValidation &&
-                    !sections.includes("adapters") &&
-                    Boolean(errors.adapters)
-                  }
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem value="ask">
-                      {m.agent_actors_approval_ask()}
-                    </SelectItem>
-                    <SelectItem value="auto">
-                      {m.agent_actors_approval_auto()}
-                    </SelectItem>
-                    <SelectItem value="full">
-                      {m.agent_actors_approval_full()}
-                    </SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            )}
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="ask">
+                    {m.agent_actors_approval_ask()}
+                  </SelectItem>
+                  <SelectItem value="auto">
+                    {m.agent_actors_approval_auto()}
+                  </SelectItem>
+                  <SelectItem value="full">
+                    {m.agent_actors_approval_full()}
+                  </SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
             <FieldDescription>
-              {approvalDescription(draft.approvalMode)}
+              {agentActorApprovalDescription(draft.approvalMode)}
             </FieldDescription>
             {showValidation &&
             !sections.includes("adapters") &&
@@ -226,7 +223,7 @@ export function AgentActorForm({
                     </dt>
                     <dd className="text-muted-foreground text-sm">
                       {mapping
-                        ? `${mapping.label}: ${mapping.effectiveBoundary}`
+                        ? `${agentActorApprovalLabel(mapping.requested)}: ${agentActorEffectiveBoundary(mapping.native)}`
                         : m.agent_actors_binding_checking()}
                     </dd>
                   </div>
@@ -267,6 +264,7 @@ export function AgentActorForm({
                   key={binding.adapter}
                   approvalMapping={approvalMappings[binding.adapter]}
                   binding={binding}
+                  checkDisabled={pendingAdapter !== null}
                   descriptor={descriptor}
                   diagnostic={diagnostics[binding.adapter]}
                   effortOptions={effortOptions[binding.adapter] ?? []}
@@ -278,7 +276,6 @@ export function AgentActorForm({
                   canRemove={draft.adapters.length > 1}
                   pending={pendingAdapter === binding.adapter}
                   primary={index === 0}
-                  readOnly={readOnly}
                   validation={validations[binding.adapter]}
                   onChange={(next) =>
                     onChange({
@@ -323,7 +320,7 @@ export function AgentActorForm({
           {showValidation && errors.adapters ? (
             <FieldError>{adapterErrorMessage(errors.adapters)}</FieldError>
           ) : null}
-          {!readOnly && available.length > 0 ? (
+          {available.length > 0 ? (
             <Select
               value=""
               onValueChange={(value) => {
@@ -360,18 +357,6 @@ export function AgentActorForm({
       ) : null}
     </form>
   );
-}
-
-function approvalLabel(mode: AgentActorDraft["approvalMode"]) {
-  if (mode === "auto") return m.agent_actors_approval_auto();
-  if (mode === "full") return m.agent_actors_approval_full();
-  return m.agent_actors_approval_ask();
-}
-
-function approvalDescription(mode: AgentActorDraft["approvalMode"]) {
-  if (mode === "auto") return m.agent_actors_approval_auto_hint();
-  if (mode === "full") return m.agent_actors_approval_full_hint();
-  return m.agent_actors_approval_ask_hint();
 }
 
 function adapterErrorMessage(

@@ -40,6 +40,13 @@ import type {
   AgentActorBindingValidation,
   AgentActorSelectOption,
 } from "../model/agent-actor-types";
+import {
+  agentActorDiagnosticStatus,
+  agentActorDiagnosticSummary,
+  agentActorEffectiveBoundary,
+  agentActorSelectorLabel,
+  agentActorValidationIssueLabel,
+} from "./agent-actor-copy";
 
 const DEFAULT_VALUE = "__client_default__";
 
@@ -47,13 +54,13 @@ export function AgentAdapterCard({
   approvalMapping,
   binding,
   canRemove,
+  checkDisabled,
   descriptor,
   diagnostic,
   effortOptions,
   open,
   pending,
   primary,
-  readOnly,
   validation,
   onChange,
   onCheck,
@@ -64,13 +71,13 @@ export function AgentAdapterCard({
   approvalMapping?: AgentActorApprovalMapping;
   binding: AgentActorBinding;
   canRemove: boolean;
+  checkDisabled: boolean;
   descriptor?: AgentActorAdapterDescriptor;
   diagnostic?: AgentActorAdapterDiagnostic;
   effortOptions: readonly AgentActorSelectOption[];
   open?: boolean;
   pending: boolean;
   primary: boolean;
-  readOnly: boolean;
   validation?: AgentActorBindingValidation;
   onChange(binding: AgentActorBinding): void;
   onCheck(): void;
@@ -80,7 +87,7 @@ export function AgentAdapterCard({
 }) {
   return (
     <Collapsible
-      defaultOpen={open === undefined ? !readOnly : undefined}
+      defaultOpen={open === undefined ? true : undefined}
       open={open}
       onOpenChange={onOpenChange}
     >
@@ -93,15 +100,11 @@ export function AgentAdapterCard({
             </Badge>
           </CardTitle>
           <CardDescription className="truncate">
-            {binding.model ??
-              descriptor?.defaultModelLabel ??
-              m.agent_actors_client_default()}
+            {agentActorSelectorLabel(binding.model)}
             {" · "}
-            {binding.effort ??
-              descriptor?.defaultEffortLabel ??
-              m.agent_actors_client_default()}
+            {agentActorSelectorLabel(binding.effort)}
             {" · "}
-            {diagnosticLabel(diagnostic)}
+            {agentActorDiagnosticStatus(diagnostic, pending)}
           </CardDescription>
           <CardAction>
             <CollapsibleTrigger asChild>
@@ -118,46 +121,52 @@ export function AgentAdapterCard({
         </CardHeader>
         <CollapsibleContent>
           <CardContent className="flex flex-col gap-4">
-            {!readOnly ? (
-              <FieldGroup>
-                <AdapterSelectField
-                  label={m.agent_actors_model_label()}
-                  options={descriptor?.modelOptions ?? []}
-                  value={binding.model}
-                  onChange={(model) =>
-                    onChange({ ...binding, effort: null, model })
-                  }
-                />
-                <AdapterSelectField
-                  label={m.agent_actors_effort_label()}
-                  options={effortOptions}
-                  value={binding.effort}
-                  onChange={(effort) => onChange({ ...binding, effort })}
-                />
-              </FieldGroup>
-            ) : null}
+            <FieldGroup>
+              <AdapterSelectField
+                label={m.agent_actors_model_label()}
+                options={descriptor?.modelOptions ?? []}
+                value={binding.model}
+                onChange={(model) =>
+                  onChange({ ...binding, effort: null, model })
+                }
+              />
+              <AdapterSelectField
+                label={m.agent_actors_effort_label()}
+                options={effortOptions}
+                value={binding.effort}
+                onChange={(effort) => onChange({ ...binding, effort })}
+              />
+            </FieldGroup>
             {approvalMapping ? (
               <Alert
                 variant={approvalMapping.danger ? "destructive" : "default"}
               >
-                <AlertTitle>{approvalMapping.label}</AlertTitle>
+                <AlertTitle>
+                  {m.agent_actors_effective_boundary_label()}
+                </AlertTitle>
                 <AlertDescription>
-                  {approvalMapping.effectiveBoundary}
+                  {agentActorEffectiveBoundary(approvalMapping.native)}
                 </AlertDescription>
               </Alert>
             ) : null}
             {validation?.issues.map((issue) => (
               <Alert key={`${issue.field}:${issue.code}`} variant="destructive">
-                <AlertDescription>{issue.message}</AlertDescription>
+                <AlertDescription>
+                  {agentActorValidationIssueLabel(issue)}
+                </AlertDescription>
               </Alert>
             ))}
-            {diagnostic?.message ? (
-              <Alert
-                variant={
-                  diagnostic.status === "ready" ? "default" : "destructive"
-                }
-              >
-                <AlertDescription>{diagnostic.message}</AlertDescription>
+            {agentActorDiagnosticSummary(diagnostic) ? (
+              <Alert variant="destructive">
+                <AlertTitle>
+                  {agentActorDiagnosticSummary(diagnostic)}
+                </AlertTitle>
+                {diagnostic?.message ? (
+                  <AlertDescription>
+                    {m.agent_actors_diagnostic_raw_detail()}:{" "}
+                    {diagnostic.message}
+                  </AlertDescription>
+                ) : null}
               </Alert>
             ) : null}
             <div className="flex flex-wrap gap-2">
@@ -165,7 +174,7 @@ export function AgentAdapterCard({
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={pending}
+                disabled={checkDisabled}
                 onClick={onCheck}
               >
                 {pending ? (
@@ -176,7 +185,7 @@ export function AgentAdapterCard({
                 ) : null}
                 {m.agent_actors_check()}
               </Button>
-              {!readOnly && !primary ? (
+              {!primary ? (
                 <Button
                   type="button"
                   variant="outline"
@@ -186,18 +195,16 @@ export function AgentAdapterCard({
                   {m.agent_actors_make_primary()}
                 </Button>
               ) : null}
-              {!readOnly ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={!canRemove}
-                  onClick={onRemove}
-                >
-                  <Trash2 data-icon="inline-start" />
-                  {m.agent_actors_remove_adapter()}
-                </Button>
-              ) : null}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={!canRemove}
+                onClick={onRemove}
+              >
+                <Trash2 data-icon="inline-start" />
+                {m.agent_actors_remove_adapter()}
+              </Button>
             </div>
           </CardContent>
         </CollapsibleContent>
@@ -241,7 +248,9 @@ function AdapterSelectField({
                 value={option.value ?? DEFAULT_VALUE}
                 disabled={!known && option.value === value}
               >
-                {option.label}
+                {option.value === null
+                  ? m.agent_actors_client_default()
+                  : option.label}
               </SelectItem>
             ))}
           </SelectGroup>
@@ -252,11 +261,4 @@ function AdapterSelectField({
       ) : null}
     </Field>
   );
-}
-
-function diagnosticLabel(diagnostic?: AgentActorAdapterDiagnostic) {
-  if (!diagnostic || diagnostic.status === "unknown")
-    return m.agent_actors_status_unchecked();
-  if (diagnostic.status === "ready") return m.agent_actors_status_ready();
-  return m.agent_actors_status_attention();
 }

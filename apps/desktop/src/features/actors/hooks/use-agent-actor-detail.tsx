@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   type Dispatch,
   type SetStateAction,
 } from "react";
@@ -63,36 +64,50 @@ export function useAgentActorDetail({
   ): Partial<Record<AgentActorBinding["adapter"], AgentActorBindingRuntime>>;
   setEditSession: Dispatch<SetStateAction<AgentActorEditSession | null>>;
 }) {
+  const readOnlyRowRef = useRef<AgentActorRow | null>(null);
   const createReadOnlyDetail = useCallback(
-    (row: AgentActorRow): Omit<SystemCollectionDetailRequest, "selection"> => ({
-      content: (
-        <AgentActorDetail
-          descriptors={descriptors}
-          diagnostics={diagnostics}
-          draft={createAgentActorDraft(row.ownerPath, row)}
-          editMode={false}
-          pendingAdapter={pendingAdapter}
-          runtime={savedRuntimeFor(row)}
-          onChange={() => undefined}
-          onCheck={diagnose}
-          onSave={() => undefined}
-        />
-      ),
-      description: (
-        <span className="sr-only">{m.agent_actors_detail_description()}</span>
-      ),
-      title: detailTitle(row),
-    }),
+    (row: AgentActorRow): Omit<SystemCollectionDetailRequest, "selection"> => {
+      readOnlyRowRef.current = row;
+      return {
+        canClose: () => {
+          if (readOnlyRowRef.current === row) readOnlyRowRef.current = null;
+          return true;
+        },
+        content: (
+          <AgentActorDetail
+            descriptors={descriptors}
+            diagnostics={diagnostics}
+            draft={createAgentActorDraft(row.ownerPath, row)}
+            editMode={false}
+            pendingAdapter={pendingAdapter}
+            runtime={savedRuntimeFor(row)}
+            onChange={() => undefined}
+            onCheck={diagnose}
+            onSave={() => undefined}
+          />
+        ),
+        description: (
+          <span className="sr-only">{m.agent_actors_detail_description()}</span>
+        ),
+        title: detailTitle(row),
+      };
+    },
     [descriptors, diagnose, diagnostics, pendingAdapter, savedRuntimeFor],
   );
 
   useEffect(() => {
+    const row = readOnlyRowRef.current;
+    if (!row || editSession || !detailController) return;
+    void detailController.open({
+      ...createReadOnlyDetail(row),
+      selection: detailSelection(instanceKey, row),
+    });
+  }, [createReadOnlyDetail, detailController, editSession, instanceKey]);
+
+  useEffect(() => {
     if (!editSession || !detailController) return;
-    const selection = {
-      instanceKey,
-      presentationId: "agents",
-      rowId: agentActorRowId(editSession.row),
-    };
+    readOnlyRowRef.current = null;
+    const selection = detailSelection(instanceKey, editSession.row);
     const session = editSession;
     void detailController
       .open({
@@ -195,6 +210,14 @@ export function useAgentActorDetail({
   ]);
 
   return createReadOnlyDetail;
+}
+
+function detailSelection(instanceKey: string, row: AgentActorRow) {
+  return {
+    instanceKey,
+    presentationId: "agents",
+    rowId: agentActorRowId(row),
+  };
 }
 
 function detailTitle(row: AgentActorRow) {

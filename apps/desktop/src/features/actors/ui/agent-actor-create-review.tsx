@@ -18,6 +18,11 @@ import type {
   AgentActorBindingRuntime,
   AgentActorDraft,
 } from "../model/agent-actor-types";
+import {
+  agentActorApprovalLabel,
+  agentActorEffectiveBoundary,
+  agentActorSelectorLabel,
+} from "./agent-actor-copy";
 
 export function AgentActorCreateReview({
   descriptors,
@@ -79,14 +84,8 @@ export function AgentActorCreateReview({
                 </span>
                 <span className="text-muted-foreground">
                   {m.agent_actors_review_adapter_configuration({
-                    effort:
-                      binding.effort ??
-                      descriptor?.defaultEffortLabel ??
-                      m.agent_actors_client_default(),
-                    model:
-                      binding.model ??
-                      descriptor?.defaultModelLabel ??
-                      m.agent_actors_client_default(),
+                    effort: agentActorSelectorLabel(binding.effort),
+                    model: agentActorSelectorLabel(binding.model),
                   })}
                 </span>
               </li>
@@ -102,7 +101,7 @@ export function AgentActorCreateReview({
       >
         <div className="flex flex-col gap-3">
           <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
-            {approvalLabel(draft.approvalMode)}
+            {agentActorApprovalLabel(draft.approvalMode)}
             <Badge variant="outline">
               {m.agent_actors_review_device_local()}
             </Badge>
@@ -119,7 +118,7 @@ export function AgentActorCreateReview({
                   label={descriptor?.label ?? binding.adapter}
                   value={
                     mapping
-                      ? `${mapping.label}: ${mapping.effectiveBoundary}`
+                      ? `${agentActorApprovalLabel(mapping.requested)}: ${agentActorEffectiveBoundary(mapping.native)}`
                       : m.agent_actors_binding_checking()
                   }
                 />
@@ -166,10 +165,4 @@ function ReviewValue({ label, value }: { label: string; value: string }) {
       <dd className="text-muted-foreground">{value}</dd>
     </div>
   );
-}
-
-function approvalLabel(mode: AgentActorDraft["approvalMode"]) {
-  if (mode === "auto") return m.agent_actors_approval_auto();
-  if (mode === "full") return m.agent_actors_approval_full();
-  return m.agent_actors_approval_ask();
 }

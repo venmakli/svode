@@ -124,6 +124,70 @@ test("closing edit clears its session so unrelated rerenders cannot reopen it", 
   }
 });
 
+test("an open read-only Detail receives current diagnostics without reopening after close", async () => {
+  const dom = createDom();
+  const restoreGlobals = installDomGlobals(dom);
+  let latestRequest: SystemCollectionDetailRequest | null = null;
+  let openCount = 0;
+  const detailController: SystemCollectionDetailController = {
+    async close() {
+      return true;
+    },
+    async open(request) {
+      latestRequest = request;
+      openCount += 1;
+      return true;
+    },
+    async prepareForNavigation() {
+      return true;
+    },
+  };
+  const root = createRoot(dom.window.document.getElementById("app")!);
+
+  try {
+    await act(async () => {
+      root.render(
+        <ReadOnlyDetailHarness detailController={detailController} />,
+      );
+      await nextTurn();
+    });
+    await act(async () => {
+      dom.window.document
+        .querySelector<HTMLButtonElement>("[data-open-read-only]")!
+        .click();
+      await nextTurn();
+    });
+    expect(openCount).toBe(1);
+
+    await act(async () => {
+      dom.window.document
+        .querySelector<HTMLButtonElement>("[data-publish-diagnostic]")!
+        .click();
+      await nextTurn();
+    });
+    expect(openCount).toBe(2);
+    const refreshedRequest =
+      latestRequest as SystemCollectionDetailRequest | null;
+    if (!refreshedRequest) throw new Error("Expected refreshed detail request");
+    expect(refreshedRequest.selection.rowId).toBe(
+      '["/repo","01arz3ndektsv4rrffq69g5fav"]',
+    );
+
+    await act(async () => {
+      expect(await refreshedRequest.canClose?.()).toBe(true);
+      dom.window.document
+        .querySelector<HTMLButtonElement>("[data-publish-diagnostic]")!
+        .click();
+      await nextTurn();
+    });
+    expect(openCount).toBe(2);
+  } finally {
+    await act(async () => root.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 function AccessHarness({ onContinue }: { onContinue(kind: string): void }) {
   const coordinator = useAgentActorAccessCoordinator({
     launchSpacePath: "/repo",
@@ -184,6 +248,64 @@ function DetailHarness({
       data-unrelated-rerender
       onClick={() => setRenderVersion((version) => version + 1)}
     />
+  );
+}
+
+function ReadOnlyDetailHarness({
+  detailController,
+}: {
+  detailController: SystemCollectionDetailController;
+}) {
+  const [diagnostics, setDiagnostics] = useState({});
+  const createDetail = useAgentActorDetail({
+    applyMutation: () => undefined,
+    descriptors: [],
+    detailController,
+    diagnose: () => undefined,
+    diagnostics,
+    editRuntime: {},
+    editSession: null,
+    instanceKey: "actors:space:root",
+    mutationPending: false,
+    pendingAdapter: null,
+    savedRuntimeFor: () => ({}),
+    setEditSession: () => undefined,
+  });
+  return (
+    <>
+      <button
+        type="button"
+        data-open-read-only
+        onClick={() =>
+          void detailController.open({
+            ...createDetail(actor),
+            selection: {
+              instanceKey: "actors:space:root",
+              presentationId: "agents",
+              rowId: '["/repo","01arz3ndektsv4rrffq69g5fav"]',
+            },
+          })
+        }
+      />
+      <button
+        type="button"
+        data-publish-diagnostic
+        onClick={() =>
+          setDiagnostics((current) => ({
+            ...current,
+            codex: {
+              adapter: "codex" as const,
+              authenticated: false,
+              code: "adapter_unauthenticated",
+              executablePath: "/bin/codex",
+              message: `diagnostic-${Object.keys(current).length}`,
+              status: "unauthenticated" as const,
+              version: "1",
+            },
+          }))
+        }
+      />
+    </>
   );
 }
 

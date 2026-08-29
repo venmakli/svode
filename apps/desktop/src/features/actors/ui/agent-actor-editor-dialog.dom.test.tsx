@@ -200,9 +200,14 @@ if (!isolatedDialogDomProcess) {
       ).toBe(true);
       expect(
         harness.dom.window.document.body.textContent?.includes(
-          "Claude full boundary",
+          "Claude Code bypasses permission checks",
         ),
       ).toBe(true);
+      expect(
+        harness.dom.window.document.body.textContent?.includes(
+          "Claude full boundary",
+        ),
+      ).toBe(false);
 
       await clickButton(harness.dom, "Continue");
       expect(currentStep(harness.dom)).toBe("review");
@@ -212,7 +217,9 @@ if (!isolatedDialogDomProcess) {
       expect(review.textContent?.includes("Claude Code")).toBe(true);
       expect(review.textContent?.includes("Primary")).toBe(true);
       expect(review.textContent?.includes("Device-local")).toBe(true);
-      expect(review.textContent?.includes("Claude full boundary")).toBe(true);
+      expect(
+        review.textContent?.includes("Claude Code bypasses permission checks"),
+      ).toBe(true);
     } finally {
       await harness.cleanup();
     }

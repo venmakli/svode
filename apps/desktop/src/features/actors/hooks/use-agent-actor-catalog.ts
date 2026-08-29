@@ -33,6 +33,11 @@ interface ScopedAgentActorDiagnostics {
   value: Partial<Record<"claude-code" | "codex", AgentActorAdapterDiagnostic>>;
 }
 
+interface ScopedPendingAdapter {
+  sourceKey: string;
+  value: "claude-code" | "codex" | null;
+}
+
 export function useAgentActorCatalog(
   projectPath: string,
   launchSpacePath: string,
@@ -62,9 +67,14 @@ export function useAgentActorCatalog(
       scopedDiagnostics.sourceKey === sourceKey ? scopedDiagnostics.value : {},
     [scopedDiagnostics, sourceKey],
   );
-  const [pendingAdapter, setPendingAdapter] = useState<
-    "claude-code" | "codex" | null
-  >(null);
+  const [scopedPendingAdapter, setScopedPendingAdapter] =
+    useState<ScopedPendingAdapter>({ sourceKey, value: null });
+  const pendingAdapter =
+    scopedPendingAdapter.sourceKey === sourceKey
+      ? scopedPendingAdapter.value
+      : null;
+  const activeSourceKeyRef = useRef(sourceKey);
+  activeSourceKeyRef.current = sourceKey;
   const coordinatorRef =
     useRef<SingleFlightRefreshCoordinator<AgentActorCatalogSnapshot> | null>(
       null,
@@ -129,12 +139,13 @@ export function useAgentActorCatalog(
   const diagnose = useCallback(
     async (adapter: "claude-code" | "codex") => {
       if (pendingAdapter) return null;
-      setPendingAdapter(adapter);
+      setScopedPendingAdapter({ sourceKey, value: adapter });
       try {
         const diagnostic = await diagnoseAgentActorAdapter(
           launchSpacePath,
           adapter,
         );
+        if (activeSourceKeyRef.current !== sourceKey) return diagnostic;
         setScopedDiagnostics((current) => ({
           sourceKey,
           value: {
@@ -144,7 +155,11 @@ export function useAgentActorCatalog(
         }));
         return diagnostic;
       } finally {
-        setPendingAdapter(null);
+        setScopedPendingAdapter((current) =>
+          current.sourceKey === sourceKey
+            ? { sourceKey, value: null }
+            : current,
+        );
       }
     },
     [launchSpacePath, pendingAdapter, sourceKey],
