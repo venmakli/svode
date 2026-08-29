@@ -2,13 +2,32 @@ import {
   useActiveEntrySelection,
   useOpenEntryDocument,
 } from "@/features/entry/selection";
-import { buildSpaceBreadcrumbSegments } from "../lib/space-breadcrumbs";
+import { useOpenScopeOwner } from "@/features/artifact";
+import {
+  buildSpaceBreadcrumbSegments,
+  type SpaceBreadcrumbSegment,
+} from "../lib/space-breadcrumbs";
 import { useSpaceStore } from "../model";
 
 export function useMainBreadcrumbs() {
   const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
   const openDocument = useOpenEntryDocument();
+  const openScopeOwner = useOpenScopeOwner();
   const { activeRootId, fileTrees, openSpace, spaces } = useSpaceStore();
+  const openBreadcrumb = (
+    segment: SpaceBreadcrumbSegment,
+    targetSpaceId?: string,
+  ) => {
+    if (segment.ownerKind === "collection") {
+      openScopeOwner({
+        kind: "collection",
+        path: segment.path,
+        spaceId: targetSpaceId ?? null,
+      });
+    } else {
+      openDocument(segment.path, targetSpaceId);
+    }
+  };
 
   if (!activeDocument) {
     const selectedSpace =
@@ -18,6 +37,7 @@ export function useMainBreadcrumbs() {
 
     return {
       activeDocument,
+      openBreadcrumb,
       openDocument,
       openSpace,
       selectedSpace,
@@ -42,6 +62,7 @@ export function useMainBreadcrumbs() {
 
   return {
     activeDocument,
+    openBreadcrumb,
     openDocument,
     openSpace,
     selectedSpace: null,

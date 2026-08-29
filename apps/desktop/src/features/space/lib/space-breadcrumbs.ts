@@ -3,15 +3,19 @@ import type { TreeNode } from "../model/types";
 export interface SpaceBreadcrumbSegment {
   label: string;
   path: string;
+  ownerKind: "collection" | null;
 }
 
-function findTitleInTree(nodes: TreeNode[], targetPath: string): string | null {
+function findNodeInTree(
+  nodes: TreeNode[],
+  targetPath: string,
+): TreeNode | null {
   for (const node of nodes) {
-    if (node.path === targetPath) return node.title;
+    if (node.path === targetPath) return node;
     const folderPath = node.path.replace(/\/readme\.md$/i, "");
-    if (folderPath === targetPath) return node.title;
+    if (folderPath === targetPath) return node;
     if (node.children.length > 0) {
-      const found = findTitleInTree(node.children, targetPath);
+      const found = findNodeInTree(node.children, targetPath);
       if (found) return found;
     }
   }
@@ -32,11 +36,22 @@ export function buildSpaceBreadcrumbSegments(
     if (i === parts.length - 1 && part.toLowerCase() === "readme.md") continue;
 
     if (i < parts.length - 1) {
-      const title = findTitleInTree(tree, cumPath) ?? part;
-      segments.push({ label: title, path: `${cumPath}/readme.md` });
+      const node = findNodeInTree(tree, cumPath);
+      const isCollectionOwner = Boolean(node?.has_schema);
+      segments.push({
+        label: node?.title ?? part,
+        path: isCollectionOwner
+          ? cumPath
+          : (node?.path ?? `${cumPath}/README.md`),
+        ownerKind: isCollectionOwner ? "collection" : null,
+      });
     } else {
-      const title = findTitleInTree(tree, cumPath) ?? part.replace(/\.md$/, "");
-      segments.push({ label: title, path: cumPath });
+      const node = findNodeInTree(tree, cumPath);
+      segments.push({
+        label: node?.title ?? part.replace(/\.md$/, ""),
+        path: cumPath,
+        ownerKind: node?.has_schema ? "collection" : null,
+      });
     }
   }
 

@@ -2,6 +2,7 @@ import {
   useActiveEntrySelection,
   useOpenEntryDocument,
 } from "@/features/entry/selection";
+import { useOpenScopeOwner } from "@/features/artifact";
 import type { TreeNode } from "../model/types";
 import { useEditorFilePendingWrite } from "@/features/editor/file-tree-sync";
 import { treeNodeHasChildren, treeParentKeyForNode } from "../lib/tree-cache";
@@ -36,6 +37,13 @@ export function useFileTreeItemActions({
   onBeforeNavigation,
 }: UseFileTreeItemActionsInput) {
   const openDocument = useOpenEntryDocument();
+  const openScopeOwner = useOpenScopeOwner();
+  const openCollectionOwner = (path: string, targetSpaceId: string) =>
+    openScopeOwner({
+      kind: "collection",
+      path,
+      spaceId: targetSpaceId,
+    });
   const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
   const {
     expandedPaths,
@@ -98,6 +106,7 @@ export function useFileTreeItemActions({
     activeRootPath,
     expandedPaths,
     openDocument,
+    openCollectionOwner,
     reloadTreeParent,
     reloadTreePathParent,
     removeTreePath,
@@ -127,6 +136,7 @@ export function useFileTreeItemActions({
     onActivateContent,
     onBeforeNavigation,
     openDocument,
+    openCollectionOwner,
     toggleExpanded,
   });
 

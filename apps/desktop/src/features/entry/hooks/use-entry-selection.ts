@@ -1,50 +1,47 @@
 import { useEffect, useRef } from "react";
-import { useShallow } from "zustand/shallow";
+import { useActiveContentSelection } from "@/features/artifact";
 import type {
   EntrySelectionSnapshot,
   EntryTitleOutcome,
 } from "./entry-selection-actions";
 import {
+  closeEntryDocument,
+  entrySelectionSnapshotFromContent,
+  openEntryDocument,
+  openEntryScopeHome,
+  retargetEntryDocument,
+} from "./entry-selection-actions";
+import {
   entryTitleOutcomeSourceKey,
-  useEntrySelectionStore,
-} from "./entry-selection-store";
+  useEntryTitleOutcomeStore,
+} from "./entry-title-outcome-store";
 
 export function useActiveEntrySelection(): EntrySelectionSnapshot {
-  return useEntrySelectionStore(
-    useShallow(
-      (state): EntrySelectionSnapshot => ({
-        activeDocument: state.activeDocument,
-        activeDocumentSpaceId: state.activeDocumentSpaceId,
-        activeRevealRequest: state.activeRevealRequest,
-        activeScopeOpenRequest: state.activeScopeOpenRequest,
-        activePathRetarget: state.activePathRetarget,
-      }),
-    ),
-  );
+  return entrySelectionSnapshotFromContent(useActiveContentSelection());
 }
 
 export function useActiveEntryDocument() {
-  return useEntrySelectionStore((state) => state.activeDocument);
+  return useActiveEntrySelection().activeDocument;
 }
 
 export function useActiveEntryDocumentSpaceId() {
-  return useEntrySelectionStore((state) => state.activeDocumentSpaceId);
+  return useActiveEntrySelection().activeDocumentSpaceId;
 }
 
 export function useOpenEntryDocument() {
-  return useEntrySelectionStore((state) => state.openDocument);
+  return openEntryDocument;
 }
 
 export function useOpenEntryScopeHome() {
-  return useEntrySelectionStore((state) => state.openScopeHome);
+  return openEntryScopeHome;
 }
 
 export function useRetargetEntryDocument() {
-  return useEntrySelectionStore((state) => state.retargetDocument);
+  return retargetEntryDocument;
 }
 
 export function useEntryTitleOutcome(scopePath: string, path: string | null) {
-  return useEntrySelectionStore((state) =>
+  return useEntryTitleOutcomeStore((state) =>
     path
       ? (state.titleOutcomeBySourceKey[
           entryTitleOutcomeSourceKey(scopePath, path)
@@ -92,5 +89,5 @@ export function useEntryTitleOutcomeEffect({
 }
 
 export function useCloseEntryDocument() {
-  return useEntrySelectionStore((state) => state.closeDocument);
+  return closeEntryDocument;
 }

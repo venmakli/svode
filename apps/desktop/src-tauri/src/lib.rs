@@ -94,6 +94,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            artifact::commands::artifact_probe_app_marker,
             agent_context::commands::agent_context_get_instructions,
             agent_context::commands::agent_context_refresh_instructions,
             actors::commands::actors_get_catalog,

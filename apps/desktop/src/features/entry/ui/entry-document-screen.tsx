@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PlateDocumentEditor } from "@/features/editor";
+import { useOpenScopeOwner } from "@/features/artifact";
 import {
   deleteEntry as deleteEntryApi,
   duplicateEntry as duplicateEntryApi,
@@ -59,6 +60,7 @@ export function EntryDocumentScreen({
   spaceId,
 }: EntryDocumentScreenProps) {
   const openDocument = useOpenEntryDocument();
+  const openScopeOwner = useOpenScopeOwner();
   const openPath = useCallback(
     (path: string, targetSpaceId?: string | null) =>
       openDocument(path, targetSpaceId ?? spaceId),
@@ -309,9 +311,16 @@ export function EntryDocumentScreen({
                 setLoadedEntryKey(
                   getDocumentTargetKey(spacePath, nextEntry.path),
                 );
-                openDocument(nextEntry.path, spaceId);
-                if (nested)
+                if (nested) {
+                  openScopeOwner({
+                    kind: "collection",
+                    path: nextEntry.path,
+                    spaceId,
+                  });
                   void reloadTreePathParents(spaceId, [nextEntry.path]);
+                } else {
+                  openDocument(nextEntry.path, spaceId);
+                }
               }}
               onDuplicateEntry={(entryToDuplicate) =>
                 void duplicateCurrentEntry(entryToDuplicate).catch(handleError)

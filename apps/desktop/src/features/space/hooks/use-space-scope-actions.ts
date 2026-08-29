@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { createCollection } from "@/features/collection";
+import { useOpenScopeOwner } from "@/features/artifact";
 import { publishEntryFilenameWarnings } from "@/features/entry";
 import { useOpenEntryDocument } from "@/features/entry/selection";
 import { createTreeFolder } from "../api/tree-entry-actions";
@@ -27,6 +28,7 @@ export function useSpaceScopeActions({
 }: UseSpaceScopeActionsInput) {
   const { createEntry } = useSpaceActions();
   const openDocument = useOpenEntryDocument();
+  const openScopeOwner = useOpenScopeOwner();
 
   const handleNewPage = useCallback(
     async (scope: ScopeTarget) => {
@@ -83,7 +85,11 @@ export function useSpaceScopeActions({
         publishEntryFilenameWarnings(entry.warnings);
         await reloadTreeParent(scope.id, null);
         onActivateContent();
-        openDocument(entry.path, scope.id);
+        openScopeOwner({
+          kind: "collection",
+          path: entry.path,
+          spaceId: scope.id,
+        });
       } catch (err) {
         console.error("Failed to create collection:", err);
         toast.error(m.toast_error());
@@ -93,7 +99,7 @@ export function useSpaceScopeActions({
       activeRootPath,
       onActivateContent,
       onBeforeNavigation,
-      openDocument,
+      openScopeOwner,
       reloadTreeParent,
     ],
   );

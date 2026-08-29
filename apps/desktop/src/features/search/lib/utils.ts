@@ -12,9 +12,3 @@ export function parentDir(path: string): string {
   if (idx <= 0) return "/";
   return path.slice(0, idx) + "/";
 }
-
-export function joinAbs(spacePath: string, rel: string): string {
-  if (!rel) return spacePath;
-  if (spacePath.endsWith("/")) return spacePath + rel;
-  return spacePath + "/" + rel;
-}

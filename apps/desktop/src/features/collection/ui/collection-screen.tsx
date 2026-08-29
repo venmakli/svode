@@ -13,6 +13,7 @@ import {
   type RelationOpenTarget,
 } from "@/features/properties";
 import { useOpenEntryDocument } from "@/features/entry/selection";
+import { useOpenScopeOwner } from "@/features/artifact";
 import type { Entry } from "@/features/entry";
 import { EntryDetailActions } from "@/features/entry/detail";
 import {
@@ -177,6 +178,7 @@ function CollectionViewsSurfaceInternal({
   );
   const readmePath = readmePathFor(collectionPath);
   const openDocument = useOpenEntryDocument();
+  const openScopeOwner = useOpenScopeOwner();
   const openPath = useCallback(
     (path: string, targetSpaceId?: string | null) =>
       openDocument(path, targetSpaceId ?? spaceId),
@@ -322,9 +324,21 @@ function CollectionViewsSurfaceInternal({
     if (targetViewName !== undefined) {
       routeState?.onViewNameChange(targetViewName);
     }
-    openDocument(entryToOpen.path, targetSpaceId ?? spaceId, {
-      scopeOpenIntent: { kind: "target", surfaceId: targetSurfaceId },
-    });
+    const targetOwnerSpaceId = targetSpaceId ?? spaceId;
+    if (targetViewName !== undefined) {
+      openScopeOwner(
+        {
+          kind: "collection",
+          path: entryToOpen.path,
+          spaceId: targetOwnerSpaceId,
+        },
+        {
+          scopeOpenIntent: { kind: "target", surfaceId: targetSurfaceId },
+        },
+      );
+    } else {
+      openDocument(entryToOpen.path, targetOwnerSpaceId);
+    }
   }
 
   const openRelationPeek = useCallback(
@@ -500,7 +514,11 @@ function CollectionViewsSurfaceInternal({
               onOpenEntry={(entryToOpen) => openPeek(entryToOpen)}
               onOpenNestedPeek={(entryToOpen) => openPeek(entryToOpen, true)}
               onOpenNestedCollection={(entryToOpen) =>
-                openDocument(entryToOpen.path, spaceId)
+                openScopeOwner({
+                  kind: "collection",
+                  path: entryToOpen.path,
+                  spaceId,
+                })
               }
               onOpenFullPage={openFullPage}
               onOpenPath={openPath}

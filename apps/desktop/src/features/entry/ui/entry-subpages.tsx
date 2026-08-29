@@ -16,6 +16,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { FileText, Folder, GripVertical, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useOpenScopeOwner } from "@/features/artifact";
 import {
   createEntry as createEntryApi,
   saveEntryTreeOrderNames,
@@ -44,6 +45,7 @@ export function EntrySubpages({
   documentPath,
 }: EntrySubpagesProps) {
   const openDocument = useOpenEntryDocument();
+  const openScopeOwner = useOpenScopeOwner();
   const loadTreeChildren = useSpaceTreeSync((state) => state.loadTreeChildren);
   const [subpages, setSubpages] = useState<TreeNode[]>([]);
   const [loading, setLoading] = useState(false);
@@ -151,7 +153,15 @@ export function EntrySubpages({
                 <SubpageRow
                   key={node.path}
                   node={node}
-                  onOpen={() => openDocument(node.path, spaceId)}
+                  onOpen={() =>
+                    node.has_schema
+                      ? openScopeOwner({
+                          kind: "collection",
+                          path: node.path,
+                          spaceId,
+                        })
+                      : openDocument(node.path, spaceId)
+                  }
                 />
               ))}
             </div>

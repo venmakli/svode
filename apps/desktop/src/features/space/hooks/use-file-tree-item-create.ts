@@ -20,6 +20,7 @@ interface UseFileTreeItemCreateInput {
   activeRootPath: string | null;
   expandedPaths: Record<string, string[]>;
   openDocument: (path: string, spaceId: string) => void;
+  openCollectionOwner: (path: string, spaceId: string) => void;
   reloadTreeParent: (
     spaceId: string,
     parentPath?: string | null,
@@ -38,6 +39,7 @@ export function useFileTreeItemCreate({
   activeRootPath,
   expandedPaths,
   openDocument,
+  openCollectionOwner,
   reloadTreeParent,
   reloadTreePathParent,
   removeTreePath,
@@ -107,7 +109,7 @@ export function useFileTreeItemCreate({
         });
         await reloadTreePathParent(spaceId, node.path);
         await reloadTreeParent(spaceId, node.path);
-        openDocument(entry.path, spaceId);
+        openCollectionOwner(entry.path, spaceId);
         return;
       }
 
@@ -121,7 +123,7 @@ export function useFileTreeItemCreate({
         spaceId,
         readmeEntry.path.replace(/\/readme\.md$/i, ""),
       );
-      openDocument(readmeEntry.path, spaceId);
+      openCollectionOwner(readmeEntry.path, spaceId);
     } catch (err) {
       console.error("Failed to make collection:", err);
       toast.error(m.toast_error());

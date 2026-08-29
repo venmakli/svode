@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useSpaceTreeSync } from "@/features/space";
+import { useOpenScopeOwner } from "@/features/artifact";
 import { deleteEntry, duplicateEntry } from "../entry-api";
 import { useOpenEntryDocument } from "../selection";
 import { useEntryDetailContext } from "../hooks/entry-detail-context";
@@ -12,6 +13,7 @@ import { EntryDetailActions } from "./entry-detail-actions";
 export function ScopeOwnerActions() {
   const context = useEntryDetailContext();
   const openDocument = useOpenEntryDocument();
+  const openScopeOwner = useOpenScopeOwner();
   const [entryToDelete, setEntryToDelete] = useState<Entry | null>(null);
   const { reloadTreePathParent, reloadTreePathParents, removeTreePath } =
     useSpaceTreeSync();
@@ -50,9 +52,15 @@ export function ScopeOwnerActions() {
         spaceId={context.spaceId}
         onConverted={(entry, nested) => {
           context.setEntry(entry);
-          openDocument(entry.path, context.spaceId);
           if (nested) {
+            openScopeOwner({
+              kind: "collection",
+              path: entry.path,
+              spaceId: context.spaceId,
+            });
             void reloadTreePathParents(context.spaceId, [entry.path]);
+          } else {
+            openDocument(entry.path, context.spaceId);
           }
         }}
         onDuplicateEntry={(entry) =>

@@ -3,7 +3,6 @@ import { toast } from "sonner";
 import { getSpaceSnapshot, useSpace } from "@/features/space";
 import { useOpenEntryDocument } from "@/features/entry/selection";
 import { useCommandPaletteStore } from "../model";
-import { joinAbs } from "../lib/utils";
 import type { KnowledgeNodeKind } from "@/features/knowledge";
 import * as m from "@/paraglide/messages.js";
 
@@ -56,13 +55,7 @@ export function useSelectResult({
         toast.error(m.search_space_unavailable({ name: item.spaceName }));
         return;
       }
-      openDocument(
-        joinAbs(targetSpacePath, item.path),
-        targetSpaceId ?? undefined,
-        {
-          reveal: true,
-        },
-      );
+      openDocument(item.path, targetSpaceId ?? undefined, { reveal: true });
       setOpen(false);
       onAfterNavigation?.();
     },

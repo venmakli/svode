@@ -1,19 +1,32 @@
 import {
-  useEntrySelectionStore,
-  type EntryRevealRequest,
-  type EntryPathRetarget,
-  type OpenEntryDocumentOptions,
-  type ScopeOpenRequest,
-} from "./entry-selection-store";
+  closeActiveContent,
+  getActiveContentSelection,
+  inferArtifactSourceShape,
+  openArtifact,
+  openScopeOwner,
+  retargetActiveContent,
+  type ActiveContentSelectionSnapshot,
+  type ContentPathRetarget,
+  type ContentRevealRequest,
+} from "@/features/artifact";
+import type { ScopeOpenIntent } from "@/features/scope-surfaces";
 import type { Entry } from "../model";
+import { useEntryTitleOutcomeStore } from "./entry-title-outcome-store";
 
-export type {
-  EntryRevealRequest,
-  EntryPathRetarget,
-  EntryTitleOutcome,
-  OpenEntryDocumentOptions,
-  ScopeOpenRequest,
-} from "./entry-selection-store";
+export interface OpenEntryDocumentOptions {
+  reveal?: boolean;
+  scopeOpenIntent?: ScopeOpenIntent;
+}
+
+export interface ScopeOpenRequest {
+  key: number;
+  intent: ScopeOpenIntent;
+}
+
+export type EntryRevealRequest = ContentRevealRequest;
+export type EntryPathRetarget = ContentPathRetarget;
+
+export type { EntryTitleOutcome } from "./entry-title-outcome-store";
 
 export interface EntrySelectionSnapshot {
   activeDocument: string | null;
@@ -23,21 +36,35 @@ export interface EntrySelectionSnapshot {
   activePathRetarget: EntryPathRetarget | null;
 }
 
-export function getActiveEntrySelection(): EntrySelectionSnapshot {
-  const {
-    activeDocument,
-    activeDocumentSpaceId,
-    activeRevealRequest,
-    activeScopeOpenRequest,
-    activePathRetarget,
-  } = useEntrySelectionStore.getState();
+export function entrySelectionSnapshotFromContent(
+  snapshot: ActiveContentSelectionSnapshot,
+): EntrySelectionSnapshot {
+  const { selection } = snapshot;
+  const activeDocument =
+    selection?.kind === "artifact"
+      ? selection.request.intent.target.path
+      : selection?.request.owner.kind === "collection"
+        ? selection.request.owner.path
+        : null;
+  const activeDocumentSpaceId =
+    selection?.kind === "artifact"
+      ? selection.request.intent.target.spaceId
+      : (selection?.request.owner.spaceId ?? null);
+  const activeScopeOpenRequest =
+    selection?.kind === "scope-owner"
+      ? { key: selection.request.key, intent: selection.request.intent }
+      : null;
   return {
     activeDocument,
     activeDocumentSpaceId,
-    activeRevealRequest,
+    activeRevealRequest: snapshot.activeRevealRequest,
     activeScopeOpenRequest,
-    activePathRetarget,
+    activePathRetarget: snapshot.activePathRetarget,
   };
+}
+
+export function getActiveEntrySelection(): EntrySelectionSnapshot {
+  return entrySelectionSnapshotFromContent(getActiveContentSelection());
 }
 
 export function openEntryDocument(
@@ -45,11 +72,36 @@ export function openEntryDocument(
   spaceId?: string,
   options?: OpenEntryDocumentOptions,
 ) {
-  useEntrySelectionStore.getState().openDocument(path, spaceId, options);
+  if (path.replaceAll("\\", "/").toLowerCase() === "readme.md") {
+    openScopeOwner(
+      { kind: "space", spaceId: spaceId ?? null },
+      { scopeOpenIntent: options?.scopeOpenIntent },
+    );
+    return;
+  }
+  if (options?.scopeOpenIntent) {
+    openScopeOwner(
+      { kind: "collection", spaceId: spaceId ?? null, path },
+      {
+        reveal: options.reveal,
+        scopeOpenIntent: options.scopeOpenIntent,
+      },
+    );
+    return;
+  }
+  openArtifact(
+    {
+      path,
+      spaceId,
+      sourceShape: inferArtifactSourceShape(path),
+      semanticHint: { kind: "page" },
+    },
+    { reveal: options?.reveal },
+  );
 }
 
 export function openEntryScopeHome(spaceId?: string) {
-  useEntrySelectionStore.getState().openScopeHome(spaceId);
+  openScopeOwner({ kind: "space", spaceId: spaceId ?? null });
 }
 
 export function retargetEntryDocument(
@@ -57,7 +109,7 @@ export function retargetEntryDocument(
   path: string,
   spaceId?: string,
 ) {
-  useEntrySelectionStore.getState().retargetDocument(fromPath, path, spaceId);
+  retargetActiveContent(fromPath, path, spaceId);
 }
 
 export function publishEntryTitleOutcome(
@@ -65,11 +117,11 @@ export function publishEntryTitleOutcome(
   previousPath: string,
   entry: Entry,
 ) {
-  useEntrySelectionStore
+  useEntryTitleOutcomeStore
     .getState()
     .publishTitleOutcome(scopePath, previousPath, entry);
 }
 
 export function closeEntryDocument() {
-  useEntrySelectionStore.getState().closeDocument();
+  closeActiveContent();
 }

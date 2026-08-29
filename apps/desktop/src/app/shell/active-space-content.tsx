@@ -1,6 +1,7 @@
-import { useActiveEntrySelection } from "@/features/entry/selection";
+import { FileText } from "lucide-react";
+import { ArtifactSurface } from "@/features/artifact/app-shell";
+import { useActiveContentSelection } from "@/features/artifact";
 import type { TreeNode } from "@/features/space";
-import { EntryDocumentScreen } from "@/features/entry/app-shell";
 import { useSpace } from "@/features/space";
 import { EmptyProjectState } from "@/features/space/app-shell";
 import {
@@ -15,7 +16,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { FileText } from "lucide-react";
 import { useCollectionRouteState } from "./hooks/use-collection-route-state";
 import { ScopeSurfacePage } from "./scope-surface-page";
 import * as m from "@/paraglide/messages.js";
@@ -34,91 +34,97 @@ function findNodeInTree(
 }
 
 export function ActiveSpaceContent() {
-  const {
-    activeDocument,
-    activeDocumentSpaceId,
-    activePathRetarget,
-    activeScopeOpenRequest,
-  } = useActiveEntrySelection();
+  const { selection, activePathRetarget } = useActiveContentSelection();
   const collectionRouteState = useCollectionRouteState();
   const { fileTrees, rootSpaces, spaces, activeRootId, activeRootPath } =
     useSpace();
-  const documentSpaceId = activeDocumentSpaceId ?? activeRootId;
-  const tree = documentSpaceId ? (fileTrees[documentSpaceId] ?? []) : [];
-  const activeNode = activeDocument
-    ? findNodeInTree(tree, activeDocument)
-    : null;
+  const artifactRequest =
+    selection?.kind === "artifact" ? selection.request : null;
+  const scopeOwnerRequest =
+    selection?.kind === "scope-owner" ? selection.request : null;
+  const selectionSpaceId =
+    artifactRequest?.intent.target.spaceId ??
+    scopeOwnerRequest?.owner.spaceId ??
+    activeRootId;
+  const selectedPath =
+    artifactRequest?.intent.target.path ??
+    (scopeOwnerRequest?.owner.kind === "collection"
+      ? scopeOwnerRequest.owner.path
+      : null);
+  const tree = selectionSpaceId ? (fileTrees[selectionSpaceId] ?? []) : [];
+  const activeNode = selectedPath ? findNodeInTree(tree, selectedPath) : null;
   const previousActiveNode =
     !activeNode &&
-    activePathRetarget?.path === activeDocument &&
-    activePathRetarget.spaceId === documentSpaceId
+    activePathRetarget?.path === selectedPath &&
+    activePathRetarget.spaceId === selectionSpaceId
       ? findNodeInTree(tree, activePathRetarget.fromPath)
       : null;
   const activeNodeSnapshot = activeNode ?? previousActiveNode;
-  const activeSpace = documentSpaceId
-    ? [...rootSpaces, ...spaces].find((space) => space.id === documentSpaceId)
+  const activeSpace = selectionSpaceId
+    ? [...rootSpaces, ...spaces].find((space) => space.id === selectionSpaceId)
     : null;
   const selectedScopeHome =
-    !activeDocument && activeDocumentSpaceId
+    scopeOwnerRequest?.owner.kind === "space"
       ? [...rootSpaces, ...spaces].find(
-          (space) => space.id === activeDocumentSpaceId,
+          (space) => space.id === scopeOwnerRequest.owner.spaceId,
         )
       : null;
   const hasChildren = spaces.length > 0;
   const rootTree = activeRootId ? (fileTrees[activeRootId] ?? []) : [];
   const hasDocuments = rootTree.length > 0;
   const isEmpty = !hasChildren && !hasDocuments;
-  const isCollection = Boolean(
-    activeNodeSnapshot?.has_schema && activeSpace && documentSpaceId,
-  );
-  const usesEntryDocumentScreen = Boolean(
-    !isCollection && activeSpace && documentSpaceId && activeDocument,
+  const isCollectionOwner = Boolean(
+    selectedPath &&
+    activeSpace &&
+    selectionSpaceId &&
+    (scopeOwnerRequest?.owner.kind === "collection" ||
+      activeNodeSnapshot?.has_schema),
   );
   const collectionSessionKey =
-    activeScopeOpenRequest?.key ?? collectionOwnerPath(activeDocument ?? "");
+    scopeOwnerRequest?.key ?? selectedPath ?? "collection";
   const previousCollectionOwnerKey =
     activePathRetarget &&
-    activePathRetarget.path === activeDocument &&
-    activePathRetarget.spaceId === documentSpaceId &&
-    documentSpaceId
-      ? (`collection:${documentSpaceId}:${collectionOwnerPath(activePathRetarget.fromPath)}` as ScopeOwnerKey)
+    activePathRetarget.path === selectedPath &&
+    activePathRetarget.spaceId === selectionSpaceId &&
+    selectionSpaceId
+      ? (`collection:${selectionSpaceId}:${collectionOwnerPath(activePathRetarget.fromPath)}` as ScopeOwnerKey)
       : undefined;
+
   const activeContent =
-    isCollection &&
-    activeNodeSnapshot &&
+    isCollectionOwner &&
     activeSpace &&
-    documentSpaceId &&
+    selectionSpaceId &&
     activeRootPath &&
-    activeDocument ? (
+    selectedPath ? (
       <ScopeSurfacePage
-        key={`collection-session:${documentSpaceId}:${collectionSessionKey}`}
+        key={`collection-session:${selectionSpaceId}:${collectionSessionKey}`}
         owner={createCollectionDirectoryOwner({
-          spaceId: documentSpaceId,
+          spaceId: selectionSpaceId,
           spacePath: activeSpace.path,
           projectPath: activeRootPath,
-          ownerPath: collectionOwnerPath(activeDocument),
+          ownerPath: collectionOwnerPath(selectedPath),
           status: activeSpace.status,
           hasSchema: true,
         })}
         presentation="full"
         routeState={collectionRouteState}
-        openIntent={activeScopeOpenRequest?.intent}
-        openRequestKey={activeScopeOpenRequest?.key}
+        openIntent={scopeOwnerRequest?.intent}
+        openRequestKey={scopeOwnerRequest?.key}
         previousOwnerKey={previousCollectionOwnerKey}
         sessionKey={collectionSessionKey}
       />
-    ) : activeSpace && documentSpaceId && activeDocument ? (
-      <EntryDocumentScreen
+    ) : artifactRequest && activeSpace && selectionSpaceId ? (
+      <ArtifactSurface
+        request={artifactRequest}
         spacePath={activeSpace.path}
         projectPath={activeRootPath}
-        documentPath={activeDocument}
-        spaceId={documentSpaceId}
+        spaceId={selectionSpaceId}
       />
     ) : (
       <div className="h-full" />
     );
 
-  if (!activeDocument || isEmpty) {
+  if (scopeOwnerRequest?.owner.kind === "space" || !selection || isEmpty) {
     if (selectedScopeHome?.status === "ready" && activeRootPath) {
       const owner = createRegisteredSpaceOwner({
         spaceId: selectedScopeHome.id,
@@ -137,8 +143,8 @@ export function ActiveSpaceContent() {
               routeState={collectionRouteState}
               fallbackTitle={selectedScopeHome.name}
               fallbackIcon={selectedScopeHome.icon || null}
-              openIntent={activeScopeOpenRequest?.intent}
-              openRequestKey={activeScopeOpenRequest?.key}
+              openIntent={scopeOwnerRequest?.intent}
+              openRequestKey={scopeOwnerRequest?.key}
             />
           </div>
         </div>
@@ -154,7 +160,7 @@ export function ActiveSpaceContent() {
     }
     return (
       <div className="flex h-full flex-col overflow-hidden">
-        <div className="flex-1 min-h-0 overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-hidden">
           <EmptyProjectState />
         </div>
       </div>
@@ -163,13 +169,7 @@ export function ActiveSpaceContent() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div
-        className={
-          isCollection || usesEntryDocumentScreen
-            ? "scrollbar-hide min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden"
-            : "min-h-0 min-w-0 flex-1 overflow-hidden"
-        }
-      >
+      <div className="scrollbar-hide min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
         {activeContent}
       </div>
     </div>

@@ -5,6 +5,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::time::Instant;
 
+use crate::artifact::app_marker::{AppMarkerProbe, probe_app_directory};
 use crate::artifact::identity::{MarkdownIdentityFacts, SourceShape, resolve_markdown_identity};
 use crate::error::AppError;
 use crate::files::frontmatter;
@@ -62,6 +63,13 @@ pub struct TreeChildNode {
 
 fn is_readme_name(name: &str) -> bool {
     name.eq_ignore_ascii_case("readme.md")
+}
+
+fn app_marker_reserves_directory(base: &Path, directory: &Path) -> bool {
+    !matches!(
+        probe_app_directory(directory, base),
+        Ok(AppMarkerProbe::NoMatch)
+    )
 }
 
 /// Find a readme.md file inside a directory (case-insensitive).
@@ -429,7 +437,11 @@ fn read_dir_direct(
             let has_schema = has_direct_schema(&abs_path)
                 && !policy.is_ignored_rel(schema_rel, TreePathKind::File);
             let readme = find_readme(base, &abs_path, policy);
-            let (title, icon, description) = if let Some(ref readme_path) = readme {
+            let app_reserved =
+                !has_schema && readme.is_some() && app_marker_reserves_directory(base, &abs_path);
+            let (title, icon, description) = if app_reserved {
+                (name.clone(), None, None)
+            } else if let Some(ref readme_path) = readme {
                 let (title, icon, description) = read_frontmatter_meta_head(readme_path);
                 if icon.is_none() && title.eq_ignore_ascii_case("readme") {
                     (name.clone(), None, None)
@@ -439,7 +451,7 @@ fn read_dir_direct(
             } else {
                 (name.clone(), None, None)
             };
-            let node_path = if let Some(ref readme_path) = readme {
+            let node_path = if !app_reserved && let Some(ref readme_path) = readme {
                 let readme_name = readme_path
                     .file_name()
                     .unwrap_or_default()
@@ -450,7 +462,7 @@ fn read_dir_direct(
             };
             let kind = if has_schema {
                 TreeChildKind::Collection
-            } else if readme.is_some() {
+            } else if readme.is_some() && !app_reserved {
                 debug_assert!(
                     resolve_markdown_identity(MarkdownIdentityFacts {
                         path: &node_path,
@@ -634,8 +646,12 @@ fn read_dir_recursive(
             let has_schema = has_direct_schema(&abs_path)
                 && !policy.is_ignored_rel(schema_rel, TreePathKind::File);
             let readme = find_readme(base, &abs_path, policy);
+            let app_reserved =
+                !has_schema && readme.is_some() && app_marker_reserves_directory(base, &abs_path);
 
-            let (title, icon, description) = if let Some(ref rp) = readme {
+            let (title, icon, description) = if app_reserved {
+                (name.clone(), None, None)
+            } else if let Some(ref rp) = readme {
                 let (t, i, d) = read_frontmatter_meta(rp);
                 // If frontmatter missing, title falls back to "README" — use folder name instead
                 if i.is_none() && t.eq_ignore_ascii_case("readme") {
@@ -649,7 +665,7 @@ fn read_dir_recursive(
 
             // For document folders: path = "dir/README.md" (actual filename)
             // For bare folders: path = "dir" (no .md extension)
-            let node_path = if let Some(ref rp) = readme {
+            let node_path = if !app_reserved && let Some(ref rp) = readme {
                 let readme_name = rp.file_name().unwrap_or_default().to_string_lossy();
                 format!("{rel_path}/{readme_name}")
             } else {
@@ -673,7 +689,7 @@ fn read_dir_recursive(
                 has_schema,
                 kind: if has_schema {
                     TreeChildKind::Collection
-                } else if readme.is_some() {
+                } else if readme.is_some() && !app_reserved {
                     TreeChildKind::Page
                 } else {
                     TreeChildKind::Folder
@@ -837,6 +853,72 @@ mod tests {
 
         assert_eq!(child_names_direct(&children), vec!["child.md".to_string()]);
         assert!(!child_names_direct(&children).contains(&"README.md".to_string()));
+    }
+
+    #[test]
+    fn marked_app_directory_with_readme_is_not_projected_as_a_page() {
+        let tmp = TempDir::new().unwrap();
+        write_doc(
+            &tmp.path().join("dashboard").join("README.md"),
+            "Dashboard docs",
+        );
+        fs::write(
+            tmp.path().join("dashboard").join("index.html"),
+            r#"<html><head><meta name="svode-app" content="1"></head></html>"#,
+        )
+        .unwrap();
+
+        let nodes = list_tree_children(tmp.path().to_str().unwrap(), None).expect("root");
+        let dashboard = nodes
+            .iter()
+            .find(|node| node.name == "dashboard")
+            .expect("dashboard");
+
+        assert_eq!(dashboard.path, "dashboard");
+        assert_eq!(dashboard.title, "dashboard");
+        assert_eq!(dashboard.kind, TreeChildKind::Folder);
+        assert_eq!(dashboard.source_shape, SourceShape::Directory);
+    }
+
+    #[test]
+    fn invalid_app_marker_does_not_fall_back_to_page_projection() {
+        let tmp = TempDir::new().unwrap();
+        write_doc(
+            &tmp.path().join("broken-app").join("README.md"),
+            "Broken app docs",
+        );
+        fs::write(
+            tmp.path().join("broken-app").join("index.html"),
+            r#"<html><head><meta name="svode-app" content="2"></head></html>"#,
+        )
+        .unwrap();
+
+        let nodes = list_tree_children(tmp.path().to_str().unwrap(), None).expect("root");
+        let app = nodes
+            .iter()
+            .find(|node| node.name == "broken-app")
+            .expect("broken app");
+
+        assert_eq!(app.path, "broken-app");
+        assert_eq!(app.kind, TreeChildKind::Folder);
+    }
+
+    #[test]
+    fn unmarked_index_keeps_the_existing_directory_backed_page_projection() {
+        let tmp = TempDir::new().unwrap();
+        write_doc(&tmp.path().join("docs").join("README.md"), "Documentation");
+        fs::write(
+            tmp.path().join("docs").join("index.html"),
+            "<html><head><title>Docs</title></head></html>",
+        )
+        .unwrap();
+
+        let nodes = list_tree_children(tmp.path().to_str().unwrap(), None).expect("root");
+        let docs = nodes.iter().find(|node| node.name == "docs").expect("docs");
+
+        assert_eq!(docs.path, "docs/README.md");
+        assert_eq!(docs.title, "Documentation");
+        assert_eq!(docs.kind, TreeChildKind::Page);
     }
 
     #[test]

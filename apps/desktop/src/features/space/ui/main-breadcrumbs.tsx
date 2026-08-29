@@ -21,7 +21,7 @@ export function MainBreadcrumbs({
 } = {}) {
   const {
     activeDocument,
-    openDocument,
+    openBreadcrumb,
     openSpace,
     selectedSpace,
     segments,
@@ -94,7 +94,7 @@ export function MainBreadcrumbs({
                       if (onBeforeNavigation && !(await onBeforeNavigation())) {
                         return;
                       }
-                      openDocument(seg.path, treeId ?? undefined);
+                      openBreadcrumb(seg, treeId ?? undefined);
                     })();
                   }}
                 >
