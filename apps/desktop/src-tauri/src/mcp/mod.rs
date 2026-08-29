@@ -2,6 +2,7 @@ pub mod active;
 pub mod cli;
 pub mod commands;
 pub mod config;
+pub mod control;
 pub mod error;
 pub mod ipc;
 pub mod path;
@@ -10,6 +11,9 @@ pub mod service;
 pub mod tools;
 
 pub const MCP_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const MCP_BRIDGE_PROTOCOL: &str = "svode-desktop-bridge-v1";
+pub const MCP_MANAGED_MARKER_ENV: &str = "SVODE_MCP_MANAGED";
+pub const MCP_MANAGED_MARKER_VALUE: &str = "svode-desktop-bridge-v1";
 pub const MCP_DISCOVERY_ENV: &str = "SVODE_MCP_DISCOVERY";
 pub const MCP_PROJECT_PATH_ENV: &str = "SVODE_MCP_PROJECT_PATH";
 pub const MCP_ROUTINE_CALLER_TOKEN_ENV: &str = "SVODE_MCP_ROUTINE_CALLER_TOKEN";

@@ -289,6 +289,7 @@ function client(
     name,
     found: true,
     installed,
+    managed: installed,
     status: installed ? "installed" : "mcp_not_installed",
   };
 }

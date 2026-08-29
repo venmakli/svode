@@ -2,12 +2,11 @@ use std::io::{self, BufRead, Write};
 
 use serde_json::{Value, json};
 
-use super::MCP_VERSION;
 use super::config::{self, McpClient};
 use super::error::McpBusinessError;
 use super::ipc;
-use super::protocol::ToolCallResult;
-use super::tools;
+use super::protocol::{IpcResponse, ToolCallResult};
+use super::{MCP_BRIDGE_PROTOCOL, MCP_VERSION};
 
 pub async fn run_cli() -> i32 {
     match run_cli_inner().await {
@@ -46,6 +45,10 @@ async fn run_cli_inner() -> Result<(), McpBusinessError> {
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
+        Some("--bridge-protocol") => {
+            println!("{MCP_BRIDGE_PROTOCOL}");
+            Ok(())
+        }
         Some("--version") | Some("-V") => {
             println!("{MCP_VERSION}");
             Ok(())
@@ -74,7 +77,8 @@ fn print_usage() {
   svode-mcp install --client <claude-code|codex>
   svode-mcp remove --client <claude-code|codex>
   svode-mcp print-config --client <claude-code|codex>
-  svode-mcp doctor"
+  svode-mcp doctor
+  svode-mcp --bridge-protocol"
     );
 }
 
@@ -97,6 +101,20 @@ async fn run_stdio() -> Result<(), McpBusinessError> {
 }
 
 async fn handle_jsonrpc_line(line: &str) -> Option<Value> {
+    handle_jsonrpc_line_with(line, |method, params| async move {
+        ipc::desktop_request(&method, params).await
+    })
+    .await
+}
+
+async fn handle_jsonrpc_line_with<Request, Future>(
+    line: &str,
+    desktop_request: Request,
+) -> Option<Value>
+where
+    Request: Fn(String, Value) -> Future,
+    Future: std::future::Future<Output = Result<IpcResponse, McpBusinessError>>,
+{
     let request: Value = match serde_json::from_str(line) {
         Ok(value) => value,
         Err(error) => {
@@ -110,57 +128,65 @@ async fn handle_jsonrpc_line(line: &str) -> Option<Value> {
     }
     let id = id.unwrap_or(json!(null));
     match method {
-        "initialize" => Some(ok_response(
-            id,
-            json!({
-                "protocolVersion": "2025-06-18",
-                "serverInfo": { "name": "svode", "version": MCP_VERSION },
-                "capabilities": { "tools": {} },
-                "instructions": "Use Svode MCP as a product API, not as raw filesystem access. Discover explicit Routine owners with list_spaces/list_collections and read fingerprints with list_routines/get_routine. Use managed create_routine/update_routine/delete_routine for definitions and run_routine only for an explicit manual/schedule launch. Routine actions do not autocommit; enabled schedule/event writes require confirmAutomaticExecution=true without changing device authority, and Routine-launched agents cannot recurse. Create Collections for structured repeated data and Pages for narrative knowledge. Use owner README and Collection item tools for those contexts. Call get_svode_guide when unsure."
-            }),
-        )),
-        "ping" => Some(ok_response(id, json!({}))),
-        "tools/list" => Some(ok_response(id, json!({ "tools": tools::definitions() }))),
-        "tools/call" => {
+        "initialize" | "ping" | "tools/list" | "tools/call" => {
             let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
-            let Some(name) = params.get("name").and_then(Value::as_str) else {
-                return Some(error_response(
-                    id,
-                    -32602,
-                    "tools/call requires a tool name",
-                ));
-            };
-            if !tools::is_public_tool(name) {
-                return Some(error_response(
-                    id,
-                    -32602,
-                    &format!("unknown Svode MCP tool: {name}"),
-                ));
-            }
-            if name == "get_svode_guide" {
-                let result =
-                    ToolCallResult::ok("Svode MCP guide.", json!({ "guide": tools::guide_text() }));
-                return Some(ok_response(
-                    id,
-                    serde_json::to_value(result).unwrap_or_else(|_| json!({})),
-                ));
-            }
-            let forwarded = match ipc::desktop_request("tools/call", params).await {
-                Ok(response) => response.tool_result.unwrap_or_else(|| {
-                    ToolCallResult::business_error(McpBusinessError::new(
-                        "DESKTOP_PROTOCOL_ERROR",
-                        "desktop did not return a tool result",
-                    ))
-                }),
-                Err(error) => ToolCallResult::business_error(error),
-            };
-            Some(ok_response(
+            Some(forward_desktop_response(
                 id,
-                serde_json::to_value(forwarded).unwrap_or_else(|_| json!({})),
+                method,
+                desktop_request(method.to_string(), params).await,
             ))
         }
         _ => Some(error_response(id, -32601, "method not found")),
     }
+}
+
+fn forward_desktop_response(
+    id: Value,
+    method: &str,
+    response: Result<IpcResponse, McpBusinessError>,
+) -> Value {
+    let response = match response {
+        Ok(response) => response,
+        Err(error) if method == "tools/call" => {
+            return ok_tool_response(id, ToolCallResult::business_error(error));
+        }
+        Err(error) => return error_response(id, -32603, &error.message),
+    };
+
+    if let Some(error) = response.error {
+        if matches!(error.code.as_str(), "INVALID_REQUEST" | "UNKNOWN_TOOL") {
+            return error_response(id, -32602, &error.message);
+        }
+        if error.code == "UNKNOWN_METHOD" {
+            return error_response(id, -32601, &error.message);
+        }
+        if method == "tools/call" {
+            return ok_tool_response(id, ToolCallResult::business_error(error));
+        }
+        return error_response(id, -32603, &error.message);
+    }
+
+    if method == "tools/call" {
+        return match response.tool_result {
+            Some(result) => ok_tool_response(id, result),
+            None => ok_tool_response(
+                id,
+                ToolCallResult::business_error(McpBusinessError::new(
+                    "DESKTOP_PROTOCOL_ERROR",
+                    "desktop did not return a tool result",
+                )),
+            ),
+        };
+    }
+
+    ok_response(id, response.result.unwrap_or_else(|| json!({})))
+}
+
+fn ok_tool_response(id: Value, result: ToolCallResult) -> Value {
+    ok_response(
+        id,
+        serde_json::to_value(result).unwrap_or_else(|_| json!({})),
+    )
 }
 
 fn ok_response(id: Value, result: Value) -> Value {
@@ -177,78 +203,122 @@ fn error_response(id: Value, code: i64, message: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use super::*;
 
     #[tokio::test]
-    async fn initialize_returns_tools_only_capabilities() {
-        let response =
-            handle_jsonrpc_line(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#)
-                .await
-                .expect("response");
+    async fn initialize_and_catalog_are_forwarded_from_active_desktop() {
+        let response = handle_jsonrpc_line_with(
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+            |method, _| async move {
+                assert_eq!(method, "initialize");
+                Ok(IpcResponse {
+                    result: Some(json!({
+                        "protocolVersion": "desktop-protocol",
+                        "serverInfo": { "name": "svode", "version": "desktop-build" },
+                        "capabilities": { "tools": {} },
+                        "instructions": "desktop-owned",
+                    })),
+                    tool_result: None,
+                    error: None,
+                })
+            },
+        )
+        .await
+        .expect("response");
         let result = response.get("result").expect("result");
-        assert_eq!(result["protocolVersion"], "2025-06-18");
-        assert!(result["capabilities"].get("tools").is_some());
-        assert!(result["serverInfo"].get("name").is_some());
-        assert!(result.get("instructions").is_some());
-    }
+        assert_eq!(result["protocolVersion"], "desktop-protocol");
+        assert_eq!(result["serverInfo"]["version"], "desktop-build");
+        assert_eq!(result["instructions"], "desktop-owned");
 
-    #[tokio::test]
-    async fn tools_list_tolerates_pagination_params() {
-        let response = handle_jsonrpc_line(
+        let response = handle_jsonrpc_line_with(
             r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"cursor":"abc"}}"#,
+            |method, params| async move {
+                assert_eq!(method, "tools/list");
+                assert_eq!(params["cursor"], "abc");
+                Ok(IpcResponse {
+                    result: Some(json!({ "tools": [{ "name": "desktop_only_tool" }] })),
+                    tool_result: None,
+                    error: None,
+                })
+            },
         )
         .await
         .expect("response");
         let tools = response["result"]["tools"].as_array().expect("tools array");
-        assert!(tools.iter().any(|tool| tool["name"] == "delete_page"));
-        assert!(
-            tools
-                .iter()
-                .any(|tool| tool["name"] == "delete_collection_item")
-        );
-        assert!(tools.iter().any(|tool| tool["name"] == "list_actors"));
-        assert!(tools.iter().any(|tool| tool["name"] == "list_routines"));
-        assert!(tools.iter().any(|tool| tool["name"] == "get_routine"));
-        assert!(tools.iter().any(|tool| tool["name"] == "create_routine"));
-        assert!(tools.iter().any(|tool| tool["name"] == "update_routine"));
-        assert!(tools.iter().any(|tool| tool["name"] == "delete_routine"));
-        assert!(tools.iter().any(|tool| tool["name"] == "run_routine"));
-        assert!(!tools.iter().any(|tool| {
-            tool["name"]
-                .as_str()
-                .is_some_and(|name| name.contains("document") || name.ends_with("_entry"))
-        }));
+        assert_eq!(tools, &[json!({ "name": "desktop_only_tool" })]);
     }
 
     #[tokio::test]
-    async fn tools_call_rejects_missing_or_unadvertised_names_as_protocol_errors() {
-        let missing = handle_jsonrpc_line(
-            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"arguments":{}}}"#,
+    async fn stale_tool_is_rejected_by_active_desktop_without_side_effects() {
+        let response = handle_jsonrpc_line_with(
+            r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"legacy_tool","arguments":{}}}"#,
+            |method, params| async move {
+                assert_eq!(method, "tools/call");
+                assert_eq!(params["name"], "legacy_tool");
+                Ok(IpcResponse {
+                    result: None,
+                    tool_result: None,
+                    error: Some(McpBusinessError::new(
+                        "UNKNOWN_TOOL",
+                        "unknown Svode MCP tool: legacy_tool",
+                    )),
+                })
+            },
         )
         .await
         .expect("response");
-        assert_eq!(missing["error"]["code"], -32602);
+        assert_eq!(response["error"]["code"], -32602);
+        assert!(
+            response["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("legacy_tool"))
+        );
+    }
 
-        let hidden = handle_jsonrpc_line(
-            r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"read_document","arguments":{"path":"A.md"}}}"#,
-        )
-        .await
-        .expect("response");
-        assert_eq!(hidden["error"]["code"], -32602);
+    #[tokio::test]
+    async fn one_bridge_connection_reads_each_catalog_from_current_desktop_owner() {
+        let active_catalog = Arc::new(Mutex::new("installed_tool"));
+        let request = |method: String, _params: Value| {
+            let active_catalog = Arc::clone(&active_catalog);
+            async move {
+                assert_eq!(method, "tools/list");
+                let name = *active_catalog.lock().expect("catalog mutex");
+                Ok(IpcResponse {
+                    result: Some(json!({ "tools": [{ "name": name }] })),
+                    tool_result: None,
+                    error: None,
+                })
+            }
+        };
 
-        let unknown_routine_action = handle_jsonrpc_line(
-            r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"stop_routine","arguments":{"spaceId":"root"}}}"#,
+        let first = handle_jsonrpc_line_with(
+            r#"{"jsonrpc":"2.0","id":6,"method":"tools/list"}"#,
+            &request,
         )
         .await
-        .expect("response");
-        assert_eq!(unknown_routine_action["error"]["code"], -32602);
+        .expect("first response");
+        assert_eq!(first["result"]["tools"][0]["name"], "installed_tool");
+
+        *active_catalog.lock().expect("catalog mutex") = "dev_tool";
+        let second = handle_jsonrpc_line_with(
+            r#"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#,
+            &request,
+        )
+        .await
+        .expect("second response");
+        assert_eq!(second["result"]["tools"][0]["name"], "dev_tool");
     }
 
     #[tokio::test]
     async fn unknown_method_is_protocol_error() {
-        let response = handle_jsonrpc_line(r#"{"jsonrpc":"2.0","id":5,"method":"resources/list"}"#)
-            .await
-            .expect("response");
+        let response = handle_jsonrpc_line_with(
+            r#"{"jsonrpc":"2.0","id":5,"method":"resources/list"}"#,
+            |_, _| async { unreachable!("unknown methods stay in the transport adapter") },
+        )
+        .await
+        .expect("response");
         assert_eq!(response["error"]["code"], -32601);
     }
 }

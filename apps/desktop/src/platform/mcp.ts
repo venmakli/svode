@@ -5,13 +5,21 @@ const MCP_STATUS_CHANGED_EVENT = "mcp:status-changed";
 
 export type McpClientId = "claude-code" | "codex";
 
-export type McpServerStatus = "installed" | "not_found" | "version_mismatch";
+export type McpServerStatus = "installed" | "not_found";
+
+export type McpClientAttentionCode =
+  | "bridge_incompatible"
+  | "bridge_missing"
+  | "config_unreadable"
+  | "custom_conflict"
+  | "higher_precedence_conflict"
+  | "repair_failed";
 
 export type McpClientConfigStatus =
   | "not_found"
   | "mcp_not_installed"
   | "installed"
-  | "update_needed";
+  | "attention";
 
 export interface McpActiveContextInput {
   projectPath: string;
@@ -39,6 +47,7 @@ export interface McpDoctorReport {
   discoveryFile?: string | null;
   messages: string[];
   errors: string[];
+  bridgeProtocol?: string;
 }
 
 export interface McpServerInfo {
@@ -53,7 +62,9 @@ export interface McpClientStatus {
   name: string;
   found: boolean;
   installed: boolean;
+  managed: boolean;
   status: McpClientConfigStatus;
+  attentionCode?: McpClientAttentionCode | null;
   path?: string | null;
   configPath?: string | null;
   message?: string | null;

@@ -26,13 +26,6 @@ function serverBadge(status: McpStatus["server"]["status"]) {
       <Badge variant="secondary">{m.settings_mcp_server_installed()}</Badge>
     );
   }
-  if (status === "version_mismatch") {
-    return (
-      <Badge variant="destructive">
-        {m.settings_mcp_server_version_mismatch()}
-      </Badge>
-    );
-  }
   return <Badge variant="outline">{m.settings_mcp_server_not_found()}</Badge>;
 }
 
@@ -42,10 +35,10 @@ function clientBadge(client: McpClientStatus) {
       <Badge variant="secondary">{m.settings_mcp_client_installed()}</Badge>
     );
   }
-  if (client.status === "update_needed") {
+  if (client.status === "attention") {
     return (
       <Badge variant="destructive">
-        {m.settings_mcp_client_update_needed()}
+        {m.settings_mcp_client_attention()}
       </Badge>
     );
   }
@@ -54,6 +47,35 @@ function clientBadge(client: McpClientStatus) {
   }
   return (
     <Badge variant="outline">{m.settings_mcp_client_not_installed()}</Badge>
+  );
+}
+
+function clientDetail(client: McpClientStatus) {
+  switch (client.attentionCode) {
+    case "bridge_incompatible":
+      return m.settings_mcp_client_bridge_incompatible();
+    case "bridge_missing":
+      return m.settings_mcp_client_bridge_missing();
+    case "config_unreadable":
+      return m.settings_mcp_client_config_unreadable();
+    case "custom_conflict":
+      return m.settings_mcp_client_custom_conflict();
+    case "higher_precedence_conflict":
+      return m.settings_mcp_client_higher_precedence_conflict();
+    case "repair_failed":
+      return m.settings_mcp_client_repair_failed();
+    default:
+      return client.status === "not_found"
+        ? m.settings_mcp_client_unavailable()
+        : null;
+  }
+}
+
+function blocksManagedToggle(client: McpClientStatus) {
+  return (
+    client.attentionCode === "config_unreadable" ||
+    client.attentionCode === "custom_conflict" ||
+    client.attentionCode === "higher_precedence_conflict"
   );
 }
 
@@ -152,6 +174,7 @@ export function McpIntegrationsSection() {
           {(status?.clients ?? []).map((client) => (
             <div
               key={client.id}
+              data-mcp-client={client.id}
               className="flex w-full min-w-0 max-w-full items-start justify-between gap-3 overflow-hidden rounded-md border p-3"
             >
               <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -161,17 +184,18 @@ export function McpIntegrationsSection() {
                   </span>
                   {clientBadge(client)}
                 </div>
-                <StatusPath
-                  value={
-                    client.configPath ?? client.path ?? client.message ?? "—"
-                  }
-                />
+                {clientDetail(client) ? (
+                  <p className="min-w-0 break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                    {clientDetail(client)}
+                  </p>
+                ) : null}
               </div>
               <Switch
                 className="shrink-0"
                 checked={client.installed}
                 disabled={
                   !client.found ||
+                  blocksManagedToggle(client) ||
                   pendingClients.has(client.id) ||
                   status?.server.status !== "installed"
                 }

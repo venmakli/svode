@@ -93,6 +93,7 @@ pub struct IpcContextOverride {
 #[serde(rename_all = "camelCase")]
 pub struct IpcRequest {
     pub token: String,
+    pub bridge_protocol: String,
     pub method: String,
     #[serde(default)]
     pub params: Value,
