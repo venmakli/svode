@@ -130,6 +130,27 @@ impl Serialize for AppError {
         S: serde::Serializer,
     {
         match self {
+            AppError::RepositoryAccessDenied {
+                repository_id,
+                status,
+                reason,
+            } => {
+                #[derive(Serialize)]
+                #[serde(rename_all = "camelCase")]
+                struct StructuredError<'a> {
+                    kind: &'static str,
+                    repository_id: &'a str,
+                    status: &'a str,
+                    reason: &'a str,
+                }
+                StructuredError {
+                    kind: self.kind(),
+                    repository_id,
+                    status,
+                    reason,
+                }
+                .serialize(serializer)
+            }
             AppError::DocumentNameConflict(conflict) => {
                 #[derive(Serialize)]
                 #[serde(rename_all = "camelCase")]
@@ -171,5 +192,20 @@ mod tests {
             value["conflict"]["conflicts"][0]["path"],
             "docs/existing.md"
         );
+    }
+
+    #[test]
+    fn repository_access_denial_serializes_as_structured_tauri_error() {
+        let value = serde_json::to_value(AppError::RepositoryAccessDenied {
+            repository_id: "repo-opaque".to_string(),
+            status: "unknown".to_string(),
+            reason: "mutation_plan_changed".to_string(),
+        })
+        .unwrap();
+
+        assert_eq!(value["kind"], "repository_access_denied");
+        assert_eq!(value["repositoryId"], "repo-opaque");
+        assert_eq!(value["status"], "unknown");
+        assert_eq!(value["reason"], "mutation_plan_changed");
     }
 }

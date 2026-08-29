@@ -6,6 +6,7 @@ import {
   listenGitCommitted as listenPlatformGitCommitted,
   setGitRemote as setPlatformGitRemote,
   setGitUserPolicy,
+  type GitSetRemoteResultDto,
 } from "@/platform/git/git-api";
 
 import {
@@ -16,6 +17,8 @@ import {
   type GitUserPolicy,
 } from "@/features/git";
 import type { SpaceGitType } from "@/features/space";
+
+export type GitSetRemoteResult = GitSetRemoteResultDto;
 
 export interface GetSpaceGitTypeInput extends Record<string, unknown> {
   projectPath: string;
@@ -80,7 +83,9 @@ export function getSettingsGitAvailability(): Promise<GitAvailability> {
   return getGitAvailability();
 }
 
-export function setGitRemote(input: SetGitRemoteInput): Promise<void> {
+export function setGitRemote(
+  input: SetGitRemoteInput,
+): Promise<GitSetRemoteResultDto> {
   return setPlatformGitRemote(input);
 }
 

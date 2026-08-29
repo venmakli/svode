@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 use super::cli::{GitCli, GitOutput};
@@ -22,6 +22,7 @@ const SERVICE_AUTHOR_NAME: &str = "Svode Access Probe";
 const SERVICE_AUTHOR_EMAIL: &str = "access@svode.invalid";
 const ROUTINE_SERVICE_AUTHOR_NAME: &str = "Svode Routine Claim";
 const ROUTINE_SERVICE_AUTHOR_EMAIL: &str = "routines@svode.invalid";
+const REPOSITORY_ACCESS_CHANGED_EVENT: &str = "git:repository-access-changed";
 
 tokio::task_local! {
     static AUTHORIZED_MUTATION_REPOSITORIES: Option<Arc<std::collections::HashSet<PathBuf>>>;
@@ -65,6 +66,12 @@ pub struct RepositoryAccessSnapshot {
     pub expires_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_known_status: Option<RepositoryAccessStatus>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RepositoryAccessChangedPayload<'a> {
+    repository_id: &'a str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -484,13 +491,18 @@ impl RepositoryAccessState {
         )
     }
 
-    pub(crate) async fn invalidate(&self, cli: &GitCli, space_path: &Path) -> Result<(), AppError> {
+    pub(crate) async fn invalidate(
+        &self,
+        cli: &GitCli,
+        space_path: &Path,
+    ) -> Result<String, AppError> {
         let repository = resolve_repository(cli, space_path).await?;
+        let repository_id = opaque_id("access-repo", &repository.to_string_lossy());
         self.snapshots
             .lock()
             .map_err(|_| AppError::General("repository access snapshot lock poisoned".into()))?
             .remove(&repository);
-        Ok(())
+        Ok(repository_id)
     }
 
     fn cached(&self, repository: &Path) -> Result<Option<Arc<PublishedSnapshot>>, AppError> {
@@ -667,9 +679,22 @@ pub async fn repository_access_verify(
 ) -> Result<RepositoryAccessSnapshot, AppError> {
     let cli = require_cli(&git_state)?;
     let store_path = access_store_path(&app)?;
-    let snapshot = access_state
+    let snapshot = match access_state
         .verify(&cli, Path::new(&space_path), &store_path)
-        .await?;
+        .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            if let Ok(snapshot) = access_state
+                .snapshot(&cli, Path::new(&space_path), &store_path)
+                .await
+            {
+                emit_repository_access_changed(&app, &snapshot.repository_id);
+            }
+            return Err(error);
+        }
+    };
+    emit_repository_access_changed(&app, &snapshot.repository_id);
     if matches!(
         snapshot.status,
         RepositoryAccessStatus::Local | RepositoryAccessStatus::Writable
@@ -682,6 +707,18 @@ pub async fn repository_access_verify(
         }
     }
     Ok(snapshot)
+}
+
+pub(crate) fn emit_repository_access_changed(app: &AppHandle, repository_id: &str) {
+    if let Err(error) = app.emit(
+        REPOSITORY_ACCESS_CHANGED_EVENT,
+        RepositoryAccessChangedPayload { repository_id },
+    ) {
+        tracing::warn!(
+            repository_id,
+            "failed to emit repository access invalidation: {error}"
+        );
+    }
 }
 
 pub async fn require_repository_mutation(

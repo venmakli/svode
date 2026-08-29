@@ -31,6 +31,25 @@ export interface SetGitRemoteInputDto extends Record<string, unknown> {
   spaceId?: string | null;
 }
 
+export type GitTrackedRemoteReconciliationStatusDto =
+  | "not_required"
+  | "updated"
+  | "pending_repository_access"
+  | "failed";
+
+export interface GitTrackedRemoteReconciliationDto {
+  status: GitTrackedRemoteReconciliationStatusDto;
+  repositoryId?: string;
+  accessStatus?: string;
+  accessReason?: string;
+  message?: string;
+}
+
+export interface GitSetRemoteResultDto {
+  localRemoteUpdated: boolean;
+  trackedReconciliation: GitTrackedRemoteReconciliationDto;
+}
+
 export interface GitCommittedEventDto {
   spacePath: string;
 }
@@ -153,8 +172,10 @@ export function getGitRemote(spacePath: string): Promise<string | null> {
   return invokeCommand<string | null>("git_get_remote", { spacePath });
 }
 
-export function setGitRemote(input: SetGitRemoteInputDto): Promise<void> {
-  return invokeCommand<void>("git_set_remote", input);
+export function setGitRemote(
+  input: SetGitRemoteInputDto,
+): Promise<GitSetRemoteResultDto> {
+  return invokeCommand<GitSetRemoteResultDto>("git_set_remote", input);
 }
 
 export function getSpaceGitType(

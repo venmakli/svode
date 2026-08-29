@@ -1,7 +1,9 @@
 import { ChevronRight, Plus } from "lucide-react";
+import type { ReactNode } from "react";
 import * as m from "@/paraglide/messages.js";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { RepositoryAccessBadge } from "@/features/git";
 import type { SpaceGitType, SpaceInfo, SpaceStatus } from "@/features/space";
 import type { ProjectSpaceGitTypeMap } from "../hooks/use-project-space-git-types";
 
@@ -18,6 +20,7 @@ interface ProjectSpacesSectionProps {
 }
 
 interface ProjectSpacePolicyListProps {
+  projectPath: string;
   spaces: SpaceInfo[];
   gitTypes: ProjectSpaceGitTypeMap;
   section: Exclude<ProjectSpaceDetailSection, "general">;
@@ -71,6 +74,7 @@ export function ProjectSpacesSection({
 }
 
 export function ProjectSpacePolicyList({
+  projectPath,
   spaces,
   gitTypes,
   section,
@@ -106,6 +110,16 @@ export function ProjectSpacePolicyList({
               disabled={space.status !== "ready"}
               actionLabel={actionLabel}
               onClick={() => onOpenSpaceDetail(space.id, section)}
+              repositoryAccess={
+                section === "git" && space.status === "ready" ? (
+                  <RepositoryAccessBadge
+                    ownerKind={gitType === "inline" ? "inline" : "independent"}
+                    repositoryPath={
+                      gitType === "inline" ? projectPath : space.path
+                    }
+                  />
+                ) : null
+              }
             />
           );
         })}
@@ -120,12 +134,14 @@ function SpaceSummaryRow({
   disabled,
   actionLabel,
   onClick,
+  repositoryAccess,
 }: {
   space: SpaceInfo;
   gitType?: SpaceGitType | null;
   disabled?: boolean;
   actionLabel?: string;
   onClick?: () => void;
+  repositoryAccess?: ReactNode;
 }) {
   const gitTypeLabel = spaceGitTypeLabel(gitType);
   const statusLabel = spaceStatusLabel(space.status);
@@ -138,6 +154,7 @@ function SpaceSummaryRow({
             <span className="truncate text-sm font-medium">{space.name}</span>
             {statusLabel && <Badge variant="outline">{statusLabel}</Badge>}
             {gitTypeLabel && <Badge variant="secondary">{gitTypeLabel}</Badge>}
+            {repositoryAccess}
           </div>
           <p className="truncate text-xs text-muted-foreground">{space.path}</p>
         </div>

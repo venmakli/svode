@@ -227,6 +227,17 @@ export function SpaceSettingsDialog({
     setGitDetail("identity");
   }
 
+  function handleOpenRepositoryRemote() {
+    if (gitSettings.gitType === "inline") {
+      setGitDetail(null);
+      setDetailSpaceId(null);
+      setSection("git");
+    }
+    window.setTimeout(() => {
+      document.getElementById("ws-git-remote")?.focus();
+    }, 0);
+  }
+
   function handleCancelIdentityDetail() {
     identitySettings.handleCancelIdentityEdit();
     setGitDetail(null);
@@ -415,6 +426,24 @@ export function SpaceSettingsDialog({
                 <div className="flex min-w-0 flex-col gap-6">
                   <SpaceGitSection
                     gitType={gitSettings.gitType}
+                    repositoryAccessOwnerKind={
+                      isRoot
+                        ? "project"
+                        : (gitSettings.gitType ?? "independent")
+                    }
+                    repositoryPath={
+                      gitSettings.gitType === "inline" ? projectPath : spacePath
+                    }
+                    repositoryDisplayPath={
+                      gitSettings.gitType === "inline" ? projectPath : spacePath
+                    }
+                    repositoryOwnerName={
+                      gitSettings.gitType === "inline"
+                        ? projectName
+                        : isRoot
+                          ? projectName
+                          : (detailSpace?.name ?? projectName)
+                    }
                     activeRootName={activeRootName}
                     scopeName={
                       isRoot ? projectName : (detailSpace?.name ?? projectName)
@@ -432,6 +461,7 @@ export function SpaceSettingsDialog({
                     identityFormError={identitySettings.identityFormError}
                     savingIdentity={identitySettings.savingIdentity}
                     canResetIdentity={identitySettings.canResetIdentity}
+                    remoteUpdateResult={gitSettings.remoteUpdateResult}
                     fanoutEnabled={identitySettings.fanoutEnabled}
                     fanoutPreview={identitySettings.fanoutPreview}
                     fanoutSelected={identitySettings.fanoutSelected}
@@ -454,9 +484,11 @@ export function SpaceSettingsDialog({
                     onResetIdentity={identitySettings.handleResetIdentity}
                     onFanoutEnabledChange={identitySettings.setFanoutEnabled}
                     onFanoutSelectedChange={identitySettings.setFanoutSelected}
+                    onEditRemote={handleOpenRepositoryRemote}
                   />
                   {isRoot && (
                     <ProjectSpacePolicyList
+                      projectPath={projectPath}
                       spaces={spaces}
                       gitTypes={projectSpaceGitTypes}
                       section="git"
@@ -502,6 +534,7 @@ export function SpaceSettingsDialog({
                   />
                   {isRoot && (
                     <ProjectSpacePolicyList
+                      projectPath={projectPath}
                       spaces={spaces}
                       gitTypes={projectSpaceGitTypes}
                       section="storage"

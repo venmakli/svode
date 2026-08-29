@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::autocommit::{AutocommitService, SystemCommitKind};
@@ -50,6 +51,101 @@ async fn invalidate_actor_space(app: &AppHandle, space: &Path) {
             space = %space.display(),
             "failed to invalidate actor catalog after successful Git operation: {error}"
         );
+    }
+}
+
+async fn invalidate_repository_access(
+    app: &AppHandle,
+    access_state: &super::access::RepositoryAccessState,
+    cli: &GitCli,
+    path: &Path,
+) {
+    match access_state.invalidate(cli, path).await {
+        Ok(repository_id) => {
+            super::access::emit_repository_access_changed(app, &repository_id);
+        }
+        Err(error) => {
+            tracing::warn!(
+                repository = %path.display(),
+                "failed to invalidate repository access: {error}"
+            );
+        }
+    }
+}
+
+fn publish_repository_access(app: &AppHandle, snapshot: &super::access::RepositoryAccessSnapshot) {
+    super::access::emit_repository_access_changed(app, &snapshot.repository_id);
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GitTrackedRemoteReconciliationStatus {
+    NotRequired,
+    Updated,
+    PendingRepositoryAccess,
+    Failed,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitTrackedRemoteReconciliation {
+    status: GitTrackedRemoteReconciliationStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repository_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    access_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    access_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitSetRemoteResult {
+    local_remote_updated: bool,
+    tracked_reconciliation: GitTrackedRemoteReconciliation,
+}
+
+impl GitTrackedRemoteReconciliation {
+    fn not_required() -> Self {
+        Self {
+            status: GitTrackedRemoteReconciliationStatus::NotRequired,
+            repository_id: None,
+            access_status: None,
+            access_reason: None,
+            message: None,
+        }
+    }
+
+    fn updated() -> Self {
+        Self {
+            status: GitTrackedRemoteReconciliationStatus::Updated,
+            ..Self::not_required()
+        }
+    }
+
+    fn from_error(error: AppError) -> Self {
+        match error {
+            AppError::RepositoryAccessDenied {
+                repository_id,
+                status,
+                reason,
+            } => Self {
+                status: GitTrackedRemoteReconciliationStatus::PendingRepositoryAccess,
+                repository_id: Some(repository_id),
+                access_status: Some(status),
+                access_reason: Some(reason),
+                message: None,
+            },
+            error => Self {
+                status: GitTrackedRemoteReconciliationStatus::Failed,
+                repository_id: None,
+                access_status: None,
+                access_reason: None,
+                message: Some(error.to_string()),
+            },
+        }
     }
 }
 
@@ -261,7 +357,7 @@ pub async fn git_set_remote(
     url: String,
     project_path: Option<String>,
     space_id: Option<String>,
-) -> Result<(), AppError> {
+) -> Result<GitSetRemoteResult, AppError> {
     let path = PathBuf::from(&space_path);
     let reconcile_target = project_path
         .as_deref()
@@ -269,54 +365,39 @@ pub async fn git_set_remote(
         .zip(space_id.as_deref())
         .map(|(project, space_id)| (PathBuf::from(project), space_id.to_string()));
 
-    // Remote configuration is an access-recovery path and is intentionally
-    // always available. Only the tracked project config written by reconcile
-    // participates in the repository mutation gate, and it must be authorized
-    // before `.git/config` changes.
-    if let Some((project, _)) = &reconcile_target {
-        super::access::require_repository_mutation_paths(
+    let cli = require_cli(&state)?;
+    let lock = state.get_lock(&path).await;
+    let _guard = lock.lock().await;
+    super::ops::set_remote(&cli, &path, &url).await?;
+    drop(_guard);
+    invalidate_repository_access(&app, &access_state, &cli, &path).await;
+
+    let tracked_reconciliation = if let Some((project, space_id)) = &reconcile_target {
+        match super::access::require_repository_mutation_paths(
             &app,
             vec![project.join(".svode").join("config.json")],
         )
-        .await?;
-    }
-
-    let cli = require_cli(&state)?;
-    let lock = state.get_lock(&path).await;
-    let guard = lock.lock().await;
-    let previous_remote = super::ops::get_remote(&cli, &path).await?;
-    super::ops::set_remote(&cli, &path, &url).await?;
-
-    let reconcile_error = reconcile_target.as_ref().and_then(|(project, space_id)| {
-        crate::space::project::reconcile_space_url(project, space_id, Some(&url)).err()
-    });
-    if let Some(error) = reconcile_error {
-        let rollback = match previous_remote.as_deref() {
-            Some(previous) => super::ops::set_remote(&cli, &path, previous).await,
-            None => match cli.exec(&path, &["remote", "remove", "origin"]).await {
-                Ok(output) if output.exit_code == 0 => Ok(()),
-                Ok(output) => Err(AppError::GitCommandFailed(format!(
-                    "git remote rollback failed: {}",
-                    output.stderr
-                ))),
-                Err(error) => Err(error),
-            },
-        };
-        drop(guard);
-        access_state.invalidate(&cli, &path).await?;
-        return match rollback {
-            Ok(()) => Err(error),
-            Err(rollback_error) => Err(AppError::General(format!(
-                "space URL reconcile failed: {error}; remote rollback failed: {rollback_error}"
-            ))),
-        };
-    }
-    drop(guard);
-    access_state.invalidate(&cli, &path).await?;
+        .await
+        {
+            Ok(_) => {
+                match crate::space::project::reconcile_space_url(project, space_id, Some(&url)) {
+                    Ok(()) => GitTrackedRemoteReconciliation::updated(),
+                    Err(error) => GitTrackedRemoteReconciliation::from_error(error),
+                }
+            }
+            Err(error) => GitTrackedRemoteReconciliation::from_error(error),
+        }
+    } else {
+        GitTrackedRemoteReconciliation::not_required()
+    };
 
     // Commit the config change (reconcile_space_url may have updated parent
     // .svode/config.json). Routes per space git type.
-    if let Some(proj_path) = project_path {
+    if matches!(
+        tracked_reconciliation.status,
+        GitTrackedRemoteReconciliationStatus::Updated
+    ) && let Some(proj_path) = project_path
+    {
         if !proj_path.is_empty() {
             if let Err(e) = autocommit
                 .commit_system_now(
@@ -331,7 +412,10 @@ pub async fn git_set_remote(
         }
     }
 
-    Ok(())
+    Ok(GitSetRemoteResult {
+        local_remote_updated: true,
+        tracked_reconciliation,
+    })
 }
 
 #[tauri::command]
@@ -346,15 +430,18 @@ pub async fn git_push(
     let _guard = lock.lock().await;
     let cli = state.cli()?;
     if let Err(error) = super::ops::push(cli, &path).await {
-        let _ = access_state.invalidate(cli, &path).await;
+        invalidate_repository_access(&app, &access_state, cli, &path).await;
         return Err(error);
     }
     let store_path = super::access::access_store_path(&app)?;
-    if let Err(error) = access_state
+    match access_state
         .record_writable_evidence(cli, &path, &store_path)
         .await
     {
-        tracing::warn!("failed to record repository write evidence after push: {error}");
+        Ok(snapshot) => publish_repository_access(&app, &snapshot),
+        Err(error) => {
+            tracing::warn!("failed to record repository write evidence after push: {error}");
+        }
     }
     super::ops::status(cli, &path).await
 }
@@ -374,13 +461,17 @@ pub async fn git_status(
 pub async fn git_fetch_status(
     app: AppHandle,
     state: State<'_, GitState>,
+    access_state: State<'_, super::access::RepositoryAccessState>,
     space_path: String,
 ) -> Result<GitStatus, AppError> {
     let path = PathBuf::from(&space_path);
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
     let cli = state.cli()?;
-    super::ops::fetch_remote(cli, &path).await?;
+    if let Err(error) = super::ops::fetch_remote(cli, &path).await {
+        invalidate_repository_access(&app, &access_state, cli, &path).await;
+        return Err(error);
+    }
     invalidate_actor_space(&app, &path).await;
     super::ops::status_with_remote_counts(cli, &path).await
 }
@@ -518,12 +609,12 @@ pub async fn git_sync(
     let result = match super::sync::sync(cli, &path).await {
         Ok(result) => result,
         Err(error) => {
-            let _ = access_state.invalidate(cli, &path).await;
+            invalidate_repository_access(&app, &access_state, cli, &path).await;
             return Err(error);
         }
     };
     if matches!(result, SyncResult::AuthRequired { .. }) {
-        let _ = access_state.invalidate(cli, &path).await;
+        invalidate_repository_access(&app, &access_state, cli, &path).await;
     }
 
     // On a successful pull (Success means pull+push completed), refresh the
@@ -532,11 +623,14 @@ pub async fn git_sync(
     // git-sync flow — emit AFTER reindex so consumers see a fresh index.
     if matches!(result, SyncResult::Success) {
         let store_path = super::access::access_store_path(&app)?;
-        if let Err(error) = access_state
+        match access_state
             .record_writable_evidence(cli, &path, &store_path)
             .await
         {
-            tracing::warn!("failed to record repository write evidence after sync: {error}");
+            Ok(snapshot) => publish_repository_access(&app, &snapshot),
+            Err(error) => {
+                tracing::warn!("failed to record repository write evidence after sync: {error}");
+            }
         }
         let key = index_state
             .key_for_space_dir(&path)
@@ -618,6 +712,7 @@ pub async fn git_conflict_files(
 pub async fn git_resolve_continue(
     app: AppHandle,
     state: State<'_, GitState>,
+    access_state: State<'_, super::access::RepositoryAccessState>,
     index_state: State<'_, IndexState>,
     space_path: String,
 ) -> Result<SyncResult, AppError> {
@@ -625,12 +720,31 @@ pub async fn git_resolve_continue(
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
     let cli = state.cli()?;
-    let result = super::sync::resolve_and_continue(cli, &path).await?;
+    let result = match super::sync::resolve_and_continue(cli, &path).await {
+        Ok(result) => result,
+        Err(error) => {
+            invalidate_repository_access(&app, &access_state, cli, &path).await;
+            return Err(error);
+        }
+    };
+    if matches!(result, SyncResult::AuthRequired { .. }) {
+        invalidate_repository_access(&app, &access_state, cli, &path).await;
+    }
 
     // After conflict resolution + merge commit + push, the space tree
     // has changed; refresh the index for the diff against the previous HEAD,
     // then emit `space:synced`.
     if matches!(result, SyncResult::Success) {
+        let store_path = super::access::access_store_path(&app)?;
+        match access_state
+            .record_writable_evidence(cli, &path, &store_path)
+            .await
+        {
+            Ok(snapshot) => publish_repository_access(&app, &snapshot),
+            Err(error) => tracing::warn!(
+                "failed to record repository write evidence after conflict resolution: {error}"
+            ),
+        }
         let key = index_state
             .key_for_space_dir(&path)
             .await
@@ -811,15 +925,18 @@ pub async fn git_publish(
     let _guard = lock.lock().await;
     let cli = state.cli()?;
     if let Err(error) = super::ops::push_set_upstream(cli, &path).await {
-        let _ = access_state.invalidate(cli, &path).await;
+        invalidate_repository_access(&app, &access_state, cli, &path).await;
         return Err(error);
     }
     let store_path = super::access::access_store_path(&app)?;
-    if let Err(error) = access_state
+    match access_state
         .record_writable_evidence(cli, &path, &store_path)
         .await
     {
-        tracing::warn!("failed to record repository write evidence after publish: {error}");
+        Ok(snapshot) => publish_repository_access(&app, &snapshot),
+        Err(error) => {
+            tracing::warn!("failed to record repository write evidence after publish: {error}");
+        }
     }
     super::ops::status(cli, &path).await
 }
@@ -875,4 +992,25 @@ pub async fn git_set_user_policy(
     crate::space::config::write_git_user_policy(&config_target, &policy)?;
     drop_legacy_shared_git_policy(&config_target);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tracked_remote_reconciliation_preserves_typed_parent_denial() {
+        let result = GitTrackedRemoteReconciliation::from_error(AppError::RepositoryAccessDenied {
+            repository_id: "repo-parent".to_string(),
+            status: "unknown".to_string(),
+            reason: "mutation_plan_changed".to_string(),
+        });
+        let value = serde_json::to_value(result).unwrap();
+
+        assert_eq!(value["status"], "pending_repository_access");
+        assert_eq!(value["repositoryId"], "repo-parent");
+        assert_eq!(value["accessStatus"], "unknown");
+        assert_eq!(value["accessReason"], "mutation_plan_changed");
+        assert!(value.get("message").is_none());
+    }
 }

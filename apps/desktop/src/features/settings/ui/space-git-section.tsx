@@ -1,17 +1,28 @@
+import { TriangleAlert } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import {
+  RepositoryAccessSummary,
+  type RepositoryAccessOwnerKind,
+} from "@/features/git";
 import type {
   FanoutPreviewEntry,
   RepoIdentityResult,
 } from "@/features/identity";
 import type { SpaceGitType } from "@/features/space";
+import type { GitSetRemoteResult } from "../api";
 import { IdentitySection } from "./identity-section";
 
 interface SpaceGitSectionProps {
   gitType: SpaceGitType | null;
+  repositoryAccessOwnerKind: RepositoryAccessOwnerKind;
+  repositoryPath: string;
+  repositoryDisplayPath: string;
+  repositoryOwnerName: string;
   activeRootName: string | null;
   scopeName: string;
   isRoot: boolean;
@@ -27,6 +38,7 @@ interface SpaceGitSectionProps {
   identityFormError: string | null;
   savingIdentity: boolean;
   canResetIdentity: boolean;
+  remoteUpdateResult: GitSetRemoteResult | null;
   fanoutEnabled: boolean;
   fanoutPreview: FanoutPreviewEntry[];
   fanoutSelected: Record<string, boolean>;
@@ -43,10 +55,15 @@ interface SpaceGitSectionProps {
   onResetIdentity: () => void;
   onFanoutEnabledChange: (value: boolean) => void;
   onFanoutSelectedChange: (value: Record<string, boolean>) => void;
+  onEditRemote: () => void;
 }
 
 export function SpaceGitSection({
   gitType,
+  repositoryAccessOwnerKind,
+  repositoryPath,
+  repositoryDisplayPath,
+  repositoryOwnerName,
   activeRootName,
   scopeName,
   isRoot,
@@ -62,6 +79,7 @@ export function SpaceGitSection({
   identityFormError,
   savingIdentity,
   canResetIdentity,
+  remoteUpdateResult,
   fanoutEnabled,
   fanoutPreview,
   fanoutSelected,
@@ -78,9 +96,18 @@ export function SpaceGitSection({
   onResetIdentity,
   onFanoutEnabledChange,
   onFanoutSelectedChange,
+  onEditRemote,
 }: SpaceGitSectionProps) {
   return (
     <div className="flex w-full min-w-0 max-w-2xl flex-col gap-6">
+      <RepositoryAccessSummary
+        displayPath={repositoryDisplayPath}
+        ownerKind={repositoryAccessOwnerKind}
+        ownerName={repositoryOwnerName}
+        remoteUrl={remoteUrl}
+        repositoryPath={repositoryPath}
+        onEditRemote={onEditRemote}
+      />
       {gitType === "inline" && (
         <p className="text-sm text-muted-foreground">
           {m.git_type_inline_note({ name: activeRootName ?? "" })}
@@ -101,7 +128,7 @@ export function SpaceGitSection({
           )}
         </>
       )}
-      {(isRoot || gitType === "independent" || gitType === null) && (
+      {(isRoot || gitType !== "inline") && (
         <>
           <div className="flex flex-col gap-2">
             <Label htmlFor="ws-git-remote">{m.git_remote_label()}</Label>
@@ -119,6 +146,33 @@ export function SpaceGitSection({
               placeholder={m.git_remote_placeholder()}
             />
           </div>
+          {remoteUpdateResult?.trackedReconciliation.status ===
+            "pending_repository_access" && (
+            <Alert>
+              <TriangleAlert />
+              <AlertTitle>
+                {m.git_remote_reconciliation_pending_title()}
+              </AlertTitle>
+              <AlertDescription>
+                {m.git_remote_reconciliation_pending_description()}
+              </AlertDescription>
+            </Alert>
+          )}
+          {remoteUpdateResult?.trackedReconciliation.status === "failed" && (
+            <Alert variant="destructive">
+              <TriangleAlert />
+              <AlertTitle>
+                {m.git_remote_reconciliation_failed_title()}
+              </AlertTitle>
+              <AlertDescription>
+                {m.git_remote_reconciliation_failed_description({
+                  error:
+                    remoteUpdateResult.trackedReconciliation.message ??
+                    m.toast_error(),
+                })}
+              </AlertDescription>
+            </Alert>
+          )}
           <div className="flex flex-col gap-2">
             <Label>{m.git_branch_label()}</Label>
             <p className="text-sm text-muted-foreground">{branch ?? "—"}</p>

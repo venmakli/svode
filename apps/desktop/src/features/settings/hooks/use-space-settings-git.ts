@@ -12,6 +12,7 @@ import {
   listenGitCommitted,
   setSettingsGitUserPolicy,
   setGitRemote,
+  type GitSetRemoteResult,
 } from "../api";
 
 interface UseSpaceSettingsGitOptions {
@@ -38,11 +39,14 @@ export function useSpaceSettingsGit({
   const [autoCommitStructural, setAutoCommitStructural] = useState(false);
   const [autoCommitSystem, setAutoCommitSystem] = useState(false);
   const [pendingRemote, setPendingRemote] = useState<string | null>(null);
+  const [remoteUpdateResult, setRemoteUpdateResult] =
+    useState<GitSetRemoteResult | null>(null);
   const gitPolicyRef = useRef<GitUserPolicy>({
     autoSync: false,
     autoCommitStructural: false,
     autoCommitSystem: false,
   });
+  const gitInfoGenerationRef = useRef(0);
 
   const applyGitPolicyState = useCallback((policy: GitUserPolicy) => {
     gitPolicyRef.current = policy;
@@ -66,50 +70,47 @@ export function useSpaceSettingsGit({
 
   const loadGitInfo = useCallback(async () => {
     if (!spacePath) return;
+    const generation = ++gitInfoGenerationRef.current;
+    setGitType(null);
     setRemoteUrl("");
     setSavedRemoteUrl("");
     setBranch(null);
     setSubmoduleUrl(null);
+    setRemoteUpdateResult(null);
+
+    const remotePromise = getSettingsGitRemote(spacePath).catch(() => null);
+    const statusPromise = getSettingsGitStatus(spacePath).catch(() => null);
+    let nextGitType: SpaceGitType | null = null;
+    let nextSubmoduleUrl: string | null = null;
 
     if (!isRoot && activeRootPath) {
       try {
-        const type = await getSpaceGitType({
+        nextGitType = await getSpaceGitType({
           projectPath: activeRootPath,
           spacePath,
         });
-        setGitType(type);
-        if (type === "submodule") {
+        if (nextGitType === "submodule") {
           const folder = spacePath.split("/").pop() ?? "";
-          const url = await getGitSubmoduleUrl({
+          nextSubmoduleUrl = await getGitSubmoduleUrl({
             projectPath: activeRootPath,
             spaceFolder: folder,
           });
-          setSubmoduleUrl(url);
         }
       } catch {
-        setGitType(null);
+        nextGitType = null;
       }
-    } else {
-      setGitType(null);
     }
 
-    try {
-      const remote = await getSettingsGitRemote(spacePath);
-      setRemoteUrl(remote ?? "");
-      setSavedRemoteUrl(remote ?? "");
-    } catch {
-      setRemoteUrl("");
-      setSavedRemoteUrl("");
-    }
+    const [remote, status] = await Promise.all([remotePromise, statusPromise]);
+    if (gitInfoGenerationRef.current !== generation) return;
 
-    try {
-      const status = await getSettingsGitStatus(spacePath);
-      setBranch(
-        status.branch && status.branch !== "HEAD" ? status.branch : null,
-      );
-    } catch {
-      setBranch(null);
-    }
+    setGitType(nextGitType);
+    setSubmoduleUrl(nextSubmoduleUrl);
+    setRemoteUrl(remote ?? "");
+    setSavedRemoteUrl(remote ?? "");
+    setBranch(
+      status?.branch && status.branch !== "HEAD" ? status.branch : null,
+    );
   }, [spacePath, isRoot, activeRootPath]);
 
   useEffect(() => {
@@ -118,7 +119,10 @@ export function useSpaceSettingsGit({
       void loadGitConfig();
       void loadGitInfo();
     }, 0);
-    return () => window.clearTimeout(preload);
+    return () => {
+      window.clearTimeout(preload);
+      gitInfoGenerationRef.current += 1;
+    };
   }, [open, spacePath, loadGitConfig, loadGitInfo]);
 
   useEffect(() => {
@@ -142,7 +146,7 @@ export function useSpaceSettingsGit({
   async function applyRemote(newUrl: string) {
     try {
       const space = spaces.find((candidate) => candidate.path === spacePath);
-      await setGitRemote({
+      const result = await setGitRemote({
         spacePath,
         url: newUrl,
         projectPath: activeRootPath ?? null,
@@ -150,6 +154,7 @@ export function useSpaceSettingsGit({
       });
       setSavedRemoteUrl(newUrl);
       setRemoteUrl(newUrl);
+      setRemoteUpdateResult(result);
       toast.success(m.toast_settings_saved());
     } catch (err) {
       console.error("Failed to set remote:", err);
@@ -166,6 +171,11 @@ export function useSpaceSettingsGit({
       return;
     }
     setPendingRemote(next);
+  }
+
+  function handleRemoteChange(value: string) {
+    setRemoteUpdateResult(null);
+    setRemoteUrl(value);
   }
 
   async function handleAutoSyncChange(value: boolean) {
@@ -248,7 +258,8 @@ export function useSpaceSettingsGit({
     autoCommitStructural,
     autoCommitSystem,
     pendingRemote,
-    setRemoteUrl,
+    remoteUpdateResult,
+    setRemoteUrl: handleRemoteChange,
     handleRemoteBlur,
     handleAutoSyncChange,
     handleAutoCommitStructuralChange,
