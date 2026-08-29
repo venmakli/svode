@@ -187,12 +187,17 @@ if (!isolatedProcess) {
       const access = row?.querySelector<HTMLElement>(
         "[data-space-row-repository-access]",
       );
+      const metadata = row?.querySelector<HTMLElement>(
+        "[data-space-row-metadata]",
+      );
       const action = row?.querySelector<HTMLElement>("[data-space-row-action]");
       expect(row?.className.includes("grid-cols-[minmax(0,1fr)_auto]")).toBe(
         true,
       );
       expect(identity?.contains(access ?? null)).toBe(false);
+      expect(metadata?.contains(access ?? null)).toBe(true);
       expect(access === null || action === null).toBe(false);
+      expect(action?.textContent?.trim()).toBe("");
       expect(row?.getAttribute("aria-label")?.includes(rowPath)).toBe(true);
       expect(
         identity

@@ -109,6 +109,7 @@ export function ProjectSpacePolicyList({
               gitType={gitType}
               disabled={space.status !== "ready"}
               actionLabel={actionLabel}
+              compactAction
               onClick={() => onOpenSpaceDetail(space.id, section)}
               repositoryAccess={
                 section === "git" && space.status === "ready" ? (
@@ -133,6 +134,7 @@ function SpaceSummaryRow({
   gitType,
   disabled,
   actionLabel,
+  compactAction = false,
   onClick,
   repositoryAccess,
 }: {
@@ -140,6 +142,7 @@ function SpaceSummaryRow({
   gitType?: SpaceGitType | null;
   disabled?: boolean;
   actionLabel?: string;
+  compactAction?: boolean;
   onClick?: () => void;
   repositoryAccess?: ReactNode;
 }) {
@@ -149,18 +152,13 @@ function SpaceSummaryRow({
     <div className="flex min-w-0 items-start gap-2" data-space-row-content>
       <span className="shrink-0 text-base leading-none">{space.icon}</span>
       <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <div
-          className="flex min-w-0 flex-wrap items-center gap-2"
-          data-space-row-identity
-        >
+        <div className="flex min-w-0 items-center" data-space-row-identity>
           <span
-            className="min-w-0 flex-1 basis-40 break-words text-sm font-medium"
+            className="min-w-0 break-words text-sm font-medium"
             title={space.name}
           >
             {space.name}
           </span>
-          {statusLabel && <Badge variant="outline">{statusLabel}</Badge>}
-          {gitTypeLabel && <Badge variant="secondary">{gitTypeLabel}</Badge>}
         </div>
         <p
           className="truncate text-xs text-muted-foreground"
@@ -168,12 +166,18 @@ function SpaceSummaryRow({
         >
           {space.path}
         </p>
-        {repositoryAccess && (
+        {(statusLabel || gitTypeLabel || repositoryAccess) && (
           <div
-            className="mt-1 flex min-w-0 flex-wrap"
-            data-space-row-repository-access
+            className="mt-1 flex min-w-0 flex-wrap items-center gap-2"
+            data-space-row-metadata
           >
-            {repositoryAccess}
+            {statusLabel && <Badge variant="outline">{statusLabel}</Badge>}
+            {gitTypeLabel && <Badge variant="secondary">{gitTypeLabel}</Badge>}
+            {repositoryAccess && (
+              <span className="flex min-w-0" data-space-row-repository-access>
+                {repositoryAccess}
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -200,7 +204,7 @@ function SpaceSummaryRow({
             className="flex shrink-0 items-center gap-1 whitespace-nowrap text-xs font-medium text-muted-foreground sm:justify-self-end"
             data-space-row-action
           >
-            {actionLabel}
+            {!compactAction && actionLabel}
             <ChevronRight className="size-3" />
           </span>
         )}
