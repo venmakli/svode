@@ -56,6 +56,8 @@ test("same-owner create and edit intents continue without an unrelated rerender"
       await nextTurn();
     });
     expect(continued).toEqual([]);
+    expect(textOf(dom, "[data-access-requesting]")).toBe("requesting");
+    expect(textOf(dom, "[data-access-recovery-open]")).toBe("closed");
 
     await act(async () => {
       access.resolve(localAccessSnapshot());
@@ -63,6 +65,7 @@ test("same-owner create and edit intents continue without an unrelated rerender"
       await nextTurn();
     });
     expect(continued).toEqual(["add-agent"]);
+    expect(textOf(dom, "[data-access-requesting]")).toBe("idle");
 
     await act(async () => {
       dom.window.document
@@ -215,6 +218,12 @@ function AccessHarness({ onContinue }: { onContinue(kind: string): void }) {
           })
         }
       />
+      <span data-access-requesting>
+        {coordinator.requesting ? "requesting" : "idle"}
+      </span>
+      <span data-access-recovery-open>
+        {coordinator.recovery.open ? "open" : "closed"}
+      </span>
     </>
   );
 }
@@ -340,6 +349,10 @@ function createDom() {
 
 function nextTurn() {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function textOf(dom: JSDOM, selector: string) {
+  return dom.window.document.querySelector(selector)?.textContent ?? "";
 }
 
 function installDomGlobals(dom: JSDOM) {

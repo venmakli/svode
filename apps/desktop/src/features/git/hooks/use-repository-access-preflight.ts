@@ -74,6 +74,7 @@ export function useRepositoryAccessPreflight() {
     ({ access }) => access.verifying || access.snapshot?.status === "checking",
   );
   const busy = acting || pending?.phase === "loading" || checking;
+  const open = pending?.phase === "ready";
 
   useEffect(() => {
     if (retainedPaths.length === 0) return;
@@ -291,7 +292,7 @@ export function useRepositoryAccessPreflight() {
       blockers,
       busy,
       close,
-      open: pending !== null,
+      open,
       openPrimarySettings,
       pending,
       primaryActionLabel: readyToRetry
@@ -312,6 +313,7 @@ export function useRepositoryAccessPreflight() {
       blockers,
       busy,
       close,
+      open,
       openPrimarySettings,
       pending,
       primaryBlocker,

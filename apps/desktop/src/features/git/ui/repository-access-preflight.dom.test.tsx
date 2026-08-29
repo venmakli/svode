@@ -9,6 +9,40 @@ import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 let useRepositoryAccessPreflight: typeof import("../hooks/use-repository-access-preflight").useRepositoryAccessPreflight;
 let RepositoryAccessInlineRecovery: typeof import("./repository-access-preflight").RepositoryAccessInlineRecovery;
 
+test("automatic local reread stays hidden until a blocker is confirmed", async () => {
+  let finishLoad: ((value: ReturnType<typeof snapshot>) => void) | undefined;
+  const harness = await renderHarness({
+    load: () =>
+      new Promise((resolve) => {
+        finishLoad = resolve;
+      }),
+    paths: new Map(),
+    verify: () => snapshot("repo-normal", "writable"),
+  });
+
+  try {
+    await click(harness.dom, "[data-request-normal]", false);
+    expect(textOf(harness.dom, "[data-pending]")).toBe("pending");
+    expect(textOf(harness.dom, "[data-open]")).toBe("closed");
+    expect(
+      harness.dom.window.document.querySelector(
+        "[data-repository-access-inline-recovery]",
+      ),
+    ).toBeNull();
+    expect(textOf(harness.dom, "[data-continued]")).toBe("0");
+
+    await act(async () => {
+      finishLoad?.(snapshot("repo-normal", "local"));
+      await nextTurn();
+    });
+    expect(textOf(harness.dom, "[data-pending]")).toBe("idle");
+    expect(textOf(harness.dom, "[data-open]")).toBe("closed");
+    expect(textOf(harness.dom, "[data-continued]")).toBe("1");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("single-target preflight stays silent for normal access and continues once after explicit verification", async () => {
   let finishVerify: ((value: ReturnType<typeof snapshot>) => void) | undefined;
   const harness = await renderHarness({
@@ -278,6 +312,7 @@ function RecoveryHarness() {
       <button data-run-primary onClick={recovery.runPrimaryAction} />
       <button data-close onClick={recovery.close} />
       <span data-open>{recovery.open ? "open" : "closed"}</span>
+      <span data-pending>{recovery.pending ? "pending" : "idle"}</span>
       <span data-blocker-count>{recovery.blockers.length}</span>
       <span data-ready-retry>
         {recovery.readyToRetry ? "ready" : "blocked"}
@@ -290,9 +325,13 @@ function RecoveryHarness() {
 }
 
 async function renderHarness({
+  load,
   paths,
   verify,
 }: {
+  load?(
+    path: string,
+  ): ReturnType<typeof snapshot> | Promise<ReturnType<typeof snapshot>>;
   paths: Map<string, ReturnType<typeof snapshot>>;
   verify(
     path: string,
@@ -306,6 +345,7 @@ async function renderHarness({
       if (command === "repository_access_get") {
         const path = String((args as Record<string, unknown>).spacePath);
         calls.push(`${command}:${path}`);
+        if (load) return load(path);
         return (
           paths.get(path) ??
           snapshot(`missing:${path}`, "unknown", "not_checked")

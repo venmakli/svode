@@ -95,7 +95,7 @@ export function useAgentActorAccessCoordinator({
     recoverFromBlock,
     recoverFromError,
     request,
-    requesting: recovery.open,
+    requesting: recovery.pending !== null,
   };
 }
 
