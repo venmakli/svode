@@ -113,7 +113,7 @@ export function ProjectSpacePolicyList({
               repositoryAccess={
                 section === "git" && space.status === "ready" ? (
                   <RepositoryAccessBadge
-                    ownerKind={gitType === "inline" ? "inline" : "independent"}
+                    ownerKind={gitType ?? "independent"}
                     repositoryPath={
                       gitType === "inline" ? projectPath : space.path
                     }
@@ -146,34 +146,60 @@ function SpaceSummaryRow({
   const gitTypeLabel = spaceGitTypeLabel(gitType);
   const statusLabel = spaceStatusLabel(space.status);
   const content = (
-    <>
-      <div className="flex min-w-0 flex-1 items-start gap-2">
-        <span className="text-base leading-none">{space.icon}</span>
-        <div className="flex min-w-0 flex-col gap-1">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-sm font-medium">{space.name}</span>
-            {statusLabel && <Badge variant="outline">{statusLabel}</Badge>}
-            {gitTypeLabel && <Badge variant="secondary">{gitTypeLabel}</Badge>}
+    <div className="flex min-w-0 items-start gap-2" data-space-row-content>
+      <span className="shrink-0 text-base leading-none">{space.icon}</span>
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <div
+          className="flex min-w-0 flex-wrap items-center gap-2"
+          data-space-row-identity
+        >
+          <span
+            className="min-w-0 flex-1 basis-40 break-words text-sm font-medium"
+            title={space.name}
+          >
+            {space.name}
+          </span>
+          {statusLabel && <Badge variant="outline">{statusLabel}</Badge>}
+          {gitTypeLabel && <Badge variant="secondary">{gitTypeLabel}</Badge>}
+        </div>
+        <p
+          className="truncate text-xs text-muted-foreground"
+          title={space.path}
+        >
+          {space.path}
+        </p>
+        {repositoryAccess && (
+          <div
+            className="mt-1 flex min-w-0 flex-wrap"
+            data-space-row-repository-access
+          >
             {repositoryAccess}
           </div>
-          <p className="truncate text-xs text-muted-foreground">{space.path}</p>
-        </div>
+        )}
       </div>
-    </>
+    </div>
   );
 
   if (onClick) {
     return (
       <button
         type="button"
-        className="flex w-full min-w-0 flex-col gap-3 rounded-md border p-3 text-left transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60 sm:flex-row sm:items-start sm:justify-between"
-        aria-label={actionLabel ? `${space.name}: ${actionLabel}` : space.name}
+        className="grid w-full min-w-0 grid-cols-1 gap-3 rounded-md border p-3 text-left transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+        aria-label={
+          actionLabel
+            ? `${space.name}, ${space.path}: ${actionLabel}`
+            : `${space.name}, ${space.path}`
+        }
+        data-space-summary-row
         disabled={disabled}
         onClick={onClick}
       >
         {content}
         {actionLabel && (
-          <span className="flex shrink-0 items-center gap-1 whitespace-nowrap text-xs font-medium text-muted-foreground">
+          <span
+            className="flex shrink-0 items-center gap-1 whitespace-nowrap text-xs font-medium text-muted-foreground sm:justify-self-end"
+            data-space-row-action
+          >
             {actionLabel}
             <ChevronRight className="size-3" />
           </span>
@@ -183,7 +209,7 @@ function SpaceSummaryRow({
   }
 
   return (
-    <div className="flex min-w-0 flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-start sm:justify-between">
+    <div className="grid min-w-0 grid-cols-1 gap-3 rounded-md border p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
       {content}
     </div>
   );

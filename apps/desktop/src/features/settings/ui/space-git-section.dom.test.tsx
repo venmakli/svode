@@ -10,6 +10,7 @@ import { getLocale, setLocale } from "@/paraglide/runtime.js";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
 import { SpaceGitSection } from "./space-git-section";
+import { ProjectSpacePolicyList } from "./space-settings-spaces-section";
 
 const isolatedProcess = process.env.SVODE_REPOSITORY_ACCESS_DOM_PROCESS === "1";
 
@@ -147,6 +148,64 @@ if (!isolatedProcess) {
         calls.filter((command) => command === "repository_access_get"),
       ).toEqual(["repository_access_get"]);
       expect(calls.includes("repository_access_verify")).toBe(false);
+
+      await setLocale("ru", { reload: false });
+      const rowPath =
+        "/Users/test/Projects/knowledge-base/spaces/очень-длинное-название-пространства";
+      await act(async () => {
+        root.render(
+          <ProjectSpacePolicyList
+            projectPath="/Users/test/Projects/knowledge-base"
+            spaces={[
+              {
+                id: "long-space",
+                name: "Очень длинное название пространства разработки",
+                icon: "👍",
+                description: "",
+                path: rowPath,
+                hasSpaces: false,
+                hasSchema: false,
+                lastOpened: null,
+                status: "ready",
+                lfsState: "n/a",
+              },
+            ]}
+            gitTypes={{ "long-space": "independent" }}
+            section="git"
+            onOpenSpaceDetail={() => undefined}
+          />,
+        );
+        await settle();
+      });
+
+      const row = dom.window.document.querySelector<HTMLElement>(
+        "[data-space-summary-row]",
+      );
+      const identity = row?.querySelector<HTMLElement>(
+        "[data-space-row-identity]",
+      );
+      const access = row?.querySelector<HTMLElement>(
+        "[data-space-row-repository-access]",
+      );
+      const action = row?.querySelector<HTMLElement>("[data-space-row-action]");
+      expect(row?.className.includes("grid-cols-[minmax(0,1fr)_auto]")).toBe(
+        true,
+      );
+      expect(identity?.contains(access ?? null)).toBe(false);
+      expect(access === null || action === null).toBe(false);
+      expect(row?.getAttribute("aria-label")?.includes(rowPath)).toBe(true);
+      expect(
+        identity
+          ?.querySelector<HTMLElement>(
+            `[title="Очень длинное название пространства разработки"]`,
+          )
+          ?.className.includes("break-words"),
+      ).toBe(true);
+      expect(
+        access
+          ?.querySelector<HTMLElement>("[data-repository-access-row-status]")
+          ?.className.includes("max-w-full"),
+      ).toBe(true);
     } finally {
       await act(async () => root.unmount());
       clearNativeMocks();

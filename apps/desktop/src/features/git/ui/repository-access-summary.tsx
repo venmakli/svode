@@ -193,6 +193,7 @@ export function RepositoryAccessBadge({
       : presentation.statusLabel;
   return (
     <Badge
+      className="max-w-full"
       variant={presentation.status === "error" ? "destructive" : "outline"}
       aria-label={label}
       data-repository-access-row-status={presentation.status}
