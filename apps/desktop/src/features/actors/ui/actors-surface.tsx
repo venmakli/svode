@@ -10,12 +10,16 @@ import {
   type SystemCollectionInstance,
   type SystemCollectionPresentationState,
 } from "@/features/collection/system";
-import { useRepositoryAccess } from "@/features/git";
+import {
+  RepositoryAccessPreflightDialog,
+  useRepositoryAccessPreflight,
+  type RepositoryAccessRequest,
+  type RepositoryAccessTarget,
+} from "@/features/git";
 import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
 import { useActorCatalog } from "../hooks/use-actor-catalog";
-import { useActorAccessPreflight } from "../hooks/use-actor-access-preflight";
 import { useActorMailmapSave } from "../hooks/use-actor-mailmap-save";
 import { useActorMutation } from "../hooks/use-actor-mutation";
 import { useAgentActorsController } from "../hooks/use-agent-actors-controller";
@@ -25,7 +29,6 @@ import type {
   AppliedActorMutationResult,
 } from "../model/identity-mutation";
 import type { ActorCatalogRow } from "../model/types";
-import { ActorAccessPreflightDialog } from "./actor-access-preflight-dialog";
 import { ActorMailmapSaveDialog } from "./actor-mailmap-save-dialog";
 import { ActorMutationDialog } from "./actor-mutation-dialog";
 import { showActorMutationOutcome } from "./actor-mutation-outcome";
@@ -37,9 +40,28 @@ import {
 import { createAgentActorsPresentation } from "./agent-actors-presentation";
 import { CatalogRetryButton } from "./catalog-retry-button";
 
-export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
+export function ActorsSurface({
+  owner,
+  repositoryOwnerName,
+  onOpenRepositorySettings,
+}: ScopeSurfaceRenderContext & {
+  repositoryOwnerName?: string;
+  onOpenRepositorySettings?: (repositoryPath: string) => void;
+}) {
   const { refresh, replaceSnapshot, state } = useActorCatalog(owner.spacePath);
-  const access = useRepositoryAccess(owner.spacePath);
+  const accessRecovery = useRepositoryAccessPreflight();
+  const repositoryTarget = useMemo<RepositoryAccessTarget>(
+    () => ({
+      displayName:
+        repositoryOwnerName ?? repositoryNameFromPath(owner.spacePath),
+      displayPath: owner.spacePath,
+      repositoryPath: owner.spacePath,
+      openSettings: onOpenRepositorySettings
+        ? () => onOpenRepositorySettings(owner.spacePath)
+        : undefined,
+    }),
+    [onOpenRepositorySettings, owner.spacePath, repositoryOwnerName],
+  );
   const detailController = useOptionalSystemCollectionDetailController();
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const [focusRowId, setFocusRowId] = useState<string | null>(null);
@@ -48,6 +70,7 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
     detailController,
     instanceKey,
     owner,
+    onOpenRepositorySettings,
   });
   const catalogRows = useMemo(
     () => (state.phase === "ready" ? state.snapshot.rows : []),
@@ -89,6 +112,13 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
     ],
   );
   const mutation = useActorMutation({
+    onAccessBlocked: (continueIntent) =>
+      accessRecovery.request(lateMutationRecoveryRequest(continueIntent)),
+    onAccessDenied: (error, continueIntent) =>
+      accessRecovery.recoverFromError(
+        error,
+        lateMutationRecoveryRequest(continueIntent),
+      ),
     onApplied,
     onDuplicate,
     projectPath: owner.projectPath,
@@ -99,6 +129,19 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
     spacePath: owner.spacePath,
   });
   const { openAdd, openEdit, openMerge } = mutation;
+  function lateMutationRecoveryRequest(
+    continueIntent: () => void | Promise<void>,
+  ): RepositoryAccessRequest {
+    return {
+      continuation: "explicit",
+      continue: continueIntent,
+      intentKey: "human-actor-apply",
+      intentLabel: m.actors_mutation_confirm(),
+      onPlanChanged: continueIntent,
+      placement: "inline",
+      targets: [repositoryTarget],
+    };
+  }
   const continueMutationIntent = useCallback(
     (intent: ActorMutationIntent) => {
       if (intent.kind === "add") openAdd();
@@ -107,13 +150,18 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
     },
     [openAdd, openEdit, openMerge],
   );
-  const accessPreflight = useActorAccessPreflight({
-    error: access.error,
-    snapshot: access.snapshot,
-    verifying: access.verifying,
-    onContinue: continueMutationIntent,
-    onVerify: access.verify,
-  });
+  const requestMutationIntent = useCallback(
+    (intent: ActorMutationIntent) =>
+      void accessRecovery.request({
+        continuation: "automatic",
+        continue: () => continueMutationIntent(intent),
+        intentKey: `human-actor-${intent.kind}`,
+        intentLabel: actorIntentLabel(intent),
+        placement: "dialog",
+        targets: [repositoryTarget],
+      }),
+    [accessRecovery, continueMutationIntent, repositoryTarget],
+  );
 
   useEffect(() => {
     if (!focusRowId || state.phase !== "ready") return;
@@ -150,9 +198,9 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
               status: "disabled",
             }
           : mutationState,
-      onAdd: () => accessPreflight.request({ kind: "add" }),
-      onEdit: (source) => accessPreflight.request({ kind: "edit", source }),
-      onMerge: (source) => accessPreflight.request({ kind: "merge", source }),
+      onAdd: () => requestMutationIntent({ kind: "add" }),
+      onEdit: (source) => requestMutationIntent({ kind: "edit", source }),
+      onMerge: (source) => requestMutationIntent({ kind: "merge", source }),
     },
     spacePath: owner.spacePath,
     state: presentationState,
@@ -198,15 +246,9 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
       data-actors-surface
     >
       {body}
-      <ActorAccessPreflightDialog
-        error={access.error}
-        intent={accessPreflight.intent}
-        snapshot={access.snapshot}
-        verifying={access.verifying}
-        onClose={accessPreflight.close}
-        onVerify={accessPreflight.verify}
-      />
+      <RepositoryAccessPreflightDialog recovery={accessRecovery} />
       <ActorMutationDialog
+        accessRecovery={accessRecovery}
         key={mutation.sessionId}
         commitExpectation={mutation.commitExpectation}
         duplicateEmail={mutation.duplicateEmail}
@@ -233,6 +275,16 @@ export function ActorsSurface({ owner }: ScopeSurfaceRenderContext) {
       {agentActors.overlays}
     </div>
   );
+}
+
+function actorIntentLabel(intent: ActorMutationIntent) {
+  if (intent.kind === "add") return m.actors_add();
+  if (intent.kind === "merge") return m.actors_merge();
+  return m.actors_edit();
+}
+
+function repositoryNameFromPath(path: string) {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
 }
 
 function mutationActionState(

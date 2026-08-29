@@ -6,7 +6,11 @@ import {
   type SystemCollectionCreateFlowFocusRequest,
   type SystemCollectionCreateFlowFocusTarget,
 } from "@/features/collection/system";
-import type { RepositoryAccessSnapshot } from "@/features/git";
+import {
+  RepositoryAccessInlineRecovery,
+  repositoryAccessPrimaryActionLabel,
+  type RepositoryAccessPreflightController,
+} from "@/features/git";
 import * as m from "@/paraglide/messages.js";
 
 import type { AgentActorDraftRuntimeState } from "../hooks/use-agent-actor-draft-runtime";
@@ -23,8 +27,6 @@ import type {
   AgentActorBindingRuntime,
   AgentActorDraft,
 } from "../model/agent-actor-types";
-import { actorAccessPreflightActionLabel } from "./actor-access-preflight-copy";
-import { ActorAccessPreflightAlert } from "./actor-access-preflight-dialog";
 import { AgentActorCreateReview } from "./agent-actor-create-review";
 import { AgentActorForm, type AgentActorFormSection } from "./agent-actor-form";
 
@@ -35,16 +37,8 @@ const CREATE_STEPS: readonly AgentActorCreateStep[] = [
   "review",
 ];
 
-export interface AgentActorCreateAccessRecovery {
-  error: string | null;
-  snapshot: RepositoryAccessSnapshot | null;
-  verifying: boolean;
-  onCancel(): void;
-  onVerify(): void;
-}
-
 interface AgentActorEditorDialogProps {
-  accessRecovery: AgentActorCreateAccessRecovery | null;
+  accessRecovery: RepositoryAccessPreflightController;
   descriptors: readonly AgentActorAdapterDescriptor[];
   diagnostics: Readonly<
     Partial<Record<AgentActorBinding["adapter"], AgentActorAdapterDiagnostic>>
@@ -120,16 +114,21 @@ function AgentActorCreateJourney({
     step: stepLabel,
     total: CREATE_STEPS.length,
   });
+  const activeAccessRecovery =
+    accessRecovery.open &&
+    accessRecovery.pending?.placement === "inline" &&
+    (accessRecovery.pending.intentKey === "add-agent" ||
+      accessRecovery.pending.intentKey === "agent-actor-create-apply");
   const busy =
     pending ||
-    (requesting && !accessRecovery) ||
-    Boolean(accessRecovery?.verifying);
+    (requesting && !activeAccessRecovery) ||
+    (activeAccessRecovery && accessRecovery.busy);
 
   useEffect(() => {
-    if (requesting || pending || accessRecovery || failure) {
+    if (requesting || pending || activeAccessRecovery || failure) {
       submitRequestedRef.current = false;
     }
-  }, [accessRecovery, failure, pending, requesting]);
+  }, [activeAccessRecovery, failure, pending, requesting]);
 
   const markAttempted = (target: AgentActorCreateStep) => {
     setAttemptedSteps((current) => new Set([...current, target]));
@@ -141,7 +140,7 @@ function AgentActorCreateJourney({
     target: AgentActorCreateStep,
     focus: "control" | "heading" = "heading",
   ) => {
-    accessRecovery?.onCancel();
+    accessRecovery.close();
     requestFocus(focus);
     setStep(target);
   };
@@ -198,9 +197,15 @@ function AgentActorCreateJourney({
             }
           : undefined
       }
-      cancelLabel={m.agent_actors_cancel()}
+      cancelLabel={
+        activeAccessRecovery
+          ? m.git_access_preflight_cancel()
+          : m.agent_actors_cancel()
+      }
       currentStep={stepIndex + 1}
-      dirty={!areAgentActorDraftsEqual(initialDraft, draft)}
+      dirty={
+        !activeAccessRecovery && !areAgentActorDraftsEqual(initialDraft, draft)
+      }
       discardConfirmation={{
         cancelLabel: m.agent_actors_discard_keep_editing(),
         confirmLabel: m.agent_actors_discard_action(),
@@ -214,15 +219,18 @@ function AgentActorCreateJourney({
       primaryAction={
         step === "review"
           ? {
-              label: accessRecovery
-                ? actorAccessPreflightActionLabel(accessRecovery)
+              label: activeAccessRecovery
+                ? repositoryAccessPrimaryActionLabel(accessRecovery)
                 : m.agent_actors_create_confirm(),
-              onClick: accessRecovery ? accessRecovery.onVerify : submit,
-              pending: pending || Boolean(accessRecovery?.verifying),
+              onClick: activeAccessRecovery
+                ? accessRecovery.runPrimaryAction
+                : submit,
+              pending: pending || (activeAccessRecovery && accessRecovery.busy),
               pendingLabel: pending
                 ? m.agent_actors_saving()
-                : accessRecovery
-                  ? actorAccessPreflightActionLabel(accessRecovery)
+                : activeAccessRecovery
+                  ? (repositoryAccessPrimaryActionLabel(accessRecovery) ??
+                    m.git_access_action_checking())
                   : m.agent_actors_create_confirm(),
             }
           : {
@@ -236,7 +244,11 @@ function AgentActorCreateJourney({
       title={m.agent_actors_create_title()}
       totalSteps={CREATE_STEPS.length}
       onClose={() => {
-        accessRecovery?.onCancel();
+        if (activeAccessRecovery) {
+          accessRecovery.close();
+          return;
+        }
+        accessRecovery.close();
         onClose();
       }}
     >
@@ -248,12 +260,8 @@ function AgentActorCreateJourney({
             runtime={runtime.runtime}
             onEdit={(target) => moveTo(target, "control")}
           />
-          {accessRecovery ? (
-            <ActorAccessPreflightAlert
-              error={accessRecovery.error}
-              snapshot={accessRecovery.snapshot}
-              verifying={accessRecovery.verifying}
-            />
+          {activeAccessRecovery ? (
+            <RepositoryAccessInlineRecovery recovery={accessRecovery} />
           ) : null}
           {failure ? (
             <Alert variant="destructive">

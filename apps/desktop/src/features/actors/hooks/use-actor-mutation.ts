@@ -18,6 +18,13 @@ interface UseActorMutationOptions {
   spacePath: string;
   onApplied(result: AppliedActorMutationResult): void;
   onDuplicate(canonicalEmail: string): void;
+  onAccessBlocked?(
+    continueIntent: () => void | Promise<void>,
+  ): void | Promise<void>;
+  onAccessDenied?(
+    error: unknown,
+    continueIntent: () => void | Promise<void>,
+  ): boolean | Promise<boolean>;
 }
 
 export function useActorMutation({
@@ -25,6 +32,8 @@ export function useActorMutation({
   spacePath,
   onApplied,
   onDuplicate,
+  onAccessBlocked,
+  onAccessDenied,
 }: UseActorMutationOptions) {
   const [intent, setIntent] = useState<ActorMutationIntent | null>(null);
   const [review, setReview] = useState<ActorMutationReview | null>(null);
@@ -91,15 +100,22 @@ export function useActorMutation({
         } else if (result.status === "duplicate") {
           setDuplicateEmail(result.canonicalEmail);
         } else {
+          if (isAccessBlock(result.reason) && onAccessBlocked) {
+            await onAccessBlocked(() => requestPreview(action));
+            return;
+          }
           setFailure({ message: result.message, reason: result.reason });
         }
       } catch (error) {
+        if (await onAccessDenied?.(error, () => requestPreview(action))) {
+          return;
+        }
         setFailure({ message: errorMessage(error), reason: "unexpected" });
       } finally {
         setPendingPhase(null);
       }
     },
-    [projectPath, spacePath],
+    [onAccessBlocked, onAccessDenied, projectPath, spacePath],
   );
 
   const apply = useCallback(async () => {
@@ -114,14 +130,31 @@ export function useActorMutation({
       } else if (result.status === "duplicate") {
         setDuplicateEmail(result.canonicalEmail);
       } else {
+        if (isAccessBlock(result.reason) && onAccessBlocked) {
+          await onAccessBlocked(() => requestPreview(review.action));
+          return;
+        }
         setFailure({ message: result.message, reason: result.reason });
       }
     } catch (error) {
+      if (await onAccessDenied?.(error, () => requestPreview(review.action))) {
+        return;
+      }
       setFailure({ message: errorMessage(error), reason: "unexpected" });
     } finally {
       setPendingPhase(null);
     }
-  }, [onApplied, pendingPhase, projectPath, reset, review, spacePath]);
+  }, [
+    onAccessBlocked,
+    onAccessDenied,
+    onApplied,
+    pendingPhase,
+    projectPath,
+    requestPreview,
+    reset,
+    review,
+    spacePath,
+  ]);
 
   const back = useCallback(() => {
     if (pendingPhase) return;
@@ -161,6 +194,14 @@ export function useActorMutation({
     review,
     sessionId,
   };
+}
+
+function isAccessBlock(reason: ActorMutationFailure["reason"]) {
+  return (
+    reason === "access_checking" ||
+    reason === "access_read_only" ||
+    reason === "access_unknown"
+  );
 }
 
 function errorMessage(error: unknown) {

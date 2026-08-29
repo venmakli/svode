@@ -23,6 +23,7 @@ const MAX_TIMER_DELAY_MS = 2_147_000_000;
 
 export class RepositoryAccessOwner {
   private readonly listeners = new Set<() => void>();
+  private version = 0;
   private readonly pathStates = new Map<string, RepositoryAccessView>();
   private readonly pathRepositoryIds = new Map<string, string>();
   private readonly repositoryPaths = new Map<string, Set<string>>();
@@ -55,13 +56,15 @@ export class RepositoryAccessOwner {
     return () => this.listeners.delete(listener);
   };
 
+  getVersion = () => this.version;
+
   getSnapshot = (spacePath: string): RepositoryAccessView => {
     return this.ensurePathState(spacePath);
   };
 
-  retain(spacePath: string): () => void {
+  retain(spacePath: string, options: { refresh?: boolean } = {}): () => void {
     this.startListening();
-    void this.refresh(spacePath);
+    if (options.refresh !== false) void this.refresh(spacePath);
     return () => undefined;
   }
 
@@ -296,6 +299,7 @@ export class RepositoryAccessOwner {
   }
 
   private emit(): void {
+    this.version += 1;
     for (const listener of this.listeners) listener();
   }
 }

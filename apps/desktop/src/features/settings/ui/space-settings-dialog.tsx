@@ -79,6 +79,7 @@ import {
 interface SpaceSettingsDialogProps {
   open: boolean;
   spacePath: string | null;
+  initialSection?: "general" | "git";
   enableLegacyAgentIntegration: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -95,6 +96,7 @@ type GitDetail = "identity";
 export function SpaceSettingsDialog({
   open,
   spacePath: inputPath,
+  initialSection = "general",
   enableLegacyAgentIntegration,
   onOpenChange,
 }: SpaceSettingsDialogProps) {
@@ -174,12 +176,16 @@ export function SpaceSettingsDialog({
   useEffect(() => {
     if (!open || !projectPath) return;
     const resetSection = window.setTimeout(() => {
-      setSection("general");
+      const requestedDetail =
+        initialSection === "git"
+          ? spaces.find((space) => space.path === inputPath)
+          : null;
+      setSection(initialSection);
       setGitDetail(null);
-      setDetailSpaceId(null);
+      setDetailSpaceId(requestedDetail?.id ?? null);
     }, 0);
     return () => window.clearTimeout(resetSection);
-  }, [open, projectPath]);
+  }, [initialSection, inputPath, open, projectPath, spaces]);
 
   function handleOpenAgentsMd() {
     onOpenChange(false);

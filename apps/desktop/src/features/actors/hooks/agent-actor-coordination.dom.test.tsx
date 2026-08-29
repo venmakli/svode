@@ -33,10 +33,13 @@ test("same-owner create and edit intents continue without an unrelated rerender"
   const restoreGlobals = installDomGlobals(dom);
   const access = deferred<unknown>();
   const continued: string[] = [];
-  mockNativeIpc((command) => {
-    if (command === "repository_access_get") return access.promise;
-    throw new Error(`Unexpected command: ${command}`);
-  });
+  mockNativeIpc(
+    (command) => {
+      if (command === "repository_access_get") return access.promise;
+      throw new Error(`Unexpected command: ${command}`);
+    },
+    { shouldMockEvents: true },
+  );
   const root = createRoot(dom.window.document.getElementById("app")!);
 
   try {
@@ -190,7 +193,6 @@ test("an open read-only Detail receives current diagnostics without reopening af
 
 function AccessHarness({ onContinue }: { onContinue(kind: string): void }) {
   const coordinator = useAgentActorAccessCoordinator({
-    launchSpacePath: "/repo",
     onContinue: (intent) => onContinue(intent.kind),
   });
   return (

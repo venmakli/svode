@@ -322,6 +322,98 @@ test("mutation state machine applies a reviewed snapshot and opens duplicates", 
   }
 });
 
+test("late access block during preview resumes through a fresh preview", async () => {
+  const dom = createDom();
+  const restoreGlobals = installDomGlobals(dom);
+  const { createRoot } = await import("react-dom/client");
+  const { useActorMutation } = await import("../hooks/use-actor-mutation");
+  let previewCount = 0;
+  let resume: (() => void | Promise<void>) | null = null;
+  mockNativeIpc((command) => {
+    if (command !== "actors_preview_mutation") {
+      throw new Error(`Unexpected command: ${command}`);
+    }
+    previewCount += 1;
+    if (previewCount === 1) {
+      return {
+        message: "Access expired",
+        reason: "access_unknown",
+        status: "blocked",
+      };
+    }
+    return {
+      commitExpectation: "manual",
+      review: {
+        action: {
+          canonicalEmail: "new@example.test",
+          displayName: "New Contributor",
+          kind: "add",
+        },
+        affectsCurrentIdentity: false,
+        currentIdentityFingerprint: null,
+        previewFingerprint: "mailmap-v2",
+        repositoryId: "actor-repo-test",
+        resultCanonicalEmail: "new@example.test",
+        resultDisplayName: "New Contributor",
+        transferredAliasEmails: [],
+      },
+      rootPointerCommitExpectation: null,
+      status: "ready",
+    };
+  });
+  const root = createRoot(dom.window.document.getElementById("app")!);
+
+  function MutationHarness() {
+    const mutation = useActorMutation({
+      onAccessBlocked: (continueIntent) => {
+        resume = continueIntent;
+      },
+      onApplied: () => undefined,
+      onDuplicate: () => undefined,
+      projectPath: "/project",
+      spacePath: "/repo",
+    });
+    return (
+      <>
+        <span data-failure>{mutation.failure?.reason ?? "none"}</span>
+        <span data-review>{mutation.review?.previewFingerprint ?? "none"}</span>
+        <button
+          type="button"
+          onClick={() =>
+            void mutation.requestPreview({
+              canonicalEmail: "new@example.test",
+              displayName: "New Contributor",
+              kind: "add",
+            })
+          }
+        >
+          preview
+        </button>
+        <button type="button" onClick={() => void resume?.()}>
+          recover
+        </button>
+      </>
+    );
+  }
+
+  try {
+    await act(async () => root.render(<MutationHarness />));
+    await clickAndFlush(dom, "preview");
+    expect(textOf(dom, "[data-failure]")).toBe("none");
+    expect(previewCount).toBe(1);
+    expect(Boolean(resume)).toBe(true);
+
+    await clickAndFlush(dom, "recover");
+    expect(previewCount).toBe(2);
+    expect(textOf(dom, "[data-review]")).toBe("mailmap-v2");
+  } finally {
+    await act(async () => root.unmount());
+    clearNativeMocks();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 async function clickAndFlush(dom: JSDOM, label: string) {
   const button = Array.from(
     dom.window.document.querySelectorAll("button"),

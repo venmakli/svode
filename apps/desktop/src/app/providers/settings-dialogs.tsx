@@ -4,7 +4,12 @@ import { AppSettingsDialog } from "@/features/settings";
 import { SpaceSettingsDialog } from "@/features/settings";
 
 export function SettingsDialogs() {
-  const { settingsDialog, settingsSpacePath, closeSettings } = useShellStore();
+  const {
+    settingsDialog,
+    settingsSpaceDestination,
+    settingsSpacePath,
+    closeSettings,
+  } = useShellStore();
 
   return (
     <>
@@ -17,6 +22,7 @@ export function SettingsDialogs() {
       />
       <SpaceSettingsDialog
         open={settingsDialog === "space"}
+        initialSection={settingsSpaceDestination}
         spacePath={settingsSpacePath}
         enableLegacyAgentIntegration={ENABLE_LEGACY_AGENT_INTEGRATION}
         onOpenChange={(open) => {

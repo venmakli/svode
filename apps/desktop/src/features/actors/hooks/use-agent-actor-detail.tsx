@@ -12,6 +12,11 @@ import type {
   SystemCollectionDetailController,
   SystemCollectionDetailRequest,
 } from "@/features/collection/system";
+import {
+  RepositoryAccessInlineRecovery,
+  RepositoryAccessPrimaryButton,
+  type RepositoryAccessPreflightController,
+} from "@/features/git";
 import * as m from "@/paraglide/messages.js";
 
 import { createAgentActorDraft } from "../model/agent-actor-draft";
@@ -28,6 +33,7 @@ import { agentActorRowId } from "../ui/agent-actors-presentation";
 import type { AgentActorEditSession } from "./use-agent-actor-mutations";
 
 export function useAgentActorDetail({
+  accessRecovery,
   applyMutation,
   descriptors,
   detailController,
@@ -41,6 +47,7 @@ export function useAgentActorDetail({
   savedRuntimeFor,
   setEditSession,
 }: {
+  accessRecovery?: RepositoryAccessPreflightController;
   applyMutation(
     kind: "update",
     ownerPath: string,
@@ -109,9 +116,17 @@ export function useAgentActorDetail({
     readOnlyRowRef.current = null;
     const selection = detailSelection(instanceKey, editSession.row);
     const session = editSession;
+    const accessBlocked =
+      Boolean(accessRecovery?.open) &&
+      accessRecovery?.pending?.placement === "inline" &&
+      accessRecovery.pending?.intentKey === "agent-actor-update-apply";
     void detailController
       .open({
         canClose: () => {
+          if (accessBlocked) {
+            accessRecovery?.close();
+            return false;
+          }
           if (
             editSession.guard.dirty &&
             !window.confirm(m.agent_actors_discard_confirm())
@@ -125,29 +140,34 @@ export function useAgentActorDetail({
           return true;
         },
         content: (
-          <AgentActorDetail
-            descriptors={descriptors}
-            diagnostics={diagnostics}
-            draft={editSession.draft}
-            editMode={true}
-            pendingAdapter={pendingAdapter}
-            runtime={editRuntime}
-            onChange={(draft) =>
-              setEditSession((current) => {
-                if (!current) return current;
-                current.guard.dirty = true;
-                return { ...current, draft };
-              })
-            }
-            onCheck={diagnose}
-            onSave={() =>
-              void applyMutation(
-                "update",
-                editSession.row.ownerPath,
-                editSession.draft,
-              )
-            }
-          />
+          <div className="flex min-w-0 flex-col gap-4">
+            <AgentActorDetail
+              descriptors={descriptors}
+              diagnostics={diagnostics}
+              draft={editSession.draft}
+              editMode={true}
+              pendingAdapter={pendingAdapter}
+              runtime={editRuntime}
+              onChange={(draft) =>
+                setEditSession((current) => {
+                  if (!current) return current;
+                  current.guard.dirty = true;
+                  return { ...current, draft };
+                })
+              }
+              onCheck={diagnose}
+              onSave={() =>
+                void applyMutation(
+                  "update",
+                  editSession.row.ownerPath,
+                  editSession.draft,
+                )
+              }
+            />
+            {accessBlocked ? (
+              <RepositoryAccessInlineRecovery recovery={accessRecovery!} />
+            ) : null}
+          </div>
         ),
         description: (
           <span className="sr-only">{m.agent_actors_edit_description()}</span>
@@ -159,6 +179,11 @@ export function useAgentActorDetail({
               variant="outline"
               disabled={mutationPending}
               onClick={() => {
+                if (accessBlocked) {
+                  accessRecovery?.close();
+                  return;
+                }
+                accessRecovery?.close();
                 editSession.guard.dirty = false;
                 setEditSession(null);
                 void detailController.open({
@@ -167,23 +192,29 @@ export function useAgentActorDetail({
                 });
               }}
             >
-              {m.agent_actors_cancel()}
+              {accessBlocked
+                ? m.git_access_preflight_cancel()
+                : m.agent_actors_cancel()}
             </Button>
-            <Button
-              type="submit"
-              form={`agent-actor-detail-${editSession.draft.id}`}
-              disabled={mutationPending}
-            >
-              {mutationPending ? (
-                <LoaderCircle
-                  data-icon="inline-start"
-                  className="animate-spin"
-                />
-              ) : null}
-              {mutationPending
-                ? m.agent_actors_saving()
-                : m.agent_actors_save()}
-            </Button>
+            {accessBlocked ? (
+              <RepositoryAccessPrimaryButton recovery={accessRecovery!} />
+            ) : (
+              <Button
+                type="submit"
+                form={`agent-actor-detail-${editSession.draft.id}`}
+                disabled={mutationPending}
+              >
+                {mutationPending ? (
+                  <LoaderCircle
+                    data-icon="inline-start"
+                    className="animate-spin"
+                  />
+                ) : null}
+                {mutationPending
+                  ? m.agent_actors_saving()
+                  : m.agent_actors_save()}
+              </Button>
+            )}
           </div>
         ),
         selection,
@@ -195,6 +226,7 @@ export function useAgentActorDetail({
         }
       });
   }, [
+    accessRecovery,
     applyMutation,
     createReadOnlyDetail,
     descriptors,

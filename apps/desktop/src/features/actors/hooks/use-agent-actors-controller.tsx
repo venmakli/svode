@@ -5,6 +5,7 @@ import type {
   SystemCollectionDetailController,
   SystemCollectionPresentationState,
 } from "@/features/collection/system";
+import { RepositoryAccessPreflightDialog } from "@/features/git";
 import type { ScopeOwnerRef } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
@@ -21,8 +22,10 @@ import { useAgentActorCatalog } from "./use-agent-actor-catalog";
 import { useAgentActorCatalogSave } from "./use-agent-actor-catalog-save";
 import { useAgentActorDetail } from "./use-agent-actor-detail";
 import { useAgentActorDraftRuntime } from "./use-agent-actor-draft-runtime";
-import { useAgentActorMutations } from "./use-agent-actor-mutations";
-import { ActorAccessPreflightDialog } from "../ui/actor-access-preflight-dialog";
+import {
+  useAgentActorMutations,
+  type AgentActorMutationAccessContext,
+} from "./use-agent-actor-mutations";
 import { AgentActorDeleteDialog } from "../ui/agent-actor-delete-dialog";
 import { AgentActorEditorDialog } from "../ui/agent-actor-editor-dialog";
 import { AgentActorSaveDialog } from "../ui/agent-actor-save-dialog";
@@ -32,10 +35,12 @@ export function useAgentActorsController({
   detailController,
   instanceKey,
   owner,
+  onOpenRepositorySettings,
 }: {
   detailController: SystemCollectionDetailController | null;
   instanceKey: string;
   owner: ScopeOwnerRef;
+  onOpenRepositorySettings?: (repositoryPath: string) => void;
 }) {
   const catalog = useAgentActorCatalog(owner.projectPath, owner.spacePath);
   const snapshot =
@@ -55,6 +60,7 @@ export function useAgentActorsController({
     [owner.spacePath, snapshot],
   );
   const catalogSave = useAgentActorCatalogSave({
+    onAccessDenied: handleCatalogAccessDenied,
     ownerPaths,
     projectPath: owner.projectPath,
     spacePath: owner.spacePath,
@@ -66,6 +72,7 @@ export function useAgentActorsController({
   );
   const mutations = useAgentActorMutations({
     detailController,
+    onAccessDenied: handleMutationAccessDenied,
     projectPath: owner.projectPath,
     refresh: catalog.refresh,
     saveCatalog: openCatalogSave,
@@ -109,8 +116,8 @@ export function useAgentActorsController({
     [applyMutation, catalogSave, createDraft, openDelete, openEdit],
   );
   const accessCoordinator = useAgentActorAccessCoordinator({
-    launchSpacePath: owner.spacePath,
     onContinue: continueIntent,
+    onOpenRepositorySettings,
   });
   const requestAccess = accessCoordinator.request;
 
@@ -131,6 +138,7 @@ export function useAgentActorsController({
   );
 
   const createReadOnlyDetail = useAgentActorDetail({
+    accessRecovery: accessCoordinator.recovery,
     applyMutation,
     descriptors: snapshot?.adapterDescriptors ?? [],
     detailController,
@@ -144,6 +152,57 @@ export function useAgentActorsController({
     savedRuntimeFor,
     setEditSession,
   });
+
+  function handleMutationAccessDenied(
+    error: unknown,
+    context: AgentActorMutationAccessContext,
+  ) {
+    const row = "ownerLabel" in context.draftOrRow ? context.draftOrRow : null;
+    const retry = () => {
+      if (context.kind === "delete" && row) {
+        openDelete(row);
+        return;
+      }
+      return mutations.apply(
+        context.kind,
+        context.ownerPath,
+        context.draftOrRow,
+      );
+    };
+    return accessCoordinator.recoverFromError(error, {
+      continue: retry,
+      intentKey: `agent-actor-${context.kind}-apply`,
+      intentLabel:
+        context.kind === "delete"
+          ? m.agent_actors_delete()
+          : m.agent_actors_save(),
+      onPlanChanged: () => {
+        if (context.kind === "delete" && row) {
+          openDelete(row);
+          return;
+        }
+        return catalog.refresh();
+      },
+      ownerName: row?.ownerLabel,
+      ownerPath: context.ownerPath,
+      placement: "inline",
+    });
+  }
+
+  function handleCatalogAccessDenied(
+    error: unknown,
+    candidate: { label: string; ownerPath: string },
+  ) {
+    return accessCoordinator.recoverFromError(error, {
+      continue: () => catalogSave.open(candidate.ownerPath),
+      intentKey: "agent-actor-catalog-save-apply",
+      intentLabel: m.agent_actors_save_catalog(),
+      onPlanChanged: () => catalogSave.open(candidate.ownerPath),
+      ownerName: candidate.label,
+      ownerPath: candidate.ownerPath,
+      placement: "inline",
+    });
+  }
 
   const actionState: SystemCollectionActionState = mutationPending
     ? { status: "pending" }
@@ -201,30 +260,9 @@ export function useAgentActorsController({
 
   const overlays = (
     <>
-      <ActorAccessPreflightDialog
-        error={accessCoordinator.access.error}
-        intent={
-          accessCoordinator.intent?.kind === "add-agent"
-            ? null
-            : accessCoordinator.intent
-        }
-        snapshot={accessCoordinator.access.snapshot}
-        verifying={accessCoordinator.access.verifying}
-        onClose={accessCoordinator.close}
-        onVerify={accessCoordinator.verify}
-      />
+      <RepositoryAccessPreflightDialog recovery={accessCoordinator.recovery} />
       <AgentActorEditorDialog
-        accessRecovery={
-          accessCoordinator.intent?.kind === "add-agent"
-            ? {
-                error: accessCoordinator.access.error,
-                snapshot: accessCoordinator.access.snapshot,
-                verifying: accessCoordinator.access.verifying,
-                onCancel: accessCoordinator.close,
-                onVerify: accessCoordinator.verify,
-              }
-            : null
-        }
+        accessRecovery={accessCoordinator.recovery}
         descriptors={snapshot?.adapterDescriptors ?? []}
         diagnostics={catalog.diagnostics}
         draft={createDraft}
@@ -237,7 +275,7 @@ export function useAgentActorsController({
         onCheck={(adapter) => void catalog.diagnose(adapter)}
         onClose={() => {
           if (mutationPending) return;
-          accessCoordinator.close();
+          accessCoordinator.recovery.close();
           setCreateDraft(null);
         }}
         onSave={() =>
@@ -246,6 +284,7 @@ export function useAgentActorsController({
         }
       />
       <AgentActorDeleteDialog
+        accessRecovery={accessCoordinator.recovery}
         actor={deleteActor}
         failure={mutationFailure}
         pending={mutationPending}
@@ -258,6 +297,7 @@ export function useAgentActorsController({
         onRetry={() => deleteActor && openDelete(deleteActor)}
       />
       <AgentActorSaveDialog
+        accessRecovery={accessCoordinator.recovery}
         candidates={catalogSave.candidates}
         failure={catalogSave.failure}
         pending={catalogSave.pending}

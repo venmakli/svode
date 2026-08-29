@@ -31,3 +31,23 @@ test("graph handoff transfers query, scope, and selection without replacing cont
     "architecture",
   );
 });
+
+test("repository recovery opens the exact space settings Git destination", () => {
+  useShellStore.setState({
+    settingsDialog: null,
+    settingsSpaceDestination: "general",
+    settingsSpacePath: null,
+  });
+
+  useShellStore.getState().openSpaceSettings("/project/spaces/docs", "git");
+
+  expect(useShellStore.getState().settingsDialog).toBe("space");
+  expect(useShellStore.getState().settingsSpaceDestination).toBe("git");
+  expect(useShellStore.getState().settingsSpacePath).toBe(
+    "/project/spaces/docs",
+  );
+
+  useShellStore.getState().closeSettings();
+  expect(useShellStore.getState().settingsSpaceDestination).toBe("general");
+  expect(useShellStore.getState().settingsSpacePath).toBeNull();
+});

@@ -5,6 +5,8 @@ import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
+import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
+
 import { createAgentActorDraft } from "../model/agent-actor-draft";
 import type {
   AgentActorAdapterDescriptor,
@@ -15,6 +17,7 @@ import type {
 
 type EditorComponent =
   typeof import("./agent-actor-editor-dialog").AgentActorEditorDialog;
+let useRepositoryAccessPreflight: typeof import("@/features/git").useRepositoryAccessPreflight;
 
 const descriptors: readonly AgentActorAdapterDescriptor[] = [
   {
@@ -283,16 +286,29 @@ if (!isolatedDialogDomProcess) {
       expect(currentStep(accessHarness.dom)).toBe("review");
       expect(
         accessHarness.dom.window.document.querySelector(
-          "[data-actor-access-inline-status]",
+          "[data-repository-access-inline-recovery]",
         ) === null,
       ).toBe(false);
       expect(
         accessHarness.dom.window.document.querySelector(
-          "[data-actor-access-preflight]",
+          "[data-repository-access-preflight]",
         ),
       ).toBeNull();
       await clickButton(accessHarness.dom, "Check access");
-      expect(textOf(accessHarness.dom, "[data-verify-count]")).toBe("1");
+      expect(
+        accessHarness.calls.filter(
+          (command) => command === "repository_access_verify",
+        ).length,
+      ).toBe(1);
+      expect(currentStep(accessHarness.dom)).toBe("review");
+      await clickButton(accessHarness.dom, "Cancel");
+      expect(textOf(accessHarness.dom, "[data-draft-open]")).toBe("open");
+      expect(textOf(accessHarness.dom, "[data-close-count]")).toBe("0");
+      expect(
+        accessHarness.dom.window.document.querySelector(
+          "[data-repository-access-inline-recovery]",
+        ),
+      ).toBeNull();
       expect(currentStep(accessHarness.dom)).toBe("review");
     } finally {
       await accessHarness.cleanup();
@@ -340,10 +356,8 @@ function JourneyHarness({
   );
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  const [accessActive, setAccessActive] = useState(false);
-  const [verifying, setVerifying] = useState(false);
+  const accessRecovery = useRepositoryAccessPreflight();
   const [saveCount, setSaveCount] = useState(0);
-  const [verifyCount, setVerifyCount] = useState(0);
   const [closeCount, setCloseCount] = useState(0);
   return (
     <>
@@ -367,27 +381,10 @@ function JourneyHarness({
         Fill name
       </button>
       <span data-save-count>{saveCount}</span>
-      <span data-verify-count>{verifyCount}</span>
       <span data-close-count>{closeCount}</span>
       <span data-draft-open>{draft ? "open" : "closed"}</span>
       <Editor
-        accessRecovery={
-          accessActive
-            ? {
-                error: null,
-                snapshot: accessSnapshot(),
-                verifying,
-                onCancel: () => {
-                  setAccessActive(false);
-                  setVerifying(false);
-                },
-                onVerify: () => {
-                  setVerifyCount((count) => count + 1);
-                  setVerifying(true);
-                },
-              }
-            : null
-        }
+        accessRecovery={accessRecovery}
         descriptors={descriptors}
         diagnostics={{}}
         draft={draft}
@@ -401,7 +398,7 @@ function JourneyHarness({
         onClose={() => {
           setCloseCount((count) => count + 1);
           setDraft(null);
-          setAccessActive(false);
+          accessRecovery.close();
         }}
         onSave={() => {
           setSaveCount((count) => count + 1);
@@ -409,7 +406,22 @@ function JourneyHarness({
           if (saveMode === "failure") {
             setFailure("Catalog changed; retry");
           }
-          if (saveMode === "access") setAccessActive(true);
+          if (saveMode === "access") {
+            void accessRecovery.request({
+              continuation: "automatic",
+              continue: () => undefined,
+              intentKey: "add-agent",
+              intentLabel: "Add agent",
+              placement: "inline",
+              targets: [
+                {
+                  displayName: "Docs",
+                  displayPath: draft?.ownerPath ?? "/repo/docs",
+                  repositoryPath: draft?.ownerPath ?? "/repo/docs",
+                },
+              ],
+            });
+          }
         }}
       />
     </>
@@ -427,10 +439,23 @@ async function renderHarness({
 } = {}) {
   const dom = createDom();
   const restoreGlobals = installDomGlobals(dom);
+  const calls: string[] = [];
+  if (saveMode === "access") {
+    mockNativeIpc(
+      (command) => {
+        calls.push(command);
+        if (command === "repository_access_get") return accessSnapshot();
+        if (command === "repository_access_verify") return accessSnapshot();
+        throw new Error(`Unexpected command: ${command}`);
+      },
+      { shouldMockEvents: true },
+    );
+  }
   dom.window.document
     .querySelector<HTMLButtonElement>("#external-create")
     ?.focus();
   const root = createRoot(dom.window.document.getElementById("app")!);
+  ({ useRepositoryAccessPreflight } = await import("@/features/git"));
   const { AgentActorEditorDialog } =
     await import("./agent-actor-editor-dialog");
   await act(async () => {
@@ -445,11 +470,13 @@ async function renderHarness({
     await nextTurn();
   });
   return {
+    calls,
     cleanup: async () => {
       await act(async () => {
         root.unmount();
         await nextTurn();
       });
+      if (saveMode === "access") clearNativeMocks();
       restoreGlobals();
       dom.window.close();
     },

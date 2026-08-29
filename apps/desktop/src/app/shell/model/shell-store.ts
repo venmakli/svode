@@ -11,6 +11,7 @@ import type {
 } from "@/features/knowledge";
 
 type SettingsDialog = "app" | "space" | null;
+export type SpaceSettingsDestination = "general" | "git";
 export type MainSurface = "content" | "sessions" | "graph";
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "svode:shell:sidebar-width";
@@ -23,6 +24,7 @@ interface ShellState {
   chatPanelOpen: boolean;
   settingsDialog: SettingsDialog;
   settingsSpacePath: string | null;
+  settingsSpaceDestination: SpaceSettingsDestination;
   mainSurface: MainSurface;
   agentSessionOpenRequest: AgentSessionOpenRequest | null;
   nextAgentSessionOpenRequestKey: number;
@@ -34,7 +36,10 @@ interface ShellState {
   closeChatPanel: () => void;
   commitSidebarWidth: (width: number) => void;
   openAppSettings: () => void;
-  openSpaceSettings: (spacePath: string) => void;
+  openSpaceSettings: (
+    spacePath: string,
+    destination?: SpaceSettingsDestination,
+  ) => void;
   closeSettings: () => void;
   openContentSurface: () => void;
   openSessionsSurface: (target?: AgentSessionOpenTarget) => void;
@@ -79,6 +84,7 @@ export const useShellStore = create<ShellState>((set) => ({
   chatPanelOpen: false,
   settingsDialog: null,
   settingsSpacePath: null,
+  settingsSpaceDestination: "general",
   mainSurface: "content",
   agentSessionOpenRequest: null,
   nextAgentSessionOpenRequestKey: 1,
@@ -102,12 +108,25 @@ export const useShellStore = create<ShellState>((set) => ({
   },
 
   openAppSettings: () =>
-    set({ settingsDialog: "app", settingsSpacePath: null }),
+    set({
+      settingsDialog: "app",
+      settingsSpaceDestination: "general",
+      settingsSpacePath: null,
+    }),
 
-  openSpaceSettings: (spacePath) =>
-    set({ settingsDialog: "space", settingsSpacePath: spacePath }),
+  openSpaceSettings: (spacePath, destination = "general") =>
+    set({
+      settingsDialog: "space",
+      settingsSpaceDestination: destination,
+      settingsSpacePath: spacePath,
+    }),
 
-  closeSettings: () => set({ settingsDialog: null, settingsSpacePath: null }),
+  closeSettings: () =>
+    set({
+      settingsDialog: null,
+      settingsSpaceDestination: "general",
+      settingsSpacePath: null,
+    }),
 
   openContentSurface: () => set({ mainSurface: "content" }),
   openSessionsSurface: (target) =>

@@ -12,6 +12,11 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import {
+  RepositoryAccessInlineRecovery,
+  RepositoryAccessPrimaryButton,
+  type RepositoryAccessPreflightController,
+} from "@/features/git";
+import {
   Select,
   SelectContent,
   SelectGroup,
@@ -24,6 +29,7 @@ import * as m from "@/paraglide/messages.js";
 import type { AgentActorSaveCandidate } from "../hooks/use-agent-actor-catalog-save";
 
 export function AgentActorSaveDialog({
+  accessRecovery,
   candidates,
   failure,
   pending,
@@ -32,6 +38,7 @@ export function AgentActorSaveDialog({
   onConfirm,
   onSelect,
 }: {
+  accessRecovery: RepositoryAccessPreflightController;
   candidates: readonly AgentActorSaveCandidate[];
   failure: string | null;
   pending: boolean;
@@ -41,8 +48,25 @@ export function AgentActorSaveDialog({
   onSelect(ownerPath: string): void;
 }) {
   if (candidates.length === 0) return null;
+  const accessBlocked =
+    accessRecovery.open &&
+    accessRecovery.pending?.placement === "inline" &&
+    (accessRecovery.pending.intentKey === "save-agent-catalog" ||
+      accessRecovery.pending.intentKey === "agent-actor-catalog-save-apply");
   return (
-    <AlertDialog open onOpenChange={(open) => !open && onClose()}>
+    <AlertDialog
+      open
+      onOpenChange={(open) => {
+        if (!open) {
+          if (accessBlocked) {
+            accessRecovery.close();
+            return;
+          }
+          accessRecovery.close();
+          onClose();
+        }
+      }}
+    >
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
@@ -81,20 +105,43 @@ export function AgentActorSaveDialog({
             {m.agent_actors_save_catalog_warning()}
           </p>
         )}
-        {failure ? <p className="text-sm text-destructive">{failure}</p> : null}
+        {accessBlocked ? (
+          <RepositoryAccessInlineRecovery recovery={accessRecovery} />
+        ) : failure ? (
+          <p className="text-sm text-destructive">{failure}</p>
+        ) : null}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={pending} onClick={onClose}>
-            {m.agent_actors_cancel()}
-          </AlertDialogCancel>
-          <AlertDialogAction
-            disabled={pending || !selectedOwnerPath}
-            onClick={onConfirm}
+          <AlertDialogCancel
+            disabled={pending || (accessBlocked && accessRecovery.busy)}
+            onClick={() => {
+              if (accessBlocked) {
+                accessRecovery.close();
+                return;
+              }
+              accessRecovery.close();
+              onClose();
+            }}
           >
-            {pending ? (
-              <LoaderCircle data-icon="inline-start" className="animate-spin" />
-            ) : null}
-            {m.agent_actors_save_catalog_confirm()}
-          </AlertDialogAction>
+            {accessBlocked
+              ? m.git_access_preflight_cancel()
+              : m.agent_actors_cancel()}
+          </AlertDialogCancel>
+          {accessBlocked ? (
+            <RepositoryAccessPrimaryButton recovery={accessRecovery} />
+          ) : (
+            <AlertDialogAction
+              disabled={pending || !selectedOwnerPath}
+              onClick={onConfirm}
+            >
+              {pending ? (
+                <LoaderCircle
+                  data-icon="inline-start"
+                  className="animate-spin"
+                />
+              ) : null}
+              {m.agent_actors_save_catalog_confirm()}
+            </AlertDialogAction>
+          )}
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

@@ -12,6 +12,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Field, FieldTitle } from "@/components/ui/field";
+import {
+  RepositoryAccessInlineRecovery,
+  RepositoryAccessPrimaryButton,
+  type RepositoryAccessPreflightController,
+} from "@/features/git";
 import * as m from "@/paraglide/messages.js";
 
 import type {
@@ -30,6 +35,7 @@ import { ActorMergePicker } from "./actor-merge-picker";
 import { ActorMutationReviewStep } from "./actor-mutation-review";
 
 export function ActorMutationDialog({
+  accessRecovery,
   commitExpectation,
   duplicateEmail,
   failure,
@@ -45,6 +51,7 @@ export function ActorMutationDialog({
   onRequestPreview,
   onRetryReview,
 }: {
+  accessRecovery: RepositoryAccessPreflightController;
   commitExpectation: ActorCommitExpectation | null;
   duplicateEmail: string | null;
   failure: ActorMutationFailure | null;
@@ -75,12 +82,23 @@ export function ActorMutationDialog({
   const retryable =
     failure?.reason === "stale_preview" ||
     failure?.reason === "current_identity_changed";
+  const accessBlocked =
+    accessRecovery.open &&
+    accessRecovery.pending?.placement === "inline" &&
+    accessRecovery.pending.intentKey === "human-actor-apply";
 
   return (
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open) onClose();
+        if (!open) {
+          if (accessBlocked) {
+            accessRecovery.close();
+            return;
+          }
+          accessRecovery.close();
+          onClose();
+        }
       }}
     >
       <DialogContent className="overflow-hidden">
@@ -115,7 +133,11 @@ export function ActorMutationDialog({
           />
         )}
 
-        {failure ? <MutationFailureAlert failure={failure} /> : null}
+        {accessBlocked ? (
+          <RepositoryAccessInlineRecovery recovery={accessRecovery} />
+        ) : failure ? (
+          <MutationFailureAlert failure={failure} />
+        ) : null}
 
         <DialogFooter>
           {duplicateEmail ? (
@@ -126,6 +148,18 @@ export function ActorMutationDialog({
               <Button type="button" onClick={onOpenDuplicate}>
                 {m.actors_mutation_open_existing()}
               </Button>
+            </>
+          ) : accessBlocked ? (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={accessRecovery.busy}
+                onClick={accessRecovery.close}
+              >
+                {m.git_access_preflight_cancel()}
+              </Button>
+              <RepositoryAccessPrimaryButton recovery={accessRecovery} />
             </>
           ) : review ? (
             <>

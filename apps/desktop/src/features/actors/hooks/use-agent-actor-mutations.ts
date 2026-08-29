@@ -29,18 +29,29 @@ export interface AgentActorEditSession {
   row: AgentActorRow;
 }
 
+export interface AgentActorMutationAccessContext {
+  draftOrRow: AgentActorDraft | AgentActorRow;
+  kind: "create" | "update" | "delete";
+  ownerPath: string;
+}
+
 export function useAgentActorMutations({
   detailController,
   projectPath,
   refresh,
   saveCatalog,
   snapshot,
+  onAccessDenied,
 }: {
   detailController: SystemCollectionDetailController | null;
   projectPath: string;
   refresh(): void | Promise<void>;
   saveCatalog(ownerPath: string): void;
   snapshot: AgentActorCatalogSnapshot | null;
+  onAccessDenied?(
+    error: unknown,
+    context: AgentActorMutationAccessContext,
+  ): boolean | Promise<boolean>;
 }) {
   const [createDraft, setCreateDraft] = useState<AgentActorDraft | null>(null);
   const [editSession, setEditSession] = useState<AgentActorEditSession | null>(
@@ -140,6 +151,15 @@ export function useAgentActorMutations({
         await detailController?.close();
         await refresh();
       } catch (error) {
+        if (
+          await onAccessDenied?.(error, {
+            draftOrRow,
+            kind,
+            ownerPath: targetOwnerPath,
+          })
+        ) {
+          return;
+        }
         setFailure(errorMessage(error));
       } finally {
         setPending(false);
@@ -152,6 +172,7 @@ export function useAgentActorMutations({
       refresh,
       saveCatalog,
       snapshot,
+      onAccessDenied,
     ],
   );
 

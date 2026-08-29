@@ -25,10 +25,15 @@ export function useAgentActorCatalogSave({
   ownerPaths,
   projectPath,
   spacePath,
+  onAccessDenied,
 }: {
   ownerPaths: readonly string[];
   projectPath: string;
   spacePath: string;
+  onAccessDenied?(
+    error: unknown,
+    candidate: AgentActorSaveCandidate,
+  ): boolean | Promise<boolean>;
 }) {
   const request = useActorMailmapSaveRequest(
     (state) => state.agentCatalogRequest,
@@ -138,11 +143,20 @@ export function useAgentActorCatalogSave({
         );
       }
     } catch (error) {
+      if (await onAccessDenied?.(error, candidate)) return;
       setFailure(errorMessage(error));
     } finally {
       setPending(false);
     }
-  }, [candidates, close, open, pending, projectPath, selectedOwnerPath]);
+  }, [
+    candidates,
+    close,
+    onAccessDenied,
+    open,
+    pending,
+    projectPath,
+    selectedOwnerPath,
+  ]);
 
   return {
     candidates,

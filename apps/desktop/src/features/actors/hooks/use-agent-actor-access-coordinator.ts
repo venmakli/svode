@@ -1,9 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback } from "react";
 
-import { useRepositoryAccess } from "@/features/git";
+import {
+  useRepositoryAccessPreflight,
+  type RepositoryAccessRequest,
+  type RepositoryAccessTarget,
+} from "@/features/git";
+import * as m from "@/paraglide/messages.js";
 
 import type { AgentActorRow } from "../model/agent-actor-types";
-import { useActorAccessPreflight } from "./use-actor-access-preflight";
 
 export type AgentActorAccessIntent =
   | { kind: "add-agent"; ownerPath: string }
@@ -11,79 +15,98 @@ export type AgentActorAccessIntent =
   | { kind: "delete-agent"; ownerPath: string; row: AgentActorRow }
   | { kind: "save-agent-catalog"; ownerPath: string };
 
-interface PendingAccessIntent {
-  id: number;
-  intent: AgentActorAccessIntent;
+export interface AgentActorLateAccessRequest {
+  continue(): void | Promise<void>;
+  intentKey: string;
+  intentLabel: string;
+  onPlanChanged?: () => void | Promise<void>;
+  ownerName?: string;
+  ownerPath: string;
+  placement: "dialog" | "inline";
 }
 
 export function useAgentActorAccessCoordinator({
-  launchSpacePath,
   onContinue,
+  onOpenRepositorySettings,
 }: {
-  launchSpacePath: string;
   onContinue(intent: AgentActorAccessIntent): void;
+  onOpenRepositorySettings?: (repositoryPath: string) => void;
 }) {
-  const [targetPath, setTargetPath] = useState(launchSpacePath);
-  const [pending, setPending] = useState<PendingAccessIntent | null>(null);
-  const nextRequestIdRef = useRef(1);
-  const handledRequestIdRef = useRef(0);
-  const access = useRepositoryAccess(targetPath);
-
-  const continueAndReset = useCallback(
-    (intent: AgentActorAccessIntent) => {
-      setPending(null);
-      setTargetPath(launchSpacePath);
-      onContinue(intent);
-    },
-    [launchSpacePath, onContinue],
+  const recovery = useRepositoryAccessPreflight();
+  const targetFor = useCallback(
+    (ownerPath: string, ownerName?: string): RepositoryAccessTarget => ({
+      displayName: ownerName ?? repositoryNameFromPath(ownerPath),
+      displayPath: ownerPath,
+      repositoryPath: ownerPath,
+      openSettings: onOpenRepositorySettings
+        ? () => onOpenRepositorySettings(ownerPath)
+        : undefined,
+    }),
+    [onOpenRepositorySettings],
   );
-  const preflight = useActorAccessPreflight<AgentActorAccessIntent>({
-    error: access.error,
-    snapshot: access.snapshot,
-    verifying: access.verifying,
-    onContinue: continueAndReset,
-    onVerify: access.verify,
-  });
-  const closePreflight = preflight.close;
-  const requestPreflight = preflight.request;
 
-  useEffect(() => {
-    if (
-      !pending ||
-      handledRequestIdRef.current === pending.id ||
-      access.spacePath !== pending.intent.ownerPath ||
-      (!access.snapshot && !access.error && !access.verifying)
-    ) {
-      return;
-    }
+  const request = useCallback(
+    (intent: AgentActorAccessIntent) =>
+      void recovery.request({
+        continuation: "automatic",
+        continue: () => onContinue(intent),
+        intentKey: intent.kind,
+        intentLabel: intentLabel(intent),
+        placement:
+          intent.kind === "add-agent" || intent.kind === "save-agent-catalog"
+            ? "inline"
+            : "dialog",
+        targets: [
+          targetFor(
+            intent.ownerPath,
+            "row" in intent ? intent.row.ownerLabel : undefined,
+          ),
+        ],
+      }),
+    [onContinue, recovery, targetFor],
+  );
 
-    handledRequestIdRef.current = pending.id;
-    requestPreflight(pending.intent);
-  }, [
-    access.error,
-    access.snapshot,
-    access.spacePath,
-    access.verifying,
-    pending,
-    requestPreflight,
-  ]);
+  const lateRequest = useCallback(
+    (request: AgentActorLateAccessRequest): RepositoryAccessRequest => ({
+      continuation: "explicit",
+      continue: request.continue,
+      intentKey: request.intentKey,
+      intentLabel: request.intentLabel,
+      onPlanChanged: request.onPlanChanged,
+      placement: request.placement,
+      targets: [targetFor(request.ownerPath, request.ownerName)],
+    }),
+    [targetFor],
+  );
 
-  const request = useCallback((intent: AgentActorAccessIntent) => {
-    setPending({ id: nextRequestIdRef.current++, intent });
-    setTargetPath(intent.ownerPath);
-  }, []);
-  const close = useCallback(() => {
-    closePreflight();
-    setPending(null);
-    setTargetPath(launchSpacePath);
-  }, [closePreflight, launchSpacePath]);
+  const recoverFromError = useCallback(
+    (error: unknown, request: AgentActorLateAccessRequest) =>
+      recovery.recoverFromError(error, lateRequest(request)),
+    [lateRequest, recovery],
+  );
+  const recoverFromBlock = useCallback(
+    (request: AgentActorLateAccessRequest) =>
+      recovery.request(lateRequest(request)),
+    [lateRequest, recovery],
+  );
 
   return {
-    access,
-    close,
-    intent: preflight.intent,
+    recovery,
+    recoverFromBlock,
+    recoverFromError,
     request,
-    requesting: pending !== null,
-    verify: preflight.verify,
+    requesting: recovery.open,
   };
+}
+
+function intentLabel(intent: AgentActorAccessIntent) {
+  if (intent.kind === "add-agent") return m.agent_actors_add();
+  if (intent.kind === "delete-agent") return m.agent_actors_delete();
+  if (intent.kind === "save-agent-catalog")
+    return m.agent_actors_save_catalog();
+  return m.agent_actors_edit();
+}
+
+function repositoryNameFromPath(path: string) {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
 }

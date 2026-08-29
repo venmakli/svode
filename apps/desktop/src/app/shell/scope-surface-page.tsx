@@ -81,6 +81,11 @@ export function ScopeSurfacePage({
   const openSessionsSurface = useShellStore(
     (state) => state.openSessionsSurface,
   );
+  const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
+  const openRepositorySettings = useCallback(
+    (repositoryPath: string) => openSpaceSettings(repositoryPath, "git"),
+    [openSpaceSettings],
+  );
   const openRoutineSession = useCallback(
     (target: { sessionId: string; launchId: string }) => {
       void runSystemCollectionNavigation(detailController, () => {
@@ -126,7 +131,13 @@ export function ScopeSurfacePage({
   const contributions = useMemo(
     () =>
       createScopeSurfaceContributions({
-        actors: (context) => <ActorsSurface {...context} />,
+        actors: (context) => (
+          <ActorsSurface
+            {...context}
+            repositoryOwnerName={fallbackTitle}
+            onOpenRepositorySettings={openRepositorySettings}
+          />
+        ),
         context: (context) => <AgentContextSurface {...context} />,
         routines: (context) => (
           <RoutinesSurface {...context} onOpenSession={openRoutineSession} />
@@ -143,7 +154,14 @@ export function ScopeSurfacePage({
           />
         ),
       }),
-    [collectionRouteState, openRoutineSession, owner, renderNested],
+    [
+      collectionRouteState,
+      fallbackTitle,
+      openRepositorySettings,
+      openRoutineSession,
+      owner,
+      renderNested,
+    ],
   );
   return (
     <EntryDetailProvider

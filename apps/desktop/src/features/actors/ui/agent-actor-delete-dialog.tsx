@@ -11,6 +11,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  RepositoryAccessInlineRecovery,
+  RepositoryAccessPrimaryButton,
+  type RepositoryAccessPreflightController,
+} from "@/features/git";
 import * as m from "@/paraglide/messages.js";
 
 import type {
@@ -19,6 +24,7 @@ import type {
 } from "../model/agent-actor-types";
 
 export function AgentActorDeleteDialog({
+  accessRecovery,
   actor,
   failure,
   pending,
@@ -27,6 +33,7 @@ export function AgentActorDeleteDialog({
   onConfirm,
   onRetry,
 }: {
+  accessRecovery: RepositoryAccessPreflightController;
   actor: AgentActorRow | null;
   failure: string | null;
   pending: boolean;
@@ -36,8 +43,24 @@ export function AgentActorDeleteDialog({
   onRetry(): void;
 }) {
   if (!actor) return null;
+  const accessBlocked =
+    accessRecovery.open &&
+    accessRecovery.pending?.placement === "inline" &&
+    accessRecovery.pending.intentKey === "agent-actor-delete-apply";
   return (
-    <AlertDialog open onOpenChange={(open) => !open && onClose()}>
+    <AlertDialog
+      open
+      onOpenChange={(open) => {
+        if (!open) {
+          if (accessBlocked) {
+            accessRecovery.close();
+            return;
+          }
+          accessRecovery.close();
+          onClose();
+        }
+      }}
+    >
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
@@ -84,21 +107,44 @@ export function AgentActorDeleteDialog({
             </Button>
           </div>
         ) : null}
-        {failure ? <p className="text-sm text-destructive">{failure}</p> : null}
+        {accessBlocked ? (
+          <RepositoryAccessInlineRecovery recovery={accessRecovery} />
+        ) : failure ? (
+          <p className="text-sm text-destructive">{failure}</p>
+        ) : null}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={pending} onClick={onClose}>
-            {m.agent_actors_cancel()}
-          </AlertDialogCancel>
-          <AlertDialogAction
-            className="bg-destructive text-white hover:bg-destructive/90"
-            disabled={pending || referenceState.phase !== "ready"}
-            onClick={onConfirm}
+          <AlertDialogCancel
+            disabled={pending || (accessBlocked && accessRecovery.busy)}
+            onClick={() => {
+              if (accessBlocked) {
+                accessRecovery.close();
+                return;
+              }
+              accessRecovery.close();
+              onClose();
+            }}
           >
-            {pending ? (
-              <LoaderCircle data-icon="inline-start" className="animate-spin" />
-            ) : null}
-            {m.agent_actors_delete_confirm()}
-          </AlertDialogAction>
+            {accessBlocked
+              ? m.git_access_preflight_cancel()
+              : m.agent_actors_cancel()}
+          </AlertDialogCancel>
+          {accessBlocked ? (
+            <RepositoryAccessPrimaryButton recovery={accessRecovery} />
+          ) : (
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              disabled={pending || referenceState.phase !== "ready"}
+              onClick={onConfirm}
+            >
+              {pending ? (
+                <LoaderCircle
+                  data-icon="inline-start"
+                  className="animate-spin"
+                />
+              ) : null}
+              {m.agent_actors_delete_confirm()}
+            </AlertDialogAction>
+          )}
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
