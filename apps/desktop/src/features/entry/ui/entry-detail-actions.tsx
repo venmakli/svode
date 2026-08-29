@@ -173,7 +173,7 @@ export function EntryDetailActions({
           className="text-muted-foreground hover:text-foreground"
         >
           <MoreVertical />
-          <span className="sr-only">{m.entry_actions()}</span>
+          <span className="sr-only">{m.content_actions()}</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64">

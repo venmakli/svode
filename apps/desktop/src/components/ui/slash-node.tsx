@@ -296,13 +296,13 @@ const groups: Group[] = [
       {
         focusEditor: false,
         icon: <FileTextIcon />,
-        keywords: ["document", "link", "документ", "ссылка", "doc"],
-        label: "Document link",
-        value: "doc-link",
+        keywords: ["page", "link", "страница", "ссылка"],
+        label: "Page link",
+        value: "page-link",
         onSelect: (editor) => {
           editor.tf.insertNodes({
             type: KEYS.mentionInput,
-            trigger: "/doc",
+            trigger: "/page",
             children: [{ text: "" }],
           });
         },

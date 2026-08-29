@@ -131,7 +131,8 @@ export function watchedEntryToTreeNode(
     has_changes: false,
     has_schema: false,
     parent: parentPath ?? dirname(entryPath),
-    kind: "document",
+    kind: "page",
+    source_shape: "file",
     hasChildren: false,
     children: [],
   };

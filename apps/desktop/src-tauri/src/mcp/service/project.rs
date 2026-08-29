@@ -18,7 +18,7 @@ pub(super) async fn get_project_info(app: &AppHandle) -> Result<ToolCallResult, 
             "null": "active/default space"
         },
         "capabilities": {
-            "documents": true,
+            "pages": true,
             "collections": true,
             "gitStatus": true,
             "commitChanges": false,

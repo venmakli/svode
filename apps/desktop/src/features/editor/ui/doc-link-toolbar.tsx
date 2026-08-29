@@ -40,7 +40,7 @@ import { useEditorDocumentContext } from "../hooks/use-resolved-asset-url";
 import { BrokenLinkRepair } from "./broken-link-repair";
 import { DocLinkTargetPicker } from "./doc-link-target-picker";
 
-type LinkMode = "document" | "url";
+type LinkMode = "page" | "url";
 
 const popoverClassName =
   "z-50 w-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md outline-hidden";
@@ -104,7 +104,7 @@ export function DocLinkFloatingToolbar({
   const inputProps = useFormInputProps({
     preventDefaultOnEnterKeydown: true,
   });
-  const [mode, setMode] = React.useState<LinkMode>("document");
+  const [mode, setMode] = React.useState<LinkMode>("page");
 
   if (hidden) return null;
 
@@ -114,21 +114,21 @@ export function DocLinkFloatingToolbar({
         type="single"
         value={mode}
         onValueChange={(value) => {
-          if (value === "document" || value === "url") setMode(value);
+          if (value === "page" || value === "url") setMode(value);
         }}
         variant="outline"
         size="sm"
         className="w-full"
       >
-        <ToggleGroupItem value="document" className="flex-1">
-          {m.doc_link_mode_document()}
+        <ToggleGroupItem value="page" className="flex-1">
+          {m.doc_link_mode_page()}
         </ToggleGroupItem>
         <ToggleGroupItem value="url" className="flex-1">
           {m.doc_link_mode_url()}
         </ToggleGroupItem>
       </ToggleGroup>
 
-      {mode === "document" ? (
+      {mode === "page" ? (
         <DocLinkTargetPicker />
       ) : (
         <LegacyUrlInput textInputProps={textInputProps} />

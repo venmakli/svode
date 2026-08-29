@@ -5,6 +5,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::time::Instant;
 
+use crate::artifact::identity::{MarkdownIdentityFacts, SourceShape, resolve_markdown_identity};
 use crate::error::AppError;
 use crate::files::frontmatter;
 use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
@@ -26,6 +27,8 @@ pub struct TreeNode {
     pub description: Option<String>,
     pub has_changes: bool,
     pub has_schema: bool,
+    pub kind: TreeChildKind,
+    pub source_shape: SourceShape,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name_conflict: Option<crate::files::naming::DocumentNameConflict>,
     pub children: Vec<TreeNode>,
@@ -34,7 +37,7 @@ pub struct TreeNode {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum TreeChildKind {
-    Document,
+    Page,
     Folder,
     Collection,
 }
@@ -52,6 +55,7 @@ pub struct TreeChildNode {
     #[serde(rename = "hasChildren")]
     pub has_children: bool,
     pub kind: TreeChildKind,
+    pub source_shape: SourceShape,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name_conflict: Option<crate::files::naming::DocumentNameConflict>,
 }
@@ -444,6 +448,22 @@ fn read_dir_direct(
             } else {
                 rel_path.clone()
             };
+            let kind = if has_schema {
+                TreeChildKind::Collection
+            } else if readme.is_some() {
+                debug_assert!(
+                    resolve_markdown_identity(MarkdownIdentityFacts {
+                        path: &node_path,
+                        source_shape: SourceShape::Directory,
+                        collection_root: None,
+                        agent_context: false,
+                    })
+                    .is_page()
+                );
+                TreeChildKind::Page
+            } else {
+                TreeChildKind::Folder
+            };
 
             nodes.push(TreeChildNode {
                 name,
@@ -455,18 +475,21 @@ fn read_dir_direct(
                 has_schema,
                 parent: parent.clone(),
                 has_children: has_visible_direct_children(base, &abs_path, skip_dirs, policy)?,
-                kind: if has_schema {
-                    TreeChildKind::Collection
-                } else {
-                    TreeChildKind::Folder
-                },
+                kind,
+                source_shape: SourceShape::Directory,
                 name_conflict: None,
             });
-        } else if meta.is_file()
-            && ((name.ends_with(".md") && !is_readme_name(&name))
-                || (parent_rel == "." && is_readme_name(&name)))
-        {
+        } else if meta.is_file() && name.ends_with(".md") && !is_readme_name(&name) {
             let (title, icon, description) = read_frontmatter_meta_head(&abs_path);
+            debug_assert!(
+                resolve_markdown_identity(MarkdownIdentityFacts {
+                    path: &rel_path,
+                    source_shape: SourceShape::File,
+                    collection_root: None,
+                    agent_context: false,
+                })
+                .is_page()
+            );
             nodes.push(TreeChildNode {
                 name,
                 path: rel_path,
@@ -477,7 +500,8 @@ fn read_dir_direct(
                 has_schema: false,
                 parent: parent.clone(),
                 has_children: false,
-                kind: TreeChildKind::Document,
+                kind: TreeChildKind::Page,
+                source_shape: SourceShape::File,
                 name_conflict: None,
             });
         }
@@ -647,10 +671,18 @@ fn read_dir_recursive(
                 description,
                 has_changes: false,
                 has_schema,
+                kind: if has_schema {
+                    TreeChildKind::Collection
+                } else if readme.is_some() {
+                    TreeChildKind::Page
+                } else {
+                    TreeChildKind::Folder
+                },
+                source_shape: SourceShape::Directory,
                 name_conflict: None,
                 children,
             });
-        } else if meta.is_file() && name.ends_with(".md") {
+        } else if meta.is_file() && name.ends_with(".md") && !is_readme_name(&name) {
             let (title, icon, description) = read_frontmatter_meta(&abs_path);
             nodes.push(TreeNode {
                 name,
@@ -660,6 +692,8 @@ fn read_dir_recursive(
                 description,
                 has_changes: false,
                 has_schema: false,
+                kind: TreeChildKind::Page,
+                source_shape: SourceShape::File,
                 name_conflict: None,
                 children: vec![],
             });
@@ -740,6 +774,7 @@ mod tests {
         let folder = nodes.iter().find(|node| node.name == "folder").unwrap();
         assert_eq!(folder.parent, None);
         assert_eq!(folder.kind, TreeChildKind::Folder);
+        assert_eq!(folder.source_shape, SourceShape::Directory);
         assert!(folder.has_children);
     }
 
@@ -793,6 +828,8 @@ mod tests {
 
         assert_eq!(docs.path, "docs/README.md");
         assert_eq!(docs.title, "Docs Home");
+        assert_eq!(docs.kind, TreeChildKind::Page);
+        assert_eq!(docs.source_shape, SourceShape::Directory);
         assert!(docs.has_children);
 
         let children = list_tree_children(tmp.path().to_str().unwrap(), Some("docs/README.md"))
@@ -800,6 +837,21 @@ mod tests {
 
         assert_eq!(child_names_direct(&children), vec!["child.md".to_string()]);
         assert!(!child_names_direct(&children).contains(&"README.md".to_string()));
+    }
+
+    #[test]
+    fn space_readme_is_owner_content_not_a_page_tree_child() {
+        let tmp = TempDir::new().unwrap();
+        write_doc(&tmp.path().join("README.md"), "Space home");
+        write_doc(&tmp.path().join("page.md"), "Page");
+
+        let direct = list_tree_children(tmp.path().to_str().unwrap(), None).expect("children");
+        let recursive = build_tree(tmp.path().to_str().unwrap()).expect("tree");
+
+        assert_eq!(child_names_direct(&direct), vec!["page.md".to_string()]);
+        assert_eq!(child_names(&recursive), vec!["page.md".to_string()]);
+        assert_eq!(direct[0].kind, TreeChildKind::Page);
+        assert_eq!(direct[0].source_shape, SourceShape::File);
     }
 
     #[test]

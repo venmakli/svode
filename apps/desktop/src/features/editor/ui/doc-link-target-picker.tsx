@@ -57,7 +57,7 @@ export function DocLinkTargetPicker() {
       <CommandInput
         value={query}
         onValueChange={setQuery}
-        placeholder={m.editor_doc_link_search()}
+        placeholder={m.editor_page_link_search()}
       />
       <CommandList>
         <CommandEmpty>
@@ -67,7 +67,7 @@ export function DocLinkTargetPicker() {
               {m.common_loading()}
             </span>
           ) : (
-            m.editor_doc_link_no_results()
+            m.editor_page_link_no_results()
           )}
         </CommandEmpty>
         <CommandGroup>

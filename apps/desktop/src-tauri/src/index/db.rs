@@ -50,7 +50,10 @@ use crate::error::AppError;
 ///
 /// Bumped to 14 in Stage 8 DF-071: removes every Routines-owned table. A
 /// mismatch now quarantines and recreates the whole derived index file.
-pub(crate) const SCHEMA_VERSION: i64 = 14;
+///
+/// Bumped to 15 in Stage 8 Slice 1A: rebuilds the Knowledge projection with
+/// canonical Page nodes instead of the legacy document/entry split.
+pub(crate) const SCHEMA_VERSION: i64 = 15;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SchemaStatus {
@@ -265,7 +268,7 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         r#"
         CREATE TABLE IF NOT EXISTS knowledge_documents (
             source_path TEXT PRIMARY KEY,
-            node_kind TEXT NOT NULL CHECK (node_kind IN ('document', 'collection', 'entry', 'agent_instruction', 'skill')),
+            node_kind TEXT NOT NULL CHECK (node_kind IN ('page', 'collection', 'agent_instruction', 'skill')),
             title TEXT NOT NULL,
             content_hash TEXT NOT NULL,
             source_updated_at TEXT NOT NULL,

@@ -13,7 +13,7 @@ export function handleEntryCreateError(error: unknown) {
   const conflictPath = conflict?.conflicts[0]?.path;
   toast.error(
     conflictPath
-      ? m.editor_name_conflict({ path: conflictPath })
+      ? m.page_name_conflict({ path: conflictPath })
       : m.board_create_error(),
   );
 }

@@ -51,7 +51,7 @@ test("resolveGitSaveAllScope keeps root leaf save-all scoped to the file", () =>
   expect(scope).toEqual({
     kind: "file",
     path: "outside.md",
-    label: "document",
+    label: "page",
   });
   expect(dirtyPathsForGitSaveScope(status, scope)).toEqual(["outside.md"]);
 });
@@ -76,9 +76,9 @@ const tree: GitSaveScopeTreeNode[] = [
     path: "tasks/README.md",
     has_schema: true,
     kind: "collection",
-    children: [{ path: "tasks/entry.md", kind: "document", children: [] }],
+    children: [{ path: "tasks/entry.md", kind: "page", children: [] }],
   },
-  { path: "outside.md", kind: "document", children: [] },
+  { path: "outside.md", kind: "page", children: [] },
 ];
 
 const status: GitStatus = {

@@ -5,6 +5,7 @@ mod agent_adapters;
 mod agent_context;
 mod agent_sessions;
 mod app_windows;
+mod artifact;
 mod commands;
 mod error;
 mod files;

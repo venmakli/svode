@@ -353,8 +353,8 @@ function gitSaveScopeLabel(label: GitSaveScopeLabel): string {
       return m.git_save_scope_collection();
     case "folder":
       return m.git_save_scope_folder();
-    case "document":
-      return m.git_save_scope_document();
+    case "page":
+      return m.git_save_scope_page();
     case "space":
       return m.git_save_scope_space();
   }

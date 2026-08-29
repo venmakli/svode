@@ -33,7 +33,7 @@ export function NavDocuments() {
 
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>{m.sidebar_documents()}</SidebarGroupLabel>
+      <SidebarGroupLabel>{m.sidebar_pages()}</SidebarGroupLabel>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <SidebarGroupAction>

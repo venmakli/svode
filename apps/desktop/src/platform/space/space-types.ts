@@ -116,7 +116,8 @@ export interface TreeNodeDto {
   has_changes: boolean;
   has_schema: boolean;
   parent?: string | null;
-  kind?: "document" | "folder" | "collection";
+  kind?: "page" | "folder" | "collection";
+  source_shape?: "file" | "directory";
   hasChildren?: boolean;
   has_children?: boolean;
   name_conflict?: {

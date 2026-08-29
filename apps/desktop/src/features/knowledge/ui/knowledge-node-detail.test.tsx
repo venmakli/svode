@@ -6,9 +6,9 @@ import type { KnowledgeNode } from "../model/types";
 import { KnowledgeNodeDetail } from "./knowledge-node-detail";
 
 const node: KnowledgeNode = {
-  id: "document:compliance:age-policy",
+  id: "page:compliance:age-policy",
   source: {
-    kind: "document",
+    kind: "page",
     path: "policies/age-and-registration-policy.md",
     spaceId: "compliance",
   },
@@ -26,11 +26,11 @@ const neighbors: KnowledgeNeighbor[] = [
     key: "links_to:monetization",
     node: {
       ...node,
-      id: "document:compliance:monetization",
+      id: "page:compliance:monetization",
       title: "Monetization BigQuest with a deliberately long relation name",
     },
     source: node.source,
-    nodeId: "document:compliance:monetization",
+    nodeId: "page:compliance:monetization",
     title: "Monetization BigQuest with a deliberately long relation name",
     targetStatus: "ready",
     edgeKinds: ["links_to"],
@@ -38,7 +38,7 @@ const neighbors: KnowledgeNeighbor[] = [
   },
 ];
 
-test("constrains document detail actions and relations to the Sidebar width", () => {
+test("constrains Page detail actions and relations to the Sidebar width", () => {
   const html = renderToStaticMarkup(
     <KnowledgeNodeDetail
       node={node}

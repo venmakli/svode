@@ -116,7 +116,7 @@ async fn handle_jsonrpc_line(line: &str) -> Option<Value> {
                 "protocolVersion": "2025-06-18",
                 "serverInfo": { "name": "svode", "version": MCP_VERSION },
                 "capabilities": { "tools": {} },
-                "instructions": "Use Svode MCP as a product API, not as raw filesystem access. Discover explicit Routine owners with list_spaces/list_collections and read fingerprints with list_routines/get_routine. Use managed create_routine/update_routine/delete_routine for definitions and run_routine only for an explicit manual/schedule launch. Routine actions do not autocommit; enabled schedule/event writes require confirmAutomaticExecution=true without changing device authority, and Routine-launched agents cannot recurse. Create collections for structured repeated data; create documents for narrative pages. Call get_svode_guide when unsure."
+                "instructions": "Use Svode MCP as a product API, not as raw filesystem access. Discover explicit Routine owners with list_spaces/list_collections and read fingerprints with list_routines/get_routine. Use managed create_routine/update_routine/delete_routine for definitions and run_routine only for an explicit manual/schedule launch. Routine actions do not autocommit; enabled schedule/event writes require confirmAutomaticExecution=true without changing device authority, and Routine-launched agents cannot recurse. Create Collections for structured repeated data and Pages for narrative knowledge. Use owner README and Collection item tools for those contexts. Call get_svode_guide when unsure."
             }),
         )),
         "ping" => Some(ok_response(id, json!({}))),
@@ -200,7 +200,12 @@ mod tests {
         .await
         .expect("response");
         let tools = response["result"]["tools"].as_array().expect("tools array");
-        assert!(tools.iter().any(|tool| tool["name"] == "delete_entry"));
+        assert!(tools.iter().any(|tool| tool["name"] == "delete_page"));
+        assert!(
+            tools
+                .iter()
+                .any(|tool| tool["name"] == "delete_collection_item")
+        );
         assert!(tools.iter().any(|tool| tool["name"] == "list_actors"));
         assert!(tools.iter().any(|tool| tool["name"] == "list_routines"));
         assert!(tools.iter().any(|tool| tool["name"] == "get_routine"));
@@ -208,7 +213,11 @@ mod tests {
         assert!(tools.iter().any(|tool| tool["name"] == "update_routine"));
         assert!(tools.iter().any(|tool| tool["name"] == "delete_routine"));
         assert!(tools.iter().any(|tool| tool["name"] == "run_routine"));
-        assert!(!tools.iter().any(|tool| tool["name"] == "get_entry"));
+        assert!(!tools.iter().any(|tool| {
+            tool["name"]
+                .as_str()
+                .is_some_and(|name| name.contains("document") || name.ends_with("_entry"))
+        }));
     }
 
     #[tokio::test]
@@ -221,7 +230,7 @@ mod tests {
         assert_eq!(missing["error"]["code"], -32602);
 
         let hidden = handle_jsonrpc_line(
-            r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_entry","arguments":{"path":"A.md"}}}"#,
+            r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"read_document","arguments":{"path":"A.md"}}}"#,
         )
         .await
         .expect("response");

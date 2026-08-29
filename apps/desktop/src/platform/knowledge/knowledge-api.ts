@@ -7,7 +7,7 @@ import type {
   KnowledgeSourceDto,
 } from "./knowledge-types";
 
-export interface GetKnowledgeDocumentsInputDto extends Record<string, unknown> {
+export interface GetKnowledgeSnapshotInputDto extends Record<string, unknown> {
   projectPath: string;
   scope?: KnowledgeScopeDto;
   query?: string;
@@ -26,9 +26,10 @@ export interface KnowledgeFiltersDto {
   neighborLimit?: number;
 }
 
-export function getKnowledgeDocuments(
-  input: GetKnowledgeDocumentsInputDto,
+export function getKnowledgeSnapshot(
+  input: GetKnowledgeSnapshotInputDto,
 ): Promise<KnowledgeResponseDto> {
+  // The command name is app-private compatibility; the wire projection is canonical Page/Collection knowledge.
   return invokeCommand<KnowledgeResponseDto>("get_knowledge_documents", input);
 }
 

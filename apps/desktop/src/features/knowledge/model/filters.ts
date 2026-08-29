@@ -5,9 +5,8 @@ import type {
 } from "./types";
 
 export const KNOWLEDGE_NODE_KINDS = [
-  "document",
+  "page",
   "collection",
-  "entry",
   "agent_instruction",
   "skill",
 ] as const satisfies readonly KnowledgeNodeKind[];

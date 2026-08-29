@@ -6,10 +6,10 @@ import {
   normalizeGitStatusPath,
 } from "./git-paths";
 
-export type GitSaveScopeLabel = "document" | "folder" | "collection" | "space";
+export type GitSaveScopeLabel = "page" | "folder" | "collection" | "space";
 
 export type GitSaveScope =
-  | { kind: "file"; path: string; label: "document" }
+  | { kind: "file"; path: string; label: "page" }
   | {
       kind: "container";
       path: string;
@@ -24,7 +24,7 @@ export interface GitSaveScopeTreeNode {
   has_schema?: boolean;
   hasChildren?: boolean;
   has_children?: boolean;
-  kind?: "document" | "folder" | "collection";
+  kind?: "page" | "folder" | "collection";
   children?: readonly GitSaveScopeTreeNode[];
 }
 
@@ -39,7 +39,7 @@ export function resolveGitSaveAllScope(input: {
 
   const nodeChain = findNodeChain(input.tree, activePath);
   if (nodeChain.length === 0) {
-    return { kind: "file", path: activePath, label: "document" };
+    return { kind: "file", path: activePath, label: "page" };
   }
 
   const activeNode = nodeChain.at(-1);
@@ -54,7 +54,7 @@ export function resolveGitSaveAllScope(input: {
     }
   }
 
-  return { kind: "file", path: activePath, label: "document" };
+  return { kind: "file", path: activePath, label: "page" };
 }
 
 export function dirtyPathsForGitSaveScope(
@@ -153,7 +153,7 @@ function scopeLabelForNode(
   ) {
     return "folder";
   }
-  return "document";
+  return "page";
 }
 
 function uniqueGitStatusPaths(paths: readonly string[]): string[] {

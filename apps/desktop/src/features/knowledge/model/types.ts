@@ -3,9 +3,8 @@ export type KnowledgeScope =
   | { kind: "space"; spaceId: string | null };
 
 export type KnowledgeNodeKind =
-  | "document"
+  | "page"
   | "collection"
-  | "entry"
   | "agent_instruction"
   | "skill";
 
@@ -67,7 +66,7 @@ export interface KnowledgeSearchItem {
 export interface KnowledgePoolFreshness {
   spaceId: string | null;
   checkedAt: string;
-  documentCount: number;
+  pageCount: number;
   linkCount: number;
   skippedCount: number;
   failureCount: number;

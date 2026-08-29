@@ -89,19 +89,30 @@ async fn call_tool_inner(
         match name {
             "get_project_info" => project_tools::get_project_info(&app).await,
             "list_spaces" => project_tools::list_spaces(&app).await,
-            "list_documents" => documents::list_documents(&app, decode(args)?).await,
-            "read_document" => documents::read_document(&app, decode(args)?).await,
-            "write_document" => documents::write_document(&app, decode(args)?).await,
-            "create_document" => documents::create_document(&app, decode(args)?).await,
-            "update_document_metadata" => {
-                documents::update_document_metadata(&app, decode(args)?).await
+            "list_pages" => documents::list_pages(&app, decode(args)?).await,
+            "read_page" => documents::read_page(&app, decode(args)?).await,
+            "write_page" => documents::write_page(&app, decode(args)?).await,
+            "create_page" => documents::create_page(&app, decode(args)?).await,
+            "update_page_metadata" => documents::update_page_metadata(&app, decode(args)?).await,
+            "delete_page" => collections::delete_page(&app, decode(args)?).await,
+            "read_space_readme" => documents::read_space_readme(&app, decode(args)?).await,
+            "write_space_readme" => documents::write_space_readme(&app, decode(args)?).await,
+            "update_space_metadata" => documents::update_space_metadata(&app, decode(args)?).await,
+            "read_collection_readme" => {
+                documents::read_collection_readme(&app, decode(args)?).await
+            }
+            "write_collection_readme" => {
+                documents::write_collection_readme(&app, decode(args)?).await
+            }
+            "update_collection_metadata" => {
+                documents::update_collection_metadata(&app, decode(args)?).await
             }
             "import_asset" => documents::import_asset(&app, decode(args)?).await,
             "create_collection" => collections::create_collection(&app, decode(args)?).await,
             "convert_to_collection" => {
                 collections::convert_to_collection(&app, decode(args)?).await
             }
-            "search_documents" => documents::search_documents(&app, decode(args)?).await,
+            "search_pages" => documents::search_pages(&app, decode(args)?).await,
             "search_knowledge" => knowledge::search_knowledge(&app, decode(args)?).await,
             "get_knowledge_node" => knowledge::get_knowledge_node(&app, decode(args)?).await,
             "get_knowledge_neighbors" => {
@@ -119,17 +130,31 @@ async fn call_tool_inner(
             "get_collection_schema" => {
                 collections::get_collection_schema(&app, decode(args)?).await
             }
-            "query_entries" => collections::query_entries(&app, decode(args)?).await,
-            "create_entry" => collections::create_entry(&app, decode(args)?).await,
-            "update_entry_fields" => collections::update_entry_fields(&app, decode(args)?).await,
-            "update_entry_body" => collections::update_entry_body(&app, decode(args)?).await,
-            "delete_entry" => collections::delete_entry(&app, decode(args)?).await,
-            "rename_entry" => collections::rename_entry(&app, decode(args)?).await,
-            "move_entry" => collections::move_entry(&app, decode(args)?).await,
-            "reorder_entries" => collections::reorder_entries(&app, decode(args)?).await,
+            "query_collection_items" => {
+                collections::query_collection_items(&app, decode(args)?).await
+            }
+            "read_collection_item" => collections::read_collection_item(&app, decode(args)?).await,
+            "create_collection_item" => {
+                collections::create_collection_item(&app, decode(args)?).await
+            }
+            "update_collection_item_fields" => {
+                collections::update_collection_item_fields(&app, decode(args)?).await
+            }
+            "update_collection_item_body" => {
+                collections::update_collection_item_body(&app, decode(args)?).await
+            }
+            "update_collection_item_metadata" => {
+                collections::update_collection_item_metadata(&app, decode(args)?).await
+            }
+            "delete_collection_item" => {
+                collections::delete_collection_item(&app, decode(args)?).await
+            }
+            "delete_collection" => collections::delete_collection(&app, decode(args)?).await,
+            "rename_content" => collections::rename_content(&app, decode(args)?).await,
+            "move_content" => collections::move_content(&app, decode(args)?).await,
+            "reorder_content" => collections::reorder_content(&app, decode(args)?).await,
             "reorder_spaces" => collections::reorder_spaces(&app, decode(args)?).await,
-            "unnest_entry" => collections::unnest_entry(&app, decode(args)?).await,
-            "convert_to_leaf" => collections::convert_to_leaf(&app, decode(args)?).await,
+            "convert_page_to_leaf" => collections::convert_page_to_leaf(&app, decode(args)?).await,
             "validate_collection_integrity" => {
                 collections::validate_collection_integrity(&app, decode(args)?).await
             }
@@ -212,9 +237,9 @@ async fn authorize_mutating_tool(
                 .repo_dir,
             ];
         }
-        "update_entry_fields" => {
-            let decoded: UpdateFieldsArgs = decode(args.clone())?;
-            let path = validate_document_path(&decoded.path)?;
+        "update_collection_item_fields" => {
+            let decoded: UpdateCollectionItemFieldsArgs = decode(args.clone())?;
+            let path = validate_markdown_path(&decoded.path)?;
             for (field, value) in decoded.fields {
                 paths.extend(
                     properties::relation_entry_field_mutation_paths_with_project(
@@ -227,8 +252,8 @@ async fn authorize_mutating_tool(
                 );
             }
         }
-        "create_entry" => {
-            let decoded: CreateEntryArgs = decode(args.clone())?;
+        "create_collection_item" => {
+            let decoded: CreateCollectionItemArgs = decode(args.clone())?;
             if let Some(fields) = decoded.fields {
                 for (field, value) in fields {
                     paths.extend(
@@ -243,7 +268,7 @@ async fn authorize_mutating_tool(
                 }
             }
         }
-        "delete_entry" => {
+        "delete_page" | "delete_collection_item" => {
             let decoded: PathArgs = decode(args.clone())?;
             let deleted = entry::planned_deleted_entry_paths(&space, &decoded.path)?;
             paths.extend(
@@ -254,8 +279,20 @@ async fn authorize_mutating_tool(
                 )?,
             );
         }
-        "rename_entry" => {
-            let decoded: RenameEntryArgs = decode(args.clone())?;
+        "delete_collection" => {
+            let decoded: CollectionArgs = decode(args.clone())?;
+            let path = collection_readme_path(&decoded.collection_path);
+            let deleted = entry::planned_deleted_entry_paths(&space, &path)?;
+            paths.extend(
+                properties::cascade_clean_deleted_entries_mutation_paths_with_project(
+                    &space,
+                    Some(&context.project_path),
+                    &deleted,
+                )?,
+            );
+        }
+        "rename_content" => {
+            let decoded: RenameContentArgs = decode(args.clone())?;
             extend_entry_move_plan(
                 app,
                 &context,
@@ -267,8 +304,8 @@ async fn authorize_mutating_tool(
             )
             .await?;
         }
-        "move_entry" => {
-            let decoded: MoveEntryArgs = decode(args.clone())?;
+        "move_content" => {
+            let decoded: MoveContentArgs = decode(args.clone())?;
             let file_name = Path::new(&decoded.from)
                 .file_name()
                 .ok_or_else(|| McpBusinessError::new("INVALID_PATH", "invalid source path"))?
@@ -281,7 +318,7 @@ async fn authorize_mutating_tool(
             extend_entry_move_plan(app, &context, &space, &decoded.from, &to, &mut paths, true)
                 .await?;
         }
-        "unnest_entry" | "convert_to_leaf" => {
+        "convert_page_to_leaf" => {
             let decoded: PathArgs = decode(args.clone())?;
             extend_backlink_plan(app, &context, &space, &decoded.path, false, &mut paths).await?;
         }

@@ -16,7 +16,7 @@ interface DocItem {
   icon: string | null;
 }
 
-/** Flatten tree into a flat list of documents. */
+/** Flatten the Page tree into a flat mention list. */
 function flattenTree(nodes: TreeNode[]): DocItem[] {
   const items: DocItem[] = [];
   for (const node of nodes) {
@@ -51,7 +51,7 @@ interface UseSlashMenuResult {
 
 /**
  * Hook to manage /-slash menu state for a textarea.
- * Returns filtered document items, selection state, and handlers.
+ * Returns filtered Page items, selection state, and handlers.
  */
 export function useSlashMenu(
   currentValue: string,
@@ -202,7 +202,7 @@ export function SlashMenuDropdown({
     >
       <div className="py-1.5">
         <div className="mt-1.5 mb-2 px-3 font-medium text-muted-foreground text-xs">
-          {m.chat_slash_group_documents()}
+          {m.chat_slash_group_pages()}
         </div>
         {items.map((item, index) => (
           <button

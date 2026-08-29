@@ -405,7 +405,7 @@ export function ChatRuntimeProvider({
             const contextBlocks = valid.map((f) => {
               const doc = docMentions.find((d) => d.path === f.path);
               const title = doc?.title ?? "";
-              return `<document path="${f.path}" title="${title}">\n${f.content}\n</document>`;
+              return `<page path="${f.path}" title="${title}">\n${f.content}\n</page>`;
             });
             messageWithContext = contextBlocks.join("\n\n") + "\n\n" + text;
           }

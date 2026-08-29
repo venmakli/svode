@@ -62,7 +62,7 @@ pub(super) async fn create_collection(
         format!("Created collection {collection_path}."),
         json!({
             "collectionPath": collection_path,
-            "entry": collection,
+            "collection": collection,
             "schema": schema,
             "changedPaths": [readme_path, schema_path_rel(&collection_path)]
         }),
@@ -125,9 +125,9 @@ pub(super) async fn get_collection_schema(
     ))
 }
 
-pub(super) async fn query_entries(
+pub(super) async fn query_collection_items(
     app: &AppHandle,
-    args: QueryEntriesArgs,
+    args: QueryCollectionItemsArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let (context, space) = resolve_space(app, args.space_id.clone()).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
@@ -138,7 +138,7 @@ pub(super) async fn query_entries(
     let git_state = app.state::<GitState>();
     let git_cli = git::commands::require_cli(&git_state).ok();
     let actor_catalog = app.state::<properties::ActorCatalogState>();
-    let entries = properties::query_entries(
+    let items = properties::query_entries(
         &pool,
         &actor_catalog,
         git_cli.as_ref(),
@@ -152,19 +152,20 @@ pub(super) async fn query_entries(
     )
     .await?;
     Ok(ToolCallResult::ok(
-        format!("Returned {} entries.", entries.len()),
-        json!({ "items": entries, "limit": limit, "offset": offset }),
+        format!("Returned {} Collection items.", items.len()),
+        json!({ "items": items, "limit": limit, "offset": offset }),
     ))
 }
 
-pub(super) async fn create_entry(
+pub(super) async fn create_collection_item(
     app: &AppHandle,
-    args: CreateEntryArgs,
+    args: CreateCollectionItemArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
     let (context, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
+    properties::read_collection_schema(&space, &collection_path)?;
     let fields = args.fields;
     let parent = if collection_path.is_empty() {
         None
@@ -226,19 +227,67 @@ pub(super) async fn create_entry(
     }
     created.warnings.extend(filename_warnings);
     Ok(ToolCallResult::ok(
-        format!("Created entry {}.", created.path),
-        json!({ "entry": created, "changedPaths": [created.path] }),
+        format!("Created Collection item {}.", created.path),
+        json!({ "item": created, "changedPaths": [created.path] }),
     ))
 }
 
-pub(super) async fn update_entry_fields(
+pub(super) async fn read_collection_item(
     app: &AppHandle,
-    args: UpdateFieldsArgs,
+    args: PathArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let (context, space) = resolve_space(app, args.space_id.clone()).await?;
+    let path = validate_markdown_path(&args.path)?;
+    ensure_inside(Path::new(&space), &path)?;
+    require_collection_item(&space, &path)?;
+    let mut item = entry::read(&space, &path)?;
+    apply_indexed_entry_dates(
+        app,
+        &context,
+        args.space_id.as_deref(),
+        &space,
+        &path,
+        &mut item,
+    )
+    .await;
+    Ok(ToolCallResult::ok(
+        format!("Read Collection item {path}."),
+        json!({ "item": item }),
+    ))
+}
+
+pub(super) async fn update_collection_item_metadata(
+    app: &AppHandle,
+    args: UpdatePageMetadataArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let _policy = MCP_MUTATION_POLICY;
+    let (_, space) = resolve_space(app, args.space_id).await?;
+    let path = validate_markdown_path(&args.path)?;
+    ensure_inside(Path::new(&space), &path)?;
+    require_collection_item(&space, &path)?;
+    let item = write_metadata_frontmatter(
+        &space,
+        &path,
+        args.title,
+        args.icon,
+        args.description,
+        args.cover,
+    )?;
+    Ok(ToolCallResult::ok(
+        format!("Updated metadata for Collection item {path}."),
+        json!({ "item": item, "changedPaths": [path] }),
+    ))
+}
+
+pub(super) async fn update_collection_item_fields(
+    app: &AppHandle,
+    args: UpdateCollectionItemFieldsArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
     let (context, space) = resolve_space(app, args.space_id).await?;
-    let path = validate_document_path(&args.path)?;
+    let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
+    require_collection_item(&space, &path)?;
     let mut relation_targets = Vec::new();
     for (field, value) in &args.fields {
         relation_targets.extend(
@@ -262,24 +311,25 @@ pub(super) async fn update_entry_fields(
             value,
         )?);
     }
-    let entry = match updated {
-        Some(entry) => entry,
+    let item = match updated {
+        Some(item) => item,
         None => entry::read(&space, &path)?,
     };
     Ok(ToolCallResult::ok(
         format!("Updated fields for {path}."),
-        json!({ "entry": entry, "changedPaths": [path] }),
+        json!({ "item": item, "changedPaths": [path] }),
     ))
 }
 
-pub(super) async fn update_entry_body(
+pub(super) async fn update_collection_item_body(
     app: &AppHandle,
-    args: UpdateBodyArgs,
+    args: UpdateCollectionItemBodyArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
     let (_, space) = resolve_space(app, args.space_id).await?;
-    let path = validate_document_path(&args.path)?;
+    let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
+    require_collection_item(&space, &path)?;
     let result = entry::write(
         &space, &path, &args.body, None, None, None, None, None, true,
     )?;
@@ -289,14 +339,48 @@ pub(super) async fn update_entry_body(
     ))
 }
 
-pub(super) async fn delete_entry(
+pub(super) async fn delete_page(
     app: &AppHandle,
     args: PathArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
-    let _policy = MCP_MUTATION_POLICY;
-    let (context, space) = resolve_space(app, args.space_id).await?;
-    let path = validate_document_path(&args.path)?;
+    let (_, space) = resolve_space(app, args.space_id.clone()).await?;
+    let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
+    require_standalone_page(&space, &path)?;
+    delete_markdown_content(app, args.space_id, path, "Page").await
+}
+
+pub(super) async fn delete_collection_item(
+    app: &AppHandle,
+    args: PathArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let (_, space) = resolve_space(app, args.space_id.clone()).await?;
+    let path = validate_markdown_path(&args.path)?;
+    ensure_inside(Path::new(&space), &path)?;
+    require_collection_item(&space, &path)?;
+    delete_markdown_content(app, args.space_id, path, "Collection item").await
+}
+
+pub(super) async fn delete_collection(
+    app: &AppHandle,
+    args: CollectionArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let (_, space) = resolve_space(app, args.space_id.clone()).await?;
+    let collection_path = validate_public_rel_path(&args.collection_path, true)?;
+    let path = collection_readme_path(&collection_path);
+    ensure_inside(Path::new(&space), &path)?;
+    require_owner(&space, &path, ContentOwnerKind::Collection)?;
+    delete_markdown_content(app, args.space_id, path, "Collection").await
+}
+
+async fn delete_markdown_content(
+    app: &AppHandle,
+    space_id: Option<String>,
+    path: String,
+    label: &str,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let _policy = MCP_MUTATION_POLICY;
+    let (context, space) = resolve_space(app, space_id).await?;
     let index_state = app.state::<IndexState>();
     let deleted = files_commands::delete_entry_shared(
         &space,
@@ -307,7 +391,7 @@ pub(super) async fn delete_entry(
     )
     .await?;
     Ok(ToolCallResult::ok(
-        format!("Deleted entry {path}."),
+        format!("Deleted {label} {path}."),
         json!({
             "deletedRoot": deleted.deleted_root,
             "deletedPaths": deleted.deleted_paths,
@@ -317,9 +401,9 @@ pub(super) async fn delete_entry(
     ))
 }
 
-pub(super) async fn rename_entry(
+pub(super) async fn rename_content(
     app: &AppHandle,
-    args: RenameEntryArgs,
+    args: RenameContentArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
     let (context, space) = resolve_space(app, args.space_id.clone()).await?;
@@ -343,7 +427,7 @@ pub(super) async fn rename_entry(
     let affected_project_paths =
         changed_structural_paths(before_project, Path::new(&context.project_path))?;
     Ok(structural_operation_result(
-        "Renamed entry",
+        "Renamed content",
         &from,
         &to,
         changed_paths,
@@ -351,9 +435,9 @@ pub(super) async fn rename_entry(
     ))
 }
 
-pub(super) async fn move_entry(
+pub(super) async fn move_content(
     app: &AppHandle,
-    args: MoveEntryArgs,
+    args: MoveContentArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
     let (context, space) = resolve_space(app, args.space_id.clone()).await?;
@@ -377,7 +461,7 @@ pub(super) async fn move_entry(
     let affected_project_paths =
         changed_structural_paths(before_project, Path::new(&context.project_path))?;
     Ok(structural_operation_result(
-        "Moved entry",
+        "Moved content",
         &from,
         &new_path,
         changed_paths,
@@ -385,9 +469,9 @@ pub(super) async fn move_entry(
     ))
 }
 
-pub(super) async fn reorder_entries(
+pub(super) async fn reorder_content(
     app: &AppHandle,
-    args: ReorderEntriesArgs,
+    args: ReorderContentArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
     let (_context, space) = resolve_space(app, args.space_id).await?;
@@ -440,48 +524,19 @@ pub(super) async fn reorder_spaces(
     ))
 }
 
-pub(super) async fn unnest_entry(
+pub(super) async fn convert_page_to_leaf(
     app: &AppHandle,
     args: PathArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
     let (context, space) = resolve_space(app, args.space_id.clone()).await?;
-    let path = validate_document_path(&args.path)?;
+    let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
+    require_standalone_page(&space, &path)?;
     let before = snapshot_structural_paths(Path::new(&space))?;
     let before_project = snapshot_structural_paths(Path::new(&context.project_path))?;
     let index_state = app.state::<IndexState>();
-    let new_path = files_commands::unnest_entry_shared(
-        &space,
-        &path,
-        Some(context.project_path.as_str()),
-        &index_state,
-        None,
-    )
-    .await?;
-    let changed_paths = changed_structural_paths(before, Path::new(&space))?;
-    let affected_project_paths =
-        changed_structural_paths(before_project, Path::new(&context.project_path))?;
-    Ok(structural_operation_result(
-        "Unnested entry",
-        &path,
-        &new_path,
-        changed_paths,
-        affected_project_paths,
-    ))
-}
-pub(super) async fn convert_to_leaf(
-    app: &AppHandle,
-    args: PathArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
-    let _policy = MCP_MUTATION_POLICY;
-    let (context, space) = resolve_space(app, args.space_id.clone()).await?;
-    let path = validate_document_path(&args.path)?;
-    ensure_inside(Path::new(&space), &path)?;
-    let before = snapshot_structural_paths(Path::new(&space))?;
-    let before_project = snapshot_structural_paths(Path::new(&context.project_path))?;
-    let index_state = app.state::<IndexState>();
-    let entry = files_commands::convert_entry_to_leaf_shared(
+    let page = files_commands::convert_entry_to_leaf_shared(
         &space,
         &path,
         Some(context.project_path.as_str()),
@@ -493,14 +548,14 @@ pub(super) async fn convert_to_leaf(
     let affected_project_paths =
         changed_structural_paths(before_project, Path::new(&context.project_path))?;
     let mut result = structural_operation_result(
-        "Converted folder document to leaf",
+        "Converted directory-backed Page to leaf Page",
         &path,
-        &entry.path,
+        &page.path,
         changed_paths,
         affected_project_paths,
     );
     if let Some(structured_content) = result.structured_content.as_mut() {
-        structured_content["entry"] = json!(entry);
+        structured_content["page"] = json!(page);
     }
     Ok(result)
 }
@@ -611,7 +666,7 @@ fn collection_conversion_result(
             "collectionPath": collection_path,
             "readmePath": readme_path,
             "schemaPath": schema_path,
-            "entry": conversion.entry,
+            "collection": conversion.entry,
             "changedPaths": changed_paths,
             "affectedProjectPaths": affected_project_paths,
             "touchedPaths": {
@@ -627,9 +682,12 @@ fn collection_conversion_result(
 
 pub(super) fn collection_conversion_error(error: crate::AppError) -> McpBusinessError {
     match error {
-        crate::AppError::General(message) => {
-            McpBusinessError::new("INVALID_COLLECTION_CONVERSION", message)
-        }
+        crate::AppError::General(message) => McpBusinessError::new(
+            "INVALID_COLLECTION_CONVERSION",
+            message
+                .replace("folder document", "directory-backed Page")
+                .replace("document", "Page"),
+        ),
         other => other.into(),
     }
 }

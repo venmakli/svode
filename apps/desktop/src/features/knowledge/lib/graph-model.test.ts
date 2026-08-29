@@ -66,7 +66,7 @@ test("graph renderer reset produces deterministic positions without one orphan r
 function node(id: string): KnowledgeNode {
   return {
     id,
-    source: { spaceId: null, path: `${id}.md`, kind: "document" },
+    source: { spaceId: null, path: `${id}.md`, kind: "page" },
     spaceName: "Root",
     title: id,
     contentHash: id,
@@ -81,9 +81,9 @@ function edge(sourceId: string, targetId: string): KnowledgeEdge {
   return {
     kind: "links_to",
     sourceId,
-    source: { spaceId: null, path: `${sourceId}.md`, kind: "document" },
+    source: { spaceId: null, path: `${sourceId}.md`, kind: "page" },
     targetId,
-    target: { spaceId: null, path: `${targetId}.md`, kind: "document" },
+    target: { spaceId: null, path: `${targetId}.md`, kind: "page" },
     targetUrl: `${targetId}.md`,
     targetStatus: "ready",
     origin: "explicit",

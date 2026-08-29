@@ -1,8 +1,8 @@
 use super::*;
 
-pub(super) async fn list_documents(
+pub(super) async fn list_pages(
     app: &AppHandle,
-    args: ListDocumentsArgs,
+    args: ListPagesArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let (_, space) = resolve_space(app, args.space_id.clone()).await?;
     let root = args
@@ -26,42 +26,44 @@ pub(super) async fn list_documents(
         .take(limit)
         .collect::<Vec<_>>();
     Ok(ToolCallResult::ok(
-        format!("Found {total} documents."),
+        format!("Found {total} Page-tree items."),
         json!({ "items": items, "total": total, "limit": limit, "offset": start }),
     ))
 }
 
-pub(super) async fn read_document(
+pub(super) async fn read_page(
     app: &AppHandle,
     args: PathArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let (context, space) = resolve_space(app, args.space_id.clone()).await?;
-    let path = validate_document_path(&args.path)?;
+    let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
-    let mut entry = entry::read(&space, &path)?;
+    require_standalone_page(&space, &path)?;
+    let mut page = entry::read(&space, &path)?;
     apply_indexed_entry_dates(
         app,
         &context,
         args.space_id.as_deref(),
         &space,
         &path,
-        &mut entry,
+        &mut page,
     )
     .await;
     Ok(ToolCallResult::ok(
-        format!("Read document {path}."),
-        json!({ "document": entry }),
+        format!("Read Page {path}."),
+        json!({ "page": page }),
     ))
 }
 
-pub(super) async fn write_document(
+pub(super) async fn write_page(
     app: &AppHandle,
-    args: WriteDocumentArgs,
+    args: WritePageArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
     let (_, space) = resolve_space(app, args.space_id).await?;
-    let path = validate_document_path(&args.path)?;
+    let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
+    require_standalone_page(&space, &path)?;
     let result = match entry::write(
         &space,
         &path,
@@ -75,25 +77,26 @@ pub(super) async fn write_document(
     ) {
         Ok(result) => result,
         Err(crate::error::AppError::DocumentNameConflict(conflict)) => {
-            return Ok(document_name_conflict_result(conflict));
+            return Ok(page_name_conflict_result(conflict));
         }
         Err(error) => return Err(error.into()),
     };
     let changed = vec![result.new_path.clone().unwrap_or(path.clone())];
     Ok(ToolCallResult::ok(
-        format!("Updated document {path}."),
+        format!("Updated Page {path}."),
         json!({ "path": path, "newPath": result.new_path, "changedPaths": changed }),
     ))
 }
 
-pub(super) async fn create_document(
+pub(super) async fn create_page(
     app: &AppHandle,
-    args: CreateDocumentArgs,
+    args: CreatePageArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
     let (_, space) = resolve_space(app, args.space_id).await?;
-    let path = normalize_create_document_path(&args.path)?;
+    let path = normalize_create_page_path(&args.path)?;
     let abs = ensure_inside(Path::new(&space), &path)?;
+    require_standalone_page(&space, &path)?;
     if abs.exists() {
         return Err(McpBusinessError::new(
             "FILE_ALREADY_EXISTS",
@@ -139,26 +142,27 @@ pub(super) async fn create_document(
     if let Err(error) = mutation {
         return match error {
             crate::error::AppError::DocumentNameConflict(conflict) => {
-                Ok(document_name_conflict_result(conflict))
+                Ok(page_name_conflict_result(conflict))
             }
             error => Err(error.into()),
         };
     }
     Ok(ToolCallResult::ok(
-        format!("Created document {path}."),
+        format!("Created Page {path}."),
         json!({ "path": path, "changedPaths": [path] }),
     ))
 }
 
-pub(super) async fn update_document_metadata(
+pub(super) async fn update_page_metadata(
     app: &AppHandle,
-    args: UpdateDocumentMetadataArgs,
+    args: UpdatePageMetadataArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
     let (_, space) = resolve_space(app, args.space_id).await?;
-    let path = validate_document_path(&args.path)?;
+    let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
-    let document = match crate::files::naming::with_document_name_lock(&space, || {
+    require_standalone_page(&space, &path)?;
+    let page = match crate::files::naming::with_document_name_lock(&space, || {
         write_metadata_frontmatter(
             &space,
             &path,
@@ -168,27 +172,176 @@ pub(super) async fn update_document_metadata(
             args.cover,
         )
     }) {
-        Ok(document) => document,
+        Ok(page) => page,
         Err(crate::error::AppError::DocumentNameConflict(conflict)) => {
-            return Ok(document_name_conflict_result(conflict));
+            return Ok(page_name_conflict_result(conflict));
         }
         Err(error) => return Err(error.into()),
     };
     Ok(ToolCallResult::ok(
         format!("Updated metadata for {path}."),
-        json!({ "document": document, "changedPaths": [path] }),
+        json!({ "page": page, "changedPaths": [path] }),
     ))
 }
 
-fn document_name_conflict_result(
+pub(super) async fn read_space_readme(
+    app: &AppHandle,
+    args: SpaceArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let (context, space) = resolve_space(app, args.space_id.clone()).await?;
+    let path = "README.md".to_string();
+    ensure_inside(Path::new(&space), &path)?;
+    require_owner(&space, &path, ContentOwnerKind::Space)?;
+    let mut readme = entry::read(&space, &path)?;
+    apply_indexed_entry_dates(
+        app,
+        &context,
+        args.space_id.as_deref(),
+        &space,
+        &path,
+        &mut readme,
+    )
+    .await;
+    Ok(ToolCallResult::ok(
+        "Read Space README.",
+        json!({ "spaceReadme": readme }),
+    ))
+}
+
+pub(super) async fn write_space_readme(
+    app: &AppHandle,
+    args: WriteSpaceReadmeArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let _policy = MCP_MUTATION_POLICY;
+    let (_, space) = resolve_space(app, args.space_id).await?;
+    let path = "README.md".to_string();
+    ensure_inside(Path::new(&space), &path)?;
+    require_owner(&space, &path, ContentOwnerKind::Space)?;
+    let result = entry::write(
+        &space,
+        &path,
+        &args.content,
+        args.title.as_deref(),
+        None,
+        None,
+        None,
+        None,
+        true,
+    )?;
+    Ok(ToolCallResult::ok(
+        "Updated Space README.",
+        json!({ "path": path, "newPath": result.new_path, "changedPaths": [path] }),
+    ))
+}
+
+pub(super) async fn update_space_metadata(
+    app: &AppHandle,
+    args: UpdateSpaceMetadataArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let _policy = MCP_MUTATION_POLICY;
+    let (_, space) = resolve_space(app, args.space_id).await?;
+    let path = "README.md".to_string();
+    ensure_inside(Path::new(&space), &path)?;
+    require_owner(&space, &path, ContentOwnerKind::Space)?;
+    let readme = write_metadata_frontmatter(
+        &space,
+        &path,
+        args.title,
+        args.icon,
+        args.description,
+        args.cover,
+    )?;
+    Ok(ToolCallResult::ok(
+        "Updated Space metadata.",
+        json!({ "spaceReadme": readme, "changedPaths": [path] }),
+    ))
+}
+
+pub(super) async fn read_collection_readme(
+    app: &AppHandle,
+    args: CollectionArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let (context, space) = resolve_space(app, args.space_id.clone()).await?;
+    let collection_path = validate_public_rel_path(&args.collection_path, true)?;
+    let path = collection_readme_path(&collection_path);
+    ensure_inside(Path::new(&space), &path)?;
+    require_owner(&space, &path, ContentOwnerKind::Collection)?;
+    let mut readme = entry::read(&space, &path)?;
+    apply_indexed_entry_dates(
+        app,
+        &context,
+        args.space_id.as_deref(),
+        &space,
+        &path,
+        &mut readme,
+    )
+    .await;
+    Ok(ToolCallResult::ok(
+        format!("Read Collection README for {collection_path}."),
+        json!({ "collectionPath": collection_path, "collectionReadme": readme }),
+    ))
+}
+
+pub(super) async fn write_collection_readme(
+    app: &AppHandle,
+    args: WriteCollectionReadmeArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let _policy = MCP_MUTATION_POLICY;
+    let (_, space) = resolve_space(app, args.space_id).await?;
+    let collection_path = validate_public_rel_path(&args.collection_path, true)?;
+    let path = collection_readme_path(&collection_path);
+    ensure_inside(Path::new(&space), &path)?;
+    require_owner(&space, &path, ContentOwnerKind::Collection)?;
+    let result = entry::write(
+        &space,
+        &path,
+        &args.content,
+        args.title.as_deref(),
+        None,
+        None,
+        None,
+        None,
+        true,
+    )?;
+    Ok(ToolCallResult::ok(
+        format!("Updated Collection README for {collection_path}."),
+        json!({ "collectionPath": collection_path, "path": path, "newPath": result.new_path, "changedPaths": [path] }),
+    ))
+}
+
+pub(super) async fn update_collection_metadata(
+    app: &AppHandle,
+    args: UpdateCollectionMetadataArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let _policy = MCP_MUTATION_POLICY;
+    let (_, space) = resolve_space(app, args.space_id).await?;
+    let collection_path = validate_public_rel_path(&args.collection_path, true)?;
+    let path = collection_readme_path(&collection_path);
+    ensure_inside(Path::new(&space), &path)?;
+    require_owner(&space, &path, ContentOwnerKind::Collection)?;
+    let readme = write_metadata_frontmatter(
+        &space,
+        &path,
+        args.title,
+        args.icon,
+        args.description,
+        args.cover,
+    )?;
+    Ok(ToolCallResult::ok(
+        format!("Updated Collection metadata for {collection_path}."),
+        json!({ "collectionPath": collection_path, "collectionReadme": readme, "changedPaths": [path] }),
+    ))
+}
+
+fn page_name_conflict_result(
     conflict: crate::files::naming::DocumentNameConflict,
 ) -> ToolCallResult {
-    let message = "document name is already used in this container";
+    let message = "Page name is already used in this container";
     ToolCallResult {
         content: vec![crate::mcp::protocol::ContentBlock::text(message)],
         structured_content: Some(json!({
             "error": {
-                "code": "DOCUMENT_NAME_CONFLICT",
+                "code": "PAGE_NAME_CONFLICT",
                 "message": message,
                 "parentPath": conflict.parent_path,
                 "conflicts": conflict.conflicts,
@@ -204,18 +357,18 @@ pub(super) async fn import_asset(
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
     let (context, space) = resolve_space(app, args.space_id.clone()).await?;
-    let document_path = validate_document_path(&args.document_path)?;
-    let document_abs = ensure_inside(Path::new(&space), &document_path)?;
-    let document_metadata = fs::metadata(&document_abs).map_err(|error| {
+    let content_path = validate_markdown_path(&args.content_path)?;
+    let content_abs = ensure_inside(Path::new(&space), &content_path)?;
+    let content_metadata = fs::metadata(&content_abs).map_err(|error| {
         McpBusinessError::new(
-            "DOCUMENT_NOT_FOUND",
-            format!("documentPath must be an existing markdown document: {error}"),
+            "CONTENT_NOT_FOUND",
+            format!("contentPath must be existing Markdown content: {error}"),
         )
     })?;
-    if !document_metadata.is_file() {
+    if !content_metadata.is_file() {
         return Err(McpBusinessError::new(
-            "INVALID_DOCUMENT_PATH",
-            "documentPath must reference an existing markdown file, including a collection README.md when applicable",
+            "INVALID_CONTENT_PATH",
+            "contentPath must reference an existing Markdown Page, Collection item, or owner README",
         ));
     }
 
@@ -236,26 +389,26 @@ pub(super) async fn import_asset(
     )
     .await?;
     let pool = index_state.get_or_create(&scope.pool_key).await?;
-    let scoped_document_id =
-        document_id_for_asset_scope(&document_abs, &scope.pool_dir, &document_path);
+    let scoped_content_id =
+        content_id_for_asset_scope(&content_abs, &scope.pool_dir, &content_path);
     let asset = assets::import_file(
         &pool,
         &scope.pool_dir,
         &source_path,
         &file_name,
-        Some(&scoped_document_id),
+        Some(&scoped_content_id),
     )
     .await?;
 
     let asset_abs = scope.pool_dir.join(&asset.rel_path);
     let (markdown_url, cover_path) =
-        asset_reference_paths(&document_abs, Path::new(&space), &asset_abs);
+        asset_reference_paths(&content_abs, Path::new(&space), &asset_abs);
     let owner_space_id = IndexState::space_id_for_key(&scope.pool_key)
         .unwrap_or_else(|| MCP_ROOT_SPACE_ID.to_string());
 
     Ok(ToolCallResult::ok(
         format!(
-            "Imported asset {} for document {document_path}.",
+            "Imported asset {} for content {content_path}.",
             asset.file_name
         ),
         json!({
@@ -271,7 +424,7 @@ pub(super) async fn import_asset(
     ))
 }
 
-pub(super) async fn search_documents(
+pub(super) async fn search_pages(
     app: &AppHandle,
     args: SearchArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
@@ -299,7 +452,7 @@ pub(super) async fn search_documents(
         .take(limit as usize)
         .collect();
     Ok(ToolCallResult::ok(
-        format!("Found {} matching documents.", results.len()),
+        format!("Found {} matching Pages.", results.len()),
         json!({ "items": results, "total": total, "limit": limit, "offset": start }),
     ))
 }
@@ -309,8 +462,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn name_conflict_result_preserves_container_and_conflicting_document_evidence() {
-        let result = document_name_conflict_result(crate::files::naming::DocumentNameConflict {
+    fn name_conflict_result_preserves_container_and_conflicting_page_evidence() {
+        let result = page_name_conflict_result(crate::files::naming::DocumentNameConflict {
             parent_path: Some("docs".to_string()),
             conflicts: vec![crate::files::naming::DocumentNameConflictEvidence {
                 path: "docs/existing.md".to_string(),
@@ -320,7 +473,7 @@ mod tests {
 
         assert!(result.is_error);
         let error = &result.structured_content.unwrap()["error"];
-        assert_eq!(error["code"], "DOCUMENT_NAME_CONFLICT");
+        assert_eq!(error["code"], "PAGE_NAME_CONFLICT");
         assert_eq!(error["parentPath"], "docs");
         assert_eq!(error["conflicts"][0]["path"], "docs/existing.md");
         assert_eq!(error["conflicts"][0]["title"], "Existing");

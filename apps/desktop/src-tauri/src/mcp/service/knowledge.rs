@@ -14,13 +14,7 @@ const MAX_TEXT_BUDGET: usize = 16_000;
 const MAX_QUERY_CHARS: usize = 512;
 const MAX_RESPONSE_FRESHNESS: usize = 100;
 const MAX_RESPONSE_DIAGNOSTICS: usize = 100;
-const NODE_KINDS: [&str; 5] = [
-    "document",
-    "collection",
-    "entry",
-    "agent_instruction",
-    "skill",
-];
+const NODE_KINDS: [&str; 4] = ["page", "collection", "agent_instruction", "skill"];
 const EDGE_KINDS: [&str; 4] = ["links_to", "relation", "member_of", "references"];
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -522,8 +516,8 @@ mod tests {
 
     #[test]
     fn node_id_and_scope_inputs_are_strict() {
-        assert!(parse_node_id("document:root:notes/a.md").is_ok());
-        assert!(parse_node_id("document:root:../secret.md").is_err());
+        assert!(parse_node_id("page:root:notes/a.md").is_ok());
+        assert!(parse_node_id("page:root:../secret.md").is_err());
         assert!(parse_node_id("canvas:root:a.md").is_err());
         assert!(
             serde_json::from_value::<SearchKnowledgeArgs>(json!({

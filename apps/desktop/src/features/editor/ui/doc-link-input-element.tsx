@@ -56,15 +56,15 @@ export function DocLinkInputElement(
 
   return (
     <PlateElement {...props} as="span">
-      <InlineCombobox element={element} trigger="/doc" showTrigger={false}>
+      <InlineCombobox element={element} trigger="/page" showTrigger={false}>
         <InlineComboboxInput
-          aria-label={m.editor_doc_link_search()}
+          aria-label={m.editor_page_link_search()}
           className="placeholder:text-muted-foreground"
-          placeholder={m.editor_doc_link_search()}
+          placeholder={m.editor_page_link_search()}
         />
         <InlineComboboxContent>
           <InlineComboboxEmpty>
-            {m.editor_doc_link_no_results()}
+            {m.editor_page_link_no_results()}
           </InlineComboboxEmpty>
           <InlineComboboxGroup>
             {items.map((item) => (

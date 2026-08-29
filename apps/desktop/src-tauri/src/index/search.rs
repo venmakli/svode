@@ -97,7 +97,20 @@ pub async fn search_by_title(
             NULL AS table_name,
             updated AS updated_at
         FROM entries
-        WHERE title LIKE ? ESCAPE '\' OR file_path LIKE ? ESCAPE '\'
+        WHERE (title LIKE ? ESCAPE '\' OR file_path LIKE ? ESCAPE '\')
+          AND NOT (
+              LOWER(file_path) = 'readme.md'
+              OR (
+                  in_collection = 1
+                  AND collection_root_path IS NOT NULL
+                  AND LOWER(file_path) = LOWER(
+                      CASE
+                          WHEN collection_root_path = '.' THEN 'readme.md'
+                          ELSE collection_root_path || '/readme.md'
+                      END
+                  )
+              )
+          )
         ORDER BY
             CASE
                 WHEN title LIKE ? ESCAPE '\' THEN 0
@@ -281,6 +294,19 @@ pub async fn search_fts(
         FROM entries_fts
         JOIN entries e ON e.rowid = entries_fts.rowid
         WHERE entries_fts MATCH ?
+          AND NOT (
+              LOWER(e.file_path) = 'readme.md'
+              OR (
+                  e.in_collection = 1
+                  AND e.collection_root_path IS NOT NULL
+                  AND LOWER(e.file_path) = LOWER(
+                      CASE
+                          WHEN e.collection_root_path = '.' THEN 'readme.md'
+                          ELSE e.collection_root_path || '/readme.md'
+                      END
+                  )
+              )
+          )
         "#,
     );
     sql.push_str(" ORDER BY bm25(entries_fts) ASC LIMIT ?");
@@ -323,6 +349,19 @@ pub async fn recent(pool: &SqlitePool, limit: i64) -> Result<Vec<SearchResult>, 
             NULL AS table_name,
             updated AS updated_at
         FROM entries
+        WHERE NOT (
+            LOWER(file_path) = 'readme.md'
+            OR (
+                in_collection = 1
+                AND collection_root_path IS NOT NULL
+                AND LOWER(file_path) = LOWER(
+                    CASE
+                        WHEN collection_root_path = '.' THEN 'readme.md'
+                        ELSE collection_root_path || '/readme.md'
+                    END
+                )
+            )
+        )
         ORDER BY updated DESC
         LIMIT ?
         "#,
@@ -462,5 +501,90 @@ mod tests {
 
         assert!(title_rows.is_empty());
         assert!(fts_rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn page_search_excludes_space_and_collection_owner_readmes() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            r#"
+            CREATE TABLE entries (
+                file_path TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT,
+                body_preview TEXT,
+                updated TEXT NOT NULL,
+                collection_root_path TEXT,
+                in_collection INTEGER NOT NULL,
+                fields TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"
+            CREATE VIRTUAL TABLE entries_fts USING fts5(
+                title,
+                description,
+                body_preview,
+                content='entries',
+                content_rowid='rowid'
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (path, title, collection_root, in_collection, updated) in [
+            ("README.md", "Needle space home", None, 0, "2026-01-04"),
+            (
+                "tasks/README.md",
+                "Needle collection home",
+                Some("tasks"),
+                1,
+                "2026-01-03",
+            ),
+            ("notes/idea.md", "Needle page", None, 0, "2026-01-02"),
+            (
+                "tasks/item.md",
+                "Needle item page",
+                Some("tasks"),
+                1,
+                "2026-01-01",
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO entries (file_path,title,description,body_preview,updated,collection_root_path,in_collection,fields) VALUES (?,?,NULL,'Needle body',?,?,?,'{}')",
+            )
+            .bind(path)
+            .bind(title)
+            .bind(updated)
+            .bind(collection_root)
+            .bind(in_collection)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO entries_fts(rowid,title,description,body_preview) SELECT rowid,title,description,body_preview FROM entries",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        for rows in [
+            search_by_title(&pool, "Needle", 10).await.unwrap(),
+            search_fts(&pool, "Needle", None, None, 10).await.unwrap(),
+            recent(&pool, 10).await.unwrap(),
+        ] {
+            let mut paths = rows.into_iter().map(|row| row.path).collect::<Vec<_>>();
+            paths.sort();
+            assert_eq!(
+                paths,
+                vec!["notes/idea.md".to_string(), "tasks/item.md".to_string()]
+            );
+        }
     }
 }

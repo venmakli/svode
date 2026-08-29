@@ -39,7 +39,7 @@ export function useEntryDocumentName({
   const titleError = effectiveConflictPath
     ? localConflictPath === undefined
       ? m.editor_name_existing_conflict({ path: effectiveConflictPath })
-      : m.editor_name_conflict({ path: effectiveConflictPath })
+      : m.page_name_conflict({ path: effectiveConflictPath })
     : null;
 
   function acceptTitle(title: string) {

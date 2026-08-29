@@ -92,7 +92,7 @@ test("selectTreeNodeChangeIndicator treats collection templates as descendants",
   });
 });
 
-test("selectSpaceRootChangeIndicator treats README as self and documents as descendants", () => {
+test("selectSpaceRootChangeIndicator treats README as owner content and Pages as descendants", () => {
   const state = gitState([
     { path: "README.md", state: "modified" },
     { path: "docs/new.md", state: "untracked" },

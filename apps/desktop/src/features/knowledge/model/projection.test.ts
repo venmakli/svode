@@ -11,18 +11,18 @@ import type { KnowledgeSnapshot } from "./types";
 const snapshot: KnowledgeSnapshot = {
   status: "complete",
   nodes: [
-    node("document:root:a.md", "a.md"),
-    node("document:root:b.md", "b.md"),
-    node("document:root:c.md", "c.md"),
+    node("page:root:a.md", "a.md"),
+    node("page:root:b.md", "b.md"),
+    node("page:root:c.md", "c.md"),
   ],
   edges: [
-    edge("document:root:a.md", "document:root:b.md"),
-    edge("document:root:c.md", "document:root:a.md"),
+    edge("page:root:a.md", "page:root:b.md"),
+    edge("page:root:c.md", "page:root:a.md"),
   ],
   searchItems: [
     {
-      nodeId: "document:root:b.md",
-      source: { kind: "document", spaceId: null, path: "b.md" },
+      nodeId: "page:root:b.md",
+      source: { kind: "page", spaceId: null, path: "b.md" },
       spaceName: "Root",
       title: "B",
       snippet: null,
@@ -47,14 +47,14 @@ const snapshot: KnowledgeSnapshot = {
 };
 
 test("knowledge graph finds a selected node and both neighbor directions", () => {
-  expect(getNodeById(snapshot, "document:root:a.md")?.title).toBe("a.md");
+  expect(getNodeById(snapshot, "page:root:a.md")?.title).toBe("a.md");
   expect(
-    getDirectNeighbors(snapshot, "document:root:a.md").map(
+    getDirectNeighbors(snapshot, "page:root:a.md").map(
       (item) => item.source.path,
     ),
   ).toEqual(["b.md", "c.md"]);
   expect(
-    getDirectNeighborDetails(snapshot, "document:root:a.md").map(
+    getDirectNeighborDetails(snapshot, "page:root:a.md").map(
       ({ node: item, edgeKinds, fieldNames }) => [
         item?.source.path,
         edgeKinds,
@@ -68,7 +68,7 @@ test("knowledge graph finds a selected node and both neighbor directions", () =>
 });
 
 test("knowledge graph uses backend search projection for focus", () => {
-  expect([...getMatchedNodeIds(snapshot, "b")]).toEqual(["document:root:b.md"]);
+  expect([...getMatchedNodeIds(snapshot, "b")]).toEqual(["page:root:b.md"]);
   expect(getMatchedNodeIds(snapshot, "").size).toBe(0);
 });
 
@@ -80,8 +80,8 @@ test("knowledge graph keeps a bounded search result visible as its logical node"
   };
   const projected = withSearchResultNodes(resultOnlySnapshot);
   expect(projected?.nodes.map(({ id }) => id)).toEqual([
-    "document:root:a.md",
-    "document:root:b.md",
+    "page:root:a.md",
+    "page:root:b.md",
   ]);
   expect(projected?.omittedNodeCount).toBe(1);
   expect(projected?.nodes.at(-1)?.canonicalSourcePath).toBe("b.md");
@@ -90,7 +90,7 @@ test("knowledge graph keeps a bounded search result visible as its logical node"
 function node(id: string, path: string) {
   return {
     id,
-    source: { kind: "document" as const, spaceId: null, path },
+    source: { kind: "page" as const, spaceId: null, path },
     spaceName: "Root",
     title: path,
     contentHash: id,
@@ -107,9 +107,9 @@ function edge(sourceId: string, targetId: string) {
   return {
     kind: "links_to" as const,
     sourceId,
-    source: { kind: "document" as const, spaceId: null, path: sourcePath },
+    source: { kind: "page" as const, spaceId: null, path: sourcePath },
     targetId,
-    target: { kind: "document" as const, spaceId: null, path: targetPath },
+    target: { kind: "page" as const, spaceId: null, path: targetPath },
     targetUrl: targetPath,
     targetStatus: "ready" as const,
     origin: "explicit" as const,

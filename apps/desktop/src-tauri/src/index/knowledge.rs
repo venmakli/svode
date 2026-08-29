@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Sqlite, SqlitePool, Transaction};
 
 use crate::agent_context::projection::ProjectKnowledgeArtifact;
+use crate::artifact::identity::{MarkdownIdentityFacts, SourceShape, resolve_markdown_identity};
 use crate::error::AppError;
 use crate::files::backlinks::parse_markdown_links;
 use crate::index::{IndexKey, IndexState};
@@ -29,13 +30,7 @@ const MAX_RELATED_CONTEXT_ITEMS: usize = 20;
 const MAX_RELATED_CONTEXT_BYTES: usize = 16_000;
 const MAX_RELATED_NEIGHBORS: usize = 100;
 const RELATED_NEIGHBORS_PER_ITEM: usize = 5;
-const NODE_KINDS: [&str; 5] = [
-    "document",
-    "collection",
-    "entry",
-    "agent_instruction",
-    "skill",
-];
+const NODE_KINDS: [&str; 4] = ["page", "collection", "agent_instruction", "skill"];
 const EDGE_KINDS: [&str; 4] = ["links_to", "relation", "member_of", "references"];
 
 #[derive(Debug, Clone)]
@@ -93,17 +88,17 @@ pub(crate) fn build_file_artifact(
     collection_root: Option<&str>,
     relations: &[KnowledgeRelationProjection],
 ) -> Option<KnowledgeArtifact> {
-    if is_excluded_source(source_path)
-        || is_agent_context_source(source_path)
-        || is_collection_readme(source_path, collection_root)
-    {
+    let agent_context = is_agent_context_source(source_path);
+    let identity = resolve_markdown_identity(MarkdownIdentityFacts {
+        path: source_path,
+        source_shape: SourceShape::File,
+        collection_root,
+        agent_context,
+    });
+    if is_excluded_source(source_path) || !identity.is_page() {
         return None;
     }
-    let kind = if collection_root.is_some() {
-        "entry"
-    } else {
-        "document"
-    };
+    let kind = "page";
     let mut edges = markdown_edges(source_path, raw);
     if let Some(root) = collection_root {
         edges.push(KnowledgeEdgeArtifact {
@@ -124,7 +119,7 @@ pub(crate) fn build_file_artifact(
             target_url: relation.target_path.clone(),
             target_scope: relation.target_scope.clone(),
             target_path: Some(relation.target_path.clone()),
-            target_kind: Some("entry".to_string()),
+            target_kind: Some("page".to_string()),
             field_name: Some(relation.field_name.clone()),
             location_path: source_path.to_string(),
             byte_start: 0,
@@ -362,14 +357,6 @@ pub(crate) fn is_agent_context_source(source_path: &str) -> bool {
     components
         .windows(2)
         .any(|parts| matches!(parts, [".agents", "skills"] | [".claude", "skills"]))
-}
-
-fn is_collection_readme(source_path: &str, collection_root: Option<&str>) -> bool {
-    collection_root.is_some_and(|root| {
-        source_path.eq_ignore_ascii_case(
-            &crate::properties::knowledge_projection::collection_readme_path(root),
-        )
-    })
 }
 
 pub(crate) async fn replace_all(
@@ -757,7 +744,7 @@ pub struct KnowledgeSearchItem {
 pub struct KnowledgePoolFreshness {
     pub space_id: Option<String>,
     pub checked_at: String,
-    pub document_count: usize,
+    pub page_count: usize,
     pub link_count: usize,
     pub skipped_count: usize,
     pub failure_count: usize,
@@ -1244,7 +1231,7 @@ fn utf8_prefix(value: &str, max_bytes: usize) -> (&str, bool) {
 }
 
 const AGENT_NODE_KINDS: [&str; 2] = ["agent_instruction", "skill"];
-const NON_AGENT_NODE_KINDS: [&str; 3] = ["document", "collection", "entry"];
+const NON_AGENT_NODE_KINDS: [&str; 2] = ["page", "collection"];
 
 fn inherited_agent_kinds(requested: Option<&[String]>) -> Vec<String> {
     match requested {
@@ -2340,7 +2327,7 @@ async fn read_manifest(pool: &SqlitePool) -> Result<Option<KnowledgePoolFreshnes
     Ok(row.map(|row| KnowledgePoolFreshness {
         space_id: None,
         checked_at: row.0,
-        document_count: row.1 as usize,
+        page_count: row.1 as usize,
         link_count: row.2 as usize,
         skipped_count: row.3 as usize,
         failure_count: row.4 as usize,
@@ -2464,7 +2451,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn templates_are_excluded_and_unlinked_entries_remain_nodes() {
+    async fn owner_content_and_templates_are_excluded_while_pages_remain_nodes() {
         let temp = TempDir::new().unwrap();
         let project = temp.path();
         fs::create_dir_all(project.join(".svode")).unwrap();
@@ -2472,6 +2459,7 @@ mod tests {
         fs::create_dir_all(project.join("tasks")).unwrap();
         fs::write(project.join("tasks/schema.yaml"), "columns: []\n").unwrap();
         fs::write(project.join("tasks/item.md"), "Unlinked body").unwrap();
+        fs::write(project.join("README.md"), "Space owner content").unwrap();
         fs::write(project.join(".templates/hidden.md"), "Hidden").unwrap();
         let state = IndexState::new();
         let pool = state
@@ -2489,7 +2477,7 @@ mod tests {
             rows,
             vec![
                 ("tasks".to_string(), "collection".to_string()),
-                ("tasks/item.md".to_string(), "entry".to_string())
+                ("tasks/item.md".to_string(), "page".to_string())
             ]
         );
     }
@@ -2548,7 +2536,7 @@ mod tests {
         replace_test_snapshot(
             &root_pool,
             &[
-                test_artifact("root.md", "document", "root document"),
+                test_artifact("root.md", "page", "root page"),
                 test_artifact(
                     "AGENTS.md",
                     "agent_instruction",
@@ -2563,8 +2551,8 @@ mod tests {
             &[],
         )
         .await;
-        let mut child_document = test_artifact("child.md", "document", "🙂🙂");
-        child_document.edges = (0..=RELATED_NEIGHBORS_PER_ITEM)
+        let mut child_page = test_artifact("child.md", "page", "🙂🙂");
+        child_page.edges = (0..=RELATED_NEIGHBORS_PER_ITEM)
             .map(|index| KnowledgeEdgeArtifact {
                 kind: "links_to".to_string(),
                 target_url: format!("related-{index}.md"),
@@ -2580,7 +2568,7 @@ mod tests {
         replace_test_snapshot(
             &child_pool,
             &[
-                child_document,
+                child_page,
                 test_artifact("AGENTS.md", "agent_instruction", "local instructions"),
             ],
             &[
@@ -2601,7 +2589,7 @@ mod tests {
         .await;
         replace_test_snapshot(
             &sibling_pool,
-            &[test_artifact("sibling.md", "document", "sibling document")],
+            &[test_artifact("sibling.md", "page", "sibling page")],
             &[],
         )
         .await;
@@ -2644,7 +2632,7 @@ mod tests {
                 (
                     Some("child-space".to_string()),
                     "child.md".to_string(),
-                    "document".to_string(),
+                    "page".to_string(),
                 ),
             ])
         );
@@ -2936,7 +2924,7 @@ mod tests {
                 neighbor: Some(KnowledgeSource {
                     space_id: None,
                     path: "tasks/item.md".to_string(),
-                    kind: "entry".to_string(),
+                    kind: "page".to_string(),
                 }),
                 neighbor_limit: Some(10),
                 source: None,
@@ -2974,7 +2962,7 @@ mod tests {
                 neighbor: Some(KnowledgeSource {
                     space_id: None,
                     path: "tasks/item.md".to_string(),
-                    kind: "entry".to_string(),
+                    kind: "page".to_string(),
                 }),
                 neighbor_limit: Some(10),
                 source: None,

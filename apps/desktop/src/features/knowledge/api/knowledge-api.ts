@@ -1,15 +1,15 @@
 import {
-  getKnowledgeDocuments,
+  getKnowledgeSnapshot as getKnowledgeSnapshotDto,
   repairKnowledgeIndex,
-  type GetKnowledgeDocumentsInputDto,
+  type GetKnowledgeSnapshotInputDto,
 } from "@/platform/knowledge/knowledge-api";
 import type { KnowledgeSnapshot } from "../model/types";
 
 export interface GetKnowledgeSnapshotInput {
   projectPath: string;
-  scope?: GetKnowledgeDocumentsInputDto["scope"];
+  scope?: GetKnowledgeSnapshotInputDto["scope"];
   query?: string;
-  filters?: GetKnowledgeDocumentsInputDto["filters"];
+  filters?: GetKnowledgeSnapshotInputDto["filters"];
   nodeOffset?: number;
   edgeOffset?: number;
   nodeLimit?: number;
@@ -20,7 +20,7 @@ export interface GetKnowledgeSnapshotInput {
 export function getKnowledgeSnapshot(
   input: GetKnowledgeSnapshotInput,
 ): Promise<KnowledgeSnapshot> {
-  return getKnowledgeDocuments({
+  return getKnowledgeSnapshotDto({
     projectPath: input.projectPath,
     scope: input.scope,
     query: input.query,

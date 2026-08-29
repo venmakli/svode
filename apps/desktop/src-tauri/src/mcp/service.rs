@@ -9,9 +9,13 @@ use tauri::{AppHandle, Manager};
 use super::active::{self, ActiveProjectContext, ActiveProjectState};
 use super::error::McpBusinessError;
 use super::path::{
-    ensure_inside, normalize_create_document_path, validate_document_path, validate_public_rel_path,
+    ensure_inside, normalize_create_page_path, validate_markdown_path, validate_public_rel_path,
 };
 use super::protocol::{IpcContextOverride, ToolCallResult};
+use crate::artifact::identity::{
+    ContentOwnerKind, MarkdownIdentityFacts, PageRole, SemanticIdentity, SourceShape,
+    resolve_markdown_identity,
+};
 use crate::commands::files as files_commands;
 use crate::files::{entry, tree};
 use crate::git::access::{ensure_mutation_paths_were_authorized, repository_access_snapshot};
@@ -92,7 +96,7 @@ struct PathArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct RenameEntryArgs {
+struct RenameContentArgs {
     #[serde(default)]
     space_id: Option<String>,
     from: String,
@@ -101,7 +105,7 @@ struct RenameEntryArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct MoveEntryArgs {
+struct MoveContentArgs {
     #[serde(default)]
     space_id: Option<String>,
     from: String,
@@ -110,7 +114,7 @@ struct MoveEntryArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ReorderEntriesArgs {
+struct ReorderContentArgs {
     #[serde(default)]
     space_id: Option<String>,
     parent_path: String,
@@ -134,7 +138,7 @@ struct IntegrityArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ListDocumentsArgs {
+struct ListPagesArgs {
     #[serde(default)]
     space_id: Option<String>,
     #[serde(default)]
@@ -147,7 +151,7 @@ struct ListDocumentsArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct WriteDocumentArgs {
+struct WritePageArgs {
     #[serde(default)]
     space_id: Option<String>,
     path: String,
@@ -158,7 +162,7 @@ struct WriteDocumentArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CreateDocumentArgs {
+struct CreatePageArgs {
     #[serde(default)]
     space_id: Option<String>,
     path: String,
@@ -176,10 +180,62 @@ struct CreateDocumentArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct UpdateDocumentMetadataArgs {
+struct UpdatePageMetadataArgs {
     #[serde(default)]
     space_id: Option<String>,
     path: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    icon: Option<Option<String>>,
+    #[serde(default)]
+    description: Option<Option<String>>,
+    #[serde(default)]
+    cover: Option<Option<entry::Cover>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WriteSpaceReadmeArgs {
+    #[serde(default)]
+    space_id: Option<String>,
+    content: String,
+    #[serde(default)]
+    title: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateSpaceMetadataArgs {
+    #[serde(default)]
+    space_id: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    icon: Option<Option<String>>,
+    #[serde(default)]
+    description: Option<Option<String>>,
+    #[serde(default)]
+    cover: Option<Option<entry::Cover>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WriteCollectionReadmeArgs {
+    #[serde(default)]
+    space_id: Option<String>,
+    collection_path: String,
+    content: String,
+    #[serde(default)]
+    title: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateCollectionMetadataArgs {
+    #[serde(default)]
+    space_id: Option<String>,
+    collection_path: String,
     #[serde(default)]
     title: Option<String>,
     #[serde(default)]
@@ -196,7 +252,7 @@ struct UpdateDocumentMetadataArgs {
 struct ImportAssetArgs {
     #[serde(default)]
     space_id: Option<String>,
-    document_path: String,
+    content_path: String,
     source_path: String,
     #[serde(default)]
     file_name: Option<String>,
@@ -246,7 +302,7 @@ struct CollectionArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct QueryEntriesArgs {
+struct QueryCollectionItemsArgs {
     #[serde(default)]
     space_id: Option<String>,
     collection_path: String,
@@ -262,7 +318,7 @@ struct QueryEntriesArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CreateEntryArgs {
+struct CreateCollectionItemArgs {
     #[serde(default)]
     space_id: Option<String>,
     collection_path: String,
@@ -341,7 +397,7 @@ struct DeleteCollectionViewArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct UpdateFieldsArgs {
+struct UpdateCollectionItemFieldsArgs {
     #[serde(default)]
     space_id: Option<String>,
     path: String,
@@ -350,7 +406,7 @@ struct UpdateFieldsArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct UpdateBodyArgs {
+struct UpdateCollectionItemBodyArgs {
     #[serde(default)]
     space_id: Option<String>,
     path: String,
@@ -377,6 +433,88 @@ fn clamp_limit(limit: Option<i64>) -> i64 {
 
 fn offset(offset: Option<i64>) -> usize {
     offset.unwrap_or(0).max(0) as usize
+}
+
+fn semantic_identity_for_path(
+    space: &str,
+    path: &str,
+) -> Result<SemanticIdentity, McpBusinessError> {
+    let direct_collection_root = Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| name.eq_ignore_ascii_case("README.md"))
+        .and_then(|_| Path::new(path).parent())
+        .filter(|parent| Path::new(space).join(parent).join("schema.yaml").is_file())
+        .map(|parent| {
+            if parent.as_os_str().is_empty() {
+                ".".to_string()
+            } else {
+                parent.to_string_lossy().replace('\\', "/")
+            }
+        });
+    let collection_root = match direct_collection_root {
+        Some(root) => Some(root),
+        None => properties::resolve_collection_schema_result(space, path)?
+            .map(|(_, root)| root.to_string_lossy().replace('\\', "/")),
+    };
+    let source_shape = if Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
+    {
+        SourceShape::Directory
+    } else {
+        SourceShape::File
+    };
+    Ok(resolve_markdown_identity(MarkdownIdentityFacts {
+        path,
+        source_shape,
+        collection_root: collection_root.as_deref(),
+        agent_context: crate::index::knowledge::is_agent_context_source(path),
+    }))
+}
+
+fn require_standalone_page(space: &str, path: &str) -> Result<(), McpBusinessError> {
+    let identity = semantic_identity_for_path(space, path)?;
+    if identity.is_page() && identity.page_role == Some(PageRole::Standalone) {
+        return Ok(());
+    }
+    Err(McpBusinessError::new(
+        "NOT_A_STANDALONE_PAGE",
+        "path belongs to owner content or a Collection item; use its canonical owner-specific tool",
+    ))
+}
+
+fn require_collection_item(space: &str, path: &str) -> Result<(), McpBusinessError> {
+    if semantic_identity_for_path(space, path)?.is_collection_item() {
+        return Ok(());
+    }
+    Err(McpBusinessError::new(
+        "NOT_A_COLLECTION_ITEM",
+        "path is not an item inside a schema-backed Collection",
+    ))
+}
+
+fn require_owner(
+    space: &str,
+    path: &str,
+    expected: ContentOwnerKind,
+) -> Result<(), McpBusinessError> {
+    if semantic_identity_for_path(space, path)?.owner_kind == Some(expected) {
+        return Ok(());
+    }
+    Err(McpBusinessError::new(
+        "CONTENT_OWNER_MISMATCH",
+        "path does not belong to the requested content owner",
+    ))
+}
+
+fn collection_readme_path(collection_path: &str) -> String {
+    if collection_path.is_empty() || collection_path == "." {
+        "README.md".to_string()
+    } else {
+        format!("{}/README.md", collection_path.trim_end_matches('/'))
+    }
 }
 
 fn rel_path_from_space(space: &str, path: &Path) -> String {
@@ -416,18 +554,18 @@ fn validate_regular_source_path(source_path: &str) -> Result<PathBuf, McpBusines
     Ok(path)
 }
 
-fn document_id_for_asset_scope(document_abs: &Path, pool_dir: &Path, fallback: &str) -> String {
-    repo_relative_from_base(pool_dir, document_abs, RootMode::Reject)
+fn content_id_for_asset_scope(content_abs: &Path, pool_dir: &Path, fallback: &str) -> String {
+    repo_relative_from_base(pool_dir, content_abs, RootMode::Reject)
         .unwrap_or_else(|_| fallback.to_string())
 }
 
 fn asset_reference_paths(
-    document_abs: &Path,
+    content_abs: &Path,
     space_dir: &Path,
     asset_abs: &Path,
 ) -> (String, String) {
     (
-        crate::files::backlinks::make_relative_link_between(document_abs, asset_abs),
+        crate::files::backlinks::make_relative_link_between(content_abs, asset_abs),
         crate::files::backlinks::make_relative_path(space_dir, asset_abs),
     )
 }
@@ -522,16 +660,12 @@ async fn mcp_repository_access(
 fn mcp_space_capabilities(kind: &str) -> Value {
     json!({
         "kind": kind,
-        "documents": true,
+        "pages": true,
         "collections": true,
         "gitStatus": true,
         "commitChanges": false,
         "autocommit": false
     })
-}
-
-fn collection_readme_path(collection_path: &str) -> String {
-    format!("{collection_path}/README.md")
 }
 
 fn fallback_collection_title(path: &str) -> String {
@@ -746,17 +880,37 @@ mod tests {
     }
 
     #[test]
+    fn semantic_identity_distinguishes_collection_owner_readme_from_item_page() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let collection = temp.path().join("tasks");
+        std::fs::create_dir_all(&collection).expect("collection dir");
+        std::fs::write(collection.join("schema.yaml"), "columns: []\nviews: []\n").expect("schema");
+
+        let owner =
+            semantic_identity_for_path(temp.path().to_string_lossy().as_ref(), "tasks/README.md")
+                .expect("owner identity");
+        let item =
+            semantic_identity_for_path(temp.path().to_string_lossy().as_ref(), "tasks/item.md")
+                .expect("item identity");
+
+        assert_eq!(owner.owner_kind, Some(ContentOwnerKind::Collection));
+        assert!(!owner.is_page());
+        assert_eq!(item.page_role, Some(PageRole::CollectionItem));
+        assert!(item.is_page());
+    }
+
+    #[test]
     fn collection_conversion_maps_validation_errors_to_stable_code() {
         let error = collections::collection_conversion_error(crate::AppError::General(
             "document is already a collection".to_string(),
         ));
 
         assert_eq!(error.code, "INVALID_COLLECTION_CONVERSION");
-        assert_eq!(error.message, "document is already a collection");
+        assert_eq!(error.message, "Page is already a collection");
     }
 
     #[test]
-    fn import_asset_paths_follow_document_and_cover_semantics() {
+    fn import_asset_paths_follow_content_and_cover_semantics() {
         let (root_markdown, root_cover) = asset_reference_paths(
             Path::new("/project/note.md"),
             Path::new("/project"),

@@ -4,7 +4,6 @@ import {
   Library,
   Link2,
   Network,
-  Rows3,
   Sparkles,
   SquareStack,
   type LucideIcon,
@@ -14,9 +13,8 @@ import type { KnowledgeEdgeKind, KnowledgeNodeKind } from "../model/types";
 import * as m from "@/paraglide/messages.js";
 
 const NODE_ICONS: Record<KnowledgeNodeKind, LucideIcon> = {
-  document: FileText,
+  page: FileText,
   collection: Library,
-  entry: Rows3,
   agent_instruction: Bot,
   skill: Sparkles,
 };
@@ -46,12 +44,10 @@ export function KnowledgeEdgeKindIcon({
 
 export function knowledgeNodeKindLabel(kind: KnowledgeNodeKind) {
   switch (kind) {
-    case "document":
-      return m.knowledge_graph_kind_document();
+    case "page":
+      return m.knowledge_graph_kind_page();
     case "collection":
       return m.knowledge_graph_kind_collection();
-    case "entry":
-      return m.knowledge_graph_kind_entry();
     case "agent_instruction":
       return m.knowledge_graph_kind_agent_instruction();
     case "skill":

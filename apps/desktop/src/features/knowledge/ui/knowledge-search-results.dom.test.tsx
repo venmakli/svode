@@ -9,7 +9,7 @@ import { KnowledgeCommandResults } from "./knowledge-search-results";
 const items: KnowledgeSearchItem[] = [
   {
     nodeId: "node-1",
-    source: { kind: "document", path: "design.md", spaceId: null },
+    source: { kind: "page", path: "design.md", spaceId: null },
     spaceName: "Project",
     title: "Design",
     snippet: null,
@@ -19,7 +19,7 @@ const items: KnowledgeSearchItem[] = [
   },
   {
     nodeId: "node-2",
-    source: { kind: "document", path: "review.md", spaceId: null },
+    source: { kind: "page", path: "review.md", spaceId: null },
     spaceName: "Project",
     title: "Review",
     snippet: null,

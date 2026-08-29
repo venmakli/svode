@@ -19,8 +19,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
-            "list_documents",
-            "List markdown documents in a space. spaceId \"root\" targets the project root; spaceId null uses the active/default space.",
+            "list_pages",
+            "List the canonical Page tree in a space, including structural folders and Collections needed to navigate Page locations. Space owner README content is not returned as a Page.",
             schema(
                 &[
                     space_id(),
@@ -34,12 +34,12 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
-            "read_document",
-            "Read a markdown document by repo-relative path.",
+            "read_page",
+            "Read a standalone Svode Page by repo-relative Markdown path. Collection items and owner README content use their canonical tools.",
             schema(
                 &[
                     space_id(),
-                    document_path_req("path", "Markdown document path."),
+                    markdown_path_req("path", "Standalone Page path."),
                 ],
                 &["path"],
             ),
@@ -47,12 +47,12 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
-            "write_document",
-            "Replace a markdown document body. Use this instead of direct filesystem writes so Svode preserves metadata, validates paths, and reports changedPaths. For new local media, call import_asset first and insert its returned markdownUrl. Does not autocommit.",
+            "write_page",
+            "Replace a standalone Page body. Use this instead of direct filesystem writes so Svode preserves metadata, validates paths, and reports changedPaths. For new local media, call import_asset first and insert its returned markdownUrl. Does not autocommit.",
             schema(
                 &[
                     space_id(),
-                    document_path_req("path", "Existing markdown document path."),
+                    markdown_path_req("path", "Existing standalone Page path."),
                     str_req("content"),
                     str_opt("title"),
                 ],
@@ -62,14 +62,14 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
-            "create_document",
-            "Create a regular Svode markdown document, not a collection. Use create_collection for structured data like tasks, CRM contacts, OKRs, backlog rows, asset inventory records, or any list/table/board/calendar content. A new image cover must use cover.path from import_asset or an already-existing repository file; cover.path does not upload a file. Paths without extension become .md; trailing slash creates README.md.",
+            "create_page",
+            "Create a standalone Svode Page, not a Collection or owner README. Use create_collection for structured data like tasks, CRM contacts, OKRs, backlog items, asset inventory items, or any list/table/board/calendar content. A new image cover must use cover.path from import_asset or an already-existing repository file; cover.path does not upload a file. Paths without extension become .md; trailing slash creates a directory-backed Page at README.md.",
             schema(
                 &[
                     space_id(),
                     path_req(
                         "path",
-                        "Repo-relative document path. Missing .md is normalized to .md; trailing slash creates README.md.",
+                        "Repo-relative Page path. Missing .md is normalized to .md; trailing slash creates a directory-backed Page at README.md.",
                     ),
                     str_opt("content"),
                     str_opt("title"),
@@ -83,12 +83,12 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
-            "update_document_metadata",
-            "Update document or collection README metadata: title, icon, description, and cover. For a new local image cover, call import_asset first and pass its returned coverPath as cover.path; an existing repository file is also allowed. Does not change body and does not autocommit.",
+            "update_page_metadata",
+            "Update standalone Page metadata: title, icon, description, and cover. For a new local image cover, call import_asset first and pass its returned coverPath as cover.path; an existing repository file is also allowed. Does not change body and does not autocommit.",
             schema(
                 &[
                     space_id(),
-                    document_path_req("path", "Markdown document or collection README path."),
+                    markdown_path_req("path", "Standalone Page path."),
                     str_opt("title"),
                     str_opt("icon"),
                     str_opt("description"),
@@ -100,19 +100,107 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
-            "import_asset",
-            "Copy one local regular file into Svode's managed .assets/ pool for an existing document or collection README. This is the required MCP flow for new local media: use returned markdownUrl in a body or returned coverPath in metadata. It does not change body/cover, does not move the source file, and does not autocommit.",
+            "delete_page",
+            "Delete one standalone Page through Svode's managed delete/index/backlink flow. Does not accept Collection items or owner README content and does not autocommit.",
             schema(
                 &[
                     space_id(),
-                    document_path_req(
-                        "documentPath",
-                        "Existing source document or collection README.md that owns the import context.",
+                    markdown_path_req("path", "Standalone Page path."),
+                ],
+                &["path"],
+            ),
+            write_ann(true, Some(false)),
+            None,
+        ),
+        def(
+            "read_space_readme",
+            "Read the selected Project/Space owner's README content without classifying it as a Page.",
+            schema(&[space_id()], &[]),
+            read_only_ann(),
+            None,
+        ),
+        def(
+            "write_space_readme",
+            "Replace the selected Project/Space owner's README body. Does not autocommit.",
+            schema(
+                &[space_id(), str_req("content"), str_opt("title")],
+                &["content"],
+            ),
+            write_ann(false, None),
+            None,
+        ),
+        def(
+            "update_space_metadata",
+            "Update the selected Project/Space owner's README metadata without classifying it as a Page. Does not autocommit.",
+            schema(
+                &[
+                    space_id(),
+                    str_opt("title"),
+                    str_opt("icon"),
+                    str_opt("description"),
+                    cover_opt("cover"),
+                ],
+                &[],
+            ),
+            write_ann(false, None),
+            None,
+        ),
+        def(
+            "read_collection_readme",
+            "Read one Collection owner's README content without classifying it as a Page or Collection item.",
+            schema(
+                &[space_id(), collection_path_req("collectionPath")],
+                &["collectionPath"],
+            ),
+            read_only_ann(),
+            None,
+        ),
+        def(
+            "write_collection_readme",
+            "Replace one Collection owner's README body. Does not autocommit.",
+            schema(
+                &[
+                    space_id(),
+                    collection_path_req("collectionPath"),
+                    str_req("content"),
+                    str_opt("title"),
+                ],
+                &["collectionPath", "content"],
+            ),
+            write_ann(false, None),
+            None,
+        ),
+        def(
+            "update_collection_metadata",
+            "Update one Collection owner's README metadata without classifying it as a Page or Collection item. Does not autocommit.",
+            schema(
+                &[
+                    space_id(),
+                    collection_path_req("collectionPath"),
+                    str_opt("title"),
+                    str_opt("icon"),
+                    str_opt("description"),
+                    cover_opt("cover"),
+                ],
+                &["collectionPath"],
+            ),
+            write_ann(false, None),
+            None,
+        ),
+        def(
+            "import_asset",
+            "Copy one local regular file into Svode's managed .assets/ pool for existing Markdown content owned by a Page, Collection item, Space, or Collection. This is the required MCP flow for new local media: use returned markdownUrl in a body or returned coverPath in metadata. It does not change body/cover, does not move the source file, and does not autocommit.",
+            schema(
+                &[
+                    space_id(),
+                    markdown_path_req(
+                        "contentPath",
+                        "Existing Page, Collection item, Space README, or Collection README that owns the import context.",
                     ),
                     source_file_path_req(),
                     str_opt("fileName"),
                 ],
-                &["documentPath", "sourcePath"],
+                &["contentPath", "sourcePath"],
             ),
             write_ann(false, Some(false)),
             None,
@@ -142,13 +230,13 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "convert_to_collection",
-            "Convert an existing markdown leaf, folder document, or bare folder into a Svode collection in place through Svode's managed structural backend. This preserves source body/frontmatter, rewrites managed links, refreshes indexes/tree, returns oldPath, collectionPath, readmePath, schemaPath and touched paths, and does not autocommit.",
+            "Convert an existing leaf Page, directory-backed Page, or bare folder into a Svode Collection in place through Svode's managed structural backend. This preserves source body/frontmatter, rewrites managed links, refreshes indexes/tree, returns oldPath, collectionPath, readmePath, schemaPath and touched paths, and does not autocommit.",
             schema(
                 &[
                     space_id(),
                     path_req(
                         "path",
-                        "Existing markdown leaf, folder document path, or bare folder path. A leaf foo.md becomes foo/README.md; an existing collection README.md is rejected.",
+                        "Existing leaf Page path, directory-backed Page path, or bare folder path. A leaf foo.md becomes foo/README.md; an existing Collection README.md is rejected.",
                     ),
                 ],
                 &["path"],
@@ -157,8 +245,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
-            "search_documents",
-            "Search indexed documents with FTS snippets.",
+            "search_pages",
+            "Search indexed Pages with FTS snippets. Space and Collection owner README content is excluded.",
             schema(
                 &[
                     space_id(),
@@ -346,8 +434,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
-            "query_entries",
-            "Query entries from an existing collection. Use list_collections first if you are unsure whether a collection exists. Relation field values are entry path refs, not row IDs.",
+            "query_collection_items",
+            "Query items from an existing Collection. Use list_collections first if you are unsure whether a Collection exists. Relation field values are Collection item path refs, not row IDs.",
             schema(
                 &[
                     space_id(),
@@ -363,8 +451,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
-            "create_entry",
-            "Create one record inside an existing collection. The collectionPath must already contain schema.yaml; this tool does not create collections. fields are custom schema field values; title/icon/description/cover are system metadata. A new image cover must use cover.path from import_asset or an already-existing repository file. Does not autocommit.",
+            "create_collection_item",
+            "Create one item inside an existing Collection. The collectionPath must already contain schema.yaml; this tool does not create Collections. fields are custom schema field values; title/icon/description/cover are system metadata. A new image cover must use cover.path from import_asset or an already-existing repository file. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -382,12 +470,25 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
-            "update_entry_fields",
-            "Update entry frontmatter custom fields. Do not write unique_id, title, icon, description, cover, created, or updated through fields. Does not autocommit.",
+            "read_collection_item",
+            "Read one item inside a schema-backed Collection by its Markdown path.",
             schema(
                 &[
                     space_id(),
-                    document_path_req("path", "Markdown entry path."),
+                    markdown_path_req("path", "Collection item path."),
+                ],
+                &["path"],
+            ),
+            read_only_ann(),
+            None,
+        ),
+        def(
+            "update_collection_item_fields",
+            "Update custom fields for one Collection item. Do not write unique_id, title, icon, description, cover, created, or updated through fields. Does not autocommit.",
+            schema(
+                &[
+                    space_id(),
+                    markdown_path_req("path", "Collection item path."),
                     fields_req("fields"),
                 ],
                 &["path", "fields"],
@@ -396,12 +497,12 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
-            "update_entry_body",
-            "Replace entry body. For new local media, call import_asset first and insert its returned markdownUrl. Does not autocommit.",
+            "update_collection_item_body",
+            "Replace one Collection item's body. For new local media, call import_asset first and insert its returned markdownUrl. Does not autocommit.",
             schema(
                 &[
                     space_id(),
-                    document_path_req("path", "Markdown entry path."),
+                    markdown_path_req("path", "Collection item path."),
                     str_req("body"),
                 ],
                 &["path", "body"],
@@ -410,12 +511,29 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
-            "delete_entry",
-            "Delete one document or collection entry by repo-relative markdown path. Pass folder/README.md to delete a folder document or collection root. Uses the same delete/index/backlink behavior as the UI, returns changedPaths, and does not autocommit.",
+            "update_collection_item_metadata",
+            "Update one Collection item's title, icon, description, or cover. Does not change its body or custom fields and does not autocommit.",
             schema(
                 &[
                     space_id(),
-                    document_path_req("path", "Markdown entry path to delete."),
+                    markdown_path_req("path", "Collection item path."),
+                    str_opt("title"),
+                    str_opt("icon"),
+                    str_opt("description"),
+                    cover_opt("cover"),
+                ],
+                &["path"],
+            ),
+            write_ann(false, None),
+            None,
+        ),
+        def(
+            "delete_collection_item",
+            "Delete one Collection item through Svode's managed delete/index/backlink flow. Does not autocommit.",
+            schema(
+                &[
+                    space_id(),
+                    markdown_path_req("path", "Collection item path to delete."),
                 ],
                 &["path"],
             ),
@@ -423,13 +541,26 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
-            "rename_entry",
-            "Rename a document or folder entry in its current parent through Svode's managed structural backend. To change parent, use move_entry. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit.",
+            "delete_collection",
+            "Delete one Collection owner and its owned content through Svode's managed delete/index/backlink flow. Does not autocommit.",
+            schema(
+                &[space_id(), collection_path_req("collectionPath")],
+                &["collectionPath"],
+            ),
+            write_ann(true, Some(false)),
+            None,
+        ),
+        def(
+            "rename_content",
+            "Rename a Page, folder, or Collection in its current parent through Svode's managed structural backend. To change parent, use move_content. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit.",
             schema(
                 &[
                     space_id(),
-                    path_req("from", "Existing repo-relative document or folder path."),
-                    path_req("to", "New repo-relative document or folder path."),
+                    path_req(
+                        "from",
+                        "Existing repo-relative Page, folder, or Collection path.",
+                    ),
+                    path_req("to", "New repo-relative Page, folder, or Collection path."),
                 ],
                 &["from", "to"],
             ),
@@ -437,12 +568,15 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
-            "move_entry",
-            "Move a document or folder entry under a new parent through Svode's managed structural backend. Use an empty toParent to move to the space root. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit.",
+            "move_content",
+            "Move a Page, folder, or Collection under a new parent through Svode's managed structural backend. Use an empty toParent to move to the space root. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit.",
             schema(
                 &[
                     space_id(),
-                    path_req("from", "Existing repo-relative document or folder path."),
+                    path_req(
+                        "from",
+                        "Existing repo-relative Page, folder, or Collection path.",
+                    ),
                     path_req(
                         "toParent",
                         "Destination parent directory path; use an empty string for the space root.",
@@ -454,8 +588,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
-            "reorder_entries",
-            "Set the complete semantic order of direct document, folder, and collection children under one parent. Use list_documents before and after to discover and verify child paths. Does not autocommit.",
+            "reorder_content",
+            "Set the complete semantic order of direct Page, folder, and Collection children under one parent. Use list_pages before and after to discover and verify child paths. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -465,7 +599,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
                     ),
                     str_array_req(
                         "orderedChildren",
-                        "Complete ordered list of direct semantic child paths from list_documents. Folder-document and collection identities use their README.md paths.",
+                        "Complete ordered list of direct semantic child paths from list_pages. Directory-backed Page and Collection identities use their README.md paths.",
                     ),
                 ],
                 &["parentPath", "orderedChildren"],
@@ -487,25 +621,12 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
-            "unnest_entry",
-            "Convert an empty folder document README.md back into a markdown leaf through Svode's managed structural backend. Fails actionably when the folder still has visible children. Does not autocommit.",
+            "convert_page_to_leaf",
+            "Convert a supported directory-backed Page at README.md into a leaf Page through Svode's managed structural backend. This is not a Collection demotion tool. Returns changed paths and does not autocommit.",
             schema(
                 &[
                     space_id(),
-                    document_path_req("path", "Folder document README.md path."),
-                ],
-                &["path"],
-            ),
-            write_ann(false, Some(false)),
-            None,
-        ),
-        def(
-            "convert_to_leaf",
-            "Convert a supported folder document README.md into a markdown leaf through Svode's managed structural backend. This is not a collection demotion tool. Returns changed paths and does not autocommit.",
-            schema(
-                &[
-                    space_id(),
-                    document_path_req("path", "Folder document README.md path."),
+                    markdown_path_req("path", "Directory-backed Page README.md path."),
                 ],
                 &["path"],
             ),
@@ -514,7 +635,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "validate_collection_integrity",
-            "Read-only check for collection relation targets, stored relation entry references, and stale sidebar order refs after deliberate raw filesystem structural edits. Omit collectionPath to validate every collection in the selected space.",
+            "Read-only check for Collection relation targets, stored Collection item references, and stale sidebar order refs after deliberate raw filesystem structural edits. Omit collectionPath to validate every Collection in the selected space.",
             schema(&[space_id(), collection_path_opt("collectionPath")], &[]),
             read_only_ann(),
             None,
@@ -550,7 +671,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "delete_collection_column",
-            "Delete a collection column. Set deleteValues true only when stored values should also be removed from entries. Does not autocommit.",
+            "Delete a Collection column. Set deleteValues true only when stored values should also be removed from Collection items. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -632,7 +753,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "get_svode_guide",
-            "Return agent-facing guidance for working with Svode documents, managed file assets, collections, entries, metadata, and schema tools.",
+            "Return agent-facing guidance for working with Svode Pages, owner README content, managed file assets, Collections, Collection items, metadata, and schema tools.",
             obj(vec![]),
             read_only_ann(),
             None,
@@ -663,11 +784,11 @@ pub fn guide_text() -> &'static str {
 - Mutating tools do not autocommit. They return changedPaths in structuredContent. Svode app owns commit/sync/autocommit policy.
 
 Structure choice:
-- Use a regular document for narrative notes, specs, plans, and one-off pages.
-- Use a document folder when one page naturally owns subpages/assets.
-- Use a collection for repeated structured data: tasks, backlog, CRM contacts, customers, OKRs, assets, inventory, bugs, sprints, meetings, or anything that should be queried, filtered, sorted, or shown as a table/board/calendar/list/gallery.
-- Do not create a plain wrapper folder for one collection. create_collection already creates the directory collection with README.md identity plus schema.yaml.
-- If a markdown leaf, folder document, or bare folder already exists and should become structured data, use convert_to_collection in place.
+- Use a standalone Page for narrative notes, specs, plans, and one-off knowledge.
+- Use a directory-backed Page when one Page naturally owns subpages/assets.
+- Use a Collection for repeated structured data: tasks, backlog, CRM contacts, customers, OKRs, assets, inventory, bugs, sprints, meetings, or anything that should be queried, filtered, sorted, or shown as a table/board/calendar/list/gallery.
+- Do not create a plain wrapper folder for one Collection. create_collection already creates the directory Collection with README.md owner identity plus schema.yaml.
+- If a leaf Page, directory-backed Page, or bare folder already exists and should become structured data, use convert_to_collection in place.
 - Existing custom frontmatter values are user data. Adding a same-name column promotes those values into schema semantics.
 
 Space targeting:
@@ -684,22 +805,22 @@ Routine workflow:
 - Saving an enabled schedule/event requires confirmAutomaticExecution=true, but that acknowledgement never enables owner-local device authority. Never address or edit raw .routines paths through MCP; Routine definitions belong to the Routine domain tools and owner resolver.
 
 Metadata and fields:
-- System metadata is title, icon, description, cover, created, and updated. Do not create custom columns for these and do not write them through update_entry_fields.
-- Collection identity lives in README.md metadata. Schema.yaml stores columns, views, system field labels, and template settings. README content is exposed through the separate Readme scope surface.
-- Prefer domain tools over direct filesystem writes: update_document_metadata for title/icon/description/cover, schema tools for columns/views, write_document or update_entry_body for body replacement, and update_entry_fields for custom field values.
+- System metadata is title, icon, description, cover, created, and updated. Do not create custom columns for these and do not write them through update_collection_item_fields.
+- Collection identity lives in README.md owner metadata. Schema.yaml stores columns, views, system field labels, and template settings. Use the Collection README tools for that owner content.
+- Prefer domain tools over direct filesystem writes: update_page_metadata for standalone Page metadata, owner-specific metadata tools for Space/Collection README content, schema tools for columns/views, write_page or update_collection_item_body for body replacement, and update_collection_item_fields for custom field values.
 
 Structural work and integrity:
 - Files-first work is supported: ordinary Markdown body edits and deliberate, predictable bulk file edits can be made directly in the repository.
-- Do not construct `.svode/order`, relation migrations, managed `.assets/` paths, structural document moves/renames, or collections manually. Use rename_entry, move_entry, reorder_entries, reorder_spaces, unnest_entry, convert_to_leaf, or convert_to_collection so Svode preserves relations, backlinks, sidebar order, and indexes. Discover spaces with list_spaces; root is `spaceId: "root"`, while reorder_spaces accepts child ids only.
-- Structural tools do not autocommit and return changed/touched paths. convert_to_collection is in-place and manages document/collection identity; convert_to_leaf applies only to a supported folder document and does not demote a collection or remove schema.yaml.
-- After an intentional raw structural edit, run validate_collection_integrity for the collection or selected space and repair every reported relation target, missing relation entry, or stale order reference before continuing.
+- Do not construct `.svode/order`, relation migrations, managed `.assets/` paths, structural Page moves/renames, or Collections manually. Use rename_content, move_content, reorder_content, reorder_spaces, convert_page_to_leaf, or convert_to_collection so Svode preserves relations, backlinks, sidebar order, and indexes. Discover spaces with list_spaces; root is `spaceId: "root"`, while reorder_spaces accepts child ids only.
+- Structural tools do not autocommit and return changed/touched paths. convert_to_collection is in-place and manages Page/Collection identity; convert_page_to_leaf applies only to a supported directory-backed Page and does not demote a Collection or remove schema.yaml.
+- After an intentional raw structural edit, run validate_collection_integrity for the Collection or selected Space and repair every reported relation target, missing Collection item, or stale order reference before continuing.
 
 Managed file assets:
 - `.assets/` is Svode's managed attachment pool, not a directory whose filenames or storage scope an MCP client should construct. A collection named "assets" or an asset inventory is structured data; it is separate from the `.assets/` file pool.
-- To use a new local image, media file, or attachment, call import_asset with its existing source document/collection README and an absolute local sourcePath. import_asset copies the file into the effective managed pool, applies filename sanitization and a unique prefix, and registers it in SQLite. It never moves the source file, does not change body/cover automatically, and does not autocommit.
-- After import_asset, use markdownUrl exactly as returned in write_document or update_entry_body. It is relative to documentPath and is the Markdown URL Plate uses for media.
-- For a cover, pass coverPath exactly as returned to update_document_metadata (or a create tool) as cover.path. cover.path refers to an asset that already exists; it is not an upload API.
-- assetPath is repo-relative to the effective managed pool, markdownUrl is relative to the source document, and coverPath is relative to the selected space root. These can differ for an inline space whose pool is project-owned; use the returned values instead of calculating paths.
+- To use a new local image, media file, or attachment, call import_asset with the existing Page, Collection item, or owner README contentPath and an absolute local sourcePath. import_asset copies the file into the effective managed pool, applies filename sanitization and a unique prefix, and registers it in SQLite. It never moves the source file, does not change body/cover automatically, and does not autocommit.
+- After import_asset, use markdownUrl exactly as returned in write_page, update_collection_item_body, or an owner README write tool. It is relative to contentPath and is the Markdown URL Plate uses for media.
+- For a cover, pass coverPath exactly as returned to the matching Page, Collection item, or owner metadata tool as cover.path. cover.path refers to an asset that already exists; it is not an upload API.
+- assetPath is repo-relative to the effective managed pool, markdownUrl is relative to contentPath, and coverPath is relative to the selected Space root. These can differ for an inline Space whose pool is project-owned; use the returned values instead of calculating paths.
 - A repository file deliberately created outside `.assets/` remains valid and is not moved unless you explicitly import_asset a managed copy. Do not write new binary files directly into `.assets/`, and do not create or change AGENTS.md for asset handling.
 
 Property semantics:
@@ -707,11 +828,11 @@ Property semantics:
 - actor is for assignee/owner/reviewer/participants. Values are canonical email strings, or arrays of canonical emails when the column allows multiple actors. Use list_actors first; do not create select options from people names.
 - status is workflow state with groups todo, in_progress, and done. A collection should have at most one status column.
 - boolean is a two-state field. Values are JSON true/false, or null to clear the stored key; do not use string surrogates such as checked/unchecked or on/off. Use display checkbox for completion, confirmation, verification, or consent semantics. Use display switch for a maintained enabled, active, published, available, or permission state with immediate effect. If the intent is ambiguous, omit display so the safe default remains checkbox. On unrelated column updates, preserve the existing display instead of reinterpreting it.
-- unique_id is read-only after creation/materialization. Do not write unique_id through update_entry_fields.
+- unique_id is read-only after creation/materialization. Do not write unique_id through update_collection_item_fields.
 - date is for due dates, events, and calendar views. Calendar views require date_field.
 - email and phone should use typed email/phone fields and sensitivity pii for contact data.
 - relation columns use relation for the target collection path and optional relation_scope for a target outside the current scope. Omit relation_scope or set it null for the same scope; use "root" to target the project root; use {"type":"space","id":"<spaceId>"} to target a registered ready child space. Use list_spaces to discover space ids, and list_collections with that spaceId to discover target collection paths. two_way is supported for same-scope and root/child-space relations; the reverse column stores the reciprocal relation_scope.
-- relation values are path refs inside the target collection, not row IDs. For cross-scope relations the value is still relative to the target collection; the target scope lives in the schema column.
+- relation values are Collection item path refs inside the target Collection, not row IDs. For cross-scope relations the value is still relative to the target Collection; the target scope lives in the schema column.
 - gallery views use card_cover. Board group_by should be status, select, or a single actor field.
 - For select/status fields, define options with useful colors/icons when possible."#
 }
@@ -969,7 +1090,7 @@ fn knowledge_kinds_opt(name: &'static str) -> (&'static str, Value) {
             "type": ["array", "null"],
             "items": {
                 "type": "string",
-                "enum": ["document", "collection", "entry", "agent_instruction", "skill"]
+                "enum": ["page", "collection", "agent_instruction", "skill"]
             },
             "uniqueItems": true,
         }),
@@ -1036,7 +1157,7 @@ fn path_opt(name: &'static str, description: &'static str) -> (&'static str, Val
     )
 }
 
-fn document_path_req(name: &'static str, description: &'static str) -> (&'static str, Value) {
+fn markdown_path_req(name: &'static str, description: &'static str) -> (&'static str, Value) {
     (
         name,
         json!({
@@ -1096,7 +1217,7 @@ fn fields_req(name: &'static str) -> (&'static str, Value) {
         name,
         json!({
             "type": "object",
-            "description": "Custom schema field values keyed by column name. actor values are canonical emails; relation values are entry path refs; unique_id and system metadata are read-only here.",
+            "description": "Custom schema field values keyed by column name. actor values are canonical emails; relation values are Collection item path refs; unique_id and system metadata are read-only here.",
             "additionalProperties": true
         }),
     )
@@ -1105,7 +1226,7 @@ fn fields_req(name: &'static str) -> (&'static str, Value) {
 fn fields_opt(name: &'static str) -> (&'static str, Value) {
     let mut schema = fields_req(name).1;
     schema["description"] = json!(
-        "Optional custom schema field values keyed by column name. actor values are canonical emails; relation values are entry path refs; do not include unique_id or system metadata."
+        "Optional custom schema field values keyed by column name. actor values are canonical emails; relation values are Collection item path refs; do not include unique_id or system metadata."
     );
     (name, nullable(schema))
 }
@@ -1174,7 +1295,7 @@ fn column_patch_req(name: &'static str) -> (&'static str, Value) {
 fn column_schema() -> Value {
     json!({
         "type": "object",
-        "description": "Svode column definition. Boolean columns use display checkbox for completion/confirmation and switch for maintained enabled/active state; omit display when ambiguous. actor values are canonical emails; relation values are entry paths; status options should use todo/in_progress/done groups.",
+        "description": "Svode column definition. Boolean columns use display checkbox for completion/confirmation and switch for maintained enabled/active state; omit display when ambiguous. actor values are canonical emails; relation values are Collection item paths; status options should use todo/in_progress/done groups.",
         "additionalProperties": false,
         "properties": column_properties(true),
         "required": ["name", "type"]
@@ -1215,7 +1336,7 @@ fn column_properties(include_name_type: bool) -> Value {
         "range_by_default".to_string(),
         json!({"type": ["boolean", "null"], "description": "date columns: use ranges by default."}),
     );
-    properties.insert("relation".to_string(), json!({"type": ["string", "null"], "description": "relation target collection path in the target scope. Relation field values are linked entry paths inside this collection, not row IDs."}));
+    properties.insert("relation".to_string(), json!({"type": ["string", "null"], "description": "relation target Collection path in the target scope. Relation field values are linked Collection item paths inside this Collection, not row IDs."}));
     properties.insert("relation_scope".to_string(), relation_scope_schema());
     properties.insert(
         "limit".to_string(),
@@ -1434,14 +1555,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn definitions_publish_delete_and_actors_but_not_get_entry() {
+    fn definitions_publish_canonical_page_and_collection_item_delete_tools() {
         let names = definitions()
             .into_iter()
             .map(|definition| definition.name)
             .collect::<Vec<_>>();
-        assert!(names.contains(&"delete_entry"));
+        assert!(names.contains(&"delete_page"));
+        assert!(names.contains(&"delete_collection_item"));
         assert!(names.contains(&"list_actors"));
-        assert!(!names.contains(&"get_entry"));
+        assert!(!names.iter().any(|name| name.ends_with("_entry")));
     }
 
     #[test]
@@ -1570,12 +1692,11 @@ mod tests {
             .map(|definition| definition.name)
             .collect::<Vec<_>>();
         for name in [
-            "rename_entry",
-            "move_entry",
-            "reorder_entries",
+            "rename_content",
+            "move_content",
+            "reorder_content",
             "reorder_spaces",
-            "unnest_entry",
-            "convert_to_leaf",
+            "convert_page_to_leaf",
             "convert_to_collection",
             "validate_collection_integrity",
         ] {
@@ -1609,7 +1730,7 @@ mod tests {
             .expect("import_asset definition");
         assert_eq!(
             definition.input_schema["required"],
-            json!(["documentPath", "sourcePath"])
+            json!(["contentPath", "sourcePath"])
         );
         assert!(definition.description.contains("markdownUrl"));
         assert!(guide_text().contains("Managed file assets"));
@@ -1700,9 +1821,14 @@ mod tests {
         assert_eq!(
             classified_writes,
             vec![
-                "write_document",
-                "create_document",
-                "update_document_metadata",
+                "write_page",
+                "create_page",
+                "update_page_metadata",
+                "delete_page",
+                "write_space_readme",
+                "update_space_metadata",
+                "write_collection_readme",
+                "update_collection_metadata",
                 "import_asset",
                 "create_collection",
                 "convert_to_collection",
@@ -1710,16 +1836,17 @@ mod tests {
                 "update_routine",
                 "delete_routine",
                 "run_routine",
-                "create_entry",
-                "update_entry_fields",
-                "update_entry_body",
-                "delete_entry",
-                "rename_entry",
-                "move_entry",
-                "reorder_entries",
+                "create_collection_item",
+                "update_collection_item_fields",
+                "update_collection_item_body",
+                "update_collection_item_metadata",
+                "delete_collection_item",
+                "delete_collection",
+                "rename_content",
+                "move_content",
+                "reorder_content",
                 "reorder_spaces",
-                "unnest_entry",
-                "convert_to_leaf",
+                "convert_page_to_leaf",
                 "add_collection_column",
                 "update_collection_column",
                 "delete_collection_column",
@@ -1732,7 +1859,7 @@ mod tests {
         assert!(annotations_are_mutating(Some(&write_ann(false, None))));
         assert!(!annotations_are_mutating(Some(&read_only_ann())));
         assert_eq!(is_mutating_tool("list_spaces"), Some(false));
-        assert_eq!(is_mutating_tool("write_document"), Some(true));
+        assert_eq!(is_mutating_tool("write_page"), Some(true));
         assert_eq!(is_mutating_tool("unknown"), None);
     }
 
@@ -1758,6 +1885,38 @@ mod tests {
             .expect("delete_collection_view definition");
         assert!(!delete_definition.description.contains("Document tab"));
         assert!(!guide_text().contains("document label"));
+    }
+
+    #[test]
+    fn public_page_contract_has_no_legacy_document_or_generic_entry_aliases() {
+        let definitions = definitions();
+        let names = definitions
+            .iter()
+            .map(|definition| definition.name)
+            .collect::<Vec<_>>();
+        for canonical in [
+            "list_pages",
+            "read_page",
+            "write_page",
+            "create_page",
+            "update_page_metadata",
+            "search_pages",
+            "query_collection_items",
+            "read_collection_item",
+        ] {
+            assert!(names.contains(&canonical), "missing {canonical}");
+        }
+        assert!(!names.iter().any(|name| name.contains("document")));
+        assert!(!names.iter().any(|name| name.ends_with("_entry")));
+        let knowledge = definitions
+            .iter()
+            .find(|definition| definition.name == "search_knowledge")
+            .unwrap();
+        assert_eq!(
+            knowledge.input_schema["properties"]["nodeKinds"]["items"]["enum"],
+            json!(["page", "collection", "agent_instruction", "skill"])
+        );
+        assert!(!guide_text().to_ascii_lowercase().contains("document"));
     }
 
     #[test]

@@ -29,7 +29,7 @@ test("collapses the visible middle while preserving the full canonical path", ()
   const node: KnowledgeNode = {
     id: "node-1",
     source: {
-      kind: "document",
+      kind: "page",
       path: "guides/product/search/design.md",
       spaceId: "docs",
     },

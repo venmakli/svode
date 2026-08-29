@@ -169,7 +169,7 @@ export function TemplatesSplitButton({
     },
     {
       id: "templateActions" as const,
-      title: activeTemplate?.title || activeTemplate?.slug || m.entry_actions(),
+      title: activeTemplate?.title || activeTemplate?.slug || m.content_actions(),
       content: activeTemplate ? (
         <div className="flex flex-col p-1">
           <SettingsRow
@@ -361,7 +361,7 @@ function SortableTemplateRow({
         type="button"
         variant="ghost"
         size="icon-xs"
-        aria-label={m.entry_actions()}
+        aria-label={m.content_actions()}
         aria-haspopup="menu"
         className="absolute top-1/2 right-1 -translate-y-1/2 text-muted-foreground"
         onPointerDown={(event) => event.stopPropagation()}

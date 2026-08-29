@@ -9,9 +9,8 @@ import {
 test("knowledge filters start with every supported kind visible", () => {
   const filters = createDefaultKnowledgeFilters();
   expect(filters.nodeKinds).toEqual([
-    "document",
+    "page",
     "collection",
-    "entry",
     "agent_instruction",
     "skill",
   ]);
@@ -26,17 +25,17 @@ test("knowledge filters start with every supported kind visible", () => {
 
 test("knowledge filters toggle kinds without duplicates", () => {
   const defaults = createDefaultKnowledgeFilters();
-  const withoutEntries = toggleKnowledgeNodeKind(defaults, "entry", false);
+  const withoutPages = toggleKnowledgeNodeKind(defaults, "page", false);
   const withoutMembership = toggleKnowledgeEdgeKind(
-    withoutEntries,
+    withoutPages,
     "member_of",
     false,
   );
 
-  expect(withoutMembership.nodeKinds.includes("entry")).toBe(false);
+  expect(withoutMembership.nodeKinds.includes("page")).toBe(false);
   expect(withoutMembership.edgeKinds.includes("member_of")).toBe(false);
   expect(countHiddenKnowledgeKinds(withoutMembership)).toBe(2);
   expect(
-    toggleKnowledgeNodeKind(withoutMembership, "document", true).nodeKinds,
+    toggleKnowledgeNodeKind(withoutMembership, "collection", true).nodeKinds,
   ).toEqual(withoutMembership.nodeKinds);
 });

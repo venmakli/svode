@@ -24,7 +24,7 @@ if (!isolatedProcess) {
     expect(child.status).toBe(0);
   });
 } else {
-  test("document labels own schema menus while values and Table actions stay separate", async () => {
+  test("Page labels own schema menus while values and Table actions stay separate", async () => {
     const dom = createDom();
     const restoreGlobals = installDomGlobals(dom);
     const root = createRoot(dom.window.document.getElementById("app")!);

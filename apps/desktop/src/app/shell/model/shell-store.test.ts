@@ -13,7 +13,7 @@ test("graph handoff transfers query, scope, and selection without replacing cont
     query: "architecture",
     scope: { kind: "space", spaceId: "child" },
     filters: createDefaultKnowledgeFilters(),
-    selectedNodeId: "document:child:README.md",
+    selectedNodeId: "page:child:notes.md",
   });
 
   expect(useShellStore.getState().mainSurface).toBe("graph");
@@ -21,7 +21,7 @@ test("graph handoff transfers query, scope, and selection without replacing cont
     query: "architecture",
     scope: { kind: "space", spaceId: "child" },
     filters: createDefaultKnowledgeFilters(),
-    selectedNodeId: "document:child:README.md",
+    selectedNodeId: "page:child:notes.md",
     requestKey: 1,
   });
 

@@ -221,7 +221,7 @@ export function FileTreeItem({
       />
       <FieldError id={renameErrorId} className="truncate text-[10px] leading-3">
         {renameConflictPath
-          ? m.editor_name_conflict({ path: renameConflictPath })
+          ? m.page_name_conflict({ path: renameConflictPath })
           : null}
       </FieldError>
     </div>
@@ -260,7 +260,7 @@ export function FileTreeItem({
         {bareFolder && !node.has_schema && (
           <DropdownMenuItem onClick={handleMakeDocument}>
             <FileSymlink className="mr-2 h-4 w-4" />
-            {m.space_make_document()}
+            {m.space_make_page()}
           </DropdownMenuItem>
         )}
         {!node.has_schema && (
