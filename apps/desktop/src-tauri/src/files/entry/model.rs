@@ -225,6 +225,16 @@ impl EntryWarning {
         }
     }
 
+    pub(crate) fn filename_rename_deferred(current_path: &str, reason: &str) -> Self {
+        Self {
+            kind: "filename_rename_deferred".to_string(),
+            message: format!(
+                "display name was saved, but the current filename was kept because dependent metadata could not be updated safely: {reason}"
+            ),
+            path: Some(current_path.to_string()),
+        }
+    }
+
     pub(super) fn filename_collision_allocated(actual_path: &str) -> Self {
         Self {
             kind: "filename_collision_allocated".to_string(),

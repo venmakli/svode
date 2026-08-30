@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { act, useEffect } from "react";
+import { act, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
@@ -88,9 +88,39 @@ test("serializes a rename-style mutation before an immediate View transition", a
   }
 });
 
+test("commits the focused title draft before an immediate View transition", async () => {
+  const page = await renderPage("local", { renderTitle: true });
+  try {
+    const input = page.dom.window.document.querySelector<HTMLInputElement>(
+      "[data-page-title] input",
+    )!;
+    await act(async () => {
+      input.focus();
+      setInputValue(input, "Renamed Page");
+    });
+    await act(async () => {
+      activateMode(page.dom, "View");
+      await nextTurn();
+      await nextTurn();
+    });
+
+    expect(page.events).toEqual([
+      "body",
+      "metadata",
+      "title:Renamed Page",
+      "body",
+      "metadata",
+    ]);
+    expect(textOf(page.dom, "[data-saved-title]")).toBe("Renamed Page");
+    expect(textOf(page.dom, "[data-mode]")).toBe("view");
+  } finally {
+    await page.cleanup();
+  }
+});
+
 async function renderPage(
   status: "local" | "read_only",
-  options: { onBodyFlush?: () => Promise<void> } = {},
+  options: { onBodyFlush?: () => Promise<void>; renderTitle?: boolean } = {},
 ) {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
@@ -117,9 +147,11 @@ async function renderPage(
     await import("./page-surface-context");
   const { PageModeControl } = await import("../ui/page-mode-control");
   const { PageAccessRecovery } = await import("../ui/page-access-recovery");
+  const { TitleZone } = await import("../ui/title-zone");
 
   function Probe() {
     const session = usePageSurfaceSession();
+    const [savedTitle, setSavedTitle] = useState("Page");
     const registerPersistence = session.registerPersistence;
     useEffect(() => {
       const unregisterBody = registerPersistence("body", async () => {
@@ -142,6 +174,30 @@ async function renderPage(
         <span data-read-only>
           {session.readOnly ? "read-only" : "editable"}
         </span>
+        {options.renderTitle ? (
+          <>
+            <div data-page-title>
+              <TitleZone
+                title={savedTitle}
+                icon={null}
+                description=""
+                readOnly={session.readOnly}
+                hideDescription
+                fallbackEmoji="📄"
+                onTitleChange={(title) => {
+                  void session.runMutation(async () => {
+                    events.push(`title:${title}`);
+                    setSavedTitle(title);
+                  });
+                }}
+                onIconChange={() => undefined}
+                onDescriptionChange={() => undefined}
+                onBodyFocus={() => undefined}
+              />
+            </div>
+            <span data-saved-title>{savedTitle}</span>
+          </>
+        ) : null}
         <button
           data-run-mutation
           onClick={() =>
@@ -210,14 +266,47 @@ function nextTurn() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function setInputValue(input: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(
+    input.ownerDocument.defaultView!.HTMLInputElement.prototype,
+    "value",
+  )?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(
+    new input.ownerDocument.defaultView!.Event("input", { bubbles: true }),
+  );
+  const propertyChange = new input.ownerDocument.defaultView!.Event(
+    "propertychange",
+    { bubbles: true },
+  );
+  Object.defineProperty(propertyChange, "propertyName", { value: "value" });
+  input.dispatchEvent(propertyChange);
+}
+
 function installDomGlobals(dom: JSDOM) {
+  Object.defineProperties(dom.window.HTMLElement.prototype, {
+    attachEvent: {
+      configurable: true,
+      value(this: HTMLElement, name: string, listener: EventListener) {
+        this.addEventListener(name.replace(/^on/, ""), listener);
+      },
+    },
+    detachEvent: {
+      configurable: true,
+      value(this: HTMLElement, name: string, listener: EventListener) {
+        this.removeEventListener(name.replace(/^on/, ""), listener);
+      },
+    },
+  });
   const values: Record<string, unknown> = {
     cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
     CustomEvent: dom.window.CustomEvent,
     DOMRect: dom.window.DOMRect,
     Element: dom.window.Element,
     Event: dom.window.Event,
+    FocusEvent: dom.window.FocusEvent,
     HTMLElement: dom.window.HTMLElement,
+    HTMLInputElement: dom.window.HTMLInputElement,
     IS_REACT_ACT_ENVIRONMENT: true,
     KeyboardEvent: dom.window.KeyboardEvent,
     MouseEvent: dom.window.MouseEvent,

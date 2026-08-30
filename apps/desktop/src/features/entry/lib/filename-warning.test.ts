@@ -34,6 +34,17 @@ test("entry filename feedback distinguishes allocated and unapplied collisions",
   expect(allocated?.description === unapplied?.description).toBe(false);
 });
 
+test("entry filename feedback explains a safely deferred rename", () => {
+  const feedback = entryFilenameWarningFeedback({
+    kind: "filename_rename_deferred",
+    message: "dependent metadata is invalid",
+    path: "legacy.md",
+  });
+
+  expect(feedback?.description.includes("legacy.md")).toBe(true);
+  expect(Boolean(feedback?.title.length)).toBe(true);
+});
+
 test("entry filename feedback ignores unrelated diagnostics", () => {
   expect(
     entryFilenameWarningFeedback({

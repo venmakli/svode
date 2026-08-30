@@ -17,7 +17,9 @@ export function PageModeControl() {
       aria-busy={session.modePending}
       data-page-mode-control
       onValueChange={(value) => {
-        if (value) void session.requestMode(value as PageSurfaceMode);
+        if (!value) return;
+        commitActivePageEdit();
+        void session.requestMode(value as PageSurfaceMode);
       }}
     >
       {session.contributions.map((contribution) => (
@@ -32,4 +34,17 @@ export function PageModeControl() {
       ))}
     </ToggleGroup>
   );
+}
+
+function commitActivePageEdit() {
+  const activeElement = document.activeElement;
+  if (!(activeElement instanceof HTMLElement)) return;
+  if (
+    !activeElement.matches(
+      'input:not([readonly]), textarea:not([readonly]), [contenteditable="true"]',
+    )
+  ) {
+    return;
+  }
+  activeElement.blur();
 }

@@ -1569,6 +1569,8 @@
   "entry_filename_collision": "Имя файла уже занято",
   "entry_filename_allocated_description": "Желаемое имя файла занято; файл сохранён как {path}.",
   "entry_filename_collision_description": "Отображаемое имя сохранено, но файл остался по пути {path}.",
+  "entry_filename_rename_deferred": "Имя файла не изменено",
+  "entry_filename_rename_deferred_description": "Отображаемое имя сохранено, но зависимые метаданные не позволили безопасно переименовать файл. Файл остался по пути {path}.",
   "routines_filename_adjusted_description": "Routine безопасно сохранена как {path}.",
   "routines_filename_allocated_description": "Желаемое имя файла занято; Routine сохранена как {path}.",
   "routines_filename_collision_description": "Имя сохранено, но файл Routine остался по пути {path}."

@@ -1569,6 +1569,8 @@
   "entry_filename_collision": "Filename already in use",
   "entry_filename_allocated_description": "The preferred filename was occupied; the file was saved as {path}.",
   "entry_filename_collision_description": "The display name was saved, but the file remains at {path}.",
+  "entry_filename_rename_deferred": "Filename kept",
+  "entry_filename_rename_deferred_description": "The display name was saved, but dependent metadata prevented a safe rename. The file remains at {path}.",
   "routines_filename_adjusted_description": "The routine was saved safely as {path}.",
   "routines_filename_allocated_description": "The preferred filename was occupied; the routine was saved as {path}.",
   "routines_filename_collision_description": "The name was saved, but the routine file remains at {path}."

@@ -8,6 +8,7 @@ const FILENAME_WARNING_KINDS = new Set([
   "filename_projection",
   "filename_collision_allocated",
   "filename_rename_collision",
+  "filename_rename_deferred",
 ]);
 
 export function retargetEntryFilenameWarnings(
@@ -54,6 +55,13 @@ export function entryFilenameWarningFeedback(
       title: m.entry_filename_collision(),
       description: warning.path
         ? m.entry_filename_collision_description({ path: warning.path })
+        : warning.message,
+    };
+  } else if (warning.kind === "filename_rename_deferred") {
+    return {
+      title: m.entry_filename_rename_deferred(),
+      description: warning.path
+        ? m.entry_filename_rename_deferred_description({ path: warning.path })
         : warning.message,
     };
   }

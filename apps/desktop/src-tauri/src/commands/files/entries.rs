@@ -328,16 +328,44 @@ pub(super) async fn write_entry_shared(
     nonces: &WriteNonceRegistry,
     autocommit: Option<&AutocommitService>,
 ) -> Result<WriteResult, AppError> {
-    let skip_rename = skip_rename.unwrap_or(false);
+    let requested_skip_rename = skip_rename.unwrap_or(false);
     let backlink_index = backlinks_for_space(index_state, &space).await;
     let project = project_path.as_deref().filter(|p| !p.is_empty());
     let project_aware = project.is_some();
+    let write_plan =
+        entry::planned_write_rename(&space, &path, title.as_deref(), requested_skip_rename)?;
+    let mut deferred_rename_warning = None;
+    let mut relation_mutation_paths = Vec::new();
+    let skip_rename = if !requested_skip_rename {
+        if let Some(rename) = write_plan.as_ref() {
+            let (old_path, new_path) = relation_paths_for_write_rename(&path, rename);
+            match properties::relation_move_mutation_paths_with_project(
+                &space, project, &old_path, &new_path,
+            ) {
+                Ok(paths) => {
+                    relation_mutation_paths = paths;
+                    false
+                }
+                Err(error) if is_schema_validation_error(&error) => {
+                    deferred_rename_warning = Some(entry::EntryWarning::filename_rename_deferred(
+                        &path,
+                        &error.to_string(),
+                    ));
+                    true
+                }
+                Err(error) => return Err(error),
+            }
+        } else {
+            false
+        }
+    } else {
+        true
+    };
     if project_aware && !skip_rename {
         ensure_backlinks_before_structural(index_state, project).await;
     }
-    let write_plan = entry::planned_write_rename(&space, &path, title.as_deref(), skip_rename)?;
-    let mut planned_paths = Vec::new();
-    if let (Some(project), Some(_)) = (project, write_plan.as_ref()) {
+    let mut planned_paths = relation_mutation_paths;
+    if !skip_rename && let (Some(project), Some(_)) = (project, write_plan.as_ref()) {
         let target_space_id = space_id_for_dir(index_state, &space).await;
         planned_paths.extend_from_slice(
             index_state
@@ -389,6 +417,9 @@ pub(super) async fn write_entry_shared(
         )
     })
     .await?;
+    if let Some(warning) = deferred_rename_warning {
+        result.warnings.push(warning);
+    }
 
     // Register the write-nonce against the canonical post-rename path so the
     // watcher can echo-guard the `file:changed` event that our own write
@@ -587,6 +618,25 @@ pub(super) async fn write_entry_shared(
     }
 
     Ok(result)
+}
+
+fn relation_paths_for_write_rename(
+    path: &str,
+    rename: &entry::PlannedWriteRename,
+) -> (String, String) {
+    if let Some(old_folder) = rename.folder_rename_old.as_ref() {
+        let new_folder = Path::new(&rename.new_path)
+            .parent()
+            .unwrap_or(Path::new(""))
+            .to_string_lossy()
+            .to_string();
+        return (old_folder.clone(), new_folder);
+    }
+    (path.to_string(), rename.new_path.clone())
+}
+
+fn is_schema_validation_error(error: &AppError) -> bool {
+    matches!(error, AppError::General(message) if message.starts_with("schema error:"))
 }
 
 pub async fn delete_entry_shared(

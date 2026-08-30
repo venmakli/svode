@@ -571,6 +571,47 @@ async fn title_update_renames_collection_tree_and_rebases_indexes_and_backlinks(
 }
 
 #[tokio::test]
+async fn title_update_keeps_filename_when_invalid_schema_blocks_safe_relation_rewrite() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join(".git")).unwrap();
+    std::fs::create_dir_all(root.join("Broken collection")).unwrap();
+    std::fs::write(
+        root.join("Broken collection").join("schema.yaml"),
+        "columns:\n  - { name: Active, type: checkbox }\nviews: []\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("Page.md"), "---\ntitle: Page\n---\nBody\n").unwrap();
+    let index_state = IndexState::new();
+    let nonces = WriteNonceRegistry::new();
+
+    let updated = update_entry_title_shared(
+        WriteEntryAuthorization::Preauthorized,
+        root.to_string_lossy().into_owned(),
+        "Page.md".to_string(),
+        "Renamed Page".to_string(),
+        None,
+        &index_state,
+        &nonces,
+        None,
+    )
+    .await
+    .expect("save title without unsafe filename rename");
+
+    assert_eq!(updated.meta.title, "Renamed Page");
+    assert_eq!(updated.path, "Page.md");
+    assert!(root.join("Page.md").is_file());
+    assert!(!root.join("renamed-page.md").exists());
+    assert_eq!(
+        updated
+            .warnings
+            .first()
+            .map(|warning| warning.kind.as_str()),
+        Some("filename_rename_deferred")
+    );
+}
+
+#[tokio::test]
 async fn targeted_nested_collection_convert_recomputes_descendant_flags() {
     let tmp = TempDir::new().unwrap();
     let space = tmp.path();
