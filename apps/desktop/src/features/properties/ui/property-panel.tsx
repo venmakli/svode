@@ -19,7 +19,6 @@ import {
   validatePropertyValue,
 } from "../model/validation";
 import { PropertyControl } from "./property-control";
-import { PROPERTY_TYPE_ICONS } from "./property-type-meta";
 import { PropertyValue } from "./property-value";
 import { propertyValidationMessage } from "./validation-message";
 import { AddColumnDialog, AddOptionDialog } from "./schema-dialogs";
@@ -110,20 +109,16 @@ export function PropertyPanel({
             column,
             panelValues[column.name],
           );
-          const PropertyIcon = PROPERTY_TYPE_ICONS[column.type];
           return (
             <div key={column.name} className="contents">
               <PropertyLabel
                 schemaMenu={
                   readOnly ? (
-                    <span className="flex min-w-0 items-center gap-1.5 px-1.5 py-1.5">
-                      <PropertyIcon
-                        aria-hidden="true"
-                        className="size-4 shrink-0"
-                        data-property-type-icon={column.type}
-                      />
-                      <span className="min-w-0 truncate">{column.name}</span>
-                    </span>
+                    <PropertyLabelTrigger
+                      column={column}
+                      open={false}
+                      disabled
+                    />
                   ) : (
                     <SchemaColumnMenu
                       trigger={
