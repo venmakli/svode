@@ -1,10 +1,4 @@
-import {
-  CheckCircle2,
-  CircleHelp,
-  LoaderCircle,
-  LockKeyhole,
-  TriangleAlert,
-} from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import { getLocale } from "@/paraglide/runtime.js";
 import * as m from "@/paraglide/messages.js";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +8,7 @@ import { GitRemoteAuthDialog } from "./git-remote-auth-dialog";
 import { useRepositoryAccess } from "../hooks/use-repository-access";
 import { useRepositoryAccessRecovery } from "../hooks/use-repository-access-recovery";
 import { repositoryAccessPresentation } from "./repository-access-copy";
+import { RepositoryAccessStatusIcon } from "./repository-access-status-icon";
 
 export type RepositoryAccessOwnerKind =
   | "project"
@@ -216,30 +211,6 @@ function repositoryOwnerLabel(
       return m.git_access_owner_independent({ name: ownerName });
     case "submodule":
       return m.git_access_owner_submodule({ name: ownerName });
-  }
-}
-
-function RepositoryAccessStatusIcon({
-  status,
-  busy,
-}: {
-  status: ReturnType<typeof repositoryAccessPresentation>["status"];
-  busy: boolean;
-}) {
-  const className = busy ? "animate-spin" : undefined;
-  switch (status) {
-    case "local":
-    case "writable":
-      return <CheckCircle2 data-icon="inline-start" className={className} />;
-    case "checking":
-    case "loading":
-      return <LoaderCircle data-icon="inline-start" className={className} />;
-    case "read_only":
-      return <LockKeyhole data-icon="inline-start" className={className} />;
-    case "error":
-      return <TriangleAlert data-icon="inline-start" className={className} />;
-    case "unknown":
-      return <CircleHelp data-icon="inline-start" className={className} />;
   }
 }
 

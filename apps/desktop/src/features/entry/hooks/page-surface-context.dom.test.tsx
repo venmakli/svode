@@ -2,93 +2,45 @@ import { expect, test } from "bun:test";
 import { act, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
+
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
-test("Page chooses a local default without verification and keeps blocked edit recoverable", async () => {
-  const local = await renderPage("local");
+test("Page derives editability from local repository access without a mode control", async () => {
+  const page = await renderPage("local");
   try {
-    expect(textOf(local.dom, "[data-mode]")).toBe("edit");
-    expect(textOf(local.dom, "[data-read-only]")).toBe("editable");
-    expect(local.calls.includes("repository_access_verify")).toBe(false);
-    await act(async () => {
-      local.dom.window.document
-        .querySelector<HTMLButtonElement>("[data-run-mutation]")!
-        .click();
-      await nextTurn();
-    });
-    expect(local.events).toEqual(["body", "metadata", "mutation"]);
-  } finally {
-    await local.cleanup();
-  }
-
-  const blocked = await renderPage("read_only");
-  try {
-    expect(textOf(blocked.dom, "[data-mode]")).toBe("view");
-    await act(async () => {
-      activateMode(blocked.dom, "Edit");
-      await nextTurn();
-      await nextTurn();
-    });
-
-    expect(textOf(blocked.dom, "[data-mode]")).toBe("view");
-    expect(textOf(blocked.dom, "[data-read-only]")).toBe("read-only");
+    expect(textOf(page.dom, "[data-read-only]")).toBe("editable");
     expect(
-      Boolean(
-        blocked.dom.window.document.querySelector(
-          "[data-repository-access-inline-recovery]",
-        ),
-      ),
-    ).toBe(true);
-    expect(blocked.calls.includes("repository_access_verify")).toBe(false);
-  } finally {
-    await blocked.cleanup();
-  }
-});
+      page.dom.window.document.querySelector("[data-page-mode-control]"),
+    ).toBeNull();
+    expect(page.calls.includes("repository_access_verify")).toBe(false);
 
-test("serializes a rename-style mutation before an immediate View transition", async () => {
-  let releaseFirstBodyFlush: () => void = () => undefined;
-  const firstBodyFlush = new Promise<void>((resolve) => {
-    releaseFirstBodyFlush = resolve;
-  });
-  let bodyFlushCount = 0;
-  const page = await renderPage("local", {
-    onBodyFlush: async () => {
-      bodyFlushCount += 1;
-      if (bodyFlushCount === 1) await firstBodyFlush;
-    },
-  });
-  try {
     await act(async () => {
       page.dom.window.document
         .querySelector<HTMLButtonElement>("[data-run-mutation]")!
         .click();
-      activateMode(page.dom, "View");
       await nextTurn();
     });
 
-    expect(page.events).toEqual(["body"]);
-
-    await act(async () => {
-      releaseFirstBodyFlush();
-      await nextTurn();
-      await nextTurn();
-    });
-
-    expect(page.events).toEqual([
-      "body",
-      "metadata",
-      "mutation",
-      "body",
-      "metadata",
-    ]);
-    expect(textOf(page.dom, "[data-mode]")).toBe("view");
-    expect(textOf(page.dom, "[data-read-only]")).toBe("read-only");
+    expect(page.events).toEqual(["body", "metadata", "mutation"]);
   } finally {
     await page.cleanup();
   }
 });
 
-test("commits the focused title draft before an immediate View transition", async () => {
+test("Page starts fail-closed for blocked repository access without probing", async () => {
+  const page = await renderPage("read_only");
+  try {
+    expect(textOf(page.dom, "[data-read-only]")).toBe("read-only");
+    expect(
+      page.dom.window.document.querySelector("[data-page-mode-control]"),
+    ).toBeNull();
+    expect(page.calls.includes("repository_access_verify")).toBe(false);
+  } finally {
+    await page.cleanup();
+  }
+});
+
+test("access degradation commits a focused title draft before becoming read-only", async () => {
   const page = await renderPage("local", { renderTitle: true });
   try {
     const input = page.dom.window.document.querySelector<HTMLInputElement>(
@@ -98,29 +50,45 @@ test("commits the focused title draft before an immediate View transition", asyn
       input.focus();
       setInputValue(input, "Renamed Page");
     });
+
     await act(async () => {
-      activateMode(page.dom, "View");
+      page.setAccessStatus("read_only");
+      page.dom.window.dispatchEvent(new page.dom.window.Event("focus"));
+      await nextTurn();
       await nextTurn();
       await nextTurn();
     });
 
-    expect(page.events).toEqual([
-      "body",
-      "metadata",
-      "title:Renamed Page",
-      "body",
-      "metadata",
-    ]);
+    expect(page.events.includes("title:Renamed Page")).toBe(true);
     expect(textOf(page.dom, "[data-saved-title]")).toBe("Renamed Page");
-    expect(textOf(page.dom, "[data-mode]")).toBe("view");
+    expect(textOf(page.dom, "[data-read-only]")).toBe("read-only");
+    expect(page.mountCount()).toBe(1);
+  } finally {
+    await page.cleanup();
+  }
+});
+
+test("a positive canonical reread restores editable presentation automatically", async () => {
+  const page = await renderPage("read_only");
+  try {
+    page.setAccessStatus("local");
+    await act(async () => {
+      page.dom.window.dispatchEvent(new page.dom.window.Event("focus"));
+      await nextTurn();
+      await nextTurn();
+    });
+
+    expect(textOf(page.dom, "[data-read-only]")).toBe("editable");
+    expect(page.calls.includes("repository_access_verify")).toBe(false);
+    expect(page.mountCount()).toBe(1);
   } finally {
     await page.cleanup();
   }
 });
 
 async function renderPage(
-  status: "local" | "read_only",
-  options: { onBodyFlush?: () => Promise<void>; renderTitle?: boolean } = {},
+  initialStatus: AccessStatus,
+  options: { renderTitle?: boolean } = {},
 ) {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
@@ -129,15 +97,19 @@ async function renderPage(
   const restoreGlobals = installDomGlobals(dom);
   const calls: string[] = [];
   const events: string[] = [];
-  const spacePath = `/page-mode-${status}-${Date.now()}`;
+  const spacePath = `/repository-work-mode-${Date.now()}-${Math.random()}`;
+  let accessStatus = initialStatus;
+  let generation = 0;
+  let mounted = 0;
   mockNativeIpc(
     (command) => {
       calls.push(command);
       if (command === "repository_access_get") {
-        return snapshot(`repo-${status}-${Date.now()}`, status);
+        generation += 1;
+        return snapshot("repo-page-work-mode", accessStatus, generation);
       }
       if (command === "repository_access_verify") {
-        return snapshot(`repo-${status}-${Date.now()}`, "local");
+        throw new Error("Page open must not verify repository access");
       }
       throw new Error(`Unexpected command: ${command}`);
     },
@@ -145,8 +117,6 @@ async function renderPage(
   );
   const { PageSurfaceSessionProvider, usePageSurfaceSession } =
     await import("./page-surface-context");
-  const { PageModeControl } = await import("../ui/page-mode-control");
-  const { PageAccessRecovery } = await import("../ui/page-access-recovery");
   const { TitleZone } = await import("../ui/title-zone");
 
   function Probe() {
@@ -154,9 +124,9 @@ async function renderPage(
     const [savedTitle, setSavedTitle] = useState("Page");
     const registerPersistence = session.registerPersistence;
     useEffect(() => {
+      mounted += 1;
       const unregisterBody = registerPersistence("body", async () => {
         events.push("body");
-        await options.onBodyFlush?.();
       });
       const unregisterMetadata = registerPersistence("metadata", async () => {
         events.push("metadata");
@@ -168,9 +138,6 @@ async function renderPage(
     }, [registerPersistence]);
     return (
       <>
-        <PageModeControl />
-        <PageAccessRecovery />
-        <span data-mode>{session.currentMode}</span>
         <span data-read-only>
           {session.readOnly ? "read-only" : "editable"}
         </span>
@@ -223,11 +190,16 @@ async function renderPage(
       </PageSurfaceSessionProvider>,
     );
     await nextTurn();
+    await nextTurn();
   });
   return {
     calls,
     events,
     dom,
+    mountCount: () => mounted,
+    setAccessStatus: (status: AccessStatus) => {
+      accessStatus = status;
+    },
     cleanup: async () => {
       await act(async () => root.unmount());
       clearNativeMocks();
@@ -237,25 +209,22 @@ async function renderPage(
   };
 }
 
-function snapshot(repositoryId: string, status: "local" | "read_only") {
+type AccessStatus = "local" | "read_only";
+
+function snapshot(
+  repositoryId: string,
+  status: AccessStatus,
+  generation: number,
+) {
   return {
     checkedAt: null,
     expiresAt: null,
-    generation: 1,
+    generation,
     lastKnownStatus: null,
-    reason: status === "read_only" ? "policy_blocked" : null,
+    reason: status === "read_only" ? "auth_required" : null,
     repositoryId,
     status,
   };
-}
-
-function activateMode(dom: JSDOM, label: string) {
-  const tab = Array.from(
-    dom.window.document.querySelectorAll<HTMLButtonElement>(
-      "[data-page-mode-control] button",
-    ),
-  ).find((button) => button.textContent === label)!;
-  tab.click();
 }
 
 function textOf(dom: JSDOM, selector: string) {

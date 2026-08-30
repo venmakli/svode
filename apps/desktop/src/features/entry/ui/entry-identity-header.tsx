@@ -101,7 +101,11 @@ export function EntryIdentityHeader({
   );
 }
 
-export function EntryIdentityHeaderSkeleton() {
+export function EntryIdentityHeaderSkeleton({
+  actions,
+}: {
+  actions?: ReactNode;
+} = {}) {
   return (
     <>
       <Skeleton className="h-44 min-h-32 max-h-48 w-full" />
@@ -119,7 +123,7 @@ export function EntryIdentityHeaderSkeleton() {
         </div>
         <div className="flex shrink-0 flex-col items-end">
           <div className="flex h-8 items-center">
-            <Skeleton className="size-7" />
+            {actions ?? <Skeleton className="size-7" />}
           </div>
           <div className="flex h-5 items-center">
             <Skeleton className="h-3 w-24" />

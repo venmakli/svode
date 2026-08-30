@@ -22,7 +22,7 @@ export function ScopeOwnerHeader({
   const { entry, schemaResult } = context;
 
   if (context.status === "loading") {
-    return <ScopeOwnerHeaderSkeleton />;
+    return <ScopeOwnerHeaderSkeleton actions={actions} />;
   }
 
   const canCreateReadme = context.status === "missing" && !readOnly;
@@ -101,10 +101,13 @@ export function ScopeOwnerHeader({
   );
 }
 
-function ScopeOwnerHeaderSkeleton() {
+function ScopeOwnerHeaderSkeleton({ actions }: { actions?: ReactNode }) {
   return (
-    <div className={detailPageHeaderClassName} aria-hidden="true">
-      <EntryIdentityHeaderSkeleton />
+    <div
+      className={detailPageHeaderClassName}
+      aria-hidden={actions ? undefined : true}
+    >
+      <EntryIdentityHeaderSkeleton actions={actions} />
     </div>
   );
 }

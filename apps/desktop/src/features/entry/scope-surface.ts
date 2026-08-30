@@ -8,7 +8,6 @@ export { ScopeOwnerHeader } from "./ui/scope-owner-header";
 export { ScopeOwnerActions } from "./ui/scope-owner-actions";
 export { ReadmeSurface } from "./ui/readme-surface";
 export { PageAccessRecovery } from "./ui/page-access-recovery";
-export { PageModeControl } from "./ui/page-mode-control";
 export {
   PageSurfaceSessionProvider,
   usePageSurfaceSession,

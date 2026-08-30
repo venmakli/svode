@@ -73,7 +73,7 @@ export function usePagePersistence({
   }, []);
 
   const enqueuePersistenceTask = useCallback(
-    <Result,>(task: () => Promise<Result>) => {
+    <Result>(task: () => Promise<Result>) => {
       const result = persistenceQueueRef.current.then(task, task);
       persistenceQueueRef.current = result.then(
         () => undefined,
@@ -162,18 +162,12 @@ export function usePagePersistence({
     }
   }, [recoverWriteError]);
 
-  const reportPersistenceError = useCallback(
-    () => setPersistenceError(m.page_surface_save_error()),
-    [],
-  );
-
   return {
     dismissRecovery,
     flushPersistence,
     persistenceError,
     recoverWriteError,
     registerPersistence,
-    reportPersistenceError,
     retryPersistence,
     runMutation,
   };

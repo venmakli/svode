@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSpaceTreeSync } from "@/features/space";
 import { useOpenScopeOwner } from "@/features/artifact";
 import { deleteEntry, duplicateEntry } from "../entry-api";
@@ -10,13 +10,28 @@ import type { Entry } from "../model";
 import { EntryDeleteDialog } from "./entry-delete-dialog";
 import { EntryDetailActions } from "./entry-detail-actions";
 
-export function ScopeOwnerActions() {
+export function ScopeOwnerActions({
+  readOnly = false,
+}: {
+  readOnly?: boolean;
+}) {
   const context = useEntryDetailContext();
   const openDocument = useOpenEntryDocument();
   const openScopeOwner = useOpenScopeOwner();
   const [entryToDelete, setEntryToDelete] = useState<Entry | null>(null);
   const { reloadTreePathParent, reloadTreePathParents, removeTreePath } =
     useSpaceTreeSync();
+
+  useEffect(() => {
+    if (!readOnly) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) setEntryToDelete(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [readOnly]);
 
   if (!context.entry) return null;
 
@@ -67,9 +82,10 @@ export function ScopeOwnerActions() {
           void duplicateOwner(entry).catch(handleError)
         }
         onDeleteEntry={setEntryToDelete}
+        readOnly={readOnly}
       />
       <EntryDeleteDialog
-        entry={entryToDelete}
+        entry={readOnly ? null : entryToDelete}
         onOpenChange={(open) => {
           if (!open) setEntryToDelete(null);
         }}

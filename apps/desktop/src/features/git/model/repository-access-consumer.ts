@@ -31,6 +31,15 @@ export function allowsRepositoryMutation(view: RepositoryAccessView) {
   );
 }
 
+export function repositoryAccessIsEditable(view: RepositoryAccessView) {
+  return (
+    !view.error &&
+    !view.loading &&
+    !view.verifying &&
+    allowsRepositoryMutation(view)
+  );
+}
+
 export function dedupeRepositoryAccessTargets(
   targets: readonly RepositoryAccessTarget[],
   getView: (repositoryPath: string) => RepositoryAccessView,

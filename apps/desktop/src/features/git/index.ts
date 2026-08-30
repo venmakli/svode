@@ -38,6 +38,7 @@ export type {
   RepositoryAccessTarget,
   RepositoryAccessTargetView,
 } from "./model/repository-access-consumer";
+export { repositoryAccessIsEditable } from "./model/repository-access-consumer";
 export {
   gitAuthChallengeFromRemoteUrl,
   isGitAuthRequiredError,
@@ -54,3 +55,7 @@ export {
   RepositoryAccessSummary,
   type RepositoryAccessOwnerKind,
 } from "./ui/repository-access-summary";
+export {
+  RepositoryWorkStatus,
+  type RepositoryWorkStatusProps,
+} from "./ui/repository-work-status";

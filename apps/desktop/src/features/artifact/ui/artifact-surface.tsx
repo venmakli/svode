@@ -73,6 +73,7 @@ async function loadPageSurface(): Promise<{
             projectPath={projectPath}
             documentPath={target.path}
             spaceId={spaceId}
+            onOpenRepositorySettings={onOpenRepositorySettings}
           />
         </PageSurfaceSessionProvider>
       );

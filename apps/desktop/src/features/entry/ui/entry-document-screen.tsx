@@ -28,6 +28,7 @@ import { type EntrySchemaResult } from "@/features/properties";
 import { getEntrySchema } from "@/features/properties/api";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
 import { useSpaceTreeSync } from "@/features/space";
+import { RepositoryWorkStatus } from "@/features/git";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 import { EntryDeleteDialog } from "./entry-delete-dialog";
 import { EntryDetailActions } from "./entry-detail-actions";
@@ -43,13 +44,13 @@ import { propertyFieldSavePolicy } from "../property-field-save";
 import { useEntryDocumentName } from "../hooks/use-entry-document-name";
 import { usePageSurfaceSession } from "../hooks/page-surface-context";
 import { PageAccessRecovery } from "./page-access-recovery";
-import { PageModeControl } from "./page-mode-control";
 
 interface EntryDocumentScreenProps {
   spacePath: string;
   projectPath?: string | null;
   documentPath: string;
   spaceId: string;
+  onOpenRepositorySettings?: (repositoryPath: string) => void;
 }
 
 function getDocumentTargetKey(spacePath: string, documentPath: string) {
@@ -61,6 +62,7 @@ export function EntryDocumentScreen({
   projectPath,
   documentPath,
   spaceId,
+  onOpenRepositorySettings,
 }: EntryDocumentScreenProps) {
   const pageSurface = usePageSurfaceSession();
   const openDocument = useOpenEntryDocument();
@@ -283,7 +285,14 @@ export function EntryDocumentScreen({
   }
 
   if (!currentEntry) {
-    return <EntryDocumentLoadingState />;
+    return (
+      <EntryDocumentLoadingState
+        contextName={pageDisplayName(documentPath)}
+        displayPath={documentPath}
+        repositoryPath={spacePath}
+        onOpenRepositorySettings={onOpenRepositorySettings}
+      />
+    );
   }
   const activeEntry = currentEntry;
   const showSubpages = detailState?.form === "folder";
@@ -328,7 +337,12 @@ export function EntryDocumentScreen({
           readOnly={pageSurface.readOnly}
           actions={
             <>
-              <PageModeControl />
+              <RepositoryWorkStatus
+                contextName={currentEntry.meta.title}
+                displayPath={currentEntry.path}
+                repositoryPath={spacePath}
+                onOpenRepositorySettings={onOpenRepositorySettings}
+              />
               <EntryDetailActions
                 entry={currentEntry}
                 spacePath={spacePath}
@@ -363,7 +377,6 @@ export function EntryDocumentScreen({
         {schemaResult && schemaResult.schema.columns.length > 0 ? (
           <div className="max-w-5xl">
             <PropertyPanel
-              key={`properties:${pageSurface.currentMode}`}
               spacePath={spacePath}
               projectPath={projectPath}
               spaceId={spaceId}
@@ -450,11 +463,30 @@ function isFileNotFoundError(error: unknown, path: string) {
   );
 }
 
-function EntryDocumentLoadingState() {
+function EntryDocumentLoadingState({
+  contextName,
+  displayPath,
+  repositoryPath,
+  onOpenRepositorySettings,
+}: {
+  contextName: string;
+  displayPath: string;
+  repositoryPath: string;
+  onOpenRepositorySettings?: (repositoryPath: string) => void;
+}) {
   return (
     <div className="flex min-h-full flex-col">
       <div className={detailPageHeaderClassName}>
-        <EntryIdentityHeaderSkeleton />
+        <EntryIdentityHeaderSkeleton
+          actions={
+            <RepositoryWorkStatus
+              contextName={contextName}
+              displayPath={displayPath}
+              repositoryPath={repositoryPath}
+              onOpenRepositorySettings={onOpenRepositorySettings}
+            />
+          }
+        />
         <div className="flex max-w-5xl flex-col gap-4">
           <div className="flex gap-2">
             <Skeleton className="h-6 w-20" />
@@ -470,4 +502,12 @@ function EntryDocumentLoadingState() {
       </div>
     </div>
   );
+}
+
+function pageDisplayName(path: string) {
+  const segments = path.replaceAll("\\", "/").split("/");
+  const name = segments.at(-1) ?? path;
+  return name.toLowerCase() === "readme.md"
+    ? (segments.at(-2) ?? name)
+    : name.replace(/\.md$/i, "");
 }
